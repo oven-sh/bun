@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashMap;
+use bun_lint::types::IdMap;
 
 /// Require or disallow initialization in variable declarations.
 pub struct InitDeclarations {
@@ -132,7 +132,7 @@ fn end_of_first_declared_namespace_in(namespace: Module<'_>) -> Option<u32> {
 pub struct State<'a> {
     declared_namespaces: AncestorMemo<'a, Module<'a>>,
     /// [`end_of_first_declared_namespace_in`] a `declare namespace`, by its statement.
-    first_ends: FxHashMap<Stmt<'a>, Option<u32>>,
+    first_ends: IdMap<Stmt<'a>, Option<u32>>,
 }
 
 /// ESLint's `insideDeclaredNamespace`, which is a flag and not a depth: the end of a
@@ -143,8 +143,14 @@ fn is_inside_declared_namespace<'a>(statement: Stmt<'a>, state: &mut State<'a>) 
         _ => None,
     });
     namespace.is_some_and(|namespace| {
-        let first_end = state.first_ends.entry(namespace.stmt());
-        let first_end = *first_end.or_insert_with(|| end_of_first_declared_namespace_in(namespace));
+        let first_end = match state.first_ends.get(namespace.stmt()) {
+            Some(first_end) => *first_end,
+            None => {
+                let first_end = end_of_first_declared_namespace_in(namespace);
+                state.first_ends.insert(namespace.stmt(), first_end);
+                first_end
+            }
+        };
         first_end.is_none_or(|end| end > statement.span().start)
     })
 }

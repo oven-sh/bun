@@ -3,7 +3,7 @@ use bun_lint::types::tsutils::{
     is_intersection_type, is_literal_type, is_object_flag_set, is_object_type, is_type_flag_set,
 };
 use bun_lint::types::utils::type_is_or_has_base_type;
-use bun_lint::types::{ObjectFlags, Type, TypeFlags};
+use bun_lint::types::{IdSet, ObjectFlags, Type, TypeFlags};
 use bun_lint::utils::eslint_utils::find_variable;
 use bun_lint::utils::ts_scope::is_type_definition;
 use bun_lint::utils::ts_utils::{
@@ -92,13 +92,12 @@ fn tsgolint_type_is_or_has_base_type<'a>(ty: Type<'a>, base_type: Type<'a>) -> b
         return false;
     };
     let mut queue: SmallVec<[Type<'a>; 4]> = SmallVec::new();
-    let mut seen: SmallVec<[Type<'a>; 4]> = SmallVec::new();
+    let mut seen: IdSet<Type<'a>> = IdSet::new();
     queue.push(ty);
     while let Some(current) = queue.pop() {
-        if seen.contains(&current) {
+        if !seen.insert(current) {
             continue;
         }
-        seen.push(current);
         if current.get_symbol() == Some(base_symbol) {
             return true;
         }

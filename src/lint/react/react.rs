@@ -11,13 +11,14 @@
 use crate::jsx::Child;
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::types::IdSet;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::{
     as_call_expression, as_function, as_function_expression, as_member_expression,
     as_method_definition, as_object_property, as_property_definition, callee_name,
     get_inner_expression, static_name, static_property_name,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 use std::hash::Hash;
 use std::ops::ControlFlow;
@@ -521,12 +522,12 @@ pub(crate) fn find_innermost_function_with_jsx<'a>(
 /// The functions that have JSX or a call of `createElement` in their body, not in a function in it: for which oxlint's
 /// `function_contains_jsx` and `arrow_function_body_contains_jsx` hold.
 pub(crate) struct FunctionsWithJsx<'a> {
-    functions: FxHashSet<Func<'a>>,
+    functions: IdSet<Func<'a>>,
 }
 
 impl<'a> FunctionsWithJsx<'a> {
     pub(crate) fn new(file: &'a File<'a>) -> Self {
-        let mut functions = FxHashSet::default();
+        let mut functions = IdSet::new();
         // The function around something. `None` in a parameter, which is in the body of no function.
         let mut around: AncestorMemo<'a, Option<Func<'a>>> = AncestorMemo::default();
         let mut add = |e: Expr<'a>| {
@@ -534,7 +535,9 @@ impl<'a> FunctionsWithJsx<'a> {
             let function = around.find(Node::Expr(e), |child, parent| {
                 as_function(parent).map(|it| is_in_body(child).then_some(it))
             });
-            functions.extend(function.flatten());
+            if let Some(function) = function.flatten() {
+                functions.insert(function);
+            }
         };
         // What is in an element is where the element is.
         let is_child =
@@ -552,7 +555,7 @@ impl<'a> FunctionsWithJsx<'a> {
 
     /// `function_contains_jsx`, `arrow_function_body_contains_jsx`
     pub(crate) fn function_contains_jsx(&self, function: Func<'a>) -> bool {
-        self.functions.contains(&function)
+        self.functions.contains(function)
     }
 }
 

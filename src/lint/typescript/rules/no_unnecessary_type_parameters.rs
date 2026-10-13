@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_type_reference;
-use bun_lint::types::{Signature, SyntaxKind, TsNode, Type, TypeFlags, TypeStructure};
+use bun_lint::types::{IdMap, IdSet, Signature, SyntaxKind, TsNode, Type, TypeFlags, TypeStructure};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
 
@@ -111,13 +111,13 @@ type Counts<'a> = FxHashMap<TsNode<'a>, u32>;
 #[derive(Default)]
 pub struct State<'a> {
     /// What has been counted in the type of a function.
-    counts_by_type: FxHashMap<Type<'a>, Rc<Counts<'a>>>,
+    counts_by_type: IdMap<Type<'a>, Rc<Counts<'a>>>,
     without_type_parameters: TypesWithoutTypeParameters<'a>,
 }
 
 /// The types that have been gone through to the end, and no type parameter was found. To go through one again counts
 /// nothing, whatever has been visited before, and many functions mention the same large types.
-type TypesWithoutTypeParameters<'a> = FxHashSet<Type<'a>>;
+type TypesWithoutTypeParameters<'a> = IdSet<Type<'a>>;
 
 /// Upstream's `collectTypeParameterUsageCounts`: how often each type parameter appears in a type.
 struct UsageCounter<'a, 'c> {
@@ -125,8 +125,8 @@ struct UsageCounter<'a, 'c> {
     /// The type parameters are those of a class, or of one of its methods.
     from_class: bool,
     /// Upstream has the lists of properties, of which each type has its own.
-    visited_symbol_lists: FxHashSet<Type<'a>>,
-    type_usages: FxHashMap<Type<'a>, u32>,
+    visited_symbol_lists: IdSet<Type<'a>>,
+    type_usages: IdMap<Type<'a>, u32>,
     visited_constraints: FxHashSet<TsNode<'a>>,
     visited_default: bool,
     without_type_parameters: &'c mut TypesWithoutTypeParameters<'a>,
@@ -158,12 +158,20 @@ impl<'a> UsageCounter<'a, '_> {
     fn visit_type(&mut self, ty: Type<'a>, uses: Uses, place: Place) {
         // The same type more than 3 ** 2 times is likely a recursive type, like
         // `type T = { [P in keyof T]: T }`. If not, what it refers to has been counted often enough.
-        if self.without_type_parameters.contains(&ty) {
+        if self.without_type_parameters.contains(ty) {
             return;
         }
-        let usages = self.type_usages.entry(ty).or_insert(0);
-        *usages += 1;
-        if *usages > 9 || !bun_core::StackCheck::init().is_safe_to_recurse() {
+        let usages = match self.type_usages.get_mut(ty) {
+            Some(usages) => {
+                *usages += 1;
+                *usages
+            }
+            None => {
+                self.type_usages.insert(ty, 1);
+                1
+            }
+        };
+        if usages > 9 || !bun_core::StackCheck::init().is_safe_to_recurse() {
             self.found_or_left_out += 1;
             return;
         }
@@ -338,8 +346,8 @@ fn collect_type_parameter_usage_counts<'a>(
     let mut counter = UsageCounter {
         found_identifier_usages,
         from_class,
-        visited_symbol_lists: FxHashSet::default(),
-        type_usages: FxHashMap::default(),
+        visited_symbol_lists: IdSet::new(),
+        type_usages: IdMap::new(),
         visited_constraints: FxHashSet::default(),
         visited_default: false,
         without_type_parameters,
@@ -514,7 +522,17 @@ impl Rule for NoUnnecessaryTypeParameters {
             match ts_node.kind() {
                 SyntaxKind::CallSignature | SyntaxKind::Constructor => count(),
                 // Each overload of a function has the type of the function, with the signatures of all of them.
-                _ => Rc::clone(counts_by_type.entry(ts_node.get_type_at_location()).or_insert_with(count)),
+                _ => {
+                    let ty = ts_node.get_type_at_location();
+                    match counts_by_type.get(ty) {
+                        Some(counts) => Rc::clone(counts),
+                        None => {
+                            let counts = count();
+                            counts_by_type.insert(ty, Rc::clone(&counts));
+                            counts
+                        }
+                    }
+                }
             }
         });
     }

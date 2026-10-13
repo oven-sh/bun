@@ -4,8 +4,7 @@ use bun_lint::types::utils::{
     get_constrained_type_at_location, get_type_name, is_builtin_symbol_like, is_symbol_from_default_library,
     matches_type_or_base_type,
 };
-use bun_lint::types::{SyntaxKind, TsNode, Type, TypeFlags, tsutils};
-use rustc_hash::{FxHashMap, FxHashSet};
+use bun_lint::types::{IdMap, IdSet, SyntaxKind, TsNode, Type, TypeFlags, tsutils};
 use smallvec::SmallVec;
 
 /// Require `.toString()` and `.toLocaleString()` to only be called on objects which provide useful information when stringified.
@@ -40,9 +39,9 @@ struct Walk<'a> {
     /// The array and tuple types that are being looked into.
     visited: SmallVec<[Type<'a>; 4]>,
     /// The array and tuple types that [`NoBaseToString::is_always_on_every_path`] was asked about.
-    is_always: FxHashMap<Type<'a>, bool>,
+    is_always: IdMap<Type<'a>, bool>,
     /// While it is asked: the array and tuple types that it has come across.
-    assumed: Option<FxHashSet<Type<'a>>>,
+    assumed: Option<IdSet<Type<'a>>>,
     /// Those of them that are still to be looked into.
     pending: Vec<Type<'a>>,
     /// The one that is looked into.
@@ -53,7 +52,7 @@ struct Walk<'a> {
     found_other: bool,
     /// What has been found for an array or tuple type, if it does not depend on what was in `visited`. Otherwise a `[T, T]` of a
     /// `[U, U]` of .. is looked into two to the power of the depth times.
-    known: FxHashMap<Type<'a>, Usefulness>,
+    known: IdMap<Type<'a>, Usefulness>,
     /// The first of `visited` that has been come across again, since the type that is looked into was begun with.
     first_revisited: Option<usize>,
     /// Since then, the stack had no room for something. Upstream overflows its stack.
@@ -64,9 +63,10 @@ struct Walk<'a> {
 /// the whole file, for every type: its `toStringMemo` and `joinMemo`.
 #[derive(Default)]
 pub struct Certainties<'a> {
-    known: FxHashMap<(Type<'a>, bool), Usefulness>,
+    /// The second is for `join()`.
+    known: [IdMap<Type<'a>, Usefulness>; 2],
     /// tsgolint's `resolving`: the types whose entry of `toStringMemo` is being found.
-    resolving: FxHashSet<Type<'a>>,
+    resolving: IdSet<Type<'a>>,
 }
 
 /// tsgolint's `isBuiltInStringCall` asks for the type of the callee, not for what its scope declares.
@@ -257,12 +257,12 @@ impl NoBaseToString {
     /// The answer is kept for all the types that it has come across, not to look into what is left of a chain of them
     /// from each of its links.
     fn is_always_on_every_path<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>) -> bool {
-        let mut assumed = FxHashSet::default();
-        assumed.insert(ty);
-        walk.assumed = Some(assumed);
+        walk.assumed.insert(IdSet::new()).insert(ty);
         walk.pending.push(ty);
+        let mut assumed = Vec::new();
         let mut others = Vec::new();
         while let Some(t) = walk.pending.pop() {
+            assumed.push(t);
             walk.looked_into = Some(t);
             walk.found_other = false;
             self.collect_elements_certainty(t, walk);
@@ -270,26 +270,38 @@ impl NoBaseToString {
                 others.push(t);
             }
         }
-        let assumed = walk.assumed.take().unwrap_or_default();
+        walk.assumed = None;
         let come_across = std::mem::take(&mut walk.come_across);
         if others.is_empty() {
-            walk.is_always.extend(assumed.into_iter().map(|t| (t, true)));
+            for t in assumed {
+                walk.is_always.insert(t, true);
+            }
             return true;
         }
         // All that one of `others` is in, however deep.
-        let mut around: FxHashMap<Type<'a>, SmallVec<[Type<'a>; 1]>> = FxHashMap::default();
+        let mut around: IdMap<Type<'a>, SmallVec<[Type<'a>; 1]>> = IdMap::new();
         for (inner, outer) in come_across {
-            around.entry(inner).or_default().extend(outer);
+            match around.get_mut(inner) {
+                Some(it) => it.extend(outer),
+                None => {
+                    around.insert(inner, outer.into_iter().collect());
+                }
+            }
         }
-        let mut has_other: FxHashSet<Type<'a>> = others.iter().copied().collect();
+        let mut has_other = IdSet::new();
+        for &t in &others {
+            has_other.insert(t);
+        }
         while let Some(t) = others.pop() {
-            for &outer in around.get(&t).map(|it| it.as_slice()).unwrap_or_default() {
+            for &outer in around.get(t).map(|it| it.as_slice()).unwrap_or_default() {
                 if has_other.insert(outer) {
                     others.push(outer);
                 }
             }
         }
-        walk.is_always.extend(assumed.into_iter().map(|t| (t, !has_other.contains(&t))));
+        for t in assumed {
+            walk.is_always.insert(t, !has_other.contains(t));
+        }
         false
     }
 
@@ -353,7 +365,7 @@ impl NoBaseToString {
         }
 
         if ty.is_tuple_type() || ty.is_array_type() {
-            let is_always = walk.is_always.get(&ty).copied();
+            let is_always = walk.is_always.get(ty).copied();
             if is_always == Some(true) {
                 return Usefulness::Always;
             }
@@ -371,7 +383,7 @@ impl NoBaseToString {
             if is_always.is_none() && self.is_always_on_every_path(ty, walk) {
                 return Usefulness::Always;
             }
-            if let Some(&known) = walk.known.get(&ty) {
+            if let Some(&known) = walk.known.get(ty) {
                 return known;
             }
             let revisited_before = walk.first_revisited.take();
@@ -403,29 +415,29 @@ impl NoBaseToString {
     fn tsgolint_collect_to_string_certainty<'a>(
         &self,
         ty: Type<'a>,
-        visited: &mut SmallVec<[Type<'a>; 4]>,
+        visited: &mut IdSet<Type<'a>>,
         memo: &mut Certainties<'a>,
     ) -> Usefulness {
         // A self referencing array or tuple type is not reported.
-        if visited.contains(&ty) {
+        if visited.contains(ty) {
             return Usefulness::Always;
         }
-        if let Some(&certainty) = memo.known.get(&(ty, false)) {
+        if let Some(&certainty) = memo.known[0].get(ty) {
             return certainty;
         }
         if !bun_core::StackCheck::init().is_safe_to_recurse() || !memo.resolving.insert(ty) {
             return Usefulness::Always;
         }
         let certainty = self.tsgolint_to_string_certainty(ty, visited, memo);
-        memo.resolving.remove(&ty);
-        memo.known.insert((ty, false), certainty);
+        memo.resolving.remove(ty);
+        memo.known[0].insert(ty, certainty);
         certainty
     }
 
     fn tsgolint_to_string_certainty<'a>(
         &self,
         ty: Type<'a>,
-        visited: &mut SmallVec<[Type<'a>; 4]>,
+        visited: &mut IdSet<Type<'a>>,
         memo: &mut Certainties<'a>,
     ) -> Usefulness {
         let flags = ty.flags();
@@ -458,9 +470,9 @@ impl NoBaseToString {
             });
         }
         if ty.is_tuple_type() || ty.is_array_type() {
-            visited.push(ty);
+            visited.insert(ty);
             let certainty = self.tsgolint_collect_elements_certainty(ty, visited, memo);
-            visited.pop();
+            visited.remove(ty);
             return certainty;
         }
         match is_fallback_on_object(ty) {
@@ -475,7 +487,7 @@ impl NoBaseToString {
     fn tsgolint_collect_elements_certainty<'a>(
         &self,
         ty: Type<'a>,
-        visited: &mut SmallVec<[Type<'a>; 4]>,
+        visited: &mut IdSet<Type<'a>>,
         memo: &mut Certainties<'a>,
     ) -> Usefulness {
         if !ty.is_tuple_type() {
@@ -499,7 +511,7 @@ impl NoBaseToString {
 
     /// tsgolint's `collectJoinCertainty`.
     fn tsgolint_collect_join_certainty<'a>(&self, ty: Type<'a>, memo: &mut Certainties<'a>) -> Usefulness {
-        if let Some(&certainty) = memo.known.get(&(ty, true)) {
+        if let Some(&certainty) = memo.known[1].get(ty) {
             return certainty;
         }
         if !bun_core::StackCheck::init().is_safe_to_recurse() {
@@ -510,11 +522,11 @@ impl NoBaseToString {
         } else if ty.is_intersection() {
             collect_intersection_type_certainty(ty, |t| self.tsgolint_collect_join_certainty(t, memo))
         } else if ty.is_tuple_type() || ty.is_array_type() {
-            self.tsgolint_collect_elements_certainty(ty, &mut SmallVec::new(), memo)
+            self.tsgolint_collect_elements_certainty(ty, &mut IdSet::new(), memo)
         } else {
             Usefulness::Always
         };
-        memo.known.insert((ty, true), certainty);
+        memo.known[1].insert(ty, certainty);
         certainty
     }
 
@@ -540,15 +552,21 @@ impl NoBaseToString {
         }
         let ty = ty.unwrap_or_else(|| node.ty());
         if is_oxlint {
-            let certainty = self.tsgolint_collect_to_string_certainty(ty, &mut SmallVec::new(), &mut cx.state);
+            let certainty = self.tsgolint_collect_to_string_certainty(ty, &mut IdSet::new(), &mut cx.state);
             Self::report(node, BASE_TO_STRING, certainty, cx);
             return;
         }
         if ty.has_flags(TypeFlags::PRIMITIVE | TypeFlags::ANY | TypeFlags::NEVER) {
             return;
         }
-        let collect = || self.collect_to_string_certainty(ty, &mut Walk::default());
-        let certainty = *cx.state.known.entry((ty, false)).or_insert_with(collect);
+        let certainty = match cx.state.known[0].get(ty).copied() {
+            Some(certainty) => certainty,
+            None => {
+                let certainty = self.collect_to_string_certainty(ty, &mut Walk::default());
+                cx.state.known[0].insert(ty, certainty);
+                certainty
+            }
+        };
         Self::report(node, BASE_TO_STRING, certainty, cx);
     }
 
@@ -618,10 +636,14 @@ impl NoBaseToString {
             let ty = get_constrained_type_at_location(object);
             let certainty = match is_oxlint {
                 true => self.tsgolint_collect_join_certainty(ty, &mut cx.state),
-                false => {
-                    let collect = || self.collect_join_certainty(ty, &mut Walk::default());
-                    *cx.state.known.entry((ty, true)).or_insert_with(collect)
-                }
+                false => match cx.state.known[1].get(ty).copied() {
+                    Some(certainty) => certainty,
+                    None => {
+                        let certainty = self.collect_join_certainty(ty, &mut Walk::default());
+                        cx.state.known[1].insert(ty, certainty);
+                        certainty
+                    }
+                },
             };
             Self::report(object, BASE_ARRAY_JOIN, certainty, cx);
         } else {

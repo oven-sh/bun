@@ -8,9 +8,8 @@ use bun_lint::types::utils::{
     is_higher_precedence_than_await, is_promise_like, is_type_flag_set,
     parse_type_or_value_specifiers, type_matches_some_specifier,
 };
-use bun_lint::types::{ObjectFlags, SyntaxKind, Type, TypeFlags};
+use bun_lint::types::{IdMap, ObjectFlags, SyntaxKind, Type, TypeFlags};
 use bun_lint::utils::ts_utils::{WrappingFixerParams, get_wrapping_fixer};
-use rustc_hash::FxHashMap;
 
 /// Disallow using the spread operator when it might cause unexpected behavior.
 pub struct NoMisusedSpread {
@@ -76,9 +75,9 @@ enum Misuse {
 /// the same type.
 #[derive(Default)]
 pub struct State<'a> {
-    in_objects: FxHashMap<Type<'a>, Option<Misuse>>,
+    in_objects: IdMap<Type<'a>, Option<Misuse>>,
     /// Whether a spread in an array or a call is to be reported.
-    in_lists: FxHashMap<Type<'a>, bool>,
+    in_lists: IdMap<Type<'a>, bool>,
 }
 
 fn is_type_recurser<'a>(ty: Type<'a>, predicate: &impl Fn(Type<'a>) -> bool) -> bool {
@@ -210,8 +209,15 @@ impl NoMisusedSpread {
             _ => return,
         }
         let ty = get_constrained_type_at_location(argument);
-        let is_misused = || is_string(ty) && !type_matches_some_specifier(ty, &self.allow);
-        if *cx.state.in_lists.entry(ty).or_insert_with(is_misused)
+        let is_misused = match cx.state.in_lists.get(ty) {
+            Some(&it) => it,
+            None => {
+                let it = is_string(ty) && !type_matches_some_specifier(ty, &self.allow);
+                cx.state.in_lists.insert(ty, it);
+                it
+            }
+        };
+        if is_misused
             && !(node.file().language().is_oxlint && is_in_unvisited_computed_name(Node::Expr(node)))
         {
             cx.report(node, NO_STRING_SPREAD);
@@ -253,7 +259,15 @@ impl NoMisusedSpread {
             return;
         }
         let ty = get_constrained_type_at_location(argument);
-        let Some(misuse) = *cx.state.in_objects.entry(ty).or_insert_with(|| self.misuse_in_object(ty)) else {
+        let misuse = match cx.state.in_objects.get(ty) {
+            Some(&it) => it,
+            None => {
+                let it = self.misuse_in_object(ty);
+                cx.state.in_objects.insert(ty, it);
+                it
+            }
+        };
+        let Some(misuse) = misuse else {
             return;
         };
         if node.file().language().is_oxlint && is_in_unvisited_computed_name(Node::Prop(node)) {

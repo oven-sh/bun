@@ -7,12 +7,11 @@ use bun_lint::types::utils::{
     find_truthiness_asserted_argument, get_constrained_type_at_location,
     is_array_method_call_with_predicate, is_type_array_type_or_union_of_array_types,
 };
-use bun_lint::types::{SyntaxKind, Type, TypeFlags, TypePredicate, TypePredicateKind};
+use bun_lint::types::{IdSet, SyntaxKind, Type, TypeFlags, TypePredicate, TypePredicateKind};
 use bun_lint::utils::estree_span;
 use bun_lint::utils::ts_utils::{
     WrappingFixerParams, get_wrapping_fixer, is_parenless_arrow_function,
 };
-use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 /// Disallow certain types in boolean expressions.
@@ -850,7 +849,7 @@ impl StrictBooleanExpressions {
             return;
         }
         let mut flatten_types: SmallVec<[Type<'a>; 8]> = SmallVec::new();
-        let mut seen: FxHashSet<Type<'a>> = FxHashSet::default();
+        let mut seen: IdSet<Type<'a>> = IdSet::new();
         for signature in predicate_type.get_call_signatures() {
             let ty = signature.get_return_type();
             let ty = match is_type_parameter(ty) {

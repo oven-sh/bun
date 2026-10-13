@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::utils::is_type_reference_type;
-use bun_lint::types::{SyntaxKind, TsNode, TsSymbol, Type};
+use bun_lint::types::{IdSet, SyntaxKind, TsNode, TsSymbol, Type};
 use smallvec::SmallVec;
 
 /// Disallow type arguments that are equal to the default.
@@ -86,12 +86,15 @@ fn get_type_parameters_from_type(
 /// `type_parameters`, so without type arguments they would be inferred from the arguments of `new`.
 fn tsgolint_arguments_can_infer<'a>(constructor: TsNode<'a>, type_parameters: &[TsNode<'a>]) -> bool {
     let names = type_parameters.iter().filter_map(|it| it.name());
-    let symbols: SmallVec<[TsSymbol; 4]> = names.filter_map(|it| it.get_symbol_at_location()).collect();
+    let mut symbols: IdSet<TsSymbol> = IdSet::new();
+    for symbol in names.filter_map(|it| it.get_symbol_at_location()) {
+        symbols.insert(symbol);
+    }
     let parameters = constructor.children().filter(|it| it.kind() == SyntaxKind::Parameter);
     let mut pending: Vec<TsNode> = parameters.filter_map(TsNode::type_node).collect();
     while let Some(node) = pending.pop() {
         if node.kind() == SyntaxKind::Identifier
-            && node.get_symbol_at_location().is_some_and(|it| symbols.contains(&it))
+            && node.get_symbol_at_location().is_some_and(|it| symbols.contains(it))
         {
             return true;
         }

@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::types::{IdMap, IdSet};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -160,7 +161,7 @@ pub struct State<'a> {
     /// The tests of the loops.
     tests: Vec<Span>,
     /// `has_dynamic_expressions`
-    is_dynamic: FxHashMap<Expr<'a>, bool>,
+    is_dynamic: IdMap<Expr<'a>, bool>,
     is_oxlint: bool,
 }
 
@@ -270,7 +271,15 @@ impl NoUnmodifiedLoopCondition {
         let statement = statement?;
         // What is dynamic in a group is so in those around it.
         let is_oxlint = state.is_oxlint;
-        if group.is_some_and(|it| *state.is_dynamic.entry(it).or_insert_with(|| has_dynamic_expressions(it, is_oxlint)))
+        let is_dynamic = group.is_some_and(|it| {
+            if let Some(&known) = state.is_dynamic.get(it) {
+                return known;
+            }
+            let computed = has_dynamic_expressions(it, is_oxlint);
+            state.is_dynamic.insert(it, computed);
+            computed
+        });
+        if is_dynamic
             // What nothing defines is not a variable. For oxlint the file has to declare it.
             || reference.symbol().is_none() && (is_oxlint || reference.global().is_none())
         {
@@ -335,7 +344,7 @@ impl Rule for NoUnmodifiedLoopCondition {
             }
             end = end.max(test.end);
         }
-        let mut modified_groups: FxHashSet<Expr<'a>> = FxHashSet::default();
+        let mut modified_groups: IdSet<Expr<'a>> = IdSet::new();
         let mut of_symbols: FxHashMap<Symbol<'a>, Modifiers<'a>> = FxHashMap::default();
         let mut of_globals: FxHashMap<Name<'a>, Modifiers<'a>> = FxHashMap::default();
         for condition in &mut conditions {
@@ -350,12 +359,14 @@ impl Rule for NoUnmodifiedLoopCondition {
                 }
             };
             condition.is_modified = condition.has_modifier_in_loop(modifiers, &mut functions);
-            if condition.is_modified {
-                modified_groups.extend(condition.group);
+            if condition.is_modified
+                && let Some(group) = condition.group
+            {
+                modified_groups.insert(group);
             }
         }
         // It is fine if anything in a group is modified.
-        conditions.retain(|it| !it.is_modified && !it.group.is_some_and(|it| modified_groups.contains(&it)));
+        conditions.retain(|it| !it.is_modified && !it.group.is_some_and(|it| modified_groups.contains(it)));
         if is_oxlint {
             // oxlint reports a variable once in a loop: where it is in no group, or else where it is first.
             let variable_in_loop = |it: &Condition<'a>| (it.inside.start, it.reference.symbol().map(Symbol::key));

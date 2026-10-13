@@ -32,6 +32,7 @@ use crate::util_pragma::{get_create_class_from_context, mentions_create_class};
 use crate::util_props::{is_default_props_declaration, is_prop_types_declaration};
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::{estree_parent, last_sequence_expression, normalize};
 use rustc_hash::FxHashMap;
@@ -245,19 +246,19 @@ pub(crate) struct Components<'a> {
     /// What `getDetectedComponents` returns, by the name. Who is in it can have been banned since.
     detected: FxHashMap<Name<'a>, SmallVec<[ComponentId; 1]>>,
     related: Related<'a>,
-    returning: RefCell<FxHashMap<Func<'a>, Returning>>,
+    returning: RefCell<IdMap<Func<'a>, Returning>>,
     queue: Queue<'a>,
     /// `None` while it is called.
     stages: Vec<Option<Box<dyn Instructions<'a> + 'a>>>,
     is_started: bool,
     is_finished: bool,
     /// See [`Components::closest_candidate`].
-    candidates: FxHashMap<Scope<'a>, Option<Scope<'a>>>,
+    candidates: IdMap<Scope<'a>, Option<Scope<'a>>>,
     /// [`Components::get_pragma_component_wrapper`] of a function, where the time does not matter:
     /// many nodes in a function that many calls are around ask for it.
-    wrappers: FxHashMap<Func<'a>, Option<Expr<'a>>>,
+    wrappers: IdMap<Func<'a>, Option<Expr<'a>>>,
     /// [`get_name_of_wrapped_component`], by the first argument: it looks through a whole body.
-    wrapped: FxHashMap<Expr<'a>, Option<Name<'a>>>,
+    wrapped: IdMap<Expr<'a>, Option<Name<'a>>>,
     /// [`may_have_explicit_components`]
     may_have_explicit: OnceCell<bool>,
     /// For [`is_explicit_component_function`].
@@ -298,14 +299,14 @@ impl<'a> Components<'a> {
             list: ComponentList::default(),
             detected: FxHashMap::default(),
             related: Related::default(),
-            returning: RefCell::default(),
+            returning: RefCell::new(IdMap::new()),
             queue: Queue::default(),
             stages: Vec::new(),
             is_started: false,
             is_finished: false,
-            candidates: FxHashMap::default(),
-            wrappers: FxHashMap::default(),
-            wrapped: FxHashMap::default(),
+            candidates: IdMap::new(),
+            wrappers: IdMap::new(),
+            wrapped: IdMap::new(),
             may_have_explicit: OnceCell::new(),
             documented_at: AncestorMemo::default(),
         }
@@ -572,15 +573,16 @@ impl<'a> Components<'a> {
             return ask(node);
         };
         let bit = 1 << question;
-        let known = self.returning.borrow().get(&func).copied();
+        let known = self.returning.borrow().get(func).copied();
         if let Some(known) = known.filter(|it| it.asked & bit != 0) {
             return known.answers & bit != 0;
         }
         let answer = ask(node);
         let mut returning = self.returning.borrow_mut();
-        let known = returning.entry(func).or_default();
+        let mut known = returning.get(func).copied().unwrap_or_default();
         known.asked |= bit;
         known.answers |= u8::from(answer) << question;
+        returning.insert(func, known);
         answer
     }
 
@@ -607,7 +609,7 @@ impl<'a> Components<'a> {
     /// `getPragmaComponentWrapper`: the outermost of the calls of wrapper functions around `node`.
     pub(crate) fn get_pragma_component_wrapper(&mut self, node: Node<'a>) -> Option<Expr<'a>> {
         let func = node.as_func();
-        if let Some(&known) = func.and_then(|it| self.wrappers.get(&it)) {
+        if let Some(&known) = func.and_then(|it| self.wrappers.get(it)) {
             return known;
         }
         let mut current_node = node;
@@ -633,8 +635,12 @@ impl<'a> Components<'a> {
     /// now, or makes a new one.
     fn node_wraps_component(&mut self, node: Call<'a>) -> bool {
         let child_component = node.args().first().and_then(|first| {
-            let wrapped = self.wrapped.entry(first);
-            *wrapped.or_insert_with(|| get_name_of_wrapped_component(node.args()))
+            if let Some(&known) = self.wrapped.get(first) {
+                return known;
+            }
+            let name = get_name_of_wrapped_component(node.args());
+            self.wrapped.insert(first, name);
+            name
         });
         // `getDetectedComponents` asks for the list, which moves the props that are used.
         if !self.stages.is_empty() {
@@ -853,7 +859,7 @@ impl<'a> Components<'a> {
             let Some(it) = current else {
                 break None;
             };
-            if let Some(&known) = self.candidates.get(&it) {
+            if let Some(&known) = self.candidates.get(it) {
                 break known;
             }
             passed.push(it);
@@ -863,8 +869,9 @@ impl<'a> Components<'a> {
             }
             current = it.parent();
         };
-        let passed = passed.into_iter().map(|it| (it, found));
-        self.candidates.extend(passed);
+        for it in passed {
+            self.candidates.insert(it, found);
+        }
         found
     }
 

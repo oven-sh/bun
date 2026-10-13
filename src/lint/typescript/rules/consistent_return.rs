@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::utils::is_type_flag_set;
-use bun_lint::types::{TsNode, Type, TypeFlags, tsutils};
+use bun_lint::types::{IdSet, TsNode, Type, TypeFlags, tsutils};
 use bun_lint_eslint::rules::consistent_return::{
     MISSING_RETURN_VALUE, UNEXPECTED_RETURN_VALUE, check, has_return_value, is_relevant,
 };
@@ -12,7 +12,7 @@ pub struct ConsistentReturn {
 }
 
 fn is_promise_void<'a>(node: TsNode<'a>, mut ty: Type<'a>) -> bool {
-    let mut seen = rustc_hash::FxHashSet::default();
+    let mut seen = IdSet::new();
     while seen.insert(ty) {
         if !tsutils::is_thenable_type(node, ty) || !tsutils::is_type_reference(ty) {
             return false;
@@ -32,7 +32,7 @@ fn is_promise_void<'a>(node: TsNode<'a>, mut ty: Type<'a>) -> bool {
 fn is_thenable_type_with_void_value<'a>(
     node: TsNode<'a>,
     ty: Type<'a>,
-    visited: &mut rustc_hash::FxHashSet<Type<'a>>,
+    visited: &mut IdSet<Type<'a>>,
 ) -> bool {
     if !visited.insert(ty) {
         return false;
@@ -59,9 +59,7 @@ fn is_return_void_or_thenable_void(func: Func<'_>) -> bool {
     func.type_at_location().get_call_signatures().iter().any(|signature| {
         let return_type = signature.get_return_type();
         match is_async {
-            true if is_oxlint => {
-                is_thenable_type_with_void_value(ts_node, return_type, &mut rustc_hash::FxHashSet::default())
-            }
+            true if is_oxlint => is_thenable_type_with_void_value(ts_node, return_type, &mut IdSet::new()),
             true => is_promise_void(ts_node, return_type),
             false => is_type_flag_set(return_type, TypeFlags::VOID),
         }

@@ -107,6 +107,7 @@
 //!   from the last candidate. `const c = new C(() => c.x)` is no circularity.
 
 mod flags;
+mod id_set;
 mod locate;
 mod node;
 mod signature;
@@ -118,6 +119,7 @@ pub mod utils;
 
 pub use bun_sema::check::services::ReadLibrary;
 pub use flags::*;
+pub use id_set::{IdMap, IdSet, Indexed};
 pub use locate::{Locate, NameOf};
 pub use node::{SourceFile, SyntaxKind, TsNode};
 pub use signature::{IndexInfo, Signature, SignatureIter, SignatureList, TypePredicate};

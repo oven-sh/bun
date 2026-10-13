@@ -8,6 +8,7 @@ use crate::jest::{
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint_oxlint::ast_util::{as_member_expression, static_property_info};
 use bun_lint_oxlint::import::{ImportImportName, import_entries, import_entries_of};
 use rustc_hash::FxHashMap;
@@ -403,7 +404,7 @@ pub(crate) mod prefer_mock_return_shorthand {
     #[derive(Default)]
     struct ReturnedExpressionVisitor<'a> {
         /// Of the expressions that have been visited.
-        known: FxHashMap<Expr<'a>, Returned>,
+        known: IdMap<Expr<'a>, Returned>,
         /// [`is_mutable`]
         mutable: FxHashMap<Symbol<'a>, bool>,
         /// Each with its `this_binding_depth`: in how many functions, values of properties of classes and static blocks it is.
@@ -435,7 +436,7 @@ pub(crate) mod prefer_mock_return_shorthand {
             ));
             while let Some((node, this_binding_depth)) = self.pending.pop() {
                 if let Node::Expr(e) = node {
-                    if let Some(known) = self.known.get(&e) {
+                    if let Some(known) = self.known.get(e) {
                         found.contains_call_like_expression |= known.contains_call_like_expression;
                         found.has_mutable_reference |= known.has_mutable_reference;
                         found.has_this_expression |=

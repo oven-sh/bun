@@ -5,9 +5,9 @@ use bun_lint::types::utils::{
     value_matches_some_specifier,
 };
 use bun_lint::types::{
-    CheckFlags, Literal as LiteralValue, NameOf, Signature, SymbolFlags, SyntaxKind, TsNode, TsSymbol, Type,
+    CheckFlags, IdMap, IdSet, Literal as LiteralValue, NameOf, Signature, SymbolFlags, SyntaxKind, TsNode, TsSymbol,
+    Type,
 };
-use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 
 /// Disallow using code marked as `@deprecated`.
@@ -51,29 +51,37 @@ impl<'a> StaticallyNamed<'a> for IdentifierLike<'a> {
 pub struct Deprecations<'a> {
     /// For tsgolint, which asks each declaration itself: a member does not inherit the tag of what it implements or overrides.
     is_nothing_inherited: bool,
-    of_symbols: FxHashMap<TsSymbol<'a>, Option<&'a [u8]>>,
-    of_signatures: FxHashMap<Signature<'a>, Option<&'a [u8]>>,
+    of_symbols: IdMap<TsSymbol<'a>, Option<&'a [u8]>>,
+    of_signatures: IdMap<Signature<'a>, Option<&'a [u8]>>,
 }
 
 impl<'a> Deprecations<'a> {
     /// `getJsDocDeprecation(symbol)`
     fn of_symbol(&mut self, symbol: Option<TsSymbol<'a>>) -> Option<&'a [u8]> {
         let symbol = symbol?;
-        let is_nothing_inherited = self.is_nothing_inherited;
-        *self.of_symbols.entry(symbol).or_insert_with(|| match is_nothing_inherited {
+        if let Some(&reason) = self.of_symbols.get(symbol) {
+            return reason;
+        }
+        let reason = match self.is_nothing_inherited {
             true => symbol.declarations().find_map(deprecation_of_declaration),
             false => symbol.deprecation(),
-        })
+        };
+        self.of_symbols.insert(symbol, reason);
+        reason
     }
 
     /// `getJsDocDeprecation(signature)`
     fn of_signature(&mut self, signature: Option<Signature<'a>>) -> Option<&'a [u8]> {
         let signature = signature?;
-        let is_nothing_inherited = self.is_nothing_inherited;
-        *self.of_signatures.entry(signature).or_insert_with(|| match is_nothing_inherited {
-            true => deprecation_of_declaration(signature.declaration()?),
+        if let Some(&reason) = self.of_signatures.get(signature) {
+            return reason;
+        }
+        let reason = match self.is_nothing_inherited {
+            true => signature.declaration().and_then(deprecation_of_declaration),
             false => signature.deprecation(),
-        })
+        };
+        self.of_signatures.insert(signature, reason);
+        reason
     }
 
     /// `searchForDeprecationInAliasesChain`: an alias on the way from an import to what it finally refers to can be deprecated:
@@ -91,7 +99,7 @@ impl<'a> Deprecations<'a> {
             };
         }
         let target_symbol = symbol.get_aliased_symbol();
-        let mut seen = rustc_hash::FxHashSet::default();
+        let mut seen = IdSet::new();
         while symbol.has_flags(SymbolFlags::ALIAS) && seen.insert(symbol) {
             if let Some(reason) = self.of_symbol(Some(symbol)) {
                 return Some(reason);

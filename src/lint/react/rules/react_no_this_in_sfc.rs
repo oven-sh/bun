@@ -5,9 +5,9 @@ use crate::util_components_list::{At, Queue};
 use crate::util_jsx::Branches;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::estree_parent;
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::ops::ControlFlow;
 
@@ -24,7 +24,7 @@ pub struct State<'a> {
     components: Components<'a>,
     enclosing_function: AncestorMemo<'a, Func<'a>>,
     /// Whether a function, or one around it, [`can_be_component`].
-    is_in_candidate: FxHashMap<Func<'a>, bool>,
+    is_in_candidate: IdMap<Func<'a>, bool>,
     /// The `this.a` in a function that upstream can take for a component.
     members: Queue<'a>,
 }
@@ -57,7 +57,7 @@ impl Rule for NoThisInSfc {
             parent_class_component: AncestorMemo::default(),
             components: Components::new(file),
             enclosing_function: AncestorMemo::default(),
-            is_in_candidate: FxHashMap::default(),
+            is_in_candidate: IdMap::new(),
             members: Queue::default(),
         })
     }
@@ -87,7 +87,7 @@ impl Rule for NoThisInSfc {
         let mut passed: SmallVec<[Func<'a>; 8]> = SmallVec::new();
         let is_in_candidate = loop {
             let Some(func) = current else { break false };
-            if let Some(&known) = cx.state.is_in_candidate.get(&func) {
+            if let Some(&known) = cx.state.is_in_candidate.get(func) {
                 break known;
             }
             passed.push(func);
@@ -96,7 +96,9 @@ impl Rule for NoThisInSfc {
             }
             current = func.enclosing();
         };
-        cx.state.is_in_candidate.extend(passed.into_iter().map(|it| (it, is_in_candidate)));
+        for it in passed {
+            cx.state.is_in_candidate.insert(it, is_in_candidate);
+        }
         if is_in_candidate {
             cx.state.members.push(At::enter(node), 0, node);
         }

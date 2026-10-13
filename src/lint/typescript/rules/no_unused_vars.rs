@@ -2,6 +2,7 @@ use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_scope::{
     SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_unused_variables, collect_variables,
@@ -13,7 +14,6 @@ use bun_lint_eslint::rules::no_unused_vars::{
     Args, NoUnusedVars as Base, Pattern, UNUSED_VAR, USED_IGNORED_VAR, VariableType, Vars,
     is_first_parameter_named,
 };
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::cell::RefCell;
 use std::cmp::Reverse;
@@ -1818,7 +1818,7 @@ impl NoUnusedVars {
             &SymbolSet,
             &RefCell<OxlintWalks<'a>>,
         ),
-        (reported, last_used_args): (&mut SymbolSet, &mut FxHashMap<Func<'a>, u32>),
+        (reported, last_used_args): (&mut SymbolSet, &mut IdMap<Func<'a>, u32>),
         (used, variable): (bool, Variable<'a>),
     ) -> bool {
         let Some(def) = variable.defs().next() else {
@@ -1892,9 +1892,9 @@ impl NoUnusedVars {
                     && let Some(function) = function_of_plain_parameter(def, is_oxlint)
                     && let Declaration::Param(pat) = def
                     && pat.span().start
-                        < *(last_used_args.entry(function)).or_insert_with(|| {
+                        < last_used_args.get(function).copied().unwrap_or_else(|| {
                             // Upstream takes every reference for a use, also the default value. oxlint does not.
-                            last_used_arg(function, |it| match (is_oxlint, Variable::new(it)) {
+                            let last = last_used_arg(function, |it| match (is_oxlint, Variable::new(it)) {
                                 (true, it) if unused_for_oxlint.contains(it.symbol()) => false,
                                 (true, it) => {
                                     !analysis.is_unused(it.symbol())
@@ -1907,7 +1907,9 @@ impl NoUnusedVars {
                                 (false, it) => {
                                     it.references().next().is_some() || analysis.is_eslint_used(it)
                                 }
-                            })
+                            });
+                            last_used_args.insert(function, last);
+                            last
                         })
                 {
                     return false;
@@ -2036,7 +2038,7 @@ impl NoUnusedVars {
             .map(|it| (false, *it)))
         .chain(used_variables.map(|it| (true, *it)));
         let mut unused_vars = Vec::new();
-        let mut last_used_args = FxHashMap::default();
+        let mut last_used_args = IdMap::new();
         for variable in variables {
             let seen = (&analysis, &unused_for_oxlint, &walks);
             if self.is_unused_variable(cx, seen, (&mut reported, &mut last_used_args), variable) {

@@ -1,6 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::types::{NodeFlags, SyntaxKind, TsSymbol, Type};
+use bun_lint::types::{IdSet, NodeFlags, SyntaxKind, TsSymbol, Type};
 use bun_lint::types::tsutils::{
     intersection_constituents, is_intrinsic_null_type, is_intrinsic_undefined_type,
     union_constituents,
@@ -197,7 +197,7 @@ fn tsgolint_to_number(value: TsgolintStaticValue) -> Option<f64> {
 /// is a `const` with an initializer, and of the operators only `+`, `-`, `as`, `<T>` and `!` are known.
 fn tsgolint_get_static_value<'a>(
     node: Expr<'a>,
-    visited: &mut SmallVec<[TsSymbol<'a>; 4]>,
+    visited: &mut IdSet<TsSymbol<'a>>,
 ) -> Option<TsgolintStaticValue<'a>> {
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return None;
@@ -225,7 +225,7 @@ fn tsgolint_get_static_value<'a>(
                 _ => {}
             }
             let symbol = node.ts_symbol()?;
-            if visited.contains(&symbol) {
+            if visited.contains(symbol) {
                 return None;
             }
             // tsgolint's `getConstInitializer`
@@ -235,9 +235,9 @@ fn tsgolint_get_static_value<'a>(
                 return None;
             }
             let initializer = declaration.initializer()?.to_ast()?.as_expr()?;
-            visited.push(symbol);
+            visited.insert(symbol);
             let value = tsgolint_get_static_value(initializer, visited);
-            visited.pop();
+            visited.remove(symbol);
             value
         }
         ExprKind::Unary {
@@ -264,7 +264,7 @@ fn tsgolint_is_static_member_access_of_value(node: Expr, value: &[u8]) -> bool {
     match node.kind() {
         ExprKind::Dot { name, .. } => name.bytes() == value,
         ExprKind::Index { index, .. } => matches!(
-            tsgolint_get_static_value(index, &mut SmallVec::new()),
+            tsgolint_get_static_value(index, &mut IdSet::new()),
             Some(TsgolintStaticValue::String(name)) if name == value
         ),
         _ => false,
@@ -342,7 +342,7 @@ impl PreferFind {
             return;
         }
         let is_zero = match is_oxlint {
-            true => tsgolint_get_static_value(argument, &mut SmallVec::new())
+            true => tsgolint_get_static_value(argument, &mut IdSet::new())
                 .is_some_and(tsgolint_is_treated_as_zero_by_array_at),
             false => get_static_value(argument, Some(cx.file().scope()))
                 .as_ref()
@@ -371,7 +371,7 @@ impl PreferFind {
             return;
         }
         let is_zero = match cx.language().is_oxlint {
-            true => tsgolint_get_static_value(index, &mut SmallVec::new())
+            true => tsgolint_get_static_value(index, &mut IdSet::new())
                 .is_some_and(tsgolint_is_treated_as_zero_by_member_access),
             false => get_static_value(index, Some(cx.file().scope()))
                 .as_ref()

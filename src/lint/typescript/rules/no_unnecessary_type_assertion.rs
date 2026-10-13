@@ -9,7 +9,7 @@ use bun_lint::types::utils::{
     get_constrained_type_at_location, get_contextual_type, get_declaration, is_nullable_type,
     is_type_flag_set,
 };
-use bun_lint::types::{Signature, SyntaxKind, TsNode, Type, TypeFlags};
+use bun_lint::types::{IdSet, Signature, SyntaxKind, TsNode, Type, TypeFlags};
 use bun_lint::utils::ast_utils::is_member_expression;
 use bun_lint::utils::ts_utils::{
     is_start_of_arrow_function_body_needing_parentheses,
@@ -336,7 +336,7 @@ fn get_type_arguments<'a>(ty: Type<'a>) -> impl ExactSizeIterator<Item = Type<'a
 /// What [`type_contains`] has met.
 #[derive(Default)]
 struct Met<'a> {
-    seen: FxHashSet<Type<'a>>,
+    seen: IdSet<Type<'a>>,
     /// The declarations of the signatures that are being looked into. Only tsgolint has them.
     active_signatures: SmallVec<[TsNode<'a>; 8]>,
 }
@@ -454,8 +454,11 @@ fn are_union_parts_equivalent_ignoring_undefined<'a>(uncast: Type<'a>, cast: Typ
     if parts(uncast).count() != parts(cast).count() {
         return false;
     }
-    let uncast_parts: FxHashSet<Type<'a>> = parts(uncast).collect();
-    parts(cast).all(|part| uncast_parts.contains(&part))
+    let mut uncast_parts = IdSet::new();
+    for part in parts(uncast) {
+        uncast_parts.insert(part);
+    }
+    parts(cast).all(|part| uncast_parts.contains(part))
 }
 
 fn get_original_expression(assertion: Assertion<'_>) -> Expr<'_> {
@@ -473,14 +476,13 @@ fn get_constraint_of_type_parameter(ty: Type<'_>) -> Option<Type<'_>> {
 }
 
 /// tsgolint's `isConstrainedTo`: `source` is `target`, or leads there by the constraints of type parameters.
-fn tsgolint_is_constrained_to<'a>(source: Type<'a>, target: Type<'a>, seen: &mut SmallVec<[Type<'a>; 4]>) -> bool {
+fn tsgolint_is_constrained_to<'a>(source: Type<'a>, target: Type<'a>, seen: &mut IdSet<Type<'a>>) -> bool {
     if source == target {
         return true;
     }
-    if seen.contains(&source) {
+    if !seen.insert(source) {
         return false;
     }
-    seen.push(source);
     if is_type_parameter(source) {
         return get_constraint_of_type_parameter(source)
             .is_some_and(|constraint| tsgolint_is_constrained_to(constraint, target, seen));
@@ -507,7 +509,7 @@ fn is_double_assertion_unnecessary<'a>(
         && original_type != cast_type
         && is_type_parameter(original_type)
         && is_type_parameter(cast_type)
-        && !tsgolint_is_constrained_to(original_type, cast_type, &mut SmallVec::new())
+        && !tsgolint_is_constrained_to(original_type, cast_type, &mut IdSet::new())
     {
         return None;
     }

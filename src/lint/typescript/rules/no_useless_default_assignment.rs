@@ -3,7 +3,7 @@ use bun_lint::types::tsutils::{CompilerOption, is_strict_compiler_option_enabled
 use bun_lint::types::utils::{
     is_rest_parameter_declaration, is_type_any_type, is_type_flag_set, is_type_unknown_type,
 };
-use bun_lint::types::{SymbolFlags, TupleTarget, Type, TypeFlags};
+use bun_lint::types::{IdMap, SymbolFlags, TupleTarget, Type, TypeFlags};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 
@@ -140,9 +140,10 @@ fn get_type_of_property<'a>(property: PatProp<'a>, cx: &mut Context<'a>) -> Opti
         // tsgolint knows the type of an optional property only where every branch of the initializer writes it.
         match init.filter(|init| is_oxlint || is_conditional_or_logical(*init)) {
             Some(init) => {
-                let properties =
-                    cx.state.entry(init).or_insert_with(|| get_properties_in_all_branches(init, is_oxlint));
-                if !properties.contains(property_name) {
+                if !cx.state.contains_key(init) {
+                    cx.state.insert(init, get_properties_in_all_branches(init, is_oxlint));
+                }
+                if !cx.state.get(init).is_some_and(|properties| properties.contains(property_name)) {
                     return None;
                 }
             }
@@ -382,7 +383,7 @@ impl Rule for NoUselessDefaultAssignment {
         .pats(&[PatTag::Object, PatTag::Array])
         .exprs(&[ExprTag::Assign]);
     /// [`get_properties_in_all_branches`] of what has been asked about.
-    type State<'a> = FxHashMap<Expr<'a>, FxHashSet<&'a [u8]>>;
+    type State<'a> = IdMap<Expr<'a>, FxHashSet<&'a [u8]>>;
 
     fn new(options: &Options) -> Self {
         NoUselessDefaultAssignment {
@@ -409,7 +410,7 @@ impl Rule for NoUselessDefaultAssignment {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(FxHashMap::default())
+        Some(IdMap::new())
     }
 
     // A default in the target of a destructuring assignment. What is assigned has no type that

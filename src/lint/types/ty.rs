@@ -29,6 +29,12 @@ impl PartialEq for Type<'_> {
     }
 }
 impl Eq for Type<'_> {}
+impl crate::types::Indexed for Type<'_> {
+    #[inline]
+    fn index(self) -> u32 {
+        self.id.0
+    }
+}
 impl std::hash::Hash for Type<'_> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

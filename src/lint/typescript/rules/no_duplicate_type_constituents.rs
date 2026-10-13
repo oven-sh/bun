@@ -1,7 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_intrinsic_error_type;
-use bun_lint::types::{Type, TypeFlags};
-use rustc_hash::FxHashMap;
+use bun_lint::types::{IdMap, Type, TypeFlags};
 use smallvec::SmallVec;
 
 /// Disallow duplicate constituents of union or intersection types.
@@ -290,7 +289,7 @@ struct Constituents<'a> {
     /// The union is the type of an optional parameter.
     is_of_optional_parameter: bool,
     unique_constituents: Vec<TypeNode<'a>>,
-    cached_type_map: FxHashMap<Type<'a>, TypeNode<'a>>,
+    cached_type_map: IdMap<Type<'a>, TypeNode<'a>>,
 }
 
 impl<'a> Constituents<'a> {
@@ -319,7 +318,7 @@ impl<'a> Constituents<'a> {
         if is_intrinsic_error_type(ty) || ty.is_unresolved() {
             return;
         }
-        if let Some(&previous) = self.cached_type_map.get(&ty) {
+        if let Some(&previous) = self.cached_type_map.get(ty) {
             report_duplicate(previous);
             return;
         }
@@ -371,7 +370,7 @@ impl NoDuplicateTypeConstituents {
             tag,
             is_of_optional_parameter,
             unique_constituents: Vec::new(),
-            cached_type_map: FxHashMap::default(),
+            cached_type_map: IdMap::new(),
         };
         for ty in types {
             constituents.check_duplicate_recursively(ty, cx);

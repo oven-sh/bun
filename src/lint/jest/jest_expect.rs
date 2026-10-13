@@ -11,12 +11,13 @@ use crate::jest::{
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
+use bun_lint::types::{IdMap, IdSet};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::{
     get_declaration_of_variable, get_inner_expression, static_property_name,
 };
 use bun_lint_oxlint::import::{ImportImportName, import_entries};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// The `Dot` or the `Index` that is called, with the name of the property: `call_expr.callee.as_member_expression()` and its
@@ -95,7 +96,7 @@ pub(crate) mod valid_expect {
 
         pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>) {
             // The functions that a fix has made `async`.
-            let mut fixed_function_expression = FxHashSet::default();
+            let mut fixed_function_expression = IdSet::new();
             for jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 self.run(jest_node, &mut fixed_function_expression, ctx);
             }
@@ -104,7 +105,7 @@ pub(crate) mod valid_expect {
         fn run<'a>(
             &self,
             possible_jest_node: PossibleJestNode<'a>,
-            fixed_function_expression: &mut FxHashSet<Func<'a>>,
+            fixed_function_expression: &mut IdSet<Func<'a>>,
             ctx: &Ctx<'a, '_>,
         ) {
             let node = possible_jest_node.node;
@@ -1120,9 +1121,9 @@ pub(crate) mod no_standalone_expect {
     struct Places<'a> {
         functions: EnclosingFunctions<'a>,
         /// Whether a function is in a place for `expect`.
-        functions_in_place: FxHashMap<Func<'a>, bool>,
+        functions_in_place: IdMap<Func<'a>, bool>,
         /// `is_var_declarator_or_test_block` of an array, an object or a call.
-        blocks: FxHashMap<Expr<'a>, bool>,
+        blocks: IdMap<Expr<'a>, bool>,
     }
 
     impl NoStandaloneExpectConfig {
@@ -1182,7 +1183,7 @@ pub(crate) mod no_standalone_expect {
                         break;
                     }
                 }
-                if let Some(&known) = places.functions_in_place.get(&func) {
+                if let Some(&known) = places.functions_in_place.get(func) {
                     is_correct = known;
                     break;
                 }
@@ -1191,9 +1192,9 @@ pub(crate) mod no_standalone_expect {
                 enclosing = enclosing_function(func);
             }
             if passed.spilled() {
-                places
-                    .functions_in_place
-                    .extend(passed.iter().map(|it| (*it, is_correct)));
+                for it in &passed {
+                    places.functions_in_place.insert(*it, is_correct);
+                }
             }
             is_correct
         }
@@ -1213,7 +1214,9 @@ pub(crate) mod no_standalone_expect {
                 ctx,
             );
             if passed.spilled() {
-                places.blocks.extend(passed.iter().map(|it| (*it, answer)));
+                for it in &passed {
+                    places.blocks.insert(*it, answer);
+                }
             }
             answer
         }
@@ -1221,7 +1224,7 @@ pub(crate) mod no_standalone_expect {
         fn is_var_declarator_or_test_block_unless_known<'a>(
             &self,
             node: AstKind<'a>,
-            known: &FxHashMap<Expr<'a>, bool>,
+            known: &IdMap<Expr<'a>, bool>,
             passed: &mut SmallVec<[Expr<'a>; 8]>,
             ctx: &Ctx<'a, '_>,
         ) -> bool {
@@ -1234,7 +1237,7 @@ pub(crate) mod no_standalone_expect {
             // What a function is an element or a property of, however deep, stands for it.
             while is_in_literal(at) {
                 if let AstKind::Expr(e) = at {
-                    if let Some(&answer) = known.get(&e) {
+                    if let Some(&answer) = known.get(e) {
                         return answer;
                     }
                     passed.push(e);
@@ -1248,7 +1251,7 @@ pub(crate) mod no_standalone_expect {
             while let Some(e) = at.as_expr()
                 && let Some(call_expr) = e.as_call()
             {
-                if let Some(&answer) = known.get(&e) {
+                if let Some(&answer) = known.get(e) {
                     return answer;
                 }
                 passed.push(e);

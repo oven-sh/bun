@@ -20,13 +20,14 @@ use crate::language::SourceType;
 use crate::semantic::{Declaration, Scope, ScopeKind};
 use crate::span::Span;
 use crate::tokens::{skip_trivia, token_len};
+use crate::types::IdMap;
 use crate::utils::oxlint::{is_script, is_strict_mode, source_type};
 use bun_core::strings;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::{
     self, BinOp, Chain, Diagnostic, DiagnosticKind, Flags, FnKind, ModifierKind, UnOp,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
@@ -268,7 +269,7 @@ pub(super) fn refusal_of_babel<'a>(
 #[derive(Default)]
 struct Tops<'a> {
     /// The outermost expression around those on a long way.
-    known: FxHashMap<Expr<'a>, Expr<'a>>,
+    known: IdMap<Expr<'a>, Expr<'a>>,
 }
 
 impl<'a> Tops<'a> {
@@ -287,7 +288,7 @@ impl<'a> Tops<'a> {
         let mut passed = Vec::new();
         let mut at = of;
         let found = loop {
-            if let Some(&top) = self.known.get(&at) {
+            if let Some(&top) = self.known.get(at) {
                 break (top, top.parent());
             }
             match at.parent() {
@@ -299,8 +300,9 @@ impl<'a> Tops<'a> {
             }
         };
         if passed.len() >= LONG {
-            self.known
-                .extend(passed.into_iter().map(|it| (it, found.0)));
+            for it in passed {
+                self.known.insert(it, found.0);
+            }
         }
         found
     }

@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
-use rustc_hash::{FxHashMap, FxHashSet};
+use bun_lint::types::IdMap;
+use rustc_hash::FxHashSet;
 
 /// Require rest parameters instead of `arguments`.
 pub struct PreferRestParams;
@@ -21,7 +22,7 @@ pub struct State<'a> {
     name: Name<'a>,
     counted: FxHashSet<Symbol<'a>>,
     /// How many of the references to what is `counted` an identifier is.
-    references: FxHashMap<Expr<'a>, u32>,
+    references: IdMap<Expr<'a>, u32>,
 }
 
 impl<'a> State<'a> {
@@ -30,10 +31,15 @@ impl<'a> State<'a> {
     fn count(&mut self, symbol: Symbol<'a>, e: Expr<'a>) -> u32 {
         if self.counted.insert(symbol) {
             for identifier in symbol.references().filter_map(Reference::expr) {
-                *self.references.entry(identifier).or_default() += 1;
+                match self.references.get_mut(identifier) {
+                    Some(count) => *count += 1,
+                    None => {
+                        self.references.insert(identifier, 1);
+                    }
+                }
             }
         }
-        self.references.get(&e).copied().unwrap_or(0)
+        self.references.get(e).copied().unwrap_or(0)
     }
 }
 
@@ -53,7 +59,7 @@ impl Rule for PreferRestParams {
         Some(State {
             name: file.name_of("arguments"),
             counted: FxHashSet::default(),
-            references: FxHashMap::default(),
+            references: IdMap::new(),
         })
     }
 

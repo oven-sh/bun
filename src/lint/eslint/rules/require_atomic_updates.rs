@@ -1,5 +1,6 @@
 use bun_lint::code_path::{Event, Step};
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -163,7 +164,7 @@ pub struct State<'a> {
     /// The current segments where the `ChainExpression` that is being left is left.
     segments_after_chain: Option<SmallVec<[Segment<'a>; 2]>>,
     /// By what is assigned: the references to verify once that has been evaluated.
-    assignment_references: FxHashMap<Expr<'a>, SmallVec<[Resolved<'a>; 1]>>,
+    assignment_references: IdMap<Expr<'a>, SmallVec<[Resolved<'a>; 1]>>,
     /// Where the `await` and the `yield` expressions of the file start, in ascending order.
     pauses: Option<Vec<u32>>,
 }
@@ -369,11 +370,13 @@ impl RequireAtomicUpdates {
             && assignment_of(write_expr).is_some()
             && !is_local_variable_without_escape(variable, is_member_access)
         {
-            state
-                .assignment_references
-                .entry(write_expr)
-                .or_default()
-                .push((reference, variable));
+            if let Some(references) = state.assignment_references.get_mut(write_expr) {
+                references.push((reference, variable));
+            } else {
+                state
+                    .assignment_references
+                    .insert(write_expr, SmallVec::from_buf([(reference, variable)]));
+            }
         }
     }
 
@@ -403,7 +406,7 @@ impl RequireAtomicUpdates {
         if state.assignment_references.is_empty() || e.is_angle_bracket_assertion() {
             return;
         }
-        let Some(references) = state.assignment_references.remove(&e) else {
+        let Some(references) = state.assignment_references.remove(e) else {
             return;
         };
         let Some(assignment) = assignment_of(e) else {

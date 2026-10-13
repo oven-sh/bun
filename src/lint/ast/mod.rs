@@ -761,6 +761,12 @@ macro_rules! handle {
             }
         }
         impl Eq for $name<'_> {}
+        impl $crate::types::Indexed for $name<'_> {
+            #[inline]
+            fn index(self) -> u32 {
+                self.id.0
+            }
+        }
         impl std::hash::Hash for $name<'_> {
             #[inline]
             fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

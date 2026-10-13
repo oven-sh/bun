@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -24,9 +25,9 @@ struct ReportInfo<'a> {
 #[derive(Default)]
 struct Memo<'a> {
     /// For each name that a scope refers to: whether the first reference is to a parameter.
-    from_parameter: FxHashMap<Scope<'a>, FxHashMap<Name<'a>, bool>>,
+    from_parameter: IdMap<Scope<'a>, FxHashMap<Name<'a>, bool>>,
     /// The names of the parameter properties of a constructor.
-    parameter_properties: FxHashMap<Func<'a>, FxHashSet<Name<'a>>>,
+    parameter_properties: IdMap<Func<'a>, FxHashSet<Name<'a>>>,
     /// What is around something: the property definition, the function, and the class whose body it is in.
     property_definitions: AncestorMemo<'a, Member<'a>>,
     functions: AncestorMemo<'a, Func<'a>>,
@@ -81,7 +82,7 @@ impl<'a> Memo<'a> {
             return matches!(declaration, Some(Declaration::Param(_)));
         }
         let scope = Node::Expr(identifier).scope();
-        let first_references = self.from_parameter.entry(scope).or_insert_with(|| {
+        if !self.from_parameter.contains_key(scope) {
             let mut first_references = FxHashMap::default();
             for reference in scope.references() {
                 first_references.entry(reference.name()).or_insert_with(|| {
@@ -91,23 +92,23 @@ impl<'a> Memo<'a> {
                     )
                 });
             }
-            first_references
-        });
-        first_references.get(&name).is_some_and(|it| *it)
+            self.from_parameter.insert(scope, first_references);
+        }
+        let first_references = self.from_parameter.get(scope);
+        first_references.is_some_and(|it| it.get(&name).is_some_and(|it| *it))
     }
 
     fn has_parameter_property(&mut self, constructor: Func<'a>, name: Name<'a>) -> bool {
-        let names = self
-            .parameter_properties
-            .entry(constructor)
-            .or_insert_with(|| {
-                let properties = constructor
-                    .params()
-                    .iter()
-                    .filter(|it| it.is_parameter_property());
-                properties.filter_map(|it| it.pat().as_ident()).collect()
-            });
-        names.contains(&name)
+        if !self.parameter_properties.contains_key(constructor) {
+            let properties = constructor
+                .params()
+                .iter()
+                .filter(|it| it.is_parameter_property());
+            let names = properties.filter_map(|it| it.pat().as_ident()).collect();
+            self.parameter_properties.insert(constructor, names);
+        }
+        let names = self.parameter_properties.get(constructor);
+        names.is_some_and(|it| it.contains(&name))
     }
 }
 

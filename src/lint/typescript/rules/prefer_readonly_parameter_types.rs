@@ -1,7 +1,6 @@
 use bun_lint::prelude::*;
-use bun_lint::types::Type;
 use bun_lint::types::utils::{ReadonlynessOptions, is_type_branded_literal_like, is_type_readonly};
-use rustc_hash::FxHashMap;
+use bun_lint::types::{IdMap, Type};
 
 /// Require function parameters to be typed as `readonly` to prevent accidental mutation of inputs.
 pub struct PreferReadonlyParameterTypes {
@@ -33,7 +32,7 @@ impl Rule for PreferReadonlyParameterTypes {
     const META: Meta = Meta::typescript("prefer-readonly-parameter-types", Kind::Suggestion).requires_types();
     const ON: On = On::new().funcs();
     /// Whether a type is to be reported. All that can be reached from it is looked at, and parameters share types.
-    type State<'a> = FxHashMap<Type<'a>, bool>;
+    type State<'a> = IdMap<Type<'a>, bool>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -44,8 +43,8 @@ impl Rule for PreferReadonlyParameterTypes {
         }
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<FxHashMap<Type<'a>, bool>> {
-        Some(FxHashMap::default())
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<IdMap<Type<'a>, bool>> {
+        Some(IdMap::new())
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
@@ -68,8 +67,15 @@ impl Rule for PreferReadonlyParameterTypes {
                 continue;
             }
             let ty = get_parameter_type(param, is_oxlint);
-            let is_mutable = || !is_type_readonly(ty, &self.readonlyness) && !is_type_branded_literal_like(ty);
-            if *cx.state.entry(ty).or_insert_with(is_mutable) {
+            let is_mutable = match cx.state.get(ty).copied() {
+                Some(is_mutable) => is_mutable,
+                None => {
+                    let is_mutable = !is_type_readonly(ty, &self.readonlyness) && !is_type_branded_literal_like(ty);
+                    cx.state.insert(ty, is_mutable);
+                    is_mutable
+                }
+            };
+            if is_mutable {
                 // oxlint points at the decorators of what is no parameter property.
                 let place = match is_oxlint && !is_parameter_property {
                     true => param.span(),

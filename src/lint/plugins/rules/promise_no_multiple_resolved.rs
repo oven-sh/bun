@@ -2,6 +2,7 @@ use crate::oxlint::promise::is_promise_constructor;
 use bun_lint::code_path::{Event, Step, steps_of_code_path};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::types::IdMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -40,16 +41,16 @@ impl Rule for NoMultipleResolved {
         let resolve_finder = ResolveFinder { resolve_symbol: symbol_of(0), reject_symbol: symbol_of(1) };
         // The executor and the functions in it are checked each for itself. There is something to find where the two are referred
         // to twice.
-        let mut references_in: FxHashMap<Func<'a>, u32> = FxHashMap::default();
+        let mut references_in: IdMap<Func<'a>, u32> = IdMap::new();
         let mut diagnostics = Vec::new();
         let resolvers = [resolve_finder.resolve_symbol, resolve_finder.reject_symbol].into_iter().flatten();
         for reference in resolvers.flat_map(Symbol::references) {
             let Node::Func(func) = reference.scope().variable_scope().node() else {
                 continue;
             };
-            let count = references_in.entry(func).or_insert(0);
-            *count += 1;
-            if *count == 2 && func.kind() != FnKind::StaticBlock {
+            let count = references_in.get(func).map_or(1, |it| it + 1);
+            references_in.insert(func, count);
+            if count == 2 && func.kind() != FnKind::StaticBlock {
                 check(func, resolve_finder, &mut diagnostics);
             }
         }
@@ -174,7 +175,7 @@ impl<'a> Walk<'a> {
         // How many of them have a `catch`.
         let mut try_block_depth = 0;
         // By the `catch` block: the segments in the block of its `try` statement, until it starts.
-        let mut leading_to_catch: FxHashMap<Stmt<'a>, Vec<Segment<'a>>> = FxHashMap::default();
+        let mut leading_to_catch: IdMap<Stmt<'a>, Vec<Segment<'a>>> = IdMap::new();
         for step in steps_of_code_path(root, [StmtTag::Expr, StmtTag::Try], StmtTag::Block) {
             match step {
                 Step::Event(Event::CodePathStart(path, node)) if node == root => walk.code_path = Some(path),
@@ -184,7 +185,7 @@ impl<'a> Walk<'a> {
                     }
                     current_segments.push(segment);
                     let catch_start = match node {
-                        Node::Stmt(handler) => leading_to_catch.remove(&handler),
+                        Node::Stmt(handler) => leading_to_catch.remove(handler),
                         _ => None,
                     };
                     if let Some(segments) = catch_start {

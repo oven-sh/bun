@@ -4,9 +4,8 @@ use bun_lint::types::tsutils::{
     intersection_constituents, is_intrinsic_undefined_type, union_constituents,
 };
 use bun_lint::types::utils::{get_constrained_type_at_location, requires_quoting};
-use bun_lint::types::{Type, TypeFlags, TypeFormatFlags};
+use bun_lint::types::{IdSet, Type, TypeFlags, TypeFormatFlags};
 use bun_lint::utils::eslint_utils::{is_closing_brace_token, is_opening_brace_token};
-use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 /// Require switch-case statements to be exhaustive.
@@ -196,15 +195,19 @@ impl SwitchExhaustivenessCheck {
             return;
         }
         let tests = cases.iter().filter_map(|switch_case| switch_case.test());
-        let case_types: FxHashSet<Type<'a>> = tests.map(get_constrained_type_at_location).collect();
+        let mut case_types: IdSet<Type<'a>> = IdSet::new();
         // The "missing", the "optional" and the "undefined" type are different types, which all
         // have `TypeFlags::UNDEFINED`.
-        let has_undefined_case = case_types.iter().any(|&it| is_intrinsic_undefined_type(it));
+        let mut has_undefined_case = false;
+        for case_type in tests.map(get_constrained_type_at_location) {
+            has_undefined_case |= is_intrinsic_undefined_type(case_type);
+            case_types.insert(case_type);
+        }
 
         let mut missing_literal_branch_types: SmallVec<[Type<'a>; 8]> = SmallVec::new();
         for union_part in union_constituents(discriminant_type) {
             for intersection_part in intersection_constituents(union_part) {
-                if case_types.contains(&intersection_part)
+                if case_types.contains(intersection_part)
                     || !is_type_literal_like_type(intersection_part)
                     || has_undefined_case && is_intrinsic_undefined_type(intersection_part)
                 {

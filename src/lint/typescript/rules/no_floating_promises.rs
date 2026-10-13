@@ -5,10 +5,9 @@ use bun_lint::types::utils::{
     parse_then_call, parse_type_or_value_specifiers, type_matches_some_specifier,
     value_matches_some_specifier,
 };
-use bun_lint::types::{NodeFlags, Signature, SymbolFlags, SyntaxKind, TsSymbol, Type};
+use bun_lint::types::{IdMap, NodeFlags, Signature, SymbolFlags, SyntaxKind, TsSymbol, Type};
 use bun_lint::utils::eslint_utils::is_parenthesized;
 use bun_lint::utils::ts_utils::{OperatorPrecedence, get_operator_precedence_for_node};
-use rustc_hash::FxHashMap;
 
 /// Require Promise-like statements to be handled appropriately.
 pub struct NoFloatingPromises {
@@ -50,8 +49,8 @@ const FLOATING_VOID: Message = Message::new(
 /// union is looked at, and many statements have the same type.
 #[derive(Default)]
 pub struct State<'a> {
-    promise_arrays: FxHashMap<Type<'a>, bool>,
-    promise_likes: FxHashMap<Type<'a>, bool>,
+    promise_arrays: IdMap<Type<'a>, bool>,
+    promise_likes: IdMap<Type<'a>, bool>,
 }
 
 /// In which way a promise is not handled.
@@ -342,7 +341,7 @@ impl NoFloatingPromises {
     }
 
     fn is_promise_array<'a>(&self, node: Expr<'a>, ty: Type<'a>, known: &mut State<'a>) -> bool {
-        if let Some(&is_promise_array) = known.promise_arrays.get(&ty) {
+        if let Some(&is_promise_array) = known.promise_arrays.get(ty) {
             return is_promise_array;
         }
         let is_promise_array = union_constituents(ty).iter().map(|t| t.get_apparent_type()).any(|ty| {
@@ -363,7 +362,12 @@ impl NoFloatingPromises {
         if self.check_thenables {
             return self.is_promise_like_at(node, ty);
         }
-        *known.promise_likes.entry(ty).or_insert_with(|| self.is_promise_like_at(node, ty))
+        if let Some(&is_promise_like) = known.promise_likes.get(ty) {
+            return is_promise_like;
+        }
+        let is_promise_like = self.is_promise_like_at(node, ty);
+        known.promise_likes.insert(ty, is_promise_like);
+        is_promise_like
     }
 
     fn is_promise_like_at<'a>(&self, node: Expr<'a>, ty: Type<'a>) -> bool {

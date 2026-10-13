@@ -2,8 +2,7 @@
 
 use super::{has_room_on_the_stack, is_type_any_array_type, is_type_any_type};
 use crate::types::tsutils::{is_thenable_type, is_union_or_intersection_type, type_constituents};
-use crate::types::{Locate, TsNode, Type};
-use smallvec::SmallVec;
+use crate::types::{IdSet, Locate, TsNode, Type};
 
 /// `AnyType`
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -19,18 +18,18 @@ pub enum AnyType {
 
 /// `discriminateAnyType(type, checker, program, tsNode)`: in which way the type is `any`, if it is.
 pub fn discriminate_any_type<'a>(ty: Type<'a>, ts_node: impl Locate<'a>) -> AnyType {
-    discriminate_any_type_worker(ty, ts_node.locate(ty.file()), &mut SmallVec::new())
+    discriminate_any_type_worker(ty, ts_node.locate(ty.file()), &mut IdSet::new())
 }
 
 fn discriminate_any_type_worker<'a>(
     ty: Type<'a>,
     ts_node: TsNode<'a>,
-    visited: &mut SmallVec<[Type<'a>; 4]>,
+    visited: &mut IdSet<Type<'a>>,
 ) -> AnyType {
-    if visited.contains(&ty) || !has_room_on_the_stack() {
+    if visited.contains(ty) || !has_room_on_the_stack() {
         return AnyType::Safe;
     }
-    visited.push(ty);
+    visited.insert(ty);
     if is_type_any_type(ty) {
         return AnyType::Any;
     }
@@ -52,11 +51,7 @@ fn discriminate_any_type_worker<'a>(
     }
 }
 
-fn is_promise_any<'a>(
-    part: Type<'a>,
-    ts_node: TsNode<'a>,
-    visited: &mut SmallVec<[Type<'a>; 4]>,
-) -> bool {
+fn is_promise_any<'a>(part: Type<'a>, ts_node: TsNode<'a>, visited: &mut IdSet<Type<'a>>) -> bool {
     is_thenable_type(ts_node, part)
         && part.get_awaited_type().is_some_and(|awaited_type| {
             discriminate_any_type_worker(awaited_type, ts_node, visited) == AnyType::Any

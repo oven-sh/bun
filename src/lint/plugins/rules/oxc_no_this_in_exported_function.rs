@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashMap;
 
 /// Disallows the use of `this` in exported functions.
 pub struct NoThisInExportedFunction;
@@ -13,7 +13,7 @@ pub struct State<'a> {
     /// The function in whose body something is, if a `this` there is that of the function.
     functions: AncestorMemo<'a, Option<Func<'a>>>,
     /// How often a function is exported.
-    exports: FxHashMap<Func<'a>, usize>,
+    exports: IdMap<Func<'a>, usize>,
     /// Where the function declarations and the function expressions are, without those in another, in order. No other function
     /// is exported.
     candidates: Vec<Span>,
@@ -54,7 +54,15 @@ impl Rule for NoThisInExportedFunction {
             return;
         };
         // It is reported for each export.
-        for _ in 0..*cx.state.exports.entry(func).or_insert_with(|| export_count(func)) {
+        let count = match cx.state.exports.get(func) {
+            Some(&count) => count,
+            None => {
+                let count = export_count(func);
+                cx.state.exports.insert(func, count);
+                count
+            }
+        };
+        for _ in 0..count {
             cx.report(this, NO_THIS_IN_EXPORTED_FUNCTION);
         }
     }

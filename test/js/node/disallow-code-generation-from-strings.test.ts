@@ -1,7 +1,9 @@
 // --disallow-code-generation-from-strings: as Node.js's flag, eval and the Function constructors
 // throw. With "=strict" (Bun's own), nothing in the process turns a string into script.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isGlibc, isLinux, isWindows, nodeExe, tempDir } from "harness";
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 
 const refused = "EvalError: Code generation from strings disallowed for this context";
 const flag = "--disallow-code-generation-from-strings";
@@ -550,5 +552,303 @@ describe.concurrent.skipIf(!builtStrict)("a build with =strict as a constant", (
       stderr: `error: --inspect cannot be used with ${strict}: the inspector evaluates code from strings`,
     });
     expect(exitCode).toBe(1);
+  });
+});
+
+// In a `bun build --compile` executable =strict is an allow-list: the engine runs Bun's builtins and the JavaScript that
+// is embedded in the executable, and refuses everything else where code is linked, whichever way it came in.
+describe.concurrent("=strict in a compiled executable", () => {
+  const notEmbedded = (url?: string) => "EvalError: Refused to run untrusted code" + (url ? ": " + url : "");
+  // evaluateAsProgram of bun:internal-for-testing is compiled under ASSERT_ENABLED only.
+  const hasTestBinding = isDebug || isASAN;
+  const exe = isWindows ? "app.exe" : "app";
+
+  const program = {
+    // Every text that must not run says so if it does.
+    "entry.ts": `
+      import fs from "node:fs";
+      import Module from "node:module";
+      import asset from "./asset.txt" with { type: "file" };
+      import { neverCalledAtStartup } from "./late.ts";
+      const [, , mode, dir] = process.argv;
+      const attempt = async fn => { try { return await fn(); } catch (e) { return e.constructor.name + ": " + e.message; } };
+      const ran = name => '(globalThis.ran ??= []).push("' + name + '");';
+      const written = (name, text = ran(name)) => { fs.writeFileSync(dir + "/" + name, text); return dir + "/" + name; };
+      const workerError = path => new Promise(resolve => {
+        const worker = new Worker(path);
+        worker.onmessage = e => resolve("ran: " + e.data);
+        worker.onerror = e => resolve(e.message.trim());
+      });
+
+      const refused = {
+        pluginJSON: () => {
+          Bun.plugin({ name: "json", setup(build) {
+            build.onLoad({ filter: /\\.plugin-json$/ }, () => ({ contents: ran("pluginJSON"), loader: "json" }));
+          } });
+          return import(written("x.plugin-json", ""));
+        },
+        macroName: () => new Bun.Transpiler({ loader: "ts" }).transformSync(
+          'import { "a\\']; (globalThis.ran ??= []).push(/macroName/.source); //" as macro } from "bun" with { type: "macro" }; export default macro();'),
+        importWritten: () => import(written("imported.mjs")),
+        requireWritten: () => require(written("required.cjs")),
+        workerWritten: () => workerError(written("worker.mjs", 'postMessage("worker.mjs")')),
+        bytecodeFile: () => require(dir + "/bytecode/with-bytecode.js"),
+        sameTextWithoutBytecode: () => require(written("same-text.js", fs.readFileSync(dir + "/bytecode/with-bytecode.js", "utf8"))),
+        compileCache: () => { Module.enableCompileCache(dir + "/compile-cache"); return require(dir + "/compile-cached.cjs"); },
+        transpilerCache: () => import(dir + "/transpiler-cached.ts"),
+        dataModule: () => import(["data:text/javascript", ran("dataModule")].join(",")),
+        blobModule: () => import(URL.createObjectURL(new Blob([ran("blobModule")], { type: "text/javascript" }))),
+        embeddedAsset: () => import(asset),
+      };
+      if (process.env.HAS_GLIBC) {
+        refused.memfd = async () => {
+          const { dlopen } = await import("bun:ffi");
+          const { memfd_create } = dlopen("libc.so.6", { memfd_create: { args: ["cstring", "u32"], returns: "i32" } }).symbols;
+          const fd = memfd_create(Buffer.from("memfd\\0"), 0);
+          fs.writeSync(fd, ran("memfd"));
+          return require("/proc/self/fd/" + fd);
+        };
+      }
+      if (process.env.HAS_TEST_BINDING) {
+        const evaluateAsProgram = async text => (await import("bun:internal-for-testing")).evaluateAsProgram(text);
+        refused.evaluate = () => evaluateAsProgram(ran("evaluate"));
+        refused.evaluateJSONPAssignment = () => evaluateAsProgram('ran = {"a":1}');
+        refused.evaluateJSONPCall = () => evaluateAsProgram('process.exit({"a":1})');
+      }
+
+      const works = {
+        firstCallLate: async () => {
+          await Bun.sleep(1);
+          const first = neverCalledAtStartup(20);
+          Bun.gc(true);
+          return [first, neverCalledAtStartup(21)];
+        },
+        classWithoutConstructor: () => {
+          class Base { field = 1; }
+          class Derived extends Base {}
+          return new Derived().field;
+        },
+        builtinsFirstUsedLate: async () => [
+          typeof (await import("node:zlib")).gzipSync,
+          typeof require("node:dgram").createSocket,
+          typeof (await import("bun:sqlite")).Database,
+          new TextDecoder().decode(await new Response(new Blob(["streams"]).stream()).arrayBuffer()),
+        ],
+        embeddedESM: async () => (await import("./esm.mjs")).default,
+        embeddedCommonJS: () => require("./commonjs.cjs"),
+        worker: () => new Promise((resolve, reject) => {
+          const worker = new Worker("./worker.ts");
+          worker.onmessage = e => resolve(e.data);
+          worker.onerror = e => reject(new Error(e.message));
+        }),
+        hotLoop: async () => {
+          const { numberOfDFGCompiles } = await import("bun:jsc");
+          function hot(a, b) { return a + b; }
+          let sum = 0;
+          for (let i = 0; i < 200000 && !numberOfDFGCompiles(hot); i++) sum = hot(sum, 1) | 0;
+          return numberOfDFGCompiles(hot) > 0;
+        },
+        dataFilesAtRunTime: async () => [
+          (await import(written("data.json", '{"a":1}'))).default,
+          require(written("data.toml", "a = 1")),
+        ],
+        databaseAtRunTime: async () => {
+          const { Database } = await import("bun:sqlite");
+          new Database(dir + "/made.sqlite").run("create table t (a)");
+          return (await import(dir + "/made.sqlite", { with: { type: "sqlite" } })).default.query("select count(*) as n from t").get();
+        },
+      };
+
+      // The transpiler throws its own error for a macro that does not load, and leaves the reason to this.
+      const unhandled = [];
+      process.on("unhandledRejection", reason => unhandled.push(String(reason)));
+      (async () => {
+        const results = {};
+        for (const [name, route] of Object.entries(mode === "refused" ? refused : works)) results[name] = await attempt(route);
+        console.log(JSON.stringify({ results, unhandled, ran: globalThis.ran }));
+        process.exit(0);
+      })();
+    `,
+    "late.ts": `export function neverCalledAtStartup(x) { return [x].map(y => y * 2)[0]; }`,
+    "esm.mjs": `export default "esm";`,
+    "commonjs.cjs": `module.exports = "commonjs";`,
+    "worker.ts": `import { neverCalledAtStartup } from "./late.ts"; postMessage(neverCalledAtStartup(4));`,
+    "asset.txt": `(globalThis.ran ??= []).push("embeddedAsset"); export default 1;`,
+    "with-bytecode.js": `(globalThis.ran ??= []).push("bytecodeFile");`,
+    "compile-cached.cjs": `(globalThis.ran ??= []).push("compileCache");`,
+    // The transpiler cache takes no file under 4 KB.
+    "transpiler-cached.ts":
+      `(globalThis.ran ??= []).push("transpilerCache" as string);\n` + Buffer.alloc(8192, "// \n").toString(),
+  };
+
+  async function bun(cwd: string, args: string[], env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: { ...bunEnv, ...env },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: expect.any(String),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  }
+
+  async function compile(cwd: string, buildArgs: string[], execArgv: string) {
+    await bun(cwd, [
+      "build",
+      "--compile",
+      ...buildArgs,
+      "--compile-exec-argv=" + execArgv,
+      "./entry.ts",
+      "./worker.ts",
+      "--outfile",
+      exe,
+    ]);
+  }
+
+  async function runCompiled(cwd: string, args: string[], env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [join(cwd, exe), ...args],
+      env: { ...bunEnv, ...(hasTestBinding && { HAS_TEST_BINDING: "1" }), ...(isGlibc && { HAS_GLIBC: "1" }), ...env },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // BUN_JSC_refuseUntrustedCode is the engine's name for it. The environment does not turn it off.
+  test.each([{}, { BUN_JSC_refuseUntrustedCode: "0" }])("refuses what is not embedded, with %j", async env => {
+    using dir = tempDir("strict-compiled-refuses", program);
+    const cwd = String(dir);
+    const transpilerCache = { BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(cwd, "transpiler-cache") };
+    // What a run of Bun that may run these files leaves behind for the next one.
+    await Promise.all([
+      compile(cwd, [], strict + " --expose-internals"),
+      bun(cwd, ["build", "--target=bun", "--bytecode", "--format=cjs", "./with-bytecode.js", "--outdir", "bytecode"]),
+      bun(cwd, ["./compile-cached.cjs"], { NODE_COMPILE_CACHE: join(cwd, "compile-cache") }),
+      bun(cwd, ["./transpiler-cached.ts"], transpilerCache),
+    ]);
+    expect({
+      bytecode: readdirSync(join(cwd, "bytecode")).sort(),
+      compileCache: readdirSync(join(cwd, "compile-cache"), { recursive: true }).length > 0,
+      transpilerCache: readdirSync(join(cwd, "transpiler-cache")).length > 0,
+    }).toEqual({ bytecode: ["with-bytecode.js", "with-bytecode.js.jsc"], compileCache: true, transpilerCache: true });
+
+    const { stdout, exitCode } = await runCompiled(cwd, ["refused", cwd], { ...transpilerCache, ...env });
+    const file = (name: string) => notEmbedded(join(cwd, name));
+    expect(JSON.parse(stdout)).toEqual({
+      results: {
+        pluginJSON: file("x.plugin-json"),
+        macroName: 'BuildMessage: "MacroLoadError" error in macro',
+        importWritten: file("imported.mjs"),
+        requireWritten: file("required.cjs"),
+        workerWritten: file("worker.mjs"),
+        bytecodeFile: file(join("bytecode", "with-bytecode.js")),
+        sameTextWithoutBytecode: file("same-text.js"),
+        compileCache: file("compile-cached.cjs"),
+        transpilerCache: file("transpiler-cached.ts"),
+        dataModule: refused,
+        blobModule: refused,
+        embeddedAsset: expect.stringMatching(/^EvalError: Refused to run untrusted code: .*asset-.*\.txt$/),
+        // The resolver follows the link, to a name that no file has, so this one does not get as far as the engine.
+        ...(isGlibc && { memfd: 'BuildMessage: ENOENT reading "/memfd:memfd (deleted)"' }),
+        ...(hasTestBinding && {
+          evaluate: notEmbedded(),
+          evaluateJSONPAssignment: notEmbedded(),
+          evaluateJSONPCall: notEmbedded(),
+        }),
+      },
+      unhandled: [expect.stringMatching(/^EvalError: Refused to run untrusted code: macro:\/\/\w+\.js$/)],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([
+    ["ES modules", []],
+    ["ES modules with bytecode", ["--bytecode"]],
+    ["CommonJS", ["--format=cjs"]],
+    ["CommonJS with bytecode", ["--format=cjs", "--bytecode"]],
+  ])(
+    "runs what is embedded: %s",
+    async (_, buildArgs) => {
+      using dir = tempDir("strict-compiled-runs", program);
+      const cwd = String(dir);
+      await compile(cwd, buildArgs, strict);
+      // Reporting is on, so a refusal that something swallowed would show as well.
+      const { stdout, stderr, exitCode } = await runCompiled(cwd, ["works", cwd], { BUN_JSC_reportUntrustedCode: "1" });
+      expect({ stderr, ...JSON.parse(stdout) }).toEqual({
+        stderr: "",
+        results: {
+          firstCallLate: [40, 42],
+          classWithoutConstructor: 1,
+          builtinsFirstUsedLate: ["function", "function", "function", "streams"],
+          embeddedESM: "esm",
+          embeddedCommonJS: "commonjs",
+          worker: 8,
+          hotLoop: true,
+          dataFilesAtRunTime: [{ a: 1 }, { a: 1 }],
+          databaseAtRunTime: { n: 0 },
+        },
+        unhandled: [],
+      });
+      expect(exitCode).toBe(0);
+      // A debug build takes seconds to make the bytecode of the builtin modules the program uses.
+    },
+    30_000,
+  );
+
+  test("BUN_JSC_reportUntrustedCode on its own refuses nothing and reports each refusal once", async () => {
+    using dir = tempDir("strict-compiled-reports", {
+      "entry.ts": `
+        import fs from "node:fs";
+        function evaluate() { return eval("1 + 1"); }
+        fs.writeFileSync(process.argv[2] + "/written.mjs", "export default function written() { return 2; }");
+        const results = [];
+        for (let i = 0; i < 3; i++) results.push(evaluate(), (await import(process.argv[2] + "/written.mjs?" + i)).default());
+        console.log(JSON.stringify(results));
+      `,
+      "worker.ts": ``,
+    });
+    const cwd = String(dir);
+    await compile(cwd, [], "--smol");
+    const { stdout, stderr, exitCode } = await runCompiled(cwd, [cwd], { BUN_JSC_reportUntrustedCode: "1" });
+    expect({
+      stdout,
+      reports: stderr
+        .split("\n")
+        .filter(line => line.startsWith("[untrusted code]"))
+        .map(line => line.replaceAll(cwd, "<dir>").replaceAll("\\", "/")),
+      evalStack: /^\[untrusted code\] link: \(no source URL\)\n    at .*\n    at evaluate@/m.test(stderr),
+    }).toEqual({
+      stdout: "[2,2,2,2,2,2]\n",
+      reports: [
+        "[untrusted code] link: (no source URL)",
+        "[untrusted code] module: <dir>/written.mjs",
+        // The module's own code, and the function it exports: two stacks.
+        "[untrusted code] link: <dir>/written.mjs",
+        "[untrusted code] link: <dir>/written.mjs",
+      ],
+      evalStack: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isLinux)("the embedded modules are mapped read-only", async () => {
+    using dir = tempDir("strict-compiled-read-only", {
+      "entry.ts": `
+        const mappings = require("node:fs").readFileSync("/proc/self/maps", "utf8").split("\\n").filter(line => line.endsWith(process.execPath));
+        console.log(mappings.at(-1).split(" ")[1]);
+      `,
+      "worker.ts": ``,
+    });
+    const cwd = String(dir);
+    await compile(cwd, [], strict);
+    expect(await runCompiled(cwd, [])).toEqual({ stdout: "r--p\n", stderr: "", exitCode: 0 });
   });
 });

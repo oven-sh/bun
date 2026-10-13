@@ -1174,6 +1174,19 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
         bun_jsc::initialize(bun_jsc::InitializeOptions::default());
+        if bun_core::code_generation_from_strings()
+            == bun_core::CodeGenerationFromStrings::Disallowed
+        {
+            // What is embedded is known by where it is, so those bytes must stay what they are.
+            if let Err(errno) = graph.make_read_only() {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: --disallow-code-generation-from-strings=strict could not make the embedded modules read-only: {}",
+                    <&'static str>::from(errno),
+                );
+                Global::exit(1);
+            }
+            bun_jsc::run_only_embedded_code();
+        }
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         if graph.flags.contains(GraphFlags::CROSS_COMPILED_BYTECODE) {
             bun_analytics::features::cross_compiled_bytecode.fetch_add(1, Ordering::Relaxed);

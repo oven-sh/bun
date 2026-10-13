@@ -129,6 +129,7 @@ export const enums = {
 
 // These are passed to --define to the bundler
 const debug = process.argv[2] === "--debug=ON";
+const assertions = process.argv.includes("--assertions=ON");
 export const define: Record<string, string> = {
   "process.env.NODE_ENV": JSON.stringify(debug ? "development" : "production"),
   "IS_BUN_DEVELOPMENT": String(debug),
@@ -239,6 +240,8 @@ export function applyReplacements(src: string, length: number) {
       } catch {
         throw new Error(`Call is not known at bundle-time: '$${name}${inner.result}'`);
       }
+      // $newCppFunction(file, symbol, argCount, "assertions"): the function is compiled under ASSERT_ENABLED only.
+      const onlyWithAssertions = name === "newCppFunction" && args.length === 4 && args.pop() === "assertions";
       if (
         args.length != (is_create_fn ? 3 : 2) ||
         typeof args[0] !== "string" ||
@@ -250,6 +253,10 @@ export function applyReplacements(src: string, length: number) {
         } else {
           throw new Error(`$${name} takes two string arguments, but got '$${name}${inner.result}'`);
         }
+      }
+
+      if (onlyWithAssertions && !assertions) {
+        return [slice.slice(0, match.index) + "void 0", inner.rest, true];
       }
 
       const id = registerNativeCall(kind, args[0], args[1], is_create_fn ? args[2] : null);

@@ -512,6 +512,11 @@ pub fn initialize(options: InitializeOptions) {
     };
 }
 
+/// From here on the engine runs only what `Bun::isEmbeddedCode` knows. After [`initialize`], and before the first VM, which freezes JSC's options.
+pub fn run_only_embedded_code() {
+    JSC__runOnlyEmbeddedCode();
+}
+
 /// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
 /// first VM, which freezes JSC's options.
 pub fn expect_vm_per_thread() {
@@ -1572,6 +1577,7 @@ unsafe extern "C" {
         short_lived_globals: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
+    safe fn JSC__runOnlyEmbeddedCode();
 }
 
 // Hand-stubbed in `generated.rs` until `src/codegen/generate-classes.ts`

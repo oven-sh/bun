@@ -45,6 +45,7 @@ use bun_resolver::node_fallbacks;
 use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
 
 use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
+use crate::embedded_code::own_module_source;
 use crate::timer;
 use crate::webcore::blob::BlobExt as _;
 
@@ -700,17 +701,16 @@ unsafe fn deinit_runtime_state(_vm: *mut VirtualMachine, state: OpaqueRuntimeSta
     bun_ast::stmt::data::Store::deinit();
 }
 
-/// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
-/// `bun:main` wrapper. Returns `false` on error (the error is already logged
-/// into `vm.log` by `generate`).
-fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool {
+/// `ServerEntryPoint.generate(watch)` — picks the source of `bun:main`. `false` when this thread has no `RuntimeState`.
+fn generate_entry_point(watch: bool) -> bool {
     let state = runtime_state();
     if state.is_null() {
         return false;
     }
     // SAFETY: `state` is the live per-thread `RuntimeState` (boxed in
     // `init_runtime_state`); no other `&mut` to `entry_point` is held here.
-    ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, watch, entry_path).is_ok()
+    ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, watch);
+    true
 }
 
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
@@ -3278,9 +3278,7 @@ fn transpile_source_code_inner(
                 {
                     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
                     return Ok(ResolvedSource {
-                        source_code: bun_core::String::static_(include_bytes!(
-                            "../js/wasi-runner.js"
-                        )),
+                        source_code: own_module_source(WASI_RUNNER_SOURCE),
                         source_url: input_specifier.create_if_different(path.text),
                         tag: ResolvedSourceTag::Esm,
                         ..Default::default()
@@ -3309,7 +3307,7 @@ fn transpile_source_code_inner(
             };
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             Ok(ResolvedSource {
-                source_code: bun_core::String::clone_utf8(sqlite_module_source_code_string),
+                source_code: own_module_source(sqlite_module_source_code_string),
                 source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::Esm,
                 ..Default::default()
@@ -3493,8 +3491,10 @@ fn maybe_watch_file(
     }
 }
 
+pub(crate) static WASI_RUNNER_SOURCE: &[u8] = include_bytes!("../js/wasi-runner.js");
+
 // Generated `bun:sqlite` import shims.
-const SQLITE_MODULE_SOURCE_HOT: &[u8] = b"\
+pub(crate) static SQLITE_MODULE_SOURCE_HOT: &[u8] = b"\
 // Generated code
 import {Database} from 'bun:sqlite';
 const {path} = import.meta;
@@ -3513,10 +3513,21 @@ if (!db) {
 export default db;
 ";
 
-const SQLITE_MODULE_SOURCE: &[u8] = b"\
+pub(crate) static SQLITE_MODULE_SOURCE: &[u8] = b"\
 // Generated code
 import {Database} from 'bun:sqlite';
 export const db = new Database(import.meta.path);
+
+export const __esModule = true;
+export default db;
+";
+
+/// For a database embedded in a standalone executable: `import.meta.path` is under the `/$bunfs/` virtual root.
+pub(crate) static SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
+/* Generated code */
+import {Database} from 'bun:sqlite';
+import {readFileSync} from 'node:fs';
+export const db = new Database(readFileSync(import.meta.path));
 
 export const __esModule = true;
 export default db;
@@ -3570,7 +3581,7 @@ fn get_hardcoded_module(
             }
             use bun_jsc::resolved_source::Tag;
             Some(ResolvedSource {
-                source_code: bun_core::String::clone_utf8(&ep.contents),
+                source_code: own_module_source(ep.contents),
                 source_url: specifier.clone(),
                 tag: Tag::Esm,
                 ..ResolvedSource::default()
@@ -3621,7 +3632,7 @@ fn get_hardcoded_module(
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.
             return Some(ResolvedSource {
-                source_code: bun_core::String::from_bytes(bun_ast::runtime::Runtime::source_code()),
+                source_code: own_module_source(bun_ast::runtime::Runtime::source_code()),
                 source_url: specifier.clone(),
                 ..ResolvedSource::default()
             });
@@ -3691,21 +3702,8 @@ fn __bun_fetch_builtin_module(
         use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 
         if matches!(file.loader, Loader::Sqlite | Loader::SqliteEmbedded) {
-            // Distinct from
-            // [`SQLITE_MODULE_SOURCE`]: the standalone-binary path reads
-            // the embedded blob via `readFileSync(import.meta.path)`
-            // (resolved through the `/$bunfs/` virtual root).
-            const SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
-/* Generated code */
-import {Database} from 'bun:sqlite';
-import {readFileSync} from 'node:fs';
-export const db = new Database(readFileSync(import.meta.path));
-
-export const __esModule = true;
-export default db;
-";
             return Some(ResolvedSource {
-                source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
+                source_code: own_module_source(SQLITE_MODULE_SOURCE_STANDALONE),
                 source_url: specifier.clone(),
                 ..ResolvedSource::default()
             });

@@ -504,6 +504,20 @@ pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
     true
 }
 
+/// `GlobalObject::moduleLoaderResolve`, of an import by `bun:main`: the entry point's path if `specifier` stands for it.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__VM__entryPointImportedByMain(
+    vm: &VirtualMachine,
+    specifier: &bun_core::String,
+    entry_point: &mut bun_core::String,
+) -> bool {
+    if !specifier.eq_ascii(bun_bundler::entry_points::ServerEntryPoint::ENTRY_SPECIFIER) {
+        return false;
+    }
+    *entry_point = bun_core::String::clone_utf8(vm.main());
+    true
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__hasStandaloneModuleGraph() -> bool {
     standalone_module_graph().is_some()
@@ -2768,10 +2782,8 @@ pub struct RuntimeHooks {
     /// `heap::take`s it and clears its thread-local cache. Without this slot
     /// every worker leaked one box.
     pub deinit_runtime_state: unsafe fn(vm: *mut VirtualMachine, state: RuntimeState),
-    /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
-    /// `bun:main` module body for `entry_path`. Returns `false` on error
-    /// (error already logged into `vm.log`).
-    pub generate_entry_point: fn(vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool,
+    /// `ServerEntryPoint.generate(watch)` — picks the source of `bun:main`. `false` when the thread has no runtime state.
+    pub generate_entry_point: fn(watch: bool) -> bool,
     /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
     /// preload promise if any, else null. Errors propagate
     /// (resolver failures / `ModuleNotFound`).
@@ -3483,7 +3495,7 @@ impl VirtualMachine {
         if !self.main_is_html_entrypoint {
             if let Some(hooks) = hooks {
                 let watch = self.is_watcher_enabled();
-                if !(hooks.generate_entry_point)(self, watch, entry_path) {
+                if !(hooks.generate_entry_point)(watch) {
                     return Err(crate::CrateError::ServerEntryPointGenerate);
                 }
             }

@@ -85,6 +85,9 @@ static String internalModuleString(uint32_t offset, uint32_t length)
 static String internalModuleSource(uint32_t id)
 {
     const auto& m = internalModuleRecord(id);
+    // A file is not Bun::isEmbeddedCode().
+    if (JSC::Options::refuseUntrustedCode() || JSC::Options::reportUntrustedCode())
+        return internalModuleString(m.codeOffset, m.codeLength);
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
     WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, ASCIILiteral::fromLiteralUnsafe(InternalModuleRegistryConstants::fileNames[id]));
     auto contents = WTF::FileSystemImpl::readEntireFile(file);

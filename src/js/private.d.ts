@@ -267,6 +267,13 @@ declare function $newCppFunction<T = (...args: any) => any>(
   symbol: string,
   argCount: number,
 ): T;
+/** The function is compiled under `ASSERT_ENABLED` only. A build without assertions has `undefined` here. */
+declare function $newCppFunction<T = (...args: any) => any>(
+  filename: NativeFilenameCPP,
+  symbol: string,
+  argCount: number,
+  only: "assertions",
+): T | undefined;
 declare function $newRustFunction<T = (...args: any) => any>(
   filename: NativeFilenameRust,
   symbol: string,

@@ -67,6 +67,7 @@ These keep working at both levels:
 - Importing module files, with literal or computed specifiers, and modules embedded in a [compiled executable](/bundler/executables).
 - `new Worker()` with a file.
 - `require()` and `createRequire()` of files and built-in modules.
+- In a compiled executable with `=strict`, "file" in the three lines above means an embedded one. See [Only what is embedded runs](#only-what-is-embedded-runs).
 - `Bun.ModuleGraph`.
 - `JSON.parse()`, `RegExp`, and `eval()` of a value that is not a string.
 - WebAssembly.
@@ -146,6 +147,64 @@ Write the value with `=`. In `--compile-exec-argv="--disallow-code-generation-fr
 
 A compiled executable does not read its own command line as Bun flags. `./server --preload ./x.js` passes both arguments to the program in `process.argv`.
 
+### Only what is embedded runs
+
+In a compiled executable, `=strict` is an allow-list. The engine runs two kinds of JavaScript:
+
+- Bun's own built-in modules and functions.
+- The JavaScript modules embedded in the executable, and their bytecode when you build with `--bytecode`.
+
+It refuses everything else, with an `EvalError` that you can catch:
+
+```txt
+EvalError: Refused to run untrusted code: /app/plugins/extra.js
+```
+
+Bun makes this check in the engine, at the one place where code is made ready to run. It does not depend on the API that the code came through, so it also holds for a way in that the tables above do not list.
+
+| At run time                                                                                         | `=strict` in a compiled executable                    |
+| --------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `import()`, `require()` or `new Worker()` of an embedded module                                     | works                                                 |
+| `import()`, `require()` or `new Worker()` of a JavaScript or TypeScript file on disk                | refused, including a file that the program just wrote |
+| `--preload`, `--import` or `--require` in `BUN_OPTIONS`                                             | refused: Bun prints the error and exits               |
+| `import()` of an embedded file that is not JavaScript, such as an asset                             | refused                                               |
+| [Macros](/bundler/macros), in a file on disk or in text given to `Bun.Transpiler`                   | refused                                               |
+| A `.jsc` file beside a script, a `module.enableCompileCache()` entry, a transpiler cache entry      | not used                                              |
+| `import()` or `require()` of a `.json`, `.jsonc`, `.json5`, `.toml`, `.yaml` or `.xml` file on disk | works: Bun makes the value without making code        |
+| `import()` of a database on disk with `{ type: "sqlite" }`                                          | works                                                 |
+| `import()` or `require()` of a `.txt` or `.md` file on disk, or of any file with `{ type: "text" }` | refused: read the file with `Bun.file()` instead      |
+
+Bun knows an embedded module by where its text is in the executable's image, not by what the text says. A file with the same text as an embedded module is refused. At startup, Bun takes away the process's own write access to that part of the image.
+
+Without `--compile` there is nothing embedded, so `=strict` keeps loading files from disk.
+
+### Finding out what would be refused
+
+Set `BUN_JSC_reportUntrustedCode=1` to log every refusal, once each, to stderr. On its own the variable refuses nothing. To see what an application would lose, compile it without `=strict` and run it with the variable:
+
+```bash icon="terminal" terminal
+bun build --compile ./server.ts --outfile server
+BUN_JSC_reportUntrustedCode=1 ./server
+```
+
+```txt
+[untrusted code] module: /app/plugins/extra.js
+[untrusted code] link: (no source URL)
+    at eval@[native code]
+    at render@/$bunfs/root/server:412:16
+```
+
+Each report has the place in the engine that would have refused, the URL of the source, and the stack:
+
+| Place      | What was about to happen                                                        |
+| ---------- | ------------------------------------------------------------------------------- |
+| `module`   | A module was about to be parsed                                                 |
+| `program`  | A script was about to run, which includes a CommonJS module                     |
+| `link`     | A function, `eval()` code, script or module was about to run for the first time |
+| `bytecode` | Cached bytecode was about to be decoded                                         |
+
+An executable compiled with `=strict` logs what it refuses when you set the variable. No environment variable turns the refusals off.
+
 ### `data:` URLs written in the source
 
 The bundler resolves a `data:` URL that is written as a literal when it builds. That module is part of the executable, like any file the program imports, so it loads at both levels. A `data:` URL that the program puts together at run time is a string that becomes code, so `=strict` refuses it:
@@ -195,9 +254,10 @@ The option is on in the builds of Bun that we publish.
 
 ## What the flag does not cover
 
-- **Files.** A program that writes a file and then imports it runs that file. Importing files is what a program does, so the flag allows it. Use file system permissions to limit what the process can write.
+- **Files.** Outside a compiled executable, a program that writes a file and then imports it runs that file. Importing files is what a program does, so the flag allows it. Use file system permissions to limit what the process can write, or [compile the program](#only-what-is-embedded-runs).
 - **Startup.** The entry point, a file given to `--preload`, `--import` or `--require`, and `bun -e` are the program. So is what you type into `bun repl`. The flag applies to what the program does once it runs. A `data:` URL given to `--preload`, `--import` or `--require` is not a file, and `=strict` refuses it like any other `data:` URL.
-- **`BUN_OPTIONS`.** Bun reads `BUN_OPTIONS` in a compiled executable too. It cannot lower the level, but `--preload` in `BUN_OPTIONS` loads a file before the entry point.
+- **`BUN_OPTIONS`.** Bun reads `BUN_OPTIONS` in a compiled executable too. It cannot lower the level. With the flag and no value, `--preload` in `BUN_OPTIONS` loads a file before the entry point.
+- **The executable file.** Whoever can replace or edit a compiled executable decides what is embedded in it.
 - **`BUN_BE_BUN`.** With `BUN_BE_BUN=1`, a compiled executable runs as the `bun` CLI. The embedded program does not start, and the flags embedded with it do not apply.
 - **Native code.** A native addon, or a library loaded with `bun:ffi`, can do what native code can do. `--no-addons` refuses `process.dlopen()` and `cc()` from `bun:ffi`, and `--no-ffi-cc` refuses `cc()`. Neither one refuses `dlopen()`, `linkSymbols()` or `CFunction()` from `bun:ffi`.
 - **Child processes.** A process that the program spawns has its own flags.

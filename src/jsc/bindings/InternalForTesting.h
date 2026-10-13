@@ -5,6 +5,9 @@
 
 namespace Bun {
 
+#if ASSERT_ENABLED
+JSC_DECLARE_HOST_FUNCTION(jsFunction_evaluateAsProgram);
+#endif
 JSC_DECLARE_HOST_FUNCTION(jsFunction_arrayBufferViewHasBuffer);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_hasReifiedStatic);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_isASANEnabled);

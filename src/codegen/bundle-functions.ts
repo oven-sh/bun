@@ -487,6 +487,10 @@ static constexpr unsigned internalCombinedSourceStarts[] = { ${files.flatMap(({ 
 RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider() {
     return JSC::BuiltinsSourceProvider::create(StringImpl::createWithoutCopying(internalCombinedSource), internalCombinedSourceStarts);
 }
+
+std::span<const Latin1Character> builtinsSource() {
+    return internalCombinedSource;
+}
 `;
 
   bundledCPP += `

@@ -52,6 +52,7 @@ pub(crate) mod shell;
 #[path = "api.rs"]
 pub(crate) mod api;
 pub(crate) mod dispatch;
+pub(crate) mod embedded_code;
 pub(crate) mod hw_exports;
 pub(crate) mod ipc;
 pub(crate) mod ipc_host;

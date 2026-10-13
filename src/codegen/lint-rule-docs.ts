@@ -373,6 +373,9 @@ export type Report = [line: number, column: number, endLine: number, endColumn: 
 /** What the page's rule reports in an example, or why the example couldn't be linted. */
 export type Outcome = { reports: Report[]; error?: string };
 
+/** Pages of rules whose message has a path with `\` in it on Windows. In other messages a `\` is part of what they say. */
+const joinsPaths = new Set(["import/named", "import/no-relative-packages"]);
+
 /** Lints every example, each in a directory of its own in `dir`. */
 export async function lintExamples(dir: string, examples: Example[], byPage: Map<string, Rule>, lint: Lint) {
   const outcomes = new Map<Example, Outcome>();
@@ -383,8 +386,10 @@ export async function lintExamples(dir: string, examples: Example[], byPage: Map
     writeFileSync(path, content)
   );
   // A few messages name a file by its whole path. Make that `/project/file.js` on every machine.
-  const portable = (it: Example, message: string) =>
-    message.replace(new RegExp(`[^\\s'"\`]*${nameOf(it)}[\\\\/]`, "g"), "/project/");
+  const portable = (it: Example, message: string) => {
+    const said = message.replace(new RegExp(`[^\\s'"\`]*${nameOf(it)}[\\\\/]`, "g"), "/project/");
+    return joinsPaths.has(it.page) ? said.replaceAll("\\", "/") : said;
+  };
 
   put(join(dir, "package.json"), JSON.stringify({ dependencies: { react: "^19.0.0" } }));
   for (const it of examples) {

@@ -764,8 +764,16 @@ pub(crate) fn lint(
             if file.config.language.is_oxlint {
                 if !was_refused && !context.parses(file.path, &fixed.output, file.config) {
                     context.note_broken_fixes(file.path, fixed.applied);
+                    // What oxlint's own rules fixed is written before tsgolint lints.
+                    let (is_fixed, fixes) = (state.is_after_own_fixes, state.fixes);
                     *state = Fixing {
-                        current: file.text.clone(),
+                        current: if is_fixed {
+                            Some(text.clone())
+                        } else {
+                            file.text.clone()
+                        },
+                        is_fixed,
+                        fixes: if is_fixed { fixes } else { 0 },
                         is_over: true,
                         ..Fixing::default()
                     };

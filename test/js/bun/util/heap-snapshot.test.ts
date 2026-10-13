@@ -1,6 +1,10 @@
 import { estimateShallowMemoryUsageOf, heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import path from "node:path";
 import { parseHeapSnapshot, summarizeByType } from "./heap";
+
+type InspectorSnapshot = Bun.HeapSnapshot & { type: "Inspector" };
 
 describe("Native types report their size correctly", () => {
   it("FormData", () => {
@@ -18,7 +22,7 @@ describe("Native types report their size correctly", () => {
     expect(afterBlob2).toBeGreaterThan(afterBlob + 1024 * 1024 * 2);
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
@@ -37,7 +41,7 @@ describe("Native types report their size correctly", () => {
     globalThis.request = request;
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
@@ -56,7 +60,7 @@ describe("Native types report their size correctly", () => {
     globalThis.response = response;
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
@@ -90,7 +94,7 @@ describe("Native types report their size correctly", () => {
     url.search = searchParams.toString();
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
@@ -110,7 +114,7 @@ describe("Native types report their size correctly", () => {
     expect(after).toBeGreaterThan(original + 1000 * 2);
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
@@ -134,7 +138,7 @@ describe("Native types report their size correctly", () => {
     globalThis.headers = headers;
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
@@ -190,12 +194,33 @@ describe("Native types report their size correctly", () => {
     expect(after).toBeGreaterThan(original + 1024 * 128);
 
     const snapshot = Bun.generateHeapSnapshot();
-    const parsed = parseHeapSnapshot(snapshot);
+    const parsed = parseHeapSnapshot(snapshot as InspectorSnapshot);
     const summariesList = Array.from(summarizeByType(parsed));
     const summariesMap = new Map(summariesList.map(summary => [summary.name, summary]));
 
     expect(summariesMap.get("WebSocket")?.size).toBeGreaterThan(1024 * 128);
 
     delete globalThis.ws;
+  });
+});
+
+describe("CommonJS Module cached slots are visible in heap snapshots", () => {
+  it("reports children and _compile as property edges", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(__dirname, "commonjs-module-heap-snapshot-fixture.cjs")],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    // Every WriteBarrier slot appendHidden'd in visitChildren needs a matching
+    // analyzePropertyNameEdge, or it retains memory with no visible retainer path.
+    // Without it these names still appear, but only as CustomGetterSetter accessor edges.
+    const targetsByName = JSON.parse(stdout);
+    expect(targetsByName["_compile"]).toContain("Function");
+    expect(targetsByName["children"]).toContain("Array");
+    expect(exitCode).toBe(0);
   });
 });

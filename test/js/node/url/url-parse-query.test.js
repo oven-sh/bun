@@ -17,7 +17,7 @@ describe("url.parse", () => {
     assert.strictEqual(query.toString, undefined);
   });
 
-  test.todo("with query string", () => {
+  test("with query string", () => {
     function createWithNoPrototype(properties = []) {
       const noProto = { __proto__: null };
       properties.forEach(property => {

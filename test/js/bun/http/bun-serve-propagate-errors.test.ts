@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("Bun.serve() propagates errors to the parent fixture", async () => {
   const code = `import { test } from "bun:test";
@@ -17,7 +17,7 @@ test("Bun.serve() propagates errors to the parent", async () => {
   server.stop(true);
 });
 `;
-  const dir = tempDirWithFiles("propagate-errors", {
+  await using dir = tempDir("propagate-errors", {
     "package.json": JSON.stringify({
       name: "test",
       version: "0.0.0",

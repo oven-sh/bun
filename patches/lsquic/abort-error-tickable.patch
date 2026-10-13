@@ -1,0 +1,17 @@
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -9258,6 +9258,14 @@
+     LSQ_INFO("abort error: is_app: %d; error code: %u; error str: %s",
+         is_app, error_code, err_str);
+     ABORT_QUIETLY(is_app, error_code, "%s", err_str);
++    /* bun: ABORT_QUIETLY only raises IFC_ERROR; it does not make the
++     * connection tickable. immediate_close() -- which turns that error into
++     * the CONNECTION_CLOSE frame -- only runs from the connection's tick, so
++     * without this the frame waits for whatever ticks the connection next
++     * (an idle or retransmission alarm, potentially seconds away) even though
++     * the application asked to abort now. ci_close() marks it for the same
++     * reason. */
++    lsquic_engine_add_conn_to_tickable(conn->ifc_enpub, lconn);
+ }
+ 
+ 

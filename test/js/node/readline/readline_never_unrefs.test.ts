@@ -5,7 +5,8 @@ test("readline should unref", () => {
     cmd: [bunExe(), import.meta.dir + "/readline_never_unrefs.js"],
     env: bunEnv,
     stdio: ["inherit", "pipe", "pipe"],
-    timeout: 1000,
+    // Loading the v26 readline stack alone is ~3s under debug+asan.
+    timeout: 10_000,
   });
   expect(res.exitCode).toBe(0);
 });

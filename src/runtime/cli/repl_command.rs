@@ -14,7 +14,7 @@ use core::ptr::NonNull;
 
 use crate::dns_jsc::Order as DnsOrder;
 use bun_alloc::Arena;
-use bun_core::ZigString;
+use bun_core::EncodedSlice;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc, JSGlobalObject};
@@ -55,8 +55,10 @@ impl ReplCommand {
             )?;
         }
 
-        // Initialize JSC
-        jsc::initialize(true); // true for eval mode
+        jsc::initialize(jsc::InitializeOptions {
+            eval_mode: true,
+            ..Default::default()
+        });
 
         bun_ast::initialize_store();
         // The arena is threaded into VirtualMachine (vm.arena). `bun_alloc::Arena`
@@ -104,22 +106,13 @@ impl ReplCommand {
         b.options.install = install_ptr;
         b.resolver.opts.install = install_ptr;
         b.resolver.opts.global_cache = ctx.debug.global_cache;
-        b.resolver.opts.prefer_offline_install = ctx
+        let offline = ctx
             .debug
             .offline_mode_setting
-            .unwrap_or(OfflineMode::Online)
-            == OfflineMode::Offline;
-        let prefer_latest = ctx
-            .debug
-            .offline_mode_setting
-            .unwrap_or(OfflineMode::Online)
-            == OfflineMode::Latest;
-        // The resolver's `BundleOptions` stub has no `prefer_latest_install` field and the
-        // resolver never reads it; only the bundler-side mirror carries it (matches
-        // run_command.rs / production.rs).
+            .unwrap_or(OfflineMode::Online);
+        b.resolver.opts.install_preference = offline;
         b.options.global_cache = b.resolver.opts.global_cache;
-        b.options.prefer_offline_install = b.resolver.opts.prefer_offline_install;
-        b.options.prefer_latest_install = prefer_latest;
+        b.options.install_preference = offline;
         b.resolver.env_loader = NonNull::new(b.env);
         b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
         b.options.dead_code_elimination = false; // REPL needs all code
@@ -188,7 +181,6 @@ impl ReplCommand {
     fn dump_build_error(vm: &VirtualMachine) {
         Output::flush();
         let writer = Output::error_writer_buffered();
-        // defer Output.flush()
         let _flush = Output::flush_guard();
         if let Some(log) = vm.log {
             // SAFETY: log is a valid NonNull<Log> for the VM lifetime.
@@ -215,7 +207,7 @@ struct ReplRunner<'a, 'r> {
 }
 
 impl<'a, 'r> ReplRunner<'a, 'r> {
-    pub(crate) fn start(this: &mut ReplRunner<'a, 'r>) {
+    fn start(this: &mut ReplRunner<'a, 'r>) {
         let _ = this.vm;
         let vm = VirtualMachine::get().as_mut();
 
@@ -280,15 +272,10 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         // SAFETY: transpiler.env is a valid *mut Loader set during VM init.
         if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
             if !tz.is_empty() {
-                // SAFETY: vm.global is valid; ZigString borrows `tz` for the FFI call duration.
-                // `JSGlobalObject::set_time_zone` isn't exposed on the Rust
-                // wrapper yet — call the underlying C++ export directly.
-                let _ = unsafe { JSGlobalObject__setTimeZone(vm.global, &ZigString::init(tz)) };
+                let _ = vm.global().set_time_zone(&EncodedSlice::from_bytes(tz));
             }
         }
 
-        // SAFETY: transpiler.env is valid.
-        unsafe { (*vm.transpiler.env).load_tracy() };
         Ok(())
     }
 }
@@ -296,12 +283,6 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
 // Local extern declarations for C++ exports the bun_jsc wrappers don't expose yet.
 unsafe extern "C" {
     fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
-    // Local shim for `JSGlobalObject::setTimeZone` (ZigGlobalObject.cpp) until
-    // bun_jsc grows a wrapper.
-    fn JSGlobalObject__setTimeZone(
-        global: *const JSGlobalObject,
-        time_zone: *const ZigString,
-    ) -> bool;
 }
 
 use bun_bundler::options::EnvBehavior;

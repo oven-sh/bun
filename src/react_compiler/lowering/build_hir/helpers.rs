@@ -87,6 +87,7 @@ pub(super) fn expression_type_name(expr: &Expr) -> &'static str {
         Data::EImport(_) => "CallExpression",
         Data::EAwait(_) => "AwaitExpression",
         Data::EYield(_) => "YieldExpression",
+        Data::ETemplate(template) if template.tag.is_some() => "TaggedTemplateExpression",
         Data::ETemplate(_) => "TemplateLiteral",
         Data::EArrow(_) => "ArrowFunctionExpression",
         Data::EFunction(_) => "FunctionExpression",
@@ -161,27 +162,7 @@ pub(super) fn build_temporary_place(
 }
 
 pub(super) fn promote_temporary(builder: &mut HirBuilder, identifier_id: IdentifierId) {
-    let env = builder.environment_mut();
-    let decl_id = env.identifiers[identifier_id.0 as usize].declaration_id;
-    let mut buf = [0u8; 12];
-    buf[0] = b'#';
-    buf[1] = b't';
-    let mut n = decl_id.0;
-    let mut len = 2usize;
-    if n == 0 {
-        buf[len] = b'0';
-        len += 1;
-    } else {
-        let start = len;
-        while n > 0 {
-            buf[len] = b'0' + (n % 10) as u8;
-            len += 1;
-            n /= 10;
-        }
-        buf[start..len].reverse();
-    }
-    env.identifiers[identifier_id.0 as usize].name =
-        Some(IdentifierName::Promoted(arena_str(&buf[..len])));
+    builder.environment_mut().promote_temporary(identifier_id);
 }
 
 pub(super) fn lower_value_to_temporary(
@@ -211,7 +192,29 @@ pub(super) fn lower_expression_to_temporary(
     expr: &Expr,
 ) -> Result<Place, CompilerError> {
     let value = lower_expression(builder, expr)?;
-    lower_value_to_temporary(builder, value)
+    let place = lower_value_to_temporary(builder, value)?;
+    match builder.type_cast_around(expr.loc) {
+        None => Ok(place),
+        Some(cast) => lower_type_cast(builder, place, cast),
+    }
+}
+
+/// Not inlined: what calls it calls itself along the source.
+#[inline(never)]
+fn lower_type_cast(
+    builder: &mut HirBuilder,
+    value: Place,
+    cast: ast::Loc,
+) -> Result<Place, CompilerError> {
+    let cast = InstructionValue::TypeCastExpression {
+        value,
+        type_: Type::Poly,
+        type_annotation_name: None,
+        type_annotation_kind: Some("as"),
+        type_annotation: None,
+        loc: convert_loc(cast),
+    };
+    lower_value_to_temporary(builder, cast)
 }
 
 // =============================================================================
@@ -501,6 +504,9 @@ pub(super) fn lower_assignment(
     value: Place,
     assignment_style: AssignmentStyle,
 ) -> Result<Option<Place>, CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     match &target.data {
         Data::EIdentifier(_) | Data::EImportIdentifier(_) => {
             let ref_ = assignment_target_ref(target).unwrap();
@@ -749,6 +755,8 @@ pub(super) fn lower_assignment(
             let mut properties: HirVec<ObjectPropertyOrSpread> = AstAlloc::vec();
             let mut followups: Vec<(Place, &Expr, Option<&Expr>)> = Vec::new();
 
+            let config = &builder.environment().config;
+            let with_keys = config.captured_targets_with_keys_force_temporaries;
             let force_temporaries = if kind == InstructionKind::Reassign {
                 let mut found = false;
                 for prop in pattern.properties.iter() {
@@ -761,6 +769,14 @@ pub(super) fn lower_assignment(
                         break;
                     };
                     match assignment_target_ref(val) {
+                        Some(ref_)
+                            if with_keys
+                                && !prop.flags.contains(ast::flags::Property::WasShorthand)
+                                && builder.is_context_identifier(ref_) =>
+                        {
+                            found = true;
+                            break;
+                        }
                         Some(ref_) => {
                             match builder.resolve_identifier(ref_, convert_loc(val.loc))? {
                                 VariableBinding::Identifier { .. } => {}
@@ -1144,7 +1160,7 @@ pub(super) fn lower_object_property_key(
         }
         Data::ENumber(n) if !computed => {
             let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(24);
-            core::fmt::write(&mut WriteBytes(&mut buf), format_args!("{}", n.value())).ok();
+            let _ = core::fmt::write(&mut WriteBytes(&mut buf), format_args!("{}", n.value()));
             Ok(Some(ObjectPropertyKey::Identifier {
                 name: StoreStr::new(buf.leak()),
             }))
@@ -1199,11 +1215,14 @@ pub(super) fn lower_optional_member_expression(
 }
 
 /// Returns (object, value_place) pair.
-pub(super) fn lower_optional_member_expression_impl(
+fn lower_optional_member_expression_impl(
     builder: &mut HirBuilder,
     expr: &Expr,
     parent_alternate: Option<BlockId>,
 ) -> Result<(Place, Place), CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     let optional = matches!(optional_chain_of(expr), Some(OptionalChain::Start));
     let loc = convert_loc(expr.loc);
     let place = build_temporary_place(builder, loc);
@@ -1319,11 +1338,14 @@ pub(super) fn lower_optional_call_expression(
     lower_optional_call_expression_impl(builder, expr, None)
 }
 
-pub(super) fn lower_optional_call_expression_impl(
+fn lower_optional_call_expression_impl(
     builder: &mut HirBuilder,
     expr: &Expr,
     parent_alternate: Option<BlockId>,
 ) -> Result<InstructionValue, CompilerError> {
+    if !builder.environment().has_stack() {
+        return Err(crate::lowering::nested_too_deeply().into());
+    }
     let Data::ECall(call) = &expr.data else {
         return Err(cold_todo(
             "lower_optional_call_expression: expected ECall",

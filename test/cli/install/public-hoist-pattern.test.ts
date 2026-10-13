@@ -1,10 +1,11 @@
 import { spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readlinkSync } from "fs";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall } from "harness";
+import { bunEnv, bunExe, readdirSorted, runBunInstall } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();
@@ -358,11 +359,14 @@ public-hoist-pattern[]=!no-deps`,
       // Manually write invalid bunfig
       await write(
         join(packageDir, "bunfig.toml"),
-        `[install]
-cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-registry = "${registry.registryUrl()}"
-linker = "isolated"
-publicHoistPattern = 123`,
+        Bun.TOML.stringify({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            registry: registry.registryUrl(),
+            linker: "isolated",
+            publicHoistPattern: 123,
+          },
+        }),
       );
 
       const { stderr, exited } = spawn({
@@ -394,11 +398,14 @@ publicHoistPattern = 123`,
       // Should error from boolean in the array
       await write(
         join(packageDir, "bunfig.toml"),
-        `[install]
-cache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"
-registry = "${registry.registryUrl()}"
-linker = "isolated"
-publicHoistPattern = ["*types*", true]`,
+        Bun.TOML.stringify({
+          install: {
+            cache: join(packageDir, ".bun-cache"),
+            registry: registry.registryUrl(),
+            linker: "isolated",
+            publicHoistPattern: ["*types*", true],
+          },
+        }),
       );
 
       const { stderr, exited } = spawn({

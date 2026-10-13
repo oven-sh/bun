@@ -22,9 +22,6 @@
 
 #include "DOMWrapperWorld.h"
 
-// #include "JSDOMWindow.h"
-#include "WebCoreJSClientData.h"
-// #include "WindowProxy.h"
 #include "ZigGlobalObject.h"
 #include <wtf/MainThread.h>
 
@@ -48,24 +45,5 @@ DOMWrapperWorld::~DOMWrapperWorld()
     ASSERT(clientData);
     // static_cast<JSVMClientData*>(clientData)->forgetWorld(*this);
 }
-
-void DOMWrapperWorld::clearWrappers()
-{
-    m_wrappers.clear();
-}
-
-DOMWrapperWorld& normalWorld(JSC::VM& vm)
-{
-    VM::ClientData* clientData = vm.clientData;
-    ASSERT(clientData);
-    return static_cast<JSVMClientData*>(clientData)->normalWorld();
-}
-
-// DOMWrapperWorld& mainThreadNormalWorld()
-// {
-//     ASSERT(isMainThread());
-//     // static DOMWrapperWorld& cachedNormalWorld = normalWorld(commonVM());
-//     return cachedNormalWorld;
-// }
 
 } // namespace WebCore

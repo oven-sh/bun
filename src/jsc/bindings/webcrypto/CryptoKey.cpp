@@ -28,14 +28,7 @@
 
 #if ENABLE(WEB_CRYPTO)
 
-#include "CryptoAlgorithmRegistry.h"
-#include "WebCoreOpaqueRoot.h"
-#include <wtf/CryptographicallyRandomNumber.h>
 #include <openssl/rand.h>
-#include <openssl/evp.h>
-#include "CryptoKeyRSA.h"
-#include "CryptoKeyEC.h"
-#include "CryptoKeyHMAC.h"
 namespace WebCore {
 
 CryptoKey::CryptoKey(CryptoAlgorithmIdentifier algorithmIdentifier, Type type, bool extractable, CryptoKeyUsageBitmap usages)
@@ -50,30 +43,33 @@ CryptoKey::~CryptoKey() = default;
 
 auto CryptoKey::usages() const -> Vector<CryptoKeyUsage>
 {
-    // The result is ordered alphabetically.
+    // Ordered to match the KeyUsage enum declaration order in the WebCrypto spec.
     Vector<CryptoKeyUsage> result;
-    if (m_usages & CryptoKeyUsageDecrypt)
-        result.append(CryptoKeyUsage::Decrypt);
-    if (m_usages & CryptoKeyUsageDeriveBits)
-        result.append(CryptoKeyUsage::DeriveBits);
-    if (m_usages & CryptoKeyUsageDeriveKey)
-        result.append(CryptoKeyUsage::DeriveKey);
     if (m_usages & CryptoKeyUsageEncrypt)
         result.append(CryptoKeyUsage::Encrypt);
+    if (m_usages & CryptoKeyUsageDecrypt)
+        result.append(CryptoKeyUsage::Decrypt);
     if (m_usages & CryptoKeyUsageSign)
         result.append(CryptoKeyUsage::Sign);
-    if (m_usages & CryptoKeyUsageUnwrapKey)
-        result.append(CryptoKeyUsage::UnwrapKey);
     if (m_usages & CryptoKeyUsageVerify)
         result.append(CryptoKeyUsage::Verify);
+    if (m_usages & CryptoKeyUsageDeriveKey)
+        result.append(CryptoKeyUsage::DeriveKey);
+    if (m_usages & CryptoKeyUsageDeriveBits)
+        result.append(CryptoKeyUsage::DeriveBits);
     if (m_usages & CryptoKeyUsageWrapKey)
         result.append(CryptoKeyUsage::WrapKey);
+    if (m_usages & CryptoKeyUsageUnwrapKey)
+        result.append(CryptoKeyUsage::UnwrapKey);
+    if (m_usages & CryptoKeyUsageEncapsulateKey)
+        result.append(CryptoKeyUsage::EncapsulateKey);
+    if (m_usages & CryptoKeyUsageEncapsulateBits)
+        result.append(CryptoKeyUsage::EncapsulateBits);
+    if (m_usages & CryptoKeyUsageDecapsulateKey)
+        result.append(CryptoKeyUsage::DecapsulateKey);
+    if (m_usages & CryptoKeyUsageDecapsulateBits)
+        result.append(CryptoKeyUsage::DecapsulateBits);
     return result;
-}
-
-WebCoreOpaqueRoot root(CryptoKey* key)
-{
-    return WebCoreOpaqueRoot { key };
 }
 
 Vector<uint8_t> CryptoKey::randomData(size_t size)

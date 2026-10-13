@@ -19,19 +19,15 @@ use crate::build_command::BuildCommand;
 use crate::cli::Cli;
 use crate::command::{self, Context, ContextData};
 
-pub fn update_package_json_and_install_catch_error(
+pub(crate) fn update_package_json_and_install_catch_error(
     ctx: Context,
     subcommand: Subcommand,
 ) -> Result<(), Error> {
     match update_package_json_and_install(ctx, subcommand) {
         Ok(()) => Ok(()),
-        Err(
-            crate::Error::InstallFailed
-            | crate::Error::InvalidPackageJSON
-            | crate::Error::Install(
-                bun_install::Error::InstallFailed | bun_install::Error::InvalidPackageJSON,
-            ),
-        ) => {
+        Err(crate::Error::Install(
+            bun_install::Error::InstallFailed | bun_install::Error::InvalidPackageJSON,
+        )) => {
             // SAFETY: `Cli::LOG_` is initialised once during single-threaded startup in
             // `Cli::start()` before any command (including this one) is dispatched; we
             // are on the single CLI thread in the install error path and no other
@@ -44,7 +40,10 @@ pub fn update_package_json_and_install_catch_error(
     }
 }
 
-pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> Result<(), Error> {
+pub(crate) fn update_package_json_and_install(
+    ctx: Context,
+    subcommand: Subcommand,
+) -> Result<(), Error> {
     // Calling with runtime `subcommand` here; if
     // `parse` requires `<const CMD: Subcommand>`, expand to a `match`.
     let mut cli = CommandLineArguments::parse(subcommand)?;

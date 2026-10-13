@@ -4,7 +4,7 @@ bun_opaque::opaque_ffi! {
 }
 
 impl SourceProvider {
-    pub fn deref(&mut self) {
+    pub(crate) fn deref(&mut self) {
         JSC__SourceProvider__deref(self)
     }
 }

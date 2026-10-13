@@ -6,10 +6,8 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // `bun_core::WTFStringImpl` is the *pointer* type (= `*mut WTFStringImplStruct`).
 use bun_core::WTFStringImpl;
-use bun_jsc::StringJsc as _; // extension trait providing `.to_js()` on `bun_core::String`
 
 pub(crate) type Hash = u32;
 
@@ -23,34 +21,21 @@ pub type Callback = unsafe fn(ctx: *mut c_void, str: *mut RefString);
 
 pub struct RefString {
     pub ptr: *const u8,
-    pub len: usize,
-    pub hash: Hash,
+    pub(crate) len: usize,
+    pub(crate) hash: Hash,
     // `impl` is a Rust keyword — renamed to `impl_`.
-    pub impl_: WTFStringImpl,
+    pub(crate) impl_: WTFStringImpl,
 
     // No per-instance allocator — non-AST crate uses the
     // global mimalloc allocator (see PORTING.md §Allocators). `destroy` below
     // frees via `heap::take`.
     pub ctx: Option<NonNull<c_void>>,
-    pub on_before_deinit: Option<Callback>,
+    pub(crate) on_before_deinit: Option<Callback>,
 }
 
 impl RefString {
-    pub fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // Wrap the raw
-        // `WTFStringImpl` pointer without bumping the refcount (`String` has
-        // no `Drop`, so this is adopt-then-forget).
-        bun_core::String::adopt_wtf_impl(self.impl_).to_js(global)
-    }
-
-    pub fn compute_hash(input: &[u8]) -> u32 {
+    pub(crate) fn compute_hash(input: &[u8]) -> u32 {
         bun_hash::XxHash32::hash(0, input)
-    }
-
-    pub fn slice(&self) -> &[u8] {
-        self.ref_();
-
-        self.leak()
     }
 
     /// Single audited deref of the set-once `impl_` backref so `ref_` /
@@ -88,7 +73,7 @@ impl RefString {
     /// SAFETY: `this` must be the unique live reference to a `RefString`
     /// previously allocated via `heap::alloc` (or equivalent). After this
     /// call `this` is dangling.
-    pub unsafe fn destroy(this: *mut RefString) {
+    pub(crate) unsafe fn destroy(this: *mut RefString) {
         // SAFETY: caller contract — `this` is the unique live pointer to a
         // `Box<RefString>`-allocated value whose `ptr`/`len` describe a
         // `Box<[u8]>`-allocated buffer. All raw derefs and `from_raw` calls

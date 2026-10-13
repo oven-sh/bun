@@ -921,9 +921,9 @@ function emitBakeCodegen({ n, cfg, sources, o, dirStamp }: Ctx): void {
   o.rustInputs.push(...outputs);
 }
 
-/** A `*_test.bind.ts` binds what exists for tests. Only a build with assertions has it, and none of those ships. */
+/** A `*_test.bind.ts` binds what exists for tests. Only a build where Rust has `debug_assertions` has it, and none ships. */
 function hasSchema(cfg: CodegenFields, src: string): boolean {
-  return cfg.assertions || !src.endsWith("_test.bind.ts");
+  return cfg.debug || cfg.assertions || !src.endsWith("_test.bind.ts");
 }
 
 function withoutBindings(cfg: CodegenFields, sources: Sources): string {

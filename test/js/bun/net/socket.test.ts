@@ -6476,3 +6476,15 @@ it("socket and tls options are not read from Object.prototype", async () => {
     for (const name of Object.keys(polluted)) delete (Object.prototype as any)[name];
   }
 });
+
+it("a view of shared memory as a tls option is refused", () => {
+  const shared = new SharedArrayBuffer(8);
+  const values = [shared, new Uint8Array(shared), new DataView(shared), Buffer.from(shared), [new Uint8Array(shared)]];
+  for (const name of ["key", "cert", "ca", "crl", "ALPNProtocols"]) {
+    for (const value of values) {
+      expect(() =>
+        Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} }, tls: { [name]: value } as any }),
+      ).toThrow(expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE" }));
+    }
+  }
+});

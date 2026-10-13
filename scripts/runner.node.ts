@@ -2357,9 +2357,8 @@ function parseTestStdout(stdout: string, testPath?: string): TestOutput {
         continue;
       }
 
-      const eol = string.lastIndexOf(" [") || undefined;
-      const test = string.substring(1 + emoji.length, eol);
-      const duration = eol ? string.substring(eol + 2, string.lastIndexOf("]")) : undefined;
+      const duration = / \[(\d+\.\d+m?s)\]$/.exec(string);
+      const test = string.substring(1 + emoji.length, duration?.index);
 
       tests.push({
         url: testPath === undefined ? undefined : getFileUrl(testPath),
@@ -2367,7 +2366,7 @@ function parseTestStdout(stdout: string, testPath?: string): TestOutput {
         test,
         status: text,
         errors: testErrors,
-        duration: parseDuration(duration),
+        duration: parseDuration(duration?.[1]),
       });
 
       for (let error of testErrors) {

@@ -874,24 +874,6 @@ static bool hasInvalidHeaderChar(StringView text, bool lenient)
     return text.is8Bit() ? hasInvalidHeaderChar(text.span8(), lenient) : hasInvalidHeaderChar(text.span16(), lenient);
 }
 
-// The test of node:http's /(?:^|\W)token(?:$|\W)/i. `lowerToken` is lowercase ASCII letters.
-static bool rawHeadValueHasToken(StringView value, ASCIILiteral lowerToken)
-{
-    const size_t n = value.length(), m = lowerToken.length();
-    for (size_t i = 0; i + m <= n; i++) {
-        size_t matched = 0;
-        while (matched < m && toASCIILower(value[i + matched]) == lowerToken[matched])
-            matched++;
-        if (matched != m)
-            continue;
-        bool leftOk = i == 0 || !(isASCIIAlphanumeric(value[i - 1]) || value[i - 1] == '_');
-        bool rightOk = i + m == n || !(isASCIIAlphanumeric(value[i + m]) || value[i + m] == '_');
-        if (leftOk && rightOk)
-            return true;
-    }
-    return false;
-}
-
 // `list.length`, as the `i < list.length` of Node's loops reads it on each turn.
 static double rawHeadListLength(JSGlobalObject* globalObject, JSObject* list)
 {
@@ -932,7 +914,7 @@ static void appendRawHeadLine(RawHeadWalk& walk, JSString* name, StringView name
         break;
     case 10:
         if (equalLettersIgnoringASCIICase(nameView, "connection"_s))
-            walk.facts |= rawHeadValueHasToken(text, "close"_s) ? kRawHeadClose : kRawHeadPersist;
+            walk.facts |= svValueHasToken(HTTPLatin1String(text).view(), "close") ? kRawHeadClose : kRawHeadPersist;
         else if (equalLettersIgnoringASCIICase(nameView, "keep-alive"_s))
             walk.facts |= kRawHeadKeepAlive;
         break;
@@ -946,7 +928,7 @@ static void appendRawHeadLine(RawHeadWalk& walk, JSString* name, StringView name
         break;
     case 17:
         if (equalLettersIgnoringASCIICase(nameView, "transfer-encoding"_s))
-            walk.facts |= rawHeadValueHasToken(text, "chunked"_s) ? kRawHeadTransferEncoding | kRawHeadChunked : kRawHeadTransferEncoding;
+            walk.facts |= svValueHasToken(HTTPLatin1String(text).view(), "chunked") ? kRawHeadTransferEncoding | kRawHeadChunked : kRawHeadTransferEncoding;
         break;
     }
 

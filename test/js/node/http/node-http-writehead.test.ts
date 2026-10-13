@@ -562,6 +562,46 @@ describe("writeHead(status, headers) with no header set before sends the header 
     });
   }
 
+  // /(?:^|\W)close(?:$|\W)/i and /(?:^|\W)chunked(?:$|\W)/i in Node.js.
+  test("`close` in a Connection line and `chunked` in a Transfer-Encoding line are whole words, in any case", async () => {
+    const found: Record<string, unknown> = {};
+    for (const [header, field, values] of [
+      ["Connection", "_last", ["close", "Close", "keep-alive, close", "not-close", "closed", "x_close", "close_"]],
+      [
+        "Transfer-Encoding",
+        "chunkedEncoding",
+        ["chunked", "CHUNKED", "gzip, chunked", "chunked;q=1", "chunked2", "x_chunked", "unchunked"],
+      ],
+    ] as const) {
+      for (const value of values) {
+        const { result } = await respond(res => {
+          res.writeHead(200, [header, value]);
+          const after = (res as any)[field];
+          // Not end(): the body has no framing that a client can read for some of these.
+          res.destroy();
+          return after;
+        });
+        found[`${header}: ${value}`] = result;
+      }
+    }
+    assert.deepStrictEqual(found, {
+      "Connection: close": true,
+      "Connection: Close": true,
+      "Connection: keep-alive, close": true,
+      "Connection: not-close": true,
+      "Connection: closed": false,
+      "Connection: x_close": false,
+      "Connection: close_": false,
+      "Transfer-Encoding: chunked": true,
+      "Transfer-Encoding: CHUNKED": true,
+      "Transfer-Encoding: gzip, chunked": true,
+      "Transfer-Encoding: chunked;q=1": true,
+      "Transfer-Encoding: chunked2": false,
+      "Transfer-Encoding: x_chunked": false,
+      "Transfer-Encoding: unchunked": false,
+    });
+  });
+
   test("a ServerResponse with no socket", () => {
     const res = new http.ServerResponse({ method: "GET", httpVersionMajor: 1, httpVersionMinor: 1 } as any);
     res.writeHead(200, { "Set-Cookie": "a=1", "set-cookie": "b=2" });

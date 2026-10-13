@@ -2393,9 +2393,7 @@ function setRawHead(response, headers) {
     }
     if (!hasHandle) {
       // Node's _storeHeader renders the lines. A throw here comes before writeHead() marks the headers as sent.
-      rawHead.pop();
-      response._storeHeader(`HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n`, rawHead);
-      rawHead.push(facts);
+      response._storeHeader(`HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n`, rawHead.slice(0, -1));
     } else {
       if (response[headerStateSymbol] === NodeHTTPHeaderState.sent) {
         // The toString() of a value sent the head from inside the walk. Node sends a second head then. A handle cannot.

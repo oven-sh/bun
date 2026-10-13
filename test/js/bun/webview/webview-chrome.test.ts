@@ -936,8 +936,8 @@ it("chrome: click(selector) waits for animation to stop", async () => {
   expect(left).toBe(100);
 });
 
-// An animation has its first position until the frame after the one that starts it, and the compositor takes a few
-// frames to start one of a transform. It begins here when click() first looks for the button, which is the worst time.
+// An animation holds its first position while it is pending, which under load is a few frames for one that the
+// compositor runs. Here it begins again each of the first three times that click() looks, so it is pending in each.
 it.each([
   ["left", "mover", "from { left: 0; } to { left: 100px; }"],
   ["transform", "mover", "from { transform: translateX(0); } to { transform: translateX(100px); }"],
@@ -955,8 +955,13 @@ it.each([
         <div id=box><button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button></div>
         <script>
           const { querySelector } = document;
+          let looks = 0;
           document.querySelector = function (selector) {
-            ${animated}.className = "go";
+            if (looks++ < 3) {
+              ${animated}.className = "";
+              ${animated}.offsetWidth;
+              ${animated}.className = "go";
+            }
             return querySelector.call(this, selector);
           };
         </script>
@@ -979,6 +984,59 @@ it("chrome: click(selector) does not wait for the animations of other elements",
   );
   await view.click("#b");
   expect(await view.evaluate("String(window.__hit)")).toBe("1");
+});
+
+it("chrome: click(selector) does not wait for an animation that cannot start", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  // Nothing overflows, so the timeline is inactive and the animation is pending for as long as the page is.
+  await view.navigate(
+    html(`
+        <style>
+          @keyframes fade { from { opacity: 0.5; } to { opacity: 1; } }
+          body { animation: fade linear; animation-timeline: scroll(); }
+        </style>
+        <button id=b onclick="window.__hit=1">b</button>
+      `),
+  );
+  await view.click("#b");
+  expect(await view.evaluate("String(window.__hit)")).toBe("1");
+});
+
+it("chrome: click(selector) does not take the position before the first frame for a frame's", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <style>
+          @keyframes slide { from { left: 0; } to { left: 100px; } }
+          #mover { position: fixed; top: 50px; width: 60px; height: 60px;
+                   animation: slide 300ms linear forwards; }
+        </style>
+        <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+      `),
+  );
+  // Under way, and the first callback runs in the frame that asked for it: nothing has moved by then. The second
+  // skips a frame, so that it cannot be in that frame too.
+  await view.evaluate(`new Promise(resolve => {
+    (function look() {
+      if (mover.getBoundingClientRect().left === 0) return setTimeout(look, 1);
+      const { requestAnimationFrame } = window;
+      let asked = 0;
+      window.requestAnimationFrame = callback => {
+        if (asked++ === 0) return (queueMicrotask(() => callback(performance.now())), 0);
+        window.requestAnimationFrame = requestAnimationFrame;
+        return requestAnimationFrame(() => requestAnimationFrame(callback));
+      };
+      resolve();
+    })();
+  })`);
+  await view.click("#mover");
+  expect(await view.evaluate("String(window.__hit)")).toBe("100");
+});
+
+it("chrome: click(selector) rejects a selector that is not valid without a frame", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 300, height: 300 });
+  await view.navigate(html(`<script>window.requestAnimationFrame = () => 0;</script>`));
+  await expect(view.click(`"); //`)).rejects.toThrow("not a valid selector");
 });
 
 // --- scrollTo variants -----------------------------------------------------

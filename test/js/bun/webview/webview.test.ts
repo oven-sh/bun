@@ -595,6 +595,103 @@ itRendering("click(selector) waits for element to stop animating", async () => {
   expect(Number(left)).toBe(100);
 });
 
+// An animation holds its first position while it is pending, which under load is a few frames for one that the
+// compositor runs. Here it begins again each of the first three times that click() looks, so it is pending in each.
+itRendering.each([
+  ["left", "mover", "from { left: 0; } to { left: 100px; }"],
+  ["transform", "mover", "from { transform: translateX(0); } to { transform: translateX(100px); }"],
+  ["transform of an ancestor", "box", "from { transform: translateX(0); } to { transform: translateX(100px); }"],
+])("click(selector) waits for an animation of %s that has yet to start", async (_, animated, keyframes) => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <style>
+          @keyframes slide { ${keyframes} }
+          #box { position: fixed; left: 0; top: 50px; }
+          #mover { position: relative; width: 60px; height: 60px; }
+          .go { animation: slide 80ms linear forwards; }
+        </style>
+        <div id=box><button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button></div>
+        <script>
+          const { querySelector } = document;
+          let looks = 0;
+          document.querySelector = function (selector) {
+            if (looks++ < 3) {
+              ${animated}.className = "";
+              ${animated}.offsetWidth;
+              ${animated}.className = "go";
+            }
+            return querySelector.call(this, selector);
+          };
+        </script>
+      `),
+  );
+  await view.click("#mover");
+  expect(await view.evaluate("String(window.__hit)")).toBe("100");
+});
+
+itRendering("click(selector) does not wait for the animations of other elements", async () => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <button id=b onclick="window.__hit=1">b</button><i id=other></i>
+        <script>
+          // One that has yet to start, in every frame.
+          (function again() { other.animate([{ opacity: 0 }, { opacity: 1 }], 1000); requestAnimationFrame(again); })();
+        </script>
+      `),
+  );
+  await view.click("#b");
+  expect(await view.evaluate("String(window.__hit)")).toBe("1");
+});
+
+itRendering("click(selector) does not wait for an animation that cannot start", async () => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  // Nothing overflows, so the timeline is inactive and the animation is pending for as long as the page is.
+  await view.navigate(
+    html(`
+        <style>
+          @keyframes fade { from { opacity: 0.5; } to { opacity: 1; } }
+          body { animation: fade linear; animation-timeline: scroll(); }
+        </style>
+        <button id=b onclick="window.__hit=1">b</button>
+      `),
+  );
+  await view.click("#b");
+  expect(await view.evaluate("String(window.__hit)")).toBe("1");
+});
+
+itRendering("click(selector) does not take the position before the first frame for a frame's", async () => {
+  await using view = new Bun.WebView({ width: 300, height: 300 });
+  await view.navigate(
+    html(`
+        <style>
+          @keyframes slide { from { left: 0; } to { left: 100px; } }
+          #mover { position: fixed; top: 50px; width: 60px; height: 60px;
+                   animation: slide 300ms linear forwards; }
+        </style>
+        <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+      `),
+  );
+  // Under way, and the first callback runs in the frame that asked for it: nothing has moved by then. The second
+  // skips a frame, so that it cannot be in that frame too.
+  await view.evaluate(`new Promise(resolve => {
+    (function look() {
+      if (mover.getBoundingClientRect().left === 0) return setTimeout(look, 1);
+      const { requestAnimationFrame } = window;
+      let asked = 0;
+      window.requestAnimationFrame = callback => {
+        if (asked++ === 0) return (queueMicrotask(() => callback(performance.now())), 0);
+        window.requestAnimationFrame = requestAnimationFrame;
+        return requestAnimationFrame(() => requestAnimationFrame(callback));
+      };
+      resolve();
+    })();
+  })`);
+  await view.click("#mover");
+  expect(await view.evaluate("String(window.__hit)")).toBe("100");
+});
+
 itRendering("click(selector) rejects on timeout when obscured", async () => {
   await using view = new Bun.WebView({ width: 300, height: 300 });
   await view.navigate(

@@ -358,28 +358,29 @@ void WebViewHost::doNativeClick(float x, float y, uint8_t button, uint8_t modifi
 // The predicate: attached + has size + in viewport + stable for 2 frames +
 // elementFromPoint at center returns the element or a descendant (not
 // obscured). Returns "cx,cy" on success; throws on timeout.
-// Each sample has a frame of its own, and an animation that has yet to start holds its element still: neither is stable.
+// The sample before the first frame can share that frame, and an animation that is about to start holds its element still: neither counts.
 //
 // Arguments `sel` and `timeout` are passed via the arguments: NSDictionary,
 // not string-interpolated — the selector can contain any characters.
 static constexpr const char* kActionabilityJS = R"js(
 const deadline = performance.now() + timeout;
-let last;
+let last, framed;
 for (;;) {
-  await new Promise(f => requestAnimationFrame(f));
   const el = document.querySelector(sel);
   if (el) {
     const r = el.getBoundingClientRect();
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-    if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight && !document.getAnimations().some(a => a.pending && a.effect?.target?.contains(el))) {
+    if (r.width > 0 && r.height > 0 && cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight && !document.getAnimations().some(a => a.pending && a.timeline?.currentTime != null && a.effect?.target?.contains?.(el))) {
       if (last && last.l === r.left && last.t === r.top && last.w === r.width && last.h === r.height) {
         const hit = document.elementFromPoint(cx, cy);
         if (hit === el || el.contains(hit)) return cx + "," + cy;
       }
-      last = { l: r.left, t: r.top, w: r.width, h: r.height };
+      last = framed && { l: r.left, t: r.top, w: r.width, h: r.height };
     } else last = undefined;
   } else last = undefined;
   if (performance.now() > deadline) throw "timeout waiting for '" + sel + "' to be actionable";
+  await new Promise(f => requestAnimationFrame(f));
+  framed = true;
 }
 )js";
 

@@ -7,7 +7,7 @@
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -143,6 +143,35 @@ foo/
       expect(exitCode).toBe(1);
       expect(await fileExists(`${tempdir}/sub_dir_files`)).toBeTrue();
     }
+  });
+
+  // Operands spelled with a `.` or `..` component resolve against the shell's
+  // cwd. On Windows `unlinkat` used to hand NtCreateFile that component as a
+  // literal name: `rm ../x` failed with "Invalid argument" and `rm -rf ./dist`
+  // left the directory in place (https://github.com/oven-sh/bun/issues/13523).
+  test("operands spelled with . or .. components", async () => {
+    using tempdir = tempDir("rm-dotdot", {
+      "work/.gitkeep": "",
+      "work/dist/bundle.js": "",
+      "work/cache/data/blob": "",
+      "file.txt": "x",
+      "tree/top.txt": "y",
+      "tree/sub/deep.txt": "z",
+    });
+    const cwd = path.join(String(tempdir), "work");
+    for (const operands of [
+      ["../file.txt"],
+      ["-rf", path.join("..", "tree")],
+      ["-rf", "./dist"],
+      ["-r", "cache/./data"],
+    ]) {
+      const { stderr, exitCode } = await $`rm ${operands}`.cwd(cwd);
+      expect(stderr.toString()).toBe("");
+      expect(exitCode).toBe(0);
+    }
+    expect(readdirSync(String(tempdir))).toEqual(["work"]);
+    expect(readdirSync(cwd).sort()).toEqual([".gitkeep", "cache"]);
+    expect(readdirSync(path.join(cwd, "cache"))).toEqual([]);
   });
 
   // The DirTask parent/child hand-off had a lost-wakeup window between

@@ -7,6 +7,11 @@ import { bunEnv, bunExe, isArm64, isLinux, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
 
+// bun-types does not declare it.
+declare module "bun:jsc" {
+  function generateHeapSnapshotForDebugging(): unknown;
+}
+
 const ModuleGraph = Bun.ModuleGraph;
 type Graph = InstanceType<typeof ModuleGraph>;
 
@@ -62,6 +67,17 @@ const dir = String(
       export function worker() {
         const w = new Worker("data:text/javascript,setInterval(() => {}, 1000); postMessage('up')");
         return new Promise(resolve => { w.onmessage = () => resolve(); w.addEventListener("close", () => control.heard.push("worker close")); });
+      }
+      // A rewrite whose <div> is never closed, with an onEndTag() callback that reaches the output Response.
+      export function rewriteThatWaitsForAnEndTag() {
+        let controller;
+        const holder = {};
+        const registered = Promise.withResolvers();
+        holder.response = new HTMLRewriter()
+          .on("div", { element(el) { el.onEndTag(() => void holder.response); registered.resolve(); } })
+          .transform(new Response(new ReadableStream({ start: c => void (controller = c) })));
+        controller.enqueue(new TextEncoder().encode("<div>x"));
+        return registered.promise;
       }
     `,
   }),
@@ -513,6 +529,18 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     } finally {
       jest.useRealTimers();
     }
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+  });
+
+  // The callback was a GC root until its end tag came, and it reached its own rewrite through the Response.
+  test("an HTMLRewriter rewrite that waits for an end tag when its graph is disposed goes with the graph", async () => {
+    const lifetimes = new Lifetimes();
+    await (async () => {
+      const graph = lifetimes.track("graph", new ModuleGraph());
+      const io = await graph.import(file("io.mjs"));
+      await graph.run(() => io.rewriteThatWaitsForAnEndTag());
+      graph.dispose();
+    })();
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
   });
 

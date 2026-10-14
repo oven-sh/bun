@@ -36,7 +36,7 @@ test("Object prototype followSymlinks", async () => {
     onlyFiles: true,
   });
   expect([...second].map(a => a.replaceAll("\\", "/"))).toEqual(["def/file.txt"]);
-  delete Object.prototype.followSymlinks;
+  delete (Object.prototype as any).followSymlinks;
 
   const third = glob.scanSync({
     "cwd": path.join(dir, "abc"),

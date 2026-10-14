@@ -1,0 +1,15 @@
+------------------
+{ printWidth: 80 }
+------------------
+Support www. prefixes on hostnames, www._ and www.
+
+www.example.com. and (www.example.com) and a@b.c.
+
+-------------------
+{ printWidth: 100 }
+-------------------
+Support www. prefixes on hostnames, www._ and www.
+
+www.example.com. and (www.example.com) and a@b.c.
+
+===================== End =====================

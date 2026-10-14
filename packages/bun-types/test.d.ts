@@ -239,11 +239,11 @@ declare module "bun:test" {
     /**
      * Skips this group of tests.
      */
-    skip: Describe<T>;
+    skip: ((label: string | number) => void) & Describe<T>;
     /**
      * Marks this group of tests as to be written or to be fixed.
      */
-    todo: Describe<T>;
+    todo: ((label: string | number) => void) & Describe<T>;
     /**
      * Marks this group of tests to be executed concurrently.
      */
@@ -306,8 +306,8 @@ declare module "bun:test" {
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
     each<T extends Readonly<[any, ...any[]]>>(table: readonly T[]): Describe<[...T]>;
-    each<T extends any[]>(table: readonly T[]): Describe<[...T]>;
-    each<const T>(table: T[]): Describe<[T]>;
+    each<T extends readonly any[]>(table: readonly T[]): Describe<[...T]>;
+    each<const T>(table: readonly T[]): Describe<[T]>;
   }
   /**
    * Describes a group of related tests.
@@ -504,6 +504,25 @@ declare module "bun:test" {
    * @category Testing
    */
   export interface Test<T extends ReadonlyArray<unknown>> {
+    /**
+     * Runs a test, with the options before the test function.
+     *
+     * @example
+     * ```ts
+     * test("can retry", { retry: 3 }, () => {
+     *   expect(Math.random()).toBeLessThan(0.5);
+     * });
+     * ```
+     */
+    (
+      label: string,
+      options: number | TestOptions,
+      fn: (
+        ...args: __internal.IsTuple<T> extends true
+          ? [...table: __internal.Flatten<T>, done: (err?: unknown) => void]
+          : T
+      ) => void | Promise<unknown>,
+    ): void;
     (
       label: string,
 
@@ -529,7 +548,7 @@ declare module "bun:test" {
     /**
      * Skips this test.
      */
-    skip: Test<T>;
+    skip: ((label: string) => void) & Test<T>;
     /**
      * Marks this test as to be written or to be fixed.
      *
@@ -537,7 +556,7 @@ declare module "bun:test" {
      * a `.todo` test that passes is marked as `fail` in the results: remove
      * the `.todo` or check that the test is implemented correctly.
      */
-    todo: Test<T>;
+    todo: ((label: string) => void) & Test<T>;
     /**
      * Marks this test as failing.
      *
@@ -627,8 +646,8 @@ declare module "bun:test" {
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
      */
     each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): Test<T>;
-    each<T extends unknown[]>(table: readonly T[]): Test<T>;
-    each<const T>(table: T[]): Test<[T]>;
+    each<T extends readonly unknown[]>(table: readonly T[]): Test<T>;
+    each<const T>(table: readonly T[]): Test<[T]>;
   }
   /**
    * Runs a test.
@@ -685,7 +704,7 @@ declare module "bun:test" {
      * @param customFailMessage an optional custom message to display if the test fails.
      * */
 
-    (actual?: never, customFailMessage?: string): Matchers<undefined>;
+    (): Matchers<undefined>;
     <T = unknown>(actual: T, customFailMessage?: string): Matchers<T>;
     <T = unknown>(actual?: T, customFailMessage?: string): Matchers<T | undefined>;
 
@@ -1909,6 +1928,11 @@ declare module "bun:test" {
     toBeCalled(): void;
 
     /**
+     * Ensures that a mock function is called exactly once.
+     */
+    toHaveBeenCalledOnce(): void;
+
+    /**
      * Ensures that a mock function is called an exact number of times.
      */
     toHaveBeenCalledTimes(expected: number): void;
@@ -2159,9 +2183,7 @@ declare module "bun:test" {
     // export type MockFunctionMetadataType = MockMetadataType;
 
     type MockFunctionResult<T extends FunctionLike = UnknownFunction> =
-      | MockFunctionResultIncomplete
-      | MockFunctionResultReturn<T>
-      | MockFunctionResultThrow;
+      MockFunctionResultIncomplete | MockFunctionResultReturn<T> | MockFunctionResultThrow;
 
     interface MockFunctionResultIncomplete {
       type: "incomplete";

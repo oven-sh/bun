@@ -203,12 +203,10 @@ describe("tagged template table", () => {
       `Table headings do not conform to expected format:\n\nheading1 | headingN\n\nReceived:\n\n${received}`;
 
     it("headings and no values", () => {
-      // @ts-expect-error a table needs a value
       const each = it.each`
         a | b
       `;
       expect(titleCallError(each)).toBe(noValues);
-      // @ts-expect-error
       const invalidEscape = describe.each`
         \unicode
       `;
@@ -216,7 +214,6 @@ describe("tagged template table", () => {
     });
 
     it("no text", () => {
-      // @ts-expect-error
       const empty = it.each``;
       expect(titleCallError(empty)).toBe(noText);
       expect(titleCallError((it.each as any)(strings(" \n\t\u00a0\u2028\ufeff")))).toBe(noText);

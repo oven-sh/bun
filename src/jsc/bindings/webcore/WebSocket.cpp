@@ -732,23 +732,37 @@ ExceptionOr<void> WebSocket::send(ArrayBufferView& arrayBufferView)
 
 WebCore::ExceptionOr<void> WebCore::WebSocket::send(WebCore::JSBlob* blob)
 {
+    return sendBlob(blob, Opcode::Binary, "send"_s);
+}
+
+WebCore::ExceptionOr<void> WebCore::WebSocket::sendBlob(WebCore::JSBlob* blob, const Opcode opcode, ASCIILiteral functionName)
+{
     if (m_state == CONNECTING)
         return Exception { InvalidStateError };
+
+    BlobPayload payload;
+    auto payloadState = Blob__getPayload(blob->wrapped(), &payload);
+
     if (m_state == CLOSING || m_state == CLOSED) {
+        // A file- or S3-backed Blob has no size to count without a read.
+        if (payloadState == BlobPayloadState::InMemory) {
+            unsigned payloadSize = static_cast<unsigned>(std::min<size_t>(payload.len, std::numeric_limits<unsigned>::max()));
+            m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, payloadSize);
+            m_bufferedAmountAfterClose = saturateAdd(m_bufferedAmountAfterClose, getFramingOverhead(payloadSize));
+        }
         return {};
     }
 
-    // Get the blob data and send it using existing binary data path
-    void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blob));
-    size_t dataSize = Blob__getSize(JSC::JSValue::encode(blob));
+    // WHATWG send(Blob) sends the bytes. For that, an ordered outgoing queue must hold the later
+    // frames until the read completes, and this client has none. So refuse the Blob: an empty
+    // frame in its place loses the data and tells nobody.
+    if (payloadState == BlobPayloadState::NeedsAsyncRead)
+        return Exception { TypeError, makeString(functionName, " cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first"_s) };
 
-    if (dataPtr && dataSize > 0) {
-        this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Binary);
-    } else {
-        // Send empty frame for empty blobs
-        this->sendWebSocketData(nullptr, 0, Opcode::Binary);
-    }
+    if (opcode != Opcode::Binary && payload.len > maxControlFramePayloadSize)
+        return controlFramePayloadTooLargeException(payload.len);
 
+    this->sendWebSocketData(reinterpret_cast<const char*>(payload.ptr), payload.len, opcode);
     return {};
 }
 
@@ -1829,50 +1843,12 @@ extern "C" void WebSocket__releasePendingActivityForClient(WebCore::WebSocket* w
 
 WebCore::ExceptionOr<void> WebCore::WebSocket::ping(WebCore::JSBlob* blob)
 {
-    if (m_state == CONNECTING)
-        return Exception { InvalidStateError };
-    if (m_state == CLOSING || m_state == CLOSED) {
-        return {};
-    }
-
-    // Get the blob data and send it using existing binary data path
-    void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blob));
-    size_t dataSize = Blob__getSize(JSC::JSValue::encode(blob));
-
-    if (dataPtr && dataSize > 0) {
-        if (dataSize > maxControlFramePayloadSize)
-            return controlFramePayloadTooLargeException(dataSize);
-        this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Ping);
-    } else {
-        // Send empty frame for empty blobs
-        this->sendWebSocketData(nullptr, 0, Opcode::Ping);
-    }
-
-    return {};
+    return sendBlob(blob, Opcode::Ping, "ping"_s);
 }
 
 WebCore::ExceptionOr<void> WebCore::WebSocket::pong(WebCore::JSBlob* blob)
 {
-    if (m_state == CONNECTING)
-        return Exception { InvalidStateError };
-    if (m_state == CLOSING || m_state == CLOSED) {
-        return {};
-    }
-
-    // Get the blob data and send it using existing binary data path
-    void* dataPtr = Blob__getDataPtr(JSC::JSValue::encode(blob));
-    size_t dataSize = Blob__getSize(JSC::JSValue::encode(blob));
-
-    if (dataPtr && dataSize > 0) {
-        if (dataSize > maxControlFramePayloadSize)
-            return controlFramePayloadTooLargeException(dataSize);
-        this->sendWebSocketData(static_cast<const char*>(dataPtr), dataSize, Opcode::Pong);
-    } else {
-        // Send empty frame for empty blobs
-        this->sendWebSocketData(nullptr, 0, Opcode::Pong);
-    }
-
-    return {};
+    return sendBlob(blob, Opcode::Pong, "pong"_s);
 }
 
 void WebCore::WebSocket::setProtocol(const String& protocol)

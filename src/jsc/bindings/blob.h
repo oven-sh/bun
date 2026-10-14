@@ -6,10 +6,23 @@
 
 namespace WebCore {
 
+// Mirrors `BlobPayloadState` in Blob.rs.
+enum class BlobPayloadState : uint8_t {
+    InMemory = 0,
+    // The store is a file or an S3 object: the bytes need an asynchronous read.
+    NeedsAsyncRead = 1,
+};
+
+// Mirrors `BlobPayload` in Blob.rs.
+struct BlobPayload {
+    const uint8_t* ptr { nullptr };
+    size_t len { 0 };
+};
+
 extern "C" void* Blob__dupeFromJS(JSC::EncodedJSValue impl);
 extern "C" void* Blob__dupe(void* impl);
-extern "C" void* Blob__getDataPtr(JSC::EncodedJSValue blob);
-extern "C" size_t Blob__getSize(JSC::EncodedJSValue blob);
+// `payload` is null and 0 for a zero-length Blob and for NeedsAsyncRead: check the state.
+extern "C" BlobPayloadState Blob__getPayload(void* impl, BlobPayload* payload);
 extern "C" void* Blob__fromBytes(JSC::JSGlobalObject* globalThis, const void* ptr, size_t len);
 extern "C" void Blob__ref(void* impl);
 extern "C" void Blob__deref(void* impl);

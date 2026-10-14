@@ -1110,6 +1110,146 @@ describe("ping/pong no-arg payload", () => {
   });
 });
 
+// npm ws throws every synchronous failure of send() to the caller and never passes it to the
+// callback. The callback gets an error only when the socket is no longer open.
+describe("WebSocket send() tells the caller when nothing was sent", () => {
+  // A client on an in-process server that records what arrives and closes on "done".
+  async function connect() {
+    const received: string[] = [];
+    const wss = new WebSocketServer({ port: 0 });
+    wss.on("connection", socket => {
+      socket.on("message", (data: Buffer, isBinary: boolean) => {
+        received.push(isBinary ? `binary:${data.length}` : `text:${data}`);
+        if (!isBinary && String(data) === "done") socket.close();
+      });
+      socket.on("ping", (data: Buffer) => received.push(`ping:${data.length}`));
+      socket.on("pong", (data: Buffer) => received.push(`pong:${data.length}`));
+    });
+    await once(wss, "listening");
+    const ws = new WebSocket("ws://127.0.0.1:" + (wss.address() as AddressInfo).port);
+    clients.push(ws);
+    return { ws, received, wss };
+  }
+
+  function thrownBy(fn: () => void): { name: string; message: string } | undefined {
+    try {
+      fn();
+    } catch (error) {
+      const { name, message } = error as Error;
+      return { name, message };
+    }
+    return undefined;
+  }
+
+  it("throws for a file-backed Blob in every call form of send(), ping() and pong()", async () => {
+    using dir = tempDir("ws-send-file-blob", { "payload.bin": "file-bytes" });
+    // @types/ws 8.5 does not list Blob, ws 8.18 accepts it
+    const blob: any = Bun.file(path.join(String(dir), "payload.bin"));
+    const refusal = (fn: string) => ({
+      name: "TypeError",
+      message: `${fn} cannot send a file- or S3-backed Blob synchronously; await blob.bytes() first`,
+    });
+    const { ws, received, wss } = await connect();
+    try {
+      await once(ws, "open");
+      let callbacks = 0;
+      const cb = () => callbacks++;
+
+      expect([
+        thrownBy(() => ws.send(blob)),
+        thrownBy(() => ws.send(blob, { binary: true })),
+        thrownBy(() => ws.send(blob, cb)),
+        thrownBy(() => ws.send(blob, { binary: true }, cb)),
+        thrownBy(() => ws.ping(blob)),
+        thrownBy(() => ws.ping(blob, undefined, cb)),
+        thrownBy(() => ws.pong(blob)),
+        thrownBy(() => ws.pong(blob, undefined, cb)),
+      ]).toEqual([
+        refusal("send"),
+        refusal("send"),
+        refusal("send"),
+        refusal("send"),
+        refusal("ping"),
+        refusal("ping"),
+        refusal("pong"),
+        refusal("pong"),
+      ]);
+
+      // The socket is still usable, and nothing went out in place of the refused payloads.
+      ws.send("done");
+      await once(ws, "close");
+      expect(received).toEqual(["text:done"]);
+      expect(callbacks).toBe(0);
+    } finally {
+      wss.close();
+    }
+  });
+
+  it("throws while CONNECTING, with and without a callback", async () => {
+    const { ws, received, wss } = await connect();
+    try {
+      expect(ws.readyState).toBe(WebSocket.CONNECTING);
+      let callbacks = 0;
+      const notOpen = { name: "Error", message: "WebSocket is not open: readyState 0 (CONNECTING)" };
+      expect([thrownBy(() => ws.send("early")), thrownBy(() => ws.send("early", () => callbacks++))]).toEqual([
+        notOpen,
+        notOpen,
+      ]);
+
+      await once(ws, "open");
+      ws.send("done");
+      await once(ws, "close");
+      expect(received).toEqual(["text:done"]);
+      expect(callbacks).toBe(0);
+    } finally {
+      wss.close();
+    }
+  });
+
+  it("throws for a payload that cannot be converted, with and without a callback", async () => {
+    const { ws, received, wss } = await connect();
+    try {
+      await once(ws, "open");
+      let callbacks = 0;
+      const payload: any = Symbol("payload");
+      const thrown = [thrownBy(() => ws.send(payload)), thrownBy(() => ws.send(payload, () => callbacks++))];
+      expect(thrown.map(error => error?.name)).toEqual(["TypeError", "TypeError"]);
+
+      ws.send("done");
+      await once(ws, "close");
+      expect(received).toEqual(["text:done"]);
+      expect(callbacks).toBe(0);
+    } finally {
+      wss.close();
+    }
+  });
+
+  it("passes the not-open error to the callback once the socket is closing or closed", async () => {
+    const { ws, received, wss } = await connect();
+    try {
+      await once(ws, "open");
+      ws.close();
+      expect(ws.readyState).toBe(WebSocket.CLOSING);
+      const whileClosing = Promise.withResolvers<Error | null | undefined>();
+      expect(thrownBy(() => ws.send("late", whileClosing.resolve))).toBeUndefined();
+      expect(thrownBy(() => ws.send("late"))).toBeUndefined();
+
+      await once(ws, "close");
+      expect(ws.readyState).toBe(WebSocket.CLOSED);
+      const whenClosed = Promise.withResolvers<Error | null | undefined>();
+      expect(thrownBy(() => ws.send("late", whenClosed.resolve))).toBeUndefined();
+
+      expect([(await whileClosing.promise)?.message, (await whenClosed.promise)?.message]).toEqual([
+        "WebSocket is not open: readyState 2 (CLOSING)",
+        "WebSocket is not open: readyState 3 (CLOSED)",
+      ]);
+      expect(received).toEqual([]);
+    } finally {
+      wss.close();
+    }
+  });
+});
+
 describe("handleUpgrade without an Upgrade header", () => {
   it("responds with 400 Invalid Upgrade header instead of throwing", () => {
     const wss = new WebSocketServer({ noServer: true });

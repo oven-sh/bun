@@ -322,6 +322,8 @@ private:
     void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
     void failConnectingWebSocket();
 
+    // Every entry that takes a Blob goes through here: a Blob whose bytes are not in memory is refused.
+    ExceptionOr<void> sendBlob(JSBlob*, const Opcode opcode, ASCIILiteral functionName);
     void sendWebSocketString(const String& message, const Opcode opcode);
     void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
     void setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params);

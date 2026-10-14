@@ -485,13 +485,21 @@ class BunWebSocket extends EventEmitter {
     try {
       this.#ws.send(normalizeData(data, opts), opts?.compress);
     } catch (error) {
-      // Node.js APIs expect callback arguments to be called after the current stack pops
-      if (typeof cb === "function") process.nextTick(cb, error);
-      return;
+      // npm ws throws a synchronous failure to the caller. It never passes one to cb.
+      if (this.#ws.readyState === ReadyState_CONNECTING) {
+        throw new Error("WebSocket is not open: readyState 0 (CONNECTING)");
+      }
+      throw error;
     }
-    // deviation: this should be called once the data is written, not immediately
-    // Node.js APIs expect callback arguments to be called after the current stack pops
-    if (typeof cb === "function") process.nextTick(cb, null);
+
+    if (typeof cb === "function") {
+      // The native send() drops the frame once the socket is CLOSING or CLOSED.
+      const state = this.#ws.readyState;
+      if (state !== ReadyState_OPEN) return sendAfterClose(state, cb);
+      // deviation: this should be called once the data is written, not immediately
+      // Node.js APIs expect callback arguments to be called after the current stack pops
+      process.nextTick(cb, null);
+    }
   }
 
   close(code, reason) {

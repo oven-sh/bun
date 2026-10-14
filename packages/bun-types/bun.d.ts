@@ -5204,9 +5204,11 @@ declare module "bun" {
 
     /**
      * Transmits data to the server
-     * @param data The data to send to the server
+     * @param data The data to send to the server. A `Blob` is sent as a binary message. A `Blob`
+     * whose bytes are in a file or in S3 (`Bun.file()`, `Bun.s3.file()`) throws a `TypeError`: send
+     * `await blob.bytes()` instead
      */
-    send(data: string | ArrayBufferLike | ArrayBufferView): void;
+    send(data: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
      * Closes the WebSocket connection
@@ -5219,15 +5221,17 @@ declare module "bun" {
 
     /**
      * Sends a ping frame to the server
-     * @param data Optional data to include in the ping frame
+     * @param data Optional data to include in the ping frame. A `Blob` whose bytes are in a file
+     * or in S3 throws a `TypeError`, as in {@link send}
      */
-    ping(data?: string | ArrayBufferLike | ArrayBufferView): void;
+    ping(data?: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
      * Sends a pong frame to the server
-     * @param data Optional data to include in the pong frame
+     * @param data Optional data to include in the pong frame. A `Blob` whose bytes are in a file
+     * or in S3 throws a `TypeError`, as in {@link send}
      */
-    pong(data?: string | ArrayBufferLike | ArrayBufferView): void;
+    pong(data?: string | ArrayBufferLike | ArrayBufferView | Blob): void;
 
     /**
      * Immediately terminates the connection

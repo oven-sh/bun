@@ -225,13 +225,13 @@ import { expectType } from "./utilities";
   const uint8Array = new Uint8Array(buffer);
   ws.send(uint8Array);
 
-  // --------------------------------------- //
-  // `.send(blob)` is not supported yet
-  // --------------------------------------- //
-  // // Send Blob
-  // const blob = new Blob(["Hello, server!"]);
-  // ws.send(blob);
-  // --------------------------------------- //
+  // Send Blob
+  const blob = new Blob(["Hello, server!"]);
+  ws.send(blob);
+
+  // Send a slice of a Blob
+  const slice = blob.slice(0, 5);
+  ws.send(slice);
 }
 
 // WebSocket close method test
@@ -288,4 +288,12 @@ import { expectType } from "./utilities";
 {
   const options = { tls: { servername: "dev.local" } } satisfies Bun.WebSocketOptions;
   expectType<string>(options.tls.servername);
+}
+
+// Blob payloads of ping() and pong(), which only Bun's WebSocket has
+{
+  const ws = null as never as Bun.WebSocket;
+  ws.send(new Blob(["Hello, server!"]));
+  ws.ping(new Blob(["ping data"]));
+  ws.pong(new Blob(["pong data"]));
 }

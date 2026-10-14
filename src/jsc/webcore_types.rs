@@ -417,6 +417,17 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
+    /// [`shared_view`](Self::shared_view) for a consumer that cannot wait
+    /// for a read: `None` when the store is a file or an S3 object.
+    /// `shared_view()` is empty for those, which reads as a zero-length Blob.
+    #[inline]
+    pub fn in_memory_view(&self) -> Option<&[u8]> {
+        if self.needs_to_read_file() || self.is_s3() {
+            return None;
+        }
+        Some(self.shared_view())
+    }
+
     /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
     /// itself may be `""`; that is not a filename.)
     ///

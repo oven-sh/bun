@@ -5654,26 +5654,41 @@ pub(crate) extern "C" fn Bun__Blob__getSizeForBindings(this: &mut Blob) -> u64 {
     this.get_size_for_bindings()
 }
 
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__getDataPtr(value: JSValue) -> *mut c_void {
-    let Some(blob) = Blob::from_js(value) else {
-        return core::ptr::null_mut();
-    };
-    // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
-    let data = unsafe { (*blob).shared_view() };
-    if data.is_empty() {
-        return core::ptr::null_mut();
-    }
-    data.as_ptr().cast_mut().cast::<c_void>()
+/// Mirrors `BlobPayloadState` in `blob.h`.
+#[repr(u8)]
+pub(crate) enum BlobPayloadState {
+    InMemory = 0,
+    NeedsAsyncRead = 1,
 }
 
+/// Mirrors `BlobPayload` in `blob.h`.
+#[repr(C)]
+pub(crate) struct BlobPayload {
+    ptr: *const u8,
+    len: usize,
+}
+
+/// The bytes of `this` for a C++ caller that sends them synchronously.
+/// `payload` is null and 0 for a zero-length Blob and for `NeedsAsyncRead`:
+/// only the returned state tells the two apart.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__getSize(value: JSValue) -> usize {
-    let Some(blob) = Blob::from_js(value) else {
-        return 0;
+pub(crate) extern "C" fn Blob__getPayload(
+    this: &Blob,
+    payload: &mut BlobPayload,
+) -> BlobPayloadState {
+    let (state, bytes) = match this.in_memory_view() {
+        Some(bytes) => (BlobPayloadState::InMemory, bytes),
+        None => (BlobPayloadState::NeedsAsyncRead, &[][..]),
     };
-    // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
-    unsafe { (*blob).shared_view().len() }
+    *payload = BlobPayload {
+        ptr: if bytes.is_empty() {
+            core::ptr::null()
+        } else {
+            bytes.as_ptr()
+        },
+        len: bytes.len(),
+    };
+    state
 }
 
 /// # Safety

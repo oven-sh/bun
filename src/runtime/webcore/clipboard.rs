@@ -1041,7 +1041,6 @@ mod platform {
                 .chain(argv[1..].iter().map(|word| word.as_bytes()))
                 .map(Box::from)
                 .collect(),
-            cwd: Box::from(b".".as_slice()),
             stdin: stdin.map_or(spawn_sync::SyncStdio::Ignore, spawn_sync::SyncStdio::Fd),
             // Not for writes: a helper that daemonizes keeps its output open.
             stdout: output,

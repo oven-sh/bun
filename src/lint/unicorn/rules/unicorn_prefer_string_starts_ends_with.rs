@@ -15,8 +15,9 @@ const STARTS_WITH: Message = Message::new("", "Prefer String#startsWith over a r
 const ENDS_WITH: Message = Message::new("", "Prefer String#endsWith over a regex with a dollar sign.");
 
 impl Rule for PreferStringStartsEndsWith {
-    const META: Meta =
-        Meta::oxlint(Plugin::Unicorn, "prefer-string-starts-ends-with", Kind::Problem).fixable(Fixable::Code);
+    const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-string-starts-ends-with", Kind::Problem)
+        .fixable(Fixable::Code)
+        .replaced_with_types_by("prefer-string-starts-ends-with");
     const ON: On = On::new().method_calls(&["test"]);
     no_state!();
 

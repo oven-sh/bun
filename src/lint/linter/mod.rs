@@ -802,6 +802,45 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
+        // See `Pairs`.
+        let pairs = S::PAIRS;
+        if file.types.is_some()
+            && file.language().is_oxlint
+            && (!is_plain || prepared.on.intersects(&pairs.without_types))
+        {
+            let mut on = RuleBits::EMPTY;
+            for it in enabled.iter().filter(|it| it.severity != Severity::Off) {
+                on.insert(it.rule.number());
+            }
+            // The rules with types that stand in for another, each with the severity of that one.
+            let mut standing_in: smallvec::SmallVec<[(u16, Severity); 4]> = Default::default();
+            let mut yields = RuleBits::EMPTY;
+            for (index, it) in enabled.iter_mut().enumerate() {
+                let number = it.rule.number();
+                let typed = pairs.typed[number as usize];
+                if !on.has(number) || !pairs.without_types.has(number) || !on.has(typed) {
+                    continue;
+                }
+                standing_in.push((typed, it.severity));
+                match pairs.yielding.has(number) {
+                    true => yields.insert(index as u16),
+                    false => it.severity = Severity::Off,
+                }
+                if pairs.keeps_comments.has(number) {
+                    let meta = S::METAS.get(number as usize).copied().flatten();
+                    rules_to_ignore.extend(meta.map(RuleId::Known));
+                }
+            }
+            if !standing_in.is_empty() {
+                for it in &mut enabled {
+                    let number = it.rule.number();
+                    for &(_, severity) in standing_in.iter().filter(|other| other.0 == number) {
+                        it.severity = it.severity.max(severity);
+                    }
+                }
+            }
+            file.sink.yields_to_types.set(yields);
+        }
         let wants_places = options.wants_places || wants_fixes || has_directives;
         let of_js = problems.len() - before_js;
         for (it, reported) in problems.iter_mut().skip(before_js).zip(1..) {

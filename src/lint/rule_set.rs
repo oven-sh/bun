@@ -6,12 +6,18 @@
 //! [`RuleSet`].
 
 use crate::options::Options;
-use crate::rule::{Meta, On, Rule};
+use crate::rule::{Meta, On, Plugin, Rule};
 use crate::runner::Starts;
 
 /// A set of rules, by their numbers.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct RuleBits(pub [u64; RuleBits::WORDS]);
+
+impl Default for RuleBits {
+    fn default() -> Self {
+        RuleBits::EMPTY
+    }
+}
 
 impl RuleBits {
     /// [`rule_sets!`](crate::rule_sets) sees to it that the rules fit.
@@ -26,6 +32,18 @@ impl RuleBits {
     #[inline]
     pub const fn has(&self, rule: u16) -> bool {
         self.0[rule as usize / 64] & (1 << (rule % 64)) != 0
+    }
+
+    #[inline]
+    pub(crate) const fn intersects(&self, other: &RuleBits) -> bool {
+        let mut word = 0;
+        while word < RuleBits::WORDS {
+            if self.0[word] & other.0[word] != 0 {
+                return true;
+            }
+            word += 1;
+        }
+        false
     }
 
     #[inline]
@@ -47,6 +65,7 @@ pub trait RuleSet: Starts + Sized + 'static {
     const LISTENS: &'static [RuleBits; On::ROWS];
     /// For each of [`On::KINDS`], the rules that name a row of it.
     const LISTENS_TO_KINDS: &'static [RuleBits; On::KINDS.len()] = &of_kinds(Self::LISTENS);
+    const PAIRS: &'static Pairs = &Pairs::of(Self::METAS);
 
     /// [`Rule::new`](crate::rule::Rule::new). `None`: no rule has the number.
     fn build(rule: u16, options: &Options) -> Option<Self>;
@@ -54,6 +73,92 @@ pub trait RuleSet: Starts + Sized + 'static {
     fn validate(rule: u16, options: &Options) -> Result<(), Vec<u8>>;
     /// Its number.
     fn number(&self) -> u16;
+}
+
+/// The rules without types whose check a rule of typescript-eslint makes with types: the core rule that it extends, and
+/// unicorn's rule for the same code. A problem is reported once: with an `.oxlintrc.json` and types for the file, where both
+/// are on only the rule with types runs, with the more severe of the two severities.
+///
+/// Two of unicorn's rules go on: the rule with types says nothing about a value without a type, and `prefer-find` looks at
+/// fewer uses of the array than `prefer-array-find`. They say nothing where the other decides:
+/// [`Cx::is_decided_with_types`](crate::context::Cx::is_decided_with_types).
+pub struct Pairs {
+    pub(crate) without_types: RuleBits,
+    /// Those of them that go on.
+    pub(crate) yielding: RuleBits,
+    /// Those of them for which a comment that disables them has nothing to do where the other rule reports: those that go on,
+    /// and those with a name of their own. A comment with the name that both have is about the other rule too.
+    pub(crate) keeps_comments: RuleBits,
+    /// For each of them, by its number: the number of the rule with types.
+    pub(crate) typed: [u16; NUMBERS],
+}
+
+const fn is_same_text(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut at = 0;
+    while at < a.len() {
+        if a[at] != b[at] {
+            return false;
+        }
+        at += 1;
+    }
+    true
+}
+
+impl Pairs {
+    const fn of(metas: &[Option<&'static Meta>]) -> Pairs {
+        let mut pairs = Pairs {
+            without_types: RuleBits::EMPTY,
+            yielding: RuleBits::EMPTY,
+            keeps_comments: RuleBits::EMPTY,
+            typed: [u16::MAX; NUMBERS],
+        };
+        let mut typed = 0;
+        while typed < metas.len() {
+            let with_types = match metas[typed] {
+                Some(it) if it.requires_types && matches!(it.plugin, Plugin::TypeScript) => it,
+                _ => {
+                    typed += 1;
+                    continue;
+                }
+            };
+            let mut number = 0;
+            while number < metas.len() {
+                if let Some(it) = metas[number]
+                    && !it.requires_types
+                {
+                    let goes_on = match (it.with_types, with_types.extends_base_rule) {
+                        (Some((name, goes_on)), _) if is_same_text(name, with_types.name) => {
+                            Some(goes_on)
+                        }
+                        (None, Some(base))
+                            if matches!(it.plugin, Plugin::Eslint)
+                                && is_same_text(base, it.name) =>
+                        {
+                            Some(false)
+                        }
+                        _ => None,
+                    };
+                    if let Some(goes_on) = goes_on {
+                        pairs.without_types.insert(number as u16);
+                        pairs.typed[number] = typed as u16;
+                        if goes_on {
+                            pairs.yielding.insert(number as u16);
+                        }
+                        if goes_on || !is_same_text(it.name, with_types.name) {
+                            pairs.keeps_comments.insert(number as u16);
+                        }
+                    }
+                }
+                number += 1;
+            }
+            typed += 1;
+        }
+        pairs
+    }
 }
 
 const fn of_kinds(rows: &[RuleBits; On::ROWS]) -> [RuleBits; On::KINDS.len()] {

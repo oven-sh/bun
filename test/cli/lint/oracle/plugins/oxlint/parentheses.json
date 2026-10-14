@@ -209,5 +209,23 @@
   "files": {
    "paren-template-as-tag.ts": "// GO: restrict_template_expressions.go:70: only `ast.IsTaggedTemplateExpression(node.Parent)` is skipped; here node.Parent is a ParenthesizedExpression, so the template is checked\n// RUST: restrict_template_expressions.rs:95: node.parent() is the TaggedTemplate if parentheses are not nodes of the Expr tree, and the template is skipped\n// EXPECT: oxlint reports line 7 (`obj`); bun lint reports nothing. (The error \"not callable\" is the point.)\ndeclare const obj: { a: number };\nexport const s =\n  // @ts-expect-error a string is not callable\n  (`${obj}`)`x`;\n"
   }
+ },
+ {
+  "name": "parentheses/prefer-includes/default",
+  "about": "prefer-includes: code in parentheses that are not needed",
+  "config": {
+   "categories": {
+    "correctness": "off"
+   },
+   "rules": {
+    "@typescript-eslint/prefer-includes": "error"
+   }
+  },
+  "files": {
+   "tsconfig.json": "{\"compilerOptions\": {\"strict\": true, \"noEmit\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": []}, \"include\": [\"*.ts\", \"*.tsx\"]}",
+   "paren-callee.ts": "// GO: prefer_includes.go:426: `callExpr.Expression.Kind != ast.KindPropertyAccessExpression` returns for `(a.indexOf)(b)`\n// RUST: prefer_includes.rs:185-190: the callee is accepted when its tag is Dot and it is not a chain root; parentheses are not tested\n// EXPECT: oxlint reports nothing; bun lint reports line 6\ndeclare const a: string[];\ndeclare const b: string;\nexport const r = (a.indexOf)(b) !== -1;\n",
+   "paren-left-call.ts": "// GO: prefer_includes.go:419: `left.Kind != ast.KindCallExpression` returns; a ParenthesizedExpression on the left is not looked through\n// RUST: prefer_includes.rs:171-181: `ExprKind::Binary { left: call_node }` is matched as `ExprKind::Call` with no `is_parenthesized()` test\n// EXPECT: oxlint reports nothing; bun lint reports line 6\ndeclare const a: string[];\ndeclare const b: string;\nexport const r = (a.indexOf(b)) !== -1;\n",
+   "right-paren-negative.ts": "// GO: prefer_includes.go:274-292: isNumberLiteral knows a NumericLiteral, or PrefixUnaryExpression(-, NumericLiteral); `(-1)` and `-(1)` are neither\n// RUST: prefer_includes.rs:20-22: `get_static_value(right)` evaluates through parentheses\n// EXPECT: oxlint reports nothing; bun lint reports lines 6, 7 and 8\ndeclare const a: string[];\ndeclare const b: string;\nexport const r1 = a.indexOf(b) !== (-1);\nexport const r2 = a.indexOf(b) === -(1);\nexport const r3 = a.indexOf(b) >= (0);\n"
+  }
  }
 ]

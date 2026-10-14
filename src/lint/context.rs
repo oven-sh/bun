@@ -105,6 +105,8 @@ pub(crate) struct Sink {
     pub(crate) calls_in_turns: OnceCell<Box<[(Span, u32)]>>,
     /// A rule has asked for [`File::modules`]: the file may be linted again.
     pub(crate) asks_about_modules: Cell<bool>,
+    /// [`Cx::is_decided_with_types`]: the rules that it is true for, by [`CxBase::rule`].
+    pub(crate) yields_to_types: Cell<crate::rule_set::RuleBits>,
 }
 
 impl File<'_> {
@@ -170,6 +172,23 @@ impl<'a, R: Rule> Cx<'a, R> {
     ///     .fix(|fixer| fixer.remove(declaration));
     /// ```
     #[inline]
+    /// For a rule without types that looks for what a rule with types looks for too. Whether that rule runs on the file and
+    /// `subject`, the value whose type it goes by, has one: then it decides, and this rule says nothing. It says nothing about
+    /// an `any` or a name that is not declared, which are left to this rule.
+    pub fn is_decided_with_types(&self, subject: crate::ast::Expr<'a>) -> bool {
+        self.base
+            .file
+            .sink
+            .yields_to_types
+            .get()
+            .has(self.base.rule)
+            && {
+                let ty = subject.ty();
+                !ty.is_unresolved()
+                    && !crate::types::tsutils::is_type_flag_set(ty, crate::types::TypeFlags::ANY)
+            }
+    }
+
     pub fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
         self.base.report(at.span(), at.packed_node(), message)
     }

@@ -253,17 +253,15 @@ import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach,
 
 - `0`: All tests passed, no unhandled errors
 - `1`: Test failures or unhandled errors occurred
+- `128 + signal number`: A signal interrupted the run, for example `130` for `SIGINT` (Ctrl+C) and `143` for `SIGTERM`
 
 ### Signal Handling
 
-The test runner handles common signals:
+`SIGINT` (Ctrl+C) and `SIGTERM` stop the run at once: tests in progress do not finish, and `afterEach` and `afterAll` hooks do not run. With [`--parallel`](/test/parallel), the coordinator also terminates its workers and prints the files that did not finish.
 
 ```bash terminal icon="terminal"
-# Gracefully stops test execution
+# Stops the run. The shell reports exit code 143 (128 + 15)
 kill -SIGTERM <test-process-pid>
-
-# Immediately stops test execution
-kill -SIGKILL <test-process-pid>
 ```
 
 ### Environment Detection

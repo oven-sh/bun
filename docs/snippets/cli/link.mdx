@@ -69,6 +69,10 @@ bun link <packages>
   Linker strategy (one of <code>isolated</code> or <code>hoisted</code>)
 </ParamField>
 
+<ParamField path="--minimum-release-age" type="number">
+  Only install packages published at least N seconds ago (security feature)
+</ParamField>
+
 <ParamField path="--dry-run" type="boolean">
   With <code>bun link &lt;package&gt;</code>, resolve but don't install packages, update <code>package.json</code>, or
   save a lockfile. Has no effect on bare <code>bun link</code>, which still registers the current package
@@ -111,6 +115,14 @@ bun link <packages>
 
 <ParamField path="--no-cache" type="boolean">
   Ignore manifest cache entirely
+</ParamField>
+
+<ParamField path="--offline" type="boolean">
+  Never touch the network: resolve and install only from the local cache
+</ParamField>
+
+<ParamField path="--prefer-offline" type="boolean">
+  Use cached package metadata regardless of age and only fetch what is missing
 </ParamField>
 
 ### Output &amp; Logging

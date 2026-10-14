@@ -782,12 +782,14 @@ describe("stringify", () => {
   });
 
   test("replacer function throws", () => {
+    // @ts-expect-error
     expect(() => JSON5.stringify({ a: 1 }, (key: string, value: any) => value)).toThrow(
       "JSON5.stringify does not support the replacer argument",
     );
   });
 
   test("replacer array throws", () => {
+    // @ts-expect-error
     expect(() => JSON5.stringify({ a: 1, b: 2 }, ["a"])).toThrow(
       "JSON5.stringify does not support the replacer argument",
     );
@@ -1091,12 +1093,12 @@ describe("reserved words as keys", () => {
   });
 
   test("NaN and Infinity as values still work", () => {
-    expect(Number.isNaN(JSON5.parse("{a: NaN}").a)).toBe(true);
-    expect(JSON5.parse("{a: Infinity}").a).toBe(Infinity);
-    expect(JSON5.parse("{a: -Infinity}").a).toBe(-Infinity);
-    expect(Number.isNaN(JSON5.parse("{a: +NaN}").a)).toBe(true);
-    expect(Number.isNaN(JSON5.parse("{a: -NaN}").a)).toBe(true);
-    expect(JSON5.parse("{a: +Infinity}").a).toBe(Infinity);
+    expect(Number.isNaN((JSON5.parse("{a: NaN}") as any).a)).toBe(true);
+    expect((JSON5.parse("{a: Infinity}") as any).a).toBe(Infinity);
+    expect((JSON5.parse("{a: -Infinity}") as any).a).toBe(-Infinity);
+    expect(Number.isNaN((JSON5.parse("{a: +NaN}") as any).a)).toBe(true);
+    expect(Number.isNaN((JSON5.parse("{a: -NaN}") as any).a)).toBe(true);
+    expect((JSON5.parse("{a: +Infinity}") as any).a).toBe(Infinity);
   });
 
   test("keyword-like identifiers as values should error", () => {
@@ -1392,7 +1394,7 @@ describe("round-trip: parse → stringify → parse", () => {
   function psp(input: string) {
     const first = JSON5.parse(input);
     const stringified = JSON5.stringify(first);
-    const second = JSON5.parse(stringified);
+    const second = JSON5.parse(stringified!);
     expect(deepEqual(first, second)).toBe(true);
   }
 
@@ -1489,7 +1491,7 @@ describe("round-trip: stringify → parse → stringify", () => {
   // Stringify a JS value, parse the result, stringify again — strings must match
   function sps(value: any) {
     const first = JSON5.stringify(value);
-    const parsed = JSON5.parse(first);
+    const parsed = JSON5.parse(first!);
     const second = JSON5.stringify(parsed);
     expect(second).toBe(first);
   }
@@ -1497,7 +1499,7 @@ describe("round-trip: stringify → parse → stringify", () => {
   // With a space argument for pretty printing
   function spsPretty(value: any, space: number | string = 2) {
     const first = JSON5.stringify(value, null, space);
-    const parsed = JSON5.parse(first);
+    const parsed = JSON5.parse(first!);
     const second = JSON5.stringify(parsed, null, space);
     expect(second).toBe(first);
   }
@@ -1601,7 +1603,7 @@ describe("round-trip: stringify → parse → stringify", () => {
     test("undefined in object is omitted", () => {
       const obj = { a: 1, b: undefined, c: 3 };
       const s1 = JSON5.stringify(obj);
-      const parsed = JSON5.parse(s1);
+      const parsed = JSON5.parse(s1!);
       const s2 = JSON5.stringify(parsed);
       expect(s2).toBe(s1);
       expect(parsed).toEqual({ a: 1, c: 3 });
@@ -1610,7 +1612,7 @@ describe("round-trip: stringify → parse → stringify", () => {
     test("undefined in array becomes null", () => {
       const arr = [1, undefined, 3];
       const s1 = JSON5.stringify(arr);
-      const parsed = JSON5.parse(s1);
+      const parsed = JSON5.parse(s1!);
       const s2 = JSON5.stringify(parsed);
       expect(s2).toBe(s1);
       expect(parsed).toEqual([1, null, 3]);

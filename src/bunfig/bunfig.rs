@@ -139,7 +139,7 @@ fn num_to_u32(n: f64) -> u32 {
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct Parser<'a> {
+struct Parser<'a, 'tool> {
     json: Expr,
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
@@ -150,9 +150,20 @@ struct Parser<'a> {
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
     bump: &'a Bump,
+    /// Reads `[lint]` and `[fmt]`.
+    tool: Option<&'a mut crate::ToolReader<'tool>>,
+    counts: Counts,
 }
 
-impl<'a> Parser<'a> {
+/// What of a bunfig.toml counts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Counts {
+    Everything,
+    /// `[lint]` and `[fmt]`: the file is above the working directory.
+    OnlyForTheTool,
+}
+
+impl<'a> Parser<'a, '_> {
     fn add_error(&mut self, loc: bun_ast::Loc, text: &'static [u8]) -> crate::Result<()> {
         self.log.add_error_opts(
             text,
@@ -344,6 +355,15 @@ impl<'a> Parser<'a> {
     // `cmd` is a runtime arg rather than a const generic —
     // `bun_options_types::command_tag::Tag` does not derive `ConstParamTy` (it
     // already derives `enum_map::Enum`, which conflicts). Monomorphising over
+    fn read_for_tool(&mut self, json: &Expr) -> crate::Result<()> {
+        if let Some(read) = self.tool.as_deref_mut() {
+            if let Err((loc, message)) = read(json) {
+                self.add_error_format(loc, format_args!("{}", bstr::BStr::new(&message)))?;
+            }
+        }
+        Ok(())
+    }
+
     // `cmd` would only dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
     fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
@@ -353,6 +373,10 @@ impl<'a> Parser<'a> {
 
         if !matches!(json.data, ExprData::EObject(_)) {
             self.add_error(json.loc, b"bunfig expects an object { } at the root")?;
+        }
+
+        if self.counts == Counts::OnlyForTheTool {
+            return self.read_for_tool(&json);
         }
 
         if let Some(expr) = json.get(b"logLevel") {
@@ -407,6 +431,8 @@ impl<'a> Parser<'a> {
                 self.ctx.runtime_options.smol = expr.as_bool().expect("infallible: type checked");
             }
         }
+
+        self.read_for_tool(&json)?;
 
         if cmd == CommandTag::TestCommand {
             if let Some(test) = json.get(b"test") {
@@ -1097,6 +1123,8 @@ impl Bunfig {
         cmd: CommandTag,
         source: &bun_ast::Source,
         ctx: &mut ContextData,
+        tool: Option<&mut crate::ToolReader<'_>>,
+        counts: Counts,
     ) -> crate::Result<()> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
@@ -1168,6 +1196,8 @@ impl Bunfig {
             source,
             ctx,
             bump: &bump,
+            tool,
+            counts,
         };
         parser.parse(cmd)
     }
@@ -1178,7 +1208,7 @@ impl Bunfig {
 // Split into a second `impl` block purely to keep `parse(cmd)` readable.
 // ─────────────────────────────────────────────────────────────────────────────
 
-impl<'a> Parser<'a> {
+impl<'a> Parser<'a, '_> {
     fn parse_registry_url(&mut self, url: &[u8]) -> crate::Result<api::NpmRegistry> {
         // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
         // The api `Parser` is generic over log/source and never reads them for

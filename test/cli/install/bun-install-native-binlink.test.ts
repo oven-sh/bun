@@ -2,15 +2,16 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, realpathSync, statSync, symlinkSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, sep } from "path";
+import { TestRegistry } from "registry";
 
-let verdaccio: VerdaccioRegistry;
+let verdaccio: TestRegistry;
 
 setDefaultTimeout(1000 * 60 * 5);
 
 beforeAll(async () => {
-  verdaccio = new VerdaccioRegistry();
+  verdaccio = new TestRegistry();
   await verdaccio.start();
 });
 
@@ -216,7 +217,7 @@ describe.concurrent("native binlink optimization", () => {
   // still run `node install.js`.
   describe("nested nativeDependencies", () => {
     async function setup(opts: { linker: "hoisted" | "isolated"; deps: Record<string, string>; extraEnv?: object }) {
-      let env: Record<string, string> = { ...bunEnv, ...(opts.extraEnv ?? {}) };
+      let env: NodeJS.Dict<string> = { ...bunEnv, ...(opts.extraEnv ?? {}) };
       const { packageDir, packageJson } = await verdaccio.createTestDir();
       env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
       env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");

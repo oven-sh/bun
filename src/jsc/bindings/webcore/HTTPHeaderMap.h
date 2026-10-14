@@ -83,23 +83,6 @@ public:
             String key;
             std::optional<HTTPHeaderName> keyAsHTTPHeaderName;
             String value;
-
-            String name() const
-            {
-                if (keyAsHTTPHeaderName) {
-                    return WTF::httpHeaderNameDefaultCaseStringImpl(keyAsHTTPHeaderName.value());
-                }
-
-                return key;
-            }
-            String asciiLowerCaseName() const
-            {
-                if (keyAsHTTPHeaderName) {
-                    return WTF::httpHeaderNameStringImpl(keyAsHTTPHeaderName.value());
-                }
-
-                return lowercaseHeaderName(key);
-            }
         };
 
         const KeyValue* get() const

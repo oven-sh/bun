@@ -1162,6 +1162,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "application/x-typescript",
         "application/typescript",
         "Text/TypeScript",
+        "TS",
+        "text/ts; charset=utf-8",
       ].map((type): [string, string, null] => [
         `<script type="${type}">let  b=1</script>\n`,
         `<script type="${type}">\n  let b = 1;\n</script>\n`,

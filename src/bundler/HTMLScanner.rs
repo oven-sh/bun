@@ -68,7 +68,12 @@ impl<'a> HTMLScanner<'a> {
 }
 
 impl<'a> HTMLScanner<'a> {
-    fn create_import_record(&mut self, input_path: &[u8], kind: ImportKind) -> Result<(), Error> {
+    fn create_import_record(
+        &mut self,
+        input_path: &[u8],
+        kind: ImportKind,
+        flags: ImportRecordFlags,
+    ) -> Result<(), Error> {
         // In HTML, sometimes people do /src/index.js
         // In that case, we don't want to use the absolute filesystem path, we want to use the path relative to the project root
         let path_to_use: &[u8] = if input_path.len() > 1 && input_path[0] == b'/' {
@@ -115,7 +120,7 @@ impl<'a> HTMLScanner<'a> {
             loader: None,
             source_index: AstIndex::default(),
             original_path: b"",
-            flags: ImportRecordFlags::default(),
+            flags,
         };
 
         self.import_records.push(record);
@@ -140,9 +145,10 @@ impl<'a> HTMLScanner<'a> {
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
+        flags: ImportRecordFlags,
     ) {
         let _ = url_attribute;
-        let _ = self.create_import_record(path, kind);
+        let _ = self.create_import_record(path, kind, flags);
     }
 
     pub(crate) fn scan(&mut self, input: &[u8]) -> Result<(), Error> {
@@ -171,6 +177,7 @@ pub(crate) trait HTMLProcessorHandler {
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
+        flags: ImportRecordFlags,
     );
     fn on_write_html(&mut self, bytes: &[u8]);
     fn on_html_parse_error(&mut self, message: &[u8]);
@@ -196,8 +203,9 @@ impl<'a> HTMLProcessorHandler for HTMLScanner<'a> {
         path: &[u8],
         url_attribute: &[u8],
         kind: ImportKind,
+        flags: ImportRecordFlags,
     ) {
-        HTMLScanner::on_tag(self, element, path, url_attribute, kind)
+        HTMLScanner::on_tag(self, element, path, url_attribute, kind, flags)
     }
     fn on_write_html(&mut self, bytes: &[u8]) {
         HTMLScanner::on_write_html(self, bytes)
@@ -217,6 +225,8 @@ struct TagHandler {
     pub(crate) url_attribute: &'static str,
     /// The kind of import to create
     pub(crate) kind: ImportKind,
+    /// The flags of the import record to create
+    pub(crate) flags: ImportRecordFlags,
 }
 
 impl TagHandler {
@@ -225,13 +235,20 @@ impl TagHandler {
             selector,
             url_attribute,
             kind,
+            flags: ImportRecordFlags::empty(),
         }
+    }
+
+    const fn with_flags(mut self, flags: ImportRecordFlags) -> Self {
+        self.flags = flags;
+        self
     }
 }
 
 const TAG_HANDLERS: [TagHandler; 16] = [
     // Module scripts with src
-    TagHandler::new("script[src]", "src", ImportKind::Stmt),
+    TagHandler::new("script[src]", "src", ImportKind::Stmt)
+        .with_flags(ImportRecordFlags::HTML_SCRIPT_SRC),
     // CSS Stylesheets
     TagHandler::new("link[rel='stylesheet'][href]", "href", ImportKind::At),
     // CSS Assets
@@ -339,6 +356,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                                     value.as_bytes(),
                                     tag_info.url_attribute.as_bytes(),
                                     tag_info.kind,
+                                    tag_info.flags,
                                 );
                             }
                         }

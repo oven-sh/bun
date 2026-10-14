@@ -990,14 +990,17 @@ impl<'a> LinkerContext<'a> {
                 Vec::with_capacity(parts_col.len());
             for (i, parts) in parts_col.iter().enumerate() {
                 let mut bits = bun_collections::AutoBitSet::init_empty(parts.len())?;
+                // The HTML loader's `ParseTask` builds its synthetic part 1 already
+                // live (so the JS-chunk visitor follows every embedded import record).
                 // `mark_file_live_for_tree_shaking` short-circuits for HTML and never
-                // walks its parts. The HTML loader's `ParseTask` builds one
-                // statement-less part per import record (so the JS-chunk visitor
-                // follows every embedded `<script src>` in document order), and all
-                // of them are live.
+                // walks its parts, so seed the bit here to preserve the old
+                // `Part::is_live = true` initializer. `call_wrapped_html_scripts` can
+                // have made several parts of it: each one holds import records.
                 if loaders.get(i).is_some_and(|l| *l == Loader::Html) {
-                    for part_index in 1..parts.len() {
-                        bits.set(part_index);
+                    for (part_index, part) in parts.iter().enumerate().skip(1) {
+                        if part_index == 1 || !part.import_record_indices.is_empty() {
+                            bits.set(part_index);
+                        }
                     }
                 }
                 parts_live.push(bits);
@@ -2368,61 +2371,96 @@ impl<'a> LinkerContext<'a> {
         Ok(true)
     }
 
-    /// The HTML loader gives each `<script src>` its own statement-less part
-    /// that holds only the import record. A script that resolved to a wrapped
-    /// module runs nothing until its wrapper is called, so print that call where
-    /// the tag was, like `should_remove_import_export_stmt` does for a bare
-    /// `import "./script"`: `require_foo()`, `init_foo()`, or `await init_foo()`.
-    /// Nothing observes the namespace, so the result is not passed to `__toESM`.
-    pub(crate) fn append_html_script_wrapper_calls(
-        &self,
-        stmts: &mut StmtList,
-        part: &Part,
-        ast: &JSAst<'_>,
+    /// A page runs a `<script src>` where the tag is. The HTML loader puts every
+    /// import record of the page in part 1, which has no statement, so a script
+    /// that the linker wrapped would not run: nothing calls `require_foo` or
+    /// `init_foo`. Gives the part those calls. A part prints after all the files
+    /// that it imports, so it ends at each call that another record follows, and
+    /// the records after the call go to a new part.
+    pub(crate) fn call_wrapped_html_scripts(
+        &mut self,
+        source_index: u32,
     ) -> Result<(), AllocError> {
-        for &import_record_index in part.import_record_indices.slice() {
-            let record = &ast.import_records[import_record_index as usize];
-            if record.kind != ImportKind::Stmt
+        // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the link pass;
+        // detach it so the statements do not borrow `self` across `add_part_to_file` below.
+        let arena: &Bump = unsafe { bun_ptr::detach_lifetime_ref::<Bump>(self.arena()) };
+        let flags = self.graph.meta.items_flags();
+        let wrapper_refs = self.graph.ast.items_wrapper_ref();
+        let records = &self.graph.ast.items_import_records()[source_index as usize];
+        let Some(part) = self.graph.ast.items_parts()[source_index as usize]
+            .as_slice()
+            .get(1)
+        else {
+            return Ok(());
+        };
+        let indices = part.import_record_indices.slice();
+        // A wrapped file prints whole, inside its wrapper.
+        let splits = flags[source_index as usize].wrap == WrapKind::None;
+
+        let to_stmts = |calls: &[Stmt]| {
+            if calls.is_empty() {
+                bun_ast::StoreSlice::EMPTY
+            } else {
+                bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(calls))
+            }
+        };
+        // Per part: where its records end in `indices`, and its statements.
+        let mut groups: Vec<(usize, bun_ast::StoreSlice<Stmt>)> = Vec::new();
+        let mut calls: Vec<Stmt> = Vec::new();
+        for (i, &record_index) in indices.iter().enumerate() {
+            let record = &records[record_index as usize];
+            if !record
+                .flags
+                .contains(bun_ast::ImportRecordFlags::HTML_SCRIPT_SRC)
                 || !record.source_index.is_valid()
-                || record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
             {
                 continue;
             }
-            let other_source_index = record.source_index.get() as usize;
-            let other_flags = self.graph.meta.items_flags()[other_source_index];
-            match other_flags.wrap {
-                WrapKind::None => continue,
-                WrapKind::Cjs => {}
-                WrapKind::Esm => {
-                    if !self.graph.files_live.is_set(other_source_index) {
-                        continue;
-                    }
-                }
-            }
-            let wrapper_ref = self.graph.ast.items_wrapper_ref()[other_source_index];
-            if wrapper_ref.is_empty() {
+            let other = record.source_index.get() as usize;
+            let wrapper_ref = wrapper_refs[other];
+            if flags[other].wrap == WrapKind::None || !wrapper_ref.is_valid() {
                 continue;
             }
-
-            let mut call = Expr::init(
+            // Nothing reads the namespace, so the call is bare: no `__toESM`.
+            let mut call = Expr::allocate(
+                arena,
                 E::Call {
                     target: Expr::init_identifier(wrapper_ref, Loc::EMPTY),
                     ..Default::default()
                 },
                 Loc::EMPTY,
             );
-            if other_flags.wrap == WrapKind::Esm && other_flags.is_async_or_has_async_dependency {
-                call = Expr::init(E::Await { value: call }, Loc::EMPTY);
+            if flags[other].wrap == WrapKind::Esm && flags[other].is_async_or_has_async_dependency {
+                call = Expr::allocate(arena, E::Await { value: call }, Loc::EMPTY);
             }
-            stmts
-                .inside_wrapper_prefix
-                .append_non_dependency(Stmt::alloc(
-                    S::SExpr {
-                        value: call,
-                        ..Default::default()
-                    },
-                    Loc::EMPTY,
-                ))?;
+            calls.push(Stmt::allocate_expr(arena, call));
+            if splits && i + 1 < indices.len() {
+                groups.push((i + 1, to_stmts(&calls)));
+                calls.clear();
+            }
+        }
+        if groups.is_empty() && calls.is_empty() {
+            return Ok(());
+        }
+        groups.push((indices.len(), to_stmts(&calls)));
+
+        let mut groups = groups.into_iter();
+        let (first_end, first_stmts) = groups.next().expect("infallible: pushed above");
+        let mut begin = first_end;
+        let mut new_parts: Vec<Part> = Vec::with_capacity(groups.len());
+        for (end, stmts) in groups {
+            new_parts.push(Part {
+                stmts,
+                import_record_indices: bun_alloc::AstAlloc::vec_from_slice(&indices[begin..end]),
+                ..Default::default()
+            });
+            begin = end;
+        }
+        let part = &mut self.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice()[1];
+        part.stmts = first_stmts;
+        part.import_record_indices.truncate(first_end);
+        for part in new_parts {
+            self.graph.add_part_to_file(source_index, part)?;
         }
         Ok(())
     }

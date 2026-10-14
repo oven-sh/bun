@@ -141,11 +141,11 @@ console.log(favicon);
             "files": [
               {
                 "input": "client.html",
-                "path": "./client-c9kjeh05.js",
+                "path": "./client-qjznw47b.js",
                 "loader": "js",
                 "isEntry": true,
                 "headers": {
-                  "etag": "7GmzUg4RQCU",
+                  "etag": "l5IfNVyE54s",
                   "content-type": "text/javascript;charset=utf-8"
                 }
               },
@@ -155,7 +155,7 @@ console.log(favicon);
                 "loader": "html",
                 "isEntry": true,
                 "headers": {
-                  "etag": "L1NGVitZslc",
+                  "etag": "xh1kdn7wbmI",
                   "content-type": "text/html;charset=utf-8"
                 }
               },
@@ -325,17 +325,17 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "Vr91Jdsy4Zc",
+                  "etag": "Dl7kT6q7eY4",
                 },
                 "input": "home.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./home-pzn5vj1q.js",
+                "path": "./home-ey4favse.js",
               },
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "bO9UOC8tMwQ",
+                  "etag": "IhvRaM9jGDU",
                 },
                 "input": "home.html",
                 "isEntry": true,
@@ -360,17 +360,17 @@ console.log("About manifest:", aboutHtml);
               {
                 "headers": {
                   "content-type": "text/javascript;charset=utf-8",
-                  "etag": "xjiS27vgDE0",
+                  "etag": "RCRrF1EbBvo",
                 },
                 "input": "about.html",
                 "isEntry": true,
                 "loader": "js",
-                "path": "./about-6rjvv0cd.js",
+                "path": "./about-44bqhv6t.js",
               },
               {
                 "headers": {
                   "content-type": "text/html;charset=utf-8",
-                  "etag": "yq0KRVKuKEY",
+                  "etag": "2OGqRD6vx54",
                 },
                 "input": "about.html",
                 "isEntry": true,

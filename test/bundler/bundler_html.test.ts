@@ -311,8 +311,9 @@ console.log("requires " + dep);`,
   });
 
   // The chunk prints wrapped files ahead of the flat ones, so the call for a
-  // CommonJS script that sits between two plain scripts must come from the
-  // tag's own part to keep document order, not from next to the wrapper.
+  // CommonJS script that sits between two plain scripts must print between
+  // them to keep document order, not next to the wrapper. The call for the
+  // last script of the page prints after every other script.
   itBundled("html/script-src-commonjs-between-plain-scripts", {
     outdir: "out/",
     files: {
@@ -323,6 +324,7 @@ console.log("requires " + dep);`,
     <script src="./first.js"></script>
     <script src="./umd-badge.js"></script>
     <script src="./last.js"></script>
+    <script src="./tail.cjs"></script>
   </body>
 </html>`,
       "/first.js": `console.log("first");`,
@@ -335,6 +337,7 @@ console.log("requires " + dep);`,
   return {};
 });`,
       "/last.js": `console.log("last");`,
+      "/tail.cjs": `console.log("tail");`,
     },
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
@@ -342,7 +345,37 @@ console.log("requires " + dep);`,
       api.expectFile("out/" + js).not.toContain("__toESM");
       api.writeFile("out/run.mjs", `import "./${js}";`);
     },
-    run: { file: "out/run.mjs", stdout: "first\numd badge\nlast" },
+    run: { file: "out/run.mjs", stdout: "first\numd badge\nlast\ntail" },
+  });
+
+  // A `<link as="worker">` only refers to its file: the page calls the wrapper
+  // of a CommonJS `<script src>`, and not the wrapper of a CommonJS worker.
+  itBundled("html/script-src-commonjs-with-worker-link", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="modulepreload" as="worker" href="./worker.js">
+  </head>
+  <body>
+    <script src="./lib.cjs"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>`,
+      "/worker.js": `
+console.log("worker");
+module.exports = {};`,
+      "/lib.cjs": `console.log("lib");`,
+      "/app.js": `console.log("app");`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const js = api.readFile("out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
+      api.writeFile("out/run.mjs", `import "./${js}";`);
+    },
+    run: { file: "out/run.mjs", stdout: "lib\napp" },
   });
 
   // Same, when the script resolved to a lazily-initialized ES module (here

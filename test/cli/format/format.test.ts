@@ -5370,6 +5370,12 @@ try {
         "13",
       ],
       [
+        ["--parser", "flow", "--cursor-offset", "28"],
+        "x  ( );\ndeclare class A  // c1\n{}\ny  ( );\n",
+        "x();\ndeclare class A {\n  // c1\n}\ny();\n",
+        "21",
+      ],
+      [
         ["--parser", "typescript", "--cursor-offset", "24"],
         "x  ( );\ninterface A  // c1\n{}\ny  ( );\n",
         "x();\ninterface A {\n  // c1\n}\ny();\n",

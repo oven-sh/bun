@@ -892,6 +892,66 @@ describe.concurrent("bun fmt", () => {
       ],
     ],
     [
+      "Prettier 3.9.9 leaves out the parentheses of what it writes as it is, where only its text needs them",
+      {},
+      [
+        [
+          "js",
+          "({}.a) && // prettier-ignore\n  b;\n",
+          "({}.a) && // prettier-ignore\n  b;\n",
+          "{}.a && // prettier-ignore\n  b;\n",
+        ],
+        [
+          "js",
+          "({} + a) /* prettier-ignore */ && b;\n",
+          "({} + a) /* prettier-ignore */ && b;\n",
+          "{} + a /* prettier-ignore */ && b;\n",
+        ],
+        [
+          "js",
+          "(function () {}()) && // prettier-ignore\n  b;\n",
+          "(function () {}()) && // prettier-ignore\n  b;\n",
+          "function () {}() && // prettier-ignore\n  b;\n",
+        ],
+        [
+          "js",
+          "x = () => ({}.a) && // prettier-ignore\n  b;\n",
+          "x = () =>\n  ({}.a) && // prettier-ignore\n  b;\n",
+          "x = () =>\n  {}.a && // prettier-ignore\n  b;\n",
+        ],
+        [
+          "js",
+          "for (let x = (a in b == c) && // prettier-ignore\n  d; ; );\n",
+          "for (\n  let x =\n    (a in b == c) && // prettier-ignore\n    d;\n  ;\n);\n",
+          "for (\n  let x =\n    a in b == c && // prettier-ignore\n    d;\n  ;\n);\n",
+        ],
+        [
+          "js",
+          "(new   A) // prettier-ignore\n  .foo();\n",
+          "(new   A) // prettier-ignore\n  .foo();\n",
+          "new   A // prettier-ignore\n  .foo();\n",
+        ],
+        [
+          "js",
+          "(function(){}()) // prettier-ignore\n  .b();\n",
+          "(function(){}()) // prettier-ignore\n  .b();\n",
+          "function(){}() // prettier-ignore\n  .b();\n",
+        ],
+        [
+          "js",
+          "({}.a) // prettier-ignore\n  [0];\n",
+          "({}.a) // prettier-ignore\n[0];\n",
+          "{}.a // prettier-ignore\n[0];\n",
+        ],
+        [
+          "ts",
+          "x = (a  <T>) // prettier-ignore\n+ y;\n",
+          "x =\n  (a  <T>) + // prettier-ignore\n  y;\n",
+          "x =\n  a  <T> + // prettier-ignore\n  y;\n",
+        ],
+      ],
+    ],
+    [
       "oxfmt 0.72 leaves out the parentheses of what it writes as it is",
       { ".oxfmtrc.json": "{}" },
       [
@@ -948,6 +1008,18 @@ describe.concurrent("bun fmt", () => {
           "type A = B extends (C  extends D ? E : F // prettier-ignore\n) ? G : H;\n",
           "type A = B extends (C  extends D ? E : F) // prettier-ignore\n  ? G\n  : H;\n",
           "type A = B extends C  extends D ? E : F // prettier-ignore\n  ? G\n  : H;\n",
+        ],
+        [
+          "js",
+          "try {} catch (/* prettier-ignore */ e) {}\n",
+          "try {\n} catch (/* prettier-ignore */ e) {}\n",
+          "try {\n} catch /* prettier-ignore */ e {}\n",
+        ],
+        [
+          "js",
+          "try {\n} catch (\n  // prettier-ignore\n  { a,   b }\n) {}\n",
+          "try {\n} catch (\n  // prettier-ignore\n  { a,   b }\n) {}\n",
+          "try {\n} catch // prettier-ignore\n{ a,   b } {}\n",
         ],
       ],
     ],

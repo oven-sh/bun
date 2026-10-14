@@ -133,12 +133,26 @@ fn write_catch_clause<'a>(
     write!(f, "catch");
     if let Some(param) = param {
         write!(f, space());
-        format_node_without_comments(
-            param.span(),
-            || node,
-            f,
-            |f| write_catch_parameter(param, body, f),
-        );
+        let parameter = format_with(|f| {
+            format_node_without_comments(
+                param.span(),
+                || node,
+                f,
+                |f| write_catch_parameter(param, body, f),
+            );
+        });
+        // The parentheses are no part of what is written as it is.
+        match !f.is_quiet() && f.comments().is_suppressed(param.span().start) {
+            true => {
+                let breaks = (f.comments().comments_before(param.span().start).iter())
+                    .any(|it| it.is_line() || it.followed_by_newline());
+                match breaks {
+                    true => write!(f, ["(", soft_block_indent(&parameter), ")"]),
+                    false => write!(f, ["(", parameter, ")"]),
+                }
+            }
+            false => write!(f, parameter),
+        }
     }
     write_block(body, f);
 }

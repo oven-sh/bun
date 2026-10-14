@@ -421,7 +421,10 @@ impl<'a> Format<'a> for FormatClass<'a> {
         let format_heritage_clauses = format_with(|f| {
             if let Some(extends) = super_class {
                 let format_super = format_with(|f| {
-                    write!(f, format_leading_comments(extends.span()));
+                    // What is written as it is writes them itself: one of them can be in its text.
+                    if !f.comments().is_suppressed(extends.span().start) {
+                        write!(f, format_leading_comments(extends.span()));
+                    }
                     let format_type_arguments = format_with(|f| {
                         write!(f, FormatCommentsTrailingInHead(gaps.after_super_class));
                         if let Some(span) = class.extends_args().angle_brackets_span() {

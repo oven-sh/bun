@@ -204,8 +204,13 @@ pub(crate) fn write_ts_literal_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>)
             let Some(rest) = text.strip_prefix(b"-") else {
                 return write!(f, format_digits(text));
             };
-            // `- /* comment */ 1`: like a unary expression whose operand has a comment.
+            // `- /* comment */ 1`: like a unary expression whose operand has a comment. The text of one that has been
+            // moved to the end of the type is behind it.
             let comments = f.comments().comments_before(ty.span().end);
+            let count = (comments.iter())
+                .take_while(|it| it.span.end <= ty.span().end)
+                .count();
+            let comments = comments.get(..count).unwrap_or_default();
             let Some(last) = comments.last() else {
                 return write!(f, ["-", format_digits(rest.trim_ascii_start())]);
             };

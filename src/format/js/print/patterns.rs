@@ -124,8 +124,9 @@ impl<'a> Format<'a> for FormatBindingPropertyValue<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let (property, value) = (self.0, self.0.value());
         match property.default() {
+            // With the parentheses of the default, as in ESTree.
             Some(default) => format_node(
-                value.span().to(default.span()),
+                value.span().to(default.outer_span()),
                 || AstNodes::BindingProperty(property),
                 f,
                 |f| write_assignment_pattern(value, default, f),

@@ -20,7 +20,7 @@ use super::print;
 use super::print::program::ends_before_semicolon;
 use super::siblings::following_span_start_in;
 use super::utils::suppressed::FormatSuppressedNode;
-use super::utils::typecast::write_type_casts;
+use super::utils::typecast::{is_cast_target, write_type_casts};
 use crate::prelude::*;
 use crate::write;
 
@@ -526,7 +526,10 @@ impl<'a> FormatExpr<'a> {
 
     /// Prettier's `printIgnored`, and the comments before it.
     fn write_as_it_is(&self, f: &mut Formatter<'a>) {
-        if print::function::write_called_function_with_comments(self.expr, self.options, f) {
+        // In the parentheses of a type cast it needs none of its own.
+        if !is_cast_target(self.expr, f)
+            && print::function::write_called_function_with_comments(self.expr, self.options, f)
+        {
             return;
         }
         format_leading_comments_of_ignored(self.expr.span()).fmt(f);

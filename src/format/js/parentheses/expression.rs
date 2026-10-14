@@ -683,13 +683,13 @@ fn assignment_needs_parentheses<'a>(
 /// Whether one of the comments between `start` and `end`, printed or not, ends its line or spans
 /// several.
 pub(crate) fn has_own_line_comment_between(start: u32, end: u32, f: &Formatter<'_>) -> bool {
-    let breaks = |comment: &Comment| comment.followed_by_newline() || comment.is_multiline_block();
+    let breaks = |comment: Comment<'_>| comment.has_newline_after() || comment.is_multiline_block();
     let comments = f.comments();
     comments
         .printed_comments()
         .iter()
         .rev()
-        .take_while(|comment| comment.start() >= start)
+        .take_while(|comment| comment.span().start >= start)
         .any(breaks)
         || comments.comments_before_iter(end).any(breaks)
 }

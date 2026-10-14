@@ -3,7 +3,6 @@
 use super::surrounding_nodes::AttachContext;
 use super::{Marker, Options, Owner, Placement, attach};
 use crate::js::ast_nodes::AST_KIND_NAMES;
-use crate::js::comments::Comment;
 use bun_lint::ast::File;
 use bun_lint::ast::comments::NodeOrName;
 use std::io::Write;
@@ -12,13 +11,12 @@ use std::io::Write;
 /// node owns.
 pub(crate) fn list<'a>(
     file: &'a File<'a>,
-    comments: &[Comment],
     cast_parens: &[u32],
     options: Options,
     out: &mut Vec<u8>,
 ) {
-    let attached = attach(file, comments, cast_parens, options);
-    let cx = AttachContext::new(file, comments, cast_parens, options);
+    let attached = attach(file, cast_parens, options);
+    let cx = AttachContext::new(file, cast_parens, options);
     let describe = |owner: Owner<'a>| {
         let name = match owner {
             Owner::Node(node) => AST_KIND_NAMES.get(node.kind() as usize).copied(),
@@ -28,8 +26,8 @@ pub(crate) fn list<'a>(
         (name.unwrap_or_default(), cx.span_of(owner))
     };
     let mut lines: Vec<(u32, Vec<u8>)> = Vec::new();
-    for (comment, attachment) in comments.iter().zip(&attached.attachments) {
-        if comment.is_merged_into_previous() || attachment.marker == Marker::InIgnoredNode {
+    for (comment, attachment) in file.comments_by_id().zip(&attached.attachments) {
+        if attachment.marker == Marker::InIgnoredNode {
             continue;
         }
         let (name, span) = describe(attachment.owner);
@@ -52,9 +50,12 @@ pub(crate) fn list<'a>(
         let _ = write!(
             line,
             "C {} {} {placement} {name} {} {} {marker}{unignore}",
-            comment.span.start, comment.span.end, span.start, span.end,
+            comment.span().start,
+            comment.span().end,
+            span.start,
+            span.end,
         );
-        lines.push((comment.span.start, line));
+        lines.push((comment.span().start, line));
     }
     // The nodes that the parser recorded, to debug a wrong owner.
     for comment in file.comments_by_id() {

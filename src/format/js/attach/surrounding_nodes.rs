@@ -9,7 +9,6 @@ use crate::js::ast_nodes::{
     AsAstNodes, AstNodes as N, ChainElement, ExpressionStatement, inner_of_stmt, is_inner_comma,
     node_as_ast_nodes,
 };
-use crate::js::comments::Comment;
 use crate::js::format::is_in_head_of_for;
 use crate::js::source_text::SourceText;
 use bun_lint::ast::comments::{self, NodeOrName};
@@ -30,8 +29,6 @@ pub(super) struct SurroundingNodes<'a> {
 pub(super) struct AttachContext<'a, 'c> {
     pub(super) file: &'a File<'a>,
     pub(super) source: SourceText<'a>,
-    /// Indexed by comment id.
-    pub(super) comments: &'c [Comment],
     pub(super) options: Options,
     /// See [`crate::js::comments::cast_parens`].
     cast_parens: &'c [u32],
@@ -99,16 +96,10 @@ fn body_of(node: N<'_>) -> Option<N<'_>> {
 }
 
 impl<'a, 'c> AttachContext<'a, 'c> {
-    pub(super) fn new(
-        file: &'a File<'a>,
-        comments: &'c [Comment],
-        cast_parens: &'c [u32],
-        options: Options,
-    ) -> Self {
+    pub(super) fn new(file: &'a File<'a>, cast_parens: &'c [u32], options: Options) -> Self {
         AttachContext {
             file,
             source: SourceText::new(file.text()),
-            comments,
             options,
             cast_parens,
         }

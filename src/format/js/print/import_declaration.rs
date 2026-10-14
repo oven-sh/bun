@@ -64,14 +64,14 @@ pub(crate) fn format_import_and_export_source_with_clause<'a>(
             let comments = f.comments().comments_before(first.span().start);
             let count = comments
                 .iter()
-                .take_while(|comment| !comment.preceded_by_newline())
+                .take_while(|comment| !comment.has_newline_before())
                 .enumerate()
                 .filter(|(_, comment)| {
-                    comment.span.end <= braces.start || comment.followed_by_newline()
+                    comment.span().end <= braces.start || comment.has_newline_after()
                 })
                 .last()
                 .map_or(0, |(index, _)| index + 1);
-            comments.get(..count).unwrap_or_default()
+            comments.slice(0, count)
         }
     };
     write!(f, FormatTrailingComments::Comments(comments));
@@ -158,9 +158,9 @@ pub(crate) fn only_specifier_has_comments<'a>(
             .comments_before_character(statement.span().start, b'}')
             .iter()
             .any(|comment| {
-                !specifier.contains(comment.span)
-                    || comment.preceded_by_newline()
-                    || comment.followed_by_newline()
+                !specifier.contains(comment.span())
+                    || comment.has_newline_before()
+                    || comment.has_newline_after()
             })
             || !comments_before_from(specifier.end, statement, f).is_empty())
 }
@@ -172,9 +172,9 @@ fn comments_before_from<'a>(
     mut position: u32,
     statement: Stmt<'a>,
     f: &Formatter<'a>,
-) -> &'a [Comment] {
+) -> CommentList<'a> {
     let Some(source) = statement.module_specifier_span() else {
-        return &[];
+        return CommentList::empty();
     };
     let comments = f.comments().comments_in(Span::before(position, source));
     let mut is_before_from = true;
@@ -183,13 +183,13 @@ fn comments_before_from<'a>(
         .take_while(|comment| {
             let gap = f
                 .source_text()
-                .text_for(&Span::before(position, comment.span));
-            position = comment.span.end;
+                .text_for(&Span::before(position, comment.span()));
+            position = comment.span().end;
             is_before_from &= !bun_core::strings::contains(gap, b"from");
-            comment.followed_by_newline() || (is_before_from && !comment.preceded_by_newline())
+            comment.has_newline_after() || (is_before_from && !comment.has_newline_before())
         })
         .count();
-    comments.get(..count).unwrap_or_default()
+    comments.slice(0, count)
 }
 
 /// The specifiers between the braces of the import or export in the first field.
@@ -254,13 +254,13 @@ impl<'a, T: Format<'a> + Spanned> Format<'a> for FormatSpecifier<'a, T> {
             .module_specifier_span()
             .filter(|_| self.next_start.is_none());
         let limit = source.and_then(|source| {
-            let is_leading = |it: &&Comment| it.preceded_by_newline() && !it.followed_by_newline();
+            let is_leading = |it: &Comment<'_>| it.has_newline_before() && !it.has_newline_after();
             Some(
                 f.comments()
                     .comments_in(self.specifier.span().between(source))
                     .iter()
                     .find(is_leading)?
-                    .span
+                    .span()
                     .start,
             )
         });
@@ -283,9 +283,9 @@ impl<'a, T: Format<'a> + Spanned> Format<'a> for FormatSpecifier<'a, T> {
                 let comments = f.comments().comments_before(next_start);
                 let count = comments
                     .iter()
-                    .rposition(|it| it.followed_by_newline())
+                    .rposition(|it| it.has_newline_after())
                     .map_or(0, |last| last + 1);
-                comments.get(..count).unwrap_or_default()
+                comments.slice(0, count)
             }
             None => comments_before_from(end, self.statement, f),
         };
@@ -305,10 +305,8 @@ impl<'a> Format<'a> for FormatCommentsInSpecifier {
         let comments = f.comments().comments_before(self.0.end);
         let count = comments
             .iter()
-            .rposition(|it| it.preceded_by_newline() || it.followed_by_newline());
-        let comments = comments
-            .get(..count.map_or(0, |last| last + 1))
-            .unwrap_or_default();
+            .rposition(|it| it.has_newline_before() || it.has_newline_after());
+        let comments = comments.slice(0, count.map_or(0, |last| last + 1));
         write!(f, FormatLeadingComments::Comments(comments));
     }
 }
@@ -466,7 +464,7 @@ impl<'a> Format<'a> for FormatImportAttribute<'a> {
         if let Some(value) = attribute.value() {
             let breaks_after_colon = !f.is_quiet()
                 && (f.comments().comments_before_iter(value.span().start))
-                    .any(|comment| comment.followed_by_newline() || comment.is_indentable_block());
+                    .any(|comment| comment.has_newline_after() || comment.is_indentable_block());
             let previous_limit = f.comments_mut().limit_comments_up_to(span.end);
             match breaks_after_colon {
                 true => write!(

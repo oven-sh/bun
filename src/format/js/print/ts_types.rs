@@ -199,15 +199,15 @@ pub(crate) fn write_ts_literal_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>)
             // moved to the end of the type is behind it.
             let comments = f.comments().comments_before(ty.span().end);
             let count = (comments.iter())
-                .take_while(|it| it.span.end <= ty.span().end)
+                .take_while(|it| it.span().end <= ty.span().end)
                 .count();
-            let comments = comments.get(..count).unwrap_or_default();
+            let comments = comments.slice(0, count);
             let Some(last) = comments.last() else {
                 return write!(f, ["-", format_digits(rest.trim_ascii_start())]);
             };
             let digits = f
                 .source_text()
-                .text_for(&Span::after(last.span, ty.span().end))
+                .text_for(&Span::after(last.span(), ty.span().end))
                 .trim_ascii_start();
             let operand = format_args!(
                 FormatLeadingComments::Comments(comments),
@@ -427,12 +427,12 @@ fn comments_behind_colon_of_property_signature_stay(f: &Formatter<'_>) -> bool {
 pub(super) fn comments_after_property_name<'a>(
     ty: TypeNode<'a>,
     f: &Formatter<'a>,
-) -> &'a [Comment] {
+) -> CommentList<'a> {
     let comments = f.comments().comments_before(ty.span().start);
     let colon = ty.annotation_span().start;
     let before_colon = comments
         .iter()
-        .take_while(|comment| comment.span.start < colon && !comment.preceded_by_newline())
+        .take_while(|comment| comment.span().start < colon && !comment.has_newline_before())
         .count();
     let (_, rest) = comments.split_at(before_colon);
     let takes_comments = comments_behind_colon_of_property_signature_stay(f)
@@ -441,8 +441,8 @@ pub(super) fn comments_after_property_name<'a>(
             TypeKind::Union(_) | TypeKind::Intersection(_)
         );
     match takes_comments {
-        true => &comments[..before_colon],
-        false => &comments[..before_colon + end_of_line_comments(rest).len()],
+        true => comments.slice(0, before_colon),
+        false => comments.slice(0, before_colon + end_of_line_comments(rest).len()),
     }
 }
 

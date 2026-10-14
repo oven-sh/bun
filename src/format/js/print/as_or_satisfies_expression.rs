@@ -22,7 +22,7 @@ fn comments_stay_around_cast_operator(f: &Formatter<'_>) -> bool {
 fn write_with_comments_in_place<'a>(
     expression: Expr<'a>,
     operation: &'static str,
-    comments: &'a [Comment],
+    comments: CommentList<'a>,
     is_union: bool,
     format_type: &dyn Format<'a>,
     f: &mut Formatter<'a>,
@@ -42,7 +42,7 @@ fn write_with_comments_in_place<'a>(
     // there. A line comment is written behind the operator anyway.
     let glued_before_count = before_operator
         .iter()
-        .take_while(|comment| !comment.preceded_by_newline() && !comment.is_multiline_block())
+        .take_while(|comment| !comment.has_newline_before() && !comment.is_multiline_block())
         .count();
     let (glued_before, moved) = before_operator.split_at(glued_before_count);
     // Those on the line of the operator.
@@ -51,15 +51,15 @@ fn write_with_comments_in_place<'a>(
         false => after_operator
             .iter()
             .take_while(|comment| {
-                !(comment.preceded_by_newline()
-                    || (comment.is_multiline_block() && comment.followed_by_newline()))
+                !(comment.has_newline_before()
+                    || (comment.is_multiline_block() && comment.has_newline_after()))
             })
             .count(),
     };
     let (glued_after, leading) = after_operator.split_at(glued_after_count);
-    let is_on_lines_of_its_own = |comment: &Comment| {
-        comment.followed_by_newline()
-            && (comment.preceded_by_newline() || comment.is_multiline_block())
+    let is_on_lines_of_its_own = |comment: Comment<'_>| {
+        comment.has_newline_after()
+            && (comment.has_newline_before() || comment.is_multiline_block())
     };
     let is_type_on_next_line = glued_before
         .iter()
@@ -101,7 +101,7 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
             None => write!(f, "const"),
         });
         let comments = match f.is_quiet() {
-            true => &[][..],
+            true => CommentList::empty(),
             false => f
                 .comments()
                 .comments_in(Span::after(expression.span(), type_start)),
@@ -135,7 +135,7 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
             .iter()
             .take_while(|c| !c.is_multiline_block())
             .count();
-        let block_comments = comments.get(..count).unwrap_or_default();
+        let block_comments = comments.slice(0, count);
 
         if !comments.is_empty() && type_annotation.is_none() {
             write!(

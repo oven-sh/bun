@@ -108,7 +108,7 @@ pub(crate) fn write_tagged_template_expression<'a>(
     if let Some(first) = comments.first() {
         match f
             .source_text()
-            .contains_newline(Span::before(tag_end, first.span))
+            .contains_newline(Span::before(tag_end, first.span()))
         {
             true => write!(f, soft_line_break()),
             false => write!(f, space()),

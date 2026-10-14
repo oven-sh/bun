@@ -78,14 +78,14 @@ impl<'a> Written<'a> {
                 .iter()
                 .find(|comment| {
                     is_after_from |= bun_core::strings::contains(
-                        f.file().slice(Span::before(position, comment.span)),
+                        f.file().slice(Span::before(position, comment.span())),
                         b"from",
                     );
-                    position = comment.span.end;
+                    position = comment.span().end;
                     is_after_from
                 });
             if let Some(comment) = comment {
-                let text = f.file().slice(comment.span);
+                let text = f.file().slice(comment.span());
                 written.source = bun_core::strings::index_of_char_usize(text, b'\n')
                     .map_or(text, |end| text[..end].trim_ascii_end());
             }
@@ -574,18 +574,21 @@ impl<'a> ImportRun<'a> {
         let mut comments = f.comments().comments_before(statement.span().start);
         while let Some(first) = comments.first() {
             // Comments without anything between them belong together.
-            let mut end = first.span.end;
-            let count = 1 + comments[1..]
+            let mut end = first.span().end;
+            let count = 1 + comments
+                .slice(1, usize::MAX)
                 .iter()
-                .take_while(|next| std::mem::replace(&mut end, next.span.end) == next.span.start)
+                .take_while(|next| {
+                    std::mem::replace(&mut end, next.span().end) == next.span().start
+                })
                 .count();
             let (now, later) = comments.split_at(count);
             comments = later;
             write!(f, FormatLeadingComments::Comments(now));
             // oxc does not see the line break after a block comment that the file starts with.
-            let starts_file = |it: &Comment| {
+            let starts_file = |it: Comment<'_>| {
                 it.is_block()
-                    && f.file().text()[..it.span.start as usize]
+                    && f.file().text()[..it.span().start as usize]
                         .trim_ascii()
                         .is_empty()
             };

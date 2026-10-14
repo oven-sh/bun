@@ -108,7 +108,7 @@ pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
             .comments()
             .end_of_line_comments_after(case.span().start + "default".len() as u32);
         let mut is_comment_in_block = false;
-        if let [rest @ .., last] = comments
+        if let Some((last, rest)) = comments.split_last()
             && last.is_line()
             && matches!(first_statement.kind(), StmtKind::Block(_))
         {

@@ -207,25 +207,25 @@ fn format_operand_trailing_comments<'a>(gap: Span, operator: u8, f: &mut Formatt
     let mut index_before_operator = None;
     let mut count = None;
     for (index, comment) in comments.iter().enumerate() {
-        if comment.end() > end {
+        if comment.span().end > end {
             count = Some(index_before_operator.unwrap_or(index));
             break;
         }
-        if source_text.contains_newline(Span::before(start, comment.span)) {
+        if source_text.contains_newline(Span::before(start, comment.span())) {
             // It is on a new line.
             count = Some(index);
             break;
-        } else if comment.is_line() || comment.followed_by_newline() {
+        } else if comment.is_line() || comment.has_newline_after() {
             // Prettier's `handleClosureTypeCastComments`: `a ? /** @type {T} */ ⏎ b : c`
-            count = Some(index + usize::from(!f.comments().looks_like_type_cast_comment(comment)));
+            count = Some(index + usize::from(!comment.looks_like_type_cast()));
             break;
-        } else if source_text.contains_byte(Span::before(start, comment.span), operator) {
+        } else if source_text.contains_byte(Span::before(start, comment.span()), operator) {
             index_before_operator = Some(index);
         }
-        start = comment.span.end;
+        start = comment.span().end;
     }
     let count = count.unwrap_or_else(|| index_before_operator.unwrap_or(comments.len()));
-    FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default()).fmt(f);
+    FormatTrailingComments::Comments(comments.slice(0, count)).fmt(f);
 }
 
 fn is_jsx_conditional_chain(e: Expr<'_>) -> bool {

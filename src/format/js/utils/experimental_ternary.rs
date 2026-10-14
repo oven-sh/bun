@@ -21,12 +21,12 @@ use crate::{format_args, write};
 /// `handleConditionalExpressionComments`.
 #[derive(Copy, Clone, Default)]
 struct OperandComments<'a> {
-    after_test: &'a [Comment],
-    before_consequent: &'a [Comment],
-    after_consequent: &'a [Comment],
+    after_test: CommentList<'a>,
+    before_consequent: CommentList<'a>,
+    after_consequent: CommentList<'a>,
     /// On lines of their own before the `:`.
-    before_colon: &'a [Comment],
-    before_alternate: &'a [Comment],
+    before_colon: CommentList<'a>,
+    before_alternate: CommentList<'a>,
 }
 
 impl<'a> OperandComments<'a> {
@@ -44,9 +44,7 @@ impl<'a> OperandComments<'a> {
             let comments = f
                 .comments()
                 .comments_in(before.span().between(after.span()));
-            comments
-                .split_at_checked(trailing_count(comments, start, operator, f.source_text()))
-                .unwrap_or((comments, &[]))
+            comments.split_at(trailing_count(comments, start, operator, f.source_text()))
         };
         let (after_test, before_consequent) = split(test, consequent, b'?');
         let (after_consequent, rest) = split(consequent, alternate, b':');
@@ -60,7 +58,7 @@ impl<'a> OperandComments<'a> {
                 .count(),
             _ => 0,
         };
-        let (before_colon, before_alternate) = rest.split_at_checked(count).unwrap_or((rest, &[]));
+        let (before_colon, before_alternate) = rest.split_at(count);
         Self {
             after_test,
             before_consequent,
@@ -87,31 +85,31 @@ impl<'a> OperandComments<'a> {
 /// How many of `comments`, which are between an operand that ends at `start` and the next, trail the
 /// former: those on its line, if they are before `operator` or the last of them ends the line.
 fn trailing_count(
-    comments: &[Comment],
+    comments: CommentList<'_>,
     mut start: u32,
     operator: u8,
     source_text: SourceText<'_>,
 ) -> usize {
     let mut first_after_operator = None;
     for (index, comment) in comments.iter().enumerate() {
-        if source_text.contains_newline(Span::before(start, comment.span)) {
+        if source_text.contains_newline(Span::before(start, comment.span())) {
             return index;
         }
-        if comment.is_line() || comment.followed_by_newline() {
+        if comment.is_line() || comment.has_newline_after() {
             return index + 1;
         }
         if first_after_operator.is_none()
-            && source_text.contains_byte(Span::before(start, comment.span), operator)
+            && source_text.contains_byte(Span::before(start, comment.span()), operator)
         {
             first_after_operator = Some(index);
         }
-        start = comment.span.end;
+        start = comment.span().end;
     }
     first_after_operator.unwrap_or(comments.len())
 }
 
 /// An operand and the comments after it.
-struct FormatOperand<'a>(Operand<'a>, &'a [Comment]);
+struct FormatOperand<'a>(Operand<'a>, CommentList<'a>);
 
 impl<'a> Format<'a> for FormatOperand<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {

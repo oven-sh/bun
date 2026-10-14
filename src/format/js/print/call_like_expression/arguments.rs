@@ -399,10 +399,10 @@ fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Format
                 .comments_in(first.span().between(second.span()))
                 .iter()
                 .any(|comment| {
-                    comment.followed_by_newline()
+                    comment.has_newline_after()
                         || !f
                             .source_text()
-                            .contains_byte(first.span().between(comment.span), b',')
+                            .contains_byte(first.span().between(comment.span()), b',')
                 })
         {
             return false;
@@ -455,11 +455,11 @@ fn should_group_last_argument_impl<'a>(
                 .comments_in(Span::before(previous_end, last_span))
                 .iter()
                 .any(|comment| {
-                    comment.preceded_by_newline()
-                        || (!comment.followed_by_newline()
+                    comment.has_newline_before()
+                        || (!comment.has_newline_after()
                             && !f
                                 .source_text()
-                                .contains_byte(comment.span.between(last_span), b','))
+                                .contains_byte(comment.span().between(last_span), b','))
                 }),
             None => f.comments().has_comment_before(last_span.start),
         };
@@ -469,7 +469,7 @@ fn should_group_last_argument_impl<'a>(
                 .first()
                 .is_some_and(|c| {
                     !f.source_text()
-                        .contains_byte(last_span.between(c.span), b')')
+                        .contains_byte(last_span.between(c.span()), b')')
                 })
         {
             return false;
@@ -955,8 +955,8 @@ fn is_react_hook_with_deps_array<'a>(
         .comments_before(arguments.parent.span().end)
         .iter()
         .any(|comment| {
-            !callback.span().contains(comment.span)
-                && (is_empty || !deps.span().contains(comment.span))
+            !callback.span().contains(comment.span())
+                && (is_empty || !deps.span().contains(comment.span()))
         })
 }
 

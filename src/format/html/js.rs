@@ -231,13 +231,14 @@ pub(crate) fn with_file(
                     };
                     let comments = comments::of_file(file, &options, parsed_by);
                     // Only in what is known to be a script are `<!--` and `-->` comments to Babel.
-                    let is_html_like = |comment: &Comment| {
+                    let is_html_like = |comment: Comment<'_>| {
                         matches!(
-                            file.text().get(comment.span.start as usize),
+                            file.text().get(comment.span().start as usize),
                             Some(b'<' | b'-')
                         )
                     };
-                    if source_type != SourceType::Script && comments.iter().any(is_html_like) {
+                    if source_type != SourceType::Script && file.comments_by_id().any(is_html_like)
+                    {
                         return;
                     }
                     if let Some(sorted) = sorts_text.and_then(|how| sorted_text(file, how)) {
@@ -482,10 +483,10 @@ fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
     let mut rest = f.comments().unprinted_comments();
     // The empty lines before the first thing in a script go.
     if let Some((first, others)) = rest.split_first()
-        && (file.text().get(..first.span.start as usize))
+        && (file.text().get(..first.span().start as usize))
             .is_some_and(|before| before.trim_ascii().is_empty())
     {
-        let (comments, indent) = (std::slice::from_ref(first), DanglingIndentMode::None);
+        let (comments, indent) = (CommentList::of(first), DanglingIndentMode::None);
         write!(f, FormatDanglingComments::Comments { comments, indent });
         rest = others;
     }

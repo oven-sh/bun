@@ -58,6 +58,12 @@ impl<'a> JsFormatContext<'a> {
             has_tree_of_babel: file.is_javascript()
                 || options.in_html.has_tree_of_babel
                 || !matches!(options.in_html.root, HtmlRoot::None | HtmlRoot::Program),
+            comments: Comments::new(
+                Some(file),
+                SourceText::new(file.text()),
+                options.flavor,
+                comments,
+            ),
             ..Self::without_file(file.text(), options, comments)
         }
     }
@@ -74,8 +80,8 @@ impl<'a> JsFormatContext<'a> {
         Self {
             file: None,
             has_tree_of_babel: false,
+            comments: Comments::new(None, SourceText::new(source), options.flavor, comments),
             options,
-            comments: Comments::new(SourceText::new(source), comments),
             skip_trailing_comments: false,
             cached_elements: FxHashMap::default(),
             quote_needed_stack: Vec::new(),

@@ -49,7 +49,7 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
                 f,
                 [
                     space(),
-                    FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())
+                    FormatTrailingComments::Comments(comments.slice(0, count))
                 ]
             );
         }
@@ -154,7 +154,7 @@ fn write_parameters_in_parentheses<'a>(func: Func<'a>, span: Span, f: &mut Forma
 fn comments_trailing_the_name(
     func: Func<'_>,
     has_parameters: bool,
-    comments: &[Comment],
+    comments: CommentList<'_>,
     flavor: Flavor,
 ) -> usize {
     match func.kind() {
@@ -167,7 +167,7 @@ fn comments_trailing_the_name(
             let leads_parameter = func.is_arrow() && has_parameters;
             (comments.iter())
                 .take_while(|it| {
-                    !it.preceded_by_newline() && (!leads_parameter || it.followed_by_newline())
+                    !it.has_newline_before() && (!leads_parameter || it.has_newline_after())
                 })
                 .count()
         }
@@ -178,7 +178,7 @@ fn comments_trailing_the_name(
             if has_parameters && func.file().is_javascript() && !flavor.is_oxfmt() =>
         {
             (comments.iter())
-                .take_while(|it| !it.preceded_by_newline())
+                .take_while(|it| !it.has_newline_before())
                 .count()
         }
         _ => comments.len(),
@@ -203,17 +203,17 @@ pub(crate) fn follows_name_or_type_parameters(func: Func<'_>) -> bool {
 pub(crate) fn comments_between<'a>(
     span: Span,
     f: &Formatter<'a>,
-) -> impl Iterator<Item = &'a Comment> + use<'a> {
+) -> impl Iterator<Item = Comment<'a>> + use<'a> {
     let Span { start, end } = span;
     let printed = f
         .comments()
         .printed_comments()
         .iter()
         .rev()
-        .take_while(move |c| c.start() >= start);
+        .take_while(move |c| c.span().start >= start);
     printed
         .chain(f.comments().comments_before_iter(end))
-        .filter(move |c| c.start() >= start && c.end() <= end)
+        .filter(move |c| c.span().start >= start && c.span().end <= end)
 }
 
 /// The modifiers of a parameter, in the order that they are written in.
@@ -454,19 +454,19 @@ pub(crate) fn should_hug_function_parameters<'a>(
             return false;
         }
         let follows_name = follows_name_or_type_parameters(func);
-        let leads_parameter = |comment: &Comment| {
-            if !follows_name || comment.preceded_by_newline() {
+        let leads_parameter = |comment: Comment<'_>| {
+            if !follows_name || comment.has_newline_before() {
                 return true;
             }
-            match comment.start() >= span.start || func.is_arrow() {
+            match comment.span().start >= span.start || func.is_arrow() {
                 // At the end of the line it trails the name.
-                true => !comment.followed_by_newline(),
+                true => !comment.has_newline_after(),
                 false => false,
             }
         };
         comments.any(|comment| {
-            comment.start() >= param.span().end
-                || (comment.end() <= param.span().start && leads_parameter(comment))
+            comment.span().start >= param.span().end
+                || (comment.span().end <= param.span().start && leads_parameter(comment))
         })
     };
 

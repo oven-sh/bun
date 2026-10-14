@@ -13,10 +13,10 @@ use bun_core::strings;
 
 /// Whether one of `comments` starts or ends its line. Prettier's `handleTryStatementComments` moves
 /// those into the next block.
-fn has_comment_with_line_break(comments: &[Comment]) -> bool {
+fn has_comment_with_line_break(comments: CommentList<'_>) -> bool {
     comments
         .iter()
-        .any(|comment| comment.preceded_by_newline() || comment.followed_by_newline())
+        .any(|comment| comment.has_newline_before() || comment.has_newline_after())
 }
 
 /// A space and a block after `try`, `catch (e)` or `finally`. The comments after it are left to the
@@ -68,12 +68,12 @@ pub(crate) fn write_try_statement<'a>(
                 .take_while(|comment| {
                     let gap = f
                         .source_text()
-                        .text_for(&Span::before(position, comment.span));
-                    position = comment.span.end;
+                        .text_for(&Span::before(position, comment.span()));
+                    position = comment.span().end;
                     strings::trim_js_whitespace(gap).is_empty()
                 })
                 .count();
-            let comments = comments.get(..count).unwrap_or_default();
+            let comments = comments.slice(0, count);
             if !has_comment_with_line_break(comments) {
                 write!(f, FormatTrailingComments::Comments(comments));
             }
@@ -137,7 +137,7 @@ fn write_catch_clause<'a>(
         match !f.is_quiet() && f.comments().is_suppressed(param.span().start) {
             true => {
                 let breaks = (f.comments().comments_before(param.span().start).iter())
-                    .any(|it| it.is_line() || it.followed_by_newline());
+                    .any(|it| it.is_line() || it.has_newline_after());
                 match breaks {
                     true => write!(f, ["(", soft_block_indent(&parameter), ")"]),
                     false => write!(f, ["(", parameter, ")"]),
@@ -160,7 +160,7 @@ fn write_catch_parameter<'a>(param: VarDecl<'a>, body: Stmt<'a>, f: &mut Formatt
     let leading_comments = f.comments().comments_before(pattern.span().start);
     let leading_comment_with_break = leading_comments
         .iter()
-        .any(|comment| comment.is_line() || comment.followed_by_newline());
+        .any(|comment| comment.is_line() || comment.has_newline_after());
     // Those before the `)`, and of those after it the ones that start or end their line.
     let before_body = f.comments().comments_in(param.span().between(body.span()));
     let count = f
@@ -171,13 +171,13 @@ fn write_catch_parameter<'a>(param: VarDecl<'a>, body: Stmt<'a>, f: &mut Formatt
             true => 0,
             false => before_body
                 .iter()
-                .rposition(|it| it.preceded_by_newline() || it.followed_by_newline())
+                .rposition(|it| it.has_newline_before() || it.has_newline_after())
                 .map_or(0, |at| at + 1),
         });
-    let trailing_comments = before_body.get(..count).unwrap_or_default();
+    let trailing_comments = before_body.slice(0, count);
     let trailing_comment_with_break = trailing_comments
         .iter()
-        .any(|comment| comment.is_line() || comment.preceded_by_newline());
+        .any(|comment| comment.is_line() || comment.has_newline_before());
 
     let content = format_with(|f| {
         write!(f, FormatLeadingComments::Comments(leading_comments));

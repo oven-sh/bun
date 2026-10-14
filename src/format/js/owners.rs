@@ -1,34 +1,36 @@
-//! The comments of a file, by what owns them.
+//! The lookup table from a node to the ids of the comments attached to it.
 //!
-//! What [`attach`](super::attach::attach) decides is kept the way a file keeps which expressions are in parentheses: a bit for
-//! each node says whether it owns anything, and a list that is sorted by [`Node::index`](bun_lint::ast::Node::index) is only
-//! searched if the bit is set. Nearly every node that is asked owns nothing.
+//! Almost every node that is looked up has no comments, so there is one bit per node that says whether it has any. Only if the
+//! bit is set is a list searched, which is sorted by [`Node::index`](bun_lint::ast::Node::index). The HIR stores which
+//! expressions are parenthesized the same way.
 
 use super::ast_nodes::AstNodes;
 use super::attach::{Attached, Owner, Placement};
-use super::comments::Comment;
 use bun_lint::ast::File;
 use bun_lint::span::Span;
 
 const LEADING: u8 = Placement::Leading as u8;
 const TRAILING: u8 = Placement::Trailing as u8;
-/// Stands in for a [`Placement`] in a group that has no comments and only marks the node as ignored
-/// (Prettier's `node.prettierIgnore`).
+/// Used instead of a [`Placement`] for a group that has no comments and only marks the node as ignored (Prettier's
+/// `node.prettierIgnore`).
 const IGNORED: u8 = 3;
 
-/// The comments that one node has in one place.
+/// The comments of one node with one placement.
 #[derive(Copy, Clone)]
 struct CommentGroup {
-    /// The [`AstKind`](super::ast_nodes::AstKind): several nodes are made of one node of `bun_lint::ast`.
+    /// The [`AstKind`](super::ast_nodes::AstKind) of the node. Several `AstNodes` can share one node of `bun_lint::ast`.
     kind: u8,
     placement: u8,
+    /// One of the comments is a `prettier-ignore` comment that applies to the node.
+    ignores_owner: bool,
+    /// A range of `Owners::comment_ids`.
     first: u32,
     len: u32,
 }
 
 #[derive(Copy, Clone)]
 struct OwnerEntry {
-    /// [`Node::index`](bun_lint::ast::Node::index), or where a name or a `(` is.
+    /// [`Node::index`](bun_lint::ast::Node::index), or the start offset of a name or a `(`.
     id: u32,
     first_group: u32,
     groups: u32,
@@ -36,26 +38,25 @@ struct OwnerEntry {
 
 #[derive(Default)]
 pub(crate) struct Owners {
-    /// Those of the same owner and placement are next to each other, in the order of the source.
-    comments: Vec<Comment>,
+    /// Grouped by owner and placement, and in source order within a group.
+    comment_ids: Vec<u32>,
     groups: Vec<CommentGroup>,
     /// Each is sorted by `id`.
     nodes: Vec<OwnerEntry>,
     names: Vec<OwnerEntry>,
     cast_parens: Vec<OwnerEntry>,
-    /// A bit for each node: it is in `nodes`.
+    /// One bit per node, by `Node::index`: whether the node is in `nodes`.
     owner_bitset: Vec<u64>,
-    /// Where the nodes start that own a comment which is not next to them or in them. Sorted.
+    /// Start offsets of the owners that are not next to their comment. Sorted.
     relocated_owner_starts: Vec<u32>,
 }
 
-/// What a node owns.
+/// The ids of the comments attached to one node.
 #[derive(Copy, Clone, Default)]
-pub(crate) struct OwnedComments<'a> {
-    pub(crate) leading: &'a [Comment],
-    pub(crate) trailing: &'a [Comment],
-    pub(crate) dangling: &'a [Comment],
-    /// Prettier's `hasNodeIgnoreComment`: it is written as it is in the source.
+pub(crate) struct OwnedIds<'a> {
+    pub(crate) leading: &'a [u32],
+    pub(crate) trailing: &'a [u32],
+    pub(crate) dangling: &'a [u32],
     pub(crate) is_ignored: bool,
 }
 
@@ -70,7 +71,7 @@ fn sort_key(owner: Owner<'_>, placement: u8) -> u64 {
 
 impl Owners {
     pub(crate) const EMPTY: Owners = Owners {
-        comments: Vec::new(),
+        comment_ids: Vec::new(),
         groups: Vec::new(),
         nodes: Vec::new(),
         names: Vec::new(),
@@ -79,10 +80,9 @@ impl Owners {
         relocated_owner_starts: Vec::new(),
     };
 
-    /// `comments`: those of `file` in the order of the source, which is the order of `attached`.
-    pub(crate) fn new(file: &File<'_>, comments: &[Comment], attached: Attached<'_>) -> Owners {
+    pub(crate) fn new(file: &File<'_>, attached: Attached<'_>) -> Owners {
         let mut sort_keys: Vec<(u64, u32)> =
-            Vec::with_capacity(comments.len() + attached.ignored_nodes.len());
+            Vec::with_capacity(attached.attachments.len() + attached.ignored_nodes.len());
         for (index, attachment) in attached.attachments.iter().enumerate() {
             sort_keys.push((
                 sort_key(attachment.owner, attachment.placement as u8),
@@ -96,7 +96,7 @@ impl Owners {
             crate::sort::sort(&mut sort_keys);
         }
         let mut owners = Owners {
-            comments: Vec::with_capacity(comments.len()),
+            comment_ids: Vec::with_capacity(attached.attachments.len()),
             owner_bitset: vec![0; file.node_count() as usize / 64 + 1],
             relocated_owner_starts: attached.relocated_owner_starts,
             ..Owners::default()
@@ -133,28 +133,31 @@ impl Owners {
                 owners.groups.push(CommentGroup {
                     kind: (sort_key >> 8) as u8,
                     placement: sort_key as u8,
-                    first: owners.comments.len() as u32,
+                    ignores_owner: false,
+                    first: owners.comment_ids.len() as u32,
                     len: 0,
                 });
             }
             previous_key = sort_key;
-            if let (Some(comment), Some(group)) =
-                (comments.get(index as usize), owners.groups.last_mut())
-            {
-                owners.comments.push(*comment);
+            if let (Some(attachment), Some(group)) = (
+                attached.attachments.get(index as usize),
+                owners.groups.last_mut(),
+            ) {
+                owners.comment_ids.push(index);
                 group.len += 1;
+                group.ignores_owner |= attachment.ignores_owner;
             }
         }
         owners
     }
 
-    fn lookup(&self, entries: &[OwnerEntry], id: u32, kind: u8) -> OwnedComments<'_> {
-        let mut owned_comments = OwnedComments::default();
+    fn lookup(&self, entries: &[OwnerEntry], id: u32, kind: u8) -> OwnedIds<'_> {
+        let mut owned = OwnedIds::default();
         let Ok(at) = entries.binary_search_by_key(&id, |entry| entry.id) else {
-            return owned_comments;
+            return owned;
         };
         let Some(entry) = entries.get(at) else {
-            return owned_comments;
+            return owned;
         };
         let groups = (self
             .groups
@@ -164,52 +167,48 @@ impl Owners {
         .take(entry.groups as usize)
         .filter(|group| group.kind == kind);
         for group in groups {
-            let comments = (self.comments)
+            let ids = (self.comment_ids)
                 .get(group.first as usize..(group.first + group.len) as usize)
                 .unwrap_or_default();
             match group.placement {
-                IGNORED => owned_comments.is_ignored = true,
-                LEADING => owned_comments.leading = comments,
-                TRAILING => owned_comments.trailing = comments,
-                _ => owned_comments.dangling = comments,
+                IGNORED => owned.is_ignored = true,
+                LEADING => owned.leading = ids,
+                TRAILING => owned.trailing = ids,
+                _ => owned.dangling = ids,
             }
-            owned_comments.is_ignored |= comments
-                .iter()
-                .any(|comment| comment.is_active_ignore_comment());
+            owned.is_ignored |= group.ignores_owner;
         }
-        owned_comments
+        owned
     }
 
     #[inline]
-    pub(crate) fn of_node(&self, node: AstNodes<'_>) -> OwnedComments<'_> {
+    pub(crate) fn of_node(&self, node: AstNodes<'_>) -> OwnedIds<'_> {
         let index = node.raw().index();
         let owns_comments = (self.owner_bitset.get(index as usize / 64))
             .is_some_and(|word| word & (1 << (index % 64)) != 0);
         match owns_comments {
             true => self.lookup(&self.nodes, index, node.kind() as u8),
-            false => OwnedComments::default(),
+            false => OwnedIds::default(),
         }
     }
 
-    /// Of the name that starts at `start`.
     #[inline]
-    pub(crate) fn of_name(&self, start: u32) -> OwnedComments<'_> {
+    pub(crate) fn of_name(&self, start: u32) -> OwnedIds<'_> {
         match self.names.is_empty() {
-            true => OwnedComments::default(),
+            true => OwnedIds::default(),
             false => self.lookup(&self.names, start, 0),
         }
     }
 
-    /// Of the parentheses that open at `open` and follow a type cast comment.
     #[inline]
-    pub(crate) fn of_cast_parens(&self, open: u32) -> OwnedComments<'_> {
+    pub(crate) fn of_cast_parens(&self, open: u32) -> OwnedIds<'_> {
         match self.cast_parens.is_empty() {
-            true => OwnedComments::default(),
+            true => OwnedIds::default(),
             false => self.lookup(&self.cast_parens, open, 0),
         }
     }
 
-    /// Whether something in `span` owns a comment that is somewhere else.
+    /// Whether a node that starts inside `span` owns a comment that is not next to it.
     #[inline]
     pub(crate) fn has_relocated_owner_in(&self, span: Span) -> bool {
         !self.relocated_owner_starts.is_empty() && {

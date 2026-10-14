@@ -71,8 +71,8 @@ pub(crate) fn write_comments_before_operator(start: u32, f: &mut Formatter<'_>) 
     let end_of_line_comments = f.comments().end_of_line_comments_after(start);
     let comments = if end_of_line_comments.is_empty() {
         let comments = f.comments().comments_before_character(start, b'=');
-        if comments.iter().any(|comment| comment.preceded_by_newline()) {
-            &[]
+        if comments.iter().any(|comment| comment.has_newline_before()) {
+            CommentList::empty()
         } else {
             comments
         }
@@ -80,7 +80,7 @@ pub(crate) fn write_comments_before_operator(start: u32, f: &mut Formatter<'_>) 
         .last()
         .is_some_and(|comment| comment.is_multiline_block())
     {
-        &[]
+        CommentList::empty()
     } else {
         end_of_line_comments
     };
@@ -101,15 +101,15 @@ pub(crate) fn comments_stay_around_operator(f: &Formatter<'_>) -> bool {
 
 /// The comments behind the operator, which ends at `operator_end`, up to a line comment that ends its
 /// line. None if a comment from before the operator is left: then all lead the right side.
-pub(crate) fn operator_line_run<'a>(operator_end: u32, f: &Formatter<'a>) -> &'a [Comment] {
+pub(crate) fn operator_line_run<'a>(operator_end: u32, f: &Formatter<'a>) -> CommentList<'a> {
     if f.comments().has_comment_before(operator_end) {
-        return &[];
+        return CommentList::empty();
     }
     let run = f.comments().end_of_line_comments_after(operator_end);
     if run.last().is_some_and(|comment| comment.is_line()) {
         run
     } else {
-        &[]
+        CommentList::empty()
     }
 }
 
@@ -573,7 +573,7 @@ impl<'a> AssignmentLike<'a> {
             && (f
                 .comments()
                 .comments_before_iter(property.value().span().start))
-            .any(|comment| comment.followed_by_newline() || comment.is_indentable_block())
+            .any(|comment| comment.has_newline_after() || comment.is_indentable_block())
         {
             return AssignmentLikeLayout::BreakAfterOperator;
         }
@@ -789,16 +789,13 @@ fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> Lea
         return LeadingComments::Break;
     }
     for comment in f.comments().comments_before_iter(start) {
-        if comment.leads_left_edge_of(right.span()) {
-            continue;
-        }
-        if comment.followed_by_newline() || comment.is_indentable_block() {
+        if comment.has_newline_after() || comment.is_indentable_block() {
             return LeadingComments::Break;
         }
         // `/** @type {T} */ a.b()` casts nothing.
         if f.comments().is_type_cast_comment(comment)
             && f.source_text()
-                .next_non_whitespace_byte_is(comment.end(), b'(')
+                .next_non_whitespace_byte_is(comment.span().end, b'(')
         {
             return match right.is_parenthesized() {
                 true => LeadingComments::TypeCast,
@@ -909,7 +906,7 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
         if let Some(previous_limit) = previous_limit {
             f.comments_mut().restore_view_limit(previous_limit);
         }
-        let operator_line_run = sides.map_or(&[][..], |(_, _, operator_end)| {
+        let operator_line_run = sides.map_or(CommentList::empty(), |(_, _, operator_end)| {
             operator_line_run(operator_end, f)
         });
         let has_line_comment_on_operator_line = !operator_line_run.is_empty()

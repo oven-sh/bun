@@ -431,9 +431,9 @@ impl<'a> Format<'a> for FormatClass<'a> {
                 let comments = f.comments().comments_before(first.span().start);
                 let count = comments
                     .iter()
-                    .take_while(|it| it.preceded_by_newline() || it.followed_by_newline())
+                    .take_while(|it| it.has_newline_before() || it.has_newline_after())
                     .count();
-                let leading_comments = comments.get(..count).unwrap_or_default();
+                let leading_comments = comments.slice(0, count);
                 let implements = FormatClassImplements(implements);
 
                 if usize::from(super_class.is_some()) + implements.0.len() > 1 {
@@ -499,12 +499,9 @@ impl<'a> Format<'a> for FormatClass<'a> {
             let comments = f.comments().comments_before(body_span.start);
             let count = comments
                 .iter()
-                .take_while(|it| !it.preceded_by_newline() && !it.followed_by_newline())
+                .take_while(|it| !it.has_newline_before() && !it.has_newline_after())
                 .count();
-            write!(
-                f,
-                FormatLeadingComments::Comments(comments.get(..count).unwrap_or_default())
-            );
+            write!(f, FormatLeadingComments::Comments(comments.slice(0, count)));
         }
 
         if class.members().is_empty() {
@@ -591,33 +588,32 @@ impl HeadGaps {
 /// How many of `comments`, which are in `gap`, trail what is before them. The others lead what
 /// follows. Prettier's `handleClassComments`, and what it does with any comment.
 fn count_comments_trailing_in_head(
-    comments: &[Comment],
+    comments: CommentList<'_>,
     gap: HeadGap,
     next_start: u32,
     f: &Formatter<'_>,
 ) -> usize {
-    let is_before = |comment: &Comment, keyword: &[u8]| {
+    let is_before = |comment: Comment<'_>, keyword: &[u8]| {
         bun_core::strings::contains(
             f.source_text()
-                .text_for(&Span::new(comment.end(), next_start)),
+                .text_for(&Span::new(comment.span().end, next_start)),
             keyword,
         )
     };
     (comments.iter())
         .take_while(|comment| {
-            let starts_or_ends_line =
-                comment.preceded_by_newline() || comment.followed_by_newline();
+            let starts_or_ends_line = comment.has_newline_before() || comment.has_newline_after();
             match gap {
                 HeadGap::AngleBracket => {
-                    !comment.preceded_by_newline() && comment.followed_by_newline()
+                    !comment.has_newline_before() && comment.has_newline_after()
                 }
                 HeadGap::Extends { is_chain } => match starts_or_ends_line {
-                    true => !is_chain || !comment.preceded_by_newline(),
-                    false => is_before(comment, b"extends"),
+                    true => !is_chain || !comment.has_newline_before(),
+                    false => is_before(*comment, b"extends"),
                 },
                 HeadGap::Implements { follows_known_part } => match starts_or_ends_line {
                     true => follows_known_part,
-                    false => is_before(comment, b"implements"),
+                    false => is_before(*comment, b"implements"),
                 },
             }
         })
@@ -636,7 +632,7 @@ impl<'a> Format<'a> for FormatCommentsTrailingInHead {
             let count = count_comments_trailing_in_head(comments, gap, next_start, f);
             write!(
                 f,
-                FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())
+                FormatTrailingComments::Comments(comments.slice(0, count))
             );
         }
     }

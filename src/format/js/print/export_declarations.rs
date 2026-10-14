@@ -129,9 +129,9 @@ pub(crate) fn write_export_default_expression<'a>(
             // One on a line of its own leads the next statement.
             let comments = f.comments().comments_before(statement.span().end);
             let count = (comments.iter())
-                .take_while(|comment| !comment.preceded_by_newline())
+                .take_while(|comment| !comment.has_newline_before())
                 .count();
-            let comments = comments.get(..count).unwrap_or_default();
+            let comments = comments.slice(0, count);
             write!(f, FormatTrailingComments::Comments(comments));
         }
         false => write!(f, [expression, OptionalSemicolon]),

@@ -4,6 +4,7 @@ pub(crate) mod ast_nodes;
 pub(crate) mod attach;
 pub(crate) mod builders;
 pub(crate) mod comments;
+mod comments_legacy;
 pub(crate) mod context;
 pub(crate) mod fields;
 pub(crate) mod format;
@@ -22,7 +23,7 @@ use crate::prelude::*;
 pub(crate) mod prelude {
     pub(crate) use super::ast_nodes::{AsAstNodes, AstNodes, ChainElement};
     pub(crate) use super::builders::FormatSeparatedIter;
-    pub(crate) use super::comments::{Comment, Comments};
+    pub(crate) use super::comments::{Comment, CommentExt, CommentList, Comments};
     pub(crate) use super::fields::{ExprFields, StmtFields};
     pub(crate) use super::source_text::SourceText;
     pub(crate) use super::trivia::{

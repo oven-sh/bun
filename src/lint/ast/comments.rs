@@ -40,6 +40,11 @@ fn node_from_data<'a>(file: &'a File<'a>, data: NodeData) -> Option<Node<'a>> {
 }
 
 impl<'a> Comment<'a> {
+    #[inline]
+    pub fn file(self) -> &'a File<'a> {
+        self.file
+    }
+
     /// Its index among the comments of the file.
     #[inline]
     pub fn id(self) -> u32 {
@@ -52,6 +57,10 @@ impl<'a> Comment<'a> {
             end: 0,
             prev_token_end: 0,
             next_token_start: 0,
+            is_block: false,
+            is_multiline: false,
+            has_newline_before: false,
+            has_newline_after: false,
             enclosing_node: hir::NodeOrName::None,
             preceding_node: hir::NodeOrName::None,
             following_node: hir::NodeOrName::None,
@@ -62,6 +71,44 @@ impl<'a> Comment<'a> {
     pub fn span(self) -> Span {
         let raw = self.raw();
         Span::new(raw.pos, raw.end)
+    }
+
+    /// The source text, with the `//` or the `/*` and `*/`.
+    pub fn text(self) -> &'a [u8] {
+        self.file.slice(self.span())
+    }
+
+    /// The text between the `/*` and the `*/`, or after the `//`.
+    pub fn content(self) -> &'a [u8] {
+        match self.text() {
+            [b'/', b'*', content @ .., b'*', b'/'] | [b'/', b'/', content @ ..] => content,
+            text => text,
+        }
+    }
+
+    /// `// comment`
+    pub fn is_line(self) -> bool {
+        !self.raw().is_block
+    }
+
+    /// `/* comment */`
+    pub fn is_block(self) -> bool {
+        self.raw().is_block
+    }
+
+    /// A block comment that spans more than one line.
+    pub fn is_multiline_block(self) -> bool {
+        self.raw().is_multiline
+    }
+
+    /// Whether there is a line break between the comment and the token or comment before it.
+    pub fn has_newline_before(self) -> bool {
+        self.raw().has_newline_before
+    }
+
+    /// Whether there is a line break between the comment and the token or comment after it.
+    pub fn has_newline_after(self) -> bool {
+        self.raw().has_newline_after
     }
 
     /// End of the previous token, or 0 if there is none.
@@ -114,6 +161,12 @@ impl<'a> File<'a> {
             Ok(index) => Span::new(span.start, detached[index].1.max(span.start)),
             Err(_) => Span::new(span.start, semicolon),
         }
+    }
+
+    /// The comment with that id.
+    #[inline]
+    pub fn comment(&'a self, id: u32) -> Comment<'a> {
+        Comment { file: self, id }
     }
 
     /// All comments in source order. The nodes around them are only known if the file was parsed with `attach_comments`.

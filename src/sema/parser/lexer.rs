@@ -70,6 +70,9 @@ pub(crate) struct Lexer<'a> {
     pub(crate) leading_comments: Vec<(u32, u32)>,
     /// `hir::File::comments`
     pub(crate) comments: Vec<Comment>,
+    /// While scanning the comments between two tokens: whether a line break was seen since the last comment, or since the
+    /// previous token if there was no comment yet.
+    newline_since_comment: bool,
     /// `Options::attach_comments`
     pub(crate) attach_comments: bool,
     /// See `Parser::finish_node`: a node that starts after this offset cannot affect any pending comment.
@@ -274,6 +277,7 @@ impl<'a> Lexer<'a> {
             comment_directives: Vec::new(),
             leading_comments: Vec::new(),
             comments: Vec::new(),
+            newline_since_comment: false,
             attach_comments: false,
             max_relevant_node_start: 0,
             flagged: Vec::new(),
@@ -722,10 +726,16 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     fn scan_after_comments(&mut self, pos: usize) {
         let first = self.comments.len();
+        // The start of the file counts as a line break.
+        self.newline_since_comment = self.newline_before || self.full_start == 0;
         self.pass_over_comments_and_scan(pos);
         let next_token_start = self.start;
-        for comment in self.comments.get_mut(first..).unwrap_or_default() {
+        let comments = self.comments.get_mut(first..).unwrap_or_default();
+        for comment in comments.iter_mut() {
             comment.next_token_start = next_token_start;
+        }
+        if let Some(last) = comments.last_mut() {
+            last.has_newline_after = self.newline_since_comment || !last.is_block;
         }
     }
 
@@ -744,15 +754,23 @@ impl<'a> Lexer<'a> {
                 },
                 b'\n' => {
                     self.newline_before = true;
+                    self.newline_since_comment = true;
                     Some(self.stops.after_blanks.next(pos + 1))
                 }
                 b'\r' => {
                     self.newline_before = true;
+                    self.newline_since_comment = true;
                     Some(pos + 1)
                 }
                 b' ' | b'\t' | 0x0B | 0x0C => Some(pos + 1),
                 b'<' | b'-' | b'#' => match self.end_of_unusual_comment(pos) {
-                    Some(end) => Some(end),
+                    Some(end) => {
+                        // A formatter has to print `<!-- comment` and `--> comment` too.
+                        if self.attach_comments && self.at(pos) != b'#' {
+                            self.note_comment(pos, end, false, false);
+                        }
+                        Some(end)
+                    }
                     None => return self.scan(pos),
                 },
                 0x80.. => self.not_ascii(pos),
@@ -809,6 +827,7 @@ impl<'a> Lexer<'a> {
         };
         if c == 0x2028 || c == 0x2029 {
             self.newline_before = true;
+            self.newline_since_comment = true;
         } else if !is_white_space_single_line(c as i32) {
             self.name_slowly(pos, pos);
             return None;
@@ -1194,14 +1213,25 @@ impl<'a> Lexer<'a> {
         src.len()
     }
 
-    /// `Lexer::scan_after_comments` fills in `next_token_start`.
+    /// `Lexer::scan_after_comments` fills in `next_token_start`, and `has_newline_after` of the last comment before a token.
     #[inline(always)]
-    fn note_comment(&mut self, start: usize, end: usize) {
+    fn note_comment(&mut self, start: usize, end: usize, is_block: bool, is_multiline: bool) {
+        let has_newline_before = std::mem::take(&mut self.newline_since_comment);
+        if let Some(previous) = self.comments.last_mut()
+            && previous.prev_token_end == self.full_start
+            && previous.pos >= self.full_start
+        {
+            previous.has_newline_after = has_newline_before;
+        }
         self.comments.push(Comment {
             pos: start as u32,
             end: end as u32,
             prev_token_end: self.full_start,
             next_token_start: end as u32,
+            is_block,
+            is_multiline,
+            has_newline_before,
+            has_newline_after: false,
             enclosing_node: NodeOrName::None,
             preceding_node: NodeOrName::None,
             following_node: NodeOrName::None,
@@ -1219,7 +1249,7 @@ impl<'a> Lexer<'a> {
         if self.full_start == 0 {
             self.leading_comments.push((start as u32, end as u32));
         }
-        self.note_comment(start, end);
+        self.note_comment(start, end, false, false);
         // `processCommentDirective`: "Skip opening //", "Skip another / if present"
         let src = self.src;
         let mut pos = start + 2;
@@ -1265,7 +1295,7 @@ impl<'a> Lexer<'a> {
         if self.full_start == 0 {
             self.leading_comments.push((start as u32, end as u32));
         }
-        self.note_comment(start, end);
+        self.note_comment(start, end, true, last_line != start);
         // `processCommentDirective`: "Skip whitespace", "Skip combinations of / and *"
         let mut pos = last_line;
         while pos < end && matches!(src[pos], b' ' | b'\t') {

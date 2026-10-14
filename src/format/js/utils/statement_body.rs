@@ -62,7 +62,7 @@ impl<'a> Format<'a> for FormatStatementBody<'a> {
         let is_block = matches!(body.kind(), StmtKind::Block(_));
         // Prettier's `shouldPrintLeadingHardline`
         if first_comment
-            .is_some_and(|comment| comment.is_multiline_block() || comment.preceded_by_newline())
+            .is_some_and(|comment| comment.is_multiline_block() || comment.has_newline_before())
         {
             match is_block {
                 true => write!(f, [hard_line_break(), content]),
@@ -96,14 +96,14 @@ fn has_line_comment_before_semicolon<'a>(body: Stmt<'a>, f: &Formatter<'a>) -> b
     for comment in f.comments().comments_in(span).iter().rev() {
         let between = f
             .source_text()
-            .text_for(&Span::new(comment.end().min(end), end));
+            .text_for(&Span::new(comment.span().end.min(end), end));
         if !between.trim_ascii().is_empty() {
             return false;
         }
-        if comment.is_line() && !comment.preceded_by_newline() {
+        if comment.is_line() && !comment.has_newline_before() {
             return true;
         }
-        end = comment.start();
+        end = comment.span().start;
     }
     false
 }
@@ -146,7 +146,7 @@ impl<'a> Format<'a> for FormatBodyAndItsComments<'a> {
                 .comments()
                 .end_of_line_comments_after(at)
                 .last()
-                .map_or(end, |last| last.span.end),
+                .map_or(end, |last| last.span().end),
             None => end,
         };
         let previous_limit = f.comments_mut().limit_comments_up_to(limit);
@@ -163,24 +163,26 @@ impl<'a> Format<'a> for FormatBodyAndItsComments<'a> {
                 !comment.is_multiline_block()
                     && !f
                         .source_text()
-                        .contains_newline(Span::before(end, comment.span))
+                        .contains_newline(Span::before(end, comment.span()))
             })
             .count();
         write!(
             f,
-            FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())
+            FormatTrailingComments::Comments(comments.slice(0, count))
         );
     }
 }
 
 /// The comments that are not printed yet before the `else` that `alternate` follows.
-pub(crate) fn comments_before_else<'a>(alternate: Stmt<'a>, f: &Formatter<'a>) -> &'a [Comment] {
+pub(crate) fn comments_before_else<'a>(alternate: Stmt<'a>, f: &Formatter<'a>) -> CommentList<'a> {
     let comments = f.comments().comments_before(alternate.span().start);
     if comments.is_empty() {
         return comments;
     }
     let end_of_else = f.file().end_of_token_before(alternate.span().start);
-    let before = comments.iter().take_while(|it| it.span.start < end_of_else);
+    let before = comments
+        .iter()
+        .take_while(|it| it.span().start < end_of_else);
     let count = before.count();
-    comments.get(..count).unwrap_or_default()
+    comments.slice(0, count)
 }

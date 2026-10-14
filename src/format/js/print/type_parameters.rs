@@ -246,7 +246,7 @@ impl<'a> FormatTypeArguments<'a> {
             || after
                 .last()
                 .or_else(|| before.last())
-                .is_some_and(|comment| comment.followed_by_newline())
+                .is_some_and(|comment| comment.has_newline_after())
     }
 }
 

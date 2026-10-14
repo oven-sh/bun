@@ -43,7 +43,7 @@ fn write_return_or_throw<'a>(
     }
     let comments = f.comments().comments_before(statement.span().end);
     let on_the_line = (comments.iter())
-        .take_while(|comment| !comment.preceded_by_newline())
+        .take_while(|comment| !comment.has_newline_before())
         .count();
     write!(
         f,
@@ -51,7 +51,7 @@ fn write_return_or_throw<'a>(
             OptionalSemicolon,
             space(),
             FormatDanglingComments::Comments {
-                comments: &comments[..on_the_line],
+                comments: comments.slice(0, on_the_line),
                 indent: DanglingIndentMode::None,
             }
         ]
@@ -77,11 +77,11 @@ fn end_before_comments_that_count_for_the_width<'a>(
         .comments_in(Span::new(content_end, span.end.max(content_end)))
         .first()?;
     let is_right_behind = (f.source_text())
-        .text_for(&Span::new(content_end, first.start()))
+        .text_for(&Span::new(content_end, first.span().start))
         .trim_ascii()
         .is_empty();
     (is_right_behind
-        && !first.preceded_by_newline()
+        && !first.has_newline_before()
         && !f.comments().has_trailing_suppression_comment(content_end))
     .then_some(content_end)
 }
@@ -144,8 +144,8 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
                 .comments()
                 .comments_in(Span::after(span, argument.outer_span().end))
                 .iter())
-            .find(|comment| !is_return || comment.preceded_by_newline())
-            .map_or_else(|| argument.outer_span().end, |comment| comment.span.start);
+            .find(|comment| !is_return || comment.has_newline_before())
+            .map_or_else(|| argument.outer_span().end, |comment| comment.span().start);
             let previous_limit = f.comments_mut().limit_comments_up_to(limit);
             write!(f, format_argument);
             f.comments_mut().restore_view_limit(previous_limit);
@@ -165,14 +165,14 @@ pub(crate) fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatte
     let type_cast_comment_end = comments
         .get_type_cast_comment_index(argument.span())
         .and_then(|index| comments.unprinted_comments().get(index))
-        .map(|comment| comment.span.end);
+        .map(|comment| comment.span().end);
     let is_before_type_cast =
-        |comment: &Comment| type_cast_comment_end.is_none_or(|end| comment.span.start < end);
+        |comment: Comment<'_>| type_cast_comment_end.is_none_or(|end| comment.span().start < end);
 
     for left_side in ExpressionLeftSide::from(argument).iter() {
         let leading_comments = comments.comments_before(left_side.span().start);
         if leading_comments.iter().any(|comment| {
-            (comment.is_multiline_block() || comment.followed_by_newline())
+            (comment.is_multiline_block() || comment.has_newline_after())
                 && is_before_type_cast(comment)
         }) {
             return true;
@@ -190,8 +190,8 @@ pub(crate) fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatte
                 .iter()
                 .any(|comment| {
                     // Prettier's `handleMemberExpressionComments`: it leads the member expression.
-                    comment.preceded_by_newline()
-                        && (comment.is_multiline_block() || comment.followed_by_newline())
+                    comment.has_newline_before()
+                        && (comment.is_multiline_block() || comment.has_newline_after())
                         && is_before_type_cast(comment)
                 })
         {

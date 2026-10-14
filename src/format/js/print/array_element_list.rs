@@ -44,7 +44,7 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
                     .comments()
                     .comments_in(Span::after(last.span(), self.array.span().end))
                     .first())
-                .is_some_and(|comment| comment.preceded_by_newline())
+                .is_some_and(|comment| comment.has_newline_before())
         });
         let mut filler = f.fill();
         let mut previous_end = 0;
@@ -61,7 +61,7 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
                         write!(f, empty_line());
                     } else if f.comments().comments_before_iter(element.span().start).any(
                         |comment| match block_comment_that_ends_line_starts_one(f) {
-                            true => comment.followed_by_newline(),
+                            true => comment.has_newline_after(),
                             false => comment.is_line(),
                         },
                     ) {
@@ -113,12 +113,12 @@ pub(crate) fn can_concisely_print_array_list<'a>(
                 // `-(/* comment */ 1)`
                 let span = item.span();
                 while comments_iter
-                    .next_if(|comment| comment.span.start <= span.start)
+                    .next_if(|comment| comment.span().start <= span.start)
                     .is_some()
                 {}
                 if comments_iter
                     .peek()
-                    .is_some_and(|it| span.contains(it.span))
+                    .is_some_and(|it| span.contains(it.span()))
                 {
                     return false;
                 }
@@ -132,7 +132,7 @@ pub(crate) fn can_concisely_print_array_list<'a>(
         .comments_before_iter(array_expression_span.end)
         .any(|comment| {
             comment.is_line()
-                && !comment.preceded_by_newline()
-                && comment.span.start > first.span().start
+                && !comment.has_newline_before()
+                && comment.span().start > first.span().start
         })
 }

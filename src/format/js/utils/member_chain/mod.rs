@@ -352,7 +352,7 @@ fn has_leading_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool 
     f.comments()
         .comments_before_character(object.span().end, character)
         .iter()
-        .any(|comment| comment.preceded_by_newline())
+        .any(|comment| comment.has_newline_before())
 }
 
 /// `a["b"] // comment⏎(c)` is `a["b"](c); // comment` for oxfmt.
@@ -373,24 +373,25 @@ fn has_trailing_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool
     // See `comments_trailing_computed_callee`: those behind the `(` are among them, and separate nothing.
     if expression.tag() == ExprTag::Index {
         return (f.comments().comments_after(end).first()).is_some_and(|comment| {
-            (f.source_text())
-                .all_bytes(Span::before(end, comment.span), |b| b.is_ascii_whitespace())
+            (f.source_text()).all_bytes(Span::before(end, comment.span()), |b| {
+                b.is_ascii_whitespace()
+            })
         });
     }
     match call_of_callee(expression) {
         // All before the `(` are among them. A block comment on its line separates nothing.
         Some(call) => callee_trailing_comments(call, end, f)
             .iter()
-            .any(|comment| comment.preceded_by_newline() || comment.followed_by_newline()),
+            .any(|comment| comment.has_newline_before() || comment.has_newline_after()),
         // A comment on its own line leads the next member, or what is in its brackets.
         None => f
             .comments()
             .comments_after(end)
             .first()
             .is_some_and(|comment| {
-                !comment.preceded_by_newline()
+                !comment.has_newline_before()
                     && f.source_text()
-                        .all_bytes(Span::before(end, comment.span), |b| {
+                        .all_bytes(Span::before(end, comment.span()), |b| {
                             b.is_ascii_whitespace() || b == b')'
                         })
             }),
@@ -402,9 +403,10 @@ fn is_before_comment_that_starts_line<'a>(expression: Expr<'a>, f: &Formatter<'a
     let end = expression.span().end;
     f.options().flavor.is_oxfmt()
         && (f.comments().comments_after(end).first()).is_some_and(|comment| {
-            comment.preceded_by_newline()
-                && (f.source_text())
-                    .all_bytes(Span::before(end, comment.span), |b| b.is_ascii_whitespace())
+            comment.has_newline_before()
+                && (f.source_text()).all_bytes(Span::before(end, comment.span()), |b| {
+                    b.is_ascii_whitespace()
+                })
         })
 }
 

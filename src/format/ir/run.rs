@@ -29,14 +29,14 @@ pub(crate) fn format_with_marks<'a>(
     write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
 ) -> Result<[Option<u32>; 2], FormatError> {
     if options.debug_comments == DebugComments::Owners {
-        let mut comments = Vec::new();
-        crate::js::comments::collect_in_source_order(file, options.flavor, &mut comments);
+        let has_tree_of_babel = file.is_javascript();
         let attach_options = crate::js::attach::Options {
-            has_tree_of_babel: file.is_javascript(),
+            has_tree_of_babel,
             experimental_ternaries: options.experimental_ternaries,
+            flavor: options.flavor,
         };
-        let cast_parens = crate::js::comments::cast_parens(file, &comments);
-        crate::js::attach::list(file, &comments, &cast_parens, attach_options, out);
+        let cast_parens = comments::cast_parens(file, options.flavor, has_tree_of_babel);
+        crate::js::attach::list(file, &cast_parens, attach_options, out);
         return Ok([None; 2]);
     }
     let root = write_document(file, options, cursor, scratch, write);
@@ -111,13 +111,19 @@ fn finish(formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, F
     scratch.unprinted_comments.clear();
     for comment in formatter.context().comments().unprinted() {
         use std::io::Write;
+        let Some(attachment) = formatter.context().comments().attachment(comment) else {
+            continue;
+        };
         let owner = (crate::js::ast_nodes::AST_KIND_NAMES)
-            .get(comment.owner_kind() as usize)
+            .get(attachment.owner_kind as usize)
             .unwrap_or(&"Name");
         let _ = writeln!(
             scratch.unprinted_comments,
-            "{} {} {:?} {owner}",
-            comment.span.start, comment.span.end, comment.placement
+            "{} {} {:?} {owner} {:?}",
+            comment.span().start,
+            comment.span().end,
+            attachment.placement,
+            attachment.marker
         );
     }
     let (root, buffers) = formatter.finish();

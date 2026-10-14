@@ -108,10 +108,10 @@ pub(crate) fn write_comments_before_closing_parenthesis<'a>(e: Expr<'a>, f: &mut
         .comments_in(Span::after(e.span(), e.outer_span().end));
     let count = comments
         .iter()
-        .take_while(|comment| !comment.preceded_by_newline())
+        .take_while(|comment| !comment.has_newline_before())
         .count();
     write!(
         f,
-        FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())
+        FormatTrailingComments::Comments(comments.slice(0, count))
     );
 }

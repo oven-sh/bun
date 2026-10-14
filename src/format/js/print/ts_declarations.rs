@@ -65,10 +65,12 @@ pub(crate) fn write_ts_interface_declaration<'a>(
                 let comments = f.comments().comments_in(previous.between(first.span()));
                 comments
                     .iter()
-                    .any(|comment| comment.preceded_by_newline() || comment.followed_by_newline())
+                    .any(|comment| comment.has_newline_before() || comment.has_newline_after())
                     || comments.first().is_some_and(|comment| {
                         f.source_text()
-                            .all_bytes(previous.between(comment.span), |b| b.is_ascii_whitespace())
+                            .all_bytes(previous.between(comment.span()), |b| {
+                                b.is_ascii_whitespace()
+                            })
                     })
             }
         });
@@ -152,7 +154,7 @@ pub(crate) fn write_ts_interface_declaration<'a>(
             let comments = f.comments().comments_before(body_span.start);
             if !comments
                 .iter()
-                .any(|comment| comment.preceded_by_newline() || comment.followed_by_newline())
+                .any(|comment| comment.has_newline_before() || comment.has_newline_after())
             {
                 write!(f, [space(), FormatLeadingComments::Comments(comments)]);
             }
@@ -225,7 +227,7 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
         write!(f, FormatNodeWithoutTrailingComments(&id));
     }
     // What oxfmt writes behind the `=`, and whether a line comment is on the line of the `=`.
-    let mut operator_line: (&[Comment], bool) = (&[], false);
+    let mut operator_line: (CommentList<'_>, bool) = (CommentList::empty(), false);
     if !f.is_quiet() {
         match type_alias_comments_stay_behind_operator(f) {
             true => operator_line = write_comments_after_type_alias_left_side(alias, f),
@@ -339,7 +341,7 @@ fn type_alias_comments_stay_behind_operator(f: &Formatter<'_>) -> bool {
 fn write_comments_after_type_alias_left_side<'a>(
     alias: Alias<'a>,
     f: &mut Formatter<'a>,
-) -> (&'a [Comment], bool) {
+) -> (CommentList<'a>, bool) {
     let left_end = alias
         .type_params()
         .angle_brackets_span()
@@ -348,7 +350,7 @@ fn write_comments_after_type_alias_left_side<'a>(
         .comments()
         .has_any_comment_in(Span::before(left_end, alias.ty().span()))
     {
-        return (&[], false);
+        return (CommentList::empty(), false);
     }
     let operator_end = f.comments().position_after_character(left_end, b'=');
     let previous_limit = f.comments_mut().limit_comments_up_to(operator_end);
@@ -368,17 +370,17 @@ fn comments_before_type_alias_operator<'a>(
     start: u32,
     ty: TypeNode<'a>,
     f: &Formatter<'a>,
-) -> &'a [Comment] {
+) -> CommentList<'a> {
     let comments = f.comments().comments_before_character(start, b'=');
     let is_object = matches!(ty.kind(), TypeKind::Object(_));
     let count = comments
         .iter()
         .take_while(|comment| {
-            !comment.preceded_by_newline()
-                && !(comment.followed_by_newline() && (is_object || comment.is_block()))
+            !comment.has_newline_before()
+                && !(comment.has_newline_after() && (is_object || comment.is_block()))
         })
         .count();
-    &comments[..count]
+    comments.slice(0, count)
 }
 
 /// Prettier's `chooseLayout` for the type alias `alias`, whose type is `ty`.
@@ -434,7 +436,7 @@ fn type_alias_layout<'a>(
             !f.is_quiet()
                 && f.comments()
                     .comments_before_iter(ty.span().start)
-                    .any(|comment| comment.followed_by_newline() || comment.is_indentable_block())
+                    .any(|comment| comment.has_newline_after() || comment.is_indentable_block())
         }
     };
     if should_break_after_operator {

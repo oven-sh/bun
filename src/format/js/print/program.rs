@@ -49,10 +49,10 @@ pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
     };
     if let Some((first, others)) = rest.split_first()
         && source
-            .get(..first.span.start as usize)
+            .get(..first.span().start as usize)
             .is_some_and(is_blank)
     {
-        let (comments, indent) = (std::slice::from_ref(first), DanglingIndentMode::None);
+        let (comments, indent) = (CommentList::of(first), DanglingIndentMode::None);
         write!(f, FormatDanglingComments::Comments { comments, indent });
         rest = others;
     }
@@ -182,11 +182,11 @@ impl<'a> Format<'a> for FormatStatements<'a> {
             };
             // Nearly always, what is left between two statements starts its line.
             let comments = match f.is_quiet() {
-                true => &[][..],
+                true => CommentList::empty(),
                 false => f.comments().comments_before(statement.span().start),
             };
-            let starts_line = |comment: &Comment| {
-                comment.preceded_by_newline()
+            let starts_line = |comment: Comment<'_>| {
+                comment.has_newline_before()
                     || is_behind_empty_statements_that_start_line(previous_statement, comment, f)
             };
             let placements = match comments.iter().all(starts_line) {
@@ -197,11 +197,11 @@ impl<'a> Format<'a> for FormatStatements<'a> {
             // `a ⏎ /* comment */; ⏎ b`
             let is_next_line_empty = match comments.first() {
                 Some(first)
-                    if first.preceded_by_newline()
-                        && first.span.start < previous_statement.span().end
+                    if first.has_newline_before()
+                        && first.span().start < previous_statement.span().end
                         && comment_before_semicolon_keeps_its_line(f) =>
                 {
-                    f.lines_before(first.span) > 1
+                    f.lines_before(first.span()) > 1
                 }
                 None if is_behind_semicolon_and_blanks(statement, f) => false,
                 _ => is_next_line_empty_after(previous_statement, f),
@@ -216,10 +216,7 @@ impl<'a> Format<'a> for FormatStatements<'a> {
                 .zip(&placements)
                 .filter(|(_, placement)| placement.leads())
             {
-                write!(
-                    f,
-                    FormatLeadingComments::Comments(std::slice::from_ref(comment))
-                );
+                write!(f, FormatLeadingComments::Comments(CommentList::of(comment)));
             }
             write_semicolon_before_type_cast_comment(statement, f);
             write_statement(f);
@@ -269,14 +266,14 @@ fn is_behind_semicolon_and_blanks<'a>(statement: Stmt<'a>, f: &Formatter<'a>) ->
 /// leads `b`. For Prettier it trails `a`.
 fn is_behind_empty_statements_that_start_line<'a>(
     previous: Stmt<'a>,
-    comment: &Comment,
+    comment: Comment<'_>,
     f: &Formatter<'a>,
 ) -> bool {
     f.options().flavor.is_oxfmt()
-        && previous.span().end <= comment.span.start
+        && previous.span().end <= comment.span().start
         && (f
             .source_text()
-            .text_for(&previous.span().between(comment.span))
+            .text_for(&previous.span().between(comment.span()))
             .iter()
             .rev())
         .find(|byte| !matches!(byte, b' ' | b'\t' | b';'))
@@ -304,7 +301,7 @@ fn is_directive_before_empty_line<'a>(last: Stmt<'a>, f: &Formatter<'a>) -> bool
 #[cold]
 fn write_more_trailing_comments<'a>(
     previous: Stmt<'a>,
-    comments: &'a [Comment],
+    comments: CommentList<'a>,
     next: Stmt<'a>,
     f: &mut Formatter<'a>,
 ) -> SmallVec<[CommentPlacement; 8]> {
@@ -320,12 +317,12 @@ fn write_more_trailing_comments<'a>(
                     b.is_ascii_whitespace() || b == b';'
                 })
             };
-            let mut at = comment.end();
+            let mut at = comment.span().end;
             comment.is_line()
-                && comment.span.start >= previous.span().start
+                && comment.span().start >= previous.span().start
                 && (comments.iter())
-                    .take_while(|it| it.start() < end)
-                    .all(|it| is_blank(core::mem::replace(&mut at, it.end()), it.start()))
+                    .take_while(|it| it.span().start < end)
+                    .all(|it| is_blank(core::mem::replace(&mut at, it.span().end), it.span().start))
                 && is_blank(at, end.max(at))
         });
     let mut has_line_suffix = is_after_line_comment;
@@ -384,7 +381,7 @@ fn write_semicolon_before_type_cast_comment_of<'a>(statement: Stmt<'a>, f: &mut 
         return;
     };
     let start = statement.span().start;
-    if let [rest @ .., _] = f.comments().comments_before(start)
+    if let Some((_, rest)) = f.comments().comments_before(start).split_last()
         && follows_type_cast_comment(start, f)
         && (!f.comments().is_suppressed(start)
             || semicolon_is_before_cast_comment_of_ignored_statement(f))

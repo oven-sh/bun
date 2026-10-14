@@ -45,10 +45,10 @@ pub(crate) fn write_ts_union_type_in<'a>(
     // A `prettier-ignore` comment on a line of its own is about the first type only.
     let suppression = leading_comments
         .iter()
-        .find(|comment| f.comments().is_suppression_comment(comment));
+        .find(|comment| f.comments().is_suppression_comment(*comment));
     let is_suppressed = match prettier_ignore_before_union_is_about_all_of_it(f) {
         true => !union_prints_itself(ty, f) || follows_printed_suppression_comment(ty, f),
-        false => suppression.is_some_and(|comment| !comment.preceded_by_newline()),
+        false => suppression.is_some_and(|comment| !comment.has_newline_before()),
     };
     if is_suppressed {
         write!(
@@ -178,10 +178,9 @@ fn follows_printed_suppression_comment<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) 
     }
     let mut end = ty.span().start;
     for comment in f.comments().printed_comments().iter().rev() {
-        let is_adjacent = !comment.is_moved()
-            && comment.span.end <= end
+        let is_adjacent = comment.span().end <= end
             && f.source_text()
-                .all_bytes(Span::after(comment.span, end), |b| {
+                .all_bytes(Span::after(comment.span(), end), |b| {
                     b.is_ascii_whitespace() || b == b'('
                 });
         if !is_adjacent {
@@ -189,9 +188,9 @@ fn follows_printed_suppression_comment<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) 
         }
         if f.comments().is_suppression_comment(comment) {
             // At the end of a line it trails what is before it.
-            return comment.preceded_by_newline();
+            return comment.has_newline_before();
         }
-        end = comment.span.start;
+        end = comment.span().start;
     }
     false
 }
@@ -216,16 +215,16 @@ fn write_union_one_per_line<'a>(
     f: &mut Formatter<'a>,
 ) {
     let leading_comments = match f.is_quiet() {
-        true => &[][..],
+        true => CommentList::empty(),
         false => f.comments().comments_before(members.ty.span().start),
     };
-    let is_after_code_at_end_of_line = |comment: &Comment| {
-        comment.is_block() && !comment.preceded_by_newline() && comment.followed_by_newline()
+    let is_after_code_at_end_of_line = |comment: Comment<'_>| {
+        comment.is_block() && !comment.has_newline_before() && comment.has_newline_after()
     };
     let is_in_type_alias = matches!(members.parent, AstNodes::TSTypeAliasDeclaration(_));
     let has_end_of_line_comment = leading_comments
         .iter()
-        .any(|comment| comment.followed_by_newline());
+        .any(|comment| comment.has_newline_after());
     // Comments go behind the `|` that is written before the first type, which writes them, wherever they are in the
     // text. Only if one of them ends its line do they all stay before it: there would be a line break between the
     // `|` and the type.
@@ -237,7 +236,7 @@ fn write_union_one_per_line<'a>(
     // ```
     let comments_before_operator = match has_end_of_line_comment {
         true => leading_comments,
-        false => &[][..],
+        false => CommentList::empty(),
     };
     // After the `?` or `:` of a conditional type the comments are behind the operator, and what follows is in line
     // with them.
@@ -294,11 +293,11 @@ fn write_union_one_per_line<'a>(
         && !matches!(members.parent, AstNodes::TSUnionType(_));
     let has_own_line_comment = leading_comments
         .iter()
-        .any(|comment| comment.preceded_by_newline())
+        .any(|comment| comment.has_newline_before())
         || (is_in_type_alias
             && leading_comments
                 .iter()
-                .any(|it| is_after_code_at_end_of_line(it) && !is_jsdoc(it, f)));
+                .any(|it| is_after_code_at_end_of_line(it) && !is_jsdoc(it)));
     let breaks_before_comments = (has_own_line_comment
         || (has_end_of_line_comment && is_only_type))
         && !is_branch_of_conditional_type;
@@ -318,8 +317,8 @@ fn write_union_one_per_line<'a>(
     }
 }
 
-fn is_jsdoc(comment: &Comment, f: &Formatter<'_>) -> bool {
-    f.source_text().text_for(comment).starts_with(b"/**")
+fn is_jsdoc(comment: Comment<'_>) -> bool {
+    comment.text().starts_with(b"/**")
 }
 
 /// oxc's `alias_union_breaks_after_operator`: whether the union that is the type of the type alias `statement` leaves
@@ -329,7 +328,7 @@ fn is_jsdoc(comment: &Comment, f: &Formatter<'_>) -> bool {
 /// - A comment that has been written behind the left side ends the line of the `=`.
 pub(crate) fn type_alias_union_breaks_after_operator<'a>(
     statement: Stmt<'a>,
-    leading_comments: &[Comment],
+    leading_comments: CommentList<'_>,
     f: &Formatter<'a>,
 ) -> bool {
     let StmtKind::TypeAlias(alias) = statement.kind() else {
@@ -341,14 +340,12 @@ pub(crate) fn type_alias_union_breaks_after_operator<'a>(
         .map_or_else(|| alias.name().span().end, |it| it.end);
     leading_comments.iter().any(|comment| {
         comment.is_indentable_block()
-            || (is_jsdoc(comment, f)
-                && !comment.preceded_by_newline()
-                && comment.followed_by_newline())
+            || (is_jsdoc(comment) && !comment.has_newline_before() && comment.has_newline_after())
     }) || f
         .comments()
         .printed_comments()
         .last()
-        .is_some_and(|comment| comment.followed_by_newline() && comment.span.start > left_end)
+        .is_some_and(|comment| comment.has_newline_after() && comment.span().start > left_end)
 }
 
 /// oxc's `union_prints_itself`: a union that a `prettier-ignore` comment is about is written as it is, and what it is
@@ -401,7 +398,8 @@ impl<'a> Format<'a> for UnionMembers<'a> {
         while let Some(member) = iter.next() {
             let next = iter.peek().copied();
             let (leading_comments, _) = comments_before_member(member, f);
-            let is_suppression = |comment: &Comment| f.comments().is_suppression_comment(comment);
+            let is_suppression =
+                |comment: Comment<'_>| f.comments().is_suppression_comment(comment);
             // A `prettier-ignore` comment leads it, or trails it with the `|` behind it.
             let is_member_suppressed = is_suppressed.get()
                 || leading_comments.iter().any(is_suppression)
@@ -410,9 +408,10 @@ impl<'a> Format<'a> for UnionMembers<'a> {
                         let comments = f.comments().comments_in(member.span().between(next.span()));
                         let trailing =
                             comments.len() - count_leading_comments(comments, next.span().start, f);
-                        comments[..trailing].iter().any(|comment| {
-                            is_suppression(comment) && !comment.preceded_by_newline()
-                        })
+                        comments
+                            .slice(0, trailing)
+                            .iter()
+                            .any(|comment| is_suppression(comment) && !comment.has_newline_before())
                     }));
 
             let format_member = format_with(|f| write_member(member, is_member_suppressed, f));
@@ -424,9 +423,12 @@ impl<'a> Format<'a> for UnionMembers<'a> {
                         // Prettier's `handleUnionTypeComments`: on a line of its own it is about the next type.
                         is_suppressed.set(comments.iter().any(|comment| {
                             f.comments().is_suppression_comment(comment)
-                                && comment.preceded_by_newline()
+                                && comment.has_newline_before()
                         }));
-                        &comments[..comments.len() - count_leading_comments(comments, start, f)]
+                        comments.slice(
+                            0,
+                            comments.len() - count_leading_comments(comments, start, f),
+                        )
                     }
                     None => {
                         // `A | (B /* comment */)`
@@ -481,12 +483,12 @@ impl<'a> UnionMembers<'a> {
     ///   | "b" // comment
     /// )[];
     /// ```
-    fn comments_after_last_member(&self, f: &Formatter<'a>) -> &'a [Comment] {
+    fn comments_after_last_member(&self, f: &Formatter<'a>) -> CommentList<'a> {
         if !matches!(
             self.parent,
             AstNodes::TSArrayType(_) | AstNodes::TSUnionType(_) | AstNodes::TSIntersectionType(_)
         ) {
-            return &[];
+            return CommentList::empty();
         }
         // Only those that are in the parent.
         let (span, parent_end) = (self.ty.span(), self.parent.span().end);
@@ -500,7 +502,7 @@ impl<'a> UnionMembers<'a> {
 
 /// The comments before `member` that are not written by `member` itself, and where the rest of
 /// them, or `member`, starts.
-fn comments_before_member<'a>(member: TypeNode<'a>, f: &Formatter<'a>) -> (&'a [Comment], u32) {
+fn comments_before_member<'a>(member: TypeNode<'a>, f: &Formatter<'a>) -> (CommentList<'a>, u32) {
     let start = member.span().start;
     match member.kind() {
         TypeKind::Union(types) if types.len() > 1 => {
@@ -509,7 +511,7 @@ fn comments_before_member<'a>(member: TypeNode<'a>, f: &Formatter<'a>) -> (&'a [
                 comments,
                 first_type_comments
                     .first()
-                    .map_or(start, |comment| comment.span.start),
+                    .map_or(start, |comment| comment.span().start),
             )
         }
         _ => (f.comments().comments_before(start), start),
@@ -519,23 +521,23 @@ fn comments_before_member<'a>(member: TypeNode<'a>, f: &Formatter<'a>) -> (&'a [
 /// How many of `comments`, which are between two types of a union, lead the second one, which
 /// starts at `start`: those that are after the `|` on the line of the type. All others trail the
 /// first type (Prettier's `handleUnionTypeComments`).
-fn count_leading_comments(comments: &[Comment], start: u32, f: &Formatter<'_>) -> usize {
+fn count_leading_comments(comments: CommentList<'_>, start: u32, f: &Formatter<'_>) -> usize {
     let mut end = start;
     let mut count = 0;
     for comment in comments.iter().rev() {
-        let is_adjacent = !comment.followed_by_newline()
+        let is_adjacent = !comment.has_newline_after()
             && f.source_text()
-                .all_bytes(Span::after(comment.span, end), |b| {
+                .all_bytes(Span::after(comment.span(), end), |b| {
                     b.is_ascii_whitespace() || b == b'('
                 });
         if !is_adjacent {
             break;
         }
-        if comment.preceded_by_newline() {
+        if comment.has_newline_before() {
             return 0;
         }
         count += 1;
-        end = comment.span.start;
+        end = comment.span().start;
     }
     count
 }

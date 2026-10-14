@@ -660,7 +660,7 @@ pub(crate) fn write_object_type<'a>(
         {
             let comments = f.comments().comments_before(first.span().start);
             let has_line_comment = comments.iter().any(|it| it.is_line());
-            let ends_line = comments.last().is_some_and(|it| it.followed_by_newline());
+            let ends_line = comments.last().is_some_and(|it| it.has_newline_after());
             let content = format_with(|f| {
                 write!(
                     f,

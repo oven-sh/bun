@@ -263,27 +263,26 @@ pub(crate) fn unary_argument_has_comments<'a>(
         return false;
     }
     let (outer, inner) = (unary.span(), argument.span());
-    let is_leading =
-        |comment: &Comment| comment.start() >= outer.start && comment.end() <= inner.start;
+    let is_leading = |comment: Comment<'_>| {
+        comment.span().start >= outer.start && comment.span().end <= inner.start
+    };
     let comments = f.comments();
     if comments.printed_comments().last().is_some_and(is_leading) {
         return true;
     }
     let unprinted = comments.unprinted_comments();
     match unprinted.first() {
-        Some(first) if first.start() < outer.end => {
+        Some(first) if first.span().start < outer.end => {
             if is_leading(first) {
                 return true;
             }
         }
         _ => return false,
     }
-    let after = unprinted.partition_point(|comment| comment.start() < inner.end);
     unprinted
-        .get(after..)
-        .unwrap_or_default()
         .iter()
-        .take_while(|comment| comment.end() <= outer.end)
+        .skip_while(|comment| comment.span().start < inner.end)
+        .take_while(|comment| comment.span().end <= outer.end)
         .any(|comment| !is_last_binary_operand_comment(argument, comment, f))
 }
 
@@ -298,7 +297,7 @@ pub(crate) fn unary_argument_has_comments<'a>(
 /// ```
 pub(crate) fn is_last_binary_operand_comment<'a>(
     argument: Expr<'a>,
-    comment: &Comment,
+    comment: Comment<'_>,
     f: &Formatter<'a>,
 ) -> bool {
     let ExprKind::Binary { op, right, .. } = argument.kind() else {
@@ -307,11 +306,11 @@ pub(crate) fn is_last_binary_operand_comment<'a>(
     let source_text = f.source_text();
     op != BinOp::Comma
         && comment_can_trail_last_operand(f)
-        && !comment.preceded_by_newline()
-        && comment.followed_by_newline()
+        && !comment.has_newline_before()
+        && comment.has_newline_after()
         && !comment.is_multiline_block()
         && source_text.contains_newline(Span::before(argument.span().start, right.span()))
-        && !source_text.contains_newline(Span::before(right.span().start, comment.span))
+        && !source_text.contains_newline(Span::before(right.span().start, comment.span()))
 }
 
 /// For oxfmt a comment before the `)` trails all that is in the parentheses here as everywhere else, and

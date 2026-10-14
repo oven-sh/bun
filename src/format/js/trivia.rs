@@ -4,13 +4,13 @@
 //! with the spaces and line breaks around them, and marks them as printed.
 
 use super::ast_nodes::AstNodes;
-use super::comments::{Comment, CommentKind};
+use super::comments::{Comment, CommentExt, CommentList};
 use crate::prelude::*;
 use crate::write;
 
 /// 0 if something is before `comment` on its line, 1 if nothing is, 2 if the line before is empty
 /// as well: Prettier's `hasNewline(.., { backwards: true })` and `isPreviousLineEmpty`.
-fn lines_before(comment: &Comment, f: &Formatter<'_>) -> usize {
+fn lines_before(comment: Comment<'_>, f: &Formatter<'_>) -> usize {
     /// Without the blanks at the end of `text` and the line break before them, if there is one.
     fn without_last_line(text: &[u8]) -> Option<&[u8]> {
         let text = bun_core::strings::trim_right(text, b" \t");
@@ -19,7 +19,7 @@ fn lines_before(comment: &Comment, f: &Formatter<'_>) -> usize {
             len => Some(&text[..text.len() - len]),
         }
     }
-    let before = f.source_text().text_for(&Span::before(0, comment.span));
+    let before = f.source_text().text_for(&Span::before(0, comment.span()));
     match without_last_line(before) {
         None => 0,
         Some(before) => 1 + usize::from(without_last_line(before).is_some()),
@@ -38,11 +38,11 @@ pub(crate) const fn leading_comments<'a>(node: AstNodes<'a>) -> FormatLeadingCom
     FormatLeadingComments::Owner(node)
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub(crate) enum FormatLeadingComments<'a> {
     Node(Span),
     Owner(AstNodes<'a>),
-    Comments(&'a [Comment]),
+    Comments(CommentList<'a>),
 }
 
 impl<'a> Format<'a> for FormatLeadingComments<'a> {
@@ -68,9 +68,9 @@ pub(crate) fn comment_before_semicolon_keeps_its_line(f: &Formatter<'_>) -> bool
 }
 
 /// Where `comment`, which leads something, ends. See [`comment_before_semicolon_keeps_its_line`].
-fn end_with_semicolon_of_statement_before(comment: &Comment, f: &Formatter<'_>) -> u32 {
-    let end = comment.span.end;
-    if !comment.preceded_by_newline() || !comment_before_semicolon_keeps_its_line(f) {
+fn end_with_semicolon_of_statement_before(comment: Comment<'_>, f: &Formatter<'_>) -> u32 {
+    let end = comment.span().end;
+    if !comment.has_newline_before() || !comment_before_semicolon_keeps_its_line(f) {
         return end;
     }
     let rest = f.source_text().as_bytes().get(end as usize..);
@@ -83,29 +83,36 @@ fn end_with_semicolon_of_statement_before(comment: &Comment, f: &Formatter<'_>) 
     }
 }
 
+/// Prettier's `mergeNestledJsdocComments`: `/** .. *//** .. */`, which JSDoc uses for the overloads of a function. The two
+/// comments stay together, without a space between them.
+fn is_nestled_jsdoc_comment(comment: Comment<'_>, next: Option<Comment<'_>>) -> bool {
+    next.is_some_and(|next| {
+        next.span().start == comment.span().end
+            && comment.is_indentable_block()
+            && next.is_indentable_block()
+    })
+}
+
 #[cold]
-fn write_leading_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
-    for comment in comments {
+fn write_leading_comments<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
+    for (index, comment) in comments.iter().enumerate() {
         if !f.comments_mut().mark_printed(comment) {
             continue;
         }
         write!(f, comment);
+        if is_nestled_jsdoc_comment(comment, comments.get(index + 1)) {
+            continue;
+        }
 
-        let lines_after = (f.source_text().lines_after(comment.span.end)).max(
+        let lines_after = (f.source_text().lines_after(comment.span().end)).max(
             f.source_text()
                 .lines_after(end_with_semicolon_of_statement_before(comment, f)),
         );
-        match comment.kind {
-            CommentKind::SingleLineBlock | CommentKind::MultiLineBlock => match lines_after {
-                0 => write!(f, space()),
-                1 if lines_before(comment, f) == 0 => write!(f, soft_line_break_or_space()),
-                1 => write!(f, hard_line_break()),
-                _ => write!(f, empty_line()),
-            },
-            CommentKind::Line => match lines_after {
-                0 | 1 => write!(f, hard_line_break()),
-                _ => write!(f, empty_line()),
-            },
+        match (comment.is_block(), lines_after) {
+            (true, 0) => write!(f, space()),
+            (true, 1) if lines_before(comment, f) == 0 => write!(f, soft_line_break_or_space()),
+            (_, 0 | 1) => write!(f, hard_line_break()),
+            _ => write!(f, empty_line()),
         }
     }
 }
@@ -127,12 +134,12 @@ pub(crate) const fn trailing_comments<'a>(node: AstNodes<'a>) -> FormatTrailingC
     FormatTrailingComments::Owner(node)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub(crate) enum FormatTrailingComments<'a> {
     /// `(enclosing_span, preceding_span, following_span_start)`
     Node((Span, Span, u32)),
     Owner(AstNodes<'a>),
-    Comments(&'a [Comment]),
+    Comments(CommentList<'a>),
 }
 
 impl<'a> Format<'a> for FormatTrailingComments<'a> {
@@ -153,15 +160,15 @@ impl<'a> Format<'a> for FormatTrailingComments<'a> {
 }
 
 #[cold]
-fn write_trailing_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
+fn write_trailing_comments<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
     let mut total_lines_before = 0;
     // `a; // b` and `; // c` on the next line: the one before the empty statement has been written by itself.
-    let mut previous_comment: Option<&Comment> = comments.first().and_then(|first| {
-        let previous = f.comments().printed_comments().last()?;
-        if first.span.start < previous.span.end {
+    let mut previous_comment: Option<Comment<'a>> = comments.first().and_then(|first| {
+        let previous = f.comments().last_printed()?;
+        if first.span().start < previous.span().end {
             return None;
         }
-        let between = previous.span.between(first.span);
+        let between = previous.span().between(first.span());
         let is_only_empty_statements =
             (f.source_text()).all_bytes(between, |b| b.is_ascii_whitespace() || b == b';');
         (previous.is_line() && is_only_empty_statements).then_some(previous)
@@ -204,7 +211,7 @@ fn write_trailing_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
         } else {
             // Nothing but a byte order mark is before it.
             let is_first_in_file =
-                f.source_text().text_for(&Span::before(0, comment.span)) == b"\xEF\xBB\xBF";
+                f.source_text().text_for(&Span::before(0, comment.span())) == b"\xEF\xBB\xBF";
             let content = format_with(|f| write!(f, [maybe_space(!is_first_in_file), comment]));
             if comment.is_line() {
                 write!(f, [line_suffix(&content), expand_parent()]);
@@ -245,7 +252,7 @@ pub(crate) enum FormatDanglingComments<'a> {
         indent: DanglingIndentMode,
     },
     Comments {
-        comments: &'a [Comment],
+        comments: CommentList<'a>,
         indent: DanglingIndentMode,
     },
 }
@@ -298,12 +305,12 @@ impl<'a> Format<'a> for FormatDanglingComments<'a> {
 
 #[cold]
 fn write_dangling_comments<'a>(
-    comments: &'a [Comment],
+    comments: CommentList<'a>,
     indent: DanglingIndentMode,
     f: &mut Formatter<'a>,
 ) {
     let content = format_with(|f: &mut Formatter<'a>| {
-        let mut previous_comment: Option<&Comment> = None;
+        let mut previous_comment: Option<Comment<'a>> = None;
         for comment in comments {
             if !f.comments_mut().mark_printed(comment) {
                 continue;
@@ -349,7 +356,7 @@ pub(crate) fn write_head_body_separator(body_start: u32, f: &mut Formatter<'_>) 
     let comments = f.comments().comments_before(body_start);
     match comments
         .first()
-        .is_some_and(|comment| comment.preceded_by_newline())
+        .is_some_and(|comment| comment.has_newline_before())
     {
         true => write!(f, hard_line_break()),
         false => write!(f, space()),
@@ -361,12 +368,12 @@ pub(crate) fn write_head_body_separator(body_start: u32, f: &mut Formatter<'_>) 
 /// what is called and the `(`. Those on the line of what is before them trail it, the others keep
 /// their lines. Returns whether what separates the two if there are no comments is still to be written.
 pub(crate) fn write_comments_between_blocks<'a>(
-    comments: &'a [Comment],
+    comments: CommentList<'a>,
     f: &mut Formatter<'a>,
 ) -> bool {
     let same_line_count = comments
         .iter()
-        .take_while(|comment| !comment.preceded_by_newline())
+        .take_while(|comment| !comment.has_newline_before())
         .count();
     let (same_line, own_line) = comments.split_at(same_line_count);
     FormatTrailingComments::Comments(same_line).fmt(f);
@@ -396,7 +403,7 @@ pub(crate) fn write_trailing_comments_before(
     let comments = f.comments().comments_before_character(start, character);
     let same_line_count = comments
         .iter()
-        .take_while(|comment| !comment.preceded_by_newline())
+        .take_while(|comment| !comment.has_newline_before())
         .count();
     let (same_line, own_line) = comments.split_at(same_line_count);
     FormatTrailingComments::Comments(same_line).fmt(f);
@@ -419,14 +426,14 @@ fn is_printed_by_prettier_for_oxfmt(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt() && f.options().in_html.root != HtmlRoot::None
 }
 
-impl<'a> Format<'a> for Comment {
+impl<'a> Format<'a> for Comment<'a> {
     /// Prettier's `printComment`.
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let content = f.source_text().text_for(&self.span);
+        let content = self.text();
         if self.is_line() {
             return write!(f, text(bun_core::strings::trim_js_whitespace_end(content)));
         }
-        if super::jsdoc::write_comment(self, f) {
+        if super::jsdoc::write_comment(*self, f) {
             return;
         }
         if self.is_indentable_block() {

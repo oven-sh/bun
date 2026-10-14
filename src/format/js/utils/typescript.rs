@@ -34,17 +34,17 @@ pub(crate) fn without_lone_operator(mut ty: TypeNode<'_>) -> TypeNode<'_> {
 
 /// Those at the start of `comments` for which Prettier's `isEndOfLineComment` holds and
 /// `isOwnLineComment` does not: there is code before them on their line, and none after them.
-pub(crate) fn end_of_line_comments(comments: &[Comment]) -> &[Comment] {
+pub(crate) fn end_of_line_comments(comments: CommentList<'_>) -> CommentList<'_> {
     let mut count = 0;
     for (index, comment) in comments.iter().enumerate() {
-        if comment.preceded_by_newline() {
+        if comment.has_newline_before() {
             break;
         }
-        if comment.followed_by_newline() {
+        if comment.has_newline_after() {
             count = index + 1;
         }
     }
-    &comments[..count]
+    comments.slice(0, count)
 }
 
 /// The comments before the union `ty`: those that lead the union, and those that lead its first
@@ -55,9 +55,9 @@ pub(crate) fn end_of_line_comments(comments: &[Comment]) -> &[Comment] {
 pub(crate) fn union_leading_comments<'a>(
     ty: TypeNode<'a>,
     f: &Formatter<'a>,
-) -> (&'a [Comment], &'a [Comment]) {
+) -> (CommentList<'a>, CommentList<'a>) {
     if f.is_quiet() {
-        return (&[], &[]);
+        return (CommentList::empty(), CommentList::empty());
     }
     let comments = f.comments().comments_before(ty.span().start);
     let mut end = ty.span().start;
@@ -67,13 +67,13 @@ pub(crate) fn union_leading_comments<'a>(
             && !comment.is_multiline_block()
             && !f.comments().is_suppression_comment(comment)
             && f.source_text()
-                .all_bytes(Span::after(comment.span, end), |b| {
+                .all_bytes(Span::after(comment.span(), end), |b| {
                     matches!(b, b' ' | b'\t')
                 });
         if !is_adjacent {
             break;
         }
-        end = comment.span.start;
+        end = comment.span().start;
         at -= 1;
     }
     comments.split_at(at)

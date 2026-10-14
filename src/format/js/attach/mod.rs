@@ -13,7 +13,8 @@ mod rules;
 mod surrounding_nodes;
 
 use super::ast_nodes::AstNodes;
-use super::comments::Comment;
+use super::comments::{Comment, CommentExt};
+use crate::options::Flavor;
 use bun_lint::ast::{Expr, File};
 pub(crate) use debug::list;
 use surrounding_nodes::{AttachContext, SurroundingNodes};
@@ -60,6 +61,8 @@ pub(crate) struct Attachment<'a> {
     pub(crate) marker: Marker,
     /// Prettier's `comment.unignore`: a `prettier-ignore` comment that applies to a node other than its owner.
     pub(crate) is_unignored: bool,
+    /// A `prettier-ignore` comment that applies to its owner.
+    pub(crate) ignores_owner: bool,
 }
 
 impl<'a> Attachment<'a> {
@@ -69,6 +72,7 @@ impl<'a> Attachment<'a> {
             placement,
             marker: Marker::None,
             is_unignored: false,
+            ignores_owner: false,
         }
     }
 
@@ -100,6 +104,7 @@ pub(crate) struct Attached<'a> {
     pub(crate) ignored_nodes: Vec<Owner<'a>>,
     /// Start offsets of the owners that are not next to their comment. Sorted.
     pub(crate) relocated_owner_starts: Vec<u32>,
+    pub(crate) has_ignore_comments: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -107,6 +112,7 @@ pub(crate) struct Options {
     /// Prettier would parse this file with Babel instead of typescript-estree. Their trees differ in a few places.
     pub(crate) has_tree_of_babel: bool,
     pub(crate) experimental_ternaries: bool,
+    pub(crate) flavor: Flavor,
 }
 
 /// Prettier's `comment.placement`.
@@ -122,40 +128,46 @@ enum TextPosition {
 
 /// Everything a rule can look at.
 struct CommentContext<'a> {
-    comment: Comment,
+    comment: Comment<'a>,
+    is_ignore_comment: bool,
     text_position: TextPosition,
     nodes: SurroundingNodes<'a>,
     is_last_comment: bool,
 }
 
 /// Whether only spaces and tabs separate two consecutive comments.
-fn are_on_same_line(first: &Comment, second: &Comment) -> bool {
-    first.next_token_start == second.next_token_start && !second.preceded_by_newline()
+fn are_on_same_line(first: Comment<'_>, second: Comment<'_>) -> bool {
+    first.next_token_start() == second.next_token_start() && !second.has_newline_before()
 }
 
 /// Prettier's `isOwnLineComment` and `isEndOfLineComment`. A run of comments on one line that share the same preceding (or
 /// following) node is classified as a whole.
-fn text_position(comments: &[Comment], nodes: &[SurroundingNodes<'_>], id: usize) -> TextPosition {
+fn text_position<'a>(
+    file: &'a File<'a>,
+    nodes: &[SurroundingNodes<'a>],
+    id: usize,
+) -> TextPosition {
+    let comment = |id: usize| file.comment(id as u32);
     let mut first = id;
     while nodes[id].preceding_node.is_some()
         && first > 0
         && nodes[first - 1].preceding_node == nodes[id].preceding_node
-        && are_on_same_line(&comments[first - 1], &comments[first])
+        && are_on_same_line(comment(first - 1), comment(first))
     {
         first -= 1;
     }
-    if comments[first].preceded_by_newline() {
+    if comment(first).has_newline_before() {
         return TextPosition::OwnLine;
     }
     let mut last = id;
     while nodes[id].following_node.is_some()
-        && last + 1 < comments.len()
+        && last + 1 < nodes.len()
         && nodes[last + 1].following_node == nodes[id].following_node
-        && are_on_same_line(&comments[last], &comments[last + 1])
+        && are_on_same_line(comment(last), comment(last + 1))
     {
         last += 1;
     }
-    match comments[last].followed_by_newline() {
+    match comment(last).has_newline_after() {
         true => TextPosition::EndOfLine,
         false => TextPosition::Remaining,
     }
@@ -199,11 +211,11 @@ fn break_ties<'a>(
     let mut gap_end = cx.start_of(following_node);
     let mut first_leading = ties.len();
     while first_leading > 0 {
-        let comment = cx.comments[ties[first_leading - 1]];
-        if !cx.is_gap(comment.span.end, gap_end) {
+        let comment = cx.file.comment(ties[first_leading - 1] as u32).span();
+        if !cx.is_gap(comment.end, gap_end) {
             break;
         }
-        gap_end = comment.span.start;
+        gap_end = comment.start;
         first_leading -= 1;
     }
     for (index, id) in ties.drain(..).enumerate() {
@@ -214,35 +226,35 @@ fn break_ties<'a>(
     }
 }
 
-/// `comments` are the comments of `file`, indexed by id. `cast_parens`: see [`super::comments::cast_parens`].
+/// `cast_parens`: see [`super::comments::cast_parens`].
 pub(crate) fn attach<'a>(
     file: &'a File<'a>,
-    comments: &[Comment],
     cast_parens: &[u32],
     options: Options,
 ) -> Attached<'a> {
-    let cx = AttachContext::new(file, comments, cast_parens, options);
+    let cx = AttachContext::new(file, cast_parens, options);
     let program = cx.program();
     let nodes = cx.surrounding_nodes_of_all_comments();
     let mut attached = Attached {
-        attachments: vec![Attachment::dangling(program); comments.len()],
+        attachments: vec![Attachment::dangling(program); nodes.len()],
         ..Attached::default()
     };
     let mut ties: Vec<usize> = Vec::new();
-    for (id, &comment) in comments.iter().enumerate() {
-        if comment.is_merged_into_previous() {
-            continue;
-        }
+    for (id, comment) in file.comments_by_id().enumerate() {
         let context = CommentContext {
             comment,
-            text_position: text_position(comments, &nodes, id),
+            is_ignore_comment: comment.is_ignore_comment(options.flavor),
+            text_position: text_position(file, &nodes, id),
             nodes: nodes[id],
-            is_last_comment: id + 1 == comments.len(),
+            is_last_comment: id + 1 == nodes.len(),
         };
+        attached.has_ignore_comments |= context.is_ignore_comment;
         let mut ignored_node = None;
         let attachment = rules::handle_comment(&cx, &context, &mut ignored_node)
             .or_else(|| attach_by_text_position(context.text_position, &context.nodes, program));
         attached.attachments[id].is_unignored = ignored_node.is_some();
+        attached.attachments[id].ignores_owner =
+            context.is_ignore_comment && ignored_node.is_none();
         attached.ignored_nodes.extend(ignored_node);
         let Some(attachment) = attachment else {
             let starts_new_run = (ties.last())
@@ -269,6 +281,7 @@ pub(crate) fn attach<'a>(
         }
         attached.attachments[id] = Attachment {
             is_unignored: ignored_node.is_some(),
+            ignores_owner: context.is_ignore_comment && ignored_node.is_none(),
             ..attachment
         };
     }

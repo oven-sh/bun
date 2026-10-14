@@ -140,9 +140,9 @@ pub(crate) fn follows_type_cast_comment(position: u32, f: &Formatter<'_>) -> boo
             .or_else(|| comments.printed_comments().last())
             .is_some_and(|comment| {
                 comments.is_type_cast_comment(comment)
-                    && comment.span.end <= position
+                    && comment.span().end <= position
                     && f.source_text()
-                        .all_bytes(Span::after(comment.span, position), |b| {
+                        .all_bytes(Span::after(comment.span(), position), |b| {
                             b.is_ascii_whitespace()
                         })
             })
@@ -300,11 +300,11 @@ impl<'a> Head<'a> {
                 let mut end = body.span().start;
                 for comment in f.comments().comments_before(end).iter().rev() {
                     if f.source_text()
-                        .contains_byte(Span::after(comment.span, end), b')')
+                        .contains_byte(Span::after(comment.span(), end), b')')
                     {
                         break;
                     }
-                    end = comment.span.start;
+                    end = comment.span().start;
                 }
                 end
             }
@@ -580,7 +580,7 @@ impl CommentPlacement {
 /// next one, which starts at `following_start`. Of the handlers, only the one for type cast comments
 /// is heeded.
 pub(crate) fn comment_placements(
-    comments: &[Comment],
+    comments: CommentList<'_>,
     following_start: u32,
     f: &Formatter<'_>,
 ) -> SmallVec<[CommentPlacement; 8]> {
@@ -589,11 +589,11 @@ pub(crate) fn comment_placements(
     let mut placements: SmallVec<[CommentPlacement; 8]> = SmallVec::new();
 
     // A comment behind one that starts the line counts as starting it.
-    let mut previous: Option<(&Comment, bool)> = None;
+    let mut previous: Option<(Comment<'_>, bool)> = None;
     for comment in comments {
-        let starts_line = comment.preceded_by_newline()
+        let starts_line = comment.has_newline_before()
             || previous.is_some_and(|(previous, starts_line)| {
-                starts_line && is_blank(previous.span.between(comment.span))
+                starts_line && is_blank(previous.span().between(comment.span()))
             });
         placements.push(match starts_line {
             true => CommentPlacement::OwnLine,
@@ -606,9 +606,9 @@ pub(crate) fn comment_placements(
     let (mut ends_line, mut next_start) = (false, following_start);
     let mut gap_end = Some(following_start);
     for (comment, placement) in comments.iter().zip(&mut placements).rev() {
-        ends_line = comment.followed_by_newline()
-            || (ends_line && is_blank(Span::after(comment.span, next_start)));
-        next_start = comment.span.start;
+        ends_line = comment.has_newline_after()
+            || (ends_line && is_blank(Span::after(comment.span(), next_start)));
+        next_start = comment.span().start;
         if *placement == CommentPlacement::OwnLine {
             continue;
         }
@@ -622,16 +622,16 @@ pub(crate) fn comment_placements(
         }
         // The parentheses of a type cast are a node, which starts right behind the comment.
         let is_before_cast = f.comments().is_type_cast_comment(comment)
-            && source.next_non_whitespace_byte_is(comment.span.end, b'(');
+            && source.next_non_whitespace_byte_is(comment.span().end, b'(');
         gap_end = gap_end
             .filter(|&end| {
                 is_before_cast
-                    || source.all_bytes(Span::after(comment.span, end), |b| {
+                    || source.all_bytes(Span::after(comment.span(), end), |b| {
                         b.is_ascii_whitespace() || b == b'('
                     })
             })
             .or_else(|| is_before_cast.then_some(0))
-            .map(|_| comment.span.start);
+            .map(|_| comment.span().start);
         if gap_end.is_some() {
             *placement = CommentPlacement::BeforeNode;
         }
@@ -666,7 +666,7 @@ impl<'a> Format<'a> for FormatForInOrOfHead<'a> {
 
         let trailing_count = leads.iter().take_while(|leads| !**leads).count();
         if leads.iter().skip(trailing_count).all(|leads| *leads) {
-            let trailing = comments.get(..trailing_count).unwrap_or_default();
+            let trailing = comments.slice(0, trailing_count);
             return write!(
                 f,
                 [
@@ -681,15 +681,12 @@ impl<'a> Format<'a> for FormatForInOrOfHead<'a> {
         for (comment, _) in comments.iter().zip(&leads).filter(|(_, leads)| !**leads) {
             write!(
                 f,
-                FormatTrailingComments::Comments(std::slice::from_ref(comment))
+                FormatTrailingComments::Comments(CommentList::of(comment))
             );
         }
         write!(f, [space(), self.keyword, space()]);
         for (comment, _) in comments.iter().zip(&leads).filter(|(_, leads)| **leads) {
-            write!(
-                f,
-                FormatLeadingComments::Comments(std::slice::from_ref(comment))
-            );
+            write!(f, FormatLeadingComments::Comments(CommentList::of(comment)));
         }
         write!(f, right);
     }
@@ -795,11 +792,11 @@ pub(crate) fn write_if_statement<'a>(
         write!(f, hard_line_break());
     }
     let comments = match f.is_quiet() {
-        true => &[][..],
+        true => CommentList::empty(),
         false => comments_before_else(alternate, f),
     };
     if let (Some(first), Some(last)) = (comments.first(), comments.last()) {
-        match f.lines_before(first.span) {
+        match f.lines_before(first.span()) {
             0 => write!(f, " "),
             1 => write!(f, is_consequent_block.then_some(hard_line_break())),
             _ => write!(f, empty_line()),
@@ -811,7 +808,7 @@ pub(crate) fn write_if_statement<'a>(
                 indent: DanglingIndentMode::None
             }
         );
-        match last.followed_by_newline() {
+        match last.has_newline_after() {
             true => write!(f, hard_line_break()),
             false => write!(f, space()),
         }
@@ -878,7 +875,7 @@ pub(crate) fn write_labeled_statement<'a>(
     let all = || {
         comments
             .iter()
-            .map(std::slice::from_ref)
+            .map(CommentList::of)
             .zip(placements.iter().copied())
     };
     let before_label = || {

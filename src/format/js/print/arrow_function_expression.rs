@@ -355,10 +355,10 @@ fn has_leading_comment<'a>(e: Expr<'a>, is_callee: bool, f: &Formatter<'a>) -> b
         .last()
         .or_else(|| comments.printed_comments().last())
         .is_some_and(|comment| {
-            comment.end() <= start
-                && (!is_callee || comment.start() >= e.outer_span().start)
+            comment.span().end <= start
+                && (!is_callee || comment.span().start >= e.outer_span().start)
                 && f.source_text()
-                    .all_bytes(Span::before(comment.end(), e.span()), |b| {
+                    .all_bytes(Span::before(comment.span().end, e.span()), |b| {
                         b.is_ascii_whitespace() || b == b'('
                     })
         })
@@ -406,22 +406,22 @@ fn has_leading_own_line_comment<'a>(
         true => arrow_token.end,
         false => arrow.span().start,
     };
-    let is_before_arrow_token = |comment: &Comment| {
-        comment.start() >= FormatFormalParameters(arrow).span().start
-            && comment.end() <= arrow_token.start
+    let is_before_arrow_token = |comment: Comment<'_>| {
+        comment.span().start >= FormatFormalParameters(arrow).span().start
+            && comment.span().end <= arrow_token.start
     };
     let mut comments =
         comments_between(Span::before(start, AstNodes::FunctionBody(arrow).span()), f)
-            .filter(|comment| has_preceding_node || !is_before_arrow_token(comment));
+            .filter(|comment| has_preceding_node || !is_before_arrow_token(*comment));
     match arrow.body() {
         FnBody::Expr(body) if matches!(body.kind(), ExprKind::Jsx(_)) => {
             comments.any(|comment| f.comments().is_suppression_comment(comment))
         }
-        FnBody::Expr(_) => comments.any(|comment| comment.followed_by_newline()),
+        FnBody::Expr(_) => comments.any(|comment| comment.has_newline_after()),
         // A comment at the end of the line of the `=>` is moved into the block, if there is
         // anything before the `=>` that it could belong to.
         _ => comments.any(|comment| {
-            comment.followed_by_newline() && (comment.preceded_by_newline() || !has_preceding_node)
+            comment.has_newline_after() && (comment.has_newline_before() || !has_preceding_node)
         }),
     }
 }
@@ -603,7 +603,7 @@ impl<'a> Format<'a> for FormatSignature<'a> {
         // If the first is from before the `(`, it leads the body, and takes the others along.
         let comments = f.comments().comments_before(arrow_token.start);
         let comments = match comments.first() {
-            Some(first) if first.start() < params.span().end => &[][..],
+            Some(first) if first.span().start < params.span().end => CommentList::empty(),
             _ => comments,
         };
         let content = FormatTrailingComments::Comments(comments);
@@ -692,13 +692,13 @@ fn write_expression_body<'a>(body: Expr<'a>, is_on_its_own_line: bool, f: &mut F
         let is_suppressed = f.comments().is_suppressed(span.start);
         let leading = span_that_comments_lead(body, f);
         let content = format_with(|f| {
-            match f.comments().comments_before(span.start) {
+            match f.comments().comments_before(span.start).split_last() {
                 // But for one that is about the parentheses behind it.
-                [others @ .., cast]
+                Some((cast, others))
                     if sequence_behind_comments_is_on_its_own_line(f)
                         && f.comments().is_cast_parenthesis(span.start) =>
                 {
-                    let cast = FormatLeadingComments::Comments(std::slice::from_ref(cast));
+                    let cast = FormatLeadingComments::Comments(CommentList::of(cast));
                     write!(f, [FormatLeadingComments::Comments(others), "(", cast]);
                 }
                 _ => write!(f, [format_leading_comments(leading), "("]),
@@ -725,7 +725,7 @@ fn write_expression_body<'a>(body: Expr<'a>, is_on_its_own_line: bool, f: &mut F
         // `(a ? b : c /* comment */)`: in the parentheses that are written if it does not break.
         ExprKind::Cond { .. } => comments
             .iter()
-            .take_while(|comment| !comment.preceded_by_newline())
+            .take_while(|comment| !comment.has_newline_before())
             .count(),
         // What is before the `)` of parentheses that go trails the body, with its indentation.
         ExprKind::Binary { .. }
@@ -743,6 +743,6 @@ fn write_expression_body<'a>(body: Expr<'a>, is_on_its_own_line: bool, f: &mut F
     };
     write!(
         f,
-        FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())
+        FormatTrailingComments::Comments(comments.slice(0, count))
     );
 }

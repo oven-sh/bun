@@ -55,7 +55,7 @@ pub(crate) fn write_ts_mapped_type<'a>(
                         && f.comments()
                             .comments_before(constraint.span().start)
                             .iter()
-                            .any(|comment| comment.followed_by_newline())
+                            .any(|comment| comment.has_newline_after())
                 });
             write!(
                 f,
@@ -108,7 +108,7 @@ pub(crate) fn write_ts_mapped_type<'a>(
 
 /// The comments between the `{` and the `[`, each on its own line. The last one stays on the line
 /// of the `[` if it is there in the source and fits.
-fn write_comments_before_bracket<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
+fn write_comments_before_bracket<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
     let Some((last, others)) = comments.split_last() else {
         return;
     };
@@ -117,7 +117,7 @@ fn write_comments_before_bracket<'a>(comments: &'a [Comment], f: &mut Formatter<
         write!(f, [comment, hard_line_break()]);
     }
     f.comments_mut().mark_printed(last);
-    match last.followed_by_newline() {
+    match last.has_newline_after() {
         true => write!(f, [last, hard_line_break()]),
         false => write!(f, group(&format_args!(last, soft_line_break_or_space()))),
     }

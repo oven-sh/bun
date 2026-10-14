@@ -39,7 +39,7 @@ pub(crate) fn callee_trailing_comments<'a>(
     call: Call<'a>,
     callee_end: u32,
     f: &Formatter<'a>,
-) -> &'a [Comment] {
+) -> CommentList<'a> {
     if let Some(comments) = comments_trailing_computed_callee(call, f) {
         return comments;
     }
@@ -59,7 +59,7 @@ pub(crate) fn callee_trailing_comments<'a>(
 fn comments_trailing_computed_callee<'a>(
     call: Call<'a>,
     f: &Formatter<'a>,
-) -> Option<&'a [Comment]> {
+) -> Option<CommentList<'a>> {
     if !f.options().flavor.is_oxfmt() {
         return None;
     }
@@ -102,7 +102,7 @@ pub(crate) fn type_arguments_trailing_comments<'a>(
     call: Call<'a>,
     end: u32,
     f: &Formatter<'a>,
-) -> &'a [Comment] {
+) -> CommentList<'a> {
     match call.args().first() {
         Some(first) => {
             trailing_prefix(f.comments().comments_in(Span::before(end, first.span())), f)
@@ -111,18 +111,18 @@ pub(crate) fn type_arguments_trailing_comments<'a>(
     }
 }
 
-fn trailing_prefix<'a>(comments: &'a [Comment], f: &Formatter<'a>) -> &'a [Comment] {
+fn trailing_prefix<'a>(comments: CommentList<'a>, f: &Formatter<'a>) -> CommentList<'a> {
     let source_text = f.source_text();
     let count = comments
         .iter()
         .rposition(|comment| {
-            !comment.preceded_by_newline()
-                && (comment.followed_by_newline()
-                    || source_text.next_non_whitespace_byte_is(comment.span.end, b'?')
-                    || source_text.next_non_whitespace_byte_is(comment.span.end, b')'))
+            !comment.has_newline_before()
+                && (comment.has_newline_after()
+                    || source_text.next_non_whitespace_byte_is(comment.span().end, b'?')
+                    || source_text.next_non_whitespace_byte_is(comment.span().end, b')'))
         })
         .map_or(0, |index| index + 1);
-    comments.get(..count).unwrap_or_default()
+    comments.slice(0, count)
 }
 
 /// Prettier's `isTestCall`. `e` is a call.

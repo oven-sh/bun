@@ -247,7 +247,7 @@ impl<'a> BinaryLikeExpression<'a> {
             && jsx_element.as_ref().is_some_and(|jsx| {
                 (f.comments()
                     .comments_before_iter(jsx.last_operand(f).span().start))
-                .any(|comment| comment.is_line() && !comment.preceded_by_newline())
+                .any(|comment| comment.is_line() && !comment.has_newline_before())
             });
 
         let format_non_jsx_parts = format_with(|f| {
@@ -399,14 +399,14 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
             // See `is_last_binary_operand_comment`.
             if !f.is_quiet()
                 && let AstNodes::UnaryExpression(unary) = outermost.parent()
-                && let [comment, ..] = f.comments().unprinted_comments()
-                && comment.start() >= right.span().end
-                && comment.end() <= unary.span().end
+                && let Some(comment) = f.comments().unprinted_comments().first()
+                && comment.span().start >= right.span().end
+                && comment.span().end <= unary.span().end
                 && is_last_binary_operand_comment(outermost.expr, comment, f)
             {
                 write!(
                     f,
-                    FormatTrailingComments::Comments(std::slice::from_ref(comment))
+                    FormatTrailingComments::Comments(CommentList::of(comment))
                 );
             }
         });
@@ -440,7 +440,8 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
         let should_break = !f.is_quiet()
             && (f.comments().printed_comments().iter().rev())
                 .take_while(|comment| {
-                    left.span().end <= comment.start() && right.span().start >= comment.end()
+                    left.span().end <= comment.span().start
+                        && right.span().start >= comment.span().end
                 })
                 .any(|comment| comment.is_line());
         write!(

@@ -29,10 +29,10 @@ fn follows_language_comment(
         .rev()
         .chain(f.comments().printed_comments().iter().rev());
     while let Some(comment) = comments.next() {
-        if comment.span.end > position {
+        if comment.span().end > position {
             return false;
         }
-        let between = source.text_for(&Span::after(comment.span, position));
+        let between = source.text_for(&Span::after(comment.span(), position));
         if !bun_core::strings::is_all_js_whitespace(between) {
             if !is_statement
                 || !bun_core::strings::split(between, b";")
@@ -42,8 +42,8 @@ fn follows_language_comment(
             }
             has_empty_statement = true;
         }
-        position = comment.span.start;
-        if !comment.is_block() || source.text_for(&comment.content_span()) != language {
+        position = comment.span().start;
+        if !comment.is_block() || comment.content() != language {
             continue;
         }
         if !has_empty_statement {
@@ -52,19 +52,19 @@ fn follows_language_comment(
         // Behind a statement on the same line, it trails that. So do the comments before it.
         let mut first = comment;
         for previous in comments {
-            if first.preceded_by_newline()
+            if first.has_newline_before()
                 || !bun_core::strings::is_all_js_whitespace(
-                    source.text_for(&previous.span.between(first.span)),
+                    source.text_for(&previous.span().between(first.span())),
                 )
             {
                 break;
             }
             first = previous;
         }
-        return first.preceded_by_newline()
+        return first.has_newline_before()
             || matches!(
                 bun_core::strings::trim_js_whitespace(
-                    source.text_for(&Span::before(0, first.span))
+                    source.text_for(&Span::before(0, first.span()))
                 ),
                 [] | [.., b'{']
             );
@@ -96,9 +96,9 @@ pub(crate) fn is_behind_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         .last()
         .or_else(|| comments.printed_comments().last());
     nearest.is_some_and(|comment| {
-        comment.span.end > start
+        comment.span().end > start
             || f.source_text()
-                .text_for(&Span::after(comment.span, start))
+                .text_for(&Span::after(comment.span(), start))
                 .iter()
                 .all(|byte| matches!(byte, b'(' | b';' | 0x80..) || byte.is_ascii_whitespace())
     })

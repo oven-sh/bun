@@ -13,6 +13,7 @@ use super::surrounding_nodes::{
 };
 use super::{Attachment, CommentContext, Marker, Owner};
 use crate::js::ast_nodes::{AsAstNodes, AstNodes as N, ExpressionStatement};
+use crate::js::comments::CommentExt;
 use bun_lint::ast::{
     BinOp, Case, Expr, ExprKind, FnBody, Func, List, Member, Node, PatKind, PropKind, Stmt,
     StmtKind, StmtTag, TypeKind, TypeNode,
@@ -79,24 +80,24 @@ impl<'a> Rules<'_, 'a, '_> {
     // ───────────────────────────── tokens around the comment ─────────────────────────────
 
     fn next_token_starts_with(&self, byte: u8) -> bool {
-        let start = self.context.comment.next_token_start;
+        let start = self.context.comment.next_token_start();
         self.cx.file.text().get(start as usize) == Some(&byte)
     }
 
     fn prev_token_ends_with(&self, byte: u8) -> bool {
-        let end = self.context.comment.prev_token_end as usize;
+        let end = self.context.comment.prev_token_end() as usize;
         end > 0 && self.cx.file.text().get(end - 1) == Some(&byte)
     }
 
     /// Whether there is no token between the comment and `owner`, which comes after it.
     fn is_directly_before(&self, owner: Owner<'a>) -> bool {
-        self.context.comment.next_token_start == self.cx.start_of(owner)
+        self.context.comment.next_token_start() == self.cx.start_of(owner)
     }
 
     fn is_on_same_line_as_end_of(&self, owner: Owner<'a>) -> bool {
         // Prettier's `locEnd` of a statement does not include the `;`.
         let end = self.cx.file.without_semicolon(self.cx.span_of(owner)).end;
-        let between = Span::new(end, self.context.comment.span.start);
+        let between = Span::new(end, self.context.comment.span().start);
         !self.cx.source.has_newline_in_range(between)
     }
 
@@ -392,8 +393,7 @@ impl<'a> Rules<'_, 'a, '_> {
                         Owner::Node(N::ImportSpecifier(_) | N::ExportSpecifier(_))
                     )
                 })?;
-                (self.context.comment.followed_by_newline())
-                    .then(|| Attachment::trailing(specifier))
+                (self.context.comment.has_newline_after()).then(|| Attachment::trailing(specifier))
             }
 
             N::VariableDeclarator(_)
@@ -426,7 +426,7 @@ impl<'a> Rules<'_, 'a, '_> {
 
             N::TSUnionType(_) if text_position == OwnLine => {
                 // `handleUnionTypeComments`
-                if self.context.comment.is_ignore_comment() {
+                if self.context.is_ignore_comment {
                     *ignored_node = self.following_node;
                 }
                 self.preceding_node.map(Attachment::trailing)
@@ -724,7 +724,7 @@ impl<'a> Rules<'_, 'a, '_> {
         let N::ArrowFunctionExpression(func) = node else {
             return None;
         };
-        (func.arrow_span()?.start == self.context.comment.next_token_start).then_some(
+        (func.arrow_span()?.start == self.context.comment.next_token_start()).then_some(
             Attachment::dangling_with_marker(Owner::Node(node), Marker::CommentBeforeArrow),
         )
     }
@@ -764,7 +764,7 @@ impl<'a> Rules<'_, 'a, '_> {
         let following_node = self
             .following_node
             .filter(|_| self.preceding_node.is_some())?;
-        (self.context.comment.span.start >= func.arrow_span()?.end)
+        (self.context.comment.span().start >= func.arrow_span()?.end)
             .then(|| self.add_block_or_not_comment(following_node))
     }
 
@@ -796,7 +796,7 @@ impl<'a> Rules<'_, 'a, '_> {
         let argument_start = self.cx.start_of(self.cx.owner_of_expr(operand));
         let has_newline = |from, to| self.cx.source.has_newline_in_range(Span::new(from, to));
         let is_on_line_of_right = has_newline(argument_start, right_start)
-            && !has_newline(right_start, self.context.comment.span.start);
+            && !has_newline(right_start, self.context.comment.span().start);
         is_on_line_of_right.then(|| Attachment::trailing(right))
     }
 
@@ -821,10 +821,10 @@ impl<'a> Rules<'_, 'a, '_> {
 
     fn should_attach_to_union_type_first_element(&self, owner: Owner<'a>) -> bool {
         let comment = self.context.comment;
-        let between = Span::new(comment.span.end, self.cx.start_of(owner));
+        let between = Span::new(comment.span().end, self.cx.start_of(owner));
         is_union(owner)
             && self.is_single_line_block_comment()
-            && !comment.is_ignore_comment()
+            && !self.context.is_ignore_comment
             && self.is_directly_before(owner)
             && !self.cx.source.has_newline_in_range(between)
     }
@@ -972,7 +972,7 @@ impl<'a> Rules<'_, 'a, '_> {
         let enclosing_node = Owner::Node(N::TSMappedType(ty));
         let key_start = mapped.param().name().span().start;
         if text_position != EndOfLine
-            && comment.is_ignore_comment()
+            && self.context.is_ignore_comment
             && self.following_node == Some(Owner::Name(key_start))
         {
             *ignored_node = Some(enclosing_node);
@@ -982,7 +982,7 @@ impl<'a> Rules<'_, 'a, '_> {
             ));
         }
         // `{ /* comment */ [K in T]: V }`
-        if comment.next_token_start < key_start {
+        if comment.next_token_start() < key_start {
             return Some(Attachment::dangling(enclosing_node));
         }
         match text_position {
@@ -1030,7 +1030,7 @@ impl<'a> Rules<'_, 'a, '_> {
     ) -> Option<Attachment<'a>> {
         let union = self.following_node.filter(|it| is_union(*it))?;
         let text_position = self.context.text_position;
-        if text_position == OwnLine && self.context.comment.is_ignore_comment() {
+        if text_position == OwnLine && self.context.is_ignore_comment {
             *ignored_node = self.union_member_owners(union).next();
         }
         match text_position != EndOfLine && self.should_attach_to_union_type_first_element(union) {

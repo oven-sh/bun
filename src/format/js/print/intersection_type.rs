@@ -60,7 +60,7 @@ fn format_intersection_types<'a>(types: List<'a, TypeNode<'a>>, f: &mut Formatte
             if matches!(item.kind(), TypeKind::Union(members) if members.len() > 1) {
                 let comments = union_leading_comments(item, f).0;
                 let is_suppressed = comments.iter().any(|comment| {
-                    f.comments().is_suppression_comment(comment) && !comment.preceded_by_newline()
+                    f.comments().is_suppression_comment(comment) && !comment.has_newline_before()
                 });
                 if !is_suppressed {
                     write!(f, FormatLeadingComments::Comments(comments));

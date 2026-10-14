@@ -2023,6 +2023,15 @@ pub struct Comment {
     pub prev_token_end: u32,
     /// Start of the next token, or the length of the text if the comment comes after the last token.
     pub next_token_start: u32,
+    /// `/* */` instead of `//`.
+    pub is_block: bool,
+    /// A block comment that spans more than one line.
+    pub is_multiline: bool,
+    /// There is a line break between the comment and the token or comment before it, or nothing but whitespace before it in
+    /// the file.
+    pub has_newline_before: bool,
+    /// There is a line break between the comment and the token or comment after it. Always true for a `//` comment.
+    pub has_newline_after: bool,
     /// The smallest node that contains the comment. `None` at the top level of the file. This and the next two fields are
     /// only filled in if the parser was asked to attach comments.
     pub enclosing_node: NodeOrName,
@@ -2125,7 +2134,8 @@ pub struct FileIn<S: Storage> {
     pub references: S::Few<(ReferenceKind, Atom, u32, ResolutionMode)>,
     /// `CommentDirectives`, in order.
     pub comment_directives: S::Few<CommentDirective>,
-    /// Every `//` and `/* */` comment, in order. Not a `#!` line, nor a comment of HTML.
+    /// Every `//` and `/* */` comment, in order. Not a `#!` line. The HTML-like comments of a script (`<!--`, `-->`) are only
+    /// included if the parser was asked to attach comments.
     pub comments: S::Nodes<Comment>,
     /// See `may_mention`. `MENTIONED_BITS` bits, or empty if the parser does not record them.
     pub mentioned: S::Nodes<u64>,

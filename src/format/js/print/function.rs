@@ -268,21 +268,21 @@ impl<'a> Format<'a> for FormatCommentsBeforeBody<'a> {
         let is_arrow = self.0.is_arrow();
         let count = (comments.iter())
             .take_while(|it| {
-                (it.is_block() && !(is_arrow && it.followed_by_newline()))
-                    || it.end() <= parameters_start
+                (it.is_block() && !(is_arrow && it.has_newline_after()))
+                    || it.span().end <= parameters_start
             })
             .count();
-        let comments = comments.get(..count).unwrap_or_default();
+        let comments = comments.slice(0, count);
         let (moved, comments) = comments.split_at(
             comments
                 .iter()
-                .take_while(|it| it.end() <= parameters_start)
+                .take_while(|it| it.span().end <= parameters_start)
                 .count(),
         );
         let (trailing, leading) = comments.split_at(
             comments
                 .iter()
-                .take_while(|it| !it.preceded_by_newline())
+                .take_while(|it| !it.has_newline_before())
                 .count(),
         );
         write!(

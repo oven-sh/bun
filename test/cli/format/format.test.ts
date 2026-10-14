@@ -1226,6 +1226,16 @@ describe.concurrent("bun fmt", () => {
     const result = await format(texts, [], { reads: names });
     expect(result.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));
     expect(result.exitCode).toBe(0);
+    // Nor in one that the option `jsdoc` writes.
+    const files = {
+      ".oxfmtrc.json": `{ "jsdoc": {} }`,
+      "a.js": 'import a // b\n/**\n * @returns   {U}   it\n * @param   {T}   x   text\n */ from "d";\n',
+    };
+    const withOption = await format(files, [], { reads: ["a.js"] });
+    expect(withOption.files["a.js"]).toBe(
+      'import a from  // b\n/**\n * @param {T} x Text\n * @returns {U} It\n */ "d";\n',
+    );
+    expect(withOption.exitCode).toBe(0);
   });
 
   test("a binding of Vue that is nothing but a comment stays as it is", async () => {

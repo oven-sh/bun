@@ -80,7 +80,7 @@ function isWritableStream(obj) {
 
 // Node's isWritableStream(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L90-L97
 function isWritableStreamLike(obj) {
-  return !!(obj && typeof obj.getWriter === "function" && typeof obj.abort === "function");
+  return !!(obj && typeof obj.getWriter === "function" && typeof obj.abort === "function" && !isNodeStream(obj));
 }
 
 // Node takes any `writable`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L99-L106

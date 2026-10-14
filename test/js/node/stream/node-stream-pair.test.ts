@@ -618,6 +618,14 @@ describe("a userland WritableStream as the last stage", () => {
     });
   }
 
+  test("not a node stream that has getWriter() and abort(): compose() asks for a writable member", () => {
+    const readable = Object.assign(new Readable({ read() {} }), { getWriter() {}, abort() {} });
+    assert.throws(() => compose(new PassThrough(), readable), {
+      code: "ERR_INVALID_ARG_VALUE",
+      message: /^The argument 'streams\[1\]' must be writable\./,
+    });
+  });
+
   test("an options object with getWriter() and abort() is a stream, not the options", async () => {
     const options = { signal: new AbortController().signal, getWriter() {}, abort() {} };
     await assert.rejects(pipelineP(source(), sink().stream, options), { code: "ERR_INVALID_ARG_TYPE" });

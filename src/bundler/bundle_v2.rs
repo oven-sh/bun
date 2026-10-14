@@ -145,9 +145,6 @@ pub struct BundleV2<'a> {
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
 }
 
-bun_core::declare_scope!(Bundle, visible);
-bun_core::declare_scope!(scan_counter, visible);
-
 /// Values are raw `*mut ParseTask` (arena-owned by `graph.heap`); the map only
 /// dedups by path during a single `on_parse_task_complete` pass.
 pub(crate) type ResolveQueue = StringHashMap<*mut ParseTask>;

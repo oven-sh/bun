@@ -371,7 +371,6 @@ pub struct DebugOptions {
     pub package_bundle_map: ArrayHashMap<Box<[u8]>, bundle_enums::BundlePackage>,
 
     pub test_directory: Box<[u8]>,
-    pub output_file: Box<[u8]>,
 }
 
 impl Default for DebugOptions {
@@ -391,7 +390,6 @@ impl Default for DebugOptions {
             editor: Box::default(),
             package_bundle_map: ArrayHashMap::default(),
             test_directory: Box::default(),
-            output_file: Box::default(),
         }
     }
 }

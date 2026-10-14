@@ -14,8 +14,6 @@ use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID, Resoluti
 
 pub use super::installer::Installer;
 
-bun_output::declare_scope!(Store, visible);
-
 #[derive(Copy, Clone)]
 pub struct Ids {
     pub(crate) dep_id: DependencyID,

@@ -25,8 +25,6 @@ use crate::{
     us_bun_verify_error_t, us_socket_t,
 };
 
-bun_core::declare_scope!(uws, visible);
-
 // ──────────────────────────────────────────────────────────────────────────
 // CloseCode PascalCase aliases
 // ──────────────────────────────────────────────────────────────────────────

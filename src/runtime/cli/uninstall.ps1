@@ -83,12 +83,57 @@ try {
 }
 
 # Delete some tempdir files. Do not fail if an error happens here
-try {
-  Remove-Item "${Temp}\bun-*" -Recurse -Force
-} catch {}
-try {
-  Remove-Item "${Temp}\bunx-*" -Recurse -Force
-} catch {}
+function Remove-BunTempFiles {
+  try {
+    $TempDir = $env:TEMP
+    if ([string]::IsNullOrWhiteSpace($TempDir) -or -not [IO.Path]::IsPathRooted($TempDir)) {
+      return
+    }
+
+    # Device paths can bypass GetFullPath normalization. Invalid path characters
+    # also need an explicit check on the .NET runtime used by PowerShell 7.
+    if ($TempDir -match '^[\\/]{2}[?.][\\/]' -or
+        ($TempDir -replace '^[A-Za-z]:', '') -match '[\x00-\x1f<>:"|?*]') {
+      return
+    }
+
+    # IsPathRooted also accepts root-relative and drive-relative paths.
+    $TempRoot = [IO.Path]::GetPathRoot($TempDir)
+    if ($TempRoot -eq "\" -or $TempRoot -eq "/" -or $TempRoot -match '^[A-Za-z]:$') {
+      return
+    }
+
+    $TempDir = [IO.Path]::GetFullPath($TempDir)
+    $TempRoot = [IO.Path]::GetPathRoot($TempDir)
+    $TempDirWithoutTrailingSeparator = $TempDir.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    $TempRootWithoutTrailingSeparator = $TempRoot.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+    if ($TempDirWithoutTrailingSeparator -eq $TempRootWithoutTrailingSeparator) {
+      return
+    }
+    if (-not (Test-Path -LiteralPath $TempDir -PathType Container -ErrorAction Stop)) {
+      return
+    }
+  } catch {
+    return
+  }
+
+  # Interpret TEMP and each returned filename literally, including brackets and
+  # backticks. Only the leaf-name filter should contain wildcards.
+  foreach ($Pattern in @("bun-*", "bunx-*")) {
+    try {
+      Get-ChildItem -LiteralPath $TempDir -Filter $Pattern -Force -ErrorAction Stop | ForEach-Object {
+        # The provider filter may also match a short (8.3) alias.
+        if ($_.Name -like $Pattern) {
+          try {
+            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+}
+
+Remove-BunTempFiles
 
 # Remove Entry from path
 try {

@@ -383,12 +383,16 @@ impl<'a> Rules<'_, 'a, '_> {
             .then(|| Attachment::leading(Owner::Name(name.span().start)))
     }
 
-    /// For oxfmt a comment after `from` leads the source. For Prettier this one trails `a`.
+    /// For oxfmt a comment after `from`, or between the `}` and `from`, leads the source. For Prettier these trail `a`.
     ///
     /// ```js
     /// import { a } from // comment
     /// "b";
+    /// import { a } from /* comment */ "b"; // from `import { a } /* comment */ from "b"`
     /// ```
+    ///
+    /// One between a name and `from` trails the name, also from a line of its own, where it leads the source for Prettier:
+    /// `import a⏎// comment⏎from "b"` is `import a from "b";⏎// comment`.
     ///
     /// Not in `export * as a from // comment⏎"b";`, which is `export * as a from "b"; // comment` for both.
     fn handle_comment_before_module_source_for_oxfmt(
@@ -396,8 +400,20 @@ impl<'a> Rules<'_, 'a, '_> {
         statement: Stmt<'a>,
     ) -> Option<Attachment<'a>> {
         let source = Owner::Name(statement.module_specifier_span()?.start);
-        (self.following_node == Some(source) && self.is_directly_before(source))
-            .then(|| Attachment::leading(source))
+        if self.following_node != Some(source) {
+            return None;
+        }
+        if self.is_directly_before(source) {
+            return Some(Attachment::leading(source));
+        }
+        // Between the last specifier and the source there is a `}`, a `from`, or both.
+        if !self.next_token_starts_with(b'f') {
+            return None;
+        }
+        match self.prev_token_ends_with(b'}') {
+            true => Some(Attachment::leading(source)),
+            false => self.preceding_node.map(Attachment::trailing),
+        }
     }
 
     /// Like Prettier's `handleModuleSpecifiersComments`, but a `prettier-ignore` comment in a specifier applies to nothing:

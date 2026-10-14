@@ -290,6 +290,15 @@ comments/before-and-behind-the-parenthesis-of-a-call-in-a-chain.js
 73 77 T NumericLiteral 71 72 -
 80 84 T CallExpression 67 79 -
 157 167 T ObjectExpression 133 156 -
+comments/before-from.js
+13 26 T ImportSpecifier 9 10 -
+51 61 T ImportSpecifier 47 48 -
+86 96 T ImportSpecifier 82 83 -
+121 134 T ExportSpecifier 117 118 -
+155 168 T ImportDefaultSpecifier 153 154 -
+189 199 T ImportDefaultSpecifier 187 188 -
+220 230 L StringLiteral 236 239 -
+256 269 L StringLiteral 275 278 -
 comments/before-the-comma-after-the-last-parameter.ts
 21 25 L TSTypeAnnotation 28 34 -
 59 66 T Identifier 49 58 -

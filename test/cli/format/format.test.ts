@@ -1227,11 +1227,8 @@ describe.concurrent("bun fmt", () => {
     expect(result.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));
     expect(result.exitCode).toBe(0);
     // Nor in one that the option `jsdoc` writes.
-    const files = {
-      ".oxfmtrc.json": `{ "jsdoc": {} }`,
-      "a.js": 'import a // b\n/**\n * @returns   {U}   it\n * @param   {T}   x   text\n */ from "d";\n',
-    };
-    const withOption = await format(files, [], { reads: ["a.js"] });
+    const text = 'import a // b\n/**\n * @returns   {U}   it\n * @param   {T}   x   text\n */ from "d";\n';
+    const withOption = await format({ "a.js": text }, ["--jsdoc"], { reads: ["a.js"] });
     expect(withOption.files["a.js"]).toBe(
       'import a from  // b\n/**\n * @param {T} x Text\n * @returns {U} It\n */ "d";\n',
     );

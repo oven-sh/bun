@@ -239,7 +239,11 @@ fn name_of(path: &[u8], cwd: &[u8]) -> Vec<u8> {
 }
 
 /// The file at `path`, which `--config` names: its patterns are relative to the working directory.
-pub(crate) fn named(path: &[u8], cwd: &[u8], modules: &mut Modules) -> Result<LegacyFile, Fatal> {
+pub(crate) fn named(
+    path: &[u8],
+    base_path: &[u8],
+    modules: &mut Modules,
+) -> Result<LegacyFile, Fatal> {
     let json = match read(path, modules).map_err(Fatal)? {
         Some(json) => json,
         None if paths::basename(path) == b"package.json" => {
@@ -250,7 +254,7 @@ pub(crate) fn named(path: &[u8], cwd: &[u8], modules: &mut Modules) -> Result<Le
     Ok(LegacyFile {
         path: path.to_vec(),
         name: b"--config".to_vec(),
-        base_path: cwd.to_vec(),
+        base_path: base_path.to_vec(),
         json,
     })
 }

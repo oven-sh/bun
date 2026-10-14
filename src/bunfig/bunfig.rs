@@ -154,6 +154,15 @@ struct Parser<'a, 'tool> {
     is_project_file: bool,
     /// Reads `[lint]` and `[fmt]`.
     tool: Option<&'a mut crate::ToolReader<'tool>>,
+    counts: Counts,
+}
+
+/// What of a bunfig.toml counts.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Counts {
+    Everything,
+    /// `[lint]` and `[fmt]`: the file is above the working directory.
+    OnlyForTheTool,
 }
 
 impl<'a> Parser<'a, '_> {
@@ -348,6 +357,15 @@ impl<'a> Parser<'a, '_> {
     // `cmd` is a runtime arg rather than a const generic —
     // `bun_options_types::command_tag::Tag` does not derive `ConstParamTy` (it
     // already derives `enum_map::Enum`, which conflicts). Monomorphising over
+    fn read_for_tool(&mut self, json: &Expr) -> crate::Result<()> {
+        if let Some(read) = self.tool.as_deref_mut() {
+            if let Err((loc, message)) = read(json) {
+                self.add_error_format(loc, format_args!("{}", bstr::BStr::new(&message)))?;
+            }
+        }
+        Ok(())
+    }
+
     // `cmd` would only dead-code-eliminate untaken arms; the
     // runtime branches below are equivalent and the few hot fields are tiny.
     fn parse(&mut self, cmd: CommandTag) -> crate::Result<()> {
@@ -357,6 +375,10 @@ impl<'a> Parser<'a, '_> {
 
         if !matches!(json.data, ExprData::EObject(_)) {
             self.add_error(json.loc, b"bunfig expects an object { } at the root")?;
+        }
+
+        if self.counts == Counts::OnlyForTheTool {
+            return self.read_for_tool(&json);
         }
 
         if let Some(expr) = json.get(b"logLevel") {
@@ -412,11 +434,7 @@ impl<'a> Parser<'a, '_> {
             }
         }
 
-        if let Some(read) = self.tool.as_deref_mut() {
-            if let Err((loc, message)) = read(&json) {
-                self.add_error_format(loc, format_args!("{}", bstr::BStr::new(&message)))?;
-            }
-        }
+        self.read_for_tool(&json)?;
 
         if cmd == CommandTag::TestCommand {
             if let Some(test) = json.get(b"test") {
@@ -1127,6 +1145,7 @@ impl Bunfig {
         is_project_file: bool,
         ctx: &mut ContextData,
         tool: Option<&mut crate::ToolReader<'_>>,
+        counts: Counts,
     ) -> crate::Result<()> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
@@ -1200,6 +1219,7 @@ impl Bunfig {
             bump: &bump,
             is_project_file,
             tool,
+            counts,
         };
         parser.parse(cmd)
     }

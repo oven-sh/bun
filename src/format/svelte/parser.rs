@@ -62,16 +62,13 @@ pub(crate) trait Js {
     fn ends_of_expressions(&mut self, text: &[u8], at: usize, until: usize) -> Vec<usize>;
     /// One statement.
     fn statement_at(&mut self, text: &[u8], at: usize) -> std::result::Result<Statement, usize>;
-    /// One type. Returns where it is.
-    fn type_at(&mut self, text: &[u8], at: usize) -> std::result::Result<Span, usize>;
-    /// `pattern`, which is in brackets or braces, as the left side of an assignment.
-    fn check_pattern(&mut self, text: &[u8], pattern: Span) -> std::result::Result<(), usize>;
-    /// `parameters`, from a `<` or a `(` to a `)`, as those of an arrow function. Returns where the last ends, with its type.
-    fn parameters(
-        &mut self,
-        text: &[u8],
-        parameters: Span,
-    ) -> std::result::Result<Option<u32>, usize>;
+    /// One type. Returns where it is, and whether there is a comment before it or in it.
+    fn type_at(&mut self, text: &[u8], at: usize) -> std::result::Result<(Span, bool), usize>;
+    /// `pattern`, which is in brackets or braces, as the left side of an assignment. Returns whether there is a comment in it.
+    fn check_pattern(&mut self, text: &[u8], pattern: Span) -> std::result::Result<bool, usize>;
+    /// `parameters`, from a `<` or a `(` to a `)`, as those of an arrow function.
+    fn check_parameters(&mut self, text: &[u8], parameters: Span)
+    -> std::result::Result<(), usize>;
 }
 
 const VOID_ELEMENT_NAMES: [&[u8]; 16] = [
@@ -84,7 +81,7 @@ fn is_void(name: &[u8]) -> bool {
     VOID_ELEMENT_NAMES.contains(&name) || name.eq_ignore_ascii_case(b"!doctype")
 }
 
-const RESERVED_WORDS: [&[u8]; 48] = [
+pub(crate) const RESERVED_WORDS: [&[u8]; 48] = [
     b"arguments",
     b"await",
     b"break",
@@ -649,8 +646,8 @@ impl<'a> Parser<'a, '_> {
 
     // ───────────── read/context.js ─────────────
 
-    /// `read_type_annotation`
-    fn read_type_annotation(&mut self) -> Result<Option<Span>> {
+    /// `read_type_annotation`. Returns where it is, and whether there is a comment in it.
+    fn read_type_annotation(&mut self) -> Result<Option<(Span, bool)>> {
         let start = self.index;
         self.allow_whitespace();
         if !self.eat(b":") {
@@ -662,9 +659,13 @@ impl<'a> Parser<'a, '_> {
         }
         let (template, index) = (self.template(), self.index);
         match self.js.type_at(template, index) {
-            Ok(span) => {
+            Ok((span, has_comments)) => {
                 self.index = span.end as usize;
-                Ok(Some(span))
+                // The plugin loses the comment in `a: /* b */ C`.
+                let before = template.get(index..span.start as usize).unwrap_or_default();
+                let comments = strings::trim_js_whitespace_start(before).len();
+                let span = Span::new(span.start as usize - comments, self.index);
+                Ok(Some((span, has_comments)))
             }
             Err(at) => fail(Message::UnexpectedToken, at),
         }
@@ -678,7 +679,8 @@ impl<'a> Parser<'a, '_> {
             let annotation = self.read_type_annotation()?;
             return Ok(Pattern {
                 span: name,
-                annotation,
+                annotation: annotation.map(|it| it.0),
+                has_comments: annotation.is_some_and(|it| it.1),
             });
         }
         if !matches!(self.text.get(start), Some(b'{' | b'[')) || start >= self.len {
@@ -687,13 +689,15 @@ impl<'a> Parser<'a, '_> {
         self.index = self.match_bracket(start, false)?;
         let span = Span::new(start, self.index);
         let template = self.template();
-        if let Err(at) = self.js.check_pattern(template, span) {
-            return fail(Message::UnexpectedToken, at);
-        }
+        let has_comments = match self.js.check_pattern(template, span) {
+            Ok(has_comments) => has_comments,
+            Err(at) => return fail(Message::UnexpectedToken, at),
+        };
         let annotation = self.read_type_annotation()?;
         Ok(Pattern {
             span: Span::new(start, self.index),
-            annotation,
+            annotation: annotation.map(|it| it.0),
+            has_comments: has_comments || annotation.is_some_and(|it| it.1),
         })
     }
 
@@ -906,7 +910,7 @@ impl<'a> Parser<'a, '_> {
                         start: self.tree[first.0].start,
                         end: self.tree[first.0].end,
                     },
-                    ExpressionKind::StringLiteral,
+                    ExpressionKind::Text,
                 ),
             });
         }
@@ -1276,9 +1280,15 @@ impl<'a> Parser<'a, '_> {
         }
     }
 
-    /// Goes on behind `/<\/script\s*>/`, or the same for `</style`. Returns what is before it. `start`: of the element.
-    fn read_raw_content(&mut self, end_tag: &[u8], start: usize) -> Result<Span> {
-        let (from, mut search) = (self.index, self.index);
+    /// Goes on behind the first `/<\/script\s*>/` from `search` on, or the same for `</style`. Returns what is before it.
+    /// `start`: of the element.
+    fn read_raw_content(
+        &mut self,
+        end_tag: &[u8],
+        start: usize,
+        mut search: usize,
+    ) -> Result<Span> {
+        let from = self.index;
         loop {
             let Some(found) = strings::index_of(&self.text[search..self.len], end_tag) else {
                 return fail(Message::UnclosedElement, start);
@@ -1295,7 +1305,7 @@ impl<'a> Parser<'a, '_> {
 
     /// `read_script`. What is in it is not parsed.
     fn read_script(&mut self, start: usize, attributes: Vec<Id>) -> Result<()> {
-        let content = self.read_raw_content(b"</script", start)?;
+        let content = self.read_raw_content(b"</script", start, self.index)?;
         let mut is_module = false;
         for &attribute in &attributes {
             let at = self.tree[attribute].start as usize;
@@ -1337,9 +1347,125 @@ impl<'a> Parser<'a, '_> {
         Ok(())
     }
 
-    /// `read_style`. What is in it is not parsed: it ends where it ends in HTML.
+    /// `read_value`: where the `;`, `{` or `}` is that ends what starts at `start`. `is_prelude`: of an at-rule. If not, what a
+    /// `{` ends is read by `read_selector_list`, which throws at a `<` and at the end of `--a:`.
+    ///
+    /// `None` also where Svelte reads on and the formatter for style sheets does not leave a `</style` as it is, or does not
+    /// read on: one that is not in a string, a comment or `url(..)`, a string or a `url(..)` that goes on in the next line, a
+    /// `url(a"b")`, which is written anew, and a parenthesis or a bracket that is not closed, which is nothing to Svelte.
+    fn end_of_css_value(&self, start: usize, is_prelude: bool) -> Option<usize> {
+        let text = &self.text[..self.len];
+        let (mut at, mut is_in_url, mut quote, mut has_angle) = (start, false, None, false);
+        // How many parentheses and brackets are open, and where the last `url(` ends.
+        let (mut open, mut url) = (0usize, start);
+        loop {
+            at += strings::index_of_any(text.get(at..)?, b"\\\"'()[]/;{}<\n")?;
+            match text[at] {
+                b'\n' if quote.is_some() || is_in_url => return None,
+                b'<' if quote.is_none() && !is_in_url => {
+                    if text[at..].starts_with(b"</style") {
+                        return None;
+                    }
+                    has_angle = true;
+                }
+                b'\\' => at += 1,
+                byte if quote == Some(byte) => quote = None,
+                byte @ (b')' | b']') => {
+                    if quote.is_none() && !is_in_url {
+                        open = open.checked_sub(1)?;
+                    }
+                    is_in_url &= byte != b')';
+                }
+                byte @ (b'"' | b'\'') if quote.is_none() => {
+                    if is_in_url && !text[url..at].trim_ascii().is_empty() {
+                        return None;
+                    }
+                    quote = Some(byte);
+                }
+                byte @ (b'(' | b'[') => {
+                    // To Svelte `aurl(` is one too, and so is one in a string.
+                    let is_url = byte == b'('
+                        && quote.is_none()
+                        && matches!(&text[start..at], [before @ .., b'u', b'r', b'l']
+                            if !before.last().is_some_and(|&it| !it.is_ascii() || is_in_css_name(it)));
+                    open += usize::from(!is_url && quote.is_none() && !is_in_url);
+                    is_in_url |= is_url;
+                    if is_url {
+                        url = at + 1;
+                    }
+                }
+                b';' | b'{' | b'}' if !is_in_url && quote.is_none() && open > 0 => return None,
+                b'{' if !is_in_url
+                    && quote.is_none()
+                    && !is_prelude
+                    && (has_angle || text[start..at].trim_ascii_end().ends_with(b":")) =>
+                {
+                    return None;
+                }
+                b';' | b'{' | b'}' if !is_in_url && quote.is_none() => return Some(at),
+                b'/' if !is_in_url && quote.is_none() && text.get(at + 1) == Some(&b'*') => {
+                    at += len_of_css_comment(&text[at..])? - 1;
+                }
+                _ => {}
+            }
+            at += 1;
+        }
+    }
+
+    /// Where `read_style` finds the `</style` that ends the style sheet that starts here. It looks for it between two rules:
+    /// `a { b: "</style>" }`. `None`: it throws, or see [`Parser::end_of_css_value`].
+    fn end_of_css(&self) -> Option<usize> {
+        let text = &self.text[..self.len];
+        let (mut at, mut depth) = (self.index, 0usize);
+        loop {
+            // `allow_comment_or_whitespace`, but for `<!-- -->`, which is no comment to the formatter for style sheets.
+            let rest = strings::trim_js_whitespace_start(text.get(at..)?);
+            at = text.len() - rest.len();
+            if rest.starts_with(b"/*") {
+                at += len_of_css_comment(rest)?;
+                continue;
+            }
+            match rest.first()? {
+                b'<' if depth == 0 && rest.starts_with(b"</style") => return Some(at),
+                b'}' => depth = depth.checked_sub(1)?,
+                // No selector, no declaration.
+                b'{' | b';' => return None,
+                // `read_at_rule`: the name is not part of the prelude.
+                b'@' => {
+                    let name = rest[1..]
+                        .iter()
+                        .take_while(|&&it| !it.is_ascii() || is_in_css_name(it));
+                    at = self.end_of_css_value(at + 1 + name.count(), true)?;
+                    match text[at] {
+                        b'{' => depth += 1,
+                        b';' => {}
+                        _ => return None,
+                    }
+                }
+                _ => {
+                    at = self.end_of_css_value(at, false)?;
+                    match text[at] {
+                        b'{' => depth += 1,
+                        b';' => {}
+                        _ => continue,
+                    }
+                }
+            }
+            at += 1;
+        }
+    }
+
+    /// `read_style`. What is in it is not parsed. With a `lang`, a preprocessor has it first, for which it ends at the first
+    /// end tag. So it does if Svelte cannot read it.
     fn read_style(&mut self, start: usize, attributes: Vec<Id>) -> Result<()> {
-        let content = self.read_raw_content(b"</style", start)?;
+        let is_css = attributes.iter().all(|&it| match &self.tree[it].kind {
+            Kind::Attribute { name, value } if matches!(*name, b"lang" | b"type") => {
+                matches!(self.text_of_attribute(value), Some(b"css" | b"text/css"))
+            }
+            _ => true,
+        });
+        let search = (is_css.then(|| self.end_of_css()).flatten()).unwrap_or(self.index);
+        let content = self.read_raw_content(b"</style", start, search)?;
         let kind = Kind::StyleSheet {
             attributes,
             content,
@@ -1423,6 +1549,12 @@ impl<'a> Parser<'a, '_> {
             Err(at) if at == self.len => return fail(Message::UnexpectedEnd, at),
             Err(at) => return fail(Message::UnexpectedToken, at),
         };
+        // The `;` is part of it.
+        let semicolon = behind_trivia(template, end);
+        let end = match template.get(semicolon) {
+            Some(b';') => semicolon + 1,
+            _ => end,
+        };
         self.index = end;
         self.allow_whitespace();
         self.expect(b"}")?;
@@ -1487,7 +1619,12 @@ impl<'a> Parser<'a, '_> {
             if !self.matches(b"as") {
                 // It may have been taken for an assertion of TypeScript.
                 if let Some(first) = parsed.first {
-                    expression = first;
+                    // With the comments before it. Nothing is behind it.
+                    let (start, end) = (expression.outer.start, first.span.end);
+                    expression = Expression {
+                        outer: Span { start, end },
+                        ..first
+                    };
                 }
                 if let Some((end, annotation)) = parsed.assertion {
                     expression.span.end = end;
@@ -1617,16 +1754,15 @@ impl<'a> Parser<'a, '_> {
             }
             self.expect(b")")?;
             let (template, parameters) = (self.template(), Span::new(parameters_start, self.index));
-            let last_parameter_end = match self.js.parameters(template, parameters) {
-                Ok(end) => end,
-                Err(at) => return fail(Message::UnexpectedToken, at),
-            };
+            if let Err(at) = self.js.check_parameters(template, parameters) {
+                return fail(Message::UnexpectedToken, at);
+            }
             self.allow_whitespace();
             self.expect(b"}")?;
             let body = self.tree.add_fragment();
             let kind = Kind::SnippetBlock {
                 expression: name,
-                last_parameter_end,
+                end_of_parameters: parameters.end,
                 body,
             };
             return self.add_block(kind, start, body);
@@ -2162,6 +2298,22 @@ fn is_typescript(text: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// `/[a-zA-Z0-9_-]/`, and the `@` and the `\\` that a name can start with or have in it.
+fn is_in_css_name(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'@' | b'\\')
+}
+
+/// How long the comment is that `text` starts with. `None` also for one with the end of a style sheet and then the start of
+/// another in it: it is not closed, and the `*/` is one of the other. Svelte reads on there.
+fn len_of_css_comment(text: &[u8]) -> Option<usize> {
+    let len = 2 + strings::index_of(text.get(2..)?, b"*/")? + 2;
+    let end_tag = strings::index_of(&text[..len], b"</style");
+    match end_tag.is_some_and(|at| strings::contains(&text[at..len], b"<style")) {
+        true => None,
+        false => Some(len),
+    }
 }
 
 /// Where what is behind the white space and the comments at `at` starts.

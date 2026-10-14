@@ -795,7 +795,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let open = self.pos();
         // `parseClassStaticBlockBody`
         let suspensions = self.suspensions;
-        let (body, _) = self.function_block(ctx::AWAIT);
+        let (body, _) = self.function_block(ctx::AWAIT | self.context & ctx::OUTSIDE_BODIES);
         if self.is_for_oxc() {
             oxc::returns_in_static_block(&mut self.f, body);
         }

@@ -14,7 +14,7 @@ mod angular_print;
 mod ast;
 mod cursor;
 mod data;
-mod embed;
+pub(crate) mod embed;
 mod error;
 pub(crate) mod in_js;
 pub(crate) mod js;

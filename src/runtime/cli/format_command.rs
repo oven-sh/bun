@@ -6,7 +6,8 @@ use bun_format_conformance::{Bundle, Flags, Format};
 use bun_lint_driver::fmt::cli::{Options, UsageError};
 
 use super::command::{ContextData, Tag};
-use super::lint_command::{defaults_of_bunfig, run_and_exit, usage_error};
+use super::lint_command::{read_bunfigs, run_and_exit, usage_error};
+use bun_bunfig::Above;
 
 pub(crate) struct FormatCommand;
 
@@ -82,8 +83,20 @@ impl FormatCommand {
         }
         let cwd = options.cwd.clone();
         run_and_exit(b"fmt", cwd.as_deref(), |environment| {
-            let read = bun_lint_driver::bunfig::format;
-            let defaults = defaults_of_bunfig(ctx, Tag::FormatCommand, b"fmt", read);
+            let mut defaults = None;
+            read_bunfigs(
+                ctx,
+                Tag::FormatCommand,
+                b"fmt",
+                &mut |file, path, is_named| {
+                    let section = bun_lint_driver::bunfig::format(file)?;
+                    defaults = section.map(|it| it.of_bunfig_at(path, is_named));
+                    Ok(match defaults {
+                        Some(_) => Above::Unwanted,
+                        None => Above::Needed,
+                    })
+                },
+            );
             let options = match defaults.map(|defaults| Options::parse_over(defaults, &args)) {
                 None => options,
                 Some(Ok(options)) => options,

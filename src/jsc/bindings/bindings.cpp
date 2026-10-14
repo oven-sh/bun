@@ -6798,9 +6798,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__evaluate(
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    // Same decoder as the module loader: text the transpiler passes through
-    // verbatim (preserved comments) can be ill-formed UTF-8, which becomes U+FFFD
-    // here; WTF::String::fromUTF8 returned a null string that evaluated to nothing.
+    // WTF::String::fromUTF8 returns a null string for ill-formed UTF-8, and a null source evaluates to nothing.
     WTF::String source = sourceLen > 0
         ? Zig::convertUTF8ToString(std::span { sourcePtr, sourceLen })
         : WTF::emptyString();

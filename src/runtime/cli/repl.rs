@@ -38,8 +38,7 @@ use bun_sys::{self as sys, Fd};
 // reference would violate provenance. This matches the convention in
 // `src/jsc/lib.rs`.
 unsafe extern "C" {
-    /// Writes `exception` only when the script throws. Start that slot at `JSValue::ZERO`:
-    /// `undefined` and `null` are values a script can throw.
+    /// Start `exception` at `JSValue::ZERO`: a script can throw `undefined` or `null`.
     fn Bun__REPL__evaluate(
         globalObject: *const JSGlobalObject,
         sourcePtr: *const u8,
@@ -949,11 +948,9 @@ impl Drawing {
 
 /// What the REPL evaluates for one input.
 enum ReplSource<'c> {
-    /// Output of the REPL transform. Evaluating it gives the value of the input inside a
-    /// `{ value }` wrapper, or a promise of that when the input has top-level await.
+    /// Output of the REPL transform: evaluates to a `{ value }` wrapper, or to a promise of one.
     Transformed(Box<[u8]>),
-    /// The input as written, because the REPL transform does not take it. Evaluating it
-    /// gives the completion value.
+    /// The input as written, not taken by the transform: evaluates to its completion value.
     AsWritten(&'c [u8]),
 }
 
@@ -965,8 +962,7 @@ impl ReplSource<'_> {
         }
     }
 
-    /// The promise to wait for, when `result` is what evaluating this source gave. A promise
-    /// that is the completion value of input as written is a value. It is not awaited.
+    /// Only transform output is awaited. A promise from input as written is its value.
     fn awaited_promise(&self, result: JSValue) -> Option<*mut jsc::JSPromise> {
         match self {
             ReplSource::Transformed(_) => result.as_promise(),
@@ -974,8 +970,7 @@ impl ReplSource<'_> {
         }
     }
 
-    /// Whether `result` is the `{ value }` wrapper of the REPL transform. A completion value
-    /// is never one, even if it is an object with a `value` property.
+    /// A completion value is never the `{ value }` wrapper, even when it has a `value` property.
     fn is_value_wrapper(&self, result: JSValue) -> bool {
         matches!(self, ReplSource::Transformed(_)) && result.is_object()
     }
@@ -1772,12 +1767,11 @@ impl<'a> Repl<'a> {
 
     /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
     /// Uses the REPL transform pipeline (TypeScript/JSX, top-level await, object literal
-    /// wrapping, declaration hoisting), or evaluates the script as written when the
-    /// transform does not take it. Drains the event loop, and optionally prints the
+    /// wrapping, declaration hoisting), drains the event loop, and optionally prints the
     /// result to stdout. Errors are written to stderr.
-    /// Returns true if the script failed: it threw, or its top-level await rejected (the
-    /// caller should set exit_code=1 and skip onBeforeExit); false on success (caller
-    /// preserves process.exitCode).
+    /// A script that the transform does not take is evaluated as written.
+    /// Returns true if an error occurred (the caller should set exit_code=1 and
+    /// skip onBeforeExit); false on success (caller preserves process.exitCode).
     pub(super) fn eval_script(&mut self, code: &[u8], print_result: bool) -> bool {
         let Some(global) = self.global else {
             return true;
@@ -2079,9 +2073,7 @@ impl<'a> Repl<'a> {
         Ok(())
     }
 
-    /// What to evaluate for `code`: the output of the REPL transform, or `code` as written when
-    /// the transform does not take it. Code that the transform does not take can be valid: a
-    /// block, or sloppy-mode syntax. So only the evaluation says whether `code` is an error.
+    /// Code that the transform does not take can be valid (a block, sloppy-mode syntax).
     fn source_for_repl<'c>(&self, code: &'c [u8]) -> ReplSource<'c> {
         match self.transform_for_repl(code) {
             Some(transformed) => ReplSource::Transformed(transformed),

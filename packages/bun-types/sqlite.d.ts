@@ -1293,9 +1293,14 @@ declare module "bun:sqlite" {
     code?: string;
 
     /**
-     * The UTF-8 byte offset of the sqlite3 query that failed, if known
+     * The UTF-8 byte offset of the token that the error refers to, counted
+     * from the start of the SQL string that was passed. `-1` if the error
+     * refers to no token, or if the offset is not known.
      *
-     * This corresponds to `sqlite3_error_offset`.
+     * {@link Database.run} counts from the start of the whole string, also
+     * when the statement that failed is not the first one.
+     *
+     * The offset comes from `sqlite3_error_offset`.
      *
      * @since v1.0.21
      */

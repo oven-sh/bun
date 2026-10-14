@@ -376,11 +376,15 @@ JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetSafeIntegers);
 JSC_DECLARE_CUSTOM_SETTER(jsSqlStatementSetSafeIntegers);
 
-static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
+// sqlite3_error_offset counts from the pointer that sqlite3_prepare_v3 received.
+// `byteOffsetBase` is the distance of that pointer from the start of the caller's SQL text.
+static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db, int64_t byteOffsetBase = 0)
 {
     auto& vm = JSC::getVM(globalObject);
     int code = sqlite3_extended_errcode(db);
-    int byteOffset = sqlite3_error_offset(db);
+    int64_t byteOffset = sqlite3_error_offset(db);
+    if (byteOffset >= 0)
+        byteOffset += byteOffsetBase;
 
     const char* msg = sqlite3_errmsg(db);
     // Error messages can echo identifiers/values from the query, which SQLite does
@@ -1526,8 +1530,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     auto utf8 = Bun::UTF8View::tryCreate(lexicalGlobalObject, scope, sqlString);
     RETURN_IF_EXCEPTION(scope, {});
 
-    const char* sqlStringHead = utf8->span().data();
-    const char* end = utf8->span().data() + utf8->span().size();
+    const char* const sqlStringStart = utf8->span().data();
+    const char* sqlStringHead = sqlStringStart;
+    const char* end = sqlStringStart + utf8->span().size();
 
     bool didSetBindings = false;
     bool didExecuteAny = false;
@@ -1561,8 +1566,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
 
         rc = sqlite3_prepare_v3(db, sqlStringHead, end - sqlStringHead, 0, &sql.stmt, &tail);
 
-        if (rc != SQLITE_OK)
-            break;
+        if (rc != SQLITE_OK) {
+            throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db, sqlStringHead - sqlStringStart));
+            return {};
+        }
 
         if (!sql.stmt) {
             // Empty statement. Stop if sqlite3_prepare_v3 made no progress
@@ -1608,6 +1615,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     }
 
     if (rc != SQLITE_OK && rc != SQLITE_DONE) [[unlikely]] {
+        // sqlite3_step failed. sqlStringHead is past that statement, so it is no base for the offset.
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
         return {};
     }

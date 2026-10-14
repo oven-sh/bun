@@ -1,7 +1,7 @@
 import { randomUUIDv7, SQL } from "bun";
 import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { isDebug, tempDir } from "harness";
+import { isDebug, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -2062,6 +2062,53 @@ describe("Error handling", () => {
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toContain("FOREIGN KEY");
     }
+  });
+
+  test("byteOffset counts from the start of the query text", async () => {
+    await sql`CREATE TABLE offsets (id, name)`;
+    // The system SQLite of macOS before 13 has no sqlite3_error_offset. Bun reports -1 there.
+    const hasErrorOffset = !(isMacOS && !isMacOSVersionAtLeast(13));
+    const at = (text: string, token: string) => (hasErrorOffset ? Buffer.from(text).indexOf(token) : -1);
+    const byteOffsetOf = async (query: PromiseLike<unknown>) => {
+      try {
+        await query;
+      } catch (error: any) {
+        return error.byteOffset;
+      }
+      return "no error";
+    };
+
+    // The adapter sends text with no SELECT, PRAGMA, WITH, EXPLAIN or RETURNING token to Database.run, which
+    // prepares one statement at a time.
+    const indented = "\n      DELETE FROM offsets WHERE nmae = 1";
+    const second = "DELETE FROM offsets WHERE name = 'é'; DELETE FROM offsets WHERE nmae = 1";
+    // Text with such a token goes to Database.prepare, which compiles the first statement from the start.
+    const select = "\n      SELECT nmae FROM offsets";
+    using dir = tempDir("sqlite-sql-offsets", { "statements.sql": second });
+
+    expect({
+      tagged: await byteOffsetOf(sql`
+      DELETE FROM offsets WHERE nmae = 1`),
+      unsafe: await byteOffsetOf(sql.unsafe(second)),
+      file: await byteOffsetOf(sql.file(join(String(dir), "statements.sql"))),
+      transaction: await byteOffsetOf(sql.begin(tx => tx.unsafe(second))),
+      select: await byteOffsetOf(sql.unsafe(select)),
+    }).toEqual({
+      tagged: at(indented, "nmae"),
+      unsafe: at(second, "nmae"),
+      file: at(second, "nmae"),
+      transaction: at(second, "nmae"),
+      select: at(select, "nmae"),
+    });
+
+    // An error that Bun raises without SQLite has no byteOffset property.
+    const closed = new SQL("sqlite://:memory:");
+    await closed.close();
+    const error = await closed`SELECT 1`.catch(e => e);
+    expect({ code: error.code, hasByteOffset: "byteOffset" in error }).toEqual({
+      code: "ERR_SQLITE_CONNECTION_CLOSED",
+      hasByteOffset: false,
+    });
   });
 });
 

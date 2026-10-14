@@ -1286,6 +1286,73 @@ it("syntax error sets the byteOffset", () => {
   }
 });
 
+// The system SQLite of macOS before 13 has no sqlite3_error_offset. Bun reports -1 there.
+const hasErrorOffset = !(isMacOS && !isMacOSVersionAtLeast(13));
+
+// sqlite3_error_offset counts from the pointer that sqlite3_prepare_v3 received. run() and exec() prepare each
+// statement from where the one before it ended, after the blanks and `;` that bun skips, so the offset of the
+// statement in the text has to be added.
+it.each(["run", "exec"])("%s() counts byteOffset from the start of the SQL text", method => {
+  const byteOffsetOf = (sql, how = method) => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE users (id, name)");
+    try {
+      db[how](sql);
+    } catch (e) {
+      return e.byteOffset;
+    }
+    return "no error";
+  };
+  // The UTF-8 byte index of the token that the error names.
+  const at = (sql, token) => (hasErrorOffset ? Buffer.from(sql).indexOf(token) : -1);
+
+  // The first statement of the text fails. prepare() compiles it from the start of the text and agrees.
+  const first = [
+    ["SELECT nmae FROM users", "nmae"],
+    ["\n    SELECT nmae FROM users", "nmae"],
+    [" !", "!"],
+    [";;; SELECT nmae FROM users", "nmae"],
+    ["-- comment\nSELECT nmae FROM users", "nmae"],
+    ["/* comment */ SELECT nmae FROM users", "nmae"],
+    ["\n\t SELECT 'abc", "'abc"],
+  ];
+  expect(first.map(([sql]) => ({ sql, byteOffset: byteOffsetOf(sql), prepare: byteOffsetOf(sql, "prepare") }))).toEqual(
+    first.map(([sql, token]) => ({ sql, byteOffset: at(sql, token), prepare: at(sql, token) })),
+  );
+
+  // A later statement fails. The offset counts the statements, blanks, comments and non-ASCII text before it.
+  const later = [
+    ["DELETE FROM users; SELECT nmae FROM users", "nmae"],
+    ["DELETE FROM users; DELETE FROM users; SELECT nmae FROM users", "nmae"],
+    ["DELETE FROM users; -- comment\n SELECT nmae FROM users", "nmae"],
+    ["SELECT 'é😀'; SELECT nmae FROM users", "nmae"],
+    ["SELECT ';'; SELECT nmae FROM users", "nmae"],
+    ["CREATE TRIGGER t AFTER INSERT ON users BEGIN DELETE FROM users; END; SELECT nmae FROM users", "nmae"],
+    ["SELECT 1; SELECT * FROM users!!", "!!"],
+    ["SELECT 1; !!", "!!"],
+    ["SELECT 1; SELECT 'abc", "'abc"],
+    // SQLite rejects a vertical tab. Bun skips it in front of a statement.
+    ["\vSELECT nmae FROM users", "nmae"],
+  ];
+  expect(later.map(([sql]) => ({ sql, byteOffset: byteOffsetOf(sql) }))).toEqual(
+    later.map(([sql, token]) => ({ sql, byteOffset: at(sql, token) })),
+  );
+
+  // An error that names no token has no offset, wherever its statement is. The last one fails in sqlite3_step.
+  const noToken = [
+    "SELECT 1;\n\n  SELECT * FROM nope",
+    "SELECT 1; SELECT (",
+    "\n  INSERT INTO users VALUES (1, 2, 3)",
+    "SELECT 1;\n  SELECT abs(-9223372036854775808)",
+  ];
+  expect(noToken.map(sql => ({ sql, byteOffset: byteOffsetOf(sql) }))).toEqual(
+    noToken.map(sql => ({ sql, byteOffset: -1 })),
+  );
+
+  // An error that does not come from SQLite has no byteOffset property.
+  expect(byteOffsetOf(" ; ")).toBeUndefined();
+});
+
 it("Missing DB throws SQLITE_CANTOPEN", () => {
   try {
     new Database("./definitely/not/found");

@@ -1138,7 +1138,7 @@ try {
     // SQLite-specific error
     console.log(error.code); // SQLite error code (e.g., "SQLITE_CONSTRAINT")
     console.log(error.errno); // SQLite error number
-    console.log(error.byteOffset); // Byte offset in SQL statement (if available)
+    console.log(error.byteOffset); // UTF-8 byte offset in the query text (-1 or undefined if not known)
   } else if (error instanceof SQL.SQLError) {
     // Generic SQL error (base class)
     console.log(error.message);

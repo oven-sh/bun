@@ -442,7 +442,7 @@ export const globalFlags: Flag[] = [
 
   // ─── Unwinding / exception tables ───
   // These go together: -fno-unwind-tables at compile, --no-eh-frame-hdr at
-  // link (release glibc), and strip -R .eh_frame at post-link (release glibc).
+  // link (release glibc, musl), and strip -R .eh_frame at post-link (the same).
   // See linkerFlags and stripFlags below — kept adjacent intentionally.
   {
     flag: ["-fno-unwind-tables", "-fno-asynchronous-unwind-tables"],
@@ -1336,13 +1336,13 @@ export const linkerFlags: Flag[] = [
     // runtime regardless of LTO. Backtraces walk frame pointers (forced on
     // both sides). Debug builds keep .eh_frame for gdb/libunwind.
     flag: "-Wl,--no-eh-frame-hdr",
-    when: c => c.linux && c.abi === "gnu" && c.release,
+    when: c => c.linux && c.abi !== "android" && c.release,
     desc: "Omit eh_frame header (release; size/RSS opt; see stripFlags for matching -R .eh_frame)",
   },
   {
     flag: "-Wl,--eh-frame-hdr",
-    when: c => c.linux && !(c.abi === "gnu" && c.release),
-    desc: "Keep eh_frame header (debug/musl/android; needed for DWARF backtraces)",
+    when: c => c.linux && !(c.abi !== "android" && c.release),
+    desc: "Keep eh_frame header (debug/android; needed for DWARF backtraces)",
   },
   {
     flag: c => `--ld-path=${c.ld}`,
@@ -1722,10 +1722,8 @@ export const stripFlags: Flag[] = [
     desc: "Remove unwind/exception sections (we compile with -fno-exceptions; these come from lolhtml etc., built with panic=abort)",
   },
   {
-    // musl: no eh_frame handling differences, but CMake gates on NOT musl so we do too.
-    //
     // Gated on release to match -Wl,--no-eh-frame-hdr in linkerFlags above
-    // (both fire on `c.linux && c.abi === "gnu" && c.release`). GNU strip
+    // (both fire on `c.linux && c.abi !== "android" && c.release`). GNU strip
     // does not rewrite the program header table, so the PT_GNU_EH_FRAME
     // phdr must already be absent at link time — which the matching
     // --no-eh-frame-hdr above guarantees. Nothing unwinds at runtime
@@ -1734,7 +1732,7 @@ export const stripFlags: Flag[] = [
     // .eh_frame_hdr 142 KB + .gcc_except_table 13 KB) that otherwise gets
     // dragged into RSS via 64 KB fault-around on adjacent .rodata reads.
     flag: ["-R", ".eh_frame", "-R", ".eh_frame_hdr", "-R", ".gcc_except_table"],
-    when: c => c.linux && c.abi === "gnu" && c.release,
+    when: c => c.linux && c.abi !== "android" && c.release,
     desc: "Remove unwind sections (GNU strip required — llvm-strip leaves [LOAD #2 [R]])",
   },
 ];

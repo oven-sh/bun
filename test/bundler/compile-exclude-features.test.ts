@@ -11,7 +11,6 @@ import {
   isASAN,
   isCI,
   isDebug,
-  isGlibc,
   isLinux,
   isMacOS,
   isWindows,
@@ -94,7 +93,7 @@ const hasTable = (() => {
 
 // Else every test below could be skipped without anyone noticing that a release lost its table.
 test.skipIf(!isCI)("the builds that should be able to exclude features are", () => {
-  const isSupportedTarget = isGlibc || (isMacOS && isArm64) || (isWindows && !isArm64);
+  const isSupportedTarget = isLinux || (isMacOS && isArm64) || (isWindows && !isArm64);
   expect(hasTable).toBe(!isDebug && !isASAN && isSupportedTarget);
 });
 

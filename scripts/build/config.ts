@@ -1284,8 +1284,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           ? "it cannot be made on a Windows host"
           : toolchain.objdump === undefined || toolchain.rustSysroot === undefined
             ? "it takes llvm-objdump and rustc"
-            : // glibc: the unwind tables refer to functions and are not kept up to date. Only there does strip remove them.
-              !((linux && abi === "gnu") || (darwin && arm64) || (windows && x64))
+            : // Android keeps its unwind tables, which refer to functions and are not kept up to date.
+              !((linux && abi !== "android") || (darwin && arm64) || (windows && x64))
               ? "this target is not supported yet"
               : undefined;
   if (partial.featureTable === true && whyNoFeatureTable !== undefined) {

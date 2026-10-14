@@ -5,7 +5,8 @@
 
 use super::map_strings::{MapString, write_mapped};
 use crate::ir::element::{Interned, TextWidth};
-use crate::js::comments::{ParsedBy, collect};
+use crate::js::ast_nodes::node_as_ast_nodes;
+use crate::js::comments::{self, NO_COMMENTS};
 use crate::js::context::JsFormatContext;
 use crate::js::print::program::{FormatStatements, write_hashbang};
 use crate::js::sort_imports::{SortImports, sorted_text};
@@ -225,24 +226,16 @@ pub(crate) fn with_file(
                     {
                         return;
                     }
-                    let comments = file.extension(|| {
-                        let mut comments = Vec::new();
-                        let parsed_by = match options.in_html.has_tree_of_babel {
-                            true => ParsedBy::Babel,
-                            false => ParsedBy::WhatItsNameSays,
-                        };
-                        collect(file, options.flavor, parsed_by, &mut comments);
-                        comments
-                    });
-                    let comments = comments.map_or(&[][..], |comments: &Vec<Comment>| comments);
+                    let comments = comments::of_file(file, &options);
                     // Only in what is known to be a script are `<!--` and `-->` comments to Babel.
-                    let is_html_like = |comment: &Comment| {
+                    let is_html_like = |comment: Comment<'_>| {
                         matches!(
-                            file.text().get(comment.span.start as usize),
+                            file.text().get(comment.span().start as usize),
                             Some(b'<' | b'-')
                         )
                     };
-                    if source_type != SourceType::Script && comments.iter().any(is_html_like) {
+                    if source_type != SourceType::Script && file.comments_by_id().any(is_html_like)
+                    {
                         return;
                     }
                     if let Some(sorted) = sorts_text.and_then(|how| sorted_text(file, how)) {
@@ -250,7 +243,14 @@ pub(crate) fn with_file(
                         return;
                     }
                     let context = JsFormatContext::new(file, options.clone(), comments);
-                    let is_written = f.write_embedded(context, file.text(), |f| write(file, f));
+                    let is_written = match file.comment_count() {
+                        0 => f.write_embedded(context, file.text(), |f| write(file, f)),
+                        // Prettier's `ensureAllCommentsPrinted`. It throws, and the code stays as it is written:
+                        // `v-slot="/* comment */"`
+                        _ => f.try_write_embedded(context, file.text(), |f| {
+                            write(file, f) && f.comments().unprinted().next().is_none()
+                        }),
+                    };
                     result = Attempt::Written(is_written);
                 });
                 result
@@ -468,33 +468,20 @@ pub(crate) fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] 
 
 /// What Prettier makes of a `Program`, without the line break at the end.
 fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
-    // Nothing that a comment could belong to. Without a statement at all the comments keep the empty lines between
-    // them, as in `write_program`, which counts on being at the start of a line.
-    let is_all_empty = file
-        .body()
-        .iter()
-        .all(|it| matches!(it.kind(), StmtKind::Empty));
-    write_hashbang(
-        is_all_empty && f.comments().unprinted_comments().is_empty(),
+    let program = node_as_ast_nodes(Node::File(file));
+    let owned = f.comments().of_node(program);
+    let has_statements = (file.body().iter()).any(|it| !matches!(it.kind(), StmtKind::Empty));
+    let is_hashbang_last = !has_statements && owned.leading.is_empty() && owned.dangling.is_empty();
+    write_hashbang(is_hashbang_last, f);
+    // The program only owns comments if there is no statement to attach them to.
+    write!(
         f,
+        [
+            leading_comments(program),
+            FormatStatements(file.body()),
+            dangling_comments(program)
+        ]
     );
-    if is_all_empty && (!file.body().is_empty() || f.options().in_html.is_in_attribute) {
-        let comments = f.comments().unprinted_comments();
-        let indent = DanglingIndentMode::None;
-        return write!(f, FormatDanglingComments::Comments { comments, indent });
-    }
-    write!(f, FormatStatements(file.body()));
-    let mut rest = f.comments().unprinted_comments();
-    // The empty lines before the first thing in a script go.
-    if let Some((first, others)) = rest.split_first()
-        && (file.text().get(..first.span.start as usize))
-            .is_some_and(|before| before.trim_ascii().is_empty())
-    {
-        let (comments, indent) = (std::slice::from_ref(first), DanglingIndentMode::None);
-        write!(f, FormatDanglingComments::Comments { comments, indent });
-        rest = others;
-    }
-    write!(f, FormatTrailingComments::Comments(rest));
 }
 
 /// `textToDoc(code, { parser })` for a program. `flavor`: whose output it is. Returns whether it has been written.
@@ -726,8 +713,6 @@ pub(crate) fn write_expression(
             let should_hug = hug.of_expression(e, in_html.root);
             let content = format_with(|f| {
                 write!(f, e);
-                let rest = f.comments().unprinted_comments();
-                write!(f, FormatTrailingComments::Comments(rest));
             });
             write_hugged(should_hug, &content, f);
             true
@@ -803,7 +788,7 @@ pub(crate) fn write_angular_expression(
             }
             write_rest(f);
         });
-        let context = JsFormatContext::new(file, options.clone(), &[]);
+        let context = JsFormatContext::new(file, options.clone(), &NO_COMMENTS);
         f.write_embedded(context, source, |f| write_hugged(should_hug, &content, f));
         is_written = true;
     });

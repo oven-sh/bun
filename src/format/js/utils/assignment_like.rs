@@ -6,16 +6,15 @@ use super::member_chain::is_member_call_chain;
 use super::object::{FormatKey, format_computed_or_property_key, write_member_name};
 use super::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use super::suppressed::FormatSuppressedNode;
-use super::typecast::is_cast_target;
+use super::typecast::{
+    comments_of_outermost_node, has_comments, has_leading_own_line_comment, is_cast_target,
+};
 use crate::js::format::{ExprOptions, FormatExpr, FormatTypeAnnotation};
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::print::arrow_function_expression::FormatJsArrowFunctionExpressionOptions;
 use crate::js::print::binary_like_expression::BinaryLikeExpression;
 use crate::js::print::decorators::FormatDecorators;
-use crate::js::print::expressions::unary_argument_has_comments;
-use crate::js::print::jsx::ignored_jsx_gets_no_parentheses;
 use crate::js::print::patterns::FormatBindingPropertyValue;
-use crate::js::print::sequence_expression::write_comments_before_closing_parenthesis;
 use crate::js::print::type_parameters::type_arguments;
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -50,43 +49,6 @@ pub(crate) enum AssignmentLikeLayout {
     ChainTailArrowFunction,
 }
 
-/// The comments between the left side, which is written and ends at `start`, and `right` that trail
-/// the left side.
-fn format_left_trailing_comments<'a>(start: u32, right: Expr<'a>, f: &mut Formatter<'a>) {
-    if f.is_quiet() {
-        return;
-    }
-    match comments_stay_around_operator(f) {
-        true => write_comments_before_operator(start, f),
-        false => FormatTrailingComments::Comments(
-            f.comments().comments_trailing_left_side(right.span().start),
-        )
-        .fmt(f),
-    }
-}
-
-/// See [`comments_stay_around_operator`]: the comments after the left side, which ends at `start`, that
-/// trail it. Those behind the operator are hidden.
-pub(crate) fn write_comments_before_operator(start: u32, f: &mut Formatter<'_>) {
-    let end_of_line_comments = f.comments().end_of_line_comments_after(start);
-    let comments = if end_of_line_comments.is_empty() {
-        let comments = f.comments().comments_before_character(start, b'=');
-        if comments.iter().any(|comment| comment.preceded_by_newline()) {
-            &[]
-        } else {
-            comments
-        }
-    } else if end_of_line_comments
-        .last()
-        .is_some_and(|comment| comment.is_multiline_block())
-    {
-        &[]
-    } else {
-        end_of_line_comments
-    };
-    FormatTrailingComments::Comments(comments).fmt(f);
-}
-
 /// For oxfmt a comment stays on the side of the `=` or the `:` that it is on, and a line comment on
 /// the line of the operator stays there, with what follows on the next line. Prettier attaches it to
 /// one of the two sides, and writes it where the line ends that this side ends on.
@@ -95,22 +57,10 @@ pub(crate) fn write_comments_before_operator(start: u32, f: &mut Formatter<'_>) 
 /// const a = // comment      const a = 1; // comment
 ///   1;
 /// ```
-pub(crate) fn comments_stay_around_operator(f: &Formatter<'_>) -> bool {
+///
+/// The comments that stay right behind the operator are attached to the assignment as dangling comments.
+fn comments_stay_around_operator(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
-}
-
-/// The comments behind the operator, which ends at `operator_end`, up to a line comment that ends its
-/// line. None if a comment from before the operator is left: then all lead the right side.
-pub(crate) fn operator_line_run<'a>(operator_end: u32, f: &Formatter<'a>) -> &'a [Comment] {
-    if f.comments().has_comment_before(operator_end) {
-        return &[];
-    }
-    let run = f.comments().end_of_line_comments_after(operator_end);
-    if run.last().is_some_and(|comment| comment.is_line()) {
-        run
-    } else {
-        &[]
-    }
 }
 
 /// A name is short if it is less than this much wider than the indentation: breaking after the
@@ -129,16 +79,10 @@ fn computed_key_width<'a>(key: Key<'a>, f: &Formatter<'a>) -> Option<usize> {
     let span = key.span(f.file());
     if let KeyKind::Computed(e) = key.kind() {
         // A comment in the brackets is a piece of its own.
-        let inner = e.outer_span();
-        let is_blank = |start: u32, end: u32| {
-            (f.source_text().text_for(&Span::new(start.min(end), end)))
-                .trim_ascii()
-                .is_empty()
+        return match !f.is_quiet() && has_comments(e, f) {
+            true => None,
+            false => plain_expression_width(e, f).map(|width| width + 2),
         };
-        return (is_blank(span.start + 1, inner.start)
-            && is_blank(inner.end, span.end.saturating_sub(1)))
-        .then(|| plain_expression_width(e, f))?
-        .map(|width| width + 2);
     }
     // A template is written with a `lineSuffixBoundary`.
     let is_template = f
@@ -147,6 +91,16 @@ fn computed_key_width<'a>(key: Key<'a>, f: &Formatter<'a>) -> Option<usize> {
         .get(1..)
         .is_some_and(|it| it.trim_ascii_start().starts_with(b"`"));
     (!is_template).then(|| f.source_text().span_width(span))
+}
+
+/// `{ a /* comment */: b }`: for Prettier a name with a comment is more than one piece of text, so it is not short. oxfmt only
+/// looks at the name.
+fn comments_make_name_long<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
+    if f.is_quiet() || f.options().flavor.is_oxfmt() {
+        return false;
+    }
+    let comments = f.comments().of_name(key.inner_span(f.file()).start);
+    !comments.leading.is_empty() || !comments.trailing.is_empty()
 }
 
 /// See [`computed_key_width`]: `a`, `1`, `-1`, `!a`, `typeof a`, `a++`, `a!`, `await a`, `a as T`,
@@ -173,9 +127,7 @@ fn plain_expression_width<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<usize> {
             ExprKind::ImportMeta => return Some(width + "import.meta".len()),
             ExprKind::NewTarget => return Some(width + "new.target".len()),
             // An operand with comments is in a group.
-            ExprKind::Unary { operand, .. } if unary_argument_has_comments(current, operand, f) => {
-                return None;
-            }
+            ExprKind::Unary { operand, .. } if has_comments(operand, f) => return None,
             ExprKind::Unary { op, operand } => {
                 width += op.as_str().len() + usize::from(op.is_keyword());
                 operand
@@ -311,6 +263,24 @@ fn write_property_definition_left<'a>(member: Member<'a>, f: &mut Formatter<'a>)
     );
 }
 
+/// `let a /* comment */⏎: T`: for oxfmt the comment trails `a`, and stays before the type annotation. For Prettier it leads the
+/// type annotation.
+fn comments_between_name_and_type<'a>(
+    declarator: VarDecl<'a>,
+    f: &Formatter<'a>,
+) -> CommentList<'a> {
+    let Some(ty) = declarator.ty().filter(|_| !f.is_quiet()) else {
+        return CommentList::empty();
+    };
+    let comments = (f.comments())
+        .of_node(declarator.pat().as_ast_nodes())
+        .trailing;
+    let count = (comments.iter())
+        .take_while(|comment| comment.span().start < ty.span().start)
+        .count();
+    comments.slice(0, count)
+}
+
 /// A left side that is a name without comments. See [`AssignmentLike::name_on_the_left`].
 #[derive(Copy, Clone)]
 enum NameOnTheLeft<'a> {
@@ -381,38 +351,38 @@ impl<'a> AssignmentLike<'a> {
             AssignmentLike::VariableDeclarator(declarator) => {
                 let (id, ty) = (declarator.pat(), declarator.ty());
                 let definite = declarator.is_definite().then_some("!");
-                let Some(init) = declarator.init() else {
-                    write!(f, [id, definite, ty.map(FormatTypeAnnotation)]);
-                    return false;
-                };
+                // For Prettier the type annotation is part of the name. So it is copied along with an ignored name, and the
+                // trailing comments of the name come after it.
                 match ty {
-                    // `a: T = // prettier-ignore`: the comment trails the name, which the type is part of.
-                    Some(ty)
-                        if !f.is_quiet()
-                            && f.comments().has_trailing_suppression_comment(ty.span().end) =>
-                    {
+                    Some(ty) if !f.is_quiet() && f.comments().is_ignored(id.as_ast_nodes()) => {
                         let span = Span::new(id.span().start, ty.span().end);
                         write!(
                             f,
-                            [format_leading_comments(span), FormatSuppressedNode(span)]
+                            [
+                                leading_comments(id.as_ast_nodes()),
+                                FormatSuppressedNode(span)
+                            ]
                         );
                     }
-                    Some(ty) => {
-                        let type_annotation = WithSpan(FormatTypeAnnotation(ty), ty.span());
-                        write!(f, [FormatNodeWithoutTrailingComments(&id), definite]);
-                        write!(f, FormatNodeWithoutTrailingComments(&type_annotation));
-                    }
-                    None => write!(f, [FormatNodeWithoutTrailingComments(&id), definite]),
+                    _ => write!(
+                        f,
+                        [
+                            FormatNodeWithoutTrailingComments(&id),
+                            FormatTrailingComments::Comments(comments_between_name_and_type(
+                                declarator, f
+                            )),
+                            definite,
+                            ty.map(FormatTypeAnnotation)
+                        ]
+                    ),
                 }
-                format_left_trailing_comments(id.span().end, init, f);
+                if !f.is_quiet() {
+                    write!(f, trailing_comments(id.as_ast_nodes()));
+                }
                 false
             }
             AssignmentLike::AssignmentExpression(assignment) => {
-                let (Some(target), Some(value)) = (assignment.left(), assignment.right()) else {
-                    return false;
-                };
-                write!(f, FormatNodeWithoutTrailingComments(&target));
-                format_left_trailing_comments(target.span().end, value, f);
+                write!(f, assignment.left());
                 false
             }
             AssignmentLike::ObjectProperty(property) => match property.key() {
@@ -426,6 +396,7 @@ impl<'a> AssignmentLike<'a> {
                 }
                 Some(key) => {
                     write_member_name(key, || property.as_ast_nodes(), f) < text_width_for_break
+                        && !comments_make_name_long(key, f)
                 }
                 None => false,
             },
@@ -440,7 +411,10 @@ impl<'a> AssignmentLike<'a> {
                         write!(f, ["[", FormatKey::new(key, node), "]"]);
                         computed_key_width(key, f).is_some_and(|width| width < text_width_for_break)
                     }
-                    Some(key) => write_member_name(key, || node, f) < text_width_for_break,
+                    Some(key) => {
+                        write_member_name(key, || node, f) < text_width_for_break
+                            && !comments_make_name_long(key, f)
+                    }
                     None => false,
                 }
             }
@@ -485,8 +459,13 @@ impl<'a> AssignmentLike<'a> {
                             && right.tag() == ExprTag::Cond
                             && layout != AssignmentLikeLayout::BreakAfterOperator
                             && !matches!(self, Self::AccessorProperty(_))
-                            && !is_cast_target(right, f) =>
+                            && !is_cast_target(right, f)
+                            && (f.is_quiet() || !f.comments().is_ignored(right.as_ast_nodes())) =>
                     {
+                        // The conditional writes the indentation itself, so its comments are outside of it.
+                        if !f.is_quiet() {
+                            write!(f, leading_comments(right.as_ast_nodes()));
+                        }
                         match super::experimental_ternary::should_break(right, f) {
                             true => write!(f, indent(&right)),
                             false => {
@@ -518,9 +497,6 @@ impl<'a> AssignmentLike<'a> {
                     Some(right) => write!(f, right),
                     None => {}
                 }
-                if let Self::AssignmentExpression(assignment) = *self {
-                    write_comments_before_closing_parenthesis(assignment, f);
-                }
             }
         }
     }
@@ -537,7 +513,6 @@ impl<'a> AssignmentLike<'a> {
     ) -> AssignmentLikeLayout {
         // For Prettier the right side is a `ParenthesizedExpression` then, whatever is in it.
         let is_type_cast = right_expression.is_some_and(|e| is_cast_target(e, f));
-        let mut starts_with_type_cast = false;
         if let Some(e) = right_expression {
             if let Some(layout) = self.chain_formatting_layout(e, is_type_cast, f) {
                 return layout;
@@ -552,10 +527,10 @@ impl<'a> AssignmentLike<'a> {
             {
                 return AssignmentLikeLayout::BreakAfterOperator;
             }
-            match leading_comments_of_right_side(e, f) {
-                LeadingComments::None | LeadingComments::TypeCast => {}
-                LeadingComments::Break => return AssignmentLikeLayout::BreakAfterOperator,
-                LeadingComments::TypeCastOfLeftEdge => starts_with_type_cast = true,
+            if has_leading_comment_that_breaks_after_operator(e, f)
+                || !self.comments_behind_operator(f).is_empty()
+            {
+                return AssignmentLikeLayout::BreakAfterOperator;
             }
             if e.tag() == ExprTag::Call
                 && !is_type_cast
@@ -570,21 +545,24 @@ impl<'a> AssignmentLike<'a> {
         // The right side of a property of a pattern is not an expression.
         if let Self::BindingProperty(property) = *self
             && !f.is_quiet()
-            && (f
-                .comments()
-                .comments_before_iter(property.value().span().start))
-            .any(|comment| comment.followed_by_newline() || comment.is_indentable_block())
         {
-            return AssignmentLikeLayout::BreakAfterOperator;
+            let value = match property.default() {
+                Some(_) => AstNodes::AssignmentPattern(Node::PatProp(property)),
+                None => property.value().as_ast_nodes(),
+            };
+            if (f.comments().of_node(value).leading.iter())
+                .any(|comment| comment.has_newline_after() || comment.is_indentable_block())
+            {
+                return AssignmentLikeLayout::BreakAfterOperator;
+            }
         }
 
         if self.should_break_left_hand_side(left_may_break && !is_type_cast) {
             return AssignmentLikeLayout::BreakLeftHandSide;
         }
         if !is_type_cast
-            && right_expression.is_some_and(|right| {
-                should_break_after_operator(right, is_left_short, starts_with_type_cast, f)
-            })
+            && right_expression
+                .is_some_and(|right| should_break_after_operator(right, is_left_short, f))
         {
             return AssignmentLikeLayout::BreakAfterOperator;
         }
@@ -749,71 +727,34 @@ impl<T> Spanned for WithSpan<T> {
     }
 }
 
-/// What the comments before the right side of an assignment mean for its layout.
-enum LeadingComments {
-    None,
-    /// One ends its line, or is a block whose lines all start with `*`: the right side starts on
-    /// its own line.
-    Break,
-    /// `/** @type {T} */ (e)`: the right side is in parentheses.
-    TypeCast,
-    /// `/** @type {T} */ (a).b`, `/** @type {T} */ (a) || b`: what the right side starts with is.
-    TypeCastOfLeftEdge,
-}
-
 /// `a = /** @type {T} */ (⏎/**⏎ * comment⏎ */⏎b)`: oxfmt looks at all comments before `b`.
 fn block_comment_in_parentheses_of_cast_breaks(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// `a =⏎// comment⏎b?.c` is `a = // comment⏎b?.c` in TypeScript: typescript-estree has a `ChainExpression` around
-/// `b?.c`, which Prettier attaches no comment to. The comment leads what is in it, and the right side has none.
-fn comments_lead_what_is_in_chain_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    e.is_chain_root() && !f.context().has_tree_of_babel() && !f.options().flavor.is_oxfmt()
-}
-
-fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> LeadingComments {
-    if f.is_quiet() || comments_lead_what_is_in_chain_expression(right, f) {
-        return LeadingComments::None;
+/// Whether a leading comment of `right`, the right side of an assignment, ends its line, or is a block comment whose lines
+/// all start with `*`. The right side starts on a line of its own then.
+fn has_leading_comment_that_breaks_after_operator<'a>(right: Expr<'a>, f: &Formatter<'a>) -> bool {
+    if f.is_quiet() {
+        return false;
     }
-    let start = right.span().start;
-    if right.tag() == ExprTag::Jsx {
-        return match f.comments().is_suppressed(start) && ignored_jsx_gets_no_parentheses(f) {
-            true => LeadingComments::Break,
-            false => LeadingComments::None,
-        };
-    }
-    if block_comment_in_parentheses_of_cast_breaks(f)
-        && (f.comments().comments_before_iter(start)).any(|comment| comment.is_indentable_block())
-    {
-        return LeadingComments::Break;
-    }
-    for comment in f.comments().comments_before_iter(start) {
-        if comment.leads_left_edge_of(right.span()) {
-            continue;
-        }
-        if comment.followed_by_newline() || comment.is_indentable_block() {
-            return LeadingComments::Break;
-        }
-        // `/** @type {T} */ a.b()` casts nothing.
-        if f.comments().is_type_cast_comment(comment)
-            && f.source_text()
-                .next_non_whitespace_byte_is(comment.end(), b'(')
-        {
-            return match right.is_parenthesized() {
-                true => LeadingComments::TypeCast,
-                false => LeadingComments::TypeCastOfLeftEdge,
-            };
-        }
-    }
-    LeadingComments::None
+    has_leading_own_line_comment(right, f)
+        || (comments_of_outermost_node(right, f).leading.iter())
+            .any(|comment| comment.is_indentable_block())
+        || (block_comment_in_parentheses_of_cast_breaks(f)
+            && is_cast_target(right, f)
+            && (f
+                .comments()
+                .of_node(right.as_chain_element())
+                .leading
+                .iter())
+            .any(|comment| comment.is_indentable_block()))
 }
 
 /// Prettier's `shouldBreakAfterOperator`.
 fn should_break_after_operator<'a>(
     right: Expr<'a>,
     is_left_short: bool,
-    starts_with_type_cast: bool,
     f: &mut Formatter<'a>,
 ) -> bool {
     // `None`: it is neither a binary nor a logical expression.
@@ -830,12 +771,7 @@ fn should_break_after_operator<'a>(
             matches!(right.kind(), ExprKind::Cond { yes, no, .. } if yes.tag() == ExprTag::Cond || no.tag() == ExprTag::Cond)
         }
         // `/** @type {T} */ (a || b) ? c : d`: the test is in parentheses.
-        ExprTag::Cond
-            if starts_with_type_cast
-                && right.test().is_some_and(|test| is_cast_target(test, f)) =>
-        {
-            false
-        }
+        ExprTag::Cond if right.test().is_some_and(|test| is_cast_target(test, f)) => false,
         ExprTag::Cond => right
             .test()
             .and_then(breaks_as_binary_expression)
@@ -847,8 +783,7 @@ fn should_break_after_operator<'a>(
         _ => {
             let inner_expression = get_innermost_expression(right, f);
             (inner_expression.tag() == ExprTag::String && !is_cast_target(inner_expression, f))
-                || (!starts_with_type_cast
-                    && is_poorly_breakable_member_or_call_chain(inner_expression, f))
+                || is_poorly_breakable_member_or_call_chain(inner_expression, f)
         }
     }
 }
@@ -897,30 +832,18 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
         // layout, which depends on what is written for the left side.
         let outer_group = f.reserve_tag();
         let left_group = f.reserve_tag();
-        // See `comments_stay_around_operator`. Where the left side ends, the right side starts and the
-        // operator ends.
-        let sides = match !f.is_quiet() && comments_stay_around_operator(f) {
-            true => self.sides_with_comments_between(right_expression, f),
-            false => None,
-        };
-        let previous_limit =
-            sides.map(|(_, _, operator_end)| f.comments_mut().limit_comments_up_to(operator_end));
         let is_left_short = self.write_left(f);
-        if let Some(previous_limit) = previous_limit {
-            f.comments_mut().restore_view_limit(previous_limit);
-        }
-        let operator_line_run = sides.map_or(&[][..], |(_, _, operator_end)| {
-            operator_line_run(operator_end, f)
-        });
-        let has_line_comment_on_operator_line = !operator_line_run.is_empty()
-            || sides.is_some_and(|(left_end, ..)| {
-                f.comments().has_printed_line_comment_after(left_end)
-            });
         let left = f.elements().get(left_group + 1..).unwrap_or_default();
         let is_left_text = left.len() <= 12 && left.iter().all(is_text_on_one_line);
         let left_may_break = !is_left_text
             && f.elements_from(left_group + 1)
                 .may_directly_break(f.options().flavor);
+        let comments_behind_operator = self.comments_behind_operator(f);
+        let has_line_comment_on_operator_line = !comments_behind_operator.is_empty()
+            || (!f.is_quiet()
+                && comments_stay_around_operator(f)
+                && f.comments()
+                    .has_printed_line_comment_after(self.left_end(f)));
         let layout = match self.layout(right_expression, is_left_short, left_may_break, f) {
             AssignmentLikeLayout::Fluid | AssignmentLikeLayout::NeverBreakAfterOperator
                 if has_line_comment_on_operator_line
@@ -938,17 +861,10 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
         }
 
         self.write_operator(f);
-        if let Some((_, right_start, _)) = sides
-            && !operator_line_run.is_empty()
-        {
-            write!(f, FormatTrailingComments::Comments(operator_line_run));
-            if operator_line_run
-                .iter()
-                .any(|comment| f.comments().is_suppression_comment(comment))
-            {
-                f.comments_mut().mark_suppressed_after_operator(right_start);
-            }
-        }
+        write!(
+            f,
+            FormatTrailingComments::Comments(comments_behind_operator)
+        );
         // Without a group of its own the line break follows the group around it all, which the line
         // comment breaks.
         let follows_line_comment =
@@ -975,53 +891,42 @@ fn is_require_call(e: Expr<'_>) -> bool {
 }
 
 impl<'a> AssignmentLike<'a> {
-    /// Where the left side ends, where the right side starts and where the operator between them ends,
-    /// if there is a comment between the two sides.
-    ///
-    /// `right_expression`: [`AssignmentLike::get_right_expression`].
-    fn sides_with_comments_between(
-        &self,
-        right_expression: Option<Expr<'a>>,
-        f: &Formatter<'a>,
-    ) -> Option<(u32, u32, u32)> {
-        let right_start = right_expression.map(|it| it.span().start);
-        let (left_end, right_start, operator) = match *self {
-            Self::VariableDeclarator(declarator) => (
-                declarator
-                    .ty()
-                    .map_or_else(|| declarator.pat().span().end, |ty| ty.span().end),
-                right_start?,
-                b'=',
-            ),
-            Self::AssignmentExpression(assignment) => {
-                (assignment.left()?.span().end, right_start?, b'=')
-            }
-            Self::ObjectProperty(property) => {
-                (property.key()?.span(f.file()).end, right_start?, b':')
-            }
-            Self::BindingProperty(property) => (
-                property.key()?.span(f.file()).end,
-                property.value().span().start,
-                b':',
-            ),
+    fn node(&self) -> AstNodes<'a> {
+        match *self {
+            Self::VariableDeclarator(declarator) => AstNodes::VariableDeclarator(declarator),
+            Self::AssignmentExpression(assignment) => assignment.as_ast_nodes(),
+            Self::ObjectProperty(property) => property.as_ast_nodes(),
+            Self::BindingProperty(property) => AstNodes::BindingProperty(property),
             Self::PropertyDefinition(member) | Self::AccessorProperty(member) => {
-                let key_end = member.key().map(|key| key.span(f.file()).end);
-                (
-                    member.ty().map(|ty| ty.span().end).or(key_end)?,
-                    right_start?,
-                    b'=',
-                )
+                member.as_ast_nodes()
             }
-        };
-        f.comments()
-            .has_any_comment_in(Span::new(left_end, right_start))
-            .then(|| {
-                (
-                    left_end,
-                    right_start,
-                    f.comments().position_after_character(left_end, operator),
-                )
-            })
+        }
+    }
+
+    /// See [`comments_stay_around_operator`].
+    fn comments_behind_operator(&self, f: &Formatter<'a>) -> CommentList<'a> {
+        match !f.is_quiet() && comments_stay_around_operator(f) {
+            true => f.comments().of_node(self.node()).dangling,
+            false => CommentList::empty(),
+        }
+    }
+
+    /// Where the left side ends.
+    fn left_end(&self, f: &Formatter<'a>) -> u32 {
+        let key_end = |key: Option<Key<'a>>| key.map_or(0, |key| key.span(f.file()).end);
+        match *self {
+            Self::VariableDeclarator(declarator) => declarator
+                .ty()
+                .map_or_else(|| declarator.pat().span().end, |ty| ty.span().end),
+            Self::AssignmentExpression(assignment) => {
+                assignment.left().map_or(0, |left| left.span().end)
+            }
+            Self::ObjectProperty(property) => key_end(property.key()),
+            Self::BindingProperty(property) => key_end(property.key()),
+            Self::PropertyDefinition(member) | Self::AccessorProperty(member) => member
+                .ty()
+                .map_or_else(|| key_end(member.key()), |ty| ty.span().end),
+        }
     }
 }
 
@@ -1121,6 +1026,10 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
     let mut current = expression;
 
     loop {
+        // For Prettier it is a `ParenthesizedExpression`.
+        if is_cast_target(current, f) {
+            return false;
+        }
         let next = match current.tag() {
             ExprTag::NonNull => current.operand(),
             ExprTag::Call => {
@@ -1164,12 +1073,7 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
         let Some(call) = call_expression.as_call_like() else {
             continue;
         };
-        let has_comment_around_argument = !call.args().is_empty()
-            && f.comments()
-                .has_comment_in_range(call.callee().span().end, call_expression.span().end);
-        if has_comment_around_argument
-            || is_complex_type_arguments(call_expression, call.type_args(), f)
-        {
+        if is_complex_type_arguments(call_expression, call.type_args(), f) {
             return false;
         }
     }
@@ -1212,11 +1116,17 @@ pub(crate) fn is_short_argument<'a>(
     f: &Formatter<'a>,
 ) -> bool {
     let threshold = threshold as usize;
+    let has_comments = |e: Expr<'a>| !f.is_quiet() && has_comments(e, f);
+    if has_comments(argument) {
+        return false;
+    }
     let mut node = argument.as_ast_nodes();
     while let AstNodes::UnaryExpression(_) = node {
         match argument.argument() {
-            Some(operand) => (argument, node) = (operand, operand.as_ast_nodes()),
-            None => return false,
+            Some(operand) if !has_comments(operand) => {
+                (argument, node) = (operand, operand.as_ast_nodes());
+            }
+            _ => return false,
         }
     }
     // Prettier asks for the `length` of a string of JavaScript, oxfmt for that of one of Rust.

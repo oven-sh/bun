@@ -54,7 +54,7 @@ fn is_class_member_modifier(token: T) -> bool {
     )
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseClassDeclaration`
     pub(crate) fn class_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         // Only its modifiers say that `default class {}` has `default`.
@@ -252,7 +252,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                         }) = p.f.exprs.last()
                         && p.f.parens.last().is_none_or(|last| last.0 != extended)
                     {
-                        p.f.exprs.pop();
+                        p.pop_expr();
                         (heritage.extends, heritage.extends_args) = (expr, type_args);
                     } else if p.is_at_type_arguments_of_heritage_element() {
                         (heritage.extends_args, element_error) = p.type_arguments_unchecked();
@@ -730,7 +730,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.context = inner;
             // `parseSemicolonAfterPropertyName`
             if self.token() == T::OpenParen && self.recovers()
-                || !self.eat(T::Semicolon) && !self.can_parse_semicolon()
+                || !self.eat_semicolon() && !self.can_parse_semicolon()
             {
                 let is_identifier =
                     name_token.is_identifier_or_keyword() && name_token != T::PrivateIdentifier;

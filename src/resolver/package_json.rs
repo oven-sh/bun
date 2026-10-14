@@ -50,8 +50,23 @@ type MainFieldMap = StringMap;
 pub struct DependencyMap {
     pub map: DependencyHashMap,
     // Borrows the package.json source contents; lifetime-erased to 'static,
-    // kept alive by `PackageJSON::source_contents`.
-    pub source_buf: &'static [u8],
+    // kept alive by `PackageJSON::source_contents`. Owned if a name or version has a JSON escape.
+    pub source_buf: std::borrow::Cow<'static, [u8]>,
+}
+
+/// Returns `text` as a slice of `buf`. With `copied`, `buf` holds each string in visiting order.
+fn slice_in_source_buf<'a>(
+    buf: &'a [u8],
+    copied: bool,
+    cursor: &mut usize,
+    text: &'a [u8],
+) -> &'a [u8] {
+    if !copied {
+        return text;
+    }
+    let start = *cursor;
+    *cursor += text.len();
+    &buf[start..*cursor]
 }
 
 // Inherent impls cannot carry associated type aliases (stable), so use a free alias.
@@ -168,7 +183,7 @@ impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
         &self.version
     }
     fn dependency_source_buf(&self) -> &[u8] {
-        self.dependencies.source_buf
+        &self.dependencies.source_buf
     }
     fn arch(&self) -> Architecture {
         self.arch
@@ -177,7 +192,7 @@ impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
         self.os
     }
     fn dependency_iter(&self) -> Box<dyn Iterator<Item = (&[u8], &Dependency)> + '_> {
-        let buf = self.dependencies.source_buf;
+        let buf: &[u8] = &self.dependencies.source_buf;
         Box::new(
             self.dependencies
                 .map
@@ -382,7 +397,17 @@ impl PackageJSON {
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
-        let package_json_path_ = r_fs.abs(&parts);
+        let Ok(package_json_path_) = r_fs.abs_checked(&parts) else {
+            r_log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Cannot read file \"{}\": ENAMETOOLONG",
+                    bstr::BStr::new(input_path)
+                ),
+            );
+            return None;
+        };
         let package_json_path = r_fs
             .dirname_store
             .append_slice(package_json_path_)
@@ -803,9 +828,11 @@ impl PackageJSON {
                                 Some(&mut *r_log),
                             ) {
                                 if dependency_version.is_exact_npm() {
-                                    if let Some(resolved) =
-                                        pm.lockfile_resolve(&package_json.name, &dependency_version)
-                                    {
+                                    if let Some(resolved) = pm.lockfile_resolve(
+                                        &package_json.name,
+                                        &dependency_version,
+                                        &package_json.version,
+                                    ) {
                                         package_json.package_manager_package_id = resolved;
                                         if resolved > 0 {
                                             break 'update_dependencies;
@@ -866,7 +893,34 @@ impl PackageJSON {
                     package_json.dependencies.map = DependencyHashMap::default();
                     // source_buf borrows json_source.contents (lifetime-erased;
                     // owned by `package_json.source_contents` on the success path).
-                    package_json.dependencies.source_buf = contents_static;
+                    package_json.dependencies.source_buf = contents_static.into();
+                    // A JSON escape is decoded outside the file's text, where offsets can't point.
+                    let for_each_string = |visit: &mut dyn FnMut(&[u8])| {
+                        for group in dependency_groups {
+                            let Some(group_json) = json.get(group.prop) else {
+                                continue;
+                            };
+                            if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
+                                for prop in group_obj.get().properties() {
+                                    visit(prop.key.slice());
+                                    if let Some(version) = prop.value.as_str() {
+                                        visit(version);
+                                    }
+                                }
+                            }
+                        }
+                    };
+                    let mut copied = false;
+                    for_each_string(&mut |text| {
+                        copied |= !bun_alloc::is_slice_in_buffer(text, contents_static);
+                    });
+                    if copied {
+                        let mut owned = Vec::new();
+                        for_each_string(&mut |text| owned.extend_from_slice(text));
+                        package_json.dependencies.source_buf = owned.into();
+                    }
+                    let source_buf: &[u8] = &package_json.dependencies.source_buf;
+                    let mut cursor = 0usize;
                     // ArrayHashMap has no `*_context` variant yet — the
                     // generic `put_assume_capacity` path is sufficient because keys are
                     // `SemverString` (offset+len into `source_buf`, hashed by content).
@@ -880,51 +934,43 @@ impl PackageJSON {
                         if let Some(group_json) = json.get(group.prop) {
                             if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
                                 for prop in group_obj.get().properties() {
-                                    let name_str = prop.key.slice();
-                                    if !bun_alloc::is_slice_in_buffer(
-                                        name_str,
-                                        package_json.dependencies.source_buf,
-                                    ) {
-                                        continue;
-                                    }
+                                    let name_str = slice_in_source_buf(
+                                        source_buf,
+                                        copied,
+                                        &mut cursor,
+                                        prop.key.slice(),
+                                    );
                                     let name_hash =
                                         Semver::semver_string::Builder::string_hash(name_str);
-                                    let name = SemverString::init(
-                                        package_json.dependencies.source_buf,
-                                        name_str,
-                                    );
+                                    let name = SemverString::init(source_buf, name_str);
                                     let Some(version_str) = prop.value.as_str() else {
                                         continue;
                                     };
+                                    let version_str = slice_in_source_buf(
+                                        source_buf,
+                                        copied,
+                                        &mut cursor,
+                                        version_str,
+                                    );
                                     let sliced_str =
-                                        Semver::SlicedString::init(version_str, version_str);
+                                        Semver::SlicedString::init(source_buf, version_str);
 
-                                    // The parser body lives in install-tier so route through
-                                    // the AutoInstaller vtable when one is wired. When it
-                                    // isn't, still record the dependency name (with an
-                                    // uninitialized-tag version) — `bun run --filter` reads
-                                    // only the map keys to compute workspace ordering.
-                                    let dependency_version = match r.auto_installer() {
-                                        Some(pm) => pm.parse_dependency(
-                                            name,
-                                            Some(name_hash),
-                                            version_str,
-                                            &sliced_str,
-                                            Some(&mut *r_log),
-                                        ),
-                                        None => Some(DependencyVersion::default()),
-                                    };
-                                    if let Some(dependency_version) = dependency_version {
+                                    if let Some(dependency_version) = r.parse_dependency(
+                                        name,
+                                        name_hash,
+                                        version_str,
+                                        &sliced_str,
+                                        Some(&mut *r_log),
+                                    ) {
                                         let dependency = Dependency {
                                             name,
                                             version: dependency_version,
                                             name_hash,
                                             behavior: group.behavior,
                                         };
-                                        let buf = package_json.dependencies.source_buf;
                                         let ctx = Semver::semver_string::ArrayHashContext {
-                                            arg_buf: buf,
-                                            existing_buf: buf,
+                                            arg_buf: source_buf,
+                                            existing_buf: source_buf,
                                         };
                                         package_json.dependencies.map.put_assume_capacity_context(
                                             dependency.name,

@@ -9,7 +9,6 @@ use bun_semver::string::Buf as StringBuf;
 
 use crate::dependency as Dependency;
 use crate::hosted_git_info;
-use crate::install::{self as Install};
 use crate::resolution::fmt_store_url;
 
 #[derive(Clone, Copy, Default)]
@@ -147,22 +146,22 @@ pub(crate) struct GitEnv {
 static GIT_ENV: bun_core::RacyCell<Option<GitEnv>> = bun_core::RacyCell::new(None);
 
 impl GitEnv {
-    pub(crate) fn get(loader: &mut bun_dotenv::Loader) -> &'static GitEnv {
+    pub(crate) fn get() -> &'static GitEnv {
         let slot = GIT_ENV.get();
         // SAFETY: only the install thread reaches this. The slot is written
         // once, before any reference into it exists, and never reassigned.
         unsafe {
             if (*slot).is_none() {
-                *slot = Some(Self::init(loader));
+                *slot = Some(Self::init());
             }
             (*slot).as_ref().unwrap()
         }
     }
 
-    fn init(loader: &mut bun_dotenv::Loader) -> GitEnv {
-        // No prompts by default: the install's own output would hide them.
-        let mut map = bun_core::handle_oom(loader.map.clone_with_allocator());
+    fn init() -> GitEnv {
+        let mut map = bun_core::handle_oom(bun_dotenv::Map::for_git_child());
 
+        // No prompts by default: the install's own output would hide them.
         if map.get(b"GIT_ASKPASS").is_none() {
             let config = SloppyGlobalGitConfig::get();
             if !config.has_askpass {
@@ -229,15 +228,14 @@ pub trait RepositoryExt: Sized {
     fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
     fn parse_append_github(input: &[u8], buf: &mut StringBuf<'_>)
     -> Result<Repository, AllocError>;
-    fn create_dependency_name_from_version_literal(
-        repository: &Repository,
-        string_buf: &[u8],
-        dep: &Install::Dependency,
-    ) -> Vec<u8>;
+    /// For a checkout whose package.json has no `name` (or no package.json at all).
+    fn fallback_package_name<'a>(&'a self, string_buf: &'a [u8]) -> &'a [u8];
     fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result;
     fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8])
     -> StorePathFormatter<'a>;
     fn fmt<'a>(&'a self, label: &'a str, buf: &'a [u8]) -> Formatter<'a>;
+    /// The commit in `resolved` (`<owner>-<repo>-<commit>` for GitHub).
+    fn resolved_commit<'a>(&'a self, buf: &'a [u8]) -> &'a [u8];
     /// The ssh form of a git URL; `None` for an explicit `http(s)://` URL.
     fn try_ssh(url: &[u8]) -> Option<Vec<u8>>;
     /// The https form of a git URL, or `None` when it has none.
@@ -293,45 +291,12 @@ impl RepositoryExt for Repository {
         Ok(result)
     }
 
-    fn create_dependency_name_from_version_literal(
-        repository: &Repository,
-        string_buf: &[u8],
-        dep: &Install::Dependency,
-    ) -> Vec<u8> {
-        // Callers (`parse_with_json`) hold a split `StringBuilder`
-        // borrow on `string_bytes`, so accept the two pieces directly.
-        let buf = string_buf;
-        let repo_name = repository.repo;
-        let repo_name_str = repo_name.slice(buf);
-
-        let name = 'brk: {
-            let mut remain = repo_name_str;
-
-            if let Some(hash_index) = strings::index_of_char(remain, b'#') {
-                remain = &remain[..hash_index as usize];
-            }
-
-            if remain.is_empty() {
-                break 'brk remain;
-            }
-
-            if let Some(slash_index) = strings::last_index_of_char(remain, b'/') {
-                remain = &remain[slash_index + 1..];
-            }
-
-            remain
-        };
-
-        if name.is_empty() {
-            let version_literal = dep.version.literal.slice(buf);
-            let mut name_buf = [0u8; bun_sha::SHA1::DIGEST];
-            let mut sha1 = bun_sha::SHA1::init();
-            sha1.update(version_literal);
-            sha1.r#final(&mut name_buf);
-            return name_buf.to_vec();
+    fn fallback_package_name<'a>(&'a self, string_buf: &'a [u8]) -> &'a [u8] {
+        let mut repo = self.repo.slice(string_buf);
+        if let Some(hash_index) = strings::index_of_char(repo, b'#') {
+            repo = &repo[..hash_index as usize];
         }
-
-        name.to_vec()
+        Dependency::fallback_package_name(repo)
     }
 
     fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
@@ -363,17 +328,33 @@ impl RepositoryExt for Repository {
         }
     }
 
+    fn resolved_commit<'a>(&'a self, buf: &'a [u8]) -> &'a [u8] {
+        let resolved = self.resolved.slice(buf);
+        match strings::last_index_of_char(resolved, b'-') {
+            Some(i) => &resolved[i + 1..],
+            None => resolved,
+        }
+    }
+
     fn try_ssh(url: &[u8]) -> Option<Vec<u8>> {
         // Do not cast explicit http(s) URLs to SSH
         if url.starts_with(b"http") {
             return None;
         }
 
-        if url.starts_with(b"git@") {
+        // `git@host:path`. git reads `git@host/path` as a path on this machine.
+        if url.starts_with(b"git@")
+            && strings::index_of_any(url, b":/").is_some_and(|at| url[at] == b':')
+        {
             return Some(url.to_vec());
         }
 
         if url.starts_with(b"ssh://") {
+            // The colon of a URL that parses is a port: ssh://git@host:2222/user/repo
+            if bun_url::whatwg::Parsed::from_utf8(url).is_some() {
+                return Some(url.to_vec());
+            }
+
             // Fix malformed ssh:// URLs with colons using hosted_git_info.correctUrl
             // ssh://git@github.com:user/repo -> ssh://git@github.com/user/repo
             let pair = hosted_git_info::UrlProtocolPair {
@@ -391,7 +372,11 @@ impl RepositoryExt for Repository {
         }
 
         if Dependency::is_scp_like_path(url) {
-            return Some(scp_like_to_url(b"ssh://git@", url));
+            let host_end = strings::index_of_any(url, b":/").unwrap_or(url.len());
+            // A user that looks like an option stays behind `git@`.
+            let has_user = url[0] != b'-' && strings::contains_char(&url[..host_end], b'@');
+            let prefix: &[u8] = if has_user { b"ssh://" } else { b"ssh://git@" };
+            return Some(scp_like_to_url(prefix, url));
         }
 
         None
@@ -444,7 +429,11 @@ pub struct StorePathFormatter<'a> {
 
 impl<'a> fmt::Display for StorePathFormatter<'a> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(writer, "{}", Install::fmt_store_path(self.label.as_bytes()))?;
+        write!(
+            writer,
+            "{}",
+            bun_semver::string::fmt_store_path(self.label.as_bytes())
+        )?;
 
         if !self.repo.owner.is_empty() {
             write!(
@@ -467,11 +456,8 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
 
         if !self.repo.resolved.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
-            let mut resolved = self.repo.resolved.slice(self.string_buf);
-            if let Some(i) = strings::last_index_of_char(resolved, b'-') {
-                resolved = &resolved[i + 1..];
-            }
-            write!(writer, "{}", Install::fmt_store_path(resolved))?;
+            let resolved = self.repo.resolved_commit(self.string_buf);
+            write!(writer, "{}", bun_semver::string::fmt_store_path(resolved))?;
         } else if !self.repo.committish.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
             write!(
@@ -510,10 +496,7 @@ impl<'a> fmt::Display for Formatter<'a> {
 
         if !self.repository.resolved.is_empty() {
             writer.write_str("#")?;
-            let mut resolved = self.repository.resolved.slice(self.buf);
-            if let Some(i) = strings::last_index_of_char(resolved, b'-') {
-                resolved = &resolved[i + 1..];
-            }
+            let resolved = self.repository.resolved_commit(self.buf);
             write!(writer, "{}", BStr::new(resolved))?;
         } else if !self.repository.committish.is_empty() {
             writer.write_str("#")?;

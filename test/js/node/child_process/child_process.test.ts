@@ -1325,6 +1325,40 @@ describe("uid/gid options", () => {
   // 65534 is "nobody" on every Linux distro and on macOS.
   const NOBODY = 65534;
 
+  // ChildProcess#spawn() skips the checks of spawn(): node aborts here, bun reaches the Bun.spawn parser.
+  it.each(["uid", "gid"])("new ChildProcess().spawn() throws for a NaN %s", async key => {
+    const child = new ChildProcess();
+    const errors: unknown[] = [];
+    child.on("error", error => errors.push(error));
+    let thrown: any;
+    try {
+      (child as any).spawn({
+        file: bunExe(),
+        args: [bunExe(), "--version"],
+        stdio: ["ignore", "ignore", "ignore"],
+        [key]: NaN,
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    await new Promise<void>(resolve => process.nextTick(resolve));
+    expect({
+      name: thrown?.name,
+      code: thrown?.code,
+      message: thrown?.message,
+      syscall: thrown?.syscall,
+      pid: child.pid,
+      errors,
+    }).toEqual({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: `The value of "${key}" is out of range. It must be an integer. Received NaN`,
+      syscall: undefined,
+      pid: undefined,
+      errors: [],
+    });
+  });
+
   it.skipIf(isWindows || !isRoot)("spawnSync applies uid/gid and drops supplementary groups", () => {
     const both = spawnSync("id", [], { uid: NOBODY, gid: NOBODY, encoding: "utf8" });
     expect(both.error).toBeUndefined();

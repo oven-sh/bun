@@ -181,6 +181,57 @@ describe("uid/gid", () => {
     expect(() => Bun.spawnSync({ cmd: [bunExe()], env: bunEnv, gid: 1.5 })).toThrow();
   });
 
+  // A NaN uid or gid used to be coerced to id 0 (root).
+  describe.each(["uid", "gid"] as const)("an invalid %s throws before the spawn", key => {
+    const outOfRange = (must: string, received: string) => ({
+      name: "RangeError",
+      code: "ERR_OUT_OF_RANGE",
+      message: `The value of "${key}" is out of range. It must be ${must}. Received ${received}`,
+    });
+    const notANumber = {
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "${key}" property must be of type number, got string`,
+    };
+    const cmd = [bunExe(), "--version"];
+
+    it.each([
+      [NaN, outOfRange("an integer", "NaN")],
+      [1.5, outOfRange("an integer", "1.5")],
+      [Infinity, outOfRange("an integer", "Infinity")],
+      [-Infinity, outOfRange("an integer", "-Infinity")],
+      [2 ** 31, outOfRange(">= -2147483648 && <= 2147483647", "2147483648")],
+      ["1", notANumber],
+    ])("%p", (value: any, error) => {
+      expect(() => Bun.spawnSync(cmd, { env: bunEnv, [key]: value })).toThrow(expect.objectContaining(error));
+      expect(() => Bun.spawnSync({ cmd, env: bunEnv, [key]: value })).toThrow(expect.objectContaining(error));
+    });
+
+    it("NaN beside a valid id", () => {
+      const other = key === "uid" ? "gid" : "uid";
+      expect(() => Bun.spawnSync({ cmd, env: bunEnv, [other]: 65534, [key]: NaN })).toThrow(
+        expect.objectContaining(outOfRange("an integer", "NaN")),
+      );
+    });
+  });
+
+  it.each([null, undefined])("a %p uid/gid leaves the ids of the child alone", (value: any) => {
+    const result = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "-e",
+        "console.log(JSON.stringify([process.getuid?.(), process.getgid?.(), process.getgroups?.()]))",
+      ],
+      env: bunEnv,
+      uid: value,
+      gid: value,
+    });
+    expect(result.stdout.toString().trim()).toBe(
+      JSON.stringify([process.getuid?.(), process.getgid?.(), process.getgroups?.()]),
+    );
+    expect(result.exitCode).toBe(0);
+  });
+
   it.if(isPosix && isRoot)("applies uid/gid and drops supplementary groups", () => {
     const result = Bun.spawnSync({ cmd: ["id"], uid: 65534, gid: 65534 });
     const out = result.stdout.toString();

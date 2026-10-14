@@ -199,15 +199,13 @@ pub struct Linter<S: RuleSet> {
     twins: Twins,
 }
 
-/// The rules without types that, with oxlint, give way to the rule of typescript-eslint that makes the same check with types.
-/// oxlint reports what both find twice.
+/// The rules without types that make a check that a rule of typescript-eslint makes with types: the core rule that it
+/// extends, or unicorn's rule of the same name. oxlint reports what both find twice. Here, with a configuration of oxlint, it
+/// is reported once, by the rule with types, as the more severe of the two. Both run: the rule with types is silent in
+/// places where the other is not, as for a value of type `any`.
 struct Twins {
-    /// The core rules that such a rule extends. It decides all that they decide: they do not run where it does.
-    extended: RuleBits,
-    /// unicorn's rules of the same name. They report where the other is silent, as for a value of type `any`: both run, and
-    /// what both report at one place is reported once.
-    namesakes: RuleBits,
-    /// For a rule of either set, by its number: the number of the rule with types.
+    without_types: RuleBits,
+    /// For each of them, by its number: the number of the rule with types.
     typed: Vec<u16>,
 }
 
@@ -218,31 +216,24 @@ impl Twins {
         numbers: usize,
         number_of: &dyn Fn(&RuleEntry) -> Option<u16>,
     ) -> Twins {
-        let (mut extended, mut namesakes) = (RuleBits::EMPTY, RuleBits::EMPTY);
+        let mut without_types = RuleBits::EMPTY;
         let mut typed = vec![u16::MAX; numbers];
         for entry in registry.all().iter().filter(|it| !it.meta.requires_types) {
-            let (twin, of) = match entry.meta.plugin {
-                crate::rule::Plugin::Eslint => {
-                    (registry.pair_of(entry.meta).map(|it| it.1), &mut extended)
-                }
+            let twin = match entry.meta.plugin {
+                crate::rule::Plugin::Eslint => registry.pair_of(entry.meta).map(|it| it.1),
                 crate::rule::Plugin::Unicorn => {
-                    let name = entry.meta.name.as_bytes();
-                    (
-                        registry.get(crate::rule::Plugin::TypeScript, name),
-                        &mut namesakes,
-                    )
+                    registry.get(crate::rule::Plugin::TypeScript, entry.meta.name.as_bytes())
                 }
-                _ => continue,
+                _ => None,
             };
             let twin = twin.filter(|it| it.meta.requires_types).and_then(number_of);
             if let (Some(number), Some(twin)) = (number_of(entry), twin) {
-                of.insert(number);
+                without_types.insert(number);
                 typed[number as usize] = twin;
             }
         }
         Twins {
-            extended,
-            namesakes,
+            without_types,
             typed,
         }
     }
@@ -859,23 +850,16 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
-        // See `Twins`. The namesakes that run beside the rule with types, and those rules.
-        let (mut giving_way, mut typed_twins) = (RuleBits::EMPTY, RuleBits::EMPTY);
+        // See `Twins`: those of them that run beside their rule with types.
         let twins = &self.twins;
-        let has_twins = on.intersects(&twins.extended) || on.intersects(&twins.namesakes);
-        if has_twins && file.types.is_some() && file.language().is_oxlint {
-            for it in enabled.iter_mut().filter(|it| it.severity != Severity::Off) {
+        let mut beside_typed = RuleBits::EMPTY;
+        if on.intersects(&twins.without_types) && file.types.is_some() && file.language().is_oxlint
+        {
+            for it in enabled.iter().filter(|it| it.severity != Severity::Off) {
                 let number = it.rule.number();
                 let typed = twins.typed.get(number as usize).copied();
-                let Some(typed) = typed.filter(|typed| *typed != u16::MAX && on.has(*typed)) else {
-                    continue;
-                };
-                if twins.namesakes.has(number) {
-                    giving_way.insert(number);
-                    typed_twins.insert(typed);
-                } else if let Some(Some(meta)) = S::METAS.get(number as usize) {
-                    it.severity = Severity::Off;
-                    rules_to_ignore.push(RuleId::Known(meta));
+                if typed.is_some_and(|typed| typed != u16::MAX && on.has(typed)) {
+                    beside_typed.insert(number);
                 }
             }
         }
@@ -900,13 +884,29 @@ impl<S: RuleSet> Linter<S> {
             })
         };
         let mut diagnostics = crate::runner::run(file, &enabled, wants_fixes);
-        if giving_way != RuleBits::EMPTY {
+        if beside_typed != RuleBits::EMPTY {
             let number = |it: &Diagnostic| enabled.get(it.rule as usize).map(|it| it.rule.number());
-            let is_of =
-                |it: &Diagnostic, rules: &RuleBits| number(it).is_some_and(|it| rules.has(it));
-            let of_typed = diagnostics.iter().filter(|it| is_of(it, &typed_twins));
-            let of_typed: Vec<u32> = of_typed.map(|it| it.span.start).collect();
-            diagnostics.retain(|it| !(is_of(it, &giving_way) && of_typed.contains(&it.span.start)));
+            // For what a rule without types reports: where its rule with types reports something that holds it.
+            let same_by_typed = |it: &Diagnostic| {
+                let own = number(it).filter(|it| beside_typed.has(*it))?;
+                let typed = *twins.typed.get(own as usize)?;
+                diagnostics.iter().position(|other| {
+                    number(other) == Some(typed)
+                        && other.span.start <= it.span.start
+                        && it.span.end <= other.span.end
+                })
+            };
+            let twice: Vec<(usize, usize, Severity)> = (diagnostics.iter().enumerate())
+                .filter_map(|(at, it)| Some((at, same_by_typed(it)?, it.severity)))
+                .collect();
+            for &(_, kept, severity) in &twice {
+                diagnostics[kept].severity = diagnostics[kept].severity.max(severity);
+            }
+            let mut at = 0;
+            diagnostics.retain(|_| {
+                at += 1;
+                !twice.iter().any(|it| it.0 == at - 1)
+            });
         }
         if let Some(thrown) = file.sink.thrown.take() {
             // "error:" stands for the plain `Error:` where the run ends.

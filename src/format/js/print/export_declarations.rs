@@ -1,12 +1,11 @@
 use super::decorators::FormatDecorators;
 use super::import_declaration::{
-    FormatSpecifiers, format_ignorable_name, format_import_and_export_source_with_clause,
-    module_export_name,
+    FormatSpecifiers, format_import_and_export_source_with_clause, module_export_name,
 };
 
 use super::semicolon::OptionalSemicolon;
 use crate::js::ast_nodes::inner_of_stmt;
-use crate::js::format::{FormatDeclaration, format_node, write_declaration};
+use crate::js::format::{FormatDeclaration, format_ignorable_name, format_node, write_declaration};
 
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;

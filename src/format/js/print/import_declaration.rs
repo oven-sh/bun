@@ -1,29 +1,13 @@
 use super::program::is_next_line_empty;
 use super::semicolon::OptionalSemicolon;
-use crate::js::format::{format_name, format_node, identifier};
+use crate::js::format::{format_ignorable_name, format_name, format_node, identifier};
 use crate::js::utils::object::FormatKey;
 use crate::js::utils::string::{
     FormatLiteralStringToken, StringLiteralParentKind, is_name_without_quotes,
 };
-use crate::js::utils::suppressed::FormatSuppressedNode;
 
 use crate::prelude::*;
 use crate::{format_args, write};
-
-/// [`format_name`] for what is at `span` and is a node that Prettier prints like any other, so that a `prettier-ignore` comment
-/// applies to it: `import /* prettier-ignore */ *  as a from /* prettier-ignore */ 'b'`. Not the key of a property.
-pub(crate) fn format_ignorable_name<'a>(
-    span: Span,
-    f: &mut Formatter<'a>,
-    write: impl FnOnce(&mut Formatter<'a>),
-) {
-    format_name(span, f, |f| {
-        match !f.is_quiet() && f.comments().of_name(span.start).is_ignored {
-            true => FormatSuppressedNode(span).fmt(f),
-            false => write(f),
-        }
-    });
-}
 
 /// A string literal that is not an expression here: a module specifier.
 pub(crate) struct FormatStringLiteral {

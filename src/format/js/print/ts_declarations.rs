@@ -1,7 +1,7 @@
 //! The declarations of TypeScript.
 
 use super::block_statement::is_empty_block;
-use super::import_declaration::{FormatStringLiteral, format_ignorable_name};
+use super::import_declaration::FormatStringLiteral;
 
 use super::intersection_type::lone_type_of_intersection_is_a_group;
 use super::program::FormatStatements;
@@ -14,7 +14,9 @@ use super::union_type::{
 };
 use crate::cursor::around_node;
 use crate::js::comments::OwnedComments;
-use crate::js::format::{format_name, format_node, identifier, write_ignored_node};
+use crate::js::format::{
+    format_ignorable_name, format_name, format_node, identifier, write_ignored_node,
+};
 use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::object::{FormatKey, key_requires_quotes};
 use crate::js::utils::statement_body::write_space_before_body;

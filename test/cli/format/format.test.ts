@@ -5291,6 +5291,8 @@ try {
     test.each([
       [["--cursor-offset", "13"], js, printed, "14"],
       [["--cursor-offset", "0"], js, printed, "0"],
+      // The cursor is in a comment that moves. It stays after the name, which is the node before it.
+      [["--cursor-offset", "20"], "function f // comment\n(a, b) {}\n", "function f(a, b) {} // comment\n", "10"],
       [
         ["--range-start", "10", "--range-end", "20"],
         "a  =  1;\nb  =  2;\nc  =  3;\n",

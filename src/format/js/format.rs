@@ -226,12 +226,36 @@ pub(crate) fn format_name<'a>(
     f: &mut Formatter<'a>,
     write: impl FnOnce(&mut Formatter<'a>),
 ) {
+    format_name_that(false, span, f, write);
+}
+
+/// [`format_name`] for what Prettier prints like any other node, so that a `prettier-ignore` comment applies to it:
+/// `import /* prettier-ignore */ *  as a from /* prettier-ignore */ 'b'`, `a./* prettier-ignore */ \u{62}`. Not the key of a
+/// property.
+pub(crate) fn format_ignorable_name<'a>(
+    span: Span,
+    f: &mut Formatter<'a>,
+    write: impl FnOnce(&mut Formatter<'a>),
+) {
+    format_name_that(true, span, f, write);
+}
+
+#[inline(always)]
+fn format_name_that<'a>(
+    can_be_ignored: bool,
+    span: Span,
+    f: &mut Formatter<'a>,
+    write: impl FnOnce(&mut Formatter<'a>),
+) {
     if f.is_quiet() {
         return write(f);
     }
     let owned = f.comments().of_name(span.start);
     FormatLeadingComments::Comments(owned.leading).fmt(f);
-    write(f);
+    f.around_cursor(span, |f| match can_be_ignored && owned.is_ignored {
+        true => FormatSuppressedNode(span).fmt(f),
+        false => write(f),
+    });
     FormatTrailingComments::Comments(owned.trailing).fmt(f);
 }
 
@@ -292,13 +316,7 @@ pub(crate) fn identifier(ident: Ident<'_>) -> FormatIdentifier {
 impl<'a> Format<'a> for FormatIdentifier {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        format_name(self.span, f, |f| {
-            // `/* prettier-ignore */ \u{61}` stays as it is written.
-            match !f.is_quiet() && f.comments().of_name(self.span.start).is_ignored {
-                true => FormatSuppressedNode(self.span).fmt(f),
-                false => write!(f, source_text(self.span)),
-            }
-        });
+        format_ignorable_name(self.span, f, |f| write!(f, source_text(self.span)));
     }
 }
 

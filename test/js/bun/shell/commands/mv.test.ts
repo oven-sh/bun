@@ -1,6 +1,6 @@
 import { $ } from "bun";
-import { describe, expect, test } from "bun:test";
-import { isPosix } from "harness";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, isLinux, isPosix, tempDir } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -172,6 +172,27 @@ describe("mv", async () => {
       }
     });
 
+    test.skipIf(skip)("directory to a new path across devices", async () => {
+      const [src, dst] = crossDevicePair("tree-new-path");
+      try {
+        const srcDir = join(src, "tree");
+        const dstDir = join(dst, "renamed");
+        mkdirSync(join(srcDir, "sub"), { recursive: true });
+        writeFileSync(join(srcDir, "a.txt"), "A\n");
+        writeFileSync(join(srcDir, "sub", "b.txt"), "B\n");
+
+        const r = await $`mv ${srcDir} ${dstDir}`.quiet();
+        expect(r.stderr.toString()).toBe("");
+        expect(r.exitCode).toBe(0);
+        expect(existsSync(srcDir)).toBe(false);
+        expect(readFileSync(join(dstDir, "a.txt"), "utf8")).toBe("A\n");
+        expect(readFileSync(join(dstDir, "sub", "b.txt"), "utf8")).toBe("B\n");
+      } finally {
+        rmSync(src, { recursive: true, force: true });
+        rmSync(dst, { recursive: true, force: true });
+      }
+    });
+
     test.skipIf(skip)("directory onto non-empty directory across devices fails", async () => {
       const [src, dst] = crossDevicePair("notempty");
       try {
@@ -232,6 +253,121 @@ describe("mv", async () => {
         rmSync(src, { recursive: true, force: true });
         rmSync(dst, { recursive: true, force: true });
       }
+    });
+
+    // These layouts need mounts, so a fixture makes them in a private mount namespace: as root, or in a user namespace.
+    describe("with mounts", () => {
+      function findUnshare(): string[] | undefined {
+        const unshare = isLinux ? Bun.which("unshare") : null;
+        if (!unshare) return undefined;
+        using probe = tempDir("mv-unshare-probe", { a: {}, b: {} });
+        const mounts = 'mount -t tmpfs -o size=1m tmpfs "$1" && mount --bind "$1" "$2"';
+        for (const namespaces of ["-Urm", "-m"]) {
+          const cmd = [unshare, namespaces, "--propagation", "private"];
+          const { exitCode } = Bun.spawnSync({
+            cmd: [...cmd, "sh", "-c", mounts, "sh", join(String(probe), "a"), join(String(probe), "b")],
+            stdout: "ignore",
+            stderr: "ignore",
+          });
+          if (exitCode === 0) return cmd;
+        }
+        return undefined;
+      }
+      const unshare = findUnshare();
+
+      async function runFixture(...layout: string[]) {
+        using dir = tempDir("mv-with-mounts", {});
+        await using proc = Bun.spawn({
+          cmd: [...unshare!, bunExe(), join(import.meta.dir, "mv-into-itself-fixture.ts"), String(dir), ...layout],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const results: Record<string, unknown> = Object.fromEntries(
+          stdout
+            .split("\n")
+            .filter(Boolean)
+            .map(line => JSON.parse(line)),
+        );
+        return { results, fixture: { stderr, exitCode } };
+      }
+
+      let results: Record<string, unknown> = {};
+      let fixture = {};
+      beforeAll(async () => {
+        if (unshare) ({ results, fixture } = await runFixture());
+      });
+
+      test.skipIf(!unshare)("the fixture makes every layout", () => {
+        expect(fixture).toEqual({ stderr: "", exitCode: 0 });
+      });
+
+      // rename(2) refuses to move a directory into itself, but only when both paths are on one mount.
+      // Across two mounts the copy must refuse it: it would copy its own output without end.
+      describe("directory into itself", () => {
+        // Refused before anything is made: the directory the copy would be made in is the source or is below it.
+        test.skipIf(!unshare).each([
+          ["into the source on a second mount", "secondMount", "b/sub/sub", ["sub", "sub/file"]],
+          ["to a new path in the source on a second mount", "secondMountNewPath", "a/sub", ["sub", "sub/file"]],
+          [
+            "a mount point among the operands of `mv * out/`",
+            "mountPointOperand",
+            "out/out",
+            ["out", "out/f1", "out/f2"],
+          ],
+          ["a mount point to a new path inside itself", "mountPointNewPath", "vol", ["vol", "vol/file"]],
+          [
+            "into a mount point inside the source",
+            "mountInside",
+            "proj/cache/proj",
+            ["proj", "proj/cache", "proj/src", "proj/src/main", "proj/top"],
+          ],
+          [
+            "to a new path on a file system mounted inside the source",
+            "mountInsideNewPath",
+            "a/sub",
+            ["sub", "sub/mnt", "sub/top"],
+          ],
+          [
+            "to a file system mounted on a child of the source under a second mount",
+            "mountUnderSecondMount",
+            "a/sub",
+            ["sub", "sub/file", "sub/p1"],
+          ],
+        ])("%s", (_, layout, path, tree) => {
+          expect(results[layout]).toEqual({ stderr: `mv: ${path}: Invalid argument\n`, exitCode: 22, tree });
+        });
+
+        // Refused during the walk, when it reaches the directory the copy is made in.
+        // As in any cross-device move that fails midway, the entries walked before that are already moved.
+        // The order of the directory listing decides which ones. The copy stops and no file is lost.
+        test.skipIf(!unshare)("into a mount of a child of the source", () => {
+          expect(results.mountOfChild).toEqual({
+            stderr: "mv: b/sub: Invalid argument\n",
+            exitCode: 22,
+            // `sub`, `sub/inner`, `kept` in one of two places, and the new `sub/inner/sub`
+            dirs: 4,
+            files: ["deep: a/sub/inner/deep", "k: a/sub/kept/k", "top: a/sub/top"],
+          });
+        });
+      });
+
+      test.skipIf(!unshare)("directory between two mounts of one file system", () => {
+        expect(results.betweenTwoMounts).toEqual({
+          stderr: "",
+          exitCode: 0,
+          tree: ["x", "x/sub", "x/sub/deep", "x/sub/deep/file", "x/sub/file"],
+        });
+      });
+
+      // Only a debug build comes to the end of its stack before it runs out of open files.
+      test.skipIf(!unshare || !isDebug)("directory tree deeper than the stack", async () => {
+        expect(await runFixture("deepTree", "1000")).toEqual({
+          results: { deepTree: { stderr: "mv: b/top: File name too long\n", exitCode: 36 } },
+          fixture: { stderr: "", exitCode: 0 },
+        });
+      });
     });
   });
 });

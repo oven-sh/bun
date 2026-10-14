@@ -43,7 +43,11 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     pub(crate) fn read_repl_expression(&mut self) -> Result<&'a mut [Stmt], Error> {
         let errors = self.log().errors;
         let loc = self.lexer.loc();
-        let value = match self.parse_expr(Level::Lowest) {
+        // An input that is not one expression is read again as statements: stop at its first error.
+        self.lexer.expected_is_fatal = true;
+        let value = self.parse_expr(Level::Lowest);
+        self.lexer.expected_is_fatal = false;
+        let value = match value {
             Ok(value) if self.lexer.token == T::TEndOfFile && self.log().errors == errors => value,
             // The statements run out of stack or memory at the same place.
             Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),

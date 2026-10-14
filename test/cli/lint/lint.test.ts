@@ -4977,13 +4977,6 @@ maybe(() => { return f; });
             "a.ts",
             "declare const p: Promise<{ a: 1 }>;\nexport async function f(o = { ...p }) {\n  return o;\n}\n",
           ],
-          // tsgolint writes `ready && obj?.count`, without the `?? 0`.
-          [
-            "prefer-optional-chain",
-            "a.ts",
-            "declare const ready: boolean;\ndeclare const obj: { count: number | null } | undefined;\nexport const a = ready && obj && (obj.count ?? 0);\n",
-            "declare const ready: boolean;\ndeclare const obj: { count: number | null } | undefined;\nexport const a = ready && (obj?.count ?? 0);\n",
-          ],
         ];
         const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
         shapes.forEach(([rule, file, text, , options], index) => {

@@ -540,11 +540,15 @@ describe.each(implementations)("ws server, sending ($name)", ({ ws: implementati
           send(Buffer.alloc(8 * MiB));
           expect(ws.bufferedAmount).toBeGreaterThan(0);
           const one = Buffer.alloc(1);
-          while (ws.bufferedAmount > 0) send(one);
+          // The pause is for the other process. It does not return to the event loop.
+          for (let turns = 0; ws.bufferedAmount > 0; turns++) {
+            if (turns === 10_000) throw new Error("the client does not read");
+            Bun.sleepSync(1);
+            send(one);
+          }
           await done;
           expect(order).toEqual(Array.from({ length: calls }, (_, call) => call));
         } finally {
-          reader.kill();
           for (const client of wss.clients) client.terminate();
           wss.close();
         }

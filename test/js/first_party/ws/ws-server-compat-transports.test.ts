@@ -596,7 +596,8 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
 
   // engine.io ends every upgraded socket on its http.Server to which, by this measure, nobody has written.
   // The real package writes through the raw socket of node:http, so there the count says nothing about `ws`.
-  test.skipIf(!builtin)("req.socket.bytesWritten counts what the WebSocket sent", async () => {
+  // Only the 101 is counted. The frames behind it are not.
+  test.skipIf(!builtin)("req.socket.bytesWritten is not 0 after the upgrade", async () => {
     await using server = await openServer(implementation);
     const { ws, req, client } = server;
     ws.send("hmr connected");

@@ -2285,6 +2285,12 @@ class ClientRequest extends EventEmitter {
     }
     this[kNative] = websocket[kNative] = native;
 
+    // Here and nowhere else, so that a request that was not dialled leaves no timer behind.
+    const { handshakeTimeout } = this[kOptions].opts;
+    if (handshakeTimeout) {
+      websocket[kHandshakeTimer] = setTimeout(handshakeOnTimeout, handshakeTimeout, websocket);
+    }
+
     if (this.listenerCount("socket") > 0) process.nextTick(emitSocket, this, native);
     return this;
   }
@@ -2729,13 +2735,8 @@ function initAsClient(
   }
 
   // Throws for a header that cannot be sent.
-  if (!opts.finishRequest) req.end();
-
-  if (handshakeTimeout && !req.destroyed) {
-    websocket[kHandshakeTimer] = setTimeout(handshakeOnTimeout, handshakeTimeout, websocket);
-  }
-
   if (opts.finishRequest) opts.finishRequest(req, websocket);
+  else req.end();
 }
 
 //

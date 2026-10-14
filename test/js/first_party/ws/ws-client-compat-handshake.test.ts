@@ -482,6 +482,25 @@ describe.each(implementations)("ws client, opening ($name)", ({ ws: implementati
       expect(client.events).toEqual(['error Error "Opening handshake has timed out" rs=2', lost]);
     });
 
+    // The process ends once no timer is left, so one that still runs would be heard. Through a proxy the built-in
+    // dials by itself also with `finishRequest`.
+    test.each([
+      { label: "a constructor", options: "" },
+      { label: "a `finishRequest`", options: "finishRequest: request => request.end()," },
+      { label: "a `finishRequest`, through a proxy", options: 'finishRequest: request => request.end(), proxy: "http://127.0.0.1:9",' }, // prettier-ignore
+    ])("$label that throws leaves no `handshakeTimeout` timer behind", async ({ options }) => {
+      const { lines, exitCode } = await runScript(
+        { specifier },
+        `try {
+           new WebSocket("ws://127.0.0.1:9", { ${options} handshakeTimeout: 50, headers: { "X-Bad": "a\\r\\nb" } });
+         } catch (error) {
+           console.log("threw " + error.name);
+         }`,
+      );
+      expect(lines).toEqual(["threw TypeError"]);
+      expect(exitCode).toBe(0);
+    });
+
     // The global WebSocket gives up on a handshake by itself. It is the clock here: made after the `ws` socket, so
     // its time is up later.
     test.concurrent(

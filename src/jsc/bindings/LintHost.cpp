@@ -171,7 +171,7 @@ JSC_DEFINE_HOST_FUNCTION(jsLintEndFile, (JSGlobalObject * globalObject, CallFram
     return JSValue::encode(jsUndefined());
 }
 
-// For src/runtime/cli/lint_js.rs, which frees what the spans point to right after this.
+// For src/lint_command/lint_js.rs, which frees what the spans point to right after this.
 extern "C" void Bun__Lint__endFile(JSGlobalObject* globalObject)
 {
     LintHost::from(globalObject)->endFile(globalObject->vm());

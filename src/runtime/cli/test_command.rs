@@ -2328,7 +2328,7 @@ impl TestCommand {
 
         // After the file watcher is enabled: see `watching`.
         let has_type_errors = ctx.runtime_options.check && {
-            use crate::cli::check_command::{EntryPoint, check_before, watching};
+            use crate::features::{EntryPoint, check_before, watching};
             let paths = test_files.iter().map(|path| EntryPoint::file(path));
             !check_before(&paths.collect::<Vec<_>>(), watching(vm))
         };

@@ -5,7 +5,7 @@
 
 use bun_core::{UnwrapOrOom, env_var};
 
-use super::check_command::working_directory;
+use crate::features::working_directory;
 
 /// The kind of thing `bun <command>` runs.
 #[derive(Copy, Clone, PartialEq, Eq)]

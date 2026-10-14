@@ -55,7 +55,7 @@ const ruleVars = {
   regen: [],
   // rust/emit.ts
   rust_build_script: ["manifest", "crate"],
-  rust_crate_gate: [],
+  feature_pass: [],
   rust_plan: ["planinput", "plan"],
   rust_rustc: ["manifest", "crate", "what"],
   // shims.ts

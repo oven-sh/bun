@@ -1,16 +1,31 @@
 //! `bun fmt`: formats JavaScript and TypeScript the way Prettier does. All of it is in
 //! `bun_lint_driver::fmt`. See `lint_command.rs` for what that takes from the process.
 
-use bun_core::{Global, ZStr};
+use bun_core::{Global, ZStr, feature};
 use bun_format_conformance::{Bundle, Flags, Format};
 use bun_lint_driver::fmt::cli::{Options, UsageError};
 
-use super::command::{ContextData, Tag};
-use super::lint_command::{defaults_of_bunfig, run_and_exit, usage_error};
+use bun_lint_command::{defaults_of_bunfig, print_flags, run_and_exit, usage_error};
+use bun_options_types::command_tag::Tag;
+use bun_options_types::context::ContextData;
+use bun_runtime::features;
 
-pub(crate) struct FormatCommand;
+struct FormatCommand;
 
-pub(crate) use bun_lint_driver::fmt::cli::HELP;
+#[feature::behind(features::exec_format, fmt)]
+fn exec_format(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
+    FormatCommand::exec(ctx, args)
+}
+
+#[feature::behind(features::is_flag_of_format, fmt)]
+fn is_flag_of_format(flag: &[u8]) -> bool {
+    FormatCommand::has_flag(flag)
+}
+
+#[feature::behind(features::print_flags_of_format, fmt)]
+fn print_flags_of_format(all: bool) {
+    print_flags(&bun_lint_driver::fmt::cli::HELP, all);
+}
 
 /// Whether `bun fmt --run-prettier-tests` exists, for `test/cli/format/conformance.test.ts`. A
 /// release build has none of it.
@@ -26,12 +41,12 @@ fn test_runner(flag: &[u8]) -> Option<fn(&Bundle<'_>, &Flags<'_>, Format<'_>)> {
 
 impl FormatCommand {
     /// Whether `bun fmt <flag>` is a valid command line.
-    pub(crate) fn has_flag(flag: &[u8]) -> bool {
+    fn has_flag(flag: &[u8]) -> bool {
         Options::parse(&[flag]).is_ok()
     }
 
     /// `args`: what follows `format`.
-    pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
+    fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
         // `--debug-check-svelte <before> <after> ..`, for `test/cli/format/svelte/svelte.test.ts`: a line for each pair.
         if HAS_TEST_RUNNER
             && let [flag, pairs @ ..] = args
@@ -77,7 +92,7 @@ impl FormatCommand {
             Err(UsageError(message)) => usage_error("fmt", &message),
         };
         if options.help {
-            crate::cli::command::tag_print_help(Tag::FormatCommand, options.all);
+            features::tag_print_help(Tag::FormatCommand, options.all);
             Global::exit(0);
         }
         let cwd = options.cwd.clone();

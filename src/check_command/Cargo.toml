@@ -1,0 +1,31 @@
+[package]
+name = "bun_check_command"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.bun]
+feature = "check"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_runtime.workspace = true
+bun_typescript_libs.workspace = true
+bun_core.workspace = true
+bun_ast.workspace = true
+bun_sema_driver.workspace = true
+bun_sema_baselines.workspace = true
+bun_paths.workspace = true
+bun_sys.workspace = true
+bun_bundler.workspace = true
+bun_options_types.workspace = true
+bun_threading.workspace = true
+bun_resolver.workspace = true
+bun_jsc.workspace = true
+bun_glob.workspace = true
+bun_clap.workspace = true
+bstr.workspace = true

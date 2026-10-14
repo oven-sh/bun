@@ -134,6 +134,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
+name = "bun_all"
+version = "0.0.0"
+dependencies = [
+ "bun_check_command",
+ "bun_format_command",
+ "bun_lint_command",
+ "bun_runtime",
+]
+
+[[package]]
 name = "bun_alloc"
 version = "0.0.0"
 dependencies = [
@@ -336,6 +346,28 @@ dependencies = [
  "bun_opaque",
  "libc",
  "strum",
+]
+
+[[package]]
+name = "bun_check_command"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_ast",
+ "bun_bundler",
+ "bun_clap",
+ "bun_core",
+ "bun_glob",
+ "bun_jsc",
+ "bun_options_types",
+ "bun_paths",
+ "bun_resolver",
+ "bun_runtime",
+ "bun_sema_baselines",
+ "bun_sema_driver",
+ "bun_sys",
+ "bun_threading",
+ "bun_typescript_libs",
 ]
 
 [[package]]
@@ -592,6 +624,18 @@ dependencies = [
  "bun_threading",
  "rustc-hash",
  "smallvec",
+]
+
+[[package]]
+name = "bun_format_command"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_format_conformance",
+ "bun_lint_command",
+ "bun_lint_driver",
+ "bun_options_types",
+ "bun_runtime",
 ]
 
 [[package]]
@@ -1029,6 +1073,31 @@ dependencies = [
  "bun_zstd",
  "rustc-hash",
  "smallvec",
+]
+
+[[package]]
+name = "bun_lint_command"
+version = "0.0.0"
+dependencies = [
+ "bstr",
+ "bun_ast",
+ "bun_bunfig",
+ "bun_clap",
+ "bun_core",
+ "bun_dotenv",
+ "bun_event_loop",
+ "bun_jsc",
+ "bun_lint",
+ "bun_lint_driver",
+ "bun_options_types",
+ "bun_paths",
+ "bun_runtime",
+ "bun_sema_driver",
+ "bun_spawn",
+ "bun_sys",
+ "bun_threading",
+ "bun_typescript_libs",
+ "bun_which",
 ]
 
 [[package]]
@@ -1481,7 +1550,6 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
- "bun_format_conformance",
  "bun_glob",
  "bun_hash",
  "bun_highway",
@@ -1499,7 +1567,6 @@ dependencies = [
  "bun_libarchive",
  "bun_libdeflate_sys",
  "bun_libuv_sys",
- "bun_lint_driver",
  "bun_lsquic_sys",
  "bun_md",
  "bun_node_path",
@@ -1517,8 +1584,6 @@ dependencies = [
  "bun_router",
  "bun_s3_signing",
  "bun_safety",
- "bun_sema_baselines",
- "bun_sema_driver",
  "bun_semver",
  "bun_semver_jsc",
  "bun_sha_hmac",
@@ -1951,6 +2016,16 @@ name = "bun_transpiler"
 version = "0.0.0"
 dependencies = [
  "bun_bundler",
+]
+
+[[package]]
+name = "bun_typescript_libs"
+version = "0.0.0"
+dependencies = [
+ "bun_core",
+ "bun_runtime",
+ "bun_sema_driver",
+ "bun_zstd",
 ]
 
 [[package]]

@@ -102,7 +102,7 @@ pub(crate) struct RuntimeState {
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
     /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
-    pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
+    pub(crate) lint: core::cell::OnceCell<Box<dyn core::any::Any>>,
 }
 
 thread_local! {
@@ -192,7 +192,7 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
 
 /// [`RuntimeState::lint`] of this thread's VM.
 #[inline]
-pub(crate) fn lint_vm() -> &'static core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>> {
+pub fn lint_vm() -> &'static core::cell::OnceCell<Box<dyn core::any::Any>> {
     let state = runtime_state();
     debug_assert!(!state.is_null(), "lint_vm before init_runtime_state");
     // SAFETY: as `global_dns_data`.
@@ -200,7 +200,7 @@ pub(crate) fn lint_vm() -> &'static core::cell::OnceCell<Box<crate::cli::lint_js
 }
 
 /// Takes [`RuntimeState::lint`] out of this thread's VM, which is about to end.
-pub(crate) fn take_lint_vm() -> Option<Box<crate::cli::lint_js::LintVm>> {
+pub fn take_lint_vm() -> Option<Box<dyn core::any::Any>> {
     let state = runtime_state();
     debug_assert!(!state.is_null(), "take_lint_vm before init_runtime_state");
     // SAFETY: this thread's state, and no `lint_vm()` borrow is live: the caller runs no JavaScript.

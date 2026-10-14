@@ -4,6 +4,7 @@
 // are individually `#[allow]`ed at the extern block with a justification.
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(thread_local)]
+#![feature(naked_functions_rustic_abi)]
 #![feature(adt_const_params)]
 // For `__rust_no_alloc_shim_is_unstable_v2` in bin_entry.
 #![feature(rustc_attrs)]
@@ -43,6 +44,7 @@ pub(crate) mod webcore;
 
 pub(crate) mod bake;
 pub(crate) mod cli;
+pub mod features;
 pub(crate) mod shell;
 // `Run::boot` / `Run::boot_standalone`. Mounted here
 // (not as a separate crate) because every dependency it has is already a dep of

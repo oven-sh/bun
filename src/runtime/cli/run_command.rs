@@ -782,9 +782,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         path: &[u8],
         loader: Option<Loader>,
         arguments: &[Box<[u8]>],
-        before_read: Option<bun_sema_driver::host::BeforeRead>,
+        before_read: Option<crate::features::BeforeRead>,
     ) -> bool {
-        use crate::cli::check_command::{EntryPoint, check_before};
+        use crate::features::{EntryPoint, check_before};
         let main = EntryPoint {
             path,
             loader: Some(Self::loader_of_main(ctx, path, loader)),
@@ -977,7 +977,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // The shell does not need to initialize JSC (saves 1-3ms).
         if strings::has_suffix_comptime(&entry_path, b".sh") {
             // It has no entry point to start from, like a script of a package.json.
-            if ctx.runtime_options.check && !crate::cli::check_command::check_project_before() {
+            if ctx.runtime_options.check && !crate::features::check_project_before() {
                 Global::exit(1);
             }
             let exit_code = Self::boot_bun_shell(ctx, &entry_path)?;
@@ -1483,7 +1483,7 @@ impl Run<'_> {
         }
 
         let has_type_errors = unchecked.is_some_and(|loader| {
-            let watching = crate::cli::check_command::watching(vm);
+            let watching = crate::features::watching(vm);
             !RunCommand::check_main(ctx, vm.main(), loader, &vm.argv, watching)
         });
         if has_type_errors {
@@ -2511,9 +2511,7 @@ impl RunCommand {
                         let use_system_shell = ctx.debug.use_system_shell;
 
                         // A script has no entry point to start from: the project is checked, as by `bun check`.
-                        if ctx.runtime_options.check
-                            && !crate::cli::check_command::check_project_before()
-                        {
+                        if ctx.runtime_options.check && !crate::features::check_project_before() {
                             Global::exit(1);
                         }
 
@@ -2713,9 +2711,7 @@ impl RunCommand {
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
                     // It has no entry point to start from, like a script of a package.json.
-                    if ctx.runtime_options.check
-                        && !crate::cli::check_command::check_project_before()
-                    {
+                    if ctx.runtime_options.check && !crate::features::check_project_before() {
                         Global::exit(1);
                     }
                     let out = destination.as_bytes();

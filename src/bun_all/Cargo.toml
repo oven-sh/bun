@@ -1,0 +1,16 @@
+[package]
+name = "bun_all"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_runtime.workspace = true
+bun_check_command.workspace = true
+bun_lint_command.workspace = true
+bun_format_command.workspace = true

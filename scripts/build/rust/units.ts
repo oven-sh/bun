@@ -24,7 +24,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import type { Config } from "../config.ts";
 import { assert } from "../error.ts";
 import { dylibPathVar, envify } from "./cargo-env.ts";
-import { crateGateDriver, gateOf } from "./gates.ts";
+import { featureFlags, featuresThatNeed } from "./features.ts";
 import type { ManifestLints, MetadataPackage, RustPlan, RustcTargetInfo, UnitGraphUnit } from "./plan.ts";
 
 export type UnitKind = "lib" | "proc-macro" | "bin" | "build-script" | "build-script-run";
@@ -91,8 +91,10 @@ export interface RustUnit {
 
 export interface RustGraph {
   units: RustUnit[];
-  /** What the graph was planned for: the `bun_runtime` library, or the Windows shim's `bin`. */
+  /** What the graph was planned for: the `bun_all` library, or the Windows shim's `bin`. */
   root: RustUnit;
+  /** The units that are a feature's, with the features that need them (features.ts). */
+  neededBy: Map<RustUnit, string[]>;
   /** The graph's own directory under the build directory (`rust-target/`, `rust-target/shim/`): plan, unit manifests, artifacts. */
   dir: string;
   hostDeps: string;
@@ -181,6 +183,7 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
       }
     }
   });
+  const neededBy = featuresThatNeed(units, units[g.roots[0]!]!);
 
   // Hashes, computed topologically over the DAG. `symbolHash` (→ `-C metadata`) must differ wherever two builds
   // of one crate name can meet in a link — host vs target, sysroot std vs build-std std, feature sets — and must
@@ -208,7 +211,7 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
       unit.platform,
       u.mode,
       [...unit.features].sort(),
-      unit.pkg.gate,
+      neededBy.get(unit) ?? null,
       u.profile,
       unit.isStd,
       plan.rustc.version,
@@ -294,6 +297,7 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
   return {
     units,
     root,
+    neededBy,
     dir,
     hostDeps: join(dir, "host", "deps"),
     targetDeps: join(dir, plan.target.triple, "deps"),
@@ -536,6 +540,8 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   // The plan's rustflags (rust.ts's list): appended to every *target* unit, and handed to build scripts as
   // CARGO_ENCODED_RUSTFLAGS.
   if (!isHost) args.push(...plan.plannedWith.rustflags);
+  const ofFeatures = featureFlags(cfg, unit.crateName, graph.neededBy.get(unit));
+  args.push(...ofFeatures.args);
   // The depfile must name what rustc read: `-Zbinary-dep-depinfo` adds every rlib/rmeta/dylib it loaded
   // (transitive crates found through -L, the sysroot std for host units, proc-macro dylibs).
   args.push("-Z", "binary-dep-depinfo");
@@ -546,6 +552,7 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   const env: Record<string, string> = {
     ...ctx.baseEnv,
     ...packageEnv(unit.pkg, ctx.cargo),
+    ...ofFeatures.env,
     CARGO_CRATE_NAME: unit.crateName,
   };
   // cargo: every unit of a package named on the command line (`-p bun_runtime`), its build script included.
@@ -554,14 +561,10 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   if (unit.buildScript !== undefined) env.OUT_DIR = unit.buildScript.scriptOutDir!;
   if (unit.isStd) env.RUSTC_BOOTSTRAP = "1";
 
-  // A crate with a gate is compiled by the driver, which does not know where it is installed.
-  const driver = isHost || unit.pkg.gate === null ? undefined : crateGateDriver(cfg);
-  if (driver !== undefined) args.unshift(gateOf(cfg, unit.crateName, unit.pkg.gate!), "--sysroot", plan.rustc.sysroot);
-
   return {
     kind: unit.kind,
     crateName: unit.crateName,
-    rustc: driver ?? plan.rustc.path,
+    rustc: plan.rustc.path,
     cwd,
     args,
     env,

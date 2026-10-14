@@ -1,115 +1,97 @@
 //! Features of the runtime that `bun build --compile --compile-exclude-features=<name>` can leave out of an executable.
 //!
-//! They work like `#ifdef`: what is gated is gone, what is not gated stays, whoever used it. Two things can be gated.
+//! A FEATURE IS CRATES THAT THE REST OF BUN DOES NOT DEPEND ON. They depend on Bun, like a plugin would, and are linked into
+//! it like everything else. So nothing outside can name what is in them, which the compiler sees to, and all of it can go:
+//! Bun's build has everything that is compiled for those crates put in sections of its own (scripts/build/feature-pass.cpp),
+//! and `bun build --compile` leaves those sections out (src/exe_features).
 //!
-//! A FUNCTION, or a method:
-//!
-//! ```ignore
-//! #[feature::gate(lint)]
-//! fn run_lint(ctx: &Context) -> CmdResult { ... }
-//! ```
-//!
-//! A CRATE, in its `Cargo.toml`, which is everything that rustc emits when it compiles the crate:
+//! The crate that a feature starts at says so in its `Cargo.toml`:
 //!
 //! ```toml
 //! [package.metadata.bun]
-//! gate = ["lint", "fmt"]
+//! feature = "lint"
 //! ```
 //!
-//! A gate names the features that need the code: it goes once all of them are excluded. A function in a gated crate may have
-//! a gate of its own, with fewer of them.
+//! What it depends on and Bun does not goes with it, or, if several features depend on it, once all of them are excluded.
 //!
-//! Nothing else can be gated. A closure is a function of its own to the compiler and does not go with the function it is
-//! written in (it does go with its crate). Neither do constants, or what the function calls.
-//!
-//! What is not gated reaches what is through [`enter!`], which is the `#ifdef ... #else`:
+//! Bun gets into a feature through a DOOR: a function of Bun's whose body says what to do without the feature.
 //!
 //! ```ignore
-//! match feature::enter!(lint, run_lint(ctx)) {
-//!     Some(result) => result,
-//!     None => built_without_this_command(),
+//! #[feature::door(lint)]
+//! pub fn exec_lint(ctx: &Context) -> CmdResult {
+//!     built_without_this_command()
 //! }
 //! ```
 //!
-//! In bun itself that costs one no-op. [`present!`] is the condition alone.
+//! With the feature, calling it runs the function that the feature put behind it instead:
 //!
-//! Naming gated code anywhere else runs into what is gone. `bun run rust:check-gates` finds that: it type-checks Bun with
-//! each feature compiled out for real, which is what these three macros also do under `--cfg bun_without="<name>"`.
+//! ```ignore
+//! #[feature::behind(bun_runtime::features::exec_lint, lint)]
+//! fn exec_lint(ctx: &Context) -> CmdResult { ... }
+//! ```
+//!
+//! A door of several features, `door(lint, fmt)`, is open for as long as one of them is there.
+//!
+//! A door is a no-op and a jump to the feature's function, and `bun build --compile` makes the no-op a jump to the body. So it
+//! costs that much, nothing is inlined through it, and it belongs where a feature is entered, not in a loop.
+//!
+//! [`present!`] is a door with nothing behind it: whether this executable has the feature.
 
 mod ids;
-pub use bun_core_macros::{enter, gate, present};
+pub use bun_core_macros::{behind, door, present};
 use ids::NAMES;
 
-/// Nothing can be excluded on this platform.
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+/// What a door is made of, for [`door`]: a no-op as long as a jump, the jump to `{real}`, and for `bun build --compile`, which
+/// reads these in the file it copies, where the no-op is and where `{absent}` is, as distances from here, and the features, a
+/// bit for each. It does not start with the jump, because a linker has what calls a jump call where that goes.
 #[doc(hidden)]
-#[inline(always)]
-pub fn is_present<const ID: u32>() -> bool {
-    true
-}
-
-// An instruction that does nothing and holds the feature's number. It is as long as a jump.
-#[cfg(target_arch = "x86_64")]
-macro_rules! no_op {
+#[macro_export]
+#[cfg(all(target_arch = "x86_64", not(any(target_os = "macos", windows))))]
+macro_rules! __door {
     () => {
-        "2: .byte 0x0f, 0x1f, 0x80\n.long {id}" // nopl id(%rax)
+        "2: .byte 0x0f, 0x1f, 0x44, 0x00, 0x00\njmp {real}\n.pushsection .bun_feature_doors,\"aR\",@progbits\n3: .long 2b - 3b\n.long {absent} - 3b\n.long {low}\n.long {high}\n.popsection"
     };
 }
-#[cfg(target_arch = "aarch64")]
-macro_rules! no_op {
+#[doc(hidden)]
+#[macro_export]
+#[cfg(all(target_arch = "aarch64", not(any(target_os = "macos", windows))))]
+macro_rules! __door {
     () => {
-        "2: movz xzr, #{id}"
-    };
-}
-
-// Where the no-op is and where to jump instead of it, as distances from here, and the number. `bun build --compile` reads
-// these in the file it copies.
-#[cfg(target_os = "linux")]
-macro_rules! marker {
-    () => {
-        ".pushsection .bun_feature_markers,\"aR\",@progbits\n3: .long 2b - 3b\n.long {no} - 3b\n.long {id}\n.long 0\n.popsection"
+        "2: nop\nb {real}\n.pushsection .bun_feature_doors,\"aR\",@progbits\n3: .long 2b - 3b\n.long {absent} - 3b\n.long {low}\n.long {high}\n.popsection"
     };
 }
 // On x86-64 Mach-O a label can be subtracted only if a symbol the linker sees comes before it in its section.
-#[cfg(target_os = "macos")]
-macro_rules! marker {
-    () => {
-        concat!(
-            ".pushsection __TEXT,__bun_feat_marks,regular,live_support\n.ifndef l_bun_feat_marks\nl_bun_feat_marks:\n.endif\n",
-            "3: .long 2b - 3b\n.long {no} - 3b\n.long {id}\n.long 0\n.popsection"
-        )
-    };
-}
-#[cfg(windows)]
-macro_rules! marker {
-    () => {
-        ".pushsection .bunfmrk,\"dr\"\n3: .long 2b - 3b\n.long {no} - 3b\n.long {id}\n.long 0\n.popsection"
-    };
-}
-
-/// [`present!`], by number.
-#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 #[doc(hidden)]
-#[inline(always)]
-#[cfg_attr(
-    target_os = "macos",
-    expect(
-        named_asm_labels,
-        reason = "`.ifndef` keeps copies of this from defining it twice"
-    )
-)]
-pub fn is_present<const ID: u32>() -> bool {
-    // SAFETY: does nothing, or jumps to the label.
-    unsafe {
-        core::arch::asm!(
-            no_op!(),
-            marker!(),
-            id = const ID,
-            no = label { return false },
-            options(nomem, nostack, preserves_flags)
-        );
-    }
-    true
+#[macro_export]
+#[cfg(all(target_arch = "x86_64", target_os = "macos"))]
+macro_rules! __door {
+    () => {
+        "2: .byte 0x0f, 0x1f, 0x44, 0x00, 0x00\njmp {real}\n.pushsection __TEXT,__bun_feat_door,regular,no_dead_strip\n.ifndef l_bun_feat_door\nl_bun_feat_door:\n.endif\n3: .long 2b - 3b\n.long {absent} - 3b\n.long {low}\n.long {high}\n.popsection"
+    };
+}
+#[doc(hidden)]
+#[macro_export]
+#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+macro_rules! __door {
+    () => {
+        "2: nop\nb {real}\n.pushsection __TEXT,__bun_feat_door,regular,no_dead_strip\n.ifndef l_bun_feat_door\nl_bun_feat_door:\n.endif\n3: .long 2b - 3b\n.long {absent} - 3b\n.long {low}\n.long {high}\n.popsection"
+    };
+}
+#[doc(hidden)]
+#[macro_export]
+#[cfg(all(target_arch = "x86_64", windows))]
+macro_rules! __door {
+    () => {
+        "2: .byte 0x0f, 0x1f, 0x44, 0x00, 0x00\njmp {real}\n.pushsection .bunfdor,\"dr\"\n3: .long 2b - 3b\n.long {absent} - 3b\n.long {low}\n.long {high}\n.popsection"
+    };
+}
+#[doc(hidden)]
+#[macro_export]
+#[cfg(all(target_arch = "aarch64", windows))]
+macro_rules! __door {
+    () => {
+        "2: nop\nb {real}\n.pushsection .bunfdor,\"dr\"\n3: .long 2b - 3b\n.long {absent} - 3b\n.long {low}\n.long {high}\n.popsection"
+    };
 }
 
 const NAMES_LENGTH: usize = {
@@ -122,9 +104,11 @@ const NAMES_LENGTH: usize = {
 };
 
 /// The names, each with a 0 after it. `bun build --compile` reads them in the file it copies.
-#[cfg(any(target_os = "linux", target_os = "macos", windows))]
 #[used(linker)]
-#[cfg_attr(target_os = "linux", unsafe(link_section = ".bun_feature_names"))]
+#[cfg_attr(
+    not(any(target_os = "macos", windows)),
+    unsafe(link_section = ".bun_feature_names")
+)]
 #[cfg_attr(target_os = "macos", unsafe(link_section = "__TEXT,__bun_feat_names"))]
 #[cfg_attr(windows, unsafe(link_section = ".bunfnam"))]
 static NAMES_IN_THE_EXECUTABLE: [u8; NAMES_LENGTH] = {

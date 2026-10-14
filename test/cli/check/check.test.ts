@@ -467,7 +467,7 @@ describe.concurrent("bun check", () => {
 
     // scripts/update-typescript-libs.ts writes the file.
     test.skipIf(!typescript7)("are those of TypeScript 7, byte for byte", () => {
-      const bundle = readFileSync(join(import.meta.dir, "../../../src/runtime/cli/typescript_libs.bin"));
+      const bundle = readFileSync(join(import.meta.dir, "../../../src/typescript_libs/typescript_libs.bin"));
       const dictionaries = [undefined, "lib.es5.d.ts", "lib.dom.d.ts"].map(
         name => name && readFileSync(join(typescript7!, name)),
       );

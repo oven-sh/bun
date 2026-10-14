@@ -1,0 +1,21 @@
+[package]
+name = "bun_format_command"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.bun]
+feature = "fmt"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_runtime.workspace = true
+bun_lint_command.workspace = true
+bun_lint_driver.workspace = true
+bun_format_conformance.workspace = true
+bun_core.workspace = true
+bun_options_types.workspace = true

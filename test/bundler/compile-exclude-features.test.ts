@@ -1,22 +1,11 @@
 // `bun build --compile --compile-exclude-features=<name>` leaves parts of the runtime out of the executable.
 //
-// What can be left out is said by a table that Bun's build writes into the release binaries of the targets it supports,
-// stripped or not (scripts/build/feature-table.ts). A debug or ASAN build has none, and has to say so.
+// A feature is crates that the rest of Bun does not depend on (src/bun_core/feature.rs). Every build of Bun has its doors. Its
+// code is in sections of its own, which can leave the file, where Bun's build could load its compiler pass
+// (scripts/build/rust/features.ts).
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import {
-  bunEnv,
-  bunExe,
-  isArm64,
-  isASAN,
-  isCI,
-  isDebug,
-  isLinux,
-  isMacOS,
-  isWindows,
-  readElf64ProgramHeaders,
-  tempDir,
-} from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, readElf64ProgramHeaders, tempDir } from "harness";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -118,22 +107,7 @@ function expectWellFormedPe(path: string) {
   expect(gaps.filter(s => s.rawSize || s.raw)).toEqual([]);
 }
 
-const noTable = "does not say what can be excluded";
-const hasTable = (() => {
-  using dir = tempDir("exclude-features-probe", { "app.ts": "" });
-  const { stdout, stderr } = Bun.spawnSync({
-    cmd: [bunExe(), "build", "--compile", "app.ts", "--outfile", "app", "--compile-exclude-features=?"],
-    cwd: String(dir),
-    env: bunEnv,
-  });
-  return (stdout.toString() + stderr.toString()).includes("These can be excluded:");
-})();
-
-// Else every test below could be skipped without anyone noticing that a release lost its table.
-test.skipIf(!isCI)("the builds that should be able to exclude features are", () => {
-  const isSupportedTarget = isLinux || isMacOS || (isWindows && !isArm64);
-  expect(hasTable).toBe(!isDebug && !isASAN && isSupportedTarget);
-});
+const alreadyExcluded = "does not say what can be excluded";
 
 test("requires --compile", async () => {
   using dir = tempDir("exclude-features", { "app.ts": app });
@@ -145,15 +119,7 @@ test("requires --compile", async () => {
   expect(exitCode).not.toBe(0);
 });
 
-test.skipIf(hasTable)("a bun that cannot exclude features says so", async () => {
-  using dir = tempDir("exclude-features", { "app.ts": app });
-  const { stdout, stderr, exitCode } = await compile(String(dir), "app", "--compile-exclude-features=lint");
-  expect(stdout + stderr).toContain(noTable);
-  expect(existsSync(join(String(dir), exe("app")))).toBe(false);
-  expect(exitCode).not.toBe(0);
-});
-
-describe.skipIf(!hasTable)("with a feature table", () => {
+describe("--compile-exclude-features", () => {
   const commands = { check: ["check"], lint: ["lint", "one.ts"], fmt: ["fmt", "--check", "one.ts"] };
   const features = Object.keys(commands) as (keyof typeof commands)[];
   // What two features share goes only once both are excluded, so each set of them is an executable of its own.
@@ -202,7 +168,9 @@ describe.skipIf(!hasTable)("with a feature table", () => {
       const name = without(...excluded);
       await expectToWork(name);
 
-      if (excluded.length) {
+      // `bun fmt` depends on the crates of `bun lint`, so those go once both are excluded.
+      const leavesTheFile = excluded.includes("check") || (excluded.includes("lint") && excluded.includes("fmt"));
+      if (leavesTheFile) {
         if (isLinux) expectWellFormedElf(join(cwd, name));
         if (isWindows) expectWellFormedPe(join(cwd, exe(name)));
         // On x64 nothing is signed.
@@ -232,8 +200,8 @@ describe.skipIf(!hasTable)("with a feature table", () => {
   test("what is excluded is not in the file", () => {
     const size = (...set: string[]) => statSync(join(cwd, exe(without(...set)))).size;
     const MB = 1024 * 1024;
-    expect(size("lint")).toBeLessThan(size() - 5 * MB);
-    expect(size(...features)).toBeLessThan(size("lint") - 5 * MB);
+    expect(size("lint", "fmt")).toBeLessThan(size() - 5 * MB);
+    expect(size(...features)).toBeLessThan(size("lint", "fmt") - 5 * MB);
   });
 
   // Nothing moves, so it reads against the symbols of the release like any other.
@@ -299,7 +267,7 @@ describe.skipIf(!hasTable)("with a feature table", () => {
   test.concurrent("features cannot be excluded a second time", async () => {
     const from = `--compile-executable-path=${join(cwd, exe(without("lint")))}`;
     const again = await compile(cwd, "a-second-time", from, "--compile-exclude-features=fmt");
-    expect(again.stdout + again.stderr).toContain(noTable);
+    expect(again.stdout + again.stderr).toContain(alreadyExcluded);
     expect(again.exitCode).not.toBe(0);
   });
 

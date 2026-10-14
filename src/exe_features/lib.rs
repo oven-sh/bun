@@ -1,11 +1,11 @@
 //! Leaves features out of a bun executable, for `bun build --compile --compile-exclude-features`.
 //!
-//! What belongs to a feature is said in Bun's source, by a gate on a function or on a crate (`bun_core::feature`). A gate names
-//! the features that need the code, and the code of each gate is a section of the executable, which has the gate in its name.
-//! Leaving features out is then
+//! `bun_core::feature` says what a feature is. In the executable, what is compiled for it is in sections of its own, which have
+//! in their names the features that need them, and the rest of Bun gets into it through doors, which are jumps. Leaving
+//! features out is then
 //!
-//! 1. turn each `feature::present!` of theirs into a jump to its `false` side,
-//! 2. overwrite the sections of the gates that name no other feature, with an instruction that traps,
+//! 1. shut their doors: have each go to what Bun does without the feature,
+//! 2. overwrite the sections that no other feature needs, with an instruction that traps,
 //! 3. leave the pages that hold nothing else out of the file.
 //!
 //! Nothing moves. Every byte that stays is loaded at the address it was linked for, so no address stored anywhere has to be
@@ -105,17 +105,23 @@ impl Container {
         Ok(sections)
     }
 
-    /// What `bun_core::feature` calls the section with the names of the features, the one with the markers, and, up to the
-    /// gate, the one of a gate.
-    fn names(self) -> [&'static [u8]; 3] {
+    /// What the section with the names of the features is called and the one with the doors (`bun_core::feature`), and, up to
+    /// the features that need it, one with code and one with constants (scripts/build/feature-pass.cpp).
+    fn names(self) -> [&'static [u8]; 4] {
         match self {
             Container::Elf => [
                 b".bun_feature_names",
-                b".bun_feature_markers",
-                b".bun_gate.",
+                b".bun_feature_doors",
+                b".bun_feature_x.",
+                b".bun_feature_r.",
             ],
-            Container::MachO => [b"__bun_feat_names", b"__bun_feat_marks", b"__bun_gate_"],
-            Container::Pe => [b".bunfnam", b".bunfmrk", b".bg"],
+            Container::MachO => [
+                b"__bun_feat_names",
+                b"__bun_feat_door",
+                b"__bun_feat_x",
+                b"__bun_feat_r",
+            ],
+            Container::Pe => [b".bunfnam", b".bunfdor", b".bfx", b".bfr"],
         }
     }
 
@@ -147,33 +153,36 @@ pub fn names(file: &[u8]) -> Result<Vec<&[u8]>> {
     names_in(file, &container.sections(file)?, container.names()[0])
 }
 
-/// The no-op that `bun_core::feature` has at `at` for the feature `id`, and the jump to `to` that goes in its place.
-fn no_op_and_jump(is_arm64: bool, id: u32, at: u64, to: u64) -> Result<(Vec<u8>, Vec<u8>)> {
+/// Makes `no_op`, which a door starts with, at `at`, a jump to `to`.
+fn shut(is_arm64: bool, no_op: &mut [u8], at: u64, to: u64) -> Result<()> {
     let distance = to.wrapping_sub(at).cast_signed();
-    if is_arm64 {
-        if id >= 1 << 16 || distance % 4 != 0 || !(-(1 << 27)..1 << 27).contains(&distance) {
+    let (expected, jump): (&[u8], Vec<u8>) = if is_arm64 {
+        if distance % 4 != 0 || !(-(1 << 27)..1 << 27).contains(&distance) {
             return Err(Error::InvalidExecutable);
         }
-        let no_op: u32 = 0xd280_001f | id << 5;
-        let jump: u32 = 0x1400_0000 | (distance / 4) as u32 & 0x03ff_ffff;
-        return Ok((no_op.to_le_bytes().to_vec(), jump.to_le_bytes().to_vec()));
+        let b: u32 = 0b000101 << 26 | (distance / 4) as u32 & 0x03ff_ffff;
+        (&[0x1f, 0x20, 0x03, 0xd5], b.to_le_bytes().to_vec())
+    } else {
+        let relative = i32::try_from(distance - 5).map_err(|_| Error::InvalidExecutable)?;
+        let jump = [&[0xe9][..], &relative.to_le_bytes()].concat();
+        (&[0x0f, 0x1f, 0x44, 0x00, 0x00], jump)
+    };
+    // The linker folds identical functions, and then their doors are one.
+    if no_op != expected && no_op != jump {
+        return Err(Error::InvalidExecutable);
     }
-    let relative = i32::try_from(distance - 5).map_err(|_| Error::InvalidExecutable)?;
-    let (mut no_op, mut jump) = (vec![0x0f, 0x1f, 0x80], vec![0xe9]);
-    no_op.extend_from_slice(&id.to_le_bytes());
-    jump.extend_from_slice(&relative.to_le_bytes());
-    jump.extend_from_slice(&[0x66, 0x90]);
-    Ok((no_op, jump))
+    no_op.copy_from_slice(&jump);
+    Ok(())
 }
 
 /// `file`, an executable, without the features `excluded`.
 pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
     let container = Container::of(&file)?;
     let is_arm64 = container.is_arm64(&file)?;
-    let [called_names, called_markers, gate_prefix] = container.names();
+    let [called_names, called_doors, code, constants] = container.names();
 
     // ---- what to do, read from the file. Then the file is written to.
-    let mut patches: Vec<(usize, Vec<u8>, Vec<u8>)> = Vec::new();
+    let mut to_shut: Vec<(usize, u64, u64)> = Vec::new();
     let mut traps: Vec<(usize, Range<u64>)> = Vec::new();
     let mut dead: Vec<Range<u64>> = Vec::new();
     let names_at;
@@ -197,34 +206,33 @@ pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
             Ok(section.offset + (address - section.addresses.start) as usize)
         };
 
-        // {no-op, other side, id, 0}, the first two as distances from the record.
-        for markers in sections.iter().filter(|s| s.name == called_markers) {
-            for record in markers.addresses.clone().step_by(16) {
+        // {the door, where it goes without the features, the features}, the first two as distances from the record.
+        for doors in sections.iter().filter(|s| s.name == called_doors) {
+            for record in doors.addresses.clone().step_by(16) {
                 let at = offset_of(record)?;
-                let id = u32_at(&file, at + 8)?;
-                if id == 0 || id as usize > names.len() {
+                let of =
+                    u64::from(u32_at(&file, at + 8)?) | u64::from(u32_at(&file, at + 12)?) << 32;
+                if of == 0 || of >> names.len() != 0 {
                     return Err(Error::InvalidExecutable);
                 }
-                if excluded & 1 << (id - 1) != 0 {
-                    let no_op = record.wrapping_add_signed(i32_at(&file, at)?.into());
-                    let otherwise = record.wrapping_add_signed(i32_at(&file, at + 4)?.into());
-                    let (present, absent) = no_op_and_jump(is_arm64, id, no_op, otherwise)?;
-                    patches.push((offset_of(no_op)?, present, absent));
+                if of & !excluded == 0 {
+                    let door = record.wrapping_add_signed(i32_at(&file, at)?.into());
+                    let absent = record.wrapping_add_signed(i32_at(&file, at + 4)?.into());
+                    to_shut.push((offset_of(door)?, door, absent));
                 }
             }
         }
-        // The linker folds identical functions, and then their markers are one.
-        patches.sort_unstable();
-        patches.dedup();
 
         let mut follows_a_dead_one = false;
         for section in &sections {
-            let gate = section.name.strip_prefix(gate_prefix);
-            let gate = gate.and_then(|hex| u64::from_str_radix(str::from_utf8(hex).ok()?, 16).ok());
-            if gate.is_some_and(|gate| gate == 0 || gate >> names.len() != 0) {
+            let needed_by =
+                (section.name.strip_prefix(code)).or(section.name.strip_prefix(constants));
+            let needed_by =
+                needed_by.and_then(|hex| u64::from_str_radix(str::from_utf8(hex).ok()?, 16).ok());
+            if needed_by.is_some_and(|set| set == 0 || set >> names.len() != 0) {
                 return Err(Error::InvalidExecutable);
             }
-            let is_dead = gate.is_some_and(|needed_by| needed_by & !excluded == 0);
+            let is_dead = needed_by.is_some_and(|set| set & !excluded == 0);
             if is_dead {
                 traps.push((section.offset, section.addresses.clone()));
                 match dead.last_mut() {
@@ -242,12 +250,9 @@ pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
         );
     }
 
-    for (at, present, absent) in patches {
-        let there = slice_mut(&mut file, at, present.len())?;
-        if there != present {
-            return Err(Error::InvalidExecutable);
-        }
-        there.copy_from_slice(&absent);
+    for (at, door, absent) in to_shut {
+        let length = if is_arm64 { 4 } else { 5 };
+        shut(is_arm64, slice_mut(&mut file, at, length)?, door, absent)?;
     }
     // int3; brk #1
     let trap: &[u8] = if is_arm64 {

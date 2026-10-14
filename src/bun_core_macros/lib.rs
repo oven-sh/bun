@@ -694,57 +694,136 @@ mod feature {
     include!("../bun_core/feature/ids.rs");
 }
 
-/// `lint` → 2
-fn feature_number(name: &syn::Ident) -> syn::Result<u32> {
-    let found = feature::NAMES.iter().position(|known| name == known);
-    found.map(|index| index as u32 + 1).ok_or_else(|| {
-        let known = feature::NAMES.join(", ");
-        syn::Error::new(name.span(), format!("no such feature. There are: {known}"))
-    })
+/// `lint, fmt` → 0b110
+fn set_of(features: &syn::punctuated::Punctuated<syn::Ident, Token![,]>) -> syn::Result<u64> {
+    let mut set = 0;
+    for name in features {
+        let Some(index) = feature::NAMES.iter().position(|known| name == known) else {
+            let known = feature::NAMES.join(", ");
+            return Err(syn::Error::new(
+                name.span(),
+                format!("no such feature. There are: {known}"),
+            ));
+        };
+        set |= 1 << index;
+    }
+    match set {
+        0 => Err(syn::Error::new(Span::call_site(), "of which feature?")),
+        _ => Ok(set),
+    }
 }
 
-/// True when the feature is compiled out for real (`bun run rust:check-gates`).
-fn is_compiled_out(name: &syn::Ident) -> proc_macro2::TokenStream {
-    let name = name.to_string();
-    quote!(bun_without = #name)
+/// What the function behind `door` is called by the linker. A door and a function that do not agree on the features do not
+/// find each other.
+fn symbol_behind(set: u64, door: &syn::Ident) -> String {
+    format!("bun_feature_{set:x}_{door}")
+}
+
+/// A function that is one jump, to `real`, which `bun build --compile` can turn to `absent`.
+fn door_to(
+    function: &syn::ItemFn,
+    set: u64,
+    real: &syn::Ident,
+    absent: &syn::Ident,
+) -> proc_macro2::TokenStream {
+    let syn::ItemFn {
+        attrs, vis, sig, ..
+    } = function;
+    let (low, high) = (set as u32, (set >> 32) as u32);
+    quote! {
+        #(#attrs)*
+        #[unsafe(naked)]
+        #vis #sig {
+            ::core::arch::naked_asm!(
+                ::bun_core::__door!(),
+                real = sym #real,
+                absent = sym #absent,
+                low = const #low,
+                high = const #high,
+            )
+        }
+    }
 }
 
 /// See `bun_core::feature`.
 #[proc_macro_attribute]
-pub fn gate(features: TokenStream, function: TokenStream) -> TokenStream {
+pub fn door(features: TokenStream, function: TokenStream) -> TokenStream {
     let parser = syn::punctuated::Punctuated::<syn::Ident, Token![,]>::parse_terminated;
     let features = parse_macro_input!(features with parser);
-    // Also what a function outside of an `impl` parses as.
-    if let Err(e) = syn::parse::<syn::ImplItemFn>(function.clone()) {
-        let message = "a gate goes on a function or a method (or on a crate, in its Cargo.toml)";
-        return syn::Error::new(e.span(), message).to_compile_error().into();
-    }
-    let mut gate = 0u64;
-    for name in &features {
-        match feature_number(name) {
-            Ok(number) => gate |= 1 << (number - 1),
-            Err(e) => return e.to_compile_error().into(),
-        }
-    }
-    if gate == 0 {
-        let message = "which features need this function?";
-        return syn::Error::new(Span::call_site(), message)
-            .to_compile_error()
-            .into();
-    }
-    // scripts/build/rust/crate-gate.cpp and src/exe_features/lib.rs have these names too.
-    let (elf, macho, pe) = (
-        format!(".bun_gate.{gate:x}"),
-        format!("__TEXT,__bun_gate_{gate:x},regular,pure_instructions"),
-        format!(".bg{gate:x}"),
+    let function = parse_macro_input!(function as syn::ItemFn);
+    let set = match set_of(&features) {
+        Ok(set) => set,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    let name = &function.sig.ident;
+    let symbol = symbol_behind(set, name);
+    let (real, absent) = (
+        syn::Ident::new(&format!("{name}_with_the_feature"), name.span()),
+        syn::Ident::new(&format!("{name}_without_the_feature"), name.span()),
     );
-    let compiled_out = features.iter().map(is_compiled_out);
-    let function = proc_macro2::TokenStream::from(function);
+    let (mut declared, mut without) = (function.sig.clone(), function.clone());
+    declared.ident = real.clone();
+    let abi = declared.abi.take().and_then(|abi| abi.name);
+    let abi = abi.unwrap_or_else(|| LitStr::new("Rust", Span::call_site()));
+    without.sig.ident = absent.clone();
+    without.vis = syn::Visibility::Inherited;
+    without.attrs.clear();
+    let door = door_to(&function, set, &real, &absent);
     quote! {
-        #[cfg(not(all(#(#compiled_out),*)))]
-        #[cfg_attr(target_os = "linux", unsafe(link_section = #elf))]
-        #[cfg_attr(target_os = "macos", unsafe(link_section = #macho))]
-        #[cfg_attr(windows, unsafe(link_section = #pe))]
+        unsafe extern #abi {
+            #[link_name = #symbol]
+            #declared;
+        }
+        #[allow(unused_variables, non_snake_case, reason = "they are the door's")]
+        #without
+        #door
+    }
+    .into()
+}
+
+struct Behind {
+    door: syn::Path,
+    features: syn::punctuated::Punctuated<syn::Ident, Token![,]>,
+}
+
+impl Parse for Behind {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let door = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let features = syn::punctuated::Punctuated::parse_terminated(input)?;
+        Ok(Self { door, features })
+    }
+}
+
+/// See `bun_core::feature`.
+#[proc_macro_attribute]
+pub fn behind(door: TokenStream, function: TokenStream) -> TokenStream {
+    let Behind { door, features } = parse_macro_input!(door as Behind);
+    let function = parse_macro_input!(function as syn::ItemFn);
+    let set = match set_of(&features) {
+        Ok(set) => set,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    let symbol = symbol_behind(set, &door.segments.last().unwrap().ident);
+    let syn::Signature {
+        unsafety,
+        abi,
+        inputs,
+        output,
+        ..
+    } = &function.sig;
+    let types = inputs.iter().map(|input| match input {
+        syn::FnArg::Typed(argument) => &*argument.ty,
+        syn::FnArg::Receiver(receiver) => &*receiver.ty,
+    });
+    let names = features.iter().map(|name| name.to_string());
+    quote! {
+        // The door is open for as long as one of its features is there, so this has to be too. Bun's build says what needs
+        // this crate (scripts/build/rust/features.ts). Cargo alone does not.
+        #[cfg(all(bun_needed_by, not(all(#(bun_needed_by = #names),*))))]
+        compile_error!("one of the features of the door does not depend on this crate");
+        const _: #unsafety #abi fn(#(#types),*) #output = #door;
+        #[unsafe(export_name = #symbol)]
         #function
     }
     .into()
@@ -752,51 +831,26 @@ pub fn gate(features: TokenStream, function: TokenStream) -> TokenStream {
 
 /// `present!(lint)`: whether this executable has the feature. See `bun_core::feature`.
 #[proc_macro]
-pub fn present(feature: TokenStream) -> TokenStream {
-    let name = parse_macro_input!(feature as syn::Ident);
-    let number = match feature_number(&name) {
-        Ok(number) => number,
+pub fn present(features: TokenStream) -> TokenStream {
+    let parser = syn::punctuated::Punctuated::<syn::Ident, Token![,]>::parse_terminated;
+    let features = parse_macro_input!(features with parser);
+    let set = match set_of(&features) {
+        Ok(set) => set,
         Err(e) => return e.to_compile_error().into(),
     };
-    let compiled_out = is_compiled_out(&name);
-    quote!((!cfg!(#compiled_out) && ::bun_core::feature::is_present::<#number>())).into()
-}
-
-struct Enter {
-    feature: syn::Ident,
-    gated: Expr,
-}
-
-impl Parse for Enter {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let feature = input.parse()?;
-        input.parse::<Token![,]>()?;
-        let gated = input.parse()?;
-        input.parse::<Option<Token![,]>>()?;
-        Ok(Self { feature, gated })
-    }
-}
-
-/// `enter!(lint, expression)`: `Some(expression)` if this executable has the feature, else `None`. See `bun_core::feature`.
-#[proc_macro]
-pub fn enter(input: TokenStream) -> TokenStream {
-    let Enter { feature, gated } = parse_macro_input!(input as Enter);
-    let number = match feature_number(&feature) {
-        Ok(number) => number,
-        Err(e) => return e.to_compile_error().into(),
-    };
-    let compiled_out = is_compiled_out(&feature);
+    let function: syn::ItemFn = syn::parse_quote!(
+        fn is_present() -> bool {}
+    );
+    let (yes, no) = (
+        syn::Ident::new("yes", Span::call_site()),
+        syn::Ident::new("no", Span::call_site()),
+    );
+    let door = door_to(&function, set, &yes, &no);
     quote! {{
-        #[cfg(not(#compiled_out))]
-        #[allow(unreachable_code, reason = "it may not return")]
-        let entered = if ::bun_core::feature::is_present::<#number>() {
-            ::core::option::Option::Some(#gated)
-        } else {
-            ::core::option::Option::None
-        };
-        #[cfg(#compiled_out)]
-        let entered = ::core::option::Option::None;
-        entered
+        fn yes() -> bool { true }
+        fn no() -> bool { false }
+        #door
+        is_present()
     }}
     .into()
 }

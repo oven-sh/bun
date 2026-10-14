@@ -185,7 +185,7 @@ struct LintSpan {
     size_t len;
 };
 
-// src/runtime/cli/lint_js.rs. Asks Rust about the file that's being linted. `kind` is one of `ask` in src/lint/js_plugin/wire.rs.
+// src/lint_command/lint_js.rs. Asks Rust about the file that's being linted. `kind` is one of `ask` in src/lint/js_plugin/wire.rs.
 // The answer is Rust's memory, aligned to 8 bytes. It stays as it is and where it is until Rust calls `Bun__Lint__endFile`, so keep the span, not a copy,
 // and drop it in `endFile`. Asking again without details gives the same span. It's `{ nullptr, 0 }` if no file is being linted.
 extern "C" LintSpan Bun__Lint__ask(JSC::JSGlobalObject*, uint32_t kind, const uint8_t* details, size_t detailsLength);

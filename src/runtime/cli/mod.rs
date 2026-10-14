@@ -5,7 +5,7 @@
 //! per-command exec bodies live in the sibling `*_command.rs` modules.
 
 use bun_core::strings;
-use bun_core::{self as bun, Global, Output, feature};
+use bun_core::{self as bun, Global, Output};
 use bun_core::{pretty, pretty_error, pretty_errorln};
 
 // ─── compiling submodules ────────────────────────────────────────────────────
@@ -336,22 +336,14 @@ pub(crate) mod upgrade_command;
 pub(crate) mod add_command;
 #[path = "audit_command.rs"]
 pub(crate) mod audit_command;
-#[path = "check_command.rs"]
-pub(crate) mod check_command;
 #[path = "dedupe_command.rs"]
 pub(crate) mod dedupe_command;
 #[path = "filter_arg.rs"]
 pub(crate) mod filter_arg;
 #[path = "filter_run.rs"]
 pub(crate) mod filter_run;
-#[path = "format_command.rs"]
-pub(crate) mod format_command;
 #[path = "link_command.rs"]
 pub(crate) mod link_command;
-#[path = "lint_command.rs"]
-pub(crate) mod lint_command;
-#[path = "lint_js.rs"]
-pub(crate) mod lint_js;
 #[path = "multi_run.rs"]
 pub(crate) mod multi_run;
 #[path = "outdated_command.rs"]
@@ -391,7 +383,6 @@ pub(crate) mod remove_command;
 pub(crate) mod scan_command;
 #[path = "script_or_command.rs"]
 pub(crate) mod script_or_command;
-mod typescript_libs;
 #[path = "unlink_command.rs"]
 pub(crate) mod unlink_command;
 #[path = "update_command.rs"]
@@ -1335,15 +1326,9 @@ pub(crate) mod command {
             Tag::UpdateInteractiveCommand => exec_update_interactive(log),
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
-            Tag::CheckCommand => {
-                feature::enter!(check, exec_check(log)).unwrap_or_else(built_without_this_command)
-            }
-            Tag::LintCommand => {
-                feature::enter!(lint, exec_lint(log)).unwrap_or_else(built_without_this_command)
-            }
-            Tag::FormatCommand => {
-                feature::enter!(fmt, exec_format(log)).unwrap_or_else(built_without_this_command)
-            }
+            Tag::CheckCommand => exec_check(log),
+            Tag::LintCommand => exec_lint(log),
+            Tag::FormatCommand => exec_format(log),
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
@@ -1464,10 +1449,7 @@ pub(crate) mod command {
         // Scripts have no entry point to start from: the project is checked, as by `bun check`.
         let runs_several =
             ctx.parallel || ctx.sequential || !ctx.filters.is_empty() || ctx.workspaces;
-        if runs_several
-            && ctx.runtime_options.check
-            && !super::check_command::check_project_before()
-        {
+        if runs_several && ctx.runtime_options.check && !crate::features::check_project_before() {
             Global::exit(1);
         }
 
@@ -1504,7 +1486,7 @@ pub(crate) mod command {
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
-            lint_command::read_program_of_script(ctx);
+            crate::features::read_program_of_script(ctx);
             return run_command::RunCommand::exec_eval(ctx);
         }
 
@@ -1517,7 +1499,7 @@ pub(crate) mod command {
 
         // `bun --check` and `bun run --check` are `bun check`, also where that is a script.
         if no_target && ctx.runtime_options.check && ctx.runtime_options.eval.script.is_empty() {
-            super::check_command::CheckCommand::exec_without_arguments();
+            crate::features::exec_check_without_arguments();
         }
 
         if !ctx.positionals.is_empty() {
@@ -1603,19 +1585,13 @@ pub(crate) mod command {
         Ok(())
     }
 
-    /// `bun build --compile --compile-exclude-features` left it out.
-    fn built_without_this_command() -> CmdResult {
-        Output::err_generic("this executable was built without this command", ());
-        Global::exit(1)
-    }
-
     #[cold]
     #[inline(never)]
     fn exec_check(log: &mut bun_ast::Log) -> CmdResult {
         // CheckCommand parses its own argv.
         init(Tag::CheckCommand, log)?;
         let argv = argv_zslice();
-        super::check_command::CheckCommand::exec(after_command(&argv, b"check"))
+        crate::features::exec_check(after_command(&argv, b"check"))
     }
 
     /// What follows `command`, which stands after the flags of `bun` and those of `BUN_OPTIONS`.
@@ -1674,8 +1650,8 @@ pub(crate) mod command {
         let ctx = init(Tag::LintCommand, log)?;
         let argv = argv_zslice();
         print_help_if_asked_before(&argv, b"lint", Tag::LintCommand);
-        let knows = super::lint_command::LintCommand::has_flag;
-        super::lint_command::LintCommand::exec(ctx, &with_own_flags_before(&argv, b"lint", knows))
+        let knows = crate::features::is_flag_of_lint;
+        crate::features::exec_lint(ctx, &with_own_flags_before(&argv, b"lint", knows))
     }
 
     #[cold]
@@ -1685,11 +1661,8 @@ pub(crate) mod command {
         let ctx = init(Tag::FormatCommand, log)?;
         let argv = argv_zslice();
         print_help_if_asked_before(&argv, b"fmt", Tag::FormatCommand);
-        let knows = super::format_command::FormatCommand::has_flag;
-        super::format_command::FormatCommand::exec(
-            ctx,
-            &with_own_flags_before(&argv, b"fmt", knows),
-        )
+        let knows = crate::features::is_flag_of_format;
+        crate::features::exec_format(ctx, &with_own_flags_before(&argv, b"fmt", knows))
     }
 
     #[cold]
@@ -2094,21 +2067,6 @@ To create a project with the official Next.js scaffolding tool, run\n\
         super::pm_view_command::view(pm, package_name, property_path, json_output)
     }
 
-    /// Prints the flags for `bun lint --help` and `bun fmt --help`: the common ones, or with `all`, every flag by group.
-    fn print_flags(help: &bun_lint_driver::cli::Help, all: bool) {
-        if all {
-            for group in help.groups {
-                pretty!("\n<b>{}:<r>", group.title);
-                bun_clap::simple_help(group.params);
-                pretty!("\n");
-            }
-            return;
-        }
-        pretty!("\n<b>Flags:<r>");
-        bun_clap::simple_help(&help.common());
-        pretty!("\n");
-    }
-
     /// Printed at the end of `bun <command> --help` if the project has a script with the same name.
     fn print_note_about_script(command: &str) {
         use crate::cli::script_or_command::{Runs, runs};
@@ -2122,7 +2080,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         }
     }
 
-    pub(crate) fn tag_print_help(cmd: Tag, show_all_flags: bool) {
+    pub fn tag_print_help(cmd: Tag, show_all_flags: bool) {
         // the output of --help uses the following syntax highlighting
         // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
         // use [foo] for multiple arguments or flags for foo.
@@ -2349,10 +2307,7 @@ Execute a shell script directly from Bun.
 <b>Flags:<r>"
                 );
                 Output::flush();
-                feature::enter!(
-                    check,
-                    bun_clap::simple_help(crate::cli::check_command::PARAMS)
-                );
+                crate::features::print_flags_of_check();
                 pretty!(
                     "
       <cyan>--strict<r>, <cyan>--target<r><d><cyan>=\\<val\\><r>, ...  Any compiler option, as for <b>tsc<r>. Overrides tsconfig.json
@@ -2386,10 +2341,7 @@ Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r
   Format JavaScript, TypeScript, CSS, HTML, JSON, YAML, Markdown and more.
 "
                 );
-                feature::enter!(
-                    fmt,
-                    print_flags(&crate::cli::format_command::HELP, show_all_flags)
-                );
+                crate::features::print_flags_of_format(show_all_flags);
                 pretty!(
                     "
 <b>Examples:<r>
@@ -2413,10 +2365,7 @@ Full documentation is available at <magenta>https://bun.com/docs/format<r>
   Find and fix problems in JavaScript and TypeScript.
 "
                 );
-                feature::enter!(
-                    lint,
-                    print_flags(&crate::cli::lint_command::HELP, show_all_flags)
-                );
+                crate::features::print_flags_of_lint(show_all_flags);
                 pretty!(
                     "
 <b>Examples:<r>

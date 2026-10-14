@@ -18,9 +18,10 @@
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 
-use bun_core::strings;
+use bun_core::{feature, strings};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Strong, virtual_machine::VirtualMachine};
 use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, Serve, Vm, Work, program};
+use bun_runtime::features::{self, LintSpan};
 use bun_threading::{Condition, Guarded};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -100,45 +101,36 @@ fn message_of(global: &JSGlobalObject, error: JSValue) -> Vec<u8> {
     }
 }
 
-/// Bytes that stay the same, and in the same place, until the call that is running is over.
-#[repr(C)]
-struct LintSpan {
-    ptr: *const u8,
-    len: usize,
-}
-
-impl LintSpan {
-    fn of(bytes: &[u8]) -> LintSpan {
-        LintSpan {
-            ptr: bytes.as_ptr(),
-            len: bytes.len(),
-        }
+fn span_of(bytes: &[u8]) -> LintSpan {
+    LintSpan {
+        ptr: bytes.as_ptr(),
+        len: bytes.len(),
     }
 }
 
 /// Answers `kind` and keeps the answer. `None`: no file is being linted.
 fn ask_and_keep(kind: u32, details: &[u8]) -> Option<LintSpan> {
-    let state = crate::jsc_hooks::lint_vm().get()?;
+    let state: &LintVm = features::lint_vm().get()?.downcast_ref()?;
     let mut call = state.call.get()?;
     // SAFETY: on the stack of `ThreadVm::call`, which is below this frame and takes it out before
     // it returns. `serve` runs no JavaScript, so this is the only reference.
     let call = unsafe { call.as_mut() };
     state.kept.borrow_mut().is_lent = true;
     if kind == 0 {
-        return Some(LintSpan::of(call.content));
+        return Some(span_of(call.content));
     }
     if details.is_empty() {
         let kept = state.kept.borrow();
         let known = kept.plain.iter().find(|it| it.0 == kind);
         if let Some(known) = known.and_then(|it| kept.all.get(it.1)) {
-            return Some(LintSpan::of(known));
+            return Some(span_of(known));
         }
     }
     let mut answer = Vec::new();
     (call.serve)(kind, details, &mut answer);
     // The allocator aligns every block to 8 bytes at least, which native code relies on to read numbers in place.
     debug_assert!(answer.is_empty() || answer.as_ptr().addr().is_multiple_of(8));
-    let span = LintSpan::of(&answer);
+    let span = span_of(&answer);
     let mut kept = state.kept.borrow_mut();
     if details.is_empty() {
         let at = kept.all.len();
@@ -151,8 +143,8 @@ fn ask_and_keep(kind: u32, details: &[u8]) -> Option<LintSpan> {
 /// Answers what the program asks, for src/jsc/bindings/LintHost.h, without a copy. `details` are bytes, so a kind can take numbers
 /// as they are. Every answer is kept until the call is over, so this is for tables, not for one small question per node.
 /// Null: no file is being linted.
-#[unsafe(no_mangle)]
-extern "C" fn Bun__Lint__ask(
+#[feature::behind(features::Bun__Lint__ask, lint, fmt)]
+extern "C" fn ask(
     _global: &JSGlobalObject,
     kind: u32,
     details: *const u8,
@@ -251,14 +243,15 @@ fn start_vm() -> Result<(), Vec<u8>> {
 /// Returns the `LintVm` of `vm`, and runs the program first if it hasn't run yet. `vm` is this thread's, and the caller holds its
 /// lock.
 fn program_of(vm: &VirtualMachine) -> Result<&'static LintVm, Vec<u8>> {
-    let slot = crate::jsc_hooks::lint_vm();
-    match slot.get() {
-        Some(state) => Ok(&**state),
+    let slot = features::lint_vm();
+    let state = match slot.get() {
+        Some(state) => state,
         None => {
             let started = Box::new(start_program(vm)?);
-            Ok(&**slot.get_or_init(|| started))
+            slot.get_or_init(|| started)
         }
-    }
+    };
+    Ok(state.downcast_ref().expect("nothing else is put there"))
 }
 
 /// The VM of this thread.
@@ -360,7 +353,7 @@ fn memory_for_engines() -> usize {
     }
     // macOS always reports next to nothing as free.
     let free = match cfg!(any(target_os = "linux", windows)) {
-        true => crate::node::os::freemem() as usize,
+        true => features::freemem() as usize,
         false => 0,
     };
     (if free == 0 {
@@ -394,7 +387,7 @@ fn end_vm(frees: bool) {
     }
     // Never released: `exit_and_free` frees the VM, and the lock with it.
     let _lock = core::mem::ManuallyDrop::new(vm.global().vm().get_api_lock());
-    drop(crate::jsc_hooks::take_lint_vm());
+    drop(features::take_lint_vm());
     drop(core::mem::take(&mut vm.as_mut().argv));
     // SAFETY: made by `start_vm` on this thread, which holds its lock. Nobody else has a pointer to it.
     unsafe { VirtualMachine::exit_and_free(VirtualMachine::get_mut_ptr()) };

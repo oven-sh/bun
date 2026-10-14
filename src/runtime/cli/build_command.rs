@@ -162,7 +162,7 @@ impl BuildCommand {
                 entry_points: &mut entry_points.map(|path| &**path),
                 sources: &mut core::iter::empty(),
             };
-            if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
+            if !crate::features::check_for_build_command(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
                     Output::error_writer(),
                 ))?;
@@ -170,8 +170,7 @@ impl BuildCommand {
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
         } else if ctx.bundler_options.check {
-            this_transpiler.options.type_check =
-                Some(crate::cli::check_command::check_for_build_command);
+            this_transpiler.options.type_check = Some(crate::features::check_for_build_command);
         }
 
         this_transpiler.options.source_map =

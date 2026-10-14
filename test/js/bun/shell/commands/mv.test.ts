@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isPosix } from "harness";
+import { bunEnv, bunExe, isPosix, isWindows, tempDir } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -66,6 +66,63 @@ describe("mv", async () => {
     .exitCode(20 /* ENOTDIR */)
     .stderr("mv: a: Not a directory\n")
     .runAsTest("move dir -> file fails");
+
+  // Moving into a directory copied basename(src) into a PATH_MAX buffer before
+  // checking its length, and on failure joined `target/basename` in the
+  // fixed-size thread-local join buffer, so a long enough source name aborted
+  // the whole process. Runs in a child process so the abort shows up as a
+  // failed assertion.
+  test("source names that do not fit the path buffers are reported, not a crash", async () => {
+    const segment = Buffer.alloc(240, "d").toString();
+    const deep = join(segment, segment);
+    using dir = tempDir("mv-long-source", { "target": {}, [segment]: { [segment]: {} }, "short.txt": "" });
+    // Longer than PATH_MAX on every POSIX platform (1024 on macOS, 4096 on Linux).
+    const overPathMax = Buffer.alloc(5000, "a").toString();
+    // Fits the Linux path buffer (the kernel still rejects it, NAME_MAX is
+    // 255), but `deep/` + this name does not fit the 4096-byte join buffer.
+    const overJoinBuffer = Buffer.alloc(3700, "b").toString();
+
+    const fixture = /* ts */ `
+      import { $ } from "bun";
+      import { existsSync } from "node:fs";
+      $.nothrow();
+      const { OVER_PATH_MAX, OVER_JOIN_BUFFER, DEEP } = process.env;
+      // A failing mv exits with the raw errno, which differs per platform.
+      const run = async (...args: string[]) => {
+        const { exitCode, stderr } = await $\`mv \${args}\`.quiet();
+        return { failed: exitCode !== 0, stderr: stderr.toString() };
+      };
+      const results = {
+        intoDir: await run(OVER_PATH_MAX!, "target"),
+        intoDeepDir: await run(OVER_JOIN_BUFFER!, DEEP!),
+        multiple: {
+          ...(await run("short.txt", OVER_PATH_MAX!, "target")),
+          shortMoved: existsSync("target/short.txt"),
+        },
+      };
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, OVER_PATH_MAX: overPathMax, OVER_JOIN_BUFFER: overJoinBuffer, DEEP: deep },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+
+    // Which errno Windows reports for an over-long name is up to the OS; what
+    // matters is that mv reported the failure and the process survived.
+    const tooLong = (path: string) =>
+      isWindows ? expect.stringMatching(/^mv: /) : `mv: ${path}: File name too long\n`;
+    expect(JSON.parse(stdout)).toEqual({
+      intoDir: { failed: true, stderr: tooLong(`target/${overPathMax}`) },
+      intoDeepDir: { failed: true, stderr: tooLong(`${deep}/${overJoinBuffer}`) },
+      multiple: { failed: true, stderr: tooLong(`target/${overPathMax}`), shortMoved: true },
+    });
+    expect(exitCode).toBe(0);
+  });
 
   // POSIX `mv` must fall back to copy+unlink when `rename()` returns EXDEV
   // (source and destination on different filesystems). Requires a writable

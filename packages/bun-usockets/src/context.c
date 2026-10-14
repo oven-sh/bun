@@ -416,18 +416,6 @@ static struct us_listen_socket_t *us_internal_loop_listener_of(struct us_loop_t 
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
-    /* listen(2) also takes a SOCK_SEQPACKET socket, which the stream code cannot serve. A
-     * descriptor that is not a socket goes on to listen(2) for its own errno. */
-    int sock_type = 0;
-    socklen_t type_len = sizeof(sock_type);
-    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, (char *) &sock_type, &type_len) == 0 && sock_type != SOCK_STREAM) {
-#ifdef _WIN32
-        *error = WSAEINVAL;
-#else
-        *error = EINVAL;
-#endif
-        return 0;
-    }
 #ifndef _WIN32
     /* A second listener on one descriptor is EEXIST from epoll. kqueue replaces the registration
      * of the first listener in silence. */

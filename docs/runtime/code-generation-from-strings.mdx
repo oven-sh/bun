@@ -176,11 +176,9 @@ Bun makes this check in the engine. It does not depend on the API that the code 
 | `import()` of a database on disk with `{ type: "sqlite" }`                                          | works                                                 |
 | `import()` or `require()` of a `.txt` or `.md` file on disk, or of any file with `{ type: "text" }` | refused: read the file with `Bun.file()` instead      |
 
-Bun knows embedded code by where it is in the executable's image, not by what it says. A file with the same text as an embedded module is refused. At startup, Bun maps the embedded modules read-only.
+Bun knows embedded code by where it is in the executable's image, not by what it says. A file with the same text as an embedded module is refused.
 
 Without `--compile` the program itself is files on disk, so `=strict` keeps loading them.
-
-No environment variable turns the refusals off. `BUN_BE_BUN` does not start the embedded program at all: see [What the flag does not cover](#what-the-flag-does-not-cover).
 
 ### `data:` URLs written in the source
 
@@ -236,6 +234,6 @@ The option is on in the builds of Bun that we publish.
 - **`BUN_OPTIONS`.** Bun reads `BUN_OPTIONS` in a compiled executable too. It cannot lower the level. With the flag and no value, `--preload` in `BUN_OPTIONS` loads a file before the entry point.
 - **The executable file.** Whoever can replace or edit a compiled executable decides what is embedded in it.
 - **`BUN_BE_BUN`.** With `BUN_BE_BUN=1`, a compiled executable runs as the `bun` CLI. The embedded program does not start, and the flags embedded with it do not apply.
-- **The process's own memory.** A program that can write to its own memory can change anything, including the embedded modules and Bun itself. On Linux, writing to `/proc/self/mem` with `node:fs` does that, whatever a page's protection is. Native code can do it everywhere.
+- **The process's own memory.** A program that can write to its own memory can change anything, including the embedded modules and Bun itself. On Linux, writing to `/proc/self/mem` with `node:fs` does that. Native code can do it everywhere.
 - **Native code.** A native addon, or a library loaded with `bun:ffi`, can do what native code can do. `--no-addons` refuses `process.dlopen()` and `cc()` from `bun:ffi`, and `--no-ffi-cc` refuses `cc()`. Neither one refuses `dlopen()`, `linkSymbols()` or `CFunction()` from `bun:ffi`.
 - **Child processes.** A process that the program spawns has its own flags.

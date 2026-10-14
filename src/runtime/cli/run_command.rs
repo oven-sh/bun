@@ -1177,8 +1177,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if bun_core::code_generation_from_strings()
             == bun_core::CodeGenerationFromStrings::Disallowed
         {
-            // Embedded code is known by its address, so the bytes there must not change.
-            graph.make_section_read_only();
             bun_jsc::disallow_non_embedded_code();
         }
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);

@@ -429,7 +429,7 @@ extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc)
     }
 }
 
-// After JSCInitialize, so that BUN_JSC_disallowNonEmbeddedCode=0 does not undo it, and before the first VM, as above.
+// After JSCInitialize and before the first VM, as above.
 extern "C" void JSC__disallowNonEmbeddedCode()
 {
     RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());

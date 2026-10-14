@@ -1359,26 +1359,6 @@ impl StandaloneModuleGraph {
         (file.contents.len() == contents.len()).then_some(file)
     }
 
-    /// Nothing writes to the section, whatever `File::bytecode` being `*mut` allows: Windows maps it read-only to begin with.
-    #[cfg(unix)]
-    pub fn make_section_read_only(&self) {
-        #[cfg(target_os = "macos")]
-        let alignment = bun_macho::BUN_SECTION_ALIGNMENT as usize;
-        #[cfg(not(target_os = "macos"))]
-        let alignment = bun_elf::BUN_SECTION_ALIGNMENT as usize;
-        // The section is the graph between its length and `Offsets` + `TRAILER`. It starts a page and is padded to `alignment`.
-        let start = self.bytes.cast::<u8>().addr() - size_of::<u64>();
-        let len = (size_of::<u64>() + self.bytes.len() + size_of::<Offsets>() + TRAILER.len())
-            .next_multiple_of(alignment);
-        // SAFETY: `[start, start + len)` is whole pages of the executable's image that hold nothing but the section.
-        let rc = unsafe { libc::mprotect(start as *mut core::ffi::c_void, len, libc::PROT_READ) };
-        // Like JSC of the same call when it freezes its config (`WTF::Config::permanentlyFreeze`).
-        assert_eq!(rc, 0);
-    }
-
-    #[cfg(not(unix))]
-    pub fn make_section_read_only(&self) {}
-
     /// Ahead-of-time bytecode for internal module `id`, if the executable carries it.
     pub fn builtin_module_bytecode(&self, id: u32) -> Option<(*mut [u8], u32)> {
         self.builtin_bytecode

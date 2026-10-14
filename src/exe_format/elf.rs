@@ -216,7 +216,7 @@ impl ElfFile {
         let bun_section = self.find_bun_section(ehdr)?;
         let bun_section_offset = bun_section.file_offset;
         let bun_section_vaddr = bun_section.vaddr;
-        let page_size = page_size(ehdr.e_machine);
+        let page_size = Self::page_size(ehdr);
 
         let header_size: u64 = size_of::<u64>() as u64;
         let new_content_size: u64 = header_size + payload.len() as u64;
@@ -571,21 +571,14 @@ impl ElfFile {
         // e_shoff is at offset 40 in Elf64_Ehdr
         write_u64_le(&mut self.data[40..][..8], new_shoff);
     }
-}
 
-const fn page_size(e_machine: u16) -> u64 {
-    match e_machine {
-        EM_AARCH64 | EM_PPC64 => 0x10000, // 64KB
-        _ => 0x1000,                      // 4KB
+    fn page_size(ehdr: Elf64_Ehdr) -> u64 {
+        match ehdr.e_machine {
+            EM_AARCH64 | EM_PPC64 => 0x10000, // 64KB
+            _ => 0x1000,                      // 4KB
+        }
     }
 }
-
-/// What `write_bun_section` aligns and pads `.bun` to in an executable for the architecture this is compiled for.
-pub const BUN_SECTION_ALIGNMENT: u64 = page_size(if cfg!(target_arch = "aarch64") {
-    EM_AARCH64
-} else {
-    EM_X86_64
-});
 
 struct BunSectionInfo {
     /// File offset of the .bun section's data (sh_offset).
@@ -763,7 +756,6 @@ const SHF_ALLOC: u64 = 0x2;
 const SHF_TLS: u64 = 0x400;
 
 const EM_PPC64: u16 = 21;
-const EM_X86_64: u16 = 62;
 const EM_AARCH64: u16 = 183;
 
 #[repr(C)]

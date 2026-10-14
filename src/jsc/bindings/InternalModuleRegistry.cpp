@@ -28,7 +28,7 @@
 // A `bun build --compile` executable may carry ahead-of-time bytecode for the internal modules the app uses
 // (StandaloneModuleGraph, Flags::HAS_BUILTIN_BYTECODE); those bytes live in the executable for the life of the process.
 extern "C" bool Bun__standaloneInternalModuleBytecode(void* bunVM, uint32_t id, const uint8_t** bytes, size_t* size, uint32_t* entryOffset);
-extern "C" bool Bun__isEmbeddedModule(const uint8_t* source, size_t sourceLength, const uint8_t* bytecode, size_t bytecodeLength, size_t bytecodeEntryOffset);
+extern "C" bool Bun__isEmbeddedModule(const uint8_t* source, size_t sourceLength);
 
 namespace WebCore {
 std::span<const Latin1Character> builtinsSource();
@@ -118,19 +118,19 @@ static bool hasSameAddress(std::span<const uint8_t> a, std::span<const uint8_t> 
     return a.data() == b.data() && a.size() == b.size();
 }
 
-bool isEmbeddedCode(std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset)
+bool isEmbeddedCode(std::span<const uint8_t> source)
 {
     if (hasSameAddress(source, asByteSpan(WebCore::builtinsSource())))
-        return bytecode.empty();
+        return true;
 
     std::span internalModulesData { reinterpret_cast<const uint8_t*>(bun_internal_modules_data), bun_internal_modules_header.dataLength };
     if (source.data() < internalModulesData.data() || source.data() >= internalModulesData.data() + internalModulesData.size())
-        return Bun__isEmbeddedModule(source.data(), source.size(), bytecode.data(), bytecode.size(), bytecodeEntryOffset);
+        return Bun__isEmbeddedModule(source.data(), source.size());
 
     for (uint32_t id = 0; id < bun_internal_modules_header.moduleCount; id++) {
         const auto& m = internalModuleRecord(id);
         if (hasSameAddress(source, internalModulesData.subspan(m.codeOffset, m.codeLength)))
-            return bytecode.empty();
+            return true;
     }
     return false;
 }

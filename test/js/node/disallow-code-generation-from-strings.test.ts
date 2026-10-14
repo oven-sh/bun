@@ -802,16 +802,12 @@ describe.concurrent("=strict in a compiled executable", () => {
       },
       unhandled: [],
     };
-    // The engine's option is set after it has read BUN_JSC_*.
-    for (const env of [{}, { BUN_JSC_disallowNonEmbeddedCode: "0" }] as Record<string, string>[]) {
-      const { stdout, exitCode } = await runCompiled(cwd, [cwd], {
-        ...transpilerCache,
-        BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
-        ...env,
-      });
-      expect(JSON.parse(stdout)).toEqual(expected);
-      expect(exitCode).toBe(0);
-    }
+    const { stdout, exitCode } = await runCompiled(cwd, [cwd], {
+      ...transpilerCache,
+      BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
+    });
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
     expect(await runCompiled(cwd, [cwd], { BUN_OPTIONS: "--preload=" + join(cwd, "imported.mjs") })).toEqual({
       stdout: "",
       stderr: expect.stringContaining(refusedFile("imported.mjs")),
@@ -820,22 +816,17 @@ describe.concurrent("=strict in a compiled executable", () => {
   });
 
   test.each([
-    { modules: "ES modules", buildArgs: [], bytecode: false },
-    { modules: "ES modules with bytecode", buildArgs: ["--bytecode"], bytecode: true },
-    { modules: "CommonJS", buildArgs: ["--format=cjs"], bytecode: false },
-    { modules: "CommonJS with bytecode", buildArgs: ["--format=cjs", "--bytecode"], bytecode: true },
-  ])("runs embedded code: $modules", async ({ buildArgs, bytecode }) => {
+    { modules: "ES modules", buildArgs: [] },
+    { modules: "ES modules with bytecode", buildArgs: ["--bytecode"] },
+    { modules: "CommonJS", buildArgs: ["--format=cjs"] },
+    { modules: "CommonJS with bytecode", buildArgs: ["--format=cjs", "--bytecode"] },
+  ])("runs embedded code: $modules", async ({ buildArgs }) => {
     using dir = tempDir("disallow-code-generation-compiled-runs", compiledFiles);
     const cwd = String(dir);
     await compile(cwd, ["./allowed-routes.ts", "./worker.ts", "./utf16.ts"], buildArgs, strict);
-    // Refused bytecode is a cache miss, which falls back to the source and shows nowhere else.
-    const { stdout, stderr, exitCode } = await runCompiled(
-      cwd,
-      [cwd],
-      bytecode ? { BUN_JSC_verboseDiskCache: "1" } : {},
-    );
+    const { stdout, stderr, exitCode } = await runCompiled(cwd, [cwd]);
     expect({ stderr, ...JSON.parse(stdout) }).toEqual({
-      stderr: bytecode ? expect.stringContaining("Cache hit") : "",
+      stderr: "",
       results: {
         functionFirstCalledLate: [40, 42],
         classWithoutConstructor: 1,
@@ -851,18 +842,5 @@ describe.concurrent("=strict in a compiled executable", () => {
       unhandled: [],
     });
     expect(exitCode).toBe(0);
-  });
-
-  // It reads /proc/self/maps.
-  test.skipIf(!isLinux)("the executable's modules are mapped read-only", async () => {
-    using dir = tempDir("disallow-code-generation-compiled-read-only", {
-      "entry.ts": `
-        const mappings = require("node:fs").readFileSync("/proc/self/maps", "utf8").split("\\n").filter(line => line.endsWith(process.execPath));
-        console.log(mappings.at(-1).split(" ")[1]);
-      `,
-    });
-    const cwd = String(dir);
-    await compile(cwd, ["./entry.ts"], [], strict);
-    expect(await runCompiled(cwd, [])).toEqual({ stdout: "r--p\n", stderr: "", exitCode: 0 });
   });
 });

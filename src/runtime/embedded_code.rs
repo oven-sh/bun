@@ -25,27 +25,14 @@ pub(crate) fn static_source_code(source: &'static [u8]) -> bun_core::String {
     bun_core::String::create_static_external(source, true)
 }
 
-/// Whether `source` is all of a module's source and `bytecode`, unless it is empty, what the executable has for that module.
+/// Whether `source` is all of a module's source.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__isEmbeddedModule(
-    source: *const u8,
-    source_len: usize,
-    bytecode: *const u8,
-    bytecode_len: usize,
-    bytecode_entry_offset: usize,
-) -> bool {
+pub(crate) extern "C" fn Bun__isEmbeddedModule(source: *const u8, source_len: usize) -> bool {
     let source = core::ptr::slice_from_raw_parts(source, source_len);
-    if let Some(file) = bun_standalone_graph::Graph::get_ref()
-        .and_then(|graph| graph.find_javascript_module_by_address(source))
+    if bun_standalone_graph::Graph::get_ref()
+        .is_some_and(|graph| graph.find_javascript_module_by_address(source).is_some())
     {
-        return bytecode_len == 0
-            || (core::ptr::eq(
-                file.bytecode.cast_const(),
-                core::ptr::slice_from_raw_parts(bytecode, bytecode_len),
-            ) && file.bytecode_entry_offset as usize == bytecode_entry_offset);
-    }
-    if bytecode_len != 0 {
-        return false;
+        return true;
     }
     let state = runtime_state();
     // SAFETY: this thread's `RuntimeState`, which only this thread writes.

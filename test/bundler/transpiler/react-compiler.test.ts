@@ -4032,6 +4032,39 @@ test.skipIf(!isDebug && !isASAN)("react-compiler reports which kind of function 
   );
 });
 
+// As `AnchorOrLast` in ReassignedInALoopInAScope, but what is assigned outside the scope of `c` is the value of a ref, which
+// is no output of a scope. So the outer scope has none of its own, as in babel-plugin-react-compiler 1.0.0. Only the pragma
+// lets a render read a ref.
+test.skipIf(!isDebug && !isASAN)("react-compiler does not keep a scope for the value of a ref", async () => {
+  using dir = tempDir("react-compiler-ref-reassign", {
+    "entry.jsx": `
+      // @validateRefAccessDuringRender:false
+      import { useRef } from "react";
+      export function Component(props) {
+        const ref = useRef(null);
+        let anchor = 0;
+        for (const m of props.msgs) {
+          const c = m.ids.length ? [m] : [];
+          for (const a of c) {
+            if (props.live.has(a.ids[0])) anchor = a.ts;
+          }
+          if (m.last) anchor = ref.current;
+        }
+        return <div>{anchor}</div>;
+      }
+    `,
+  });
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.jsx")],
+    target: "browser",
+    external: ["*"],
+    reactCompiler: true,
+    // @ts-expect-error test-only option, not in bun-types
+    reactCompilerParseTestPragmas: true,
+  });
+  expect((await result.outputs[0].text()).match(/\b_c\(\d+\)/g)).toEqual(["_c(2)"]);
+});
+
 // RenameVariables reaches a nested function expression through its
 // `visit_value` override. The shared walker for a function body recursed into
 // it a second time, so a function at depth d was walked 2^d times: depth 25

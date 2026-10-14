@@ -2091,24 +2091,27 @@ impl<'a> DependencyCollectionContext<'a> {
             let already = scope.reassignments.iter().position(|it| {
                 env.identifiers[it.identifier.0 as usize].declaration_id == declaration_id
             });
-            if let Some(already) = already {
-                let scope = &mut env.scopes[current_scope.0 as usize];
-                if current_scope == innermost && scope.reassignments[already].scope != innermost {
-                    scope.reassignments[already] = reassignment.clone();
-                }
-            } else if self.check_valid_dependency_of(
-                Some(current_scope),
-                &ReactiveScopeDependency {
-                    identifier: place.identifier,
-                    reactive: place.reactive,
-                    path: hir_vec![],
-                    loc: place.loc,
-                },
-                env,
-            ) {
-                env.scopes[current_scope.0 as usize]
-                    .reassignments
-                    .push(reassignment.clone());
+            let is_recorded = already.is_some_and(|already| {
+                current_scope != innermost || scope.reassignments[already].scope == innermost
+            });
+            if is_recorded
+                || !self.check_valid_dependency_of(
+                    Some(current_scope),
+                    &ReactiveScopeDependency {
+                        identifier: place.identifier,
+                        reactive: place.reactive,
+                        path: hir_vec![],
+                        loc: place.loc,
+                    },
+                    env,
+                )
+            {
+                continue;
+            }
+            let reassignments = &mut env.scopes[current_scope.0 as usize].reassignments;
+            match already {
+                Some(already) => reassignments[already] = reassignment.clone(),
+                None => reassignments.push(reassignment.clone()),
             }
         }
     }

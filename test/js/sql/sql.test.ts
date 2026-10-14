@@ -261,12 +261,12 @@ if (isDockerEnabled()) {
 
         {
           const [{ x }] = await sql`select ${sql.array([100000, -2147483648, 2147483647], "INT")} as x`;
-          expect(x).toEqual(new Int32Array([100000, -2147483648, 2147483647]));
+          expect(x).toEqual([100000, -2147483648, 2147483647]);
         }
         {
           const [{ x }] =
             await sql`select ${sql.array(Int32Array.from([100000, -2147483648, 2147483647]) as any, "INT")} as x`;
-          expect(x).toEqual(new Int32Array([100000, -2147483648, 2147483647]));
+          expect(x).toEqual([100000, -2147483648, 2147483647]);
         }
       });
 
@@ -1084,7 +1084,7 @@ if (isDockerEnabled()) {
     // t("Empty array", async () => [true, Array.isArray((await sql`select ${sql.array([], 1009)} as x`)[0].x)]);
 
     test("string arg with ::int -> Array<int>", async () =>
-      expect((await sql`select ${"{1,2,3}"}::int[] as x`)[0].x).toEqual(new Int32Array([1, 2, 3])));
+      expect((await sql`select ${"{1,2,3}"}::int[] as x`)[0].x).toEqual([1, 2, 3]));
 
     // t("Array of Integer", async () => ["3", (await sql`select ${sql.array([1, 2, 3])} as x`)[0].x[2]]);
 
@@ -4014,8 +4014,7 @@ CREATE TABLE ${table_name} (
           { a: [4, 5, 6], b: 3 },
         ]);
         const binary_mode = await reserved`select * from ${table_name} where b = ${2}`;
-        // for now we return a typed array with do not match postgres's array type (this need to accept nulls so will change in future)
-        expect(binary_mode.map(row => row)).toEqual([{ a: new Int32Array([1, 2, 3]), b: 2 }]);
+        expect(binary_mode.map(row => row)).toEqual([{ a: [1, 2, 3], b: 2 }]);
       }
     });
     test("reserve connection", async () => {
@@ -4945,7 +4944,7 @@ CREATE TABLE ${table_name} (
       });
 
       // A parameter makes the column arrive in binary format. The values must
-      // read the same as in text format.
+      // read the same as in text format, as a plain array.
       test("int4[] - null values in binary format", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const [row] = await sql`SELECT ARRAY[1, NULL, 3, NULL]::int4[] as v WHERE ${1} = 1`;
@@ -4981,7 +4980,7 @@ CREATE TABLE ${table_name} (
               [7, 8],
             ],
           ],
-          one_d: new Int32Array([1, 2, 3]),
+          one_d: [1, 2, 3],
         });
       });
 
@@ -7864,7 +7863,7 @@ CREATE TABLE ${table_name} (
             [1.5, 2.5],
             [3.5, 4.5],
           ],
-          one_d: new Float32Array([1.5, 2.5]),
+          one_d: [1.5, 2.5],
         });
       });
 

@@ -1,7 +1,8 @@
+use core::mem::size_of;
 use core::ptr;
 use core::slice;
 
-use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult};
+use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_collections::StringHashMap;
 use bun_core::UnwrapOrOom as _;
 use bun_core::wtf::WTFStringImpl;
@@ -53,7 +54,7 @@ pub enum Tag {
     Bytea = 8,
     Json = 9,
     Array = 10,
-    TypedArray = 11,
+    PackedArray = 11,
     Raw = 12,
     Uint4 = 13,
     Uint8 = 14,
@@ -77,7 +78,7 @@ pub union Value {
     // LIFETIMES.tsv: SHARED — same rationale as `string`.
     pub(crate) json: WTFStringImpl,
     pub(crate) array: Array,
-    pub(crate) typed_array: TypedArray,
+    pub(crate) packed_array: PackedArray,
     pub(crate) raw: Raw,
     pub(crate) uint4: u32,
     pub(crate) uint8: u64,
@@ -144,26 +145,29 @@ pub struct Raw {
     pub(crate) len: u64,
 }
 
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct TypedArray {
-    // LIFETIMES.tsv: BORROW_PARAM → Option<&'a [u8]>. Kept as thin raw ptr for
-    // #[repr(C)] FFI layout (a Rust slice ref is a fat pointer). free_value=0
-    // for typed_array producers, so deinit's free path is effectively dead for
-    // borrowed buffers.
-    pub(crate) head_ptr: *mut u8,
-    // LIFETIMES.tsv: BORROW_FIELD → sub-slice of head_ptr; same rationale.
-    pub(crate) ptr: *mut u8,
-    pub(crate) len: u32,
-    pub(crate) byte_len: u32,
-    pub(crate) type_: JSType, // `type` is a Rust keyword
+/// Element type of a `PackedArray` cell. C++ (SQLClient.cpp) switches on it.
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum PackedArrayElem {
+    Int4 = 0,
+    Float4 = 1,
 }
 
-// Note: no `&mut [u8]` slice getters are provided. `len` is the typed-array
-// *element* count (consumed by SQLClient.cpp), not a byte length, so a
-// `&mut [u8; len]` view would be wrong for elements wider than u8; `deinit`
-// builds the fat pointer with the safe `ptr::slice_from_raw_parts_mut`
-// directly (no intermediate `&mut` reference).
+/// A one-dimensional binary array with no NULL element, still in the wire
+/// buffer: `len` elements, each a 4-byte length prefix and a 4-byte
+/// big-endian value. C++ builds the JS array straight from these bytes.
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct PackedArray {
+    // LIFETIMES.tsv: BORROW_PARAM → &'a [u8] of `len * 8` bytes inside the
+    // DataRow. Thin pointer for the `#[repr(C)]` union; never freed.
+    pub(crate) ptr: *const u8,
+    pub(crate) len: u32,
+    pub(crate) elem: PackedArrayElem,
+}
+
+// The C++ side declares the same layout (`DataCell` in SQLClient.cpp).
+const _: () = assert!(size_of::<SQLDataCell>() == 32);
 
 impl SQLDataCell {
     // Note: kept as an explicit method, not `impl Drop` — this type is
@@ -210,33 +214,6 @@ impl SQLDataCell {
                 }
                 array.deinit();
             }
-            Tag::TypedArray => {
-                // SAFETY: tag == TypedArray ⇒ `typed_array` is active.
-                let ta = unsafe { self.value.typed_array };
-                if !ta.head_ptr.is_null() && ta.byte_len != 0 {
-                    // Build the fat pointer with the safe
-                    // `ptr::slice_from_raw_parts_mut` (no `&mut` reference
-                    // materialized); only `Box::from_raw` is unsafe.
-                    // `len` is the *element* count (consumed by SQLClient.cpp
-                    // as the typed-array length); for any element wider than u8
-                    // that under-reports the allocation size, and
-                    // `Box::<[u8]>::from_raw`'s layout must match the
-                    // allocation, hence `byte_len`.
-                    // SAFETY: head_ptr was allocated via the global allocator
-                    // when free_value != 0. This branch is live: the postgres
-                    // binary-array path (DataCell.rs `from_bytes_typed_array`)
-                    // produces `free_value=1` cells whose `head_ptr` is
-                    // `Box::into_raw` of a `Box<[u8]>` of exactly `byte_len`
-                    // bytes, so the layout below matches the allocation.
-                    unsafe {
-                        drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(
-                            ta.head_ptr,
-                            ta.byte_len as usize,
-                        )))
-                    };
-                }
-            }
-
             _ => {}
         }
     }

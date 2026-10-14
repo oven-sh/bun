@@ -249,12 +249,34 @@ test("well-formed binary int4[] still parses", async () => {
     i32(3),
   ]);
   const result: any = await runMockQuery(col, INT4_ARRAY);
-  expect(result[0].arr).toEqual(new Int32Array([1, 2, 3]));
+  expect(result[0].arr).toEqual([1, 2, 3]);
 });
 
-// A typed array has no null holes and no nesting, so these shapes decode into
-// a plain array, like the text path does for the same value.
+// A binary int4[]/float4[] reads as a plain array, like the text path. A 1-D
+// value with no NULL is built straight from the wire bytes. Every other shape
+// goes through the per-element decoder.
 const plainArrays: { name: string; oid: number; col: Buffer; expected: unknown }[] = [
+  {
+    name: "float4[] with NaN, -0 and Infinity",
+    oid: FLOAT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: FLOAT4, len: 4, lbound: 1 }),
+      float4Elems([1.5, NaN, -0, Infinity]),
+    ]),
+    expected: [1.5, NaN, -0, Infinity],
+  },
+  {
+    name: "int4[] with ndim = 0",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([i32(0), i32(0), i32(INT4)]),
+    expected: [],
+  },
+  {
+    name: "int4[] with len = 0",
+    oid: INT4_ARRAY,
+    col: binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 0, lbound: 1 }),
+    expected: [],
+  },
   {
     name: "int4[] with a NULL element",
     oid: INT4_ARRAY,

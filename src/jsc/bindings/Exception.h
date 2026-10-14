@@ -70,4 +70,14 @@ inline Exception isolatedCopy(Exception&& value)
     return Exception { value.code(), value.releaseMessage().isolatedCopy(), value.releaseExtra().isolatedCopy() };
 }
 
+// A message past String::MaxLength becomes OutOfMemoryError. makeString() would crash.
+template<typename... StringTypes>
+Exception exceptionWithMessage(ExceptionCode code, const StringTypes&... parts)
+{
+    String message = tryMakeString(parts...);
+    if (message.isNull()) [[unlikely]]
+        return Exception { OutOfMemoryError };
+    return Exception { code, WTF::move(message) };
+}
+
 }

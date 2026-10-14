@@ -1014,12 +1014,12 @@ describe("response stream ends without FIN", () => {
   // promises that the server did no application processing (RFC 9114 section
   // 8.1), so only that code may re-send the request, as h2 retries only
   // REFUSED_STREAM. Any other code fails the request without a second copy.
-  async function postToServerThatResetsWith(errorCode: number, body: string | Uint8Array = "payload") {
+  async function postToServerThatResetsWith(reset: (stream: any) => void, body: string | Uint8Array = "payload") {
     const requests: string[] = [];
     const origin = await listenOrigin(function (headers) {
       requests.push(`${headers[":method"]} ${headers[":path"]}`);
       if (requests.length === 1) {
-        this.destroy(new QuicError("rejected", { errorCode }));
+        reset(this);
         return;
       }
       this.sendHeaders({ ":status": "200" });
@@ -1041,24 +1041,29 @@ describe("response stream ends without FIN", () => {
     }
   }
 
+  // destroy() sends STOP_SENDING next to RESET_STREAM, both with the code.
+  const destroyWith = (errorCode: number) => (stream: any) => stream.destroy(new QuicError("rejected", { errorCode }));
+
   test("RESET_STREAM(H3_REQUEST_REJECTED) before the headers re-sends the request once", async () => {
-    expect(await postToServerThatResetsWith(0x10b)).toEqual({
+    expect(await postToServerThatResetsWith(destroyWith(0x10b))).toEqual({
       result: { resolved: "200 second attempt" },
       requests: ["POST /submit", "POST /submit"],
     });
   });
 
-  // The reset arrives while the client still sends the body, so its own send
-  // half is open. The code the client reads must still be the server's.
-  test("RESET_STREAM(H3_REQUEST_REJECTED) during the body upload re-sends the request once", async () => {
-    expect(await postToServerThatResetsWith(0x10b, Buffer.alloc(8 * 1024 * 1024, "a"))).toEqual({
+  // RESET_STREAM alone, while the client still sends the body: its own send
+  // half is open and no STOP_SENDING repeats the code. The code the client
+  // reads at close must still be the server's.
+  test("RESET_STREAM(H3_REQUEST_REJECTED) alone during the body upload re-sends the request once", async () => {
+    const resetOnly = (stream: any) => stream.resetStream(0x10b);
+    expect(await postToServerThatResetsWith(resetOnly, Buffer.alloc(8 * 1024 * 1024, "a"))).toEqual({
       result: { resolved: "200 second attempt" },
       requests: ["POST /submit", "POST /submit"],
     });
   });
 
   test("RESET_STREAM(H3_INTERNAL_ERROR) before the headers fails without a second copy of the request", async () => {
-    expect(await postToServerThatResetsWith(0x102)).toEqual({
+    expect(await postToServerThatResetsWith(destroyWith(0x102))).toEqual({
       result: { rejected: "HTTP3StreamReset" },
       requests: ["POST /submit"],
     });

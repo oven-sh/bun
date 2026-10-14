@@ -87,8 +87,7 @@ function isWritableStreamLike(obj) {
   return !!(obj && typeof obj.getWriter === "function" && typeof obj.abort === "function");
 }
 
-// Node accepts any object as `writable`, then pumpToWeb() calls its getWriter() outside a try:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L99-L106
+// Node takes any `writable`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/utils.js#L99-L106
 function isTransformStream(obj) {
   return (
     $inheritsTransformStream(obj) ||

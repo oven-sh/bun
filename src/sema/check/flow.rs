@@ -6819,7 +6819,7 @@ impl<'p, 's> Checker<'p, 's> {
                     // A walk in which a cycle is left unmarked behind `eager` is not one tsgo makes, nor one in which a query is
                     // refused for the depth at which it is made or at a limit that tsgo has not: the value assigned on a
                     // back edge is missing then. Nothing of it is in `flowLoopCache`, which outlives the frames around.
-                    let refusals = (self.unmarked_refusals, self.limits, self.refused_at);
+                    let refusals = (self.unmarked_refusals, self.cuts(), self.refused_at);
                     // Once the type is the declared type, only subtypes could be added. Unlike at a
                     // branch label, the initial type is not considered.
                     if entry != walk.declared {
@@ -6848,7 +6848,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 .cached_flow_loop_type(&key, &walk.reference)
                                 .filter(|_| {
                                     refusals
-                                        == (self.unmarked_refusals, self.limits, self.refused_at)
+                                        == (self.unmarked_refusals, self.cuts(), self.refused_at)
                                 });
                             if restarted.is_some() {
                                 break;
@@ -6878,7 +6878,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if !incomplete
                         && !walk.too_deep
                         && walk.steps < MAX_STEPS
-                        && refusals == (self.unmarked_refusals, self.limits, self.refused_at)
+                        && refusals == (self.unmarked_refusals, self.cuts(), self.refused_at)
                     {
                         self.flow_memo
                             .flow_loop_cache

@@ -18325,5 +18325,13 @@
       "c.ts": "import { build } from \"./a\";\nexport const y = [build()];\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"target\": \"esnext\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [] }, \"files\": [\"b.ts\", \"c.ts\", \"a.ts\"] }\n"
     }
+  },
+  "loop-back-edge-errors-of-two-variables-in-functions-that-other-files-call": {
+    "files": {
+      "a.ts": "interface Item { next: Item | null }\ndeclare const more: boolean; declare const item: Item;\nexport function build() { let last: Item | null = null; let n: number | string = 0; while (more) { n = more && n === last ? \"s\" : 5; last = n === 0 ? item : null; } return last; }\nexport function build2() { let last: Item | null = null; let n: number | string = 0; while (more) { last = n === 0 ? item : null; n = more && n === last ? \"s\" : 5; } return n; }\nexport function build3() { let a: number | string = 0; let b: number | string = 0; while (more) { a = more && b === \"x\" ? \"s\" : 5; b = more && a === \"y\" ? \"t\" : 6; } return b; }\n",
+      "b.ts": "import { build, build2, build3 } from \"./a\"; export const x = build(); export const y = build2(); export const z = build3();\n",
+      "c.ts": "import { build3, build2, build } from \"./a\"; export const z = build3(); export const y = build2(); export const x = build();\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"target\": \"es2022\", \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"c.ts\", \"b.ts\", \"a.ts\"] }\n"
+    }
   }
 }

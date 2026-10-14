@@ -3,6 +3,7 @@ import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir, tls } from "harn
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
+import { parseStringPromise } from "xml2js";
 import { mysqlHandshakeV10, mysqlOkPacket, pgAuthenticationOk, pgReadyForQuery } from "../../js/sql/wire-frames";
 
 // Every case spawns at least one full `bun test --isolate` child; the heavy
@@ -162,7 +163,7 @@ describe.concurrent("bun test --isolate", () => {
         expect(starts.map(([, name]) => name)).toEqual(["observer", "owner"]);
         expect(starts[0][2]).toBe(starts[1][2]);
       }
-      const report = await require("xml2js").parseStringPromise(fs.readFileSync(join(String(dir), "out.xml"), "utf8"), {
+      const report = await parseStringPromise(fs.readFileSync(join(String(dir), "out.xml"), "utf8"), {
         strict: true,
       });
       const ownerSuite = report.testsuites.testsuite.find(suite => suite.$.file === owner);
@@ -252,7 +253,7 @@ describe.concurrent("bun test --isolate", () => {
     expect(events.filter(event => event === "afterAll observer")).toHaveLength(1);
     expect(events).not.toContain("afterAll owner");
     expect(events).not.toContain("unexpected test");
-    const report = await require("xml2js").parseStringPromise(fs.readFileSync(join(String(dir), "out.xml"), "utf8"), {
+    const report = await parseStringPromise(fs.readFileSync(join(String(dir), "out.xml"), "utf8"), {
       strict: true,
     });
     const ownerSuite = report.testsuites.testsuite.find(suite => suite.$.file === "a-owner.test.ts");

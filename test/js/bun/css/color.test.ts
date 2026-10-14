@@ -848,12 +848,17 @@ describe("color-mix() computes what WPT expects", () => {
     const actual = color(specified, "css");
     expect(actual).not.toBeNull();
     const [space, want] = parse(computed);
-    // bun prints a mix in srgb, hsl or hwb as an 8-bit color.
+    // bun prints a mix in srgb, hsl or hwb as an 8-bit color: a hex color or a color name.
     const eightBit = space === "srgb";
-    const [actualSpace, got] = eightBit
-      ? [space, (color(actual!, "[rgba]") as number[]).map(channel => channel / 255)]
-      : parse(actual!);
-    expect(actualSpace).toBe(space);
+    let got: number[];
+    if (eightBit) {
+      expect(actual).not.toContain("(");
+      got = (color(actual!, "[rgba]") as number[]).map(channel => channel / 255);
+    } else {
+      const [actualSpace, channels] = parse(actual!);
+      expect(actualSpace).toBe(space);
+      got = channels;
+    }
     for (let i = 0; i < 4; i++) {
       if (Number.isNaN(want[i])) {
         expect(got[i]).toBeNaN();

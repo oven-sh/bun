@@ -20,10 +20,10 @@ import { cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
-import { emitFeatureTableTool, featureTableLinkImplicitInputs, linkFromBuildDir } from "./feature-table.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
+import { emitFeatureTableTool, featureTableLinkImplicitInputs, linkFromBuildDir } from "./feature-table.ts";
 import {
   bunIncludes,
   computeFlags,

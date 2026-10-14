@@ -5024,6 +5024,9 @@ describe("bundler", () => {
           function pure() {}
           const a = require("./lazy.cjs");
           ${unusedReads("a")}
+          const bound = require("./esm.js");
+          [bound.value, a.boot];
+          try { const alias = a.boot; typeof alias; } catch {}
           console.log("require:", a.count);
           const x = require("ext");
           ${unusedReads("x")}
@@ -5042,13 +5045,14 @@ describe("bundler", () => {
           }
         `,
         "/lazy.cjs": lazyExports,
+        "/esm.js": `export const value = "value";`,
       },
       runtimeFiles: { "/node_modules/ext/index.js": lazyExports },
       external: ["ext"],
       target: "bun",
       ...options,
       run: {
-        stdout: ["require: 14", "external: 14", ...(topLevelAwait ? ["await import: 28", "Promise.all: 42"] : [])].join(
+        stdout: ["require: 16", "external: 14", ...(topLevelAwait ? ["await import: 30", "Promise.all: 44"] : [])].join(
           "\n",
         ),
       },
@@ -5137,11 +5141,10 @@ describe("bundler", () => {
     // and returns the `module.exports` export of an ES module that has one.
     // Without the split, the reads of `ns` bind.
     for (const splitRequire of [true, false]) {
-      itBundled(
-        `dynamic_import_dce/${splitRequire ? "UnboundItemSplitRequire" : "NoSplitRequireBindsItems"}${suffix}`,
-        {
-          files: {
-            "/entry.js": /* js */ `
+      const name = splitRequire ? "UnboundItemSplitRequire" : "NoSplitRequireBindsItems";
+      itBundled(`dynamic_import_dce/${name}${suffix}`, {
+        files: {
+          "/entry.js": /* js */ `
             const ns = require("./esm.js");
             console.log(ns.who(), (0, ns.who)(), (true ? ns.who : 0)(), [ns.who][0]());
             ${
@@ -5157,29 +5160,28 @@ describe("bundler", () => {
                 : ""
             }
           `,
-            "/esm.js": `export ${who("namespace")}`,
-            "/module-exports.js": /* js */ `
+          "/esm.js": `export ${who("namespace")}`,
+          "/module-exports.js": /* js */ `
             let count = 0;
             const object = { get boot() { return ++count; }, get count() { return count; } };
             export { object as "module.exports" };
           `,
-          },
-          target: "bun",
-          splitting: true,
-          splitRequire,
-          outdir: "/out",
-          minifySyntax,
-          run: {
-            file: "/out/entry.js",
-            stdout: splitRequire ? "namespace none none none\n4" : "none none none none",
-          },
-          onAfterBundle(api) {
-            const out = api.readFile("/out/entry.js");
-            if (splitRequire) expect(out).toContain("import.meta.require(");
-            else expect(out).not.toContain("import.meta.require(");
-          },
         },
-      );
+        target: "bun",
+        splitting: true,
+        splitRequire,
+        outdir: "/out",
+        minifySyntax,
+        run: {
+          file: "/out/entry.js",
+          stdout: splitRequire ? "namespace none none none\n4" : "none none none none",
+        },
+        onAfterBundle(api) {
+          const out = api.readFile("/out/entry.js");
+          if (splitRequire) expect(out).toContain("import.meta.require(");
+          else expect(out).not.toContain("import.meta.require(");
+        },
+      });
     }
 
     // The printer merges declarators that read one stable object into a
@@ -5454,6 +5456,38 @@ describe("bundler", () => {
     output(out) {
       expect(out).toContain('console.log(1 /* Red */, "g" /* Green */, 3 /* Small */, "big" /* Big */);');
       expect(out).not.toContain("Color");
+    },
+  });
+
+  // Only a read that the parser counted as a read of the enum member is
+  // inlined. A read through an import, through a local that a pattern binds
+  // or through two members prints the enum object, which a write needs.
+  itBundled("dynamic_import_dce/EnumMemberThroughOtherBases", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Star } from "./hop";
+        async function main() {
+          console.log(Star.E.A, Star.E["B"]);
+          (Star.E as any).A = 7;
+          console.log(Star.E.A);
+          const { Star: pattern } = await import("./hop");
+          console.log(pattern.E.B);
+          (pattern.E as any).B = 8;
+          const ns = await import("./hop");
+          console.log(ns.Star.E.B);
+          (ns.Star.E as any).B++;
+          console.log(ns.Star.E.B);
+        }
+        main();
+      `,
+      "/hop.ts": `export * as Star from "./enums";`,
+      "/enums.ts": `export enum E { A = 1, B = 2 }`,
+    },
+    run: { stdout: "1 2\n7\n2\n8\n9" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).not.toContain("/* A */");
+      expect(out).not.toContain("/* B */");
     },
   });
 

@@ -18,27 +18,6 @@ use std::sync::Arc;
 /// `plugins` in bunfig.toml and from `--plugin`.
 pub type NamedPlugin = (Arc<js_plugin::Plugin>, Json);
 
-/// `/a/node_modules/@b/c` of `/a/node_modules/@b/c/dist/index.js`: the directory of the package that `file` is in, if it is an
-/// installed one.
-fn installed_package(file: &[u8]) -> Option<&[u8]> {
-    let is_separator = |it: &u8| matches!(*it, b'/' | b'\\');
-    let mut end = 0;
-    let mut found = None;
-    let mut parts = file.split(is_separator).peekable();
-    while let Some(part) = parts.next() {
-        end += part.len() + 1;
-        if part == b"node_modules" {
-            let name = parts.peek()?;
-            let scoped = name.starts_with(b"@");
-            let mut rest = parts.clone();
-            let first = rest.next()?.len();
-            let second = if scoped { rest.next()?.len() + 1 } else { 0 };
-            found = file.get(..end + first + second);
-        }
-    }
-    found
-}
-
 /// Why a configuration cannot be used. The text is ESLint's where ESLint has one.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ConfigError {
@@ -328,7 +307,7 @@ fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
             },
             // Not of ESLint: see `Config::from_flat_json_with_plugins`.
             b"$changesLinter" | b"$defaultOptions" | b"$forReact" | b"$globsOfBun" | b"$ignorePatterns"
-            | b"$jsPlugins" | b"$otherPlugins" | b"$parser" | b"$processor" | b"$severityByKind" | b"$source"
+            | b"$jsPlugins" | b"$otherPlugins" | b"$parser" | b"$pluginModules" | b"$processor" | b"$severityByKind" | b"$source"
             | b"$withoutWarnings" => None,
             b"rules" if !is_object(value) => expected_object(),
             b"rules" => (value.as_object().unwrap_or_default().iter())
@@ -693,16 +672,17 @@ impl Reader<'_> {
                 });
             }
         }
+        let modules_of = |prefix: &[u8]| json.get(b"$pluginModules")?.get(prefix);
         let others = json.get(b"$otherPlugins").and_then(Json::as_object);
         for (prefix, location) in others.unwrap_or_default() {
-            self.refuse_second(prefix, location)?;
+            self.refuse_second(prefix, location, modules_of(prefix))?;
         }
         for (prefix, location) in json
             .get(b"$jsPlugins")
             .and_then(Json::as_object)
             .unwrap_or_default()
         {
-            self.refuse_second(prefix, location)?;
+            self.refuse_second(prefix, location, modules_of(prefix))?;
             // `twin`: which of the plugins that objects have under that name.
             let is_it = |it: &(Box<[u8]>, Json)| {
                 *it.0 == prefix[..] && it.1.get(b"twin") == location.get(b"twin")
@@ -974,8 +954,15 @@ impl Config {
 impl Reader<'_> {
     /// ESLint's `Cannot redefine plugin`, for a plugin that the configuration has as `prefix` and a [`NamedPlugin`]. `location`:
     /// where the former is, which is `null` for one that no module exports. The configuration can have imported the same
-    /// package: then it is one plugin, for ESLint too.
-    pub(super) fn refuse_second(&self, prefix: &[u8], location: &Json) -> Result<(), ConfigError> {
+    /// package: then it is one plugin, for ESLint too. `modules`: all the modules that are the former, if there is more than
+    /// the one of `location`: one module can have what another exports, and a package can have one build to import and one to
+    /// require.
+    pub(super) fn refuse_second(
+        &self,
+        prefix: &[u8],
+        location: &Json,
+        modules: Option<&Json>,
+    ) -> Result<(), ConfigError> {
         // `[]` and `["default"]` are the same for what has no `default`.
         let is_whole = |it: &Json| {
             let path = it.get(b"export").and_then(Json::as_array);
@@ -983,15 +970,13 @@ impl Reader<'_> {
                 it.len() <= 1 && it.iter().all(|it| it.as_str() == Some(b"default"))
             })
         };
-        // The main module of a package often has what another module of it exports, and either can be where the plugin was found.
-        let place = |it: &Json| {
-            let file = it.get(b"module")?.as_str()?;
-            Some(installed_package(file).unwrap_or(file).to_vec())
-        };
+        let modules = modules.and_then(Json::as_array).unwrap_or_default();
         let is_same = |it: &Json| {
-            place(it).is_some_and(|it| Some(it) == place(location))
-                && is_whole(location)
-                && is_whole(it)
+            let Some(module) = it.get(b"module").filter(|_| is_whole(it)) else {
+                return false;
+            };
+            modules.contains(module)
+                || (location.get(b"module") == Some(module) && is_whole(location))
         };
         let mut named = self.js_locations.iter().take(self.named);
         match named.any(|it| *it.0 == *prefix && !is_same(&it.1)) {

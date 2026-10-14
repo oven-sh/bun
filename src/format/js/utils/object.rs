@@ -9,7 +9,7 @@ use super::tailwindcss::{
     context_of_string, has_white_space, sorted_string_literal, sorted_template_text,
 };
 use crate::ir::width::string_width;
-use crate::js::format::format_node;
+use crate::js::format::format_name;
 use crate::prelude::*;
 use crate::write;
 use bun_lint::linter::goes_to_flow;
@@ -42,8 +42,18 @@ fn write_key<'a>(key: Key<'a>, parent: impl Fn() -> AstNodes<'a>, f: &mut Format
             _ => 0,
         };
     }
-    let printed = printed_key(key, span, parent(), f);
-    format_node(span, parent, f, |f| match &printed {
+    let mut printed = printed_key(key, span, parent(), f);
+    // Prettier's `printPropertyKey` prints a key like any other node unless it adds or removes the quotes, so a
+    // `prettier-ignore` comment applies to `0XAB` and `'a-b'`, and not to the `'a'` that is printed as `a`.
+    let source = f.source_text().text_for(&span);
+    let has_quotes = |text: &[u8]| matches!(text.first(), Some(b'"' | b'\''));
+    if !f.is_quiet()
+        && has_quotes(source) == has_quotes(&printed)
+        && f.comments().of_name(span.start).is_ignored
+    {
+        printed = Cow::Borrowed(source);
+    }
+    format_name(span, f, |f| match &printed {
         Cow::Borrowed(_) if is_name => write!(f, source_text(span)),
         _ => write!(f, text(&printed)),
     });
@@ -145,7 +155,7 @@ fn printed_key<'a>(
             let printed = format_trimmed_number(source);
             // Prettier's `isKeySafeToQuote`: not in TypeScript, where it changes the type, and only
             // if the number is written the way it is converted to a string.
-            let is_safe_to_quote = f.context().has_tree_of_babel()
+            let is_safe_to_quote = (f.context().has_tree_of_babel() || f.file().is_flow())
                 && is_simple_number(&printed)
                 && name.bytes() == &*printed;
             match is_safe_to_quote && should_quote_keys(parent, f) {

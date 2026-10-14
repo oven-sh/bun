@@ -28,7 +28,7 @@ impl PreferPromiseRejectErrors {
             }
         };
         if !is_rejected_with_error {
-            cx.report(e, REJECT_AN_ERROR);
+            cx.report(e, REJECT_AN_ERROR).unless_claimed(e);
         }
     }
 

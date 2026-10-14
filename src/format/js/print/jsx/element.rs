@@ -1,8 +1,10 @@
 use super::child_list::{FormatChildrenResult, format_children};
 use super::opening_element::FormatOpeningElement;
 use super::{FormatJsxChild, write_jsx_closing_element, write_jsx_fragment_tag};
-use crate::js::format::write_trailing_comments_of;
+use crate::js::attach::Marker;
+use crate::js::format::format_node;
 use crate::js::parentheses::expression::needs_parentheses;
+use crate::js::print::class::dangling_comments_with_marker;
 use crate::js::utils::jsx::WrapState;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
@@ -24,40 +26,22 @@ impl<'a> AnyJsxTagWithChildren<'a> {
         self.expr.ast_parent()
     }
 
-    fn format_trailing_comments(&self, f: &mut Formatter<'a>) {
-        if f.is_quiet() {
-            return;
+    /// The comments inside `<>`, which have no marker, or inside `</>`.
+    fn comments_in_fragment_tag(&self, marker: Marker, f: &Formatter<'a>) -> CommentList<'a> {
+        match f.is_quiet() {
+            true => CommentList::empty(),
+            false => dangling_comments_with_marker(self.expr.as_ast_nodes(), marker, f),
         }
-        let parent = self.parent();
-        let trailing_comments = if let AstNodes::ExpressionStatement(statement) = parent
-            && statement.is_arrow_function_body()
-        {
-            // All up to the end of the arrow function
-            f.comments()
-                .comments_before(parent.parent().parent().span().end)
-        } else if let AstNodes::ConditionalExpression(conditional) = parent {
-            match conditional.alternate() == Some(self.expr) {
-                true => f.comments().comments_before(conditional.span().end),
-                false => f.comments().end_of_line_comments_after(self.span().end),
-            }
-        } else if matches!(
-            parent,
-            AstNodes::TemplateLiteral(_) | AstNodes::TSTemplateLiteralType(_)
-        ) {
-            f.comments()
-                .comments_before_character(self.span().end, b'}')
-        } else {
-            return write_trailing_comments_of(self.expr.as_ast_nodes(), f);
-        };
-        FormatTrailingComments::Comments(trailing_comments).fmt(f);
     }
 
-    /// Prettier's `maybeWrapJsxElementInParens`.
-    fn get_wrap_state(&self) -> WrapState {
-        match self.parent() {
+    /// Prettier's `isNoWrapParent`.
+    fn get_wrap_state(&self, parent: AstNodes<'a>) -> WrapState {
+        match parent {
             AstNodes::ArrayExpression(_)
             | AstNodes::JSXAttribute(_)
+            | AstNodes::JSXElement(_)
             | AstNodes::JSXExpressionContainer(_)
+            | AstNodes::JSXFragment(_)
             | AstNodes::ConditionalExpression(_)
             | AstNodes::CallExpression(_)
             | AstNodes::NewExpression(_)
@@ -69,9 +53,32 @@ impl<'a> AnyJsxTagWithChildren<'a> {
         }
     }
 
+    /// Prettier's `maybeWrapJsxElementInParens`.
+    fn fmt_in_parentheses(&self, element: &impl Format<'a>, f: &mut Formatter<'a>) {
+        let parent = self.parent();
+        match self.get_wrap_state(parent) {
+            WrapState::NoWrap => write!(f, element),
+            WrapState::WrapOnBreak => {
+                let needs_parentheses = needs_parentheses(self.expr, f);
+                write!(
+                    f,
+                    group(&format_args!(
+                        (!needs_parentheses).then_some(if_group_breaks(&"(")),
+                        soft_block_indent(element),
+                        (!needs_parentheses).then_some(if_group_breaks(&")"))
+                    ))
+                    .should_expand(should_expand(parent))
+                );
+            }
+        }
+    }
+
     fn fmt_opening(&self, f: &mut Formatter<'a>) {
         match self.jsx.is_fragment() {
-            true => write_jsx_fragment_tag(self.jsx.opening_span(), false, f),
+            true => {
+                let comments = self.comments_in_fragment_tag(Marker::None, f);
+                write_jsx_fragment_tag(self.jsx.opening_span(), comments, false, f);
+            }
             false => FormatOpeningElement {
                 expr: self.expr,
                 jsx: self.jsx,
@@ -82,8 +89,11 @@ impl<'a> AnyJsxTagWithChildren<'a> {
 
     fn fmt_closing(&self, f: &mut Formatter<'a>) {
         match (self.jsx.close_tag(), self.jsx.closing_span()) {
-            (Some(name), _) => write_jsx_closing_element(self.expr, name, f),
-            (None, Some(span)) if self.jsx.is_fragment() => write_jsx_fragment_tag(span, true, f),
+            (Some(name), _) => write_jsx_closing_element(name, f),
+            (None, Some(tag)) if self.jsx.is_fragment() => {
+                let comments = self.comments_in_fragment_tag(Marker::ClosingFragment, f);
+                write_jsx_fragment_tag(tag, comments, true, f);
+            }
             _ => {}
         }
     }
@@ -109,108 +119,97 @@ impl<'a> AnyJsxTagWithChildren<'a> {
     }
 }
 
-impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        let is_suppressed = f.comments().is_suppressed(self.span().start);
+impl<'a> AnyJsxTagWithChildren<'a> {
+    /// Prettier's `printJsxElementInternal`.
+    fn fmt_tags_and_children(&self, f: &mut Formatter<'a>) {
+        let format_opening = format_with(|f| self.fmt_opening(f));
+        let format_closing = format_with(|f| self.fmt_closing(f));
 
-        let format_tag = format_with(|f| {
-            if is_suppressed {
-                return FormatSuppressedNode(self.span()).fmt(f);
+        match self.layout() {
+            ElementLayout::NoChildren => write!(f, [format_opening, format_closing]),
+            ElementLayout::Template(expression) => {
+                write!(
+                    f,
+                    [format_opening, FormatJsxChild(expression), format_closing]
+                );
             }
-            let format_opening = format_with(|f| self.fmt_opening(f));
-            let format_closing = format_with(|f| self.fmt_closing(f));
+            ElementLayout::Default => {
+                let format_opening = format_opening.memoized();
+                let opening_breaks = format_opening.inspect(f).will_break();
+                let multiple_attributes = self.jsx.attrs().len() > 1;
 
-            match self.layout() {
-                ElementLayout::NoChildren => write!(f, [format_opening, format_closing]),
-                ElementLayout::Template(expression) => {
-                    write!(
-                        f,
-                        [format_opening, FormatJsxChild(expression), format_closing]
-                    );
-                }
-                ElementLayout::Default => {
-                    let format_opening = format_opening.memoized();
-                    let opening_breaks = format_opening.inspect(f).will_break();
-                    let multiple_attributes = self.jsx.attrs().len() > 1;
-
-                    // Prettier's `isMdxBlock`
-                    let is_mdx_block = f.options().is_mdx_jsx && self.span().start == 0;
-                    match format_children(
-                        self.jsx,
-                        multiple_attributes || opening_breaks,
-                        is_mdx_block,
-                        f,
-                    ) {
-                        FormatChildrenResult::ForceMultiline(children)
-                        | FormatChildrenResult::BestFitting {
-                            expanded_children: children,
-                            ..
-                        } if is_mdx_block => children.fmt_content(f),
-                        FormatChildrenResult::SingleChild(child) => {
-                            write!(
-                                f,
-                                group(&format_args!(format_opening, child, format_closing))
-                            );
-                        }
-                        FormatChildrenResult::ForceMultiline(multiline) => {
-                            write!(
-                                f,
-                                group(&format_args!(format_opening, multiline, format_closing))
-                            );
-                        }
-                        FormatChildrenResult::BestFitting {
-                            flat_children,
-                            expanded_children,
-                        } => {
-                            let format_closing = format_closing.memoized();
-                            write!(
-                                f,
-                                best_fitting![
-                                    group(&format_args!(
-                                        format_opening,
-                                        flat_children, format_closing
-                                    )),
-                                    group(&format_args!(
-                                        format_opening,
-                                        expanded_children, format_closing
-                                    ))
-                                ]
-                            );
-                        }
+                // Prettier's `isMdxBlock`
+                let is_mdx_block = f.options().is_mdx_jsx && self.span().start == 0;
+                match format_children(
+                    self.jsx,
+                    multiple_attributes || opening_breaks,
+                    is_mdx_block,
+                    f,
+                ) {
+                    FormatChildrenResult::ForceMultiline(children)
+                    | FormatChildrenResult::BestFitting {
+                        expanded_children: children,
+                        ..
+                    } if is_mdx_block => children.fmt_content(f),
+                    FormatChildrenResult::SingleChild(child) => {
+                        write!(
+                            f,
+                            group(&format_args!(format_opening, child, format_closing))
+                        );
+                    }
+                    FormatChildrenResult::ForceMultiline(multiline) => {
+                        write!(
+                            f,
+                            group(&format_args!(format_opening, multiline, format_closing))
+                        );
+                    }
+                    FormatChildrenResult::BestFitting {
+                        flat_children,
+                        expanded_children,
+                    } => {
+                        let format_closing = format_closing.memoized();
+                        write!(
+                            f,
+                            best_fitting![
+                                group(&format_args!(format_opening, flat_children, format_closing)),
+                                group(&format_args!(
+                                    format_opening,
+                                    expanded_children, format_closing
+                                ))
+                            ]
+                        );
                     }
                 }
             }
-        });
-
-        let parent = self.parent();
-        if matches!(parent, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_)) {
-            return write!(f, format_tag);
         }
+    }
 
-        let format_with_comments = format_args!(
-            format_leading_comments(self.span()),
-            format_tag,
-            format_with(|f| self.format_trailing_comments(f))
+    /// The source text of an element that has a `prettier-ignore` comment, with the comments of the element.
+    fn fmt_ignored(&self, f: &mut Formatter<'a>) {
+        let skip_trailing_comments = f.context_mut().take_skip_trailing_comments();
+        let comments = f.comments().of_node(self.expr.as_ast_nodes());
+        write!(
+            f,
+            [
+                FormatLeadingComments::Comments(comments.leading),
+                FormatSuppressedNode(self.span()),
+                (!skip_trailing_comments)
+                    .then_some(FormatTrailingComments::Comments(comments.trailing))
+            ]
         );
-        match self.get_wrap_state() {
-            // Prettier's `printIgnored` comes before `maybeWrapJsxElementInParens`.
-            _ if is_suppressed && ignored_jsx_gets_no_parentheses(f) => {
-                write!(f, format_with_comments);
-            }
-            WrapState::NoWrap => write!(f, format_with_comments),
-            WrapState::WrapOnBreak => {
-                let needs_parentheses = needs_parentheses(self.expr, f);
-                write!(
-                    f,
-                    group(&format_args!(
-                        (!needs_parentheses).then_some(if_group_breaks(&"(")),
-                        soft_block_indent(&format_with_comments),
-                        (!needs_parentheses).then_some(if_group_breaks(&")"))
-                    ))
-                    .should_expand(should_expand(parent))
-                );
-            }
+    }
+}
+
+impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
+    /// Prettier's `printJsxElement`: the comments of the element are inside the parentheses.
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let node = self.expr.as_ast_nodes();
+        if !f.is_quiet() && f.comments().is_ignored(node) {
+            return self.fmt_in_parentheses(&format_with(|f| self.fmt_ignored(f)), f);
         }
+        let format_with_comments =
+            format_with(|f| format_node(node, f, |f| self.fmt_tags_and_children(f)));
+        self.fmt_in_parentheses(&format_with_comments, f);
     }
 }
 

@@ -204,7 +204,7 @@ pub(super) fn name_for_oxc(token: T, text: &[u8]) -> Vec<u8> {
     }
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseErrorAtRange`. Without recovery: `fail`.
     #[cold]
     #[inline(never)]

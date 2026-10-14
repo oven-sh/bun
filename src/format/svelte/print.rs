@@ -9,7 +9,8 @@ use super::doc::{
     Brace, Code, Doc, EMPTY, Js, JsKind, Parser, dedent, group, indent, owned, text, trim_left,
     trim_right,
 };
-use super::parser::closing_tag_omitted;
+use super::parser::{RESERVED_WORDS, closing_tag_omitted};
+use crate::html::embed::infer_parser_by_type_attribute;
 use crate::html::preprocess::slice;
 use crate::options::{
     AttributePosition, FormatOptions, HtmlWhitespaceSensitivity, SvelteOptions, SveltePart as Part,
@@ -19,12 +20,41 @@ use crate::text::{
     has_newline, has_newline_backwards, is_previous_line_empty, skip_newline, skip_spaces,
 };
 use bun_core::strings;
+use bun_lint::utils::text::is_identifier_name;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 
 const SELF_CLOSING_TAGS: [&[u8]; 14] = [
     b"area", b"base", b"br", b"col", b"embed", b"hr", b"img", b"input", b"link", b"meta", b"param",
     b"source", b"track", b"wbr",
+];
+
+/// What else than the types of `infer_parser_by_type_attribute` says that a script is code: the other names of JavaScript and
+/// TypeScript, and Partytown's, which runs it in a worker.
+const TYPES_OF_CODE: [&[u8]; 23] = [
+    b"application/ecmascript",
+    b"application/typescript",
+    b"application/x-ecmascript",
+    b"application/x-javascript",
+    b"javascript",
+    b"js",
+    b"jsx",
+    b"text/ecmascript",
+    b"text/javascript1.0",
+    b"text/javascript1.1",
+    b"text/javascript1.2",
+    b"text/javascript1.3",
+    b"text/javascript1.4",
+    b"text/javascript1.5",
+    b"text/jscript",
+    b"text/livescript",
+    b"text/partytown",
+    b"text/ts",
+    b"text/typescript",
+    b"text/x-ecmascript",
+    b"text/x-javascript",
+    b"ts",
+    b"typescript",
 ];
 
 const BLOCK_ELEMENTS: [&[u8]; 33] = [
@@ -494,6 +524,48 @@ impl<'a, 'o> Printer<'a, 'o> {
         Some(value.strip_prefix(b"text/").unwrap_or(&value[..]))
     }
 
+    /// What `type` says, in whatever letters the name is written: a text, or a string between braces.
+    fn text_of_type(&self, attributes: &[Id]) -> Option<&[u8]> {
+        let value = attributes
+            .iter()
+            .find_map(|&it| match &self.tree[it].kind {
+                Kind::Attribute { name, value } if name.eq_ignore_ascii_case(b"type") => {
+                    Some(value)
+                }
+                _ => None,
+            })?;
+        match self.lone_mustache_tag(value).map(|it| &self.tree[it].kind) {
+            Some(Kind::ExpressionTag(it)) if it.kind == ExpressionKind::StringLiteral => {
+                let string = it.span.of(self.text);
+                string.get(1..string.len() - 1)
+            }
+            Some(_) => None,
+            None => match value {
+                Value::True | Value::Tag(_) => None,
+                Value::Parts(parts) => parts.iter().find_map(|&it| Some(&self.raw(it)?[..])),
+            },
+        }
+    }
+
+    /// Whether a script with these attributes has code in it: it has a `lang`, no `type`, or a `type` that stands for code.
+    /// What is behind a `;` in the `type`, and which letters are capitals, makes no difference.
+    fn has_type_of_code(&self, attributes: &[Id]) -> bool {
+        let lang = self.attribute_text_value(attributes, b"lang");
+        let Some(kind) =
+            (self.text_of_type(attributes)).filter(|_| lang.is_none_or(|it| it.is_empty()))
+        else {
+            return true;
+        };
+        let end = strings::index_of_char(kind, b';').map_or(kind.len(), |it| it as usize);
+        let kind = kind[..end].trim_ascii().to_ascii_lowercase();
+        kind.is_empty()
+            || matches!(
+                infer_parser_by_type_attribute(&kind),
+                Some(b"babel" | b"typescript")
+            )
+            || TYPES_OF_CODE.contains(&&kind[..])
+    }
+
     /// `isNodeSupportedLanguage`
     fn is_supported_language(&self, attributes: &[Id]) -> bool {
         !matches!(
@@ -514,11 +586,17 @@ impl<'a, 'o> Printer<'a, 'o> {
         }
     }
 
-    /// Whether `expression` is the name `name`. The plugin makes `{a}` of `a={a /* b */}`.
+    /// Whether `expression` is the name `name`. The plugin makes `{a}` of `a={a /* b */}` and of `a={/* b */ a}`.
     fn is_name(&self, expression: Expression, name: &[u8]) -> bool {
         expression.kind == ExpressionKind::Identifier
             && expression.span.of(self.text) == name
-            && !self.has_comments_around(expression)
+            && !self.has_comments(expression)
+    }
+
+    /// Whether `name`, which stands for `name={name}`, can be written like that. The plugin makes `class:a-b={a-b}` of
+    /// `class:a-b`, and `class:if={if}` of `class:if`.
+    fn is_variable(name: &[u8]) -> bool {
+        is_identifier_name(name) && !RESERVED_WORDS.contains(&name)
     }
 
     /// `isOrCanBeConvertedToShorthand`
@@ -676,15 +754,23 @@ impl<'a, 'o> Printer<'a, 'o> {
         Cow::Borrowed(Span { start, end }.of(self.text))
     }
 
-    /// Whether there is a comment before or behind what the plugin prints of `expression`: `{a /* b */}`, `{/* b */ (a)}`.
+    /// Whether there is a comment from `start` to `end`, where there is nothing but parentheses, white space and comments.
+    fn has_comment_between(&self, start: u32, end: u32) -> bool {
+        let around = self.text.get(start as usize..end as usize);
+        around.is_some_and(|it| strings::contains_char(it, b'/'))
+    }
+
+    /// Whether there is a comment before or behind what the plugin prints of `expression`: `{a /* b */}`, `{/* b */ (a)}`. It
+    /// prints the one in `{/* b */ a}`.
     fn has_comments_around(&self, expression: Expression) -> bool {
-        // What is there is parentheses, white space and comments.
-        let has_comment = |start: u32, end: u32| {
-            let around = self.text.get(start as usize..end as usize);
-            around.is_some_and(|it| strings::contains_char(it, b'/'))
-        };
-        has_comment(expression.outer.start, expression.from)
-            || has_comment(expression.span.end, expression.outer.end)
+        self.has_comment_between(expression.outer.start, expression.from)
+            || self.has_comment_between(expression.span.end, expression.outer.end)
+    }
+
+    /// Whether there is a comment before or behind `expression`. For who prints something else in its place.
+    fn has_comments(&self, expression: Expression) -> bool {
+        self.has_comment_between(expression.outer.start, expression.span.start)
+            || self.has_comment_between(expression.span.end, expression.outer.end)
     }
 
     fn js(&self, expression: Expression) -> Js<'a> {
@@ -699,6 +785,7 @@ impl<'a, 'o> Printer<'a, 'o> {
             has_single_quotes: false,
             is_on_one_line: false,
             is_without_parentheses: false,
+            is_without_comment_behind: false,
             follows: None,
         }
     }
@@ -1004,6 +1091,11 @@ impl<'a, 'o> Printer<'a, 'o> {
             .last()
             .is_some_and(|it| self.is_ignore_directive(it.0));
         let body = match parser.filter(|_| self.is_supported_language(attributes) && !is_ignored) {
+            // The plugin reads every one as JavaScript: `<p>{{a}}</p>` in a `text/template` is JSX, which gets a `;`, and
+            // `x^2 + y^2` in a `math/tex` becomes `x ^ (2 + y) ^ 2;`.
+            Some(Parser::BabelTs) if !self.has_type_of_code(attributes) => {
+                lines_as_they_are(&Cow::Borrowed(content))
+            }
             Some(parser) if !strings::trim_js_whitespace(content).is_empty() => {
                 Doc::Code(Box::new(Code::Body {
                     content,
@@ -1316,7 +1408,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                     Self::print_modifiers(&modifiers),
                 ];
                 if self.can_be_shorthand(name, &value) || value == Value::True {
-                    if !allows_shorthand {
+                    if !allows_shorthand && Self::is_variable(name) {
                         prefix.extend([Doc::Token("={"), text(name), Doc::Token("}")]);
                     }
                     return Doc::List(prefix);
@@ -1330,6 +1422,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                 expression,
             } => {
                 let is_own_name = expression.is_some_and(|it| self.is_name(it, name));
+                let allows_shorthand = allows_shorthand || !Self::is_variable(name);
                 let (prefix, value) = match kind {
                     DirectiveKind::On => ("on:", with_value(self, expression)),
                     DirectiveKind::Bind if is_own_name && allows_shorthand => ("bind:", EMPTY),
@@ -1617,8 +1710,9 @@ impl<'a, 'o> Printer<'a, 'o> {
         } else if let Some(this) = this {
             let line = self.attribute_line(&element.attributes, true);
             let value = match this.kind {
+                ExpressionKind::Text => self.print_text_of_this(this.span),
                 ExpressionKind::StringLiteral
-                    if kind == ElementKind::SvelteElement && !self.has_comments_around(this) =>
+                    if kind == ElementKind::SvelteElement && !self.has_comments(this) =>
                 {
                     self.print_tag_name(this)
                 }
@@ -1766,18 +1860,37 @@ impl<'a, 'o> Printer<'a, 'o> {
         group(parts)
     }
 
-    /// `this=` of `<svelte:element>` with a string.
+    /// `this="a"`. The plugin puts every text between double quotes: `this='a"b'` becomes `this="a"b"`.
+    fn print_text_of_this(&self, written: Span) -> Doc<'a> {
+        let before = (written.start as usize)
+            .checked_sub(1)
+            .and_then(|at| self.text.get(at));
+        let quote = Doc::Token(match (before, written.of(self.text)) {
+            (_, value) if !strings::contains_char(value, b'"') => "\"",
+            (Some(b'\''), _) => "'",
+            _ => "",
+        });
+        Doc::List(vec![quote.clone(), text(written.of(self.text)), quote])
+    }
+
+    /// `this=` of `<svelte:element>` with a string. Right behind the `{` the plugin prints `{"a"}`, elsewhere `"a"`, with what
+    /// the string stands for in it, whatever that is: `this={'a"b'}` becomes `this={"a"b"}`, and `this={ "a&amp;b" }`, which is
+    /// no entity, becomes one.
     fn print_tag_name(&self, tag: Expression) -> Doc<'a> {
-        let written = tag.span.of(self.text);
+        let value = match tag.span.of(self.text) {
+            [_, inner @ .., _] => inner,
+            _ => b"",
+        };
+        let is_plain = |&it: &u8| {
+            !it.is_ascii() || it.is_ascii_alphanumeric() || matches!(it, b'-' | b'_' | b':' | b'.')
+        };
+        if !value.iter().all(is_plain) {
+            return self.print_js_in_braces(tag);
+        }
         let is_in_braces = (tag.span.start as usize)
             .checked_sub(1)
             .and_then(|at| self.text.get(at))
             == Some(&b'{');
-        // A literal has its quotes, the text of an attribute has not.
-        let value = match written {
-            [open @ (b'"' | b'\''), inner @ .., close] if open == close => inner,
-            _ => written,
-        };
         Doc::List(vec![
             Doc::Token(if is_in_braces { "{\"" } else { "\"" }),
             text(value),
@@ -1865,6 +1978,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                     has_single_quotes: false,
                     is_on_one_line: false,
                     is_without_parentheses: true,
+                    is_without_comment_behind: false,
                     follows: None,
                 }),
             ),
@@ -1876,6 +1990,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                     has_single_quotes: false,
                     is_on_one_line: false,
                     is_without_parentheses: false,
+                    is_without_comment_behind: true,
                     follows: None,
                 }),
             ),
@@ -1919,11 +2034,12 @@ impl<'a, 'o> Printer<'a, 'o> {
                 body,
                 fallback,
             } => {
-                // Without an `as`, Svelte goes on where the expression ends, which is before a `)`. The plugin prints
-                // `{#each (a = 1)}`.
+                // Without an `as`, Svelte goes on where the expression ends, which is before a `)` and before a comment. The
+                // plugin prints `{#each (a = 1)}`.
                 let list = Self::code(Js {
                     is_on_one_line: true,
                     is_without_parentheses: context.is_none(),
+                    is_without_comment_behind: context.is_none(),
                     ..self.js(expression)
                 });
                 let mut parts = vec![Doc::Token("{#each "), list];
@@ -1963,13 +2079,20 @@ impl<'a, 'o> Printer<'a, 'o> {
                             .any(|&it| printer.pre_depth > 0 || !printer.is_empty_text(it))
                     })
                 };
-                // The plugin leaves out a `{:catch}` with nothing in it too. Without one, Svelte throws the error again.
-                let (pending, then) = (full(self, pending), full(self, then));
+                // The plugin leaves out a `{:catch}` with nothing in it too. Without one, Svelte throws the error again. And with
+                // a `{:then a /* b */}` the comment goes.
+                let has_comment = value.is_some_and(|it| it.has_comments);
+                let has_full_then = full(self, then).is_some();
+                let (pending, then) = (
+                    full(self, pending),
+                    then.filter(|_| has_full_then || has_comment),
+                );
                 let has_full_catch = full(self, catch).is_some();
-                let print_catch = |printer: &mut Self, catch: FragmentId| match has_full_catch {
-                    true => printer.print_block_fragment(catch),
-                    false => EMPTY,
-                };
+                let print_if =
+                    |printer: &mut Self, fragment: FragmentId, is_full: bool| match is_full {
+                        true => printer.print_block_fragment(fragment),
+                        false => EMPTY,
+                    };
                 let mut block = Vec::new();
                 let head = vec![Doc::Token("{#await "), self.print_block_js(expression)];
                 let clause = |mut head: Vec<Doc<'a>>, word: &'static str, pattern: Doc<'a>| {
@@ -1980,12 +2103,12 @@ impl<'a, 'o> Printer<'a, 'o> {
                     (None, Some(then), _) => {
                         let pattern = self.expand_node(value);
                         block.push(clause(head, " then", pattern));
-                        block.push(self.print_block_fragment(then));
+                        block.push(print_if(self, then, has_full_then));
                     }
                     (None, None, Some(catch)) => {
                         let pattern = self.expand_node(error);
                         block.push(clause(head, " catch", pattern));
-                        block.push(print_catch(self, catch));
+                        block.push(print_if(self, catch, has_full_catch));
                     }
                     _ => {
                         block.push(clause(head, "", EMPTY));
@@ -1995,14 +2118,14 @@ impl<'a, 'o> Printer<'a, 'o> {
                         if let Some(then) = then {
                             let pattern = self.expand_node(value);
                             block.push(clause(Vec::new(), "{:then", pattern));
-                            block.push(self.print_block_fragment(then));
+                            block.push(print_if(self, then, has_full_then));
                         }
                     }
                 }
                 if let Some(catch) = catch.filter(|_| pending.is_some() || then.is_some()) {
                     let pattern = self.expand_node(error);
                     block.push(clause(Vec::new(), "{:catch", pattern));
-                    block.push(print_catch(self, catch));
+                    block.push(print_if(self, catch, has_full_catch));
                 }
                 block.push(Doc::Token("{/await}"));
                 group(block)
@@ -2022,19 +2145,17 @@ impl<'a, 'o> Printer<'a, 'o> {
             }
             Kind::SnippetBlock {
                 expression,
-                last_parameter_end,
+                end_of_parameters,
                 body,
             } => {
-                let from = last_parameter_end.unwrap_or(expression.end) as usize;
-                let end = (self.text.get(from..))
-                    .and_then(|rest| strings::index_of_char_usize(rest, b')'))
-                    .map_or(0, |at| from + at + 1);
+                // The plugin goes up to the first `)` behind the last parameter, which can be in a comment: `a(b /* () */)`.
                 let head = Self::code(Js {
-                    text: self.js_text(expression.start, (end as u32).max(expression.start)),
+                    text: self.js_text(expression.start, end_of_parameters),
                     kind: JsKind::Function,
                     has_single_quotes: false,
                     is_on_one_line: false,
                     is_without_parentheses: false,
+                    is_without_comment_behind: false,
                     follows: None,
                 });
                 Doc::List(vec![

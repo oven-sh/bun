@@ -4,44 +4,26 @@ use super::function_type::{
     write_ts_call_signature_declaration, write_ts_construct_signature_declaration,
     write_ts_method_signature,
 };
-use super::import_declaration::FormatStringLiteral;
 use super::object_like::ObjectLike;
-use super::type_parameters::type_arguments;
+use super::type_parameters::{FormatDanglingCommentsForInline, type_arguments};
+use super::union_type::union_writes_comments_behind_colon;
 use crate::cursor::extend_node;
-use crate::js::format::{
-    FormatTypeOfPredicate, identifier, no_comment_trails_what_is_before_another,
-    write_trailing_comments_of,
-};
+use crate::js::format::{FormatTypeOfPredicate, format_node, identifier};
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::number::format_number_token;
 use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::js::utils::suppressed::{FormatSuppressedNode, FormatTemplateText};
-use crate::js::utils::typescript::{end_of_line_comments, without_lone_operator};
+use crate::js::utils::typescript::without_lone_operator;
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
-use smallvec::SmallVec;
-use std::cell::Cell;
 
-/// `A.B.C`. `parent`: what it is a name in.
-pub(crate) fn entity_name<'a>(name: EntityName<'a>, parent: AstNodes<'a>) -> impl Format<'a> {
+/// `A.B.C`
+pub(crate) fn entity_name<'a>(name: EntityName<'a>) -> impl Format<'a> {
     format_with(move |f: &mut Formatter<'a>| {
-        if f.is_quiet() {
-            f.join_with(".")
-                .entries(name.parts().map(|part| identifier(part, parent)));
-            return;
-        }
-        // The next name is what follows a name, which `parent` does not tell.
-        let mut parts = name.parts().peekable();
-        while let Some(part) = parts.next() {
-            let part = identifier(part, parent);
-            let Some(next) = parts.peek() else {
-                return write!(f, part);
-            };
-            let comments = format_trailing_comments(name.span(), part.span(), next.span().start);
-            write!(f, [FormatNodeWithoutTrailingComments(&part), comments, "."]);
-        }
+        f.join_with(".")
+            .entries(name.parts().map(|part| identifier(part)));
     })
 }
 
@@ -72,10 +54,7 @@ pub(crate) fn write_ts_type_reference<'a>(
     {
         return write!(
             f,
-            [
-                heritage_name(name, node),
-                type_arguments(args, Node::Type(ty))
-            ]
+            [heritage_name(name), type_arguments(args, Node::Type(ty))]
         );
     }
     if args.is_empty() && f.file().is_javascript() {
@@ -84,28 +63,17 @@ pub(crate) fn write_ts_type_reference<'a>(
             return write!(f, "boolean");
         }
         // `A<>`
-        if let Some(last) = name.get(name.len().wrapping_sub(1))
-            && ty.text().ends_with(b">")
-        {
-            let brackets = Span::after(last.span(), ty.span().end);
-            let has_line_comment = f
-                .comments()
-                .comments_in(brackets)
-                .iter()
-                .any(|it| it.is_line());
-            match name.len() {
-                1 => write!(
-                    f,
-                    FormatNodeWithoutTrailingComments(&identifier(last, node))
-                ),
-                _ => write!(f, entity_name(name, node)),
-            }
-            write!(f, "<");
-            match has_line_comment {
-                true => write!(f, format_dangling_comments(brackets).with_block_indent()),
-                false => write!(f, format_dangling_comments(brackets)),
-            }
-            return write!(f, ">");
+        if ty.text().ends_with(b">") {
+            let arguments = AstNodes::TSTypeParameterInstantiation(Node::Type(ty));
+            return write!(
+                f,
+                [
+                    entity_name(name),
+                    "<",
+                    FormatDanglingCommentsForInline(arguments),
+                    ">"
+                ]
+            );
         }
     }
     let wrap =
@@ -114,7 +82,7 @@ pub(crate) fn write_ts_type_reference<'a>(
         f,
         [
             wrap.then_some("("),
-            entity_name(name, node),
+            entity_name(name),
             type_arguments(args, Node::Type(ty)),
             wrap.then_some(")")
         ]
@@ -128,10 +96,10 @@ fn heritage_name_breaks_before_its_dots(f: &Formatter<'_>) -> bool {
 
 /// `A.B.C` after `extends` or `implements`. There it is a member expression in ESTree, which can
 /// break before its dots (Prettier's `printMemberExpression`).
-fn heritage_name<'a>(name: EntityName<'a>, parent: AstNodes<'a>) -> impl Format<'a> {
+fn heritage_name<'a>(name: EntityName<'a>) -> impl Format<'a> {
     format_with(move |f: &mut Formatter<'a>| {
         for (index, part) in name.parts().enumerate() {
-            let part = identifier(part, parent);
+            let part = identifier(part);
             match index {
                 0 => write!(f, part),
                 _ => write!(
@@ -205,14 +173,16 @@ pub(crate) fn write_ts_literal_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>)
                 return write!(f, format_digits(text));
             };
             // `- /* comment */ 1`: like a unary expression whose operand has a comment.
-            let comments = f.comments().comments_before(ty.span().end);
+            let comments = match f.is_quiet() {
+                true => CommentList::empty(),
+                false => f.comments().of_node(ty.as_ast_nodes()).dangling,
+            };
             let Some(last) = comments.last() else {
                 return write!(f, ["-", format_digits(rest.trim_ascii_start())]);
             };
             let digits = f
                 .source_text()
-                .text_for(&Span::after(last.span, ty.span().end))
-                .trim_ascii_start();
+                .text_for(&Span::new(last.next_token_start(), ty.span().end));
             let operand = format_args!(
                 FormatLeadingComments::Comments(comments),
                 format_digits(digits)
@@ -268,19 +238,25 @@ fn write_signatures<'a>(members: List<'a, Member<'a>>, is_interface: bool, f: &m
         f.context_mut().push_quote_needed(quote_needed);
     }
 
+    let (is_flow, text) = (f.file().is_flow(), f.source_text().as_bytes());
     let mut joiner = f.join_nodes_with_soft_line();
     let mut iter = members.iter().peekable();
+    let mut previous: Option<Member<'a>> = None;
     while let Some(signature) = iter.next() {
         let content = FormatTSSignature {
             signature,
             next_signature: iter.peek().copied(),
             is_interface,
         };
-        // Prettier has no node for the `...`.
-        match super::flow::is_inexact_mark(signature)
-            && !joiner.has_comment_before(signature.span().start)
-        {
+        // `a: 1⏎⏎// comment⏎; b: 2`: a member in Flow ends before its separator, and Prettier's `isNextLineEmpty` starts there.
+        let is_after_empty_line = is_flow
+            && previous.replace(signature).is_some_and(|previous| {
+                crate::text::is_next_line_empty(text, previous.span().end as usize)
+            });
+        // Prettier has no node for the `...`. A comment before it trails the member before it.
+        match super::flow::is_inexact_mark(signature) {
             true => joiner.entry_without_empty_line(&content),
+            false if is_after_empty_line => joiner.entry_after_empty_line(&content),
             false => joiner.entry(signature.span(), &content),
         }
     }
@@ -302,47 +278,19 @@ struct FormatTSSignature<'a> {
     is_interface: bool,
 }
 
-/// A member, with the span that the comments after it are after.
-struct FormatMemberIn<'a>(Member<'a>, Span);
-
-impl<'a> Format<'a> for FormatMemberIn<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        self.0.fmt(f);
-    }
-}
-
-impl Spanned for FormatMemberIn<'_> {
-    fn span(&self) -> Span {
-        self.1
-    }
-}
-
 impl<'a> Format<'a> for FormatTSSignature<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let (signature, mut span) = (self.signature, self.signature.span());
+        let signature = self.signature;
+        let node = signature.as_ast_nodes();
         if !f.is_quiet() {
-            if f.comments().is_suppressed(span.start) {
+            if f.comments().is_ignored(node) {
                 write!(f, signature);
-                // It is not part of a member of Flow's.
-                if f.file().is_flow() {
+                // In Flow the separator is not part of the member. In an interface or a declared class Prettier writes none after an ignored
+                // member, which is a syntax error before another member.
+                if f.file().is_flow() && !(self.is_interface && self.next_signature.is_none()) {
                     self.write_separator(f);
                 }
                 return;
-            }
-            if f.comments().has_trailing_suppression_comment(span.end) {
-                write!(
-                    f,
-                    [format_leading_comments(span), FormatSuppressedNode(span)]
-                );
-                return write_trailing_comments_of(signature.as_ast_nodes(), f);
-            }
-            // Prettier's `handleTSFunctionTrailingComments`: `a() /* comment */;`
-            if matches!(signature.as_ast_nodes(), AstNodes::TSMethodSignature(_))
-                && signature
-                    .func()
-                    .is_some_and(|func| func.return_type().is_none())
-            {
-                span = f.comments().without_semicolon(span);
             }
             // The `,` of Flow's is behind the comments that trail the member.
             if (f.file().is_flow() && !self.is_interface) || separator_is_behind_comments(f) {
@@ -351,18 +299,11 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
             }
         }
 
-        // The separator is not part of the member. The comments after the member are behind it.
-        write!(
-            f,
-            FormatNodeWithoutTrailingComments(&FormatMemberIn(signature, span))
-        );
+        // The separator is not part of the member. The comments that trail the member are behind it.
+        write!(f, FormatNodeWithoutTrailingComments(&signature));
         self.write_separator(f);
         extend_node(signature.span(), f);
-        if !f.is_quiet()
-            && !(self.next_signature.is_some() && no_comment_trails_what_is_before_another(f))
-        {
-            write_trailing_comments_of(signature.as_ast_nodes(), f);
-        }
+        write!(f, trailing_comments(node));
     }
 }
 
@@ -434,55 +375,18 @@ pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
             let Some(ty) = member.ty() else {
                 return write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
             };
-            // Prettier does not attach comments to the `: T` of a property signature, only to the
-            // name and the type.
-            if !f.is_quiet() {
-                write!(
-                    f,
-                    FormatTrailingComments::Comments(comments_after_property_name(ty, f))
-                );
-            }
             write!(
                 f,
-                [
-                    member.flags().contains(Flags::OPTIONAL).then_some("?"),
-                    ":",
-                    space(),
-                    ty
-                ]
+                [member.flags().contains(Flags::OPTIONAL).then_some("?"), ":"]
             );
-            write_trailing_comments_of(AstNodes::TSTypeAnnotation(ty), f);
+            write!(f, space());
+            // `a: // comment ⏎ B` stays as it is for oxfmt. The comment dangles from the signature.
+            if !f.is_quiet() && !union_writes_comments_behind_colon(without_lone_operator(ty), f) {
+                let comments_behind_colon = f.comments().of_node(node).dangling;
+                write!(f, FormatLeadingComments::Comments(comments_behind_colon));
+            }
+            write!(f, ty);
         }
-    }
-}
-
-/// `a: // comment ⏎ B;` stays as it is for oxfmt. For Prettier it is `a: B; // comment`.
-fn comments_behind_colon_of_property_signature_stay(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
-}
-
-/// Of the comments between the name of a property signature and its type `ty`, those that trail
-/// the name: those on its line that are before the `:`, or at the end of the line, unless a union
-/// or an intersection follows (Prettier's `handlePropertySignatureComments`).
-pub(super) fn comments_after_property_name<'a>(
-    ty: TypeNode<'a>,
-    f: &Formatter<'a>,
-) -> &'a [Comment] {
-    let comments = f.comments().comments_before(ty.span().start);
-    let colon = ty.annotation_span().start;
-    let before_colon = comments
-        .iter()
-        .take_while(|comment| comment.span.start < colon && !comment.preceded_by_newline())
-        .count();
-    let (_, rest) = comments.split_at(before_colon);
-    let takes_comments = comments_behind_colon_of_property_signature_stay(f)
-        || matches!(
-            without_lone_operator(ty).kind(),
-            TypeKind::Union(_) | TypeKind::Intersection(_)
-        );
-    match takes_comments {
-        true => &comments[..before_colon],
-        false => &comments[..before_colon + end_of_line_comments(rest).len()],
     }
 }
 
@@ -498,24 +402,36 @@ pub(crate) fn write_ts_type_query<'a>(
     args: List<'a, TypeNode<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    if f.file().is_flow() && super::flow::write_declared_predicate(ty, expr, args, f) {
+    if f.file().is_flow() && super::flow::write_declared_predicate(ty, f) {
         return;
     }
-    // The name is ESTree's `TSQualifiedName`, which does not break like a member expression.
-    let mut names: SmallVec<[Ident<'a>; 4]> = SmallVec::new();
-    let mut leftmost = expr;
-    while let ExprKind::Dot { obj, name, .. } = leftmost.kind() {
-        names.push(name);
-        leftmost = obj;
-    }
-    write!(f, ["typeof ", leftmost]);
-    for &name in names.iter().rev() {
-        write!(f, [".", identifier(name, AstNodes::TSTypeQuery(ty))]);
-    }
+    write!(f, "typeof ");
+    write_qualified_name(expr, f);
     write!(f, type_arguments(args, Node::Type(ty)));
 }
 
+/// `a.b.c` after `typeof`. It is ESTree's `TSQualifiedName`, which does not break like a member expression.
+fn write_qualified_name<'a>(name: Expr<'a>, f: &mut Formatter<'a>) {
+    let ExprKind::Dot {
+        obj: left,
+        name: right,
+        ..
+    } = name.kind()
+    else {
+        return write!(f, name);
+    };
+    // Not by way of `Expr`.
+    if !f.context_mut().has_stack_left() {
+        return;
+    }
+    format_node(name.as_chain_element(), f, |f| {
+        write_qualified_name(left, f);
+        write!(f, [".", identifier(right)]);
+    });
+}
+
 /// `import("a").B<C>`, `typeof import("a")`
+#[inline(never)]
 pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     let TypeKind::Import {
         name,
@@ -529,31 +445,35 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
     let Some(source) = ty.import_source_span() else {
         return write!(f, FormatSuppressedNode(ty.span()));
     };
-    let node = AstNodes::TSImportType(ty);
-    let format_source = FormatStringLiteral {
-        span: source,
-        parent: node,
+    let options = ty.import_attributes();
+    let comments = match f.is_quiet() {
+        true => ImportTypeComments::default(),
+        false => ImportTypeComments::new(ty, source, options, f),
     };
+    let format_source = comments.format_source(source);
 
-    // Up to what follows the `)`, they lead or trail the module specifier.
-    let has_comment = !f.is_quiet() && {
-        let following = name
-            .first()
-            .map(|it| it.span())
-            .or_else(|| args.angle_brackets_span());
-        let span = ty.span();
-        f.comments()
-            .has_comment_in_range(span.start, following.map_or(span.end, |it| it.start))
-    };
-
-    write!(f, is_typeof.then_some("typeof "));
-    match ty.import_attributes() {
+    write!(
+        f,
+        [
+            is_typeof.then_some("typeof "),
+            FormatLeadingComments::Comments(comments.leading_import)
+        ]
+    );
+    if let Some(import) = ty.import_span()
+        && has_ignore_comment(&[comments.leading_import], CommentList::empty(), f)
+    {
+        return write!(f, FormatSuppressedNode(import));
+    }
+    match options {
         Some(options) => {
-            let arguments = format_with(|f| write_import_type_arguments(ty, source, options, f));
+            let arguments =
+                format_with(|f| write_import_type_arguments(source, options, &comments, f));
             write!(f, group(&format_args!("import", arguments)));
         }
         // A long module name does not break.
-        None if !has_comment => write!(f, ["import(", format_source, ")"]),
+        None if comments.leading_source.is_empty() && comments.trailing_source.is_empty() => {
+            write!(f, ["import(", format_source, ")"])
+        }
         None => write!(
             f,
             group(&format_args!(
@@ -565,48 +485,148 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
     }
 
     if !name.is_empty() {
-        write!(f, [".", entity_name(name, node)]);
+        write!(f, [".", entity_name(name)]);
     }
     write!(f, type_arguments(args, Node::Type(ty)));
 }
 
-/// The module specifier in `import("a")` or `require("a")`. Only the comments before the `)` trail it.
-pub(crate) struct FormatModuleSpecifier<'a> {
-    pub(crate) span: Span,
-    pub(crate) parent: AstNodes<'a>,
-    /// From `import` or `require` to the `)`.
-    pub(crate) call_span: Span,
+/// The comments in `typeof import("a", { with: { .. } })`, by the ESTree node that Prettier attaches them to. Of those nodes only
+/// the module specifier and the inner object can own comments here, so they also own the comments of the import type after
+/// `typeof`, of the outer object and of its property.
+#[derive(Default)]
+struct ImportTypeComments<'a> {
+    /// `typeof /* comment */ import("a")`
+    leading_import: CommentList<'a>,
+    leading_source: CommentList<'a>,
+    trailing_source: CommentList<'a>,
+    /// Before the `{` of `{ with: { .. } }`: the comments that the module specifier owns, then those that the inner object owns.
+    leading_options: [CommentList<'a>; 2],
+    /// Before `with`: the comments that the module specifier owns, then those that the inner object owns.
+    leading_property: [CommentList<'a>; 2],
+    /// `with // comment ⏎: { .. }`. With Prettier's `handlePropertyComments` it leads the property.
+    at_end_of_line_before_colon: CommentList<'a>,
+    /// `with: // comment ⏎ { .. }`, likewise.
+    at_end_of_line_after_colon: CommentList<'a>,
+    /// `with /* comment */: { .. }`
+    trailing_keyword: CommentList<'a>,
+    /// Before the `{` of `{ .. }`.
+    leading_attributes: CommentList<'a>,
+    /// Before the `}` of `{ with: { .. } }`.
+    trailing_property: CommentList<'a>,
+    trailing_options: CommentList<'a>,
 }
 
-struct FormatModuleSpecifierWithoutComments<'a>(Span, AstNodes<'a>);
-
-impl Spanned for FormatModuleSpecifierWithoutComments<'_> {
-    fn span(&self) -> Span {
-        self.0
-    }
-}
-
-impl<'a> Format<'a> for FormatModuleSpecifierWithoutComments<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        FormatStringLiteral {
-            span: self.0,
-            parent: self.1,
+impl<'a> ImportTypeComments<'a> {
+    fn new(
+        ty: TypeNode<'a>,
+        source: Span,
+        options: Option<ImportAttributes<'a>>,
+        f: &Formatter<'a>,
+    ) -> Self {
+        /// Splits off the comments at the start of `comments` whose next token starts at or before `token_start`.
+        fn take_up_to<'a>(comments: &mut CommentList<'a>, token_start: u32) -> CommentList<'a> {
+            let count = (comments.iter())
+                .take_while(|comment| comment.next_token_start() <= token_start)
+                .count();
+            let (taken, rest) = comments.split_at(count);
+            *comments = rest;
+            taken
         }
-        .fmt(f);
+        let of_source = f.comments().of_name(source.start);
+        let end_of_typeof = ty.span().start + "typeof".len() as u32;
+        let is_typeof = matches!(
+            ty.kind(),
+            TypeKind::Import {
+                is_typeof: true,
+                ..
+            }
+        );
+        let behind_typeof = (of_source.leading.iter())
+            .take_while(|comment| is_typeof && comment.prev_token_end() == end_of_typeof)
+            .count();
+        let (leading_import, leading_source) = of_source.leading.split_at(behind_typeof);
+        let Some(options) = options else {
+            return ImportTypeComments {
+                leading_import,
+                leading_source,
+                trailing_source: of_source.trailing,
+                ..ImportTypeComments::default()
+            };
+        };
+        let outer = options.options_span();
+        let of_attributes = f.comments().of_node(options.object().as_ast_nodes());
+        let (mut after_source, mut before_attributes, mut after_attributes) = (
+            of_source.trailing,
+            of_attributes.leading,
+            of_attributes.trailing,
+        );
+        // `"a" /* 1 */, // 2 ⏎ { .. }`: before the `,`, or after it up to the end of its line.
+        let before_comma = take_up_to(&mut after_source, outer.start.saturating_sub(1));
+        let (on_line_of_comma, after_comma) =
+            take_up_to(&mut after_source, outer.start).split_at_end_of_line();
+        let (keyword, attributes) = (options.keyword_span().start, options.braces_span().start);
+        let leading_options = [after_comma, take_up_to(&mut before_attributes, outer.start)];
+        let leading_property = [
+            take_up_to(&mut after_source, keyword),
+            take_up_to(&mut before_attributes, keyword),
+        ];
+        let (at_end_of_line_before_colon, trailing_keyword) =
+            take_up_to(&mut after_source, attributes.saturating_sub(1)).split_at_end_of_line();
+        ImportTypeComments {
+            leading_import,
+            leading_source,
+            trailing_source: (of_source.trailing)
+                .slice(0, before_comma.len() + on_line_of_comma.len()),
+            leading_options,
+            leading_property,
+            at_end_of_line_before_colon,
+            at_end_of_line_after_colon: after_source,
+            trailing_keyword,
+            leading_attributes: before_attributes,
+            trailing_property: take_up_to(&mut after_attributes, outer.end.saturating_sub(1)),
+            trailing_options: after_attributes,
+        }
+    }
+
+    /// The module specifier at `source`, with its comments.
+    fn format_source(&self, source: Span) -> impl Format<'a> {
+        let (leading, trailing) = (self.leading_source, self.trailing_source);
+        format_with(move |f: &mut Formatter<'a>| {
+            write!(f, FormatLeadingComments::Comments(leading));
+            match has_ignore_comment(&[leading], trailing, f) {
+                true => write!(f, FormatSuppressedNode(source)),
+                false => write!(
+                    f,
+                    FormatLiteralStringToken::new(
+                        f.source_text().text_for(&source),
+                        false,
+                        StringLiteralParentKind::Expression
+                    )
+                ),
+            }
+            write!(f, FormatTrailingComments::Comments(trailing));
+        })
     }
 }
 
-impl<'a> Format<'a> for FormatModuleSpecifier<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        let specifier = FormatModuleSpecifierWithoutComments(self.span, self.parent);
-        write!(
-            f,
-            [
-                FormatNodeWithoutTrailingComments(&specifier),
-                format_trailing_comments(self.call_span, self.span, 0)
-            ]
-        );
-    }
+/// `import('a' /* prettier-ignore */)` is `import("a" /* prettier-ignore */)` for oxfmt: a `prettier-ignore` comment after a node
+/// applies to it only if it ends its line. For Prettier every comment of a node counts.
+fn trailing_ignore_comment_has_to_end_its_line(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// Whether a `prettier-ignore` comment applies to the ESTree node that has the comments `leading` and `trailing`.
+fn has_ignore_comment<'a>(
+    leading: &[CommentList<'a>],
+    trailing: CommentList<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    let is_ignore_comment = |comment: Comment<'a>| f.comments().is_suppression_comment(comment);
+    leading.iter().any(|it| it.iter().any(is_ignore_comment))
+        || trailing.iter().any(|comment| {
+            is_ignore_comment(comment)
+                && (comment.has_newline_after() || !trailing_ignore_comment_has_to_end_its_line(f))
+        })
 }
 
 /// ```ts
@@ -623,37 +643,42 @@ fn options_of_import_type_are_on_a_line_of_their_own(f: &Formatter<'_>) -> bool 
 
 /// `("a", { with: { type: "json" } })`. Prettier's `printCallArguments` for a string and an object.
 fn write_import_type_arguments<'a>(
-    ty: TypeNode<'a>,
     source: Span,
     options: ImportAttributes<'a>,
+    comments: &ImportTypeComments<'a>,
     f: &mut Formatter<'a>,
 ) {
-    let span = options.options_span();
-    let format_source = format_with(|f| {
-        let source = FormatModuleSpecifierWithoutComments(source, AstNodes::TSImportType(ty));
-        write!(
-            f,
-            [
-                FormatNodeWithoutTrailingComments(&source),
-                format_trailing_comments(ty.span(), source.span(), span.start)
-            ]
-        );
-    })
-    .memoized();
+    let format_source = comments.format_source(source).memoized();
     let does_source_break = format_source.inspect(f).will_break();
 
-    let has_comments = Cell::new(f.comments().has_comment_before(span.start));
+    let has_comments = !(comments.leading_options.iter().all(|it| it.is_empty())
+        && comments.trailing_options.is_empty());
     let format_options = format_with(|f| {
-        write!(f, format_leading_comments(span));
-        write_import_type_options(options, f);
-        let comments = f.comments().comments_before_character(span.end, b')');
-        has_comments.set(has_comments.get() || !comments.is_empty());
-        write!(f, FormatTrailingComments::Comments(comments));
+        for comments in comments.leading_options {
+            write!(f, FormatLeadingComments::Comments(comments));
+        }
+        match has_ignore_comment(&comments.leading_options, comments.trailing_options, f) {
+            true => write!(f, FormatSuppressedNode(options.options_span())),
+            false => write_import_type_options(options, comments, f),
+        }
+        write!(
+            f,
+            FormatTrailingComments::Comments(comments.trailing_options)
+        );
     })
     .memoized();
     let do_options_break = format_options.inspect(f).will_break();
 
-    let head = format_with(|f| write!(f, [format_source, ",", soft_line_break_or_space()]));
+    let first_comment = comments.leading_options.into_iter().flatten().next();
+    let has_empty_line = f.source_text().get_lines_before(
+        options.options_span(),
+        first_comment.map(|comment| comment.span()),
+        true,
+    ) > 1;
+    let head = format_with(|f| match has_empty_line {
+        true => write!(f, [format_source, ",", empty_line()]),
+        false => write!(f, [format_source, ",", soft_line_break_or_space()]),
+    });
     let (head, format_options) = (&head, &format_options);
     let all_broken_out = |should_expand: bool| {
         format_with(move |f: &mut Formatter<'a>| {
@@ -665,10 +690,10 @@ fn write_import_type_arguments<'a>(
             );
         })
     };
-    if has_comments.get() {
+    if has_comments {
         return write!(f, all_broken_out(does_source_break || do_options_break));
     }
-    if does_source_break {
+    if does_source_break || has_empty_line {
         return write!(f, all_broken_out(true));
     }
     if !do_options_break && options_of_import_type_are_on_a_line_of_their_own(f) {
@@ -705,9 +730,25 @@ fn write_import_type_arguments<'a>(
     }
 }
 
+/// ```ts
+/// type A = import("a", {          type A = import("a", {
+///   with: // comment                // comment
+///     { type: "json" },             with: { type: "json" },
+/// });                             });
+/// ```
+///
+/// oxfmt on the left, Prettier on the right.
+fn comments_at_end_of_line_stay_after_colon(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `{ with: { type: "json" } }`. It is an object literal, of which the HIR has only the properties
 /// of the inner one.
-fn write_import_type_options<'a>(options: ImportAttributes<'a>, f: &mut Formatter<'a>) {
+fn write_import_type_options<'a>(
+    options: ImportAttributes<'a>,
+    comments: &ImportTypeComments<'a>,
+    f: &mut Formatter<'a>,
+) {
     let (outer, keyword, inner) = (
         options.options_span(),
         options.keyword_span(),
@@ -719,14 +760,21 @@ fn write_import_type_options<'a>(options: ImportAttributes<'a>, f: &mut Formatte
     };
     let has_space = f.options().bracket_spacing.value();
 
+    let attributes = options.object().as_ast_nodes();
     let format_inner = format_with(|f| {
-        write!(f, format_leading_comments(inner));
+        write!(
+            f,
+            FormatLeadingComments::Comments(comments.leading_attributes)
+        );
+        if has_ignore_comment(&[comments.leading_attributes], CommentList::empty(), f) {
+            return write!(f, FormatSuppressedNode(inner));
+        }
         let Some(first) = entries.first() else {
             return write!(
                 f,
                 [
                     "{",
-                    format_dangling_comments(inner).with_soft_block_indent(),
+                    dangling_comments(attributes).with_soft_block_indent(),
                     "}"
                 ]
             );
@@ -747,21 +795,61 @@ fn write_import_type_options<'a>(options: ImportAttributes<'a>, f: &mut Formatte
         );
     });
     let format_property = format_with(|f| {
+        for comments in comments.leading_property {
+            write!(f, FormatLeadingComments::Comments(comments));
+        }
+        if has_ignore_comment(&comments.leading_property, comments.trailing_property, f) {
+            return write!(
+                f,
+                [
+                    FormatSuppressedNode(keyword.to(inner)),
+                    FormatTrailingComments::Comments(comments.trailing_property),
+                    FormatTrailingCommas::ES5
+                ]
+            );
+        }
+        let at_end_of_line = [
+            comments.at_end_of_line_before_colon,
+            comments.at_end_of_line_after_colon,
+        ];
+        let stay_after_colon = comments_at_end_of_line_stay_after_colon(f);
+        if !stay_after_colon {
+            for comments in at_end_of_line {
+                write!(f, FormatLeadingComments::Comments(comments));
+            }
+        }
         write!(
             f,
             [
-                format_leading_comments(keyword),
                 source_text(keyword),
-                ":",
-                space(),
-                format_inner
+                FormatTrailingComments::Comments(comments.trailing_keyword),
+                ":"
             ]
         );
-        let comments = f.comments().comments_before(outer.end.saturating_sub(1));
+        if stay_after_colon {
+            for comments in at_end_of_line {
+                write!(f, FormatTrailingComments::Comments(comments));
+            }
+        }
+        // The layout `break-after-operator` of Prettier's `printAssignment`.
+        let breaks_after_colon = (comments.leading_attributes.iter())
+            .any(|comment| comment.has_newline_after() || comment.is_indentable_block())
+            || (stay_after_colon && at_end_of_line.iter().any(|it| !it.is_empty()));
+        match breaks_after_colon {
+            true => write!(
+                f,
+                group(&indent(&format_args!(
+                    soft_line_break_or_space(),
+                    format_inner
+                )))
+                .should_expand(stay_after_colon)
+            ),
+            false => write!(f, [space(), format_inner]),
+        }
         write!(
             f,
             [
-                FormatTrailingComments::Comments(comments),
+                FormatTrailingComments::Comments(comments.trailing_property),
                 FormatTrailingCommas::ES5
             ]
         );
@@ -790,23 +878,15 @@ pub(crate) fn write_ts_type_predicate<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a
     if f.file().is_flow() && super::flow::write_checks_predicate(ty, f) {
         return;
     }
-    let parameter = ty
-        .predicate_param()
-        .map(|it| identifier(it, AstNodes::TSTypePredicate(ty)));
+    let parameter = ty.predicate_param().map(|it| identifier(it));
     write!(f, asserts.then(|| super::flow::predicate_prefix(ty)));
     let Some(type_annotation) = type_annotation else {
         return write!(f, parameter);
     };
-    write!(f, parameter.as_ref().map(FormatNodeWithoutTrailingComments));
-    if let Some(parameter) = parameter {
-        write!(
-            f,
-            format_trailing_comments(ty.span(), parameter.span(), type_annotation.span().start)
-        );
-    }
     write!(
         f,
         [
+            parameter,
             space(),
             "is",
             space(),

@@ -2,8 +2,8 @@
 
 use crate::js::ast_nodes::ExpressionStatement;
 use crate::js::print::binary_like_expression::{is_angular_pipe, should_flatten};
-use crate::js::print::expressions::unary_argument_has_comments;
-use crate::js::utils::typecast::is_cast_target;
+use crate::js::print::return_or_throw_statement::has_argument_leading_comments;
+use crate::js::utils::typecast::{has_comments, has_comments_that_count, is_cast_target};
 use crate::prelude::*;
 use AstNodes as N;
 
@@ -38,6 +38,190 @@ pub(crate) fn chain_expression_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<
         N::NewExpression(new) => new.callee() == Some(e),
         _ => false,
     }
+}
+
+/// Whether the source text of `e`, which is in parentheses there, means something else without them, where `e` itself
+/// needs none. What is formatted gets them further in, or is written otherwise: `({}.a) && b` is `({}).a && b`,
+/// `(new A).b` is `new A().b`. Prettier leaves them out of what it writes as it is.
+pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    // The parentheses of a type cast are written anyway.
+    if (e.parens()).all(|paren| f.comments().is_cast_parenthesis(paren.start)) {
+        return false;
+    }
+    // What follows would be taken for a part of it, or `<T>` for two comparisons.
+    let continues_with: &[u8] = match e.kind() {
+        // `(a<T>) + b`, `(a<T>).b`, `(a<T>)()`, `(a<T>)<U>`, `(a<T>)!`
+        ExprKind::Instantiation { .. } => b"+-<>.[(`!",
+        // `(new A).b`, `(new A)()`, `(new A)<T>`, `(new A)!.b`
+        ExprKind::New(call) if call.close_paren().is_none() => b".[(`<!",
+        _ => b"",
+    };
+    if !continues_with.is_empty()
+        && start_of_token_after(e, f)
+            .is_some_and(|byte| bun_core::strings::contains_char(continues_with, byte))
+    {
+        return true;
+    }
+    // What it starts with: `{`, `function`, `class` and `let[` start a statement.
+    let mut first = e;
+    while let Some(next) = match first.kind() {
+        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
+        ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => Some(call.callee()),
+        ExprKind::Cond { test, .. } => Some(test),
+        ExprKind::As { expr, .. }
+        | ExprKind::AsConst(expr)
+        | ExprKind::Satisfies { expr, .. }
+        | ExprKind::NonNull(expr)
+        | ExprKind::Instantiation { expr, .. }
+            if !first.is_angle_bracket_assertion() =>
+        {
+            Some(expr)
+        }
+        ExprKind::Unary {
+            op: UnOp::PostInc | UnOp::PostDec,
+            operand,
+        } => Some(operand),
+        _ => first.left(),
+    } {
+        if next.is_parenthesized() {
+            break;
+        }
+        if match next.kind() {
+            ExprKind::Ident(_) => needs_parentheses(next, f),
+            _ => would_start_statement(next, e),
+        } {
+            return true;
+        }
+        first = next;
+    }
+    // `in` ends the initializer of a `for`.
+    is_in_for_statement_initializer(e, f) && has_bare_in(e)
+}
+
+/// The first byte of the token that is written after `e`, if it is a token of an expression that `e` is in. `None` for what ends
+/// an expression: `)`, `]`, `}`, `;`.
+///
+/// `b + e + c`: `e` is the end of `b + e`, and the `+` of `(b + e) + c` is written after it.
+fn start_of_token_after<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<u8> {
+    let mut current = e;
+    loop {
+        let parent = match current.parent() {
+            Node::Expr(parent) => parent,
+            // The body of an arrow function.
+            Node::Func(func) => func.owner().as_expr()?,
+            _ => return None,
+        };
+        let is = |child: Expr<'a>| child == current;
+        match parent.kind() {
+            ExprKind::Dot { obj, .. } if is(obj) => return Some(b'.'),
+            ExprKind::Index { obj, .. } if is(obj) => return Some(b'['),
+            ExprKind::Call(call) | ExprKind::New(call) if is(call.callee()) => return Some(b'('),
+            ExprKind::TaggedTemplate(call) if is(call.callee()) => return Some(b'`'),
+            ExprKind::NonNull(_) => return Some(b'!'),
+            ExprKind::Instantiation { .. } => return Some(b'<'),
+            ExprKind::Binary { op, left, .. } if is(left) => {
+                return op.as_str().as_bytes().first().copied();
+            }
+            ExprKind::Unary { op, .. } if !op.is_prefix() => {
+                return op.as_str().as_bytes().first().copied();
+            }
+            ExprKind::Cond { test, .. } if is(test) => return Some(b'?'),
+            ExprKind::Cond { yes, .. } if is(yes) => return Some(b':'),
+            ExprKind::Assign { target, .. } if is(target) => return Some(b'='),
+            ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. }
+                if !parent.is_angle_bracket_assertion() =>
+            {
+                return Some(b'a');
+            }
+            // It writes parentheses around an operand with comments.
+            ExprKind::Unary { .. } if !f.is_quiet() && has_comments_that_count(current, f) => {
+                return None;
+            }
+            // `current` is the end of `parent`.
+            ExprKind::Binary { .. }
+            | ExprKind::Unary { .. }
+            | ExprKind::Cond { .. }
+            | ExprKind::Assign { .. }
+            | ExprKind::As { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::Await(_)
+            | ExprKind::Yield { .. }
+            | ExprKind::Fn(_) => {}
+            // An argument, an element, an index, ..
+            _ => return None,
+        }
+        if is_cast_target(parent, f) || expression_needs_parentheses(parent, f) {
+            return None;
+        }
+        current = parent;
+    }
+}
+
+/// Whether `first`, which the text of `e` starts with, would be taken for the start of a block, a function declaration or a
+/// class declaration if `e` had no parentheses.
+fn would_start_statement<'a>(first: Expr<'a>, e: Expr<'a>) -> bool {
+    let (is_object, is_declaration) = match first.kind() {
+        ExprKind::Object(_) => (true, false),
+        ExprKind::Fn(func) => (false, !func.is_arrow()),
+        ExprKind::Class(_) => (false, true),
+        _ => (false, false),
+    };
+    if !is_object && !is_declaration {
+        return false;
+    }
+    let (outermost, container) = left_edge_end(e, e.as_ast_nodes());
+    let is_sequence = outermost.binary_op() == Some(BinOp::Comma);
+    match container {
+        // A sequence is in parentheses there.
+        N::ExpressionStatement(ExpressionStatement::Stmt(_)) => !is_sequence,
+        // So are a sequence and an assignment there.
+        N::ExpressionStatement(ExpressionStatement::ArrowBody(_)) => {
+            is_object && !is_sequence && !matches!(outermost.kind(), ExprKind::Assign { .. })
+        }
+        N::ExportDefaultDeclaration(_) => is_declaration,
+        _ => false,
+    }
+}
+
+/// Whether there is an `a in b` in `e` that no parentheses, brackets or braces in `e` are around.
+fn has_bare_in(e: Expr<'_>) -> bool {
+    // A loop: what is written as it is can be nested to any depth.
+    let mut pending = vec![e];
+    while let Some(next) = pending.pop() {
+        if next.binary_op() == Some(BinOp::In) {
+            return true;
+        }
+        let (first, second) = match next.kind() {
+            ExprKind::Binary { left, right, .. } => (Some(left), Some(right)),
+            ExprKind::Assign { target, value, .. } => (Some(target), Some(value)),
+            // Any expression can be between `?` and `:`.
+            ExprKind::Cond { test, no, .. } => (Some(test), Some(no)),
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => (Some(obj), None),
+            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
+                (Some(call.callee()), None)
+            }
+            ExprKind::Unary { operand: it, .. }
+            | ExprKind::Await(it)
+            | ExprKind::As { expr: it, .. }
+            | ExprKind::Satisfies { expr: it, .. }
+            | ExprKind::AsConst(it)
+            | ExprKind::NonNull(it)
+            | ExprKind::Instantiation { expr: it, .. } => (Some(it), None),
+            ExprKind::Yield { value, .. } => (value, None),
+            ExprKind::Fn(func) => match func.body() {
+                FnBody::Expr(body) if func.is_arrow() => (Some(body), None),
+                _ => (None, None),
+            },
+            _ => (None, None),
+        };
+        pending.extend(
+            [first, second]
+                .into_iter()
+                .flatten()
+                .filter(|it| !it.is_parenthesized()),
+        );
+    }
+    false
 }
 
 /// Whether `e` itself needs parentheses, not the `ChainExpression` around it.
@@ -252,8 +436,9 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             op: BinOp::Comma, ..
         } => match parent {
             N::ForStatement(_) => false,
-            // Written by `print/return_or_throw_statement.rs` and `print/arrow_function_expression.rs`.
-            N::ReturnStatement(_) | N::ThrowStatement(_) => false,
+            // The statement writes parentheses around a comment and what follows it.
+            N::ReturnStatement(_) | N::ThrowStatement(_) => !has_argument_leading_comments(e, f),
+            // Written by `print/arrow_function_expression.rs`.
             N::ExpressionStatement(statement) => !statement.is_arrow_function_body(),
             _ => true,
         },
@@ -605,25 +790,9 @@ fn assignment_needs_parentheses<'a>(
             !matches!(parent.parent(), N::ForStatement(statement) if is_init_or_update(statement, sequence))
         }
         // The statement writes parentheses around a comment and what follows it.
-        N::ReturnStatement(statement) | N::ThrowStatement(statement) => {
-            !has_own_line_comment_between(statement.span().start, e.span().start, f)
-        }
+        N::ReturnStatement(_) | N::ThrowStatement(_) => !has_argument_leading_comments(e, f),
         _ => true,
     }
-}
-
-/// Whether one of the comments between `start` and `end`, printed or not, ends its line or spans
-/// several.
-pub(crate) fn has_own_line_comment_between(start: u32, end: u32, f: &Formatter<'_>) -> bool {
-    let breaks = |comment: &Comment| comment.followed_by_newline() || comment.is_multiline_block();
-    let comments = f.comments();
-    comments
-        .printed_comments()
-        .iter()
-        .rev()
-        .take_while(|comment| comment.start() >= start)
-        .any(breaks)
-        || comments.comments_before_iter(end).any(breaks)
 }
 
 /// `<T>a | 0`: Prettier puts `<T>a` in parentheses next to `|`, `&`, `^` and the shifts. oxfmt only where it has to: before
@@ -659,9 +828,8 @@ fn binary_or_cast_needs_parentheses<'a>(
         | N::TSNonNullExpression(_)
         | N::UpdateExpression(_) => return true,
         // It writes parentheses around an argument with comments. For oxfmt `a as T` has its own in them.
-        N::UnaryExpression(unary) => {
-            return (is_binary_cast && f.options().flavor.is_oxfmt())
-                || !unary_argument_has_comments(unary, e, f);
+        N::UnaryExpression(_) => {
+            return (is_binary_cast && f.options().flavor.is_oxfmt()) || !has_comments(e, f);
         }
         N::AssignmentExpression(assignment) | N::AssignmentTargetWithDefault(assignment) => {
             return operator.is_none() && assignment.left() == Some(e);

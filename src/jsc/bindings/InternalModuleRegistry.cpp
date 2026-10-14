@@ -23,7 +23,6 @@
 #include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/CachedTypes.h>
 #include <JavaScriptCore/CodeCache.h>
-#include <JavaScriptCore/NonEmbeddedCode.h>
 #include <JavaScriptCore/ParserError.h>
 
 // A `bun build --compile` executable may carry ahead-of-time bytecode for the internal modules the app uses
@@ -93,7 +92,7 @@ static String internalModuleSource(uint32_t id)
 {
     const auto& m = internalModuleRecord(id);
     // The copy on disk is not embedded code.
-    if (JSC::NonEmbeddedCode::isDisallowedOrReported())
+    if (JSC::Options::disallowNonEmbeddedCode())
         return internalModuleString(m.codeOffset, m.codeLength);
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
     WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, ASCIILiteral::fromLiteralUnsafe(InternalModuleRegistryConstants::fileNames[id]));

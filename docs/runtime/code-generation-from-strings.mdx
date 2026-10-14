@@ -182,32 +182,6 @@ Bun knows embedded code by where it is in the executable's image, not by what it
 
 Without `--compile` the program itself is files on disk, so `=strict` keeps loading them.
 
-### Finding out what would be refused
-
-Set `BUN_JSC_reportNonEmbeddedCode=1` to log every refusal, once each, to stderr. On its own the variable refuses nothing. To see what an application would lose, compile it without `=strict` and run it with the variable:
-
-```bash icon="terminal" terminal
-bun build --compile ./server.ts --outfile server
-BUN_JSC_reportNonEmbeddedCode=1 ./server
-```
-
-```txt
-[non-embedded code] module: /app/plugins/extra.js
-[non-embedded code] eval: (no source URL)
-    at eval@[native code]
-    at render@/$bunfs/root/server:412:16
-```
-
-Each report says what was about to happen, the URL of the source, and the stack:
-
-| Report     | What was about to happen                                                        |
-| ---------- | ------------------------------------------------------------------------------- |
-| `module`   | A module was about to be parsed                                                 |
-| `program`  | A script was about to run, which includes a CommonJS module                     |
-| `eval`     | `eval()` was about to evaluate a string                                         |
-| `run`      | A function, `eval()` code, script or module was about to run for the first time |
-| `bytecode` | Cached bytecode was about to be decoded                                         |
-
 No environment variable turns the refusals off. `BUN_BE_BUN` does not start the embedded program at all: see [What the flag does not cover](#what-the-flag-does-not-cover).
 
 ### `data:` URLs written in the source

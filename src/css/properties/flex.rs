@@ -556,14 +556,11 @@ impl FlexHandler {
         }
 
         // Runs before `property` is buffered in `grow`, `shrink` or `basis`.
-        // `$rejected` says whether a target rejects it, and `$repeats` whether
-        // it sets what those slots hold.
+        // `$rejected` says whether a target rejects it.
         macro_rules! before_flex {
-            ($rejected:expr, $repeats:expr) => {{
+            ($rejected:expr) => {{
                 if (self.grow.is_some() || self.shrink.is_some() || self.basis.is_some())
-                    && self
-                        .rejected_flex
-                        .must_flush_before(property, $rejected, || $repeats)
+                    && self.rejected_flex.must_flush_before(property, $rejected)
                 {
                     self.flush(dest, context);
                 }
@@ -617,7 +614,7 @@ impl FlexHandler {
                     self.box_flex = None;
                     self.flex_positive = None;
                 }
-                before_flex!(false, false);
+                before_flex!(false);
                 property_helper!(grow, &val.0, &val.1);
             }
             Property::BoxFlex(val) => property_helper!(box_flex, &val.0, &val.1),
@@ -626,7 +623,7 @@ impl FlexHandler {
                 if context.targets.browsers.is_some() {
                     self.flex_negative = None;
                 }
-                before_flex!(false, false);
+                before_flex!(false);
                 property_helper!(shrink, &val.0, &val.1);
             }
             Property::FlexNegative(val) => property_helper!(flex_negative, &val.0, &val.1),
@@ -640,9 +637,9 @@ impl FlexHandler {
                 if context.targets.browsers.is_some() {
                     self.preferred_size = None;
                 }
-                before_flex!(rejected, holds!(basis, &val.0));
+                before_flex!(rejected);
                 property_helper!(basis, &val.0, &val.1);
-                self.rejected_flex = Rejected::after(property, rejected);
+                self.rejected_flex.set(property, rejected, dest.bump());
             }
             Property::FlexPreferredSize(val) => {
                 if self.preferred_size.is_some()
@@ -672,19 +669,14 @@ impl FlexHandler {
                     self.flex_negative = None;
                     self.preferred_size = None;
                 }
-                before_flex!(
-                    rejected,
-                    holds!(grow, &flex.grow)
-                        && holds!(shrink, &flex.shrink)
-                        && holds!(basis, &flex.basis)
-                );
+                before_flex!(rejected);
                 maybe_flush!(grow, &flex.grow, &val.1);
                 maybe_flush!(shrink, &flex.shrink, &val.1);
                 maybe_flush!(basis, &flex.basis, &val.1);
                 property_helper!(grow, &flex.grow, &val.1);
                 property_helper!(shrink, &flex.shrink, &val.1);
                 property_helper!(basis, &flex.basis, &val.1);
-                self.rejected_flex = Rejected::after(property, rejected);
+                self.rejected_flex.set(property, rejected, dest.bump());
             }
             Property::Order(val) => {
                 if context.targets.browsers.is_some() {

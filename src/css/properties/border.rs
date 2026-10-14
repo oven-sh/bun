@@ -442,16 +442,6 @@ impl BorderShorthand {
         self.width.is_some() || self.style.is_some() || self.color.is_some()
     }
 
-    /// Whether the side buffers the three values of `border`.
-    fn holds<const P: u8>(&self, border: &GenericBorder<LineStyle, P>) -> bool {
-        self.width.as_ref() == Some(&border.width)
-            && self.style == Some(border.style)
-            && self
-                .color
-                .as_ref()
-                .is_some_and(|color| css::generic::eql(color, &border.color))
-    }
-
     fn is_valid(&self) -> bool {
         self.width.is_some() && self.style.is_some() && self.color.is_some()
     }
@@ -1277,15 +1267,13 @@ mod border_handler_body {
 
                     let rejected: bool = $rejected;
                     if self.has_any
-                        && (self.rejected.must_flush_before(property, rejected, || {
-                            true $(&& self.$key.$prop.as_ref().is_some_and(|existing| existing.eql($val)))+
-                        }) || $flush_if)
+                        && (self.rejected.must_flush_before(property, rejected) || $flush_if)
                     {
                         self.flush(dest, context);
                     }
 
                     $(self.$key.$prop = Some($val.deep_clone(arena));)+
-                    self.rejected = Rejected::after(property, rejected);
+                    self.rejected.set(property, rejected, arena);
                     self.category = $category;
                     self.has_any = true;
                 }};
@@ -1307,16 +1295,12 @@ mod border_handler_body {
 
                     let rejected: bool =
                         rejected!($category, context.targets.rejects(&$val.width));
-                    if self.has_any
-                        && self.rejected.must_flush_before(property, rejected, || {
-                            true $(&& self.$key.holds($val))+
-                        })
-                    {
+                    if self.has_any && self.rejected.must_flush_before(property, rejected) {
                         self.flush(dest, context);
                     }
 
                     $(self.$key.set_border(arena, $val);)+
-                    self.rejected = Rejected::after(property, rejected);
+                    self.rejected.set(property, rejected, arena);
                     self.category = $category;
                     self.has_any = true;
                 }};
@@ -1528,13 +1512,7 @@ mod border_handler_body {
                         && context.should_compile_logical(Feature::LogicalBorders);
                     if self.has_any
                         && !compiled_logical
-                        && (keeps_image
-                            || self.rejected.must_flush_before(property, rejected, || {
-                                self.border_top.holds(val)
-                                    && self.border_bottom.holds(val)
-                                    && self.border_left.holds(val)
-                                    && self.border_right.holds(val)
-                            }))
+                        && (keeps_image || self.rejected.must_flush_before(property, rejected))
                     {
                         self.flush(dest, context);
                     }
@@ -1555,7 +1533,7 @@ mod border_handler_body {
 
                     // Setting the `border` property resets `border-image`
                     self.border_image_handler.reset();
-                    self.rejected = Rejected::after(property, rejected);
+                    self.rejected.set(property, rejected, arena);
                     self.has_any = true;
                 }
                 Property::Unparsed(val) => {

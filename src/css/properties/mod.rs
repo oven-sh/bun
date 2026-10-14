@@ -141,9 +141,9 @@ mod properties_impl;
 pub use self::custom::CustomPropertyName;
 pub use self::properties_generated::{Property, PropertyId, PropertyIdTag};
 
-/// What a handler buffers when a browser target rejects it: one declaration,
-/// alone. `Rejected::default()` when every target supports what the handler
-/// buffers.
+/// The declaration that a handler buffers alone, because a browser target
+/// rejects it. `Rejected::default()` when every target supports what the
+/// handler buffers.
 ///
 /// A handler buffers the declarations of a shorthand group, and `flush` prints
 /// them folded: a later value replaces an earlier one, and longhands become a
@@ -152,34 +152,42 @@ pub use self::properties_generated::{Property, PropertyId, PropertyIdTag};
 /// output takes those others away from it. So a handler never folds a rejected
 /// declaration with another one: it flushes before the declaration and before
 /// the next one. lightningcss 1.33.0 folds them.
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Rejected(Option<PropertyIdTag>);
+#[derive(Default)]
+pub(crate) struct Rejected(Option<Property>);
 
 impl Rejected {
     /// Whether the handler must flush before it buffers `property`. `rejected`
-    /// says whether a target rejects `property`. `repeats` says whether
-    /// `property` sets the values that the buffered declaration set.
+    /// says whether a target rejects `property`.
     #[inline]
-    pub(crate) fn must_flush_before(
-        self,
-        property: &Property,
-        rejected: bool,
-        repeats: impl FnOnce() -> bool,
-    ) -> bool {
-        match self.0 {
+    pub(crate) fn must_flush_before(&self, property: &Property, rejected: bool) -> bool {
+        match &self.0 {
             None => rejected,
-            // The same property again. A value that every target supports
-            // replaces the buffered one in every browser. One that a target
-            // rejects needs the buffered one as its fallback.
-            Some(buffered) if buffered == property.variant_tag() => rejected && !repeats(),
-            Some(_) => true,
+            Some(buffered) => Self::keeps_apart(buffered, property, rejected),
         }
     }
 
-    /// The state once the handler has buffered `property`.
+    #[cold]
+    fn keeps_apart(buffered: &Property, property: &Property, rejected: bool) -> bool {
+        if !rejected {
+            // The same property with a value that every target supports
+            // replaces `buffered` in every browser.
+            return core::mem::discriminant(buffered) != core::mem::discriminant(property);
+        }
+        // `buffered` is the fallback of `property`, unless `property` is the
+        // same declaration again. A vendor prefix does not make it another one.
+        match (buffered, property) {
+            (Property::Flex(buffered), Property::Flex(flex)) => buffered.0 != flex.0,
+            (Property::FlexBasis(buffered), Property::FlexBasis(basis)) => buffered.0 != basis.0,
+            _ => !buffered.eql(property),
+        }
+    }
+
+    /// Records `property` once the handler has buffered it.
     #[inline]
-    pub(crate) fn after(property: &Property, rejected: bool) -> Self {
-        Self(rejected.then(|| property.variant_tag()))
+    pub(crate) fn set(&mut self, property: &Property, rejected: bool, arena: &bun_alloc::Arena) {
+        if rejected || self.0.is_some() {
+            self.0 = rejected.then(|| property.deep_clone(arena));
+        }
     }
 }
 

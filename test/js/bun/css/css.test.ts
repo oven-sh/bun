@@ -2327,6 +2327,9 @@ describe("css tests", () => {
       rule("border: 1cqw solid red; border: 1cqw solid red", "border: 1cqw solid red");
       rule("background: red 0 0 / 1cqw; background: red 0 0 / 1cqw", "background: red 0 0 / 1cqw");
       rule("translate: 1cqw; translate: 1cqw", "translate: 1cqw");
+      // A vendor prefix does not make it another declaration.
+      rule("-webkit-flex-basis: 100dvh; flex-basis: 100dvh", "flex-basis: 100dvh");
+      rule("-webkit-flex: 1 1 100dvh; flex: 1 1 100dvh", "-webkit-flex: 100dvh; flex: 100dvh", { safari: 8 << 16 });
 
       test("2000 rules with one rejected declaration print it once", () => {
         const source = ".a{border:1cqw solid red}";

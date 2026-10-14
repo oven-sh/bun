@@ -631,20 +631,6 @@ macro_rules! flush_helper {
     }};
 }
 
-/// Whether `$field` buffers exactly the value that `$project` reads from each
-/// item of `$val`.
-macro_rules! buffers_same {
-    ($this:expr, $field:ident, $val:expr, |$item:ident| $project:expr) => {
-        $this.$field.as_ref().is_some_and(|buffered| {
-            buffered.len() == $val.len()
-                && buffered
-                    .iter()
-                    .zip($val.iter())
-                    .all(|(buffered, $item)| *buffered == $project)
-        })
-    };
-}
-
 macro_rules! push_property {
     ($this:expr, $dest:expr, $variant:ident, $bg_prop:expr, $val:expr) => {{
         $dest.push(Property::$variant($val));
@@ -664,27 +650,18 @@ impl BackgroundHandler {
         let mut rejected = false;
         match property {
             Property::BackgroundColor(val) => {
-                self.before_supported(property, dest, context);
+                self.before_write(property, false, dest, context);
                 flush_helper!(self, color, val, dest, context);
                 self.color = Some(val.deep_clone(arena));
             }
             Property::BackgroundImage(val) => {
-                self.before_supported(property, dest, context);
+                self.before_write(property, false, dest, context);
                 self.background_helper(val, property, dest, context);
                 self.images = Some(val.deep_clone(arena));
             }
             Property::BackgroundPosition(val) => {
                 rejected = context.targets.rejects(val);
-                self.before_write(
-                    property,
-                    rejected,
-                    |this| {
-                        buffers_same!(this, x_positions, val, |layer| layer.x)
-                            && buffers_same!(this, y_positions, val, |layer| layer.y)
-                    },
-                    dest,
-                    context,
-                );
+                self.before_write(property, rejected, dest, context);
                 let len = val.len();
                 {
                     let x_positions = init_small_list_helper!(self, x_positions, len);
@@ -701,52 +678,34 @@ impl BackgroundHandler {
             }
             Property::BackgroundPositionX(val) => {
                 rejected = context.targets.rejects(val);
-                self.before_write(
-                    property,
-                    rejected,
-                    |this| this.x_positions.as_ref() == Some(val),
-                    dest,
-                    context,
-                );
+                self.before_write(property, rejected, dest, context);
                 // Drop replaces deinit; just overwrite.
                 self.x_positions = Some(val.deep_clone(arena));
             }
             Property::BackgroundPositionY(val) => {
                 rejected = context.targets.rejects(val);
-                self.before_write(
-                    property,
-                    rejected,
-                    |this| this.y_positions.as_ref() == Some(val),
-                    dest,
-                    context,
-                );
+                self.before_write(property, rejected, dest, context);
                 self.y_positions = Some(val.deep_clone(arena));
             }
             Property::BackgroundRepeat(val) => {
-                self.before_supported(property, dest, context);
+                self.before_write(property, false, dest, context);
                 self.repeats = Some(val.deep_clone(arena));
             }
             Property::BackgroundSize(val) => {
                 rejected = context.targets.rejects(val);
-                self.before_write(
-                    property,
-                    rejected,
-                    |this| this.sizes.as_ref() == Some(val),
-                    dest,
-                    context,
-                );
+                self.before_write(property, rejected, dest, context);
                 self.sizes = Some(val.deep_clone(arena));
             }
             Property::BackgroundAttachment(val) => {
-                self.before_supported(property, dest, context);
+                self.before_write(property, false, dest, context);
                 self.attachments = Some(val.deep_clone(arena));
             }
             Property::BackgroundOrigin(val) => {
-                self.before_supported(property, dest, context);
+                self.before_write(property, false, dest, context);
                 self.origins = Some(val.deep_clone(arena));
             }
             Property::BackgroundClip(x) => {
-                self.before_supported(property, dest, context);
+                self.before_write(property, false, dest, context);
                 let val: &SmallList<BackgroundClip, 1> = &x.0;
                 let vendor_prefix: VendorPrefix = x.1;
                 // Compute the predicate first, then dispatch (avoids holding
@@ -778,13 +737,7 @@ impl BackgroundHandler {
                 rejected = val.iter().any(|layer| {
                     context.targets.rejects(&layer.position) || context.targets.rejects(&layer.size)
                 });
-                self.before_write(
-                    property,
-                    rejected,
-                    |this| this.buffers_same(val),
-                    dest,
-                    context,
-                );
+                self.before_write(property, rejected, dest, context);
                 let mut images: SmallList<Image, 1> = SmallList::init_capacity(val.len());
                 for b in val.slice() {
                     images.append_assume_capacity(b.image.deep_clone(arena));
@@ -871,67 +824,23 @@ impl BackgroundHandler {
             _ => return false,
         }
 
-        self.rejected = Rejected::after(property, rejected);
+        self.rejected.set(property, rejected, arena);
         self.has_any = true;
         true
     }
 
     /// Runs before `property` is buffered. `rejected` says whether a target
-    /// rejects it, and `repeats` whether it sets the values that the buffered
-    /// declaration set.
+    /// rejects it.
     fn before_write(
         &mut self,
         property: &Property,
         rejected: bool,
-        repeats: impl FnOnce(&Self) -> bool,
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
-        if self.has_any
-            && self
-                .rejected
-                .must_flush_before(property, rejected, || repeats(self))
-        {
+        if self.has_any && self.rejected.must_flush_before(property, rejected) {
             self.flush(dest, context);
         }
-    }
-
-    /// `before_write` for a declaration that every target supports.
-    fn before_supported(
-        &mut self,
-        property: &Property,
-        dest: &mut DeclarationList,
-        context: &mut PropertyHandlerContext,
-    ) {
-        self.before_write(property, false, |_| false, dest, context);
-    }
-
-    /// Whether the handler buffers what `background: <val>` sets.
-    fn buffers_same(&self, val: &SmallList<Background, 1>) -> bool {
-        self.color
-            .as_ref()
-            .zip(val.last())
-            .is_some_and(|(color, layer)| color.eql(&layer.color))
-            && self.images.as_ref().is_some_and(|images| {
-                images.len() == val.len()
-                    && images
-                        .iter()
-                        .zip(val.iter())
-                        .all(|(image, layer)| image.eql(&layer.image))
-            })
-            && buffers_same!(self, x_positions, val, |layer| layer.position.x)
-            && buffers_same!(self, y_positions, val, |layer| layer.position.y)
-            && buffers_same!(self, repeats, val, |layer| layer.repeat)
-            && buffers_same!(self, sizes, val, |layer| layer.size)
-            && buffers_same!(self, attachments, val, |layer| layer.attachment)
-            && buffers_same!(self, origins, val, |layer| layer.origin)
-            && self.clips.as_ref().is_some_and(|(clips, _)| {
-                clips.len() == val.len()
-                    && clips
-                        .iter()
-                        .zip(val.iter())
-                        .all(|(clip, layer)| *clip == layer.clip)
-            })
     }
 
     fn background_helper(

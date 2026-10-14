@@ -1284,38 +1284,17 @@ impl AlignHandler {
                 self.justify_items = Some(val.justify.clone());
             }
             Property::RowGap(val) => {
-                self.before_gap(
-                    property,
-                    context.targets.rejects(val),
-                    |this| this.row_gap.as_ref() == Some(val),
-                    dest,
-                    context,
-                );
+                self.before_gap(property, context.targets.rejects(val), dest, context);
                 self.row_gap = Some(val.clone());
                 self.has_any = true;
             }
             Property::ColumnGap(val) => {
-                self.before_gap(
-                    property,
-                    context.targets.rejects(val),
-                    |this| this.column_gap.as_ref() == Some(val),
-                    dest,
-                    context,
-                );
+                self.before_gap(property, context.targets.rejects(val), dest, context);
                 self.column_gap = Some(val.clone());
                 self.has_any = true;
             }
             Property::Gap(val) => {
-                self.before_gap(
-                    property,
-                    context.targets.rejects(val),
-                    |this| {
-                        this.row_gap.as_ref() == Some(&val.row)
-                            && this.column_gap.as_ref() == Some(&val.column)
-                    },
-                    dest,
-                    context,
-                );
+                self.before_gap(property, context.targets.rejects(val), dest, context);
                 self.row_gap = Some(val.row.clone());
                 self.column_gap = Some(val.column.clone());
                 self.has_any = true;
@@ -1338,24 +1317,20 @@ impl AlignHandler {
     }
 
     /// Runs before `property` is buffered in `row_gap` or `column_gap`.
-    /// `rejected` says whether a target rejects it, and `repeats` whether it
-    /// sets what those slots hold.
+    /// `rejected` says whether a target rejects it.
     fn before_gap(
         &mut self,
         property: &Property,
         rejected: bool,
-        repeats: impl FnOnce(&Self) -> bool,
         dest: &mut DeclarationList<'_>,
         context: &mut PropertyHandlerContext<'_>,
     ) {
         if (self.row_gap.is_some() || self.column_gap.is_some())
-            && self
-                .rejected_gap
-                .must_flush_before(property, rejected, || repeats(self))
+            && self.rejected_gap.must_flush_before(property, rejected)
         {
             self.flush(dest, context);
         }
-        self.rejected_gap = Rejected::after(property, rejected);
+        self.rejected_gap.set(property, rejected, dest.bump());
     }
 
     pub(crate) fn finalize(

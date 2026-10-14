@@ -1164,11 +1164,7 @@ fn path_has_link(path: &[u8]) -> bool {
     false
 }
 
-/// The `node_modules` of a workspace that this install links is from another linker, or from a
-/// store that is gone. It moves to `<old_modules>/.old_<name>_modules`, where `old_modules` is
-/// `node_modules/.old_modules-<id>` of the root. `old_modules_exists` is false when that
-/// directory is not made yet: it is made for the first workspace that has a `node_modules`.
-/// A workspace that `--filter` leaves out has no entry in `store`, and its `node_modules` stays.
+/// Moves the `node_modules` of each workspace in `store` to `<old_modules>/.old_<name>_modules`.
 fn move_workspace_node_modules_aside(
     lockfile: &Lockfile,
     store: &Store,
@@ -1193,8 +1189,7 @@ fn move_workspace_node_modules_aside(
         let basename = workspace_node_modules.basename().to_vec();
         workspace_node_modules.append(b"node_modules").assume_ok();
 
-        // Most workspaces have no `node_modules` here. A link with that name is from the user,
-        // and what is behind a link in the path of the workspace is not in this project.
+        // A `node_modules` that is a link, or behind one, is not in this project.
         if !is_real_directory(workspace_node_modules.slice_z()) || path_has_link(workspace_path) {
             continue;
         }
@@ -1790,8 +1785,7 @@ pub(crate) fn install_isolated_packages(
 
         match sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {
             Ok(()) => {
-                // The root had no 'node_modules'. The 'node_modules' of a workspace is then
-                // from another linker, or from a store that is gone.
+                // No root 'node_modules': that of a workspace is from another linker or store.
                 let mut rename_path = AutoRelPath::from(b"node_modules").assume_ok();
                 rename_path
                     .append_fmt(format_args!(

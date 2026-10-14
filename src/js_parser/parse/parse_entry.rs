@@ -2389,6 +2389,22 @@ impl<'a> Parser<'a> {
             p.jsx_imports = jsx_imports;
         }
 
+        if !p.chai_imports.0.is_empty() {
+            let chai_imports = core::mem::take(&mut p.chai_imports);
+            let keys: Vec<usize> = (0..chai_imports.0.len()).collect();
+            p.generate_import_stmt(
+                b"chai",
+                keys,
+                &mut before,
+                &chai_imports,
+                None,
+                b"import_",
+                false,
+                js_ast::PartTag::None,
+            )
+            .expect("unreachable");
+        }
+
         if p.server_components_wrap_ref.is_valid() {
             let fw = p.options.framework.unwrap_or_else(|| {
                 panic!("server components requires a framework configured, but none was set")

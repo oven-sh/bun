@@ -117,6 +117,65 @@ describe.concurrent("test context", () => {
     });
   });
 
+  test("TestRunner.getCurrentTest() is the task of the running test", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, beforeAll, beforeEach, afterEach, afterAll, TestRunner } from "vitest";
+        const show = (where, ctx) => {
+          const task = TestRunner.getCurrentTest();
+          console.log(where, task === ctx.task, task.name, task.result.retryCount, task.result.repeatCount);
+        };
+        console.log("load", TestRunner.getCurrentTest());
+        beforeAll(() => console.log("beforeAll", TestRunner.getCurrentTest()));
+        afterAll(() => console.log("afterAll", TestRunner.getCurrentTest()));
+        beforeEach(ctx => show("beforeEach", ctx));
+        afterEach(ctx => show("afterEach", ctx));
+        let attempt = 0;
+        test("retried", { retry: 1 }, ctx => { show("test", ctx); if (!attempt++) throw new Error("again"); });
+        test("repeated", { repeats: 1 }, async ctx => { await 1; show("after an await", ctx); });
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "load undefined",
+        "beforeAll undefined",
+        "beforeEach true retried 0 0",
+        "test true retried 0 0",
+        "afterEach true retried 0 0",
+        "beforeEach true retried 1 0",
+        "test true retried 1 0",
+        "afterEach true retried 1 0",
+        "beforeEach true repeated 0 0",
+        "after an await true repeated 0 0",
+        "afterEach true repeated 0 0",
+        "beforeEach true repeated 0 1",
+        "after an await true repeated 0 1",
+        "afterEach true repeated 0 1",
+        "afterAll undefined",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("TestRunner.getCurrentTest() in a concurrent test", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import { test, TestRunner } from "vitest";
+        for (const name of ["first", "second"]) {
+          test.concurrent(name, async ctx => {
+            console.log(name, TestRunner.getCurrentTest() === ctx.task);
+            await 1;
+            console.log(name, "after an await", TestRunner.getCurrentTest());
+          });
+        }
+      `,
+    });
+    expect({ log: log.sort(), exitCode }).toEqual({
+      log: ["first after an await undefined", "first true", "second after an await undefined", "second true"],
+      exitCode: 0,
+    });
+  });
+
   test("is the same object in the hooks, the test, its retries and its repeats", async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
@@ -1622,12 +1681,76 @@ describe.concurrent("exports", () => {
         "true true function function function",
         "undefined 1",
         "[]",
-        "assertType onTestFailed suite vitest",
+        "TestRunner assertType onTestFailed suite vitest",
         "true false false",
         "a suite > test",
       ],
       exitCode: 0,
     });
+  });
+
+  const chai = {
+    "node_modules/chai/package.json": `{ "name": "chai", "type": "module", "main": "index.js" }`,
+    "node_modules/chai/index.js": `
+      export const assert = Object.assign(() => "the project's assert", { equal: (a, b) => a === b });
+      export const should = () => "the project's should";
+    `,
+  };
+
+  test(`"assert" and "should" are imported from the project's chai`, async () => {
+    const { log, exitCode } = await runTests({
+      ...chai,
+      "dep.js": `export const dep = "real";`,
+      "helper.js": `import { assert } from "vitest"; export const inAHelper = () => assert();`,
+      "a.test.ts": `
+        import { assert, should as renamed, test, vi, type TestContext } from "vitest";
+        import { assert as again } from "vitest";
+        import * as fromChai from "chai";
+        import { dep } from "./dep.js";
+        import { inAHelper } from "./helper.js";
+        vi.mock("./dep.js", () => ({ dep: "mocked" }));
+        test("test", (ctx: TestContext) => {
+          console.log(assert(), assert.equal(dep, "mocked"), renamed(), inAHelper());
+          console.log(assert === fromChai.assert, again === assert, renamed === fromChai.should, typeof ctx.task);
+        });
+      `,
+      "only.test.js": `
+        import { assert } from "vitest";
+        test("the file still counts as importing from vitest", ctx => console.log(assert(), typeof ctx.task));
+      `,
+    });
+    expect({ log, exitCode }).toEqual({
+      log: [
+        "the project's assert true the project's should the project's assert",
+        "true true true object",
+        "the project's assert object",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test(`importing "assert" without chai installed says what's missing`, async () => {
+    const { errors, exitCode } = await runTests({
+      "a.test.js": `import { assert, test } from "vitest"; test("test", () => assert(true));`,
+    });
+    expect({ errors, exitCode }).toEqual({
+      errors: [`error: Cannot find package 'chai' from '<dir>/a.test.js'`],
+      exitCode: 1,
+    });
+  });
+
+  test(`"assert" from another module is left alone`, async () => {
+    const { log, exitCode } = await runTests({
+      ...chai,
+      "a.test.js": `
+        import { test } from "vitest";
+        import { assert } from "./mine.js";
+        import nodeAssert from "node:assert";
+        test("test", () => console.log(assert(), typeof nodeAssert.strictEqual));
+      `,
+      "mine.js": `export const assert = () => "mine";`,
+    });
+    expect({ log, exitCode }).toEqual({ log: ["mine function"], exitCode: 0 });
   });
 
   const globals = {

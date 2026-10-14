@@ -506,7 +506,9 @@ In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/gl
 | Default hook timeout                                      | same as a test's                     | 10 seconds, or `--timeout` if it's longer                    |
 | `beforeAll` in a scope with only skipped tests            | runs                                 | doesn't run                                                  |
 
-`"vitest"` also exports `suite`, `vitest`, `onTestFailed` and `assertType`.
+`"vitest"` also exports `suite`, `vitest`, `onTestFailed`, `assertType` and `TestRunner.getCurrentTest()`, which returns the running test's [`task`](#test-context).
+
+`import { assert, should } from "vitest"` imports them from the `chai` package in your `node_modules`, which Vitest depends on. They aren't available through `import * as`, `import()` or a re-export of `"vitest"`.
 
 In a file that imports from `"vitest"`, the globals (`test`, `describe`, `beforeEach`, ...) come from `"vitest"` too. Set [`globals = "vitest"`](/test/configuration#globals) in `bunfig.toml` to do that for every file.
 

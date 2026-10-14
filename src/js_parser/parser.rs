@@ -637,6 +637,31 @@ impl crate::p::GenerateImportSymbols for RuntimeImports {
     }
 }
 
+#[derive(Default)]
+pub(crate) struct ChaiImports(pub(crate) Vec<(&'static [u8], Ref)>);
+
+impl ChaiImports {
+    pub(crate) fn name(alias: &[u8]) -> Option<&'static [u8]> {
+        [b"assert".as_slice(), b"should"]
+            .into_iter()
+            .find(|&name| name == alias)
+    }
+}
+
+impl crate::p::GenerateImportSymbols for ChaiImports {
+    type Key = usize;
+
+    #[inline]
+    fn get(&self, key: &usize) -> Option<Ref> {
+        Some(self.0[*key].1)
+    }
+
+    #[inline]
+    fn alias_name(&self, key: &usize) -> &'static [u8] {
+        self.0[*key].0
+    }
+}
+
 impl crate::p::GenerateImportSymbols for JSXImportSymbols {
     type Key = &'static [u8];
 

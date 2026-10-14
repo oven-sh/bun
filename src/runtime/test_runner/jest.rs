@@ -462,6 +462,7 @@ pub(crate) mod Jest {
                     jsc::JSFunction::create(global_object, "onTestFailed", generic_hook::__jsc_host_vitest_on_test_failed, 1, Default::default()),
                 );
                 module.put(global_object, b"suite", describe_scope_functions);
+                module.put(global_object, b"TestRunner", crate::test_runner::test_context::create_test_runner(global_object));
                 if let Some(vi) = module.get(global_object, "vi")? {
                     module.put(global_object, b"vitest", vi);
                 }

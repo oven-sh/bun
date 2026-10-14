@@ -443,6 +443,44 @@ fn annotate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSPromise::resolved_promise_value(global, annotation))
 }
 
+/// `TestRunner.getCurrentTest()`: the running test's `task`. In a concurrent group, only while the test's callback is on the stack.
+#[bun_jsc::host_fn]
+fn get_current_test(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let Some(strong) = super::bun_test::clone_active_strong() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    let buntest = strong.get();
+    let running = match buntest.get_current_state_data() {
+        RefDataValue::Execution { group_index, entry_data: None } => {
+            RefDataValue::Execution { group_index, entry_data: buntest.execution.on_stack.get() }
+        }
+        running => running,
+    };
+    let (RefDataValue::Execution { group_index, entry_data: Some(entry_data) }, Some((sequence, _))) =
+        (running, buntest.execution.get_current_and_valid_execution_sequence(&running))
+    else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: as in `running`; nothing else borrows the sequence while a callback of it is on the stack.
+    let sequence = unsafe { &mut *sequence.as_ptr() };
+    if sequence.test_entry.is_none() {
+        return Ok(JSValue::UNDEFINED);
+    }
+    let context = sequence.context(global, &strong, group_index, entry_data.sequence_index);
+    Ok(context.get(global, "task")?.unwrap_or(JSValue::UNDEFINED))
+}
+
+/// Of Vitest's `TestRunner`, only what test code calls.
+pub(crate) fn create_test_runner(global: &JSGlobalObject) -> JSValue {
+    let runner = JSValue::create_empty_object(global, 1);
+    runner.put(
+        global,
+        b"getCurrentTest",
+        JSFunction::create(global, "getCurrentTest", __jsc_host_get_current_test, 0, Default::default()),
+    );
+    runner
+}
+
 fn mode(base: &BaseScope) -> &'static str {
     match base.mode {
         ScopeMode::Skip | ScopeMode::FilteredOut => "skip",

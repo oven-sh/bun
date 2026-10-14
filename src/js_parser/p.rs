@@ -493,6 +493,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) jest: Jest,
     pub(crate) imported_mock_apis: HashMap<Ref, MockApi>,
+    /// `assert` and `should` imported from "vitest", which re-exports them from chai. Bun imports them from the project's chai.
+    pub(crate) chai_imports: crate::parser::ChaiImports,
     /// Only read by a debug assertion that `uses_test_api()` covers every test-only transform.
     pub(crate) did_apply_test_feature: bool,
     /// Also computed outside `bun test`, for `uses_test_api()`.
@@ -4491,6 +4493,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
+
+            if self.options.features.inject_jest_globals
+                && path.text == b"vitest"
+                && let Some(name) = crate::parser::ChaiImports::name(alias)
+            {
+                self.chai_imports.0.push((name, r#ref));
+                self.did_apply_test_feature = true;
+                continue;
+            }
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
@@ -9901,6 +9912,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             imported_mock_apis: Default::default(),
+            chai_imports: Default::default(),
             did_apply_test_feature: false,
             has_hoisted_mock_stmt: false,
             import_meta_glob_use: Default::default(),

@@ -1315,8 +1315,9 @@ inline void Http2Connection::onData(const char *data, size_t length) {
         in.append((const char *) p + consumed, avail - consumed);
     }
     /* Only frames that move a stream count as activity: a peer holding
-     * streams open at a zero window can't keep the connection alive on PINGs. */
-    if (progressed || streams.empty()) touch();
+     * streams open at a zero window can't keep the connection alive on PINGs.
+     * Nor can one with no stream at all once a graceful stop has run. */
+    if (progressed || (streams.empty() && !ctx->stopping)) touch();
     progressed = false;
     busy--;
     Http2Context::epilogue(this, s);

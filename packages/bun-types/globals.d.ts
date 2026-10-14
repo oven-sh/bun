@@ -1334,7 +1334,7 @@ interface ImportMetaEnv {
 }
 
 declare module "bun" {
-  /** Options of {@link ImportMeta.glob} */
+  /** Options for {@link ImportMeta.glob} */
   interface ImportMetaGlobOptions {
     /**
      * Import the modules with `import` statements instead of `() => import()`
@@ -1343,7 +1343,7 @@ declare module "bun" {
      */
     eager?: boolean;
     /**
-     * The export to import instead of the module namespace object, such as `"default"`
+     * Import this export, such as `"default"`, instead of the module namespace object
      */
     import?: string;
     /**
@@ -1351,8 +1351,8 @@ declare module "bun" {
      */
     query?: string | Record<string, string | number | boolean>;
     /**
-     * Directory that relative patterns and the keys of the result are relative
-     * to. Starts with `./` or `../` (from the importing file) or `/` (from the
+     * The directory that relative patterns and the result's keys are relative
+     * to. It starts with `./` or `../` (from the importing file) or `/` (from the
      * project root).
      */
     base?: string;
@@ -1365,8 +1365,8 @@ declare module "bun" {
   }
 
   namespace __internal {
-    // `ImportMeta` inherits `glob`: the `ImportMeta.glob` of another package, such as
-    // `vite/client`, then replaces it whichever of the two is loaded first.
+    // `ImportMeta` inherits `glob` so that another package's `ImportMeta.glob`, such as
+    // the one in `vite/client`, overrides it no matter which of the two is loaded first.
     interface ImportMetaGlob {
       /**
        * Import every module that matches a glob pattern. Compatible with
@@ -1436,7 +1436,7 @@ interface ImportMeta extends Bun.__internal.ImportMetaGlob {
    * import.meta.env === process.env
    * ```
    *
-   * Under `bun test` it is a view of `process.env` that also has Vite's `MODE`,
+   * Under `bun test`, it's a view of `process.env` that also has Vite's `MODE`,
    * `DEV`, `PROD`, `SSR` and `BASE_URL`.
    */
   readonly env: Bun.Env & NodeJS.ProcessEnv & ImportMetaEnv;

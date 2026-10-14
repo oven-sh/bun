@@ -17,7 +17,7 @@ declare module "bun:test" {
   export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>;
 
   /**
-   * `T` with every function and class in it, at any depth, typed as a {@link Mock}.
+   * `T` with every nested function and class typed as a {@link Mock}.
    */
   export type Mocked<T> = T extends new (...args: infer Args) => infer Instance
     ? Mock<(...args: Args) => Mocked<Instance>> & { prototype: Mocked<Instance> } & {
@@ -30,7 +30,7 @@ declare module "bun:test" {
         : T;
 
   /**
-   * Returns the exports of a mocked module, or a promise for them. `importOriginal` loads the module that is mocked.
+   * Returns a mocked module's exports, or a promise for them. Call `importOriginal()` to load the real module.
    *
    * @example
    * ```ts
@@ -41,7 +41,7 @@ declare module "bun:test" {
 
   export interface ModuleMockOptions {
     /**
-     * Keep the implementation of every function the module exports, and record its calls.
+     * Keep each exported function's real implementation and record its calls.
      */
     spy?: boolean | undefined;
   }
@@ -52,10 +52,10 @@ declare module "bun:test" {
      */
     <T extends (...args: any[]) => any>(Function?: T): Mock<T>;
     /**
-     * Creates a mock class. `new` on the mock constructs through `Class`.
+     * Creates a mock class. Calling the mock with `new` runs the `Class` constructor.
      */
     <Args extends any[], Instance>(Class: new (...args: Args) => Instance): Mock<(...args: Args) => Instance>;
-    // Repeated: `ReturnType<typeof mock>` and `Parameters<typeof mock>` read the last overload.
+    // Repeated because `ReturnType<typeof mock>` and `Parameters<typeof mock>` use the last overload.
     <T extends (...args: any[]) => any>(Function?: T): Mock<T>;
 
     /**
@@ -70,8 +70,8 @@ declare module "bun:test" {
      * returned promise resolves after that. Otherwise nothing is returned.
      *
      * @param id module ID to mock
-     * @param factory a function returning an object used as the exports of the mocked module. It is given a function
-     * that loads the module being mocked.
+     * @param factory a function returning an object used as the exports of the mocked module. It receives a function
+     * that loads the real module.
      *
      * @example
      * ```ts
@@ -106,7 +106,7 @@ declare module "bun:test" {
    * - `new Date()`
    * - `Intl.DateTimeFormat().format()`
    *
-   * The real time comes back at the end of the test file, unless a preload set the time.
+   * The real time is restored when the test file ends, unless a preload set the time.
    *
    * @param now The time to set the system time to. If omitted, the system time is reset
    * @since v0.6.13
@@ -130,7 +130,7 @@ declare module "bun:test" {
   export function setSystemTime(now?: Date | number | string): void;
 
   /**
-   * A function or clock that `useFakeTimers()` can fake, by its name in `@sinonjs/fake-timers`.
+   * A function or clock that `useFakeTimers()` can fake. The names are the ones `@sinonjs/fake-timers` uses.
    */
   export type FakeableAPI =
     | "setTimeout"
@@ -153,25 +153,25 @@ declare module "bun:test" {
 
   export interface FakeTimersOptions {
     /**
-     * What `Date` says the time is when the fake clock starts.
+     * The time `Date` reports when the fake clock starts.
      */
     now?: number | Date | undefined;
     /**
-     * Fake these and nothing else.
+     * Fake only these.
      *
      * @default ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "requestAnimationFrame", "cancelAnimationFrame", "Date", "performance", "hrtime"]
      */
     toFake?: FakeableAPI[] | undefined;
     /**
-     * Do not fake these. Jest's name for the option.
+     * Don't fake these. This is Jest's name for the option.
      */
     doNotFake?: FakeableAPI[] | undefined;
     /**
-     * Do not fake these. Vitest's name for the option.
+     * Don't fake these. This is Vitest's name for the option.
      */
     toNotFake?: FakeableAPI[] | undefined;
     /**
-     * Move the fake clock forward by `advanceTimeDelta` milliseconds every `advanceTimeDelta` real milliseconds.
+     * Advance the fake clock by `advanceTimeDelta` milliseconds every `advanceTimeDelta` real milliseconds.
      *
      * @default false
      */
@@ -181,12 +181,12 @@ declare module "bun:test" {
      */
     advanceTimeDelta?: number | undefined;
     /**
-     * Jest's name for `shouldAdvanceTime` (`true`) and `advanceTimeDelta` (a number).
+     * Jest's name for `shouldAdvanceTime` (pass `true`) and `advanceTimeDelta` (pass a number).
      */
     advanceTimers?: boolean | number | undefined;
     /**
-     * How many timers `runAllTimers()` runs before it throws, and how many faked `process.nextTick` or
-     * `queueMicrotask` callbacks in a row any function that moves the clock.
+     * The number of timers `runAllTimers()` runs before it throws. Any function that moves the clock also throws
+     * after this many faked `process.nextTick` or `queueMicrotask` callbacks in a row.
      *
      * @default 10_000 for `vi.useFakeTimers()`, 100_000 for `jest.useFakeTimers()`
      */
@@ -203,115 +203,116 @@ declare module "bun:test" {
     function resetAllMocks(): typeof jest;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function fn<Args extends any[], Instance>(func: new (...args: Args) => Instance): Mock<(...args: Args) => Instance>;
-    // Repeated: `ReturnType<typeof jest.fn>` and `Parameters<typeof jest.fn>` read the last overload.
+    // Repeated because `ReturnType<typeof jest.fn>` and `Parameters<typeof jest.fn>` use the last overload.
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     /**
-     * Whether `fn` is a mock function or a spy.
+     * Returns `true` if `fn` is a mock function or a spy.
      */
     function isMockFunction(fn: unknown): fn is Mock<(...args: any[]) => any>;
     /**
-     * Returns `item`, typed as mocked. It does nothing at runtime.
+     * Returns `item` typed as {@link Mocked}. Does nothing at runtime.
      */
     function mocked<T>(item: T, options?: unknown): Mocked<T>;
     /**
-     * Replace the module `id` with the return value of `factory`. The call is moved above the imports of the file.
+     * Replace the module `id` with the return value of `factory`. The call is hoisted above the file's imports.
      *
-     * Without a factory the module is the file of the same name in a `__mocks__` directory, if there is one, and
-     * otherwise a copy of the module in which every function is a mock.
+     * Without a factory, the module is replaced with the file of the same name in a `__mocks__` directory. If there
+     * isn't one, it's replaced with a copy of the module where every function is a mock.
      */
     function mock(id: string, factory?: ModuleMockFactory): typeof jest;
     /**
-     * Like {@link mock}, but the call stays where it is written.
+     * Like {@link mock}, but the call isn't hoisted.
      */
     function doMock(id: string, factory?: ModuleMockFactory): typeof jest;
     /**
-     * The module `id` is not mocked any more. The call is moved above the imports of the file.
+     * Stop mocking the module `id`. The call is hoisted above the file's imports.
      */
     function unmock(id: string): typeof jest;
     /**
-     * Like {@link unmock}, but the call stays where it is written.
+     * Like {@link unmock}, but the call isn't hoisted.
      */
     function dontMock(id: string): typeof jest;
     /**
-     * `require()` the module `id` itself, whether or not it is mocked.
+     * `require()` the real module `id`, even if it's mocked.
      */
     function requireActual<T = any>(id: string): T;
     /**
-     * `require()` the module `id` as it is when it is mocked, whether or not it is.
+     * `require()` the mocked version of the module `id`, even if it isn't mocked.
      */
     function requireMock<T = any>(id: string): T;
     /**
-     * A copy of what `require()` of the module `id` itself returns, in which every function is a mock.
+     * `require()` the real module `id` and return a copy where every function is a mock.
      */
     function createMockFromModule<T = any>(id: string): Mocked<T>;
     /**
-     * The next `import()` or `require()` of a module evaluates it again. Mocked modules stay mocked, and their
-     * factories are called again.
+     * Re-evaluate each module on its next `import()` or `require()`. Mocked modules stay mocked, and their factories
+     * run again.
      */
     function resetModules(): typeof jest;
     function setSystemTime(now?: number | Date | string): void;
     function setTimeout(milliseconds: number): void;
     /**
-     * Replace the timer functions on `globalThis` with ones that schedule on a fake clock, which only moves when the
-     * test moves it. A function that was read before this call, such as `const savedSetTimeout = setTimeout`, stays real.
+     * Replace the timer functions on `globalThis` with fakes that use a fake clock. The clock only moves when the test
+     * moves it. A reference saved before this call, such as `const savedSetTimeout = setTimeout`, stays real.
      *
-     * The real timers come back at the end of the test file, unless a preload made this call at its top level.
+     * The real timers are restored when the test file ends, unless a preload made this call at its top level.
      */
     function useFakeTimers(options?: FakeTimersOptions | "modern" | "legacy"): typeof jest;
     /**
-     * Put the real timer functions and clocks back, and drop the fake timers that are pending.
+     * Restore the real timer functions and clocks, and discard pending fake timers.
      */
     function useRealTimers(): typeof jest;
     /**
-     * Move the fake clock forward and run the timers that become due.
+     * Advance the fake clock and run the timers that come due.
      */
     function advanceTimersByTime(milliseconds: number): typeof jest;
     /**
-     * Like {@link advanceTimersByTime}, but promise jobs and a turn of the real event loop run between two timers, so a
-     * timer that a callback schedules after an `await` is seen.
+     * Like {@link advanceTimersByTime}, but runs promise jobs and one turn of the real event loop between timers, so it
+     * picks up timers that a callback schedules after an `await`.
      */
     function advanceTimersByTimeAsync(milliseconds: number): Promise<void>;
     /**
-     * Move the fake clock to the next timer and run every timer that is due at that time, `steps` times.
+     * Advance the fake clock to the next timer and run every timer due at that time. Repeats `steps` times.
      */
     function advanceTimersToNextTimer(steps?: number): typeof jest;
     /**
-     * Like {@link advanceTimersToNextTimer}, but promise jobs and a turn of the real event loop run between two timers.
+     * Like {@link advanceTimersToNextTimer}, but runs promise jobs and one turn of the real event loop between timers.
      */
     function advanceTimersToNextTimerAsync(steps?: number): Promise<void>;
     /**
-     * Move the fake clock to the next multiple of 16 milliseconds, when a faked `requestAnimationFrame` runs its callbacks.
+     * Advance the fake clock to the next multiple of 16 milliseconds. That's when a faked `requestAnimationFrame` runs
+     * its callbacks.
      */
     function advanceTimersToNextFrame(): typeof jest;
     /**
-     * Run timers until none is left. Throws after `timerLimit` timers.
+     * Run timers until none are left. Throws after `timerLimit` timers.
      */
     function runAllTimers(): typeof jest;
     /**
-     * Like {@link runAllTimers}, but promise jobs and a turn of the real event loop run between two timers.
+     * Like {@link runAllTimers}, but runs promise jobs and one turn of the real event loop between timers.
      */
     function runAllTimersAsync(): Promise<void>;
     /**
-     * Move the fake clock to the last timer that is pending now.
+     * Advance the fake clock to the last timer that's currently pending.
      */
     function runOnlyPendingTimers(): typeof jest;
     /**
-     * Like {@link runOnlyPendingTimers}, but promise jobs and a turn of the real event loop run between two timers.
+     * Like {@link runOnlyPendingTimers}, but runs promise jobs and one turn of the real event loop between timers.
      */
     function runOnlyPendingTimersAsync(): Promise<void>;
     /**
-     * Run the callbacks given to a faked `process.nextTick` or `queueMicrotask`.
+     * Run the callbacks queued with a faked `process.nextTick` or `queueMicrotask`.
      */
     function runAllTicks(): typeof jest;
     /**
-     * Run the callbacks given to a faked `setImmediate`.
+     * Run the callbacks queued with a faked `setImmediate`.
      */
     function runAllImmediates(): typeof jest;
     /**
-     * Choose how the fake clock moves when the test does not move it.
-     * - `manual`: it does not. This is the default.
-     * - `nextAsync`: every turn of the real event loop runs the next timer.
-     * - `interval`: every `delta` (default 20) real milliseconds it moves forward by as many.
+     * Choose how the fake clock moves when the test doesn't move it.
+     * - `manual`: it doesn't move. This is the default.
+     * - `nextAsync`: each turn of the real event loop runs the next timer.
+     * - `interval`: it advances by `delta` milliseconds (default 20) every `delta` real milliseconds.
      */
     function setTimerTickMode(
       config: { mode: "manual" | "nextAsync" } | { mode: "interval"; delta?: number | undefined },
@@ -320,7 +321,7 @@ declare module "bun:test" {
     function clearAllTimers(): void;
     function isFakeTimers(): boolean;
     /**
-     * The real time in milliseconds since the epoch, whatever is faked.
+     * Returns the real time in milliseconds since the epoch, no matter what's faked.
      */
     function getRealSystemTime(): number;
     function spyOn<T extends object, K extends keyof T>(obj: T, property: K, accessType: "get"): Mock<() => T[K]>;
@@ -381,7 +382,7 @@ declare module "bun:test" {
   }
 
   /**
-   * Create a spy on the getter of a property. It calls the original getter until it is given another implementation.
+   * Create a spy on a property's getter. The spy calls the original getter until you give it another implementation.
    *
    * @example
    * ```ts
@@ -390,7 +391,7 @@ declare module "bun:test" {
    */
   export function spyOn<T extends object, K extends keyof T>(obj: T, property: K, accessType: "get"): Mock<() => T[K]>;
   /**
-   * Create a spy on the setter of a property. It calls the original setter until it is given another implementation.
+   * Create a spy on a property's setter. The spy calls the original setter until you give it another implementation.
    */
   export function spyOn<T extends object, K extends keyof T>(
     obj: T,
@@ -420,11 +421,12 @@ declare module "bun:test" {
     isMockFunction: typeof jest.isMockFunction;
     mocked: typeof jest.mocked;
     /**
-     * Mock `value` deeply, the way a module is mocked when it is given no factory: a copy in which functions and
-     * classes are mocks that return `undefined`, arrays are empty, and primitives and builtin objects are kept.
+     * Deeply mock `value`, the same way `vi.mock()` mocks a module when it has no factory. Returns a copy where
+     * functions and classes are mocks that return `undefined` and arrays are empty. Primitives and builtin objects are
+     * kept.
      *
-     * With `{ spy: true }` the functions keep their implementation, arrays keep their elements, and objects are
-     * changed in place instead of copied.
+     * With `{ spy: true }`, functions keep their implementation, arrays keep their elements, and objects are modified
+     * in place instead of copied.
      *
      * @example
      * ```ts
@@ -435,15 +437,16 @@ declare module "bun:test" {
      */
     mockObject<T>(value: T, options?: { spy?: boolean | undefined }): Mocked<T>;
     /**
-     * Like `vi.mock(id, factory)`, with the module written as `import("./math")`: `importOriginal` is typed as that module.
+     * Like `vi.mock(id, factory)`, but takes `import("./math")` instead of a string, so `importOriginal` is typed as
+     * that module.
      */
     mock<T>(module: Promise<T>, factory?: ModuleMockFactory<T> | ModuleMockOptions): void | Promise<void>;
     /**
-     * Replace a module with the return value of `factory`. The call is moved above the imports of the file.
+     * Replace a module with the return value of `factory`. The call is hoisted above the file's imports.
      *
-     * Without a factory the module is the file of the same name in a `__mocks__` directory, if there is one, and
-     * otherwise a copy of the module in which every function is a mock. With `{ spy: true }` the functions keep their
-     * implementation.
+     * Without a factory, the module is replaced with the file of the same name in a `__mocks__` directory. If there
+     * isn't one, it's replaced with a copy of the module where every function is a mock. With `{ spy: true }`, the
+     * functions keep their implementation.
      *
      * @example
      * ```ts
@@ -454,9 +457,9 @@ declare module "bun:test" {
      */
     mock(id: string, factory?: ModuleMockFactory | ModuleMockOptions): void | Promise<void>;
     /**
-     * Like `vi.mock`, but the call stays where it is written: it applies to the imports that run after it.
+     * Like `vi.mock`, but the call isn't hoisted, so it only applies to imports that run after it.
      *
-     * Disposing of what it returns removes the mock: `using _ = vi.doMock("./math", factory)`.
+     * Disposing the return value removes the mock, as in `using _ = vi.doMock("./math", factory)`.
      */
     doMock(id: string, factory?: ModuleMockFactory | ModuleMockOptions): Disposable | (Disposable & Promise<void>);
     doMock<T>(
@@ -464,28 +467,28 @@ declare module "bun:test" {
       factory?: ModuleMockFactory<T> | ModuleMockOptions,
     ): Disposable | (Disposable & Promise<void>);
     /**
-     * The module is not mocked any more. The call is moved above the imports of the file.
+     * Stop mocking the module. The call is hoisted above the file's imports.
      */
     unmock(id: string | Promise<unknown>): void;
     /**
-     * Like `vi.unmock`, but the call stays where it is written.
+     * Like `vi.unmock`, but the call isn't hoisted.
      */
     doUnmock(id: string | Promise<unknown>): void;
     /**
-     * Import the module `id` itself, whether or not it is mocked.
+     * Import the real module `id`, even if it's mocked.
      */
     importActual<T = any>(id: string): Promise<T>;
     /**
-     * Import the module `id` as it is when it is mocked, whether or not it is.
+     * Import the mocked version of the module `id`, even if it isn't mocked.
      */
     importMock<T = any>(id: string): Promise<Mocked<T>>;
     /**
-     * The next `import()` or `require()` of a module evaluates it again. Mocked modules stay mocked.
+     * Re-evaluate each module on its next `import()` or `require()`. Mocked modules stay mocked.
      */
     resetModules(): typeof vi;
     /**
-     * Calls `factory` and returns what it returns. The statement is moved above the imports of the file, so a
-     * `vi.mock` factory can use the result.
+     * Calls `factory` and returns its result. The statement is hoisted above the file's imports, so a `vi.mock`
+     * factory can use the result.
      *
      * @example
      * ```ts
@@ -495,7 +498,7 @@ declare module "bun:test" {
      */
     hoisted<T>(factory: () => T): T;
     /**
-     * Put back every property that is spied on. The calls and the implementation of a `vi.spyOn()` spy are kept.
+     * Restore every spied-on property. A `vi.spyOn()` spy keeps its recorded calls and its implementation.
      */
     restoreAllMocks(): typeof vi;
     /**
@@ -503,67 +506,69 @@ declare module "bun:test" {
      */
     clearAllMocks(): typeof vi;
     /**
-     * Clear all mock state and implementations. A `vi.fn(implementation)` mock goes back to `implementation` and a
-     * `vi.spyOn()` spy to the original; mocks made with `jest.fn()`, `mock()` or `spyOn()` return `undefined`.
+     * Clear all mock state and implementations. A `vi.fn(implementation)` mock goes back to `implementation`, and a
+     * `vi.spyOn()` spy goes back to the original. Mocks made with `jest.fn()`, `mock()` or `spyOn()` return
+     * `undefined`.
      */
     resetAllMocks(): typeof vi;
     /**
-     * Replace the timer functions on `globalThis` with ones that schedule on a fake clock, which only moves when the
-     * test moves it. A function that was read before this call, such as `const savedSetTimeout = setTimeout`, stays real.
+     * Replace the timer functions on `globalThis` with fakes that use a fake clock. The clock only moves when the test
+     * moves it. A reference saved before this call, such as `const savedSetTimeout = setTimeout`, stays real.
      *
-     * The real timers come back at the end of the test file, unless a preload made this call at its top level.
+     * The real timers are restored when the test file ends, unless a preload made this call at its top level.
      */
     useFakeTimers(options?: FakeTimersOptions | "modern" | "legacy"): typeof vi;
     /**
-     * Put the real timer functions and clocks back, and drop the fake timers that are pending.
+     * Restore the real timer functions and clocks, and discard pending fake timers.
      */
     useRealTimers(): typeof vi;
     /**
-     * Move the fake clock forward and run the timers that become due.
+     * Advance the fake clock and run the timers that come due.
      */
     advanceTimersByTime(milliseconds: number): typeof vi;
     /**
-     * Like `advanceTimersByTime`, but promise jobs and a turn of the real event loop run between two timers, so a timer
-     * that a callback schedules after an `await` is seen.
+     * Like `advanceTimersByTime`, but runs promise jobs and one turn of the real event loop between timers, so it picks
+     * up timers that a callback schedules after an `await`.
      */
     advanceTimersByTimeAsync(milliseconds: number): Promise<typeof vi>;
     /**
-     * Move the fake clock to the next timer and run every timer that is due at that time, `steps` times.
+     * Advance the fake clock to the next timer and run every timer due at that time. Repeats `steps` times.
      */
     advanceTimersToNextTimer(steps?: number): typeof vi;
     /**
-     * Like `advanceTimersToNextTimer`, but promise jobs and a turn of the real event loop run between two timers.
+     * Like `advanceTimersToNextTimer`, but runs promise jobs and one turn of the real event loop between timers.
      */
     advanceTimersToNextTimerAsync(steps?: number): Promise<typeof vi>;
     /**
-     * Move the fake clock to the next multiple of 16 milliseconds, when a faked `requestAnimationFrame` runs its callbacks.
+     * Advance the fake clock to the next multiple of 16 milliseconds. That's when a faked `requestAnimationFrame` runs
+     * its callbacks.
      */
     advanceTimersToNextFrame(): typeof vi;
     /**
-     * Run timers until none is left. Throws after `loopLimit` timers.
+     * Run timers until none are left. Throws after `loopLimit` timers.
      */
     runAllTimers(): typeof vi;
     /**
-     * Like `runAllTimers`, but promise jobs and a turn of the real event loop run between two timers.
+     * Like `runAllTimers`, but runs promise jobs and one turn of the real event loop between timers.
      */
     runAllTimersAsync(): Promise<typeof vi>;
     /**
-     * Move the fake clock to the last timer that is pending now.
+     * Advance the fake clock to the last timer that's currently pending.
      */
     runOnlyPendingTimers(): typeof vi;
     /**
-     * Like `runOnlyPendingTimers`, but promise jobs and a turn of the real event loop run between two timers.
+     * Like `runOnlyPendingTimers`, but runs promise jobs and one turn of the real event loop between timers.
      */
     runOnlyPendingTimersAsync(): Promise<typeof vi>;
     /**
-     * Run the callbacks given to a faked `process.nextTick` or `queueMicrotask`.
+     * Run the callbacks queued with a faked `process.nextTick` or `queueMicrotask`.
      */
     runAllTicks(): typeof vi;
     /**
-     * Choose how the fake clock moves when the test does not move it.
-     * - `manual`: it does not. This is the default.
-     * - `nextTimerAsync`: every turn of the real event loop runs the next timer.
-     * - `interval`: every `interval` (default 20) real milliseconds it moves forward by as many.
+     * Choose how the fake clock moves when the test doesn't move it.
+     * - `manual`: it doesn't move. This is the default.
+     * - `nextTimerAsync`: each turn of the real event loop runs the next timer.
+     * - `interval`: it advances by `interval` milliseconds (default 20) every `interval` real milliseconds.
      */
     setTimerTickMode(mode: "manual" | "nextTimerAsync"): typeof vi;
     setTimerTickMode(mode: "interval", interval?: number): typeof vi;
@@ -571,49 +576,49 @@ declare module "bun:test" {
     clearAllTimers(): typeof vi;
     isFakeTimers(): boolean;
     /**
-     * Set what `Date` says the time is. Without fake timers only `Date` is mocked, until `vi.useRealTimers()`.
+     * Set the time `Date` reports. Without fake timers, only `Date` is mocked, until you call `vi.useRealTimers()`.
      */
     setSystemTime(now?: number | Date | string): typeof vi;
     /**
-     * The mocked time, or `null` when neither `vi.setSystemTime()` nor `vi.useFakeTimers()` is in effect.
+     * Returns the mocked time, or `null` if neither `vi.setSystemTime()` nor `vi.useFakeTimers()` is in effect.
      */
     getMockedSystemTime(): Date | null;
     /**
-     * The real time in milliseconds since the epoch, whatever is faked.
+     * Returns the real time in milliseconds since the epoch, no matter what's faked.
      */
     getRealSystemTime(): number;
     /**
-     * Set `process.env[name]` (which is also `import.meta.env[name]`) until `vi.unstubAllEnvs()` or the end of the
-     * test file. `undefined` deletes the variable.
+     * Set `process.env[name]`, which is also `import.meta.env[name]`. The stub lasts until `vi.unstubAllEnvs()` or the
+     * end of the test file. Passing `undefined` deletes the variable.
      */
     stubEnv<T extends string>(
       name: T,
       value: T extends "PROD" | "DEV" | "SSR" ? boolean | undefined : string | undefined,
     ): typeof vi;
     /**
-     * Give every variable changed by `vi.stubEnv()` the value it had before the first stub.
+     * Restore every variable changed by `vi.stubEnv()` to the value it had before it was first stubbed.
      */
     unstubAllEnvs(): typeof vi;
     /**
-     * Define `globalThis[name]` until `vi.unstubAllGlobals()` or the end of the test file.
+     * Define `globalThis[name]`. The stub lasts until `vi.unstubAllGlobals()` or the end of the test file.
      */
     stubGlobal(name: string | symbol | number, value: unknown): typeof vi;
     /**
-     * Give every global changed by `vi.stubGlobal()` the property descriptor it had before the first stub.
+     * Restore every global changed by `vi.stubGlobal()` to the property descriptor it had before it was first stubbed.
      */
     unstubAllGlobals(): typeof vi;
     /**
-     * Change the configuration for the rest of the test file, or for every test file when a preload script
-     * calls it. Other options of Vitest are accepted and have no effect.
+     * Change the configuration for the rest of the test file. If a preload script calls it, the change applies to
+     * every test file. Vitest's other options are accepted but ignored.
      */
     setConfig(config: {
-      /** Default timeout, in milliseconds, of the tests registered after this call. `0` and `Infinity` mean no timeout. */
+      /** Default timeout in milliseconds for tests registered after this call. `0` and `Infinity` mean no timeout. */
       testTimeout?: number | undefined;
-      /** Default timeout, in milliseconds, of the hooks registered after this call. `0` and `Infinity` mean no timeout. */
+      /** Default timeout in milliseconds for hooks registered after this call. `0` and `Infinity` mean no timeout. */
       hookTimeout?: number | undefined;
-      /** How many concurrent tests run at the same time. */
+      /** The number of concurrent tests that can run at the same time. */
       maxConcurrency?: number | undefined;
-      /** Call `vi.clearAllMocks()` before each test. The default for tests imported from `"vitest"`. */
+      /** Call `vi.clearAllMocks()` before each test. This is the default for tests that use `test` from `"vitest"`. */
       clearMocks?: boolean | undefined;
       /** Call `vi.resetAllMocks()` before each test. */
       mockReset?: boolean | undefined;
@@ -626,19 +631,18 @@ declare module "bun:test" {
       [option: string]: unknown;
     }): void;
     /**
-     * Undo every `vi.setConfig()`.
+     * Undo every `vi.setConfig()` call.
      */
     resetConfig(): void;
     /**
-     * Wait until every `import()` that is in flight has settled, including the ones started meanwhile.
+     * Wait until every in-flight `import()` has settled, including ones that start during the wait.
      */
     dynamicImportSettled(): Promise<void>;
     /**
-     * Call `callback` now and then every `interval` milliseconds until it neither throws nor rejects, and resolve
-     * with its value. After `timeout` milliseconds, reject with its last error.
+     * Call `callback` right away, then every `interval` milliseconds, until it doesn't throw or reject. Resolves with
+     * its value. After `timeout` milliseconds, rejects with its last error.
      *
-     * The waiting is on the real clock. While fake timers are on, every call is preceded by
-     * `vi.advanceTimersByTime(interval)`.
+     * The wait uses the real clock. While fake timers are on, `vi.advanceTimersByTime(interval)` runs before each call.
      *
      * @param options the timeout, or `{ timeout = 1000, interval = 50 }`
      *
@@ -652,11 +656,11 @@ declare module "bun:test" {
       options?: number | { timeout?: number | undefined; interval?: number | undefined },
     ): Promise<T>;
     /**
-     * Call `callback` now and then every `interval` milliseconds until it returns a truthy value, and resolve
-     * with that value. An error rejects at once. After `timeout` milliseconds, reject with a timeout error.
+     * Call `callback` right away, then every `interval` milliseconds, until it returns a truthy value. Resolves with
+     * that value. Rejects right away if `callback` throws or rejects, and with a timeout error after `timeout`
+     * milliseconds.
      *
-     * The waiting is on the real clock. While fake timers are on, every call is preceded by
-     * `vi.advanceTimersByTime(interval)`.
+     * The wait uses the real clock. While fake timers are on, `vi.advanceTimersByTime(interval)` runs before each call.
      *
      * @param options the timeout, or `{ timeout = 1000, interval = 50 }`
      *
@@ -728,9 +732,9 @@ declare module "bun:test" {
      */
     sequential: Describe<T>;
     /**
-     * Runs the tests of this group, and of the groups inside it, in a random order.
+     * Runs the tests in this group and its nested groups in random order.
      *
-     * The summary of the run prints the seed: `bun test --seed=<seed>` gives the same order again.
+     * The run summary prints the seed. Use `bun test --seed=<seed>` to get the same order again.
      */
     shuffle: Describe<T>;
     /**
@@ -767,13 +771,13 @@ declare module "bun:test" {
     each<T extends readonly any[]>(table: readonly T[]): Describe<[...T]>;
     each<const T>(table: readonly T[]): Describe<[T]>;
     /**
-     * The table as a tagged template: the first line names the columns, and each row is an object.
+     * Takes the table as a tagged template. The first line names the columns, and each row is passed as an object.
      */
     each(headings: TemplateStringsArray, ...values: any[]): Describe<[row: any]>;
-    // Repeated: `Parameters<typeof describe.each>` and `ReturnType<typeof describe.each>` read the last overload.
+    // Repeated because `Parameters<typeof describe.each>` and `ReturnType<typeof describe.each>` use the last overload.
     each<const T>(table: readonly T[]): Describe<[T]>;
     /**
-     * Like `each()`, but a row that is an array is not spread over the parameters.
+     * Like `each()`, but an array row is passed as one argument instead of being spread.
      */
     for<const T>(table: readonly T[]): Describe<[row: T]>;
     for(headings: TemplateStringsArray, ...values: any[]): Describe<[row: any]>;
@@ -973,7 +977,7 @@ declare module "bun:test" {
    * @category Testing
    */
   export interface Test<T extends ReadonlyArray<unknown>> {
-    // First, or `options` that are `any` are taken for the `fn` of the next overload. `Parameters<>` reads the last one.
+    // Must be first, or `options` typed as `any` matches the next overload's `fn`. `Parameters<>` uses the last one.
     (
       label: string,
       fn: (
@@ -1049,9 +1053,9 @@ declare module "bun:test" {
     /**
      * Marks this test as failing, like Vitest's `test.fails`.
      *
-     * The test passes if anything about it fails: its callback, a `beforeEach`
+     * The test passes if any part of it fails: its callback, a `beforeEach`
      * or `afterEach` hook, the timeout, or `expect.assertions()`.
-     * {@link test.failing} only accepts an error from the callback.
+     * With {@link test.failing}, only an error from the callback counts.
      */
     fails: Test<T>;
     /**
@@ -1121,7 +1125,7 @@ declare module "bun:test" {
     each<T extends readonly unknown[]>(table: readonly T[]): Test<T>;
     each<const T>(table: readonly T[]): Test<[T]>;
     /**
-     * The table as a tagged template: the first line names the columns, and each row is an object.
+     * Takes the table as a tagged template. The first line names the columns, and each row is passed as an object.
      *
      * @example
      * ```ts
@@ -1134,10 +1138,10 @@ declare module "bun:test" {
      * ```
      */
     each(headings: TemplateStringsArray, ...values: any[]): Test<[row: any]>;
-    // Repeated: `Parameters<typeof test.each>` and `ReturnType<typeof test.each>` read the last overload.
+    // Repeated because `Parameters<typeof test.each>` and `ReturnType<typeof test.each>` use the last overload.
     each<const T>(table: readonly T[]): Test<[T]>;
     /**
-     * Like `each()`, but a row that is an array is not spread over the parameters,
+     * Like `each()`, but an array row is passed as one argument instead of being spread,
      * and the second argument is the {@link TestContext}.
      *
      * @example
@@ -1150,10 +1154,10 @@ declare module "bun:test" {
     for<const Row>(table: readonly Row[]): TestWithContext<object, [row: Row]>;
     for(headings: TemplateStringsArray, ...values: any[]): TestWithContext<object, [row: any]>;
     /**
-     * Returns a `test` whose callbacks receive the {@link TestContext} with `fixtures` in it.
+     * Returns a `test` whose callbacks receive the {@link TestContext} with `fixtures` added to it.
      *
-     * A fixture is set up for the tests, and the `beforeEach()` / `afterEach()` hooks of the
-     * returned `test`, that destructure it, and torn down after the test.
+     * A fixture is set up for the tests that destructure it, and for the returned `test`'s
+     * `beforeEach()` / `afterEach()` hooks that destructure it. It's torn down after the test.
      *
      * @example
      * ```ts
@@ -1180,15 +1184,15 @@ declare module "bun:test" {
   }
 
   /**
-   * What the callbacks of `test.for()` and of a `test` made by `test.extend()` receive.
-   * One object per test: its hooks get the same one.
+   * The object passed to `test.for()` callbacks and to the callbacks of a `test` made by `test.extend()`.
+   * Each test gets one object, and its hooks receive the same one.
    */
   export interface TestContext {
     /** The running test. */
     readonly task: TestTask;
     /**
-     * `expect`, with `expect.assertions()`, `expect.hasAssertions()` and snapshots that belong to
-     * this test whichever tests run concurrently with it.
+     * An `expect` bound to this test. Its `expect.assertions()`, `expect.hasAssertions()` and snapshots
+     * belong to this test even when other tests run concurrently.
      */
     readonly expect: Expect;
     /** Aborted when the test times out. */
@@ -1197,11 +1201,11 @@ declare module "bun:test" {
     skip(note?: string): never;
     /** Stops the test and reports it as skipped, unless `condition` is `false`. */
     skip(condition: boolean, note?: string): void;
-    /** Runs `fn` after the test, its `afterEach` hooks and its fixtures. The last registered runs first. */
+    /** Runs `fn` after the test, its `afterEach` hooks and its fixture teardown. The last one registered runs first. */
     onTestFinished(fn: (context: TestContext) => void | Promise<unknown>, options?: HookOptions): void;
-    /** Like `onTestFinished()`, only if the test failed. */
+    /** Like `onTestFinished()`, but only runs if the test failed. */
     onTestFailed(fn: (context: TestContext) => void | Promise<unknown>, options?: HookOptions): void;
-    /** Adds to `task.annotations`. */
+    /** Adds an annotation to `task.annotations`. */
     annotate(message: string, type?: string, attachment?: object): Promise<TestAnnotation>;
     annotate(message: string, attachment?: object): Promise<TestAnnotation>;
   }
@@ -1215,22 +1219,22 @@ declare module "bun:test" {
 
   export interface TestSuite {
     type: "suite";
-    /** The label of the `describe()` block, or the path of the file relative to the working directory. */
+    /** The `describe()` block's label, or the file's path relative to the working directory. */
     name: string;
-    /** The names of the file, of the blocks around this one and its own, joined by `" > "`. */
+    /** The file's name, the enclosing blocks' names and this block's name, joined by `" > "`. */
     fullName: string;
     mode: "run" | "skip" | "only" | "todo";
-    /** For anything you want to keep with the block. */
+    /** Free-form storage for anything you want to attach to the block. */
     meta: Record<string, any>;
     file: TestSuite & { filepath: string };
-    /** The block around this one. */
+    /** The enclosing block. */
     suite?: TestSuite;
   }
 
   export interface TestTask extends Omit<TestSuite, "type"> {
     type: "test";
     id: string;
-    /** `fullName` without the file. */
+    /** `fullName` without the file name. */
     fullTestName: string;
     timeout: number;
     retry: number;
@@ -1240,11 +1244,11 @@ declare module "bun:test" {
     annotations: TestAnnotation[];
     result: {
       state: "run" | "pass" | "fail" | "skip";
-      /** What the test, its hooks and its fixtures threw. */
+      /** Errors thrown by the test, its hooks and its fixtures. */
       errors?: unknown[];
       retryCount: number;
       repeatCount: number;
-      /** The argument of `context.skip()`. */
+      /** The note passed to `context.skip()`. */
       note?: string;
     };
     context: TestContext;
@@ -1252,20 +1256,21 @@ declare module "bun:test" {
 
   export interface FixtureOptions {
     /**
-     * Set the fixture up for every test, whether it destructures it or not.
+     * Set up the fixture for every test, even tests that don't destructure it.
      * @default false
      */
     auto?: boolean;
     /**
-     * `"file"` and `"worker"`: set up once, for the first test that needs it, and torn down after the last test of the file.
+     * With `"file"` or `"worker"`, the fixture is set up once, for the first test that needs it, and torn down after
+     * the file's last test.
      * @default "test"
      */
     scope?: "test" | "file" | "worker";
   }
 
   /**
-   * Sets up a fixture, passes it to `use()`, and tears it down once the promise `use()` returned resolves.
-   * The first parameter has to be an object destructuring pattern: it names the fixtures this one depends on.
+   * Sets up a fixture, passes it to `use()`, and tears it down after the promise returned by `use()` resolves.
+   * The first parameter must be an object destructuring pattern. It names the fixtures this one depends on.
    */
   export type FixtureFunction<Value, Context> = (
     context: Context,
@@ -1290,7 +1295,7 @@ declare module "bun:test" {
       fixtures: Fixtures<Added, Context>,
     ): TestWithContext<Omit<Context, keyof Added> & Added>;
     /**
-     * Adds one fixture: a value, or a function that returns it.
+     * Adds one fixture. `value` is the fixture's value, or a function that returns it.
      */
     <Name extends string, Value>(
       name: Name,
@@ -1322,7 +1327,7 @@ declare module "bun:test" {
     options?: HookOptions,
   ) => void;
   type TestOfRows<Row extends ReadonlyArray<unknown>> = {
-    // First, or `options` that are `any` are taken for the `fn` of the next overload. `Parameters<>` reads the last one.
+    // Must be first, or `options` typed as `any` matches the next overload's `fn`. `Parameters<>` uses the last one.
     (label: string, fn: (...args: Row) => void | Promise<unknown>, options: number | TestOptions): void;
     (label: string, options: number | TestOptions, fn: (...args: Row) => void | Promise<unknown>): void;
     (label: string, fn: (...args: Row) => void | Promise<unknown>, options?: number | TestOptions): void;
@@ -1332,7 +1337,7 @@ declare module "bun:test" {
    * A `test` whose callbacks receive the {@link TestContext} instead of a `done` callback.
    */
   export interface TestWithContext<Context, Row extends ReadonlyArray<unknown> = []> {
-    // First, or `options` that are `any` are taken for the `fn` of the next overload. `Parameters<>` reads the last one.
+    // Must be first, or `options` typed as `any` matches the next overload's `fn`. `Parameters<>` uses the last one.
     (
       label: string,
       fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
@@ -1363,7 +1368,7 @@ declare module "bun:test" {
     failingIf(condition: boolean): TestWithContext<Context, Row>;
     concurrentIf(condition: boolean): TestWithContext<Context, Row>;
     serialIf(condition: boolean): TestWithContext<Context, Row>;
-    /** The rows fill the parameters: the callback does not get the context. */
+    /** Each row is spread over the callback's parameters, so the callback doesn't receive the context. */
     each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): TestOfRows<T>;
     each<T extends readonly unknown[]>(table: readonly T[]): TestOfRows<T>;
     each<const T>(table: readonly T[]): TestOfRows<[row: T]>;
@@ -1372,15 +1377,15 @@ declare module "bun:test" {
     for(headings: TemplateStringsArray, ...values: any[]): TestWithContext<Context, [row: any]>;
     extend: ExtendTest<Context>;
     /**
-     * Replaces fixtures for the tests of the `describe()` block it is called in, or of the file.
+     * Replaces fixtures for the tests in the `describe()` block it's called in, or in the file when called outside one.
      */
     override(fixtures: Partial<Fixtures<Context>>): this;
     /** @deprecated Use `override()`. */
     scoped(fixtures: Partial<Fixtures<Context>>): this;
-    /** The callback gets the fixtures with `scope: "file"` or `"worker"` that it destructures, and the suite. */
+    /** The callback receives the `scope: "file"` or `"worker"` fixtures that it destructures, and the suite. */
     beforeAll: SuiteHook<Context>;
     afterAll: SuiteHook<Context>;
-    /** A function the callback returns runs after the `afterEach` hooks. */
+    /** If the callback returns a function, that function runs after the `afterEach` hooks. */
     beforeEach: ContextHook<Context>;
     afterEach: ContextHook<Context>;
     describe: Describe<[]>;
@@ -1525,8 +1530,8 @@ declare module "bun:test" {
     unreachable(msg?: string | Error): never;
 
     /**
-     * Like `expect()`, except that a matcher that fails does not throw: the failure is reported, the test goes
-     * on, and it fails when it ends.
+     * Like `expect()`, but doesn't throw when a matcher fails. The failure is reported, the test keeps running,
+     * and it's marked as failed at the end.
      *
      * @example
      * expect.soft(response.status).toBe(200);
@@ -1538,10 +1543,10 @@ declare module "bun:test" {
     soft<T = unknown>(actual?: T, customFailMessage?: string): Matchers<T>;
 
     /**
-     * Calls `fn`, awaits what it returns and runs the matcher on it, again and again until the matcher passes.
-     * The matcher returns a promise, which rejects with the last failure once `timeout` is up.
+     * Calls `fn`, awaits its result and runs the matcher on it. Retries until the matcher passes.
+     * The matcher returns a promise that rejects with the last failure once `timeout` is up.
      *
-     * The time is real even under fake timers, which each attempt advances by `interval`.
+     * The wait uses the real clock, even with fake timers on. Each attempt advances the fake timers by `interval`.
      *
      * @example
      * await expect.poll(() => document.querySelector(".ready")).not.toBeNull();
@@ -1551,12 +1556,12 @@ declare module "bun:test" {
       fn: () => T,
       options?: {
         /**
-         * Milliseconds between two attempts.
+         * Milliseconds between attempts.
          * @default 50
          */
         interval?: number;
         /**
-         * Milliseconds after which the matcher fails.
+         * Milliseconds before the matcher gives up and fails.
          * @default 1000
          */
         timeout?: number;
@@ -1586,13 +1591,13 @@ declare module "bun:test" {
     assertions(neededAssertions: number): void;
 
     /**
-     * Registers functions that decide whether two values are equal, for `toEqual()`,
+     * Registers functions that decide whether two values are equal. They're used by `toEqual()`,
      * `toStrictEqual()`, `toMatchObject()`, `toHaveBeenCalledWith()` and every other
      * matcher and asymmetric matcher that compares deeply.
      *
-     * A tester returns `true` or `false`, or `undefined` to leave the pair to the next
-     * tester and then to the built-in rules. Testers registered by a test file last
-     * until the end of that file; those registered by a preload script last for every file.
+     * A tester returns `true` or `false`. It can also return `undefined` to pass the pair on
+     * to the next tester, and then to the built-in rules. Testers registered by a test file last
+     * until that file ends. Testers registered by a preload script apply to every file.
      *
      * @example
      * expect.addEqualityTesters([
@@ -1603,11 +1608,11 @@ declare module "bun:test" {
     addEqualityTesters(testers: Tester[]): void;
 
     /**
-     * Registers how the snapshot matchers print the values that `serializer.test()` returns `true` for,
-     * wherever in a snapshot they are. The serializer that was added last is asked first.
+     * Registers a serializer for the snapshot matchers. It prints every value that `serializer.test()`
+     * returns `true` for, anywhere in a snapshot. The most recently added serializer is tried first.
      *
-     * A serializer added by a test file lasts until the end of that file; one added by a preload
-     * script, or by a module that test files import, lasts for every file after it.
+     * A serializer added by a test file lasts until that file ends. One added by a preload script,
+     * or by a module that test files import, applies to every file after it.
      *
      * @example
      * expect.addSnapshotSerializer({
@@ -1623,8 +1628,8 @@ declare module "bun:test" {
     addSnapshotSerializer(serializer: SnapshotSerializer): void;
 
     /**
-     * What `expect` knows about the test that is running, plus whatever was given to
-     * {@link Expect.setState}. The same object is returned, up to date, by every call.
+     * Returns `expect`'s state for the running test, plus anything passed to
+     * {@link Expect.setState}. Every call returns the same object, kept up to date.
      */
     getState(): ExpectState & Record<string, unknown>;
 
@@ -1633,17 +1638,17 @@ declare module "bun:test" {
      *
      * `assertionCalls`, `expectedAssertionsNumber` and `isExpectingAssertions` are the
      * counters behind `expect.assertions()` and `expect.hasAssertions()`.
-     * `currentTestName` and `testPath` cannot be changed.
+     * `currentTestName` and `testPath` can't be changed.
      */
     setState(state: Partial<ExpectState> & Record<string, unknown>): void;
   }
 
   export interface ExpectState {
-    /** How many assertions the current test has made. */
+    /** The number of assertions the current test has made. */
     assertionCalls: number;
-    /** The names of the enclosing `describe` blocks and of the current test, joined by a space. */
+    /** The enclosing `describe` blocks' names and the current test's name, joined by a space. */
     currentTestName?: string;
-    /** The argument of `expect.assertions()`, if it was called in the current test. */
+    /** The number passed to `expect.assertions()`, if it was called in the current test. */
     expectedAssertionsNumber: number | null;
     /** Whether `expect.hasAssertions()` was called in the current test. */
     isExpectingAssertions: boolean;
@@ -1836,14 +1841,14 @@ declare module "bun:test" {
   }
 
   /**
-   * The matchers after `.resolves` and `.rejects`. Each returns a promise, which fulfills once the matcher has
-   * passed and rejects with its failure.
+   * The matchers available after `.resolves` and `.rejects`. Each one returns a promise that fulfills if the matcher
+   * passes and rejects with the failure if it doesn't.
    */
   export type AsyncMatchers<T = unknown> = MatchersBuiltin<T, Promise<void>> & {
     [K in Exclude<keyof Matchers<T>, keyof MatchersBuiltin>]: Matchers<T>[K] extends (...args: infer Args) => unknown
       ? (...args: Args) => Promise<void>
       : Matchers<T>[K];
-    // `infer Args` reads the last overload of a custom matcher and drops its type parameters: the rest come from here.
+    // `infer Args` only sees a custom matcher's last overload, without its type parameters. The rest come from here.
   } & Matchers<T>;
 
   export interface MatchersBuiltin<T = unknown, R = void> {
@@ -2444,16 +2449,16 @@ declare module "bun:test" {
     toMatchInlineSnapshot(propertyMatchers?: object, value?: string): R;
 
     /**
-     * Asserts that a value matches the contents of a file of its own. A string is compared as it is,
-     * anything else as a snapshot prints it.
+     * Asserts that a value matches the contents of its own snapshot file. A string is compared as is.
+     * Any other value is first printed the way a snapshot prints it.
      *
-     * A file that does not exist is written, unless in CI. `--update-snapshots` rewrites one that differs.
+     * If the file doesn't exist, it's created, except in CI. `--update-snapshots` rewrites a file that differs.
      *
      * @example
      * await expect(render(page)).toMatchFileSnapshot("./snapshots/page.html");
      *
-     * @param path Path of the file, relative to the test file.
-     * @param hint Hint used to number the snapshot among those of the test.
+     * @param path The file's path, relative to the test file.
+     * @param hint Hint used to number the snapshot among the test's other snapshots.
      */
     toMatchFileSnapshot(path: string, hint?: string): Promise<void>;
 
@@ -2862,14 +2867,14 @@ declare module "bun:test" {
     toHaveBeenCalledExactlyOnceWith(...expected: unknown[]): R;
 
     /**
-     * Ensure that the first call of a mock function came before the first call of `mock`.
+     * Ensure that a mock function's first call came before `mock`'s first call.
      * @param mock The mock function to compare with
      * @param failIfNoFirstInvocation Whether to fail when the received mock function was never called. Defaults to `true`.
      */
     toHaveBeenCalledBefore(mock: Mock<(...args: any[]) => any>, failIfNoFirstInvocation?: boolean): R;
 
     /**
-     * Ensure that the first call of a mock function came after the first call of `mock`.
+     * Ensure that a mock function's first call came after `mock`'s first call.
      * @param mock The mock function to compare with
      * @param failIfNoFirstInvocation Whether to fail when `mock` was never called. Defaults to `true`.
      */
@@ -2878,7 +2883,7 @@ declare module "bun:test" {
     /**
      * Ensures that a promise returned by a mock function has resolved at least once.
      *
-     * A returned value that is not a promise counts as resolved, a thrown error as rejected.
+     * A return value that isn't a promise counts as resolved. A thrown error counts as rejected.
      */
     toHaveResolved(): R;
 
@@ -2894,13 +2899,13 @@ declare module "bun:test" {
     toHaveResolvedWith(expected: unknown): R;
 
     /**
-     * Ensures that the promise returned by the last call of a mock function has resolved with a specific value.
+     * Ensures that the promise returned by a mock function's last call has resolved with a specific value.
      * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
      */
     toHaveLastResolvedWith(expected: unknown): R;
 
     /**
-     * Ensures that the promise returned by the nth call of a mock function has resolved with a specific value.
+     * Ensures that the promise returned by a mock function's nth call has resolved with a specific value.
      * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
      * @param n The 1-based index of the function call
      * @param expected The expected resolved value
@@ -2939,7 +2944,7 @@ declare module "bun:test" {
       : CustomMatcher<unknown, any[]>;
   };
 
-  /** Prints a value that is inside of the one a {@link SnapshotSerializer} prints. */
+  /** Prints a value nested inside the one a {@link SnapshotSerializer} is printing. */
   export type SnapshotPrinter = (
     value: unknown,
     config: SnapshotSerializerConfig,
@@ -2948,20 +2953,20 @@ declare module "bun:test" {
     refs: unknown[],
   ) => string;
 
-  /** The options of `pretty-format` that snapshots are printed with. */
+  /** The `pretty-format` options that snapshots are printed with. */
   export interface SnapshotSerializerConfig {
-    /** What one more level of `indentation` adds. */
+    /** The string each extra level adds to `indentation`. */
     indent: string;
-    /** Between two items. */
+    /** Printed between two items. */
     spacingInner: string;
-    /** After an opening and before a closing bracket. */
+    /** Printed after an opening bracket and before a closing bracket. */
     spacingOuter: string;
     min: boolean;
     plugins: SnapshotSerializer[];
     [option: string]: unknown;
   }
 
-  /** For {@link Expect.addSnapshotSerializer}: a plugin of `pretty-format`, with either of its two interfaces. */
+  /** A `pretty-format` plugin for {@link Expect.addSnapshotSerializer}. Either of the two plugin interfaces works. */
   export type SnapshotSerializer = { test(value: any): boolean } & (
     | {
         serialize(
@@ -2984,7 +2989,7 @@ declare module "bun:test" {
   export type EqualsFunction = (
     a: unknown,
     b: unknown,
-    /** The only custom testers to use. Those of `expect.addEqualityTesters()` are not used unless they are passed. */
+    /** The custom testers to use. Testers from `expect.addEqualityTesters()` are only used if you pass them here. */
     customTesters?: Array<Tester>,
     /** Compare like `toStrictEqual()` instead of `toEqual()`. */
     strictCheck?: boolean,
@@ -3008,7 +3013,7 @@ declare module "bun:test" {
   type MatcherHintColor = (arg: string) => string; // subset of Chalk type
 
   interface MatcherUtils {
-    /** The testers registered with `expect.addEqualityTesters()`, to pass on to `equals`. */
+    /** The testers registered with `expect.addEqualityTesters()`. Pass them on to `equals`. */
     customTesters: Array<Tester>;
     //dontThrow(): void; // (internally used by jest snapshot)
     equals: EqualsFunction;
@@ -3017,24 +3022,24 @@ declare module "bun:test" {
       printReceived(value: unknown): string;
       printExpected(value: unknown): string;
       /**
-       * The lines that differ between two values, or between two strings.
+       * Returns the lines that differ between two values, or between two strings.
        *
-       * `null` for two numbers, two bigints, two booleans, and an asymmetric matcher.
+       * Returns `null` for two numbers, two bigints, two booleans, or an asymmetric matcher.
        *
-       * @param options accepted for compatibility with Jest, and ignored
+       * @param options accepted for compatibility with Jest, but ignored
        */
       diff(expected: unknown, received: unknown, options?: object): string | null;
-      /** `name` with the type of `value`, and `name` with what `print` makes of `value`, on two lines. */
+      /** Returns two lines. The first has `name` and `value`'s type. The second has `name` and `print(value)`. */
       printWithType<T>(name: string, value: T, print: (value: T) => string): string;
-      /** Colors text like an expected value. The text is not quoted. */
+      /** Colors text like an expected value. The text isn't quoted. */
       EXPECTED_COLOR(...text: unknown[]): string;
-      /** Colors text like a received value. The text is not quoted. */
+      /** Colors text like a received value. The text isn't quoted. */
       RECEIVED_COLOR(...text: unknown[]): string;
       /**
-       * The first line of a failure message, such as `expect(received).toBeFoo(expected)`.
+       * Returns the first line of a failure message, such as `expect(received).toBeFoo(expected)`.
        *
-       * @param received the text between the parentheses of `expect()`
-       * @param expected the text between the parentheses of the matcher, `""` for none
+       * @param received the text inside `expect()`'s parentheses
+       * @param expected the text inside the matcher's parentheses, or `""` for none
        */
       matcherHint(
         matcherName: string,
@@ -3227,8 +3232,8 @@ declare module "bun:test" {
        */
       results: Array<MockFunctionResult<T>>;
       /**
-       * What the result of each call has settled to by now: a returned promise counts as `"incomplete"` while it is
-       * pending, then as `"fulfilled"` or `"rejected"`. Every read gives a new array.
+       * The settled result of each call so far. A returned promise is `"incomplete"` while it's pending, then
+       * `"fulfilled"` or `"rejected"`. Each read returns a new array.
        */
       readonly settledResults: Array<
         | { type: "incomplete"; value: undefined }

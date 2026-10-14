@@ -6403,9 +6403,9 @@ declare module "bun" {
   }
 
   /**
-   * `undefined` or `null` declines the module: the next matching `onLoad`
-   * callback runs, and when they all decline the module is loaded as if no
-   * plugin had matched it.
+   * Return `undefined` or `null` to skip the module. The next matching `onLoad`
+   * callback runs instead. If every callback skips it, the module is loaded as
+   * if no plugin had matched it.
    */
   type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | null | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
@@ -6419,7 +6419,7 @@ declare module "bun" {
 
   interface OnResolveArgs {
     /**
-     * The import specifier of the module being loaded, as it is written:
+     * The import specifier of the module being loaded, exactly as written:
      * `"react"`, `"@/utils"`, `"./file"`, `"./file.ts"`
      */
     path: string;

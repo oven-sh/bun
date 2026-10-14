@@ -1,6 +1,7 @@
 // What a `ws` server socket does with the frames it receives, from a raw TCP client. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { tls as harnessTls } from "harness";
+import { isLinux, tls as harnessTls } from "harness";
+import { readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import zlib from "node:zlib";
@@ -818,6 +819,20 @@ describe.each(implementations)("ws server, receiving ($name)", ({ ws: implementa
         expect(events).toEqual([]);
         expect(client.frames).toEqual([]);
         expect(ws.readyState).toBe(WebSocket.OPEN);
+      });
+
+      // The length is only a claim until the bytes arrive.
+      test.skipIf(!isLinux)("no memory is set aside for the 3 GiB that a frame head announces", async () => {
+        const addressSpace = () =>
+          Number(/^VmSize:\s*(\d+) kB$/m.exec(readFileSync("/proc/self/status", "utf8"))![1]) * 1024;
+        await using server = await openServer(implementation, { maxPayload: 0 });
+        const control = server.connect();
+        await control.response;
+        const before = addressSpace();
+        server.client.write(frameHead(OP.binary, 3 * 1024 * MiB));
+        expect(await control.roundTrip()).toEqual([]);
+        expect(addressSpace() - before).toBeLessThan(1024 * MiB);
+        expect(server.events).toEqual([]);
       });
     });
   });

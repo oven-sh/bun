@@ -141,9 +141,10 @@ private:
                     }
                 }
             } else {
-                /* Allocate fragment buffer up front first time */
+                /* Allocate fragment buffer up front first time. The length is only what the header claims, so
+                 * beyond this much the buffer grows with the bytes that really arrive. */
                 if (!webSocketData->fragmentBuffer.length()) {
-                    webSocketData->fragmentBuffer.reserve(length + remainingBytes);
+                    webSocketData->fragmentBuffer.reserve(std::min<size_t>(length + remainingBytes, 16 * 1024 * 1024));
                 }
                 /* Fragments forming a big message are not caught until appending them */
                 if (refusePayloadLength(length + webSocketData->fragmentBuffer.length(), webSocketState, s)) {

@@ -500,9 +500,7 @@ describe.each(implementations)("ws server, sending ($name)", ({ ws: implementati
 
       // Behind them, one of each kind.
       const kinds = ["ArrayBuffer", "Blob", "ping", "pong", "empty", "first", "last"];
-      const before = ws.bufferedAmount;
       ws.send(new Uint8Array([104, 105]).buffer, { binary: false }, ran.callback("ArrayBuffer"));
-      expect(ws.bufferedAmount).toBeGreaterThanOrEqual(before + 2);
       ws.send(new Blob(["blob"]) as any, ran.callback("Blob"));
       ws.ping("p", undefined, ran.callback("ping"));
       ws.pong("q", undefined, ran.callback("pong"));

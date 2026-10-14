@@ -2045,7 +2045,7 @@ describe.each([
 });
 
 // A cycle would make a missing-name lookup loop forever, so this runs in a subprocess with a timeout.
-test.concurrent("the prototype chain of the globalThis of a context cannot lead back to it", async () => {
+test.concurrent("setting a context's globalThis prototype to form a cycle is rejected", async () => {
   const fixture = /* js */ `
     const vm = require("node:vm");
     const attempt = set => {
@@ -2135,7 +2135,7 @@ test.concurrent("the prototype chain of the globalThis of a context cannot lead 
   });
 });
 
-test.concurrent("operations on contexts that are nested too deeply are a RangeError", async () => {
+test.concurrent("operations on contexts that are nested too deeply throw a RangeError", async () => {
   const fixture = /* js */ `
     const vm = require("node:vm");
     const operations = {
@@ -2177,7 +2177,7 @@ test.concurrent("operations on contexts that are nested too deeply are a RangeEr
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "went all the way down: \n", stderr: "", exitCode: 0 });
 });
 
-test.concurrent("DONT_CONTEXTIFY: `this` of an accessor does not depend on how hot the code is", async () => {
+test.concurrent("DONT_CONTEXTIFY: an accessor's `this` is globalThis in every JIT tier", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -2240,7 +2240,7 @@ describe.each([
   const notDefined = (name: string) =>
     expect.objectContaining({ name: "ReferenceError", message: `${name} is not defined` });
 
-  test("a `get` trap answers for every name", () => {
+  test("with a `get` trap, every name resolves through the trap", () => {
     const get = (_: object, key: string | symbol) => (key === "answered" ? 42 : undefined);
     for (const handler of [{ get }, { get, has: () => false }, { get, has: () => true }]) {
       for (const proxy of [new Proxy({}, handler), new Proxy(new Proxy({}, handler), {})]) {
@@ -2257,7 +2257,7 @@ describe.each([
     }
   });
 
-  test("without a `get` trap it has what its target has", () => {
+  test("without a `get` trap, names resolve to the target's properties", () => {
     for (const handler of [{}, { get: undefined }, { get: null as never }, { has: () => false }]) {
       for (const target of [
         { held: 1 },
@@ -3421,7 +3421,7 @@ test.concurrent("Atomics.notify does not wake the Atomics.waitAsync of a context
   });
 });
 
-test.concurrent("contexts that nothing refers to are collected, the last one made as well", async () => {
+test.concurrent("unreferenced contexts are garbage collected, including the last one created", async () => {
   const fixture = /* js */ `
     const vm = require("node:vm");
     const { heapStats } = require("bun:jsc");
@@ -3444,7 +3444,7 @@ test.concurrent("contexts that nothing refers to are collected, the last one mad
 test.each([
   ["a Proxy", () => new Proxy({ first: "one", second: "two" }, {})],
   ["import.meta.env", () => import.meta.env],
-])("the global lists the properties of a contextified object that lists them itself: %s", (_, object) => {
+])("the global enumerates the properties of an exotic contextified object: %s", (_, object) => {
   const env = process.env;
   process.env = { first: "one", second: "two" };
   try {

@@ -412,7 +412,7 @@ describe.concurrent("suffixes of an import path", () => {
     console.log("@" + JSON.stringify(results));
   `;
 
-  test("which one wins, and what is not one", async () => {
+  test("combined suffixes follow a fixed precedence, and look-alike queries are ignored", async () => {
     const code = `globalThis.evaluated = (globalThis.evaluated ?? 0) + 1;\nexport default "evaluated";\n`;
     const expected = {
       "./code.ts": "evaluated",
@@ -509,7 +509,7 @@ describe.concurrent("suffixes of an import path", () => {
   const base64 = (type: string, content: string | Buffer) =>
     `data:${type};base64,${Buffer.from(content).toString("base64")}`;
 
-  test("?inline on a file that is neither code nor data nor a style sheet", async () => {
+  test("?inline on an asset file returns a base64 data: URL with its MIME type", async () => {
     const types = {
       "a.png": "image/png",
       "a.jpg": "image/jpeg",
@@ -607,7 +607,7 @@ describe.concurrent("suffixes of an import path", () => {
     ).toEqual({ printed: expected, stderr: "", exitCode: 0 });
   });
 
-  test("?inline in import.meta.glob, in a static import, and what the URL holds", async () => {
+  test("?inline in import.meta.glob and static imports returns a URL that fetch() can read", async () => {
     const wasm = Buffer.from("0061736d01000000", "hex");
     expect(
       await runMain({
@@ -684,7 +684,7 @@ describe.concurrent("suffixes of an import path", () => {
   });
 
   // On Windows that means a drive letter and backslashes.
-  test("the path of ?url is the native one, which fs, pathToFileURL and Worker take", async () => {
+  test("?url returns a native path that fs, pathToFileURL and Worker accept", async () => {
     expect(
       await runMain({
         "nested/echo.ts": echoWorker,
@@ -778,7 +778,7 @@ describe.concurrent("suffixes of an import path", () => {
     ).toEqual({ printed: { echo: "ping", isMainThread: false }, stderr: "", exitCode: 0 });
   });
 
-  test("?worker and ?sharedworker construct what the global is when they are called, as Vite's wrapper does", async () => {
+  test("?worker and ?sharedworker read the global constructor when called, like Vite", async () => {
     expect(
       await runMain({
         "echo.ts": echoWorker,
@@ -861,7 +861,7 @@ describe.concurrent("suffixes of an import path", () => {
     ).toEqual({ printed: [true, 42, "TypeError"], stderr: "", exitCode: 0 });
   });
 
-  test("an import attribute decides over the suffix", async () => {
+  test("an import attribute takes precedence over the suffix", async () => {
     expect(
       await runMain({
         "data.json": `{ "key": 1 }\n`,

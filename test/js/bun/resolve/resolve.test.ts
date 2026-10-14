@@ -818,7 +818,7 @@ describe.concurrent("an absolute specifier about as long as a path buffer", () =
     });
   });
 
-  it("is what a key of require.extensions that long makes of any specifier", async () => {
+  it("is not found when it comes from appending a require.extensions key that long", async () => {
     using dir = tempDir("resolver-long-extension", {
       "directory/other.js": "",
       "index.js": `
@@ -849,7 +849,7 @@ describe.concurrent("an absolute specifier about as long as a path buffer", () =
   });
 
   it.skipIf(isWindows)(
-    "is not found either when it is a directory whose index.js has a path longer still",
+    "is not found either when it is a directory whose index.js path is longer than the buffer",
     async () => {
       using dir = tempDir("resolver-long-directory", {
         "index.js": `

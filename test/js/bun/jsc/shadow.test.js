@@ -21,7 +21,7 @@ it("process.nextTick() runs its callback, before the promise jobs", async () => 
   expect(order).toEqual(["tick 12", "job"]);
 });
 
-it("process.nextTick() throws a TypeError of the realm for what is not a function", () => {
+it("process.nextTick() throws the realm's own TypeError for a non-function", () => {
   const thrown = new ShadowRealm().evaluate(`
     try {
       process.nextTick(1);
@@ -77,7 +77,7 @@ it.concurrent("rejected promises are collected", async () => {
   ).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
 });
 
-it("Bun.isMainThread and node:worker_threads say which thread the realm is on", async () => {
+it("Bun.isMainThread and node:worker_threads' isMainThread reflect the realm's thread", async () => {
   expect(new ShadowRealm().evaluate("Bun.isMainThread")).toBe(true);
   expect(await new ShadowRealm().importValue("node:worker_threads", "isMainThread")).toBe(true);
 

@@ -314,7 +314,7 @@ retry = 3
   expect(exitCode).toBe(0);
 });
 
-test("what an earlier attempt still does neither ends nor fails a later one", async () => {
+test("leftover work from an earlier attempt doesn't end or fail the retry", async () => {
   using dir = tempDir("retry-stale", {
     "stale.test.ts": `
       import { test, expect } from "bun:test";

@@ -93,7 +93,7 @@ describe("vi.stubEnv", () => {
     expect(() => vi.stubEnv(Symbol("name"), "value")).toThrow(TypeError);
   });
 
-  test("an inherited property is not an original", () => {
+  test("an inherited property isn't saved as the original value", () => {
     vi.stubEnv("hasOwnProperty", "stub");
     expect<unknown>(process.env.hasOwnProperty).toBe("stub");
     vi.unstubAllEnvs();
@@ -128,7 +128,7 @@ describe("vi.stubEnv", () => {
     const defaults = ["test", "/", true, false, true];
     const absent = [undefined, undefined, undefined, undefined, undefined];
 
-    test("are what is stubbed, DEV, PROD and SSR as booleans, and have their defaults again afterwards", () => {
+    test("can be stubbed, keep DEV, PROD and SSR booleans, and reset to their defaults", () => {
       expect([read(import.meta.env), read(process.env)]).toEqual([defaults, absent]);
       vi.stubEnv("MODE", "production");
       expect([read(import.meta.env), read(process.env)]).toEqual([
@@ -151,7 +151,7 @@ describe("vi.stubEnv", () => {
       expect([read(import.meta.env), read(process.env)]).toEqual([defaults, absent]);
     });
 
-    test("an original that import.meta.env assigned is restored", () => {
+    test("a value assigned through import.meta.env is restored", () => {
       import.meta.env.DEV = false as any;
       try {
         vi.stubEnv("DEV", true);
@@ -382,7 +382,7 @@ describe.concurrent("stubs do not outlive their test file", () => {
   });
 });
 
-describe.concurrent("what a preload stubs is there for every test file", () => {
+describe.concurrent("stubs made in a preload apply to every test file", () => {
   const seen = `[typeof viUtilsStub, typeof fetch, process.env.VI_UTILS_EXISTING, process.env.VI_UTILS_NEW, process.env.VI_UTILS_GONE]`;
   const stubbed = `["function", "string", "stub", "stub", undefined]`;
   const files = {
@@ -446,7 +446,7 @@ describe.concurrent("what a preload stubs is there for every test file", () => {
     },
   );
 
-  test("in a beforeAll() of the preload, which runs once", async () => {
+  test("including stubs made in the preload's beforeAll(), which runs once", async () => {
     const { stderr, exitCode } = await run(
       ["test", "--preload", "./preload.ts", ...testFiles],
       {
@@ -466,7 +466,7 @@ describe.concurrent("what a preload stubs is there for every test file", () => {
     });
   });
 
-  test("not what the preload has undone itself, but what a hook of it undoes after a test", async () => {
+  test("even if its afterEach() undoes them, but not if the preload undid them itself", async () => {
     const { stderr, exitCode } = await run(["test", "--preload", "./preload.ts", "./a.test.ts", "./b.test.ts"], {
       "preload.ts": `
         import { afterEach, vi } from "bun:test";
@@ -500,7 +500,7 @@ describe.concurrent("what a preload stubs is there for every test file", () => {
   });
 });
 
-describe.concurrent("a global that Bun's own modules use is stubbed", () => {
+describe.concurrent("stubbing a global that Bun's own modules use", () => {
   const url = `URL {
   href: 'http://a/',
   origin: 'http://a',
@@ -518,7 +518,7 @@ describe.concurrent("a global that Bun's own modules use is stubbed", () => {
 `;
 
   test.each(["undefined", `{ platform: "win32" }`])(
-    "process = %s, and a value with a custom inspector is printed",
+    "console.log() still prints a URL when process is stubbed with %s",
     async stub => {
       const { stdout, stderr, exitCode } = await run(["test", "./stub.test.ts"], {
         "stub.test.ts": `
@@ -537,7 +537,7 @@ describe.concurrent("a global that Bun's own modules use is stubbed", () => {
     },
   );
 
-  test("process, and an assertion that fails prints such a value", async () => {
+  test("a failing assertion still prints a URL when process is stubbed", async () => {
     const { stderr, exitCode } = await run(["test", "./stub.test.ts"], {
       "stub.test.ts": `
         import { expect, test, vi } from "bun:test";
@@ -551,7 +551,7 @@ describe.concurrent("a global that Bun's own modules use is stubbed", () => {
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(fail) fails"], exitCode: 1 });
   });
 
-  test("process, outside of bun test", async () => {
+  test("console.log() still prints a URL outside of bun test when process is undefined", async () => {
     const { stdout, exitCode } = await run(["./script.ts"], {
       "script.ts": `
         globalThis.process = undefined;
@@ -561,7 +561,7 @@ describe.concurrent("a global that Bun's own modules use is stubbed", () => {
     expect({ stdout, exitCode }).toEqual({ stdout: url, exitCode: 0 });
   });
 
-  test.each(["Symbol", "Object"])("%s: node:util cannot be loaded until it is back", async name => {
+  test.each(["Symbol", "Object"])("%s: Bun.inspect() throws a TypeError until the global is restored", async name => {
     const { stdout, exitCode } = await run(["./script.ts"], {
       "script.ts": `
         const original = globalThis.${name};
@@ -618,7 +618,7 @@ describe.concurrent("vi.setConfig", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("does not reach the next file", async () => {
+  test("doesn't leak into the next file", async () => {
     const { stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
       "a.test.ts": `
         import { test, vi } from "bun:test";
@@ -634,7 +634,7 @@ describe.concurrent("vi.setConfig", () => {
   });
 
   describe.each(["--isolate", "--parallel=1", "--isolate --rerun-each=2"])(
-    "does not reach the next file, which has a global object of its own: %s",
+    "doesn't leak into the next file when each file gets its own global: %s",
     flags => {
       const setsAll = `vi.setConfig({ testTimeout: 10, hookTimeout: 10, maxConcurrency: 1, clearMocks: false });`;
       const observes = `
@@ -691,7 +691,7 @@ describe.concurrent("vi.setConfig", () => {
     );
   });
 
-  test("hookTimeout is for the hooks registered after it, testTimeout for the tests", async () => {
+  test("hookTimeout applies to hooks registered after it, testTimeout only to tests", async () => {
     const { stderr, exitCode } = await run(["test", "./config.test.ts"], {
       "config.test.ts": `
         import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, onTestFinished, setDefaultTimeout, test, vi } from "bun:test";
@@ -769,7 +769,7 @@ describe.concurrent("vi.setConfig", () => {
     });
   });
 
-  test("the hooks of vitest have ten seconds unless --timeout gives them more", async () => {
+  test("vitest hooks get a 10s timeout unless --timeout is longer", async () => {
     const file = (module: string) => `
       import { beforeEach, test } from "${module}";
       beforeEach(() => Bun.sleep(40));
@@ -821,7 +821,7 @@ describe.concurrent("vi.setConfig", () => {
     });
   });
 
-  describe("what is undone before each test", () => {
+  describe("the options that reset mocks and stubs before each test", () => {
     const file = (module: string, config = "") => `
       import { beforeAll, beforeEach, test, vi } from "${module}";
       ${config}
@@ -878,7 +878,7 @@ describe.concurrent("vi.setConfig", () => {
       ["bun:test", nothing],
       ["@jest/globals", nothing],
       ["vitest", { ...nothing, ...cleared }],
-    ])("by default, for a test of %j", async (module, expected) => {
+    ])("by default, in a file that imports from %j", async (module, expected) => {
       expect(await seen(module, {}, "bunfig")).toEqual(expected);
     });
 
@@ -897,12 +897,12 @@ describe.concurrent("vi.setConfig", () => {
         expect(await seen("bun:test", options, through)).toEqual({ ...nothing, ...difference });
       });
 
-      test("clearMocks: false, for a test of vitest", async () => {
+      test("clearMocks: false, in a file that imports from vitest", async () => {
         expect(await seen("vitest", { clearMocks: false }, through)).toEqual(nothing);
       });
     });
 
-    test("in the workers of --parallel", async () => {
+    test("in --parallel workers", async () => {
       expect(await seen("bun:test", { clearMocks: true, unstubEnvs: true }, "bunfig", ["--parallel=1"])).toEqual({
         ...nothing,
         ...cleared,
@@ -910,7 +910,7 @@ describe.concurrent("vi.setConfig", () => {
       });
     });
 
-    test("before each attempt, not for a test that is skipped, until resetConfig() or the end of the file", async () => {
+    test("apply to every attempt but not to skipped tests, until resetConfig() or the file ends", async () => {
       const { stdout, stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
         "shared.ts": `import { vi } from "bun:test"; export const fn = vi.fn();`,
         "a.test.ts": `
@@ -962,7 +962,7 @@ describe.concurrent("vi.setConfig", () => {
       });
     });
 
-    test("bunfig.toml wants a boolean", async () => {
+    test("bunfig.toml requires a boolean", async () => {
       const { stderr, exitCode } = await run(["test"], {
         "a.test.ts": `import { test } from "bun:test"; test("test", () => {});`,
         "bunfig.toml": `[test]\nclearMocks = "yes"\n`,
@@ -1104,7 +1104,7 @@ describe.concurrent("vi.dynamicImportSettled", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("neither handles nor reports the rejection of an import", async () => {
+  test("neither handles nor reports a rejected import", async () => {
     const { stderr, exitCode } = await run(["test", "./rejected.test.ts"], {
       "throws.ts": `throw new Error("thrown by the module");`,
       "rejected.test.ts": `
@@ -1125,7 +1125,7 @@ describe.concurrent("vi.dynamicImportSettled", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("an import that is in flight at the end of a test file is not the next file's", async () => {
+  test("doesn't wait for an import the previous test file left in flight", async () => {
     const { stdout, stderr, exitCode } = await run(["test", "./a.test.ts", "./b.test.ts"], {
       "never.ts": `await new Promise(() => {});`,
       "a.test.ts": `
@@ -1177,7 +1177,7 @@ describe("vi.waitFor", () => {
     expect(calls).toBe(3);
   });
 
-  test.each([0, "", null, undefined, false, NaN])("%p is a value", async value => {
+  test.each([0, "", null, undefined, false, NaN])("resolves with a falsy return value: %p", async value => {
     const callback = vi.fn(() => value);
     expect(await vi.waitFor(callback)).toBe(value);
     expect(callback).toHaveBeenCalledTimes(1);
@@ -1228,7 +1228,7 @@ describe("vi.waitFor", () => {
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
-  test.each([undefined, null, 0, "", false])("throwing %p is not an error to report", async value => {
+  test.each([undefined, null, 0, "", false])("throwing %p rejects with the timeout error instead", async value => {
     await expect(
       vi.waitFor(
         () => {
@@ -1324,7 +1324,7 @@ describe("vi.waitFor", () => {
     expect(value).toBe(3);
   });
 
-  test("a function with a `then` is a value, which the promise adopts", async () => {
+  test("a function with a `then` is treated as a thenable", async () => {
     const callable = Object.assign(() => {}, { then: (resolve: (value: string) => void) => resolve("adopted") });
     expect(await vi.waitFor<unknown>(() => callable)).toBe("adopted");
   });
@@ -1530,7 +1530,7 @@ describe("vi.waitFor", () => {
       expect(elapsed.slice(0, 2)).toEqual([10, 20]);
     });
 
-    test("rejects with what a fake timer throws in the advance before the first call", async () => {
+    test("rejects with an error a fake timer throws before the first call", async () => {
       vi.useFakeTimers();
       setTimeout(() => {
         throw new Error("thrown by a fake timer");
@@ -1583,7 +1583,7 @@ describe("vi.waitUntil", () => {
     expect(callback).toHaveBeenCalledTimes(2);
   });
 
-  test("rejects with exactly what was thrown", async () => {
+  test("rejects with the thrown value, even a falsy one", async () => {
     await expect(
       vi.waitUntil(() => {
         throw 0;
@@ -1664,7 +1664,7 @@ describe.concurrent("a wait that is still pending", () => {
   };
 
   test.each(["--no-isolate", "--isolate", "--parallel=1 --no-isolate"])(
-    "ends with its test file: bun test %s",
+    "stops polling when its test file ends: bun test %s",
     async flags => {
       const { stdout, stderr, exitCode } = await run(
         ["test", ...flags.split(" "), "./a.test.ts", "./b.test.ts"],
@@ -1677,7 +1677,7 @@ describe.concurrent("a wait that is still pending", () => {
     },
   );
 
-  test("goes on after a fake timer throws, which is an uncaught error", async () => {
+  test("keeps polling after a fake timer throws, which is an uncaught error", async () => {
     const { stdout, stderr, exitCode } = await run(["test", "./throws.test.ts"], {
       "throws.test.ts": `
         import { test, vi } from "bun:test";
@@ -1804,12 +1804,12 @@ describe("a function that returns `this` for chaining", () => {
     },
   );
 
-  test("setSystemTime() that is imported returns undefined", () => {
+  test("the imported setSystemTime() returns undefined", () => {
     expect(setSystemTime(0)).toBeUndefined();
     expect(setSystemTime()).toBeUndefined();
   });
 
-  test("the getter of mock.settledResults does not read the variables of a scope", () => {
+  test("the mock.settledResults getter doesn't read variables from a scope object", () => {
     const getter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(vi.fn().mock), "settledResults")!.get!;
     // Named `results` because the getter reads `this.results`, which a scope object would resolve to this variable.
     const results = [{ type: "return", value: "a variable, not a result" }];
@@ -1818,7 +1818,7 @@ describe("a function that returns `this` for chaining", () => {
 
   // Hundreds of calls that mostly throw take seconds in a debug build that validates exception checks.
   test.concurrent(
-    "no function of the test module lets a scope object out",
+    "no function exported by the test modules leaks a scope object",
     async () => {
       const { stdout, stderr, exitCode } = await run(["test", "--timeout=60000", "./sweep.test.ts"], {
         "sweep.test.ts": `

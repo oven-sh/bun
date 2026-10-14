@@ -1560,7 +1560,7 @@ describe("spyOn", () => {
       expect(Object.getOwnPropertyDescriptors(target)).toEqual(descriptors);
     });
 
-    test("the traps decide", () => {
+    test("goes through the defineProperty and deleteProperty traps", () => {
       const defineProperty = jest.fn(Reflect.defineProperty);
       const deleteProperty = jest.fn(Reflect.deleteProperty);
       const target = Object.create({ get x() { return 1; } }); // prettier-ignore
@@ -1607,7 +1607,7 @@ describe("spyOn", () => {
         ["method", undefined, "method()"],
         ["value", "get", "value"],
         ["accessor", "get", "accessor"],
-      ])("what that has is spied on, and put back: %s", (key, access, code) => {
+      ])("spies on the sandbox's property and restores it: %s", (key, access, code) => {
         const { sandbox, context, global } = makeContext(contextify);
         const descriptors = Object.getOwnPropertyDescriptors(sandbox);
         const fn = access ? spyOn(global, key, access) : spyOn(global, key);
@@ -1619,7 +1619,7 @@ describe("spyOn", () => {
         expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
       });
 
-      test("what that has is spied on, and put back: a setter", () => {
+      test("spies on the sandbox's setter and restores it", () => {
         const { sandbox, context, global } = makeContext(contextify);
         const descriptors = Object.getOwnPropertyDescriptors(sandbox);
         const fn = spyOn(global, "accessor", "set");
@@ -1630,7 +1630,7 @@ describe("spyOn", () => {
       });
 
       test.each(["method", "value", "declared", "declaredFunction", "toString", "parseInt", "missing"])(
-        "that is as it was once a spy is restored: %s",
+        "leaves the sandbox unchanged once a spy is restored: %s",
         key => {
           // Vitest and Jest refuse non-functions, and leave the builtin behind on the sandbox after restoring.
           if (!isBun && !["method", "declaredFunction", "toString"].includes(key)) return;
@@ -1643,7 +1643,7 @@ describe("spyOn", () => {
         },
       );
 
-      test("that is as it was after restoreAllMocks()", () => {
+      test("leaves the sandbox unchanged after restoreAllMocks()", () => {
         const { sandbox, global } = makeContext(contextify);
         const descriptors = Object.getOwnPropertyDescriptors(sandbox);
         for (const key of ["method", "declaredFunction", "toString"]) spyOn(global, key);
@@ -1652,7 +1652,7 @@ describe("spyOn", () => {
         expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
       });
 
-      test("what that got while a spy was on the global object stays", () => {
+      test("mockRestore() keeps properties added to the sandbox while the spy was installed", () => {
         if (!isBun) return;
         const { sandbox, global } = makeContext(contextify);
         const spies = [spyOn(global, "missing"), spyOn(global, "toString"), spyOn(global, "parseInt")];
@@ -1662,7 +1662,7 @@ describe("spyOn", () => {
       });
     });
 
-    test("made of a frozen object, which refuses", () => {
+    test("made of a frozen object throws for the sandbox's properties", () => {
       const { sandbox, context, global } = makeContext(Object.freeze);
       const descriptors = Object.getOwnPropertyDescriptors(sandbox);
       expect(() => spyOn(global, "method")).toThrow(TypeError);
@@ -1676,7 +1676,7 @@ describe("spyOn", () => {
       expect(Object.getOwnPropertyDescriptors(sandbox)).toEqual(descriptors);
     });
 
-    test("made of nothing", () => {
+    test("made with vm.constants.DONT_CONTEXTIFY", () => {
       const context = vm.createContext(vm.constants.DONT_CONTEXTIFY);
       const global = vm.runInContext("this", context);
       Object.defineProperties(global, Object.getOwnPropertyDescriptors(makeContext().sandbox));
@@ -1995,7 +1995,7 @@ describe("spyOn", () => {
       });
 
       // Vitest allows these, Jest throws "does not have access type".
-      test("the half of an accessor that is missing", () => {
+      test("the missing half of an accessor can be spied on", () => {
         const readonly = { get x() { return 1; } }; // prettier-ignore
         const setter = spyOn(readonly, "x", "set");
         readonly.x = 3;
@@ -2068,7 +2068,7 @@ describe("spyOn", () => {
         expect(Object.getOwnPropertyDescriptor(exports, "method")).toEqual(original);
       });
 
-      test("properties that the object does not store", () => {
+      test("properties that can't be redefined, like an array's length, throw", () => {
         for (const [obj, key] of [
           [[1, 2], "length"],
           [new String("ab"), "length"],
@@ -2229,7 +2229,7 @@ if (isBun) {
       expect(newTarget).toBeUndefined();
     });
 
-    test("what a function implementation returns", () => {
+    test("returns the object a function implementation returns, and ignores a primitive", () => {
       const object = {};
       const ReturnsObject = vi.fn(function () {
         return object;
@@ -2244,7 +2244,7 @@ if (isBun) {
       expect(new ReturnsPrimitive()).toEqual({ w: 1 });
     });
 
-    test("the prototype of a function implementation is behind mock.prototype", () => {
+    test("mock.prototype inherits from a function implementation's prototype", () => {
       function F() {}
       F.prototype.hi = () => "hi";
       const Mock = vi.fn(F);
@@ -2473,7 +2473,7 @@ if (isBun) {
       expect(instance).not.toBeInstanceOf(Mock);
     });
 
-    test("mock.instances holds this for plain calls", () => {
+    test("mock.instances records `this` for plain calls", () => {
       const fn = jest.fn();
       const obj = { fn };
       obj.fn();
@@ -2531,7 +2531,7 @@ if (isBun) {
       expect(jest.fn().mockImplementation(B).own).toBeUndefined();
     });
 
-    test("do not replace what a mock has", () => {
+    test("don't shadow the mock's API or Function.prototype methods", () => {
       function implementation() {}
       implementation.mockClear = "mockClear";
       implementation.mock = "mock";
@@ -2890,7 +2890,7 @@ if (isBun) {
       expect(Object.getOwnPropertyDescriptor(mocked, "__proto__").value).toEqual({ polluted: true });
     });
 
-    test("{ spy: true } skips what cannot be assigned", () => {
+    test("{ spy: true } skips properties that can't be assigned", () => {
       const method = () => 1;
       const frozen = Object.freeze({ method, nested: { method } });
       const spied = vi.mockObject(frozen, { spy: true });
@@ -3042,7 +3042,7 @@ if (isBun) {
         expect(Mocked.prototype.method).toHaveBeenCalledTimes(10);
       });
 
-      test.each(modes)("%s: what a subclass or the constructor defines is left alone", (_, options) => {
+      test.each(modes)("%s: a method a subclass overrides doesn't get a per-instance mock", (_, options) => {
         class K {
           overridden() {}
           kept() {}
@@ -3292,7 +3292,7 @@ if (isBun) {
       });
     });
 
-    test("an error thrown while the value is read is passed on", () => {
+    test("an error thrown while reading the value propagates", () => {
       const error = new Error("trap");
       const proxy = new Proxy({}, { ownKeys: () => { throw error; } }); // prettier-ignore
       expect(() => vi.mockObject({ proxy })).toThrow(error);
@@ -3483,7 +3483,7 @@ if (isBun) {
       ["bun:test", false, mock, spyOn],
     ];
 
-    test("vi.fn and vi.spyOn are functions of their own", () => {
+    test("vi.fn and vi.spyOn are distinct from jest.fn and jest.spyOn", () => {
       expect(vi.fn).not.toBe(jest.fn);
       expect(vi.spyOn).not.toBe(jest.spyOn);
       expect(jest.fn).not.toBe(mock);
@@ -3685,7 +3685,7 @@ if (isBun) {
       expect(fn(mocked) === mocked).toBe(isVitest);
     });
 
-    test.each(flavors)("%s: what withImplementation() returns", (_, isVitest, fn) => {
+    test.each(flavors)("%s: the return value of withImplementation()", (_, isVitest, fn) => {
       const mocked = fn();
       expect(mocked.withImplementation(() => 1, () => {})).toBe(isVitest ? mocked : undefined); // prettier-ignore
     });
@@ -3827,7 +3827,7 @@ if (isBun) {
         ["vi", vi.fn, vi.spyOn, { "": "vi.fn()", undefined: "given", 5: "given" }],
         ["jest", jest.fn, jest.spyOn, { "": "given", undefined: "given", 5: "5" }],
         ["bun:test", mock, spyOn, { "": "given", undefined: "given", 5: "5" }],
-      ])("%s: mockName() with something else than a name", (_, fn, spyOn, expected) => {
+      ])("%s: mockName() with '', undefined or a number", (_, fn, spyOn, expected) => {
         for (const make of [() => fn(), () => spyOn(target(), "method")]) {
           expect({
             "": make().mockName("given").mockName("").getMockName(),
@@ -3881,16 +3881,16 @@ if (isBun) {
           "fn().mockName().mockReset()": "mockConstructor",
         };
 
-        test("vi: 'Mock' whatever vi.fn() is given, and the name of the property for a spy", () => {
+        test("vi: 'Mock' for anything passed to vi.fn(), and the property name for a spy", () => {
           const expected = Object.fromEntries(Object.keys(ofImplementation).map(key => [key, "Mock"]));
           expect(names(vi.fn, vi.spyOn)).toEqual({ ...expected, ...ofSpies });
         });
 
-        test("jest: that of the first implementation", () => {
+        test("jest: the first implementation's name", () => {
           expect(names(jest.fn, jest.spyOn)).toEqual(ofImplementation);
         });
 
-        test("bun:test: that of the first implementation, until mockName() gives it another", () => {
+        test("bun:test: the first implementation's name, until mockName() changes it", () => {
           expect(names(mock, spyOn)).toEqual({
             ...ofImplementation,
             "fn().mockName()": "given",
@@ -3899,7 +3899,7 @@ if (isBun) {
           });
         });
 
-        test.each(flavors)("%s: is the property that a function has", (_, isVitest, fn) => {
+        test.each(flavors)("%s: has the same attributes as a function's `name`", (_, isVitest, fn) => {
           for (const mocked of [fn(), fn(implementation)]) {
             expect(Object.getOwnPropertyDescriptor(mocked, "name")).toEqual({
               value: mocked.name,
@@ -3911,7 +3911,7 @@ if (isBun) {
           expect(fn((a, b) => {}).length).toBe(2);
         });
 
-        test("vi: an automock has the name of what it stands for", () => {
+        test("vi: an automock keeps the name of the function or class it mocks", () => {
           class K {
             static fixed() {}
             method() {}
@@ -3987,7 +3987,7 @@ if (isBun) {
       });
     });
 
-    test("vi.mockObject(value, { spy: true }) goes back to the originals", () => {
+    test("vi.mockObject(value, { spy: true }) calls the originals after resetAllMocks()", () => {
       class K {
         method() {
           return "real";
@@ -4009,7 +4009,7 @@ if (isBun) {
       expect(new spied.K()).toBeInstanceOf(K);
     });
 
-    describe.each(flavors)("%s: `prototype` of a mock that nothing has looked at yet", (_, isVitest, fn) => {
+    describe.each(flavors)("%s: `prototype` of a fresh mock, before anything reads it", (_, isVitest, fn) => {
       const makers = [
         ["fn()", () => fn(), Object.prototype],
         ["fn(function)", implementation => fn(implementation), undefined],
@@ -4158,7 +4158,7 @@ if (isBun) {
           expect(sealed.prototype.constructor).toBe(sealed);
         });
 
-        test("what makes instances", () => {
+        test("new, instanceof, extends and Reflect.construct()", () => {
           const mocked = fresh();
           const instance = new mocked();
           expect(Object.getPrototypeOf(instance)).toBe(mocked.prototype);
@@ -4175,7 +4175,7 @@ if (isBun) {
           expect(Object.getPrototypeOf(Reflect.construct(class {}, [], newTarget))).toBe(newTarget.prototype);
         });
 
-        test("its parent is that of the implementation of the moment", () => {
+        test("inherits from the current implementation's prototype", () => {
           class Later {}
           const configuredFirst = fresh().mockImplementation(Later);
           expect(Object.getPrototypeOf(configuredFirst.prototype)).toBe(Later.prototype);
@@ -4214,7 +4214,7 @@ if (isBun) {
           });
         });
 
-        test("in code that has seen both kinds", () => {
+        test("in hot code that sees mocks with and without a created prototype", () => {
           const read = mocked => mocked.prototype;
           const write = (mocked, value) => {
             mocked.prototype = value;
@@ -4244,7 +4244,7 @@ if (isBun) {
     });
 
     describe.each(flavors)(
-      "%s: *AllMocks() finds a mock each time something has been done to it",
+      "%s: *AllMocks() still reaches a mock that is used again after an earlier *AllMocks()",
       (_, isVitest, fn, spy) => {
         test("clearAllMocks()", () => {
           const called = fn();
@@ -4282,7 +4282,7 @@ if (isBun) {
           }
         });
 
-        test("clearAllMocks() keeps the implementations, which resetAllMocks() still finds", () => {
+        test("clearAllMocks() keeps the implementations, and resetAllMocks() still resets them", () => {
           const configured = fn().mockReturnValue("configured");
           const named = fn().mockName("named");
           const made = fn(() => "initial");
@@ -4344,7 +4344,7 @@ if (isBun) {
           expect(mocked()).toBe(isVitest ? "initial" : undefined);
         });
 
-        test("the mocks are collected all the same", () => {
+        test("the mocks are still garbage collected", () => {
           const { heapStats } = require("bun:jsc");
           const count = () => (Bun.gc(true), heapStats().objectTypeCounts.Mock ?? 0);
           const before = count();
@@ -4360,7 +4360,7 @@ if (isBun) {
       },
     );
 
-    describe.each(flavors)("%s: a mock that is as new is found again", (_, isVitest, fn, spy) => {
+    describe.each(flavors)("%s: a mock reset to its initial state is reached again", (_, isVitest, fn, spy) => {
       const initial = isVitest ? "initial" : undefined;
       const asNew = { calls: [], contexts: [], instances: [], invocationCallOrder: [], results: [] };
       const makeAsNew = [
@@ -4503,7 +4503,7 @@ if (isBun) {
       });
     });
 
-    test("the mock of a method on the prototype of an automocked class, which the instances record on", () => {
+    test("*AllMocks() clears and resets an automocked prototype method called via instances", () => {
       const { Class } = vi.mockObject({
         Class: class {
           method() {}
@@ -4586,7 +4586,7 @@ if (isBun) {
       expect(exitCode).toBe(0);
     });
 
-    test("what is recorded after clearAllMocks() ran while a call is recorded is found by the next one", async () => {
+    test("clearAllMocks() while a call is recorded doesn't make the next one miss the mock", async () => {
       const { bunEnv, bunExe } = require("harness");
       await using proc = Bun.spawn({
         cmd: [
@@ -4682,7 +4682,7 @@ if (isBun) {
       expect(exitCode).toBe(0);
     });
 
-    describe.each(flavors)("%s: resetAllMocks() finds what withImplementation() has put back", (_, isVitest, fn) => {
+    describe.each(flavors)("%s: resetAllMocks() resets a mock withImplementation() restored", (_, isVitest, fn) => {
       const initial = isVitest ? "initial" : undefined;
       const configured = () =>
         fn(() => "initial")
@@ -4765,7 +4765,7 @@ if (isBun) {
       }
     });
 
-    test("a result that the implementation has changed the shape of is still completed", () => {
+    test("a mock.results entry whose shape the implementation changed is still completed", () => {
       for (const [, , fn] of flavors) {
         for (const change of [
           result => Object.freeze(result),
@@ -4800,7 +4800,7 @@ if (isBun) {
       expect([...seen]).toEqual(["incomplete:undefined", "return:returned"]);
     });
 
-    test("resetAllMocks() does nothing to a mock that is as resetting leaves it", () => {
+    test("resetAllMocks() skips a mock that is already reset", () => {
       let reads = 0;
       const implementation = new Proxy(function () {}, {
         get(target, key, receiver) {
@@ -4819,7 +4819,7 @@ if (isBun) {
       expect(reads).toBe(1);
     });
 
-    test("clearAllMocks() does nothing to a mock that nothing was done to since the last one", () => {
+    test("clearAllMocks() skips a mock that hasn't been used since the last clearAllMocks()", () => {
       const mocked = vi.fn();
       const state = mocked.mock;
       vi.clearAllMocks();
@@ -4833,7 +4833,7 @@ if (isBun) {
 
     describe("restoreAllMocks()", () => {
       test.each(flavors)(
-        "%s: the others are restored when one throws, and that one the next time",
+        "%s: when restoring one spy throws, the others are restored and that one is retried next time",
         (_, isVitest, fn, spy) => {
           const objects = [{ method() {} }, { method() {} }, { method() {} }];
           let shouldThrow = false;

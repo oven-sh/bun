@@ -1037,7 +1037,7 @@ describe("the functions useFakeTimers() replaces", () => {
     expect(names.filter(name => globalThis[name] !== saved[name])).toEqual([]);
   });
 
-  test("a setTimeout taken before fires on real time", async () => {
+  test("a setTimeout saved before useFakeTimers() still fires on real time", async () => {
     vi.useFakeTimers();
     const fired = Promise.withResolvers<string>();
     saved.setTimeout(fired.resolve, 1, "fired");
@@ -1046,7 +1046,7 @@ describe("the functions useFakeTimers() replaces", () => {
     expect(performance.now()).toBe(0);
   });
 
-  test("a setInterval taken before repeats on real time", async () => {
+  test("a setInterval saved before useFakeTimers() still repeats on real time", async () => {
     vi.useFakeTimers();
     const thrice = Promise.withResolvers<void>();
     let fires = 0;
@@ -1110,7 +1110,7 @@ describe("the functions useFakeTimers() replaces", () => {
     expect([saved.setTimeout, setInterval, clearTimeout].filter(fn => Object.hasOwn(fn, "clock"))).toEqual([]);
   });
 
-  test("what the program had put on globalThis comes back", () => {
+  test("useRealTimers() restores a setTimeout the program had assigned to globalThis", () => {
     const mine = () => {};
     const inBetween = () => {};
     // @ts-expect-error
@@ -1172,7 +1172,7 @@ describe("the functions useFakeTimers() replaces", () => {
   test.each([
     ["useRealTimers()", () => vi.useRealTimers()],
     ["the next useFakeTimers()", () => vi.useFakeTimers({ toFake: [...everyFunction] })],
-  ])("a fake function that outlives %s does what the real one does", async (_, end) => {
+  ])("a fake function kept after %s behaves like the real one", async (_, end) => {
     Object.assign(globalThis, { requestAnimationFrame: () => 0 });
     try {
       vi.useFakeTimers({ toFake: [...everyFunction] });
@@ -1228,7 +1228,7 @@ describe("the functions useFakeTimers() replaces", () => {
     expect(results).toEqual(schedulers.map(() => ({ stdout: "1\n", stderr: "", exitCode: 0, signalCode: null })));
   });
 
-  test("an interval whose callback starts another fake clock is not on it", () => {
+  test("an interval whose callback restarts the fake clock is dropped", () => {
     vi.useFakeTimers();
     let ticks = 0;
     setInterval(() => (ticks++, vi.useFakeTimers()), 1);
@@ -1265,7 +1265,7 @@ describe.concurrent("the end of a test file", () => {
     });
   `;
 
-  test.each([[[]], [["--isolate"]]])("brings back everything the file left faked %j", async flags => {
+  test.each([[[]], [["--isolate"]]])("restores everything the file left faked %j", async flags => {
     using dir = tempDir("fake-timers-file-end", {
       "a.test.ts": `
         import { test, vi } from "bun:test";
@@ -1293,7 +1293,7 @@ describe.concurrent("the end of a test file", () => {
   });
 
   // Matches Vitest. If it settled, the code after the await would fail with no test left to report it.
-  test.each([[[]], [["--isolate"]]])("leaves the promise of an …Async call in flight pending %j", async flags => {
+  test.each([[[]], [["--isolate"]]])("leaves the promise of an in-flight …Async call pending %j", async flags => {
     using dir = tempDir("fake-timers-file-end-in-flight", {
       "a.test.ts": `
         import { expect, test, vi } from "bun:test";
@@ -1317,7 +1317,7 @@ describe.concurrent("the end of a test file", () => {
     });
   });
 
-  test("what the getter of a global throws is an error of the file that ends", async () => {
+  test("reports an error thrown by a global's getter under that file", async () => {
     using dir = tempDir("fake-timers-file-end-getter", {
       "a.test.ts": `
         import { test, vi } from "bun:test";
@@ -1353,7 +1353,7 @@ describe.concurrent("the end of a test file", () => {
     });
   });
 
-  test("ends setSystemTime() without fake timers", async () => {
+  test("undoes setSystemTime() called without fake timers", async () => {
     using dir = tempDir("fake-timers-file-end-system-time", {
       "a.test.ts": `
         import { setSystemTime, test } from "bun:test";
@@ -1368,7 +1368,7 @@ describe.concurrent("the end of a test file", () => {
     });
   });
 
-  test("of a file that fails to load", async () => {
+  test("restores real timers after a file that fails to load", async () => {
     using dir = tempDir("fake-timers-file-end-load-error", {
       "a.test.ts": `
         import { vi } from "bun:test";
@@ -1403,7 +1403,7 @@ describe.concurrent("the end of a test file", () => {
   test.each([
     ["useFakeTimers({ now: 0, shouldAdvanceTime: true, advanceTimeDelta: 1 })", true],
     ["setSystemTime(0)", false],
-  ])("leaves what a preload mocked at its top level: %s", async (mock, fake) => {
+  ])("keeps mocks a preload set up at its top level: %s", async (mock, fake) => {
     const file = `
       import { expect, test, vi } from "bun:test";
       test("is mocked", async () => {
@@ -1428,7 +1428,7 @@ describe.concurrent("the end of a test file", () => {
     });
   });
 
-  test("undoes what a hook of a preload fakes in each file", async () => {
+  test("undoes vi.useFakeTimers() from a preload's beforeEach() after each file", async () => {
     using dir = tempDir("fake-timers-file-end-preload-hook", {
       "preload.ts": `import { beforeEach, vi } from "bun:test"; beforeEach(() => void vi.useFakeTimers());`,
       "a.test.ts": `
@@ -1486,7 +1486,7 @@ describe("a global with a getter", () => {
     }
   }
 
-  test("that throws leaves the fake timers there are as they were", () => {
+  test("that throws leaves the current fake timers untouched", () => {
     vi.useFakeTimers({ now: 5 });
     const fake = setTimeout;
     const fired = vi.fn();
@@ -1684,14 +1684,14 @@ describe("useFakeTimers({ toFake, doNotFake })", () => {
     [{ toNotFake: [{}] }, "'toNotFake' must be an array of strings"],
     [{ toFake: ["setTimeOut"] }, `'toFake' contains "setTimeOut", which can't be faked`],
     [{ doNotFake: [""] }, `'doNotFake' contains "", which can't be faked`],
-  ])("%j throws and leaves the real timers", (options, message) => {
+  ])("%j throws and leaves the real timers in place", (options, message) => {
     // @ts-expect-error
     expect(() => vi.useFakeTimers(options)).toThrow(message);
     expect(vi.isFakeTimers()).toBe(false);
     expect(setTimeout).toBe(saved.setTimeout);
   });
 
-  test("an option that throws leaves the fake timers that are active alone", () => {
+  test("an invalid option throws and leaves the active fake timers alone", () => {
     vi.useFakeTimers({ now: 1000 });
     const fake = setTimeout;
     setTimeout(() => {}, 10);
@@ -1735,7 +1735,7 @@ describe('toFake: ["performance"] in a beforeEach', () => {
     });
   });
 
-  test("what waits on a timeout, an interval, an immediate or a microtask goes on while performance.now() stands still", async () => {
+  test("timers, immediates and microtasks still run while performance.now() is frozen", async () => {
     const before = { date: Date.now(), hrtime: process.hrtime.bigint() };
     await new Promise(resolve => setTimeout(resolve, 3));
     await new Promise<void>(resolve => {
@@ -1775,7 +1775,7 @@ describe('toFake: ["performance"] in a beforeEach', () => {
 });
 
 describe("a faked setImmediate", () => {
-  test("runs before the timeouts of its instant, in order, with its arguments", () => {
+  test("runs before timeouts due at the same time, in order, with its arguments", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "setImmediate", "clearImmediate"] });
     expect(setImmediate).not.toBe(saved.setImmediate);
     const order: unknown[] = [];
@@ -1800,7 +1800,7 @@ describe("a faked setImmediate", () => {
     expect(at).toEqual([6]);
   });
 
-  test("the real clearImmediate clears it, and the fake one a real immediate", async () => {
+  test("the real clearImmediate clears it, and the fake one clears a real immediate", async () => {
     vi.useFakeTimers({ toFake: ["setImmediate", "clearImmediate"] });
     expect([setImmediate === saved.setImmediate, clearImmediate === saved.clearImmediate]).toEqual([false, false]);
     const fired = vi.fn();
@@ -1883,7 +1883,7 @@ describe("a faked process.nextTick and queueMicrotask", () => {
     expect(order).toEqual(["tick", "timeout 1", "tick of timeout 1", "timeout 2", "microtask of timeout 2"]);
   });
 
-  test("one that throws is thrown by runAllTicks(), which leaves the rest queued", () => {
+  test("runAllTicks() rethrows an error from one and leaves the rest queued", () => {
     vi.useFakeTimers({ toFake: [...toFake] });
     const after = vi.fn();
     process.nextTick(() => {
@@ -1920,7 +1920,7 @@ describe("a faked process.nextTick and queueMicrotask", () => {
   test.each([
     ["process.nextTick", () => process.nextTick(5 as any)],
     ["queueMicrotask", () => queueMicrotask(undefined as any)],
-  ])("%s wants a function", (_, call) => {
+  ])("%s requires a function", (_, call) => {
     vi.useFakeTimers({ toFake: [...toFake] });
     expect(process.nextTick).not.toBe(saved.nextTick);
     expect(call).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
@@ -1937,7 +1937,7 @@ describe("a faked process.nextTick and queueMicrotask", () => {
   });
 });
 
-describe("what a faked tick throws", () => {
+describe("an error thrown by a faked tick", () => {
   const toFake = ["nextTick", "queueMicrotask", "setTimeout", "performance"] as const;
   const drivers = {
     advanceTimersByTime: () => vi.advanceTimersByTime(100),
@@ -1999,7 +1999,7 @@ describe("what a faked tick throws", () => {
       });
     });
 
-    test("and the next call goes on from there", async () => {
+    test("and the next call resumes where it stopped", async () => {
       await outcome(drive, queue => setTimeout(queue, 5));
       const ran = vi.fn();
       queueMicrotask(ran);
@@ -2014,7 +2014,7 @@ describe("what a faked tick throws", () => {
     "runOnlyPendingTimers",
     "advanceTimersByTimeAsync",
     "runOnlyPendingTimersAsync",
-  ] as const)("%s() throws it rather than what a timer threw before", async name => {
+  ] as const)("%s() throws it instead of an earlier error from a timer", async name => {
     vi.useFakeTimers({ toFake: [...toFake] });
     setTimeout(() => {
       process.nextTick(throws);
@@ -2029,7 +2029,7 @@ describe("what a faked tick throws", () => {
     expect(thrown).toEqual(new Error("from a tick"));
   });
 
-  test.each([undefined, null, 0, "", false])("also %p", async value => {
+  test.each([undefined, null, 0, "", false])("also when the thrown value is %p", async value => {
     for (const drive of [drivers.advanceTimersByTime, drivers.advanceTimersByTimeAsync]) {
       vi.useFakeTimers({ toFake: [...toFake] });
       process.nextTick(() => {
@@ -2119,7 +2119,7 @@ describe("a faked tick that queues itself again", () => {
     ["vi.waitFor(() => expect(0).toBe(1), wait)"],
     ["vi.waitUntil(() => false, wait)"],
     ["expect.poll(() => 0, wait).toBe(1)"],
-  ])("%s rejects with it when the first is queued in a later advance", async drive => {
+  ])("%s rejects when the first tick is queued in a later advance", async drive => {
     using dir = tempDir("fake-timers-endless-ticks", {
       "endless.test.ts": `${prelude}
         const wait = { interval: 10, timeout: 60_000 };
@@ -2148,7 +2148,7 @@ describe("a faked tick that queues itself again", () => {
     });
   });
 
-  test.concurrent("what polls in microtasks for a timer to fire gets the error of the loop limit", async () => {
+  test.concurrent("polling in microtasks for a timer to fire throws the loop limit error", async () => {
     using dir = tempDir("fake-timers-endless-ticks", {
       "endless.test.ts": `${prelude}
         test("polls", () => {
@@ -2174,7 +2174,7 @@ describe("a faked tick that queues itself again", () => {
     ["shouldAdvanceTime", "vi.useFakeTimers({ ...options, shouldAdvanceTime: true, advanceTimeDelta: 1 })"],
     ["interval mode", 'vi.useFakeTimers(options).setTimerTickMode("interval", 1)'],
     ["next timer mode", 'vi.useFakeTimers(options).setTimerTickMode("nextTimerAsync")'],
-  ])("%s: it is one uncaught error, and the clock no longer advances by itself", async (_, install) => {
+  ])("%s: reports one uncaught error and stops advancing the clock", async (_, install) => {
     using dir = tempDir("fake-timers-endless-ticks", {
       "endless.test.ts": `${prelude}
         describe.each([again, throwsAndAgain])("%p", tick => {
@@ -2216,7 +2216,7 @@ describe("as in @sinonjs/fake-timers", () => {
     ["runAllTimers", () => vi.runAllTimers()],
     ["advanceTimersToNextTimer", () => vi.advanceTimersToNextTimer()],
     ["runAllTimersAsync", () => vi.runAllTimersAsync()],
-  ])("the immediate of a tick that is pending for %s() is due at once", async (_, drive) => {
+  ])("%s() fires an immediate scheduled by a pending tick without advancing time", async (_, drive) => {
     vi.useFakeTimers({ toFake: [...toFake] });
     const at: number[] = [];
     process.nextTick(() => setImmediate(() => at.push(performance.now())));
@@ -2224,7 +2224,7 @@ describe("as in @sinonjs/fake-timers", () => {
     expect(at).toEqual([0]);
   });
 
-  test("a timer that a pending tick schedules is not pending for runOnlyPendingTimersAsync(), as for runOnlyPendingTimers()", async () => {
+  test("runOnlyPendingTimersAsync() doesn't fire a timer scheduled by a pending tick", async () => {
     vi.useFakeTimers({ toFake: [...toFake] });
     const fired: string[] = [];
     process.nextTick(() => setTimeout(() => fired.push("of the tick"), 1000));
@@ -2236,7 +2236,7 @@ describe("as in @sinonjs/fake-timers", () => {
     expect({ fired, now: performance.now() }).toEqual({ fired: ["pending", "of the tick"], now: 1000 });
   });
 
-  test("advanceTimersToNextTimerAsync() does not wait for an immediate that is armed again after an await", async () => {
+  test("advanceTimersToNextTimerAsync() doesn't wait for an immediate re-armed after an await", async () => {
     vi.useFakeTimers({ toFake: ["setImmediate", "performance"] });
     let fires = 0;
     const again = async () => {
@@ -2251,14 +2251,14 @@ describe("as in @sinonjs/fake-timers", () => {
 });
 
 // As in Vitest, a spy or stub that's undone after useRealTimers() puts back what it replaced, which is the fake.
-describe("a fake that comes back after useRealTimers()", () => {
+describe("a fake put back by a spy or stub after useRealTimers()", () => {
   const ways = [
     ["jest.spyOn()", () => void jest.spyOn(globalThis, "setTimeout"), () => void jest.restoreAllMocks()],
     ["vi.stubGlobal()", () => void vi.stubGlobal("setTimeout", () => {}), () => void vi.unstubAllGlobals()],
   ] as const;
 
   test.each(ways)(
-    "%s: it does not say that the timers are fake, and is not what the next useFakeTimers() replaces",
+    "%s: it has no `clock` marker, and the next useFakeTimers() doesn't treat it as the original",
     (_, replace, undo) => {
       try {
         vi.useFakeTimers();
@@ -2367,7 +2367,7 @@ describe("a faked requestAnimationFrame", () => {
     expect(dom.cancelAnimationFrame).toBe(ofTheDom.cancelAnimationFrame);
   });
 
-  test.each([[undefined], [{ toFake: [...toFake] }]])("is faked only where there is one: %j", options => {
+  test.each([[undefined], [{ toFake: [...toFake] }]])("is only faked when the global exists: %j", options => {
     vi.useFakeTimers(options);
     expect(["requestAnimationFrame" in globalThis, "cancelAnimationFrame" in globalThis]).toEqual([false, false]);
   });
@@ -2444,7 +2444,7 @@ describe("a callback that throws", () => {
     expect({ order, pending: vi.getTimerCount() }).toEqual({ order: [1], pending: 1 });
   });
 
-  test("what is thrown need not be an Error", () => {
+  test("advanceTimersByTime() rethrows a non-Error value unchanged", () => {
     vi.useFakeTimers();
     setTimeout(() => {
       throw "a string";
@@ -2459,7 +2459,7 @@ describe("a callback that throws", () => {
   });
 
   test.each(["advanceTimersByTime", "advanceTimersByTimeAsync"] as const)(
-    "%s() keeps what was thrown alive while the later timers run",
+    "%s() keeps the thrown value alive while the later timers run",
     async control => {
       vi.useFakeTimers();
       setTimeout(() => {
@@ -2560,7 +2560,7 @@ describe("the loop limit", () => {
     60_000,
   );
 
-  test("as many timers as the limit are not a loop", () => {
+  test("allows exactly as many timers as the limit", () => {
     vi.useFakeTimers({ loopLimit: 3 });
     const fired = vi.fn();
     for (let i = 0; i < 3; i++) setTimeout(fired, i);
@@ -2787,7 +2787,7 @@ describe.each([
     });
   });
 
-  test("reject where their namesakes throw", async () => {
+  test("reject where the sync versions throw", async () => {
     await expect(api.advanceTimersByTimeAsync(1)).rejects.toThrow("Fake timers are not active");
     await expect(api.advanceTimersToNextTimerAsync()).rejects.toThrow("Fake timers are not active");
     await expect(api.runAllTimersAsync()).rejects.toThrow("Fake timers are not active");
@@ -2939,7 +2939,7 @@ describe("the clock that advances by itself", () => {
     expect(Date.now()).toBeGreaterThanOrEqual(2_000_000);
   });
 
-  test.concurrent("an error thrown by a timer it fires is an uncaught error, and it goes on", async () => {
+  test.concurrent("an error thrown by a timer it fires is an uncaught error, and it keeps advancing", async () => {
     expect(
       await run([
         "-e",
@@ -3048,7 +3048,7 @@ describe("setTimerTickMode", () => {
     expect(order).toEqual(["first", "real immediate", "second"]);
   });
 
-  test("manual mode stops it, and next timer mode picks up what is pending", async () => {
+  test("manual mode stops next timer mode, and switching back fires the pending timers", async () => {
     vi.useFakeTimers();
     vi.setTimerTickMode("nextTimerAsync");
     vi.setTimerTickMode("manual");
@@ -3112,7 +3112,7 @@ describe("setTimerTickMode", () => {
     expect(vi.getTimerCount()).toBe(1);
   });
 
-  test.concurrent("an error thrown in next timer mode is an uncaught error, and the mode goes on", async () => {
+  test.concurrent("an error thrown in next timer mode is an uncaught error, and later timers still fire", async () => {
     expect(
       await run([
         "-e",
@@ -3150,7 +3150,7 @@ describe("setTimerTickMode", () => {
 });
 
 describe("the system time", () => {
-  test("getRealSystemTime() is the real time, whatever is faked", () => {
+  test("getRealSystemTime() returns the real time under fake timers", () => {
     const before = Date.now();
     vi.useFakeTimers({ now: 0 });
     for (const api of [vi, jest]) {

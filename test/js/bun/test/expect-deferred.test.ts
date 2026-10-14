@@ -238,7 +238,7 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("a test waits for the matchers it did not await, and their failures are its own", async () => {
+  test("a test waits for matchers it didn't await, and their failures fail that test", async () => {
     const source = `
       test("passes", () => {
         expect(later(1)).resolves.toBe(1).then(() => console.log("passes: checked"));
@@ -341,7 +341,7 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("the timeout of the test ends the wait", async () => {
+  test("the test's timeout ends the wait", async () => {
     const { stdout, report, exitCode, signalCode } = await runTests(`
       test("awaited", async () => {
         await expect(never()).resolves.toBe(1);
@@ -384,7 +384,7 @@ describe.concurrent(".resolves and .rejects", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
   });
 
-  test("what awaits a matcher is unwound when the test that called the matcher ends", async () => {
+  test("a pending matcher rejects when its test ends, so finally blocks and disposers run", async () => {
     const { stdout, report, exitCode, signalCode } = await runTests(`
       const unwound = [];
       expect.extend({ toNeverAnswer: never });
@@ -485,7 +485,7 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("the matchers of an attempt end it once", async () => {
+  test("two failing matchers in one attempt end only that attempt", async () => {
     const { stdout, results, exitCode } = await runTests(`
       let attempt = 0;
       test("every attempt fails", async () => {
@@ -510,7 +510,7 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("what a concurrent test does after its first await is not another test's", async () => {
+  test("a failure after an await in a concurrent test isn't blamed on another test", async () => {
     const { report, exitCode } = await runTests(`
       for (const [name, fail] of [
         ["soft", () => expect.soft(1).toBe(2)],
@@ -556,7 +556,7 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("a matcher that no test is known to have called is an error once its group has waited as long as it can", async () => {
+  test("an un-awaited, never-settling matcher in a concurrent test is an unhandled error", async () => {
     const source = `
       describe("concurrent", () => {
         test.concurrent("does not await it", async () => {
@@ -605,7 +605,7 @@ describe.concurrent(".resolves and .rejects", () => {
           ]),
       );
 
-    test("the file waits for a matcher, whose failure is its own", async () => {
+    test("the file waits for a matcher and reports its failure under that file", async () => {
       const { stderr, exitCode } = await run(["test", ...flags, "./a.test.js", "./b.test.js"], {
         "a.test.js":
           prelude +
@@ -641,7 +641,7 @@ describe.concurrent(".resolves and .rejects", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("not for ever", async () => {
+    test("a matcher that never settles times out after the file's tests finish", async () => {
       const source = `
         expect(never()).resolves.toBe("not awaited");
         expect(never()).resolves.toBe("handled").catch(() => {});
@@ -684,7 +684,7 @@ describe.concurrent(".resolves and .rejects", () => {
     });
   });
 
-  test("concurrent tests go on while one of them waits for a matcher", async () => {
+  test("concurrent tests keep running while one of them waits for a matcher", async () => {
     const source = `
       const log = [];
       const a = Promise.withResolvers(), b = Promise.withResolvers();
@@ -743,7 +743,7 @@ describe.concurrent(".resolves and .rejects", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
   });
 
-  test("the expect of a test context names its test, whichever tests run beside it", async () => {
+  test("the test context's expect reports failures under its own concurrent test", async () => {
     const { stdout, stderr, results, exitCode } = await run(["test"], {
       "a.test.js": `
         import { test } from "vitest";
@@ -831,7 +831,7 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("the flags of the call are those it was made with", async () => {
+  test("matchers on a reused chain keep the .not state they were called with", async () => {
     const { results, exitCode } = await runTests(`
       test("one chain, several matchers", async () => {
         const { promise, resolve } = Promise.withResolvers();
@@ -886,7 +886,7 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("call a function and wait for what it returns", async () => {
+  test("call a function and await the promise it returns", async () => {
     const { stdout, results, exitCode } = await runTests(`
       test("functions", async () => {
         const fn = jest.fn(async () => { throw "Oops"; });
@@ -938,7 +938,7 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("in a Worker, expect() is what it is outside of bun test, and nothing can be registered", async () => {
+  test("in a Worker, expect() works like outside of bun test, and test() and hooks throw", async () => {
     const { stdout, results, exitCode, signalCode } = await run(["test", "./a.test.js"], {
       "a.test.js": `
         import { expect, test } from "bun:test";
@@ -1018,7 +1018,7 @@ describe.concurrent(".resolves and .rejects", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
-  test("what is pending when its test ends does not run, and is not reported in a later file", async () => {
+  test("a matcher left pending by its test never runs and isn't reported in a later file", async () => {
     for (const args of [[], ["--isolate"]]) {
       const { stdout, report, stderr, exitCode } = await run(["test", ...args, "./a.test.js", "./b.test.js"], {
         "a.test.js":
@@ -1068,8 +1068,8 @@ describe.concurrent(".resolves and .rejects", () => {
   });
 });
 
-describe.concurrent("matchers that meet a pending promise", () => {
-  test("of the errors that the function of toThrow() reports, only the first one is taken for what it threw", async () => {
+describe.concurrent("matchers that have to wait for a promise", () => {
+  test("toThrow() only treats the first error its function reports as the thrown one", async () => {
     const { report, exitCode, signalCode } = await runTests(`
       const listenerThrows = message => {
         const target = new EventTarget();
@@ -1266,7 +1266,7 @@ describe.concurrent("matchers that meet a pending promise", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
   });
 
-  test("a matcher that runs again is given what it was given the first time", async () => {
+  test("a matcher that re-runs after a wait reuses the values from its first run", async () => {
     const { stdout, exitCode, signalCode } = await runTests(`
       const calls = {};
       const count = name => (calls[name] = (calls[name] ?? 0) + 1);
@@ -1340,7 +1340,7 @@ describe.concurrent("matchers that meet a pending promise", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
-  test("an answer is only given back to who asked, about what it was asked", async () => {
+  test("a cached answer is only reused for the same caller and question", async () => {
     const { stdout, exitCode, signalCode } = await runTests(`
       const calls = [];
       expect.extend({
@@ -1472,7 +1472,7 @@ describe.concurrent("matchers that meet a pending promise", () => {
   });
 
   test.each(["Array", "Object"])(
-    "what script puts on %s.prototype neither sees nor changes what a matcher has been answered",
+    "accessors on %s.prototype can't observe or change a matcher's cached answers",
     async name => {
       const { stdout, results, exitCode } = await runTests(`
         expect.extend({
@@ -1509,7 +1509,7 @@ describe.concurrent("matchers that meet a pending promise", () => {
     },
   );
 
-  test("however many matchers come before and after the one that is waited for, each is called once", async () => {
+  test("each matcher is called once, however many come before or after the async one", async () => {
     const { stdout, results, exitCode } = await runTests(`
       const calls = [];
       expect.extend({
@@ -1552,7 +1552,7 @@ describe.concurrent("matchers that meet a pending promise", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a matcher that another one calls has its own promises", async () => {
+  test("a matcher called while another one runs waits for its own promises", async () => {
     const { stdout, exitCode } = await runTests(`
       expect.extend({
         async toBeOdd(received) {
@@ -1584,7 +1584,7 @@ describe.concurrent("matchers that meet a pending promise", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("the time limit of its test ends a matcher that never stops meeting promises", async () => {
+  test("the test's timeout ends a matcher that keeps finding new promises to wait for", async () => {
     const { report, exitCode, signalCode } = await runTests(`
       const received = [0], expected = [];
       expect.extend({
@@ -1605,7 +1605,7 @@ describe.concurrent("matchers that meet a pending promise", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 1, signalCode: null });
   });
 
-  test("what cannot wait for an asynchronous matcher says so", async () => {
+  test("asymmetricMatch() and this.equals() throw instead of waiting for an async matcher", async () => {
     const { stdout, exitCode } = await runTests(`
       const message = error => Object.prototype.toString.call(error) + " " + error.message;
       expect.extend({
@@ -1653,7 +1653,7 @@ describe.concurrent("matchers that meet a pending promise", () => {
 });
 
 describe.concurrent("expect.soft()", () => {
-  test("a failure fails the test, which goes on", async () => {
+  test("a failure fails the test but doesn't stop it", async () => {
     const source = `
       expect.extend({
         toBeFoo(received) {
@@ -1715,7 +1715,7 @@ describe.concurrent("expect.soft()", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("with .resolves and .rejects, the promise of the matcher fulfills", async () => {
+  test("with .resolves and .rejects, a failing matcher's promise still fulfills", async () => {
     const source = `
       test("awaited", async () => {
         console.log(await expect.soft(later(1)).resolves.toBe("pending"));
@@ -1888,7 +1888,7 @@ describe.concurrent("expect.poll()", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("rejects with the last failure once the time is up", async () => {
+  test("rejects with the last failure when it times out", async () => {
     const source = `
       const show = error => [error.constructor.name, Bun.stripANSI(error.message).replaceAll("\\n", " ").trim(), "<-", error.cause?.message].join(" ");
       test("caught", async () => {
@@ -1947,7 +1947,7 @@ describe.concurrent("expect.poll()", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("ends with its test", async () => {
+  test("stops polling when its test times out", async () => {
     const { stdout, report, exitCode, signalCode } = await runTests(`
       let calls = 0;
       test("times out", async () => {
@@ -1980,7 +1980,7 @@ describe.concurrent("expect.poll()", () => {
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
 
-  test("refuses what cannot be polled", async () => {
+  test("throws for unsupported matchers and invalid arguments", async () => {
     const { stdout, exitCode } = await runTests(`
       test("refusals", () => {
         const fn = jest.fn();
@@ -2024,7 +2024,7 @@ describe.concurrent("expect.poll()", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("rejects with its last error, whatever that is", async () => {
+  test("rejects with the same value the function last threw", async () => {
     const { stdout, results, exitCode } = await runTests(`
       test("errors", async () => {
         const errors = {
@@ -2064,7 +2064,7 @@ describe.concurrent("expect.poll()", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("like expect.soft(), does not call what it is called on", async () => {
+  test("like expect.soft(), doesn't call or modify its `this` value", async () => {
     const { stdout, exitCode, signalCode } = await runTests(`
       test("receivers", async () => {
         const object = { a: 1, b: 2, c: 3, d: 4, e: 5, f: 6 };

@@ -6,7 +6,7 @@ import { constants, createContext, runInContext, Script } from "node:vm";
 describe.each([
   ["DONT_CONTEXTIFY", () => createContext(constants.DONT_CONTEXTIFY)],
   ["a contextified object", () => createContext({})],
-])("programs that start with a Proxy in the prototype chain of the global: %s", (_, makeContext) => {
+])("programs run with a Proxy in the global's prototype chain: %s", (_, makeContext) => {
   function makeContextWithProxy() {
     const ctx = makeContext();
     const inner = runInContext("this", ctx);
@@ -30,7 +30,7 @@ describe.each([
     expect(new Script("2 + 2").runInContext(ctx)).toBe(4);
   });
 
-  test("declaring runs no trap", () => {
+  test("declarations don't trigger any Proxy trap", () => {
     const { ctx, target, traps } = makeContextWithProxy();
     runInContext(
       `var declaredVar = 1;
@@ -48,7 +48,7 @@ describe.each([
     expect(target).toEqual({ fromProxy: 7 });
   });
 
-  test("a declaration shadows what the Proxy has", () => {
+  test("a declaration shadows a property inherited from the Proxy", () => {
     const { ctx, inner, target } = makeContextWithProxy();
     expect(runInContext("function fromProxy() {} typeof fromProxy", ctx)).toBe("function");
     expect(Object.hasOwn(inner, "fromProxy")).toBe(true);
@@ -71,7 +71,7 @@ describe.each([
     expect(runInContext("'missingName' in globalThis", ctx)).toBe(false);
   });
 
-  test("a store makes an own property of the global", () => {
+  test("an assignment creates an own property on the global", () => {
     const { ctx, inner, target } = makeContextWithProxy();
     expect(runInContext("createdByStore = 9; createdByStore", ctx)).toBe(9);
     expect(runInContext("fromProxy = 8; fromProxy", ctx)).toBe(8);
@@ -81,7 +81,7 @@ describe.each([
   });
 });
 
-test("a global shaped like the window of jsdom", () => {
+test("a global shaped like jsdom's window", () => {
   const window = createContext(constants.DONT_CONTEXTIFY);
   const namedElements = new Map<PropertyKey, object>([["byId", { id: "byId" }]]);
   const eventTargetPrototype = Object.create(window.Object.prototype, {

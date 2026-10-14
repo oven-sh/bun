@@ -448,7 +448,7 @@ describe.concurrent("css module exports", () => {
     await expectSkipped(String(dir), cases);
   });
 
-  test("a composes that cannot be followed is left out", async () => {
+  test("a `composes` that can't be resolved is left out", async () => {
     const neverAppears = (name: string, file: string) =>
       `The name "${name}" never appears in "${file}" as a CSS modules locally scoped class name. Note that "composes" only works with single class selectors.`;
     const notCSS = (file: string) =>
@@ -681,7 +681,7 @@ describe.concurrent("css module exports", () => {
     });
   });
 
-  test("what the resolver logs while it follows composes is not printed", async () => {
+  test("resolver logs from following `composes` aren't printed", async () => {
     using dir = tempDir("css-module-resolver-log", {
       "a.module.css": `.a { composes: b from "cut-short/b.module.css" }`,
       "node_modules/cut-short/package.json": `{ "name": "cut-short",`,
@@ -724,7 +724,7 @@ describe.concurrent("css module exports", () => {
     expect(await run(String(dir), "e.cjs")).toEqual({ stdout: `{"a":"a_BLNoTg"}\n`, stderr: "", exitCode: 0 });
   });
 
-  test("what the bundler only warns about does not throw", async () => {
+  test("CSS the bundler only warns about doesn't throw", async () => {
     using dir = tempDir("css-module-warnings", {
       "parity.ts": parity,
       "entry.ts": `export { default } from "./a.module.css";`,

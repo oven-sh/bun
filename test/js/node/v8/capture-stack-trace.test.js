@@ -2102,13 +2102,13 @@ test.each([
     },
   ],
   ["import.meta.env", () => import.meta.env],
-])("Error.captureStackTrace refuses %s, as V8 refuses a Proxy", (_, object) => {
+])("Error.captureStackTrace throws for %s, as V8 does for a Proxy", (_, object) => {
   expect(() => Error.captureStackTrace(object())).toThrow(
     expect.objectContaining({ name: "TypeError", message: "invalid_argument" }),
   );
 });
 
-test("Error.captureStackTrace still takes what is not a Proxy", () => {
+test("Error.captureStackTrace accepts objects that aren't themselves a Proxy", () => {
   const context = createContext({});
   const inherits = Object.create(new Proxy({}, {}));
   Error.captureStackTrace(inherits);

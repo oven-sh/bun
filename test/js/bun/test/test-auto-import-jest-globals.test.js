@@ -140,7 +140,7 @@ describe.concurrent("a file that imports from a test module", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a name that the file binds is not a global", async () => {
+  test("a name the file declares itself shadows the global", async () => {
     using dir = tempDir("jest-globals", {
       "globals.test.ts": `
         import { describe as it, test as renamed } from "vitest";
@@ -228,7 +228,7 @@ describe.concurrent("a file that imports from a test module", () => {
   );
 });
 
-test.concurrent("a global that the type of a decorated member names as well", async () => {
+test.concurrent("jest still works as a global when a decorated member's type mentions it", async () => {
   using dir = tempDir("jest-globals-decorator-metadata", {
     "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } }),
     "metadata.test.ts": `
@@ -267,7 +267,7 @@ describe.concurrent("the transpiler cache", () => {
     [`import { jest } from "@jest/globals";`],
     [`import { mock } from "bun:test";`],
     [``],
-  ])("holds a test file: %s", async header => {
+  ])("caches a test file: %s", async header => {
     using dir = tempDir("jest-globals-cache", {
       "cached.test.ts": `
         ${header}
@@ -290,7 +290,7 @@ describe.concurrent("the transpiler cache", () => {
     ]);
   });
 
-  test("keeps `bun test` and `bun run` apart", async () => {
+  test("uses separate entries for `bun test` and `bun run`", async () => {
     using dir = tempDir("jest-globals-cache", {
       "node_modules/vitest/package.json": `{ "name": "vitest", "main": "index.js" }`,
       "node_modules/vitest/index.js": `exports.vi = { fn: "the package" };`,
@@ -317,7 +317,7 @@ describe.concurrent("the transpiler cache", () => {
     ]);
   });
 
-  test("keeps apart what a file is with and without a global of a preload script", async () => {
+  test("uses separate entries with and without a preload that sets globalThis.expect", async () => {
     using dir = tempDir("jest-globals-cache", {
       "preload.ts": `globalThis.expect = () => "own";`,
       "cached.test.ts": `

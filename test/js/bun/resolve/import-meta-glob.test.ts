@@ -182,7 +182,7 @@ describe.concurrent("import.meta.glob", () => {
   });
 
   // Vite's module runner also defines an import.meta.glob() that throws.
-  test("only a direct call is replaced, and any other finds a function that throws", async () => {
+  test("only a direct call is replaced, and any other form calls a function that throws", async () => {
     const { stdout, stderr, exitCode } = await runEntry(`
       const message = call => { try { return call(); } catch (error) { return error.name + ": " + error.message; } };
       console.log(JSON.stringify([
@@ -227,7 +227,7 @@ describe.concurrent("import.meta.glob", () => {
     return out.slice(0, codes.length);
   }
 
-  test("code that only calls it where it exists runs as it did without it", async () => {
+  test("feature detection falls back in modules whose calls can't be replaced", async () => {
     expect(
       await evaluateEach([
         `typeof import.meta.glob === "function" ? import.meta.glob(globalThis.pattern) : "fallback"`,
@@ -241,7 +241,7 @@ describe.concurrent("import.meta.glob", () => {
     ).toEqual(["fallback", "fallback", null, "fallback", "dead", "dead", "undefined"]);
   });
 
-  test("a file that assigns to it calls what it assigned", async () => {
+  test("a file that assigns its own import.meta.glob calls that function instead", async () => {
     expect(
       await evaluateEach([
         `(import.meta.glob = pattern => "own " + pattern, import.meta.glob("../dir/*.ts"))`,
@@ -253,7 +253,7 @@ describe.concurrent("import.meta.glob", () => {
     ).toEqual(["own ../dir/*.ts", "own whatever", "own ../dir/*.ts", "own ../dir/*.ts", ["0"]]);
   });
 
-  test("a test for the function agrees with the calls that are replaced", async () => {
+  test("feature detection succeeds in modules whose calls are replaced", async () => {
     const keys = `Object.keys(import.meta.glob("/src/dir/[ab].ts"))`;
     expect(
       await evaluateEach([
@@ -298,7 +298,7 @@ describe.concurrent("import.meta.glob", () => {
     });
   });
 
-  test("the function is only in the modules whose calls are replaced", async () => {
+  test("the function is only defined in modules whose calls are replaced", async () => {
     const { stdout, stderr, exitCode } = await runEntry(
       `import other from "./other.ts";
        import.meta.glob("./dir/a.ts");
@@ -312,7 +312,7 @@ describe.concurrent("import.meta.glob", () => {
     });
   });
 
-  test("the function moves no line or column and is not in the coverage", async () => {
+  test("defining the function doesn't shift source positions or appear in coverage", async () => {
     const rest = `
       export function covered() { return 1; }
       export function thrower() {
@@ -343,7 +343,7 @@ describe.concurrent("import.meta.glob", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("Object.keys of another Object gets the modules", async () => {
+  test("Object.keys() on a shadowed Object still receives the modules", async () => {
     expect(
       await runEntry(
         `console.log(JSON.stringify((Object => Object.keys(import.meta.glob("./dir/[ab].ts", { eager: true, import: "name" })))({ keys: object => globalThis.Object.values(object) })));`,
@@ -383,7 +383,7 @@ describe.concurrent("import.meta.glob", () => {
   });
 
   // Windows paths can't get long enough to hit this limit.
-  test.skipIf(isWindows)("a file that is too far away for a path", async () => {
+  test.skipIf(isWindows)("a match whose relative path would be too long throws", async () => {
     using dir = tempDir("import-meta-glob", { "x/a.js": "" });
     // Each "d/" level needs a longer "../" to climb out, so the relative path overflows while the absolute one fits.
     const levels = Math.floor(((isMacOS ? 1024 : 4096) - String(dir).length - 16) / 2);
@@ -439,7 +439,7 @@ describe.concurrent("import.meta.glob", () => {
       },
     );
 
-    test("bun build says what it skips, and can import a name with a question mark", async () => {
+    test("bun build warns about skipped names, and can import a name containing `?`", async () => {
       using dir = tempDir("import-meta-glob", { ...names, "entry.js": print(", eager: true") });
       const built = await run(String(dir), ["build", "--target=bun", "--outfile=out.js", "entry.js"]);
       expect(built.stderr.split("\n").filter(line => line.startsWith("warn"))).toEqual([
@@ -478,7 +478,7 @@ describe.concurrent("import.meta.glob", () => {
   });
 
   // Vite searches the whole file system instead.
-  test("a pattern that starts with ** is looked for in the project", async () => {
+  test("a pattern that starts with ** is searched from the project root", async () => {
     expect(await runEntry(`console.log(JSON.stringify(Object.keys(import.meta.glob("**/[dq].ts"))));`)).toEqual({
       stdout: `["/src/[id]/(group)/{x}/q.ts","/src/dir/sub/d.ts"]`,
       stderr: "",
@@ -581,7 +581,7 @@ describe.concurrent("import.meta.glob", () => {
       return JSON.parse(stdout);
     }
 
-    test("one that only calls it where it exists runs as it did without it", async () => {
+    test("feature detection around an eager call takes the fallback", async () => {
       expect(
         await requireEach({
           "guarded.cjs": `module.exports = ${guarded};`,
@@ -670,7 +670,7 @@ describe.concurrent("import.meta.glob", () => {
     expect(await run(String(dir), ["entry.js"])).toEqual({ stdout: "[]\n", stderr: "", exitCode: 0 });
   });
 
-  test("in a module that a plugin made up", async () => {
+  test("in a virtual module from a plugin", async () => {
     const { stdout, stderr, exitCode } = await runEntry(
       `Bun.plugin({
          name: "virtual",
@@ -785,7 +785,7 @@ describe.concurrent("import.meta.glob", () => {
     expect(readdirSync(cache)).toHaveLength(1);
   });
 
-  test("nor is one whose call could not be replaced, which does not only depend on the module", async () => {
+  test("a module whose call couldn't be replaced isn't restored from the cache either", async () => {
     const padding = Buffer.alloc(80 * 1024, "/").toString();
     using dir = tempDir("import-meta-glob", {
       "modules/a.ts": "",

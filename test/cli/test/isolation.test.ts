@@ -899,7 +899,7 @@ describe.concurrent("bun test --isolate", () => {
 
   // Close handlers for sockets a file leaves open are the last of that file's JS to run.
   test.each(["--isolate", "--parallel=1"])(
-    "what a close handler of a finished file fakes is not faked in the next file: bun test %s",
+    "timers faked by a finished file's close handler are real in the next file: bun test %s",
     async flag => {
       using dir = tempDir("isolate-fake-timers-close-handler", {
         "a.test.ts": `
@@ -953,7 +953,7 @@ describe.concurrent("bun test --isolate", () => {
       "a node:vm context without a sandbox",
       "vm.runInContext(code, Object.assign(vm.createContext(vm.constants.DONT_CONTEXTIFY), { console }))",
     ],
-  ])("with --isolate, what a file leaves in flight in %s does not go on in the next file", async (_, evaluate) => {
+  ])("with --isolate, work a file leaves in flight in %s doesn't continue in the next file", async (_, evaluate) => {
     using dir = tempDir("isolate-derived-realm", {
       "a.test.ts": `
         import { test } from "bun:test";
@@ -992,7 +992,7 @@ describe.concurrent("bun test --isolate", () => {
     }).toEqual({ stdout: "", counts: [" 2 pass", " 0 fail"], exitCode: 0 });
   });
 
-  test("with --isolate, a BroadcastChannel that a file leaves open in a ShadowRealm hears nothing of the next file", async () => {
+  test("with --isolate, a BroadcastChannel left open in a ShadowRealm stops receiving messages", async () => {
     using dir = tempDir("isolate-derived-realm-channel", {
       "a.test.ts": `
         import { test } from "bun:test";
@@ -1096,7 +1096,7 @@ describe.concurrent("bun test --isolate", () => {
 
   // On debug builds `vm.global().set_time_zone()` temporaries in `TestCommand::exec`'s frame keep the first file alive.
   test.skipIf(isDebug)(
-    "with --isolate, of the finished files only the last two can be waiting for a collection",
+    "with --isolate, only the last two finished files can still be waiting for garbage collection",
     async () => {
       // File i keeps 16 * 2 ** i URLSearchParams on its global, so the live count is a bitmask of the live files.
       const keep = (file: number) =>
@@ -2233,7 +2233,7 @@ test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProv
   }
 });
 
-describe.concurrent("the SourceProvider cache does not keep what is made from more than the source", () => {
+describe.concurrent("the SourceProvider cache skips files that use import.meta.glob() or macros", () => {
   // One size below and one above the RuntimeTranspilerCache's minimum file size.
   const padding = { small: "", large: Buffer.alloc("// padding\n".length * 6000, "// padding\n").toString() };
   const files = (size: keyof typeof padding) => ({
@@ -2369,7 +2369,7 @@ test.concurrent("--isolate: a macro runs in every file when a plugin is register
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("--isolate: two import()s at once of a file both put it into the SourceProvider cache", async () => {
+test.concurrent("--isolate: two concurrent import()s of a file both add it to the SourceProvider cache", async () => {
   using dir = tempDir("isolate-import-twice", {
     "imported.ts": `export const x = 1;`,
     "required.cjs": `exports.x = 1;`,
@@ -2490,7 +2490,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     });
   `;
 
-  test("a spy that cannot be restored is an error of the file that made it, and of no other", async () => {
+  test("a spy that can't be restored is reported once, under the file that made it", async () => {
     using dir = tempDir("spies-of-a-file", {
       "a.test.ts": restoredThroughTrap(`throw new Error("the trap refuses");`),
       "b.test.ts": `import { test } from "bun:test"; test("b", () => {});`,
@@ -2520,7 +2520,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
       `expect(other.method()).toBe("original")`,
     ],
     ["a call that is made", `called("by the trap");`, `expect(called.mock.calls).toEqual([])`],
-  ])("%s while the spies of a file are restored does not outlive the file either", async (_, onRestore, check) => {
+  ])("%s while a file's spies are being restored doesn't outlive the file either", async (_, onRestore, check) => {
     using dir = tempDir("spies-of-a-file", {
       "a.test.ts": restoredThroughTrap(onRestore),
       "b.test.ts": `import { expect, test } from "bun:test"; test("b", () => ${check});`,
@@ -2529,7 +2529,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
-  test("the spies of a preload, and of its beforeAll(), stay", async () => {
+  test("spies made by a preload or its beforeAll() are kept across files", async () => {
     using dir = tempDir("spies-of-a-preload", {
       "preload.ts": `
         import { beforeAll, jest, vi } from "bun:test";
@@ -2563,7 +2563,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
-  test("a check in the afterAll() of a preload sees the calls of every file", async () => {
+  test("a preload's afterAll() sees the calls made in every file", async () => {
     using dir = tempDir("mocks-of-a-preload", {
       "preload.ts": `
         import { afterAll, expect, jest } from "bun:test";
@@ -2597,7 +2597,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     ["while it loads", (make: string) => make],
     ["in its beforeAll()", (make: string) => `beforeAll(() => { ${make} });`],
     ["in its beforeAll(), after an await", (make: string) => `beforeAll(async () => { await Bun.sleep(0); ${make} });`],
-  ])("what a preload makes %s", (_, where) => {
+  ])("a mock that a preload makes %s", (_, where) => {
     const preload = `
       import { beforeAll, jest, mock, spyOn, vi } from "bun:test";
       ${where(`
@@ -2679,7 +2679,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     });
   });
 
-  test("what a beforeEach() of a preload makes is the file's, as what the file makes before its first test", async () => {
+  test("mocks made in a preload's beforeEach() are cleaned up with the file", async () => {
     using dir = tempDir("mocks-of-a-file", {
       "preload.ts": `
         import { beforeAll, beforeEach, jest } from "bun:test";
@@ -2750,7 +2750,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
-  describe("resetAllMocks() finds what an earlier file has configured", () => {
+  describe("resetAllMocks() resets mocks that an earlier file configured", () => {
     const configure = `
       for (const mocked of Object.values(mocks)) mocked.mockReturnValue("configured").mockReturnValueOnce("once");
     `;
@@ -2813,7 +2813,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
         }
       });
 
-      test("between the repeats of --rerun-each", async () => {
+      test("between --rerun-each repeats", async () => {
         using dir = tempDir("mocks-of-a-file", {
           "a.test.ts": `
             import { expect, jest, test, vi } from "bun:test";

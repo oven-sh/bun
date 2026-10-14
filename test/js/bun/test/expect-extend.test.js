@@ -411,7 +411,7 @@ test("expect.extend with numeric index keys does not crash", () => {
   expect(typeof expect[1073741820]).toBe("function");
 });
 
-describe("the message of a matcher that fails is thrown as it is", () => {
+describe("a failing custom matcher's message is thrown unchanged", () => {
   expect.extend({
     _toFailWith(received, result) {
       return { pass: false, ...result };
@@ -447,7 +447,7 @@ describe("the message of a matcher that fails is thrown as it is", () => {
     ]).toEqual(Array(6).fill("line 1\nline 2\n"));
   });
 
-  test("the matcher says what was called", async () => {
+  test("a matcher can build the hint itself from this.isNot and this.promise", async () => {
     expect([
       await messageOf(() => expect(1)._toFailWithItsHint()),
       await messageOf(() => expect(1).not._toFailWithItsHint()),
@@ -485,7 +485,7 @@ describe("the message of a matcher that fails is thrown as it is", () => {
     ).toThrow(thrown);
   });
 
-  test("an asymmetric matcher that fails is printed by the matcher around it", async () => {
+  test("a failing asymmetric matcher is printed by the enclosing matcher", async () => {
     expect(await messageOf(() => expect({ a: 1 }).toEqual({ a: expect._toFailWith({ message }) }))).toStartWith(
       "expect(received).toEqual(expected)",
     );
@@ -602,7 +602,7 @@ describe("MatcherContext", () => {
       ]);
     });
 
-    test("matcherHint rejects what it cannot use", () => {
+    test("matcherHint throws on invalid arguments", () => {
       expect(() => utils.matcherHint()).toThrow("the first argument (matcher name) must be a string");
       expect(() => utils.matcherHint(1)).toThrow("the first argument (matcher name) must be a string");
       expect(() => utils.matcherHint("toX", "r", "e", 1)).toThrow("options must be an object (or undefined)");
@@ -625,7 +625,7 @@ describe("MatcherContext", () => {
       ).toThrow(thrown);
     });
 
-    test.each(["EXPECTED_COLOR", "RECEIVED_COLOR"])("%s colors text as it is", name => {
+    test.each(["EXPECTED_COLOR", "RECEIVED_COLOR"])("%s adds color without quoting or formatting the text", name => {
       const color = (...args) => Bun.stripANSI(utils[name](...args));
       expect([
         color("text"),
@@ -716,7 +716,7 @@ describe("MatcherContext", () => {
       expect(Bun.stripANSI(utils.diff(Symbol("a"), Symbol("b")))).toBe("Expected: Symbol(a)\nReceived: Symbol(b)");
     });
 
-    test("diff reports what a value throws while it is printed", () => {
+    test("diff rethrows an error thrown while printing a value", () => {
       const thrown = new Error("from the trap");
       const value = new Proxy(
         {},
@@ -852,7 +852,7 @@ describe("MatcherContext", () => {
   });
 });
 
-describe.skipIf(!isBun)("the namespace of a module as matchers", () => {
+describe.skipIf(!isBun)("passing a module namespace to expect.extend()", () => {
   test("only `default` and `__esModule` are left out when they are not functions", () => {
     expect.extend({
       // @ts-expect-error

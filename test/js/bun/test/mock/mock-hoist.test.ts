@@ -658,7 +658,7 @@ describe.concurrent("vi.mock(import(path))", () => {
   });
 
   test.each(["vi.mock", "vi.unmock", "jest.doMock", "jest.doUnmock"])(
-    "%s() in code that never runs, in a module that uses nothing else of the test APIs",
+    "%s() in dead code, in a module that uses no other test API",
     async mock => {
       expect(
         await events({
@@ -715,7 +715,7 @@ describe.concurrent("vi.mock(import(path))", () => {
     ).toEqual([["load other", "mocked"]]);
   });
 
-  test("only for the first argument of those methods of vi and jest", async () => {
+  test("only applies to the first argument of vi's and jest's mocking methods", async () => {
     expect(
       await events({
         "hoist.test.ts": `
@@ -809,7 +809,7 @@ describe.concurrent("modes", () => {
     ).toEqual([["hoisted 1", "hoisted 2", "body", "load side", "mocked", "object", true]]);
   });
 
-  test("the transpiler cache keeps `bun test` and `bun run` apart", async () => {
+  test("`bun test` and `bun run` use separate transpiler cache entries", async () => {
     using dir = tempDir("mock-hoist-cache", {
       ...modules,
       "shared.ts": `
@@ -958,7 +958,7 @@ describe.concurrent("errors", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("two files that hoist and import each other are both named", async () => {
+  test("two files that hoist and import each other are both named in the error", async () => {
     const { stderr, exitCode } = await run({
       "helper.ts": `
         import { shared } from "./hoist.test";
@@ -1033,7 +1033,7 @@ describe.concurrent("source locations", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("an import that fails reports what a static import reports", async () => {
+  test("a failed import after vi.mock() reports the same error as a static import", async () => {
     const { stderr, exitCode } = await run({
       "hoist.test.ts": [
         `import { test, vi } from "vitest";`,

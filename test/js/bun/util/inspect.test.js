@@ -534,7 +534,7 @@ it("Bun.inspect.custom exists", () => {
 
 // JSC passes its own scope object as `this` when a native function is called through a captured variable.
 // These functions return a `this` of the wrong class unchanged, which would leak that scope object to JS.
-it("[Bun.inspect.custom] of a built-in class returns undefined or throws when it is called by a bare name", () => {
+it("a built-in's [Bun.inspect.custom] called without a receiver never returns an object", () => {
   const returned = {};
   for (const name of Object.getOwnPropertyNames(globalThis)) {
     const inspectCustom = globalThis[name]?.prototype?.[Bun.inspect.custom];
@@ -1442,7 +1442,7 @@ describe("values of another realm", () => {
     ).toBe("Window {\n  a: 1,\n  m: [Function: m],\n}");
   });
 
-  it("its global ends a prototype chain", () => {
+  it("properties inherited from its global aren't printed", () => {
     expect(Bun.inspect(Object.create(vm.runInContext("this", vm.createContext({ a: 1 }))))).toBe("{}");
   });
 });
@@ -1483,7 +1483,7 @@ describe("a value whose [nodejs.util.inspect.custom] cannot be read", () => {
     });
   });
 
-  it.concurrent("console.log() throws the error, and goes on printing afterwards", async () => {
+  it.concurrent("console.log() throws the error, and later calls still print", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1537,7 +1537,7 @@ describe("a value whose [nodejs.util.inspect.custom] cannot be read", () => {
         });
       });
 
-      it.concurrent("says where printing what was thrown threw", async () => {
+      it.concurrent("prints [threw while printing] in place of a property that throws", async () => {
         const handler = `{ getPrototypeOf() { throw new Error("has no prototype"); } }`;
         expect(await reportOf(`{ a: 1, value: Object.create(new Proxy({}, ${handler})) }`)).toEqual({
           stdout: "",
@@ -1549,7 +1549,7 @@ describe("a value whose [nodejs.util.inspect.custom] cannot be read", () => {
   );
 });
 
-it("a function that is printed as an object and has nothing to list is printed as a function", () => {
+it("expect.objectContaining(fn) prints the function when it has no properties to list", () => {
   const f = () => {};
   expect(Bun.inspect(expect.objectContaining(f))).toBe("ObjectContaining [Function: f]");
   expect(Bun.inspect(expect.objectContaining(class A {}))).toBe("ObjectContaining [class A]");

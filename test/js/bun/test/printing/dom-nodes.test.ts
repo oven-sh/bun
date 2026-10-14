@@ -230,7 +230,7 @@ describe("matcher messages", () => {
     expect(utils.stringify(h("div", { a: new NodeList([]) }))).toBe("<div a={[]} />");
   });
 
-  test("the levels of the values around it count", () => {
+  test("the depth of enclosing values counts toward the limit", () => {
     expect(utils.stringify({ a: { b: nested(10) } })).toContain(
       `b: ${repeat("<div>", 8)}<div … />${repeat("</div>", 8)},`,
     );
@@ -265,7 +265,7 @@ describe("matcher messages", () => {
     expect(utils.stringify(wide(9_986))).toBe("<p><i … /></p>");
   });
 
-  test("stops printing what is already too long", () => {
+  test("stops printing as soon as the output is over the limit", () => {
     const tagName = Object.getOwnPropertyDescriptor(Node.prototype, "tagName")!;
     let reads = 0;
     Object.defineProperty(Node.prototype, "tagName", {
@@ -510,7 +510,7 @@ describe("snapshots", () => {
     `);
   });
 
-  test("the attributes and the items of a collection are the ones its iterator yields", () => {
+  test("a collection's attributes and items come from its iterator", () => {
     class Half extends ArrayLike {
       *[Symbol.iterator]() {
         yield this[0];
@@ -567,7 +567,7 @@ describe("snapshots", () => {
     `);
   });
 
-  test("indentation does not stop growing", () => {
+  test("indentation isn't capped for deeply nested nodes", () => {
     const lines = messageOf(() => expect(nested(40)).toEqual<unknown>(1)).split("\n");
     expect(lines).toContain(`+ ${repeat(" ", 80)}<i />`);
     expect(lines).toContain(`+ ${repeat(" ", 78)}</div>`);
@@ -590,7 +590,7 @@ describe("snapshots", () => {
     `);
   });
 
-  test("values that no DOM has", () => {
+  test("non-string attributes and non-node children", () => {
     expect(h("div", { n: 1, o: { a: 1 }, e: {}, list: [h("i")], u: undefined })).toMatchInlineSnapshot(`
       <div
         e={{}}
@@ -628,7 +628,7 @@ describe("snapshots", () => {
   });
 });
 
-describe("what is a node", () => {
+describe("objects treated as DOM nodes", () => {
   const isMarkup = (value: unknown) => /^(<|\[<|$)/.test(utils.stringify(value));
   const named = (name: string, Base = Node) => ({ [name]: class extends Base {} })[name];
 
@@ -664,7 +664,7 @@ describe("what is a node", () => {
     expect(utils.stringify(elementOf(named("Foo"), "BUTTON", { is: "x-foo" }))).toBe('<button is="x-foo" />');
   });
 
-  test("the class has to go with the node type", () => {
+  test("the class has to match the node type", () => {
     expect(isMarkup(new Comment({ nodeType: 3, data: "" }))).toBe(false);
     expect(isMarkup(new Text({ nodeType: 8, data: "" }))).toBe(false);
     expect(isMarkup(new Text({ nodeType: 11, data: "" }))).toBe(false);
@@ -675,7 +675,7 @@ describe("what is a node", () => {
     expect(isMarkup(new (named("Document"))({ nodeType: 9, childNodes: [] }))).toBe(false);
   });
 
-  test("a node has the string its markup is made of", () => {
+  test("a node needs a string tagName or data", () => {
     expect(isMarkup(new HTMLElement({ nodeType: 1 }))).toBe(false);
     expect(isMarkup(new HTMLElement({ nodeType: 1, tagName: 1 }))).toBe(false);
     expect(isMarkup(new Text({ nodeType: 3 }))).toBe(false);
@@ -727,7 +727,7 @@ describe("objects that misbehave", () => {
     expect(messageOf(() => expect(node).toEqual<unknown>(1))).toContain("+ Foo {\n");
   });
 
-  test("inside a node, it is an error", () => {
+  test("a child whose nodeType throws makes the matcher throw", () => {
     const parent = () => h("div", {}, thrower("nodeType", h("i")));
     expect(() => expect(parent()).toBeNull()).toThrow("nodeType was read");
     expect(() => expect(parent()).toEqual<unknown>(1)).toThrow("nodeType was read");
@@ -760,7 +760,7 @@ describe("objects that misbehave", () => {
     );
   });
 
-  test.each(["attributes", "childNodes"])("%s that throws is the error", key => {
+  test.each(["attributes", "childNodes"])("%s that throws makes the matcher throw that error", key => {
     expect(() => expect(thrower(key, button())).toBeNull()).toThrow(`${key} was read`);
     expect(() => expect(thrower(key, button())).toMatchInlineSnapshot()).toThrow(`${key} was read`);
     expect(() => expect(thrower(key, button())).toEqual<unknown>(1)).toThrow(`${key} was read`);
@@ -839,7 +839,7 @@ describe("objects that misbehave", () => {
 });
 
 describe("equality", () => {
-  test("isEqualNode() decides", () => {
+  test("nodes compare with isEqualNode()", () => {
     expect(button()).toEqual(button());
     expect(button()).toStrictEqual(button());
     expect(button()).not.toEqual(h("button", { id: "x", class: "b a" }, "stop"));
@@ -848,13 +848,13 @@ describe("equality", () => {
     expect(messageOf(() => expect(h("i", { a: "1" })).toEqual(h("i", { a: "2" })))).toContain('-   a="2"\n+   a="1"\n');
   });
 
-  test("what it returns counts as a boolean", () => {
+  test("isEqualNode()'s return value is coerced to a boolean", () => {
     const returning = (returned: unknown) => Object.assign(h("i"), { isEqualNode: () => returned });
     for (const truthy of [1, "yes", {}]) expect(returning(truthy)).toEqual<Node>(h("b"));
     for (const falsy of [0, "", null, undefined]) expect(returning(falsy)).not.toEqual(h("i"));
   });
 
-  test("toMatchObject compares two nodes the same way, and a node with a pattern by its properties", () => {
+  test("toMatchObject uses isEqualNode() for two nodes and properties for a plain pattern", () => {
     expect({ n: h("i", { a: "1" }), x: 1 }).toMatchObject({ n: h("i", { a: "1" }) });
     expect({ n: h("i", { a: "1" }), x: 1 }).not.toMatchObject({ n: h("i", { a: "2" }) });
     expect(h("i", { a: "1" })).not.toMatchObject(h("i", { a: "2" }));
@@ -863,7 +863,7 @@ describe("equality", () => {
     expect(h("i")).not.toMatchObject({ tagName: "B" });
   });
 
-  test("toStrictEqual wants the same class", () => {
+  test("toStrictEqual requires the same class", () => {
     const sameName = () => elementOf(class HTMLElement extends Element {}, "I");
     expect(sameName()).toEqual(sameName());
     expect(sameName()).not.toStrictEqual(sameName());
@@ -926,7 +926,7 @@ describe("equality", () => {
     expect(() => expect({ n: node }).toMatchObject({ n: h("i") })).toThrow(`${key} was read`);
   });
 
-  test("values that are not nodes are not asked anything", () => {
+  test("no node properties are read from values that aren't nodes", () => {
     const asked: string[] = [];
     const traps = new Proxy(
       {},
@@ -995,7 +995,7 @@ describe("equality", () => {
 });
 
 // Printed as objects, a real document's nodes take hundreds of megabytes and abort where memory is limited.
-test("assertions on nodes that hold a large object graph fail with a short message", async () => {
+test("assertions on nodes that reference a large object graph fail with a short message", async () => {
   using dir = tempDir("dom-nodes-graph", {
     "graph.test.js": `
       import { expect, mock, test } from "bun:test";

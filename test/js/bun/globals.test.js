@@ -283,7 +283,7 @@ describe.concurrent("builtin modules read the native classes and objects, not th
     return JSON.parse(stdout);
   }
 
-  it("every one loads with all of them replaced, and exports the native ones", async () => {
+  it("every module loads with all those globals replaced and exports the native ones", async () => {
     const result = await run(`
       const ecmascript = new Set(require("node:vm").runInNewContext("Object.getOwnPropertyNames(globalThis)"));
       const names = Object.getOwnPropertyNames(globalThis).filter(name =>
@@ -326,7 +326,7 @@ describe.concurrent("builtin modules read the native classes and objects, not th
     expect(result.exported).toContain("worker_threads.MessageChannel");
   });
 
-  it("each realm has its own", async () => {
+  it("each realm uses its own native classes", async () => {
     expect(
       await run(`
         const NativeURL = URL;
@@ -352,7 +352,7 @@ describe.concurrent("builtin modules read the native classes and objects, not th
     ).toEqual({ calledFromContext: true, inShadowRealm: true, inWorker: true });
   });
 
-  it("without creating what nothing has used", async () => {
+  it("without creating classes that nothing has used", async () => {
     expect(
       await run(`
         for (const id of ["fs", "path", "events", "os", "timers"]) require("node:" + id);
@@ -365,7 +365,7 @@ describe.concurrent("builtin modules read the native classes and objects, not th
     ).toEqual({ before: [], after: ["URL"] });
   });
 
-  it("from an object that script cannot get hold of", async () => {
+  it("from an object user code can't reach", async () => {
     expect(
       await run(`
         // This script is in process.execArgv.

@@ -2189,8 +2189,7 @@ async function runFilesWithEnv(env: Record<string, string>, files: Record<string
 
 // No test has started yet, so no test timeout can end these waits.
 describe.concurrent("a test file that can never finish loading", () => {
-  const nothingLeft =
-    "note: the event loop is empty, so nothing can settle it anymore";
+  const nothingLeft = "note: the event loop is empty, so nothing can settle it anymore";
   const neverLoads = `
     import { test } from "bun:test";
     await new Promise(() => {});
@@ -2206,7 +2205,7 @@ describe.concurrent("a test file that can never finish loading", () => {
     [["--isolate"]],
     // On Windows the pipe to the coordinator keeps a worker's loop alive.
     ...(isWindows ? [] : [[["--parallel=2"]], [["--parallel=2", "--isolate"]]]),
-  ])("fails at once and the run goes on %j", async flags => {
+  ])("fails immediately and the run continues %j", async flags => {
     const { errors, counts, exitCode } = await runFiles(
       { "a.test.ts": neverLoads, "b.test.ts": passes, "c.test.ts": passes },
       ...flags,
@@ -2297,7 +2296,7 @@ describe.concurrent("a test file that can never finish loading", () => {
     });
   });
 
-  test("names a handful of modules at most", async () => {
+  test("names at most five modules", async () => {
     const files: Record<string, string> = { "a.test.ts": "" };
     for (let i = 0; i < 7; i++) {
       files["a.test.ts"] += `import "./dep${i}.ts";\n`;
@@ -2340,7 +2339,7 @@ describe.concurrent("a test file that can never finish loading", () => {
     });
   });
 
-  test("the next file loads the modules it left unfinished anew", async () => {
+  test("the next file re-evaluates the modules it left unfinished", async () => {
     const { stdout, errors, counts, exitCode } = await runFiles(
       {
         "a.test.ts": `
@@ -2470,7 +2469,7 @@ describe.concurrent("a test file that can never finish loading", () => {
   });
 
   // On Windows faked timers share the ref'd timers' hold on the loop, which can't be told apart from any other ref.
-  test.skipIf(isWindows)("waiting for a faked timer, which nothing fires", async () => {
+  test.skipIf(isWindows)("waiting on a fake timer that nothing fires", async () => {
     const { errors, counts, exitCode } = await runFiles({
       "a.test.ts": `
         import { jest } from "bun:test";
@@ -2567,7 +2566,7 @@ describe.concurrent("a test file that can never finish loading", () => {
       "file": `(await Bun.file(import.meta.path).text()) && "ok"`,
       "transpiling a big module on another thread": `(await import("./big.ts")).ok`,
     }),
-  )("is not one that waits for: %s", async (_, expression) => {
+  )("a file still waiting on real work isn't reported: %s", async (_, expression) => {
     const bigLine = "(function (a: number): number { return a + 1; });\n";
     const { errors, counts, exitCode } = await runFiles({
       "a.test.ts": `
@@ -2582,7 +2581,7 @@ describe.concurrent("a test file that can never finish loading", () => {
 
   // macOS watchers miss changes made before their event stream starts, so keep writing until the run ends.
   // The writes come from here because a writer inside the test file would be one more thing to wait for.
-  test("is not one that waits for: unref'd fs.watch", async () => {
+  test("a file still waiting on real work isn't reported: unref'd fs.watch", async () => {
     using dir = tempDir("bun-test-waits", {
       "a.test.ts": `
         import { test, expect } from "bun:test";
@@ -2612,7 +2611,7 @@ describe.concurrent("a test file that can never finish loading", () => {
   });
 
   // Without pidfd_open(), a waiter thread waits for children instead of the event loop.
-  test.skipIf(!isLinux)("counts an unref'd subprocess that a thread waits for, until it has exited", async () => {
+  test.skipIf(!isLinux)("waits for an unref'd subprocess on the waiter thread, but only until it exits", async () => {
     const { errors, counts, exitCode } = await runFilesWithEnv(
       { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
       {
@@ -2639,7 +2638,7 @@ describe.concurrent("a test file that can never finish loading", () => {
     });
   });
 
-  test("is not one that comes after an unhandled error", async () => {
+  test("a file that loads after an unhandled error isn't reported", async () => {
     const { errors, counts, exitCode } = await runFiles(
       {
         "a.test.ts": `
@@ -2662,7 +2661,7 @@ describe.concurrent("a test file that can never finish loading", () => {
   });
 
   // On Windows `bun test --watch` is a parent process that restarts the runner.
-  test.skipIf(isWindows)("--watch reports it and goes on watching", async () => {
+  test.skipIf(isWindows)("--watch reports it and keeps watching", async () => {
     using dir = tempDir("bun-test-waits-watch", { "a.test.ts": neverLoads });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--watch", "--no-clear-screen"],
@@ -2695,14 +2694,13 @@ describe.concurrent("a test file that can never finish loading", () => {
 
 // No test timeout ends these waits either.
 describe.concurrent("a test file that can never finish running", () => {
-  const nothingLeft =
-    "note: the event loop is empty, so nothing can settle it anymore";
+  const nothingLeft = "note: the event loop is empty, so nothing can settle it anymore";
   const passes = `
     import { test } from "bun:test";
     test("passes", () => {});
   `;
 
-  test("a describe() callback that never settles fails, and the run goes on", async () => {
+  test("a describe() callback that never settles is reported and the run continues", async () => {
     const { stdout, errors, counts, exitCode } = await runFiles(
       {
         "a.test.ts": `
@@ -2728,7 +2726,7 @@ describe.concurrent("a test file that can never finish running", () => {
     });
   });
 
-  test("tests without a timeout that never settle fail, and the run goes on", async () => {
+  test("tests without a timeout that never settle fail and the run continues", async () => {
     const { stderr, errors, counts, exitCode } = await runFiles({
       "a.test.ts": `
         import { test } from "bun:test";
@@ -2764,7 +2762,7 @@ describe.concurrent("a test file that can never finish running", () => {
         test.concurrent("second", () => new Promise(() => {}), 0);
       `,
     ],
-  ])("the file ends at %s without a timeout that can never settle, and the run goes on", async (_, contents) => {
+  ])("the file stops at %s without a timeout that can never settle, and the run continues", async (_, contents) => {
     const { errors, counts, exitCode } = await runFiles(
       { "a.test.ts": contents, "b.test.ts": passes },
       "./a.test.ts",
@@ -2836,7 +2834,7 @@ describe.concurrent("the runner sleeps while it waits", () => {
   });
 });
 
-describe.concurrent("the next test does not start beneath the call that ends a test", () => {
+describe.concurrent("the next test doesn't start inside the call that ended the previous test", () => {
   const results = (stderr: string) => stderr.match(/^\((pass|fail)\) [\w ]+/gm)?.map(line => line.trimEnd());
 
   test.each(
@@ -2923,7 +2921,7 @@ describe.concurrent("the next test does not start beneath the call that ends a t
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(fail) ends", "(pass) next"], exitCode: 1 });
   });
 
-  test("two rejections of one tick are both the running test's", async () => {
+  test("two rejections in one tick are both attributed to the running test", async () => {
     const { stderr, errors, exitCode } = await runFiles({
       "a.test.ts": `
         import { test } from "bun:test";
@@ -2974,7 +2972,7 @@ describe.concurrent("an error that arrives while a test file loads", () => {
       "an uncaught exception": `throw new Error("stray");`,
       "reportError()": `reportError(new Error("stray"));`,
     }),
-  )("%s is reported, and the tests of the file run", async (_, error) => {
+  )("%s is reported, and the file's tests run", async (_, error) => {
     const { stderr, errors, exitCode } = await runFiles({ "a.test.ts": file(error) });
     expect({ results: results(stderr), errors, exitCode }).toEqual({
       results: all,
@@ -2984,7 +2982,7 @@ describe.concurrent("an error that arrives while a test file loads", () => {
     expect(stderr).toContain("Unhandled error between tests");
   });
 
-  test("what the file before it has left behind", async () => {
+  test("from code the previous file left behind is reported, and the file's tests run", async () => {
     const { stderr, errors, exitCode } = await runFiles(
       {
         "a.test.ts": `
@@ -3075,7 +3073,7 @@ describe.concurrent("a test file that fails to load", () => {
       ["--bail=1", "one", "missing"],
       ["beforeAll", "one: true", "afterAll"],
     ],
-  ])("runs none of its tests, and the hooks of a preload that are due with it: %j", async (args, expected) => {
+  ])("runs none of its tests, but still runs the preload's beforeAll and afterAll: %j", async (args, expected) => {
     const { stdout, exitCode } = await runFiles(
       files,
       "--preload=./preload.ts",
@@ -3088,13 +3086,13 @@ describe.concurrent("a test file that fails to load", () => {
   });
 });
 
-describe.concurrent("an error whose message cannot be read", () => {
+describe.concurrent("an error whose message getter throws", () => {
   test.each(
     Object.entries({
       "an own getter": `Object.defineProperty(new Error("unreadable"), "message", { get() { throw new Error("thrown by the getter"); } })`,
       "a getter of its class": `new (class extends Error { get message() { return this.details.join(); } })()`,
     }),
-  )("%s: the tests after it are run, not reported unrun", async (_, error) => {
+  )("%s: the tests after it still run", async (_, error) => {
     const { stdout, stderr, exitCode } = await runFiles({
       "a.test.ts": `
         import { afterEach, test } from "bun:test";

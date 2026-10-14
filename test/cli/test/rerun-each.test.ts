@@ -204,7 +204,7 @@ test("toMatchSnapshot() counter is reset between per-test retry / repeats", asyn
   expect(exitCode).toBe(0);
 });
 
-test("a retry takes back the toMatchSnapshot() counts of its own attempt only", async () => {
+test("a retry rolls back only its own attempt's toMatchSnapshot() counters", async () => {
   using dir = tempDir("test-retry-snapshot-own", {
     "snap.test.ts": `
       import { test, expect } from "bun:test";

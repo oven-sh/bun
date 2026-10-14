@@ -57,7 +57,7 @@ describe("modifiers", () => {
     expect(exitCode).toBe(1);
   });
 
-  test.concurrent("test.fails passes whatever it is that fails, test.failing when the test throws", async () => {
+  test.concurrent("test.fails passes on any kind of failure, test.failing only when the test throws", async () => {
     const file = (modifier: string) => `
       import { afterEach, beforeEach, describe, expect, onTestFinished, test } from "bun:test";
       const marked = test.${modifier};
@@ -133,7 +133,7 @@ describe("modifiers", () => {
     );
   });
 
-  test.concurrent("test.fails: an attempt in which nothing fails is retried, and ends the repeats", async () => {
+  test.concurrent("a test.fails attempt that doesn't fail is retried with retry, and stops repeats", async () => {
     const { results, stdout, exitCode } = await runTests({
       "a.test.ts": `
         import { afterAll, test } from "bun:test";
@@ -164,7 +164,7 @@ describe("modifiers", () => {
   });
 
   describe.each([[[]], [["--parallel=2"]]])("test.fails in the JUnit report %j", args => {
-    test.concurrent("a failure that is expected is not reported, and one that is missing is", async () => {
+    test.concurrent("an expected failure isn't reported, and a missing one is", async () => {
       using dir = tempDir("vitest-apis-junit", {
         "a.test.ts": `
           import { beforeEach, describe, expect, test } from "bun:test";
@@ -288,7 +288,7 @@ describe("modifiers", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("modifiers combine in any order: a repeated one is a no-op and skip > todo > fails", async () => {
+  test.concurrent("modifiers combine in any order, repeats are no-ops, and skip > todo > fails", async () => {
     const { results, stdout, exitCode } = await runTests({
       "chains.test.ts": `
         import { describe, test } from "bun:test";
@@ -416,7 +416,7 @@ describe("modifiers", () => {
       },
     );
 
-    test("the shuffle option of a block of vitest, which the blocks inside it inherit until one says false", async () => {
+    test("vitest's shuffle option is inherited by nested blocks until one sets it to false", async () => {
       const files = {
         "a.test.ts": `
           import { describe, test } from "vitest";
@@ -615,7 +615,7 @@ describe("expect.setState", () => {
     expect(expect.getState()).toMatchObject({ vitestApisFirst: 2, vitestApisSecond: { nested: true } });
   });
 
-  test("what the caller puts on the state object stays too", () => {
+  test("properties assigned directly to the expect.getState() object are kept", () => {
     expect.getState().vitestApisDirect = "direct";
     expect(expect.getState().vitestApisDirect).toBe("direct");
   });
@@ -625,7 +625,7 @@ describe("expect.setState", () => {
     expect.setState({ assertionCalls: 5 });
   });
 
-  test("expectedAssertionsNumber is what expect.assertions() sets, and null unsets it", () => {
+  test("expectedAssertionsNumber is the count expect.assertions() sets, and null unsets it", () => {
     expect.setState({ expectedAssertionsNumber: 40 });
     const set = expect.getState().expectedAssertionsNumber;
     expect.setState({ expectedAssertionsNumber: null });
@@ -633,7 +633,7 @@ describe("expect.setState", () => {
     expect([set, unset]).toEqual([40, null]);
   });
 
-  test("isExpectingAssertions is what expect.hasAssertions() sets, and false unsets it", () => {
+  test("isExpectingAssertions is the flag expect.hasAssertions() sets, and false unsets it", () => {
     expect.setState({ isExpectingAssertions: true });
     const set = expect.getState().isExpectingAssertions;
     expect.setState({ isExpectingAssertions: false });
@@ -728,7 +728,7 @@ test("a custom matcher reads the state of the test from `this`", () => {
 });
 
 test.concurrent(
-  "among concurrent tests, a custom matcher of the expect of a test context reads the state of that test",
+  "in concurrent tests, a custom matcher called through a test context's expect reads that test's own state",
   async () => {
     const { stdout, results, exitCode } = await runTests(
       {
@@ -887,7 +887,7 @@ describe("expect.addEqualityTesters", () => {
     return undefined;
   }
 
-  test("values that differ are equal once a tester says so", () => {
+  test("a registered tester can make different values compare equal", () => {
     expect(litre()).not.toEqual(thousandMillilitres());
     expect(expect.addEqualityTesters([])).toBeUndefined();
     expect(litre()).not.toEqual(thousandMillilitres());
@@ -1005,7 +1005,7 @@ describe("expect.addEqualityTesters", () => {
     expect(context.equals).toBeFunction();
   });
 
-  test("a tester is asked about every level, before the built-in rules, even for the same object", () => {
+  test("testers run at every level, before the built-in rules, even for the same object", () => {
     seen.length = 0;
     const same = { v: 1 };
     expect(same).toEqual(same);
@@ -1013,7 +1013,7 @@ describe("expect.addEqualityTesters", () => {
     expect(seen.map(([, a]) => a)).toEqual([same, { list: ["x", "y"] }, ["x", "y"], "x", "y"]);
   });
 
-  test("a hole is undefined for a tester", () => {
+  test("a tester sees an array hole as undefined", () => {
     seen.length = 0;
     const holey = new Array(2);
     holey[1] = 1;
@@ -1035,7 +1035,7 @@ describe("expect.addEqualityTesters", () => {
     expect(litre()).toEqual(expect.objectContaining({ unit: "L" }));
   });
 
-  test("testers run in registration order until one has an opinion", () => {
+  test("testers run in registration order until one returns something other than undefined", () => {
     const calls: number[] = [];
     expect.addEqualityTesters([
       a => {
@@ -1057,7 +1057,7 @@ describe("expect.addEqualityTesters", () => {
     expect(calls).toEqual([1, 2]);
   });
 
-  test("anything but undefined is an opinion, by truthiness", () => {
+  test("any return value except undefined decides the comparison, by truthiness", () => {
     let result: unknown;
     expect.addEqualityTesters([a => (a === "vitest-apis-result" ? (result as boolean) : undefined)]);
     const verdicts = [true, 1, "yes", {}, false, null, 0, "", NaN].map(value => {
@@ -1072,7 +1072,7 @@ describe("expect.addEqualityTesters", () => {
     expect(verdicts).toEqual([true, true, true, true, false, false, false, false, false]);
   });
 
-  test("what a tester throws is thrown by the matcher", () => {
+  test("an error thrown by a tester propagates out of the matcher", () => {
     expect.addEqualityTesters([
       a => {
         if (a === "vitest-apis-throw") throw new RangeError("the tester threw");
@@ -1202,7 +1202,7 @@ describe("expect.addEqualityTesters", () => {
     ]);
   });
 
-  test("a tester is asked about two values that are the same", () => {
+  test("testers still run when the two values are identical", () => {
     const unequal = 918273645;
     expect.addEqualityTesters([(a, b) => (a === unequal || b === unequal ? false : undefined)]);
     class Holder {
@@ -1231,7 +1231,7 @@ describe("expect.addEqualityTesters", () => {
     expect(new Float64Array([1, 2])).not.toEqual(new Float64Array([1, 3]));
   });
 
-  test("a tester is asked about the elements of typed arrays", () => {
+  test("testers run on the elements of typed arrays", () => {
     expect.addEqualityTesters([
       (a, b) =>
         typeof a === "number" && typeof b === "number" && a > 5e8 && b > 5e8 ? Math.abs(a - b) < 1 : undefined,
@@ -1316,7 +1316,7 @@ describe("expect.addEqualityTesters", () => {
   });
 
   test.concurrent.each([[[]], [["--isolate"]]])(
-    "a tester that a module registers holds in every test file that imports the module %j",
+    "a tester that a module registers applies in every test file that imports the module %j",
     async args => {
       const file = (name: string) => `
         import { expect, test } from "bun:test";

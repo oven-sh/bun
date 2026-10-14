@@ -655,7 +655,7 @@ describe.concurrent("the original of a mocked module", () => {
     );
   });
 
-  test("importOriginal and vi.importActual give what an already loaded module exported before it was patched", async () => {
+  test("importOriginal and vi.importActual return an already loaded module's real exports", async () => {
     await expectFixturesToPass(
       {
         ...modules,
@@ -1008,7 +1008,7 @@ describe.concurrent("a module mocked without a factory", () => {
 
 describe.concurrent("unmock", () => {
   test.each([{}, { BUN_JSC_useDFGJIT: "0" }])(
-    "an export that had no value yet when it was mocked keeps the one its module gave it since %j",
+    "an export still uninitialized when it was mocked keeps the value its module assigned later %j",
     async env => {
       using dir = tempDir("mock-module-uninitialized", {
         "late.js": `
@@ -1135,7 +1135,7 @@ describe.concurrent("unmock", () => {
   });
 });
 
-test("jest.mock() and the like return jest, vi.doMock() something to dispose of", async () => {
+test("jest.mock() and friends return jest, and vi.doMock() returns a disposable", async () => {
   using dir = tempDir("mock-module-returns", {
     "a.ts": `export const a = "real-a";`,
     "b.ts": `export const b = "real-b";`,
@@ -1330,7 +1330,7 @@ describe.concurrent("factories", () => {
     );
   });
 
-  test("a ReferenceError for a variable of the test file says that vi.mock and jest.mock are hoisted", async () => {
+  test("a TDZ ReferenceError from a hoisted factory gets a note about vi.mock() hoisting", async () => {
     await expectFixturesToPass(
       {
         "tdz.test.ts": `
@@ -1364,7 +1364,7 @@ describe.concurrent("factories", () => {
     );
   });
 
-  test("the file whose import runs such a factory fails to load with the note", async () => {
+  test("a file whose static import runs such a factory fails to load and prints the note", async () => {
     using dir = tempDir("mock-module-tdz", {
       "dep.ts": `export const value = "real";`,
       "tdz.test.ts": `
@@ -1390,7 +1390,7 @@ describe.concurrent("factories", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("a pending factory that fails leaves an already imported module as it was before an earlier mock patched it", async () => {
+  test("a pending factory that fails restores the real exports, not an earlier mock's", async () => {
     using dir = tempDir("mock-module-pending-after-mock", {
       "a.ts": `export function a() { return "real-a"; }`,
     });
@@ -1444,7 +1444,7 @@ describe.concurrent("factories", () => {
   });
 });
 
-describe.concurrent("the exports of a mocked module are read from what the factory returned", () => {
+describe.concurrent("a mocked module's exports are read from the object the factory returned", () => {
   const dep = {
     "dep.ts": `
       export const flag = "real-flag";
@@ -1533,7 +1533,7 @@ describe.concurrent("the exports of a mocked module are read from what the facto
     );
   });
 
-  test("in code that is hot, before and after the module is mocked", async () => {
+  test("in hot code, before and after the module is mocked", async () => {
     await expectFixturesToPass(
       {
         ...dep,
@@ -1605,7 +1605,7 @@ describe.concurrent("the exports of a mocked module are read from what the facto
     });
   }
 
-  test("mocking the module again changes what everything linked to it reads", async () => {
+  test("mocking the module again updates every binding linked to it", async () => {
     await expectFixturesToPass(
       {
         ...dep,
@@ -1696,7 +1696,7 @@ describe.concurrent("a factory that returns a module namespace object", () => {
     "star-of-star.ts": `export * from "./star";`,
   };
 
-  test("of a mocked module gets what that reads from at the time", async () => {
+  test("of a mocked module reuses that mock's current exports object", async () => {
     await expectFixturesToPass(
       {
         ...files,
@@ -1760,7 +1760,7 @@ describe.concurrent("a factory that returns a module namespace object", () => {
     );
   });
 
-  test("an object that reads from the mocked module in a way that is not seen is a RangeError when it is read", async () => {
+  test("an object inheriting from the mocked module's namespace throws RangeError on read", async () => {
     await expectFixturesToPass(
       {
         ...files,
@@ -1781,7 +1781,7 @@ describe.concurrent("a factory that returns a module namespace object", () => {
     );
   });
 
-  test("the function that calls the factories of mocks that are given the original is out of reach", async () => {
+  test("user code can't import the internal module that calls importOriginal factories", async () => {
     await expectFixturesToPass(
       {
         "a.ts": `
@@ -2049,7 +2049,7 @@ describe.concurrent("import cycles through a mocked module", () => {
     );
   });
 
-  test("vi.importActual() of the mocked module is what loads the cycle", async () => {
+  test("the cycle is first loaded by vi.importActual() of the mocked module", async () => {
     await expectFixturesToPass(
       {
         "a.ts": `import { seen } from "./b"; export const a = "real-a"; export const seenByB = () => seen();`,
@@ -2131,7 +2131,7 @@ describe.concurrent("import cycles through a mocked module", () => {
     );
   });
 
-  test("the importer uses what it imports from the mock while it is evaluated", async () => {
+  test("the mock's exports are ready when the importer's top-level code uses them", async () => {
     await expectFixturesToPass(
       {
         "base.ts": `
@@ -2196,7 +2196,7 @@ describe.concurrent("import cycles through a mocked module", () => {
     );
   });
 
-  test("the note about hoisting is on the error of a factory that is given the original", async () => {
+  test("a factory that takes importOriginal gets the hoisting note on its TDZ error too", async () => {
     using dir = tempDir("mock-module-tdz", {
       "a.ts": `import "./b"; export const a = "real-a";`,
       "b.ts": `import { a } from "./a"; export const seen = () => a;`,
@@ -2263,7 +2263,7 @@ describe.concurrent("import cycles through a mocked module", () => {
   });
 });
 
-describe.concurrent("what a factory loads while it runs", () => {
+describe.concurrent("a module that a factory loads while it runs", () => {
   const files = {
     "log.ts": `export const order = (globalThis.order ??= []);`,
     "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", type: "module", main: "./index.js" }),
@@ -2403,7 +2403,7 @@ describe.concurrent("what a factory loads while it runs", () => {
     );
   });
 
-  test("is not told from the rest for a factory that is not written in a file", async () => {
+  test("fails with a circular import error if the factory has no source file", async () => {
     await expectFixturesToPass(
       {
         "a.ts": `export const a = "real-a";`,
@@ -2469,7 +2469,7 @@ describe.concurrent("what a factory loads while it runs", () => {
   });
 });
 
-describe.concurrent("the module mocks of a test file are undone when it ends", () => {
+describe.concurrent("a test file's module mocks are undone when it ends", () => {
   const shared = {
     "mod.ts": `
       globalThis.modLoads = (globalThis.modLoads ?? 0) + 1;
@@ -2569,7 +2569,7 @@ describe.concurrent("the module mocks of a test file are undone when it ends", (
     );
   });
 
-  test("of a file that fails to load, and of a mock that the file removed itself", async () => {
+  test("also when the file fails to load, or has already removed the mock itself", async () => {
     using dir = tempDir("mock-module-leak", {
       ...shared,
       "1.test.ts": `
@@ -2612,7 +2612,7 @@ describe.concurrent("the module mocks of a test file are undone when it ends", (
     expect(exitCode).toBe(1);
   });
 
-  test("the mocks of a preload stay", async () => {
+  test("a preload's mocks are kept", async () => {
     await expectFixturesToPass(
       {
         "preload.ts": `
@@ -2721,7 +2721,7 @@ describe.concurrent("a mocked module that exports then", () => {
     vi.doMock("./given-the-original", importOriginal => ({ a: 1, then }));
   `;
 
-  test("is to import() what a module that exports then is", async () => {
+  test("is a thenable for import(), like a real module that exports then", async () => {
     await expectFixturesToPass(
       {
         ...files,
@@ -2764,7 +2764,7 @@ describe.concurrent("a mocked module that exports then", () => {
     );
   });
 
-  test("has it like any other export for an import statement and require()", async () => {
+  test("exposes it as a plain export to import statements and require()", async () => {
     await expectFixturesToPass(
       {
         ...files,
@@ -2790,7 +2790,7 @@ describe.concurrent("a mocked module that exports then", () => {
     );
   });
 
-  test("has it read by import() and by nothing else", async () => {
+  test("has its `then` read only by import()", async () => {
     await expectFixturesToPass(
       {
         "sync.ts": ``,
@@ -2830,7 +2830,7 @@ describe.concurrent("a mocked module that exports then", () => {
     );
   });
 
-  test("gets the exports from it when a promise of the factory is resolved with them", async () => {
+  test("is unwrapped like any thenable when an async factory returns it", async () => {
     await expectFixturesToPass(
       {
         "mocked.ts": ``,
@@ -2847,7 +2847,7 @@ describe.concurrent("a mocked module that exports then", () => {
   });
 });
 
-describe.concurrent("script cannot name a module by its key", () => {
+describe.concurrent("user code can't load a module by its internal key", () => {
   const attempts = `
     export async function attempts() {
       const outcomes = [];
@@ -2956,7 +2956,7 @@ test.concurrent("a getter of a pending factory's exports that calls Bun.plugin.c
   );
 });
 
-test("the name of a module to mock has no null byte", () => {
+test("a module name containing a null byte throws", () => {
   const nameless = " requires a module name without null bytes";
   for (const name of ["/tmp/a\0b.ts", "./a\0b.ts", "\0a"]) {
     expect(() => mock.module(name, () => ({}))).toThrow("mock(module, fn)" + nameless);
@@ -2971,7 +2971,7 @@ test("the name of a module to mock has no null byte", () => {
   expect(() => mock.module("file:///tmp/a%00b.ts", () => ({}))).toThrow('Invalid "file:" URL');
 });
 
-test("two import()s at once of a mocked module do not keep the global object of the test file under --isolate", async () => {
+test("concurrent import()s of a mocked module don't leak the global object under --isolate", async () => {
   const files: Record<string, string> = { "mocked.ts": `export const a = 0;` };
   for (let i = 0; i < 8; i++) {
     files[`${i}.test.ts`] = `
@@ -3020,7 +3020,7 @@ test("two import()s at once of a mocked module do not keep the global object of 
   expect(exitCode).toBe(0);
 });
 
-describe.concurrent("a module that is being loaded when it is to be evicted", () => {
+describe.concurrent("a module that is evicted while it is still loading", () => {
   const graph = {
     "k.js": `export const x = "real";`,
     "a.js": `import { x } from "./k.js"; export const seen = x;`,
@@ -3102,7 +3102,7 @@ describe.concurrent("a module that is being loaded when it is to be evicted", ()
     expect(stderr).toContain(" 1 pass\n 0 fail\n");
     expect(exitCode).toBe(0);
   });
-  test("is what whoever waits for it gets, whatever its mock has become", async () => {
+  test("resolves the import()s waiting for it even if its mock is replaced or removed", async () => {
     await expectFixturesToPass(
       {
         ...graph,
@@ -3197,7 +3197,7 @@ describe.concurrent("a module that is being loaded when it is to be evicted", ()
       6,
     );
   });
-  test("while a plugin is pending, inside require() inside a factory, and before vi.dynamicImportSettled()", async () => {
+  test("with a pending plugin, require() in a factory, and vi.dynamicImportSettled()", async () => {
     await expectFixturesToPass(
       {
         ...graph,
@@ -3316,7 +3316,7 @@ describe.concurrent("a module that is being loaded when it is to be evicted", ()
     );
   });
 
-  test("goes when its own load has settled, whatever else is being loaded", async () => {
+  test("is dropped once its own load settles, even while other loads are pending", async () => {
     await expectFixturesToPass(
       {
         "one.js": `globalThis.one = (globalThis.one ?? 0) + 1; export const n = globalThis.one;`,
@@ -3385,7 +3385,7 @@ describe.concurrent("a module that is being loaded when it is to be evicted", ()
   });
 });
 
-describe.concurrent("the module mocks of a test file are undone when it ends: loads that are in flight", () => {
+describe.concurrent("a test file's module mocks are undone when it ends, even with loads in flight", () => {
   const modules = {
     "k.js": `export const x = "real";`,
     "slow.js": `export const s = "slow";`,
@@ -3535,7 +3535,7 @@ describe.concurrent("the module mocks of a test file are undone when it ends: lo
     expect(exitCode).toBe(1);
   });
 
-  test("a load that never settles does not keep the next file's from being evicted", async () => {
+  test("a load that never settles doesn't stop the next file's loads from being evicted", async () => {
     await expectFixturesToPass(
       {
         ...modules,
@@ -3567,7 +3567,7 @@ describe.concurrent("the module mocks of a test file are undone when it ends: lo
     );
   });
 
-  test("a load that has imported a mock and can never finish is not left for the next file", async () => {
+  test("a load that imported a mock and never finishes isn't reused by the next file", async () => {
     await expectFixturesToPass(
       {
         ...modules,
@@ -3605,7 +3605,7 @@ describe.concurrent("the module mocks of a test file are undone when it ends: lo
   });
 });
 
-describe.concurrent("the module mocks of a test file are undone when it ends: modules that import one another", () => {
+describe.concurrent("a test file's module mocks are undone when it ends, for modules that import one another", () => {
   const apis = ["vi.doMock", "mock.module", "jest.doMock"];
 
   test.each(apis)("a module that was mocked after it had imported a mock: %s", async api => {
@@ -3636,7 +3636,7 @@ describe.concurrent("the module mocks of a test file are undone when it ends: mo
   });
 
   test.each(apis)(
-    "a module this file loaded, which imports a mock that goes because of what it imports: %s",
+    "the next file gets the originals after a file mocks a loaded module and then one of its imports: %s",
     async api => {
       await expectFixturesToPass(
         {
@@ -3679,7 +3679,7 @@ describe.concurrent("the module mocks of a test file are undone when it ends: mo
   );
 
   test.each(["", "vi.resetModules();", "jest.resetModules();"])(
-    "what a preload loaded has the preload's mock back after a file has replaced it: %s",
+    "modules a preload loaded see the preload's mock again after a file replaced it: %s",
     async reset => {
       await expectFixturesToPass(
         {
@@ -3716,7 +3716,7 @@ describe.concurrent("the module mocks of a test file are undone when it ends: mo
     "vi.resetModules();",
     "jest.resetModules();",
     "for (const key of Object.keys(require.cache)) delete require.cache[key];",
-  ])("what a preload loaded has the original back after a file has patched it and evicted it: %s", async evict => {
+  ])("modules a preload loaded see the original again after a file patched and evicted it: %s", async evict => {
     await expectFixturesToPass(
       {
         "dep.js": `export const x = "real";`,
@@ -3778,7 +3778,7 @@ describe.concurrent("the module mocks of a test file are undone when it ends: mo
 });
 
 test.concurrent.each(["vi.mock", "vi.doMock", "mock.module"])(
-  "a module and one it imports, both loaded by an earlier file, are mocked with %s: the next file gets the originals",
+  "the next file gets the originals after %s mocks a loaded module and one of its imports",
   async mockIt => {
     const imports = mockIt === "vi.mock" ? `import { x } from "./k.js";` : "";
     await expectFixturesToPass(
@@ -3812,7 +3812,7 @@ test.concurrent.each(["vi.mock", "vi.doMock", "mock.module"])(
 );
 
 test.concurrent(
-  "a factory that resets the modules while it patches a loaded module: the next run of the file gets the original",
+  "the next --rerun-each run gets the original after a factory resets modules while patching a loaded one",
   async () => {
     await expectFixturesToPass(
       {
@@ -3832,7 +3832,7 @@ test.concurrent(
   },
 );
 
-test.concurrent("jest.resetModules() leaves what was imported from a mock as it is", async () => {
+test.concurrent("jest.resetModules() keeps bindings already imported from a mock", async () => {
   await expectFixturesToPass(
     {
       "dep.js": `export const x = "real"; export function f() { return "real-f"; }`,
@@ -3856,7 +3856,7 @@ test.concurrent("jest.resetModules() leaves what was imported from a mock as it 
   );
 });
 
-test.concurrent("a mock that is made from the original of a module that is imported with a type", async () => {
+test.concurrent("importOriginal() and automocks work for modules imported with a `type` attribute", async () => {
   await expectFixturesToPass(
     {
       "data.json": `{ "a": "real", "b": 1 }`,
@@ -3890,7 +3890,7 @@ test.concurrent("a mock that is made from the original of a module that is impor
 });
 
 test.concurrent(
-  "a factory that fails, and has imported its module, whose original imports itself, is called once",
+  "a failing factory that import()s its own module, whose original imports itself, is only called once",
   async () => {
     await expectFixturesToPass(
       {
@@ -3926,7 +3926,7 @@ test.concurrent(
   },
 );
 
-test.concurrent("importOriginal() fails with what a getter of the original's exports throws", async () => {
+test.concurrent("importOriginal() fails with the error a getter on the original's exports throws", async () => {
   await expectFixturesToPass(
     {
       "other.js": `export const boom = 1;`,
@@ -4011,7 +4011,7 @@ test.concurrent("a factory that require()s a module which imports an importer of
 });
 
 test.concurrent(
-  "the original of a module that imports itself, required before the async factory that asks for it is called",
+  "requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads",
   async () => {
     await expectFixturesToPass(
       {
@@ -4048,7 +4048,7 @@ test.concurrent(
 );
 
 test.concurrent(
-  "a factory that never settles does not keep the next mock of the module from the file it is written in",
+  "a factory that never settles doesn't hide the module's next mock from the file that defined the factory",
   async () => {
     await expectFixturesToPass(
       {
@@ -4102,7 +4102,7 @@ test.concurrent("evicting modules calls no accessor of module.children", async (
   );
 });
 
-describe.concurrent("a factory that is running gets what does not wait for its mock", () => {
+describe.concurrent("a running factory's imports don't wait for its own mock", () => {
   test("after it has removed its mock, or all of them", async () => {
     await expectFixturesToPass(
       {
@@ -4132,7 +4132,7 @@ describe.concurrent("a factory that is running gets what does not wait for its m
     );
   });
 
-  test("while another is running that asks for a module which waits for this one's mock", async () => {
+  test("while another running factory imports a module that waits for this one's mock", async () => {
     await expectFixturesToPass(
       {
         "two.js": `import "./three.js"; import "./four.js"; export { c } from "./five.cjs";`,
@@ -4153,7 +4153,7 @@ describe.concurrent("a factory that is running gets what does not wait for its m
     );
   });
 
-  test("through a mock that is made from an original which imports the module", async () => {
+  test("through another mock whose original imports the mocked module", async () => {
     await expectFixturesToPass(
       {
         "k.js": `export const x = "real";`,
@@ -4174,7 +4174,7 @@ describe.concurrent("a factory that is running gets what does not wait for its m
 });
 
 test.concurrent(
-  "jest.resetModules() in the factory of a mock that replaces another does not keep the mock from being made",
+  "a factory that replaces an earlier mock and calls jest.resetModules() still installs its own mock",
   async () => {
     await expectFixturesToPass(
       {
@@ -4195,7 +4195,7 @@ test.concurrent(
 );
 
 describe.concurrent("a test file that has mocked modules", () => {
-  test("does not keep the modules that imported a mock once it has ended", async () => {
+  test("doesn't leak the modules that imported a mock after it ends", async () => {
     const files: Record<string, string> = { "dep.js": `export const x = "real";` };
     for (let i = 0; i < 20; i++)
       files[`m${i}.js`] =
@@ -4219,7 +4219,7 @@ describe.concurrent("a test file that has mocked modules", () => {
     await expectFixturesToPass(files, 13);
   });
 
-  test("is loaded once, and has what it exported for the files after it", async () => {
+  test("isn't evaluated again when a later file imports it, and keeps its exports", async () => {
     await expectFixturesToPass(
       {
         "dep.js": `export const x = "real";`,
@@ -4256,7 +4256,7 @@ describe.concurrent("a module that is being fetched as a mock whose factory has 
     ["removed", () => vi.doUnmock("./k.js"), "real"],
     ["replaced", () => vi.doMock("./k.js", () => ({ x: "second" })), "second"],
   ]`;
-  test("is what it is now for whoever imports it once the mock is removed or replaced", async () => {
+  test("loads as the real module or the new mock once the mock is removed or replaced", async () => {
     await expectFixturesToPass(
       {
         "k.js": `export const x = "real";`,
@@ -4299,7 +4299,7 @@ describe.concurrent("a module that is being fetched as a mock whose factory has 
 });
 
 test.concurrent(
-  "a mock made from its original is made from the copy of it that a running factory is given",
+  "an automock is built from the copy of its original module that a running factory was given",
   async () => {
     await expectFixturesToPass(
       {
@@ -4348,7 +4348,7 @@ test.concurrent("a module that imports a mock whose factory has failed with the 
   );
 });
 
-describe.concurrent("what a preload has loaded and a test file evicts is back for the next file", () => {
+describe.concurrent("modules a preload loaded and a test file evicted are restored for the next file", () => {
   const files = {
     "preload.js": `
       import * as helper from "./helper.js";
@@ -4391,7 +4391,7 @@ describe.concurrent("what a preload has loaded and a test file evicts is back fo
 });
 
 test.concurrent(
-  "a module that is imported under two types is mocked, mocked again and not mocked under both",
+  "a module imported with and without a `type` attribute is mocked, re-mocked and unmocked for both imports",
   async () => {
     await expectFixturesToPass(
       {
@@ -4421,7 +4421,7 @@ test.concurrent(
 );
 
 test.concurrent(
-  "a mock that script has deleted from require.cache does not reach the next file through what imported it",
+  "a mock deleted from require.cache by user code doesn't reach the next file through its importers",
   async () => {
     await expectFixturesToPass(
       {
@@ -4449,7 +4449,7 @@ test.concurrent(
 );
 
 describe.concurrent(
-  "a factory waits for what is being fetched for the importers of its mock, and for nothing else",
+  "a factory only waits for the fetches of the modules that import its mock, not for unrelated loads",
   () => {
     const files = {
       "k.js": `export const x = "real";`,
@@ -4485,7 +4485,7 @@ describe.concurrent(
       );
     });
 
-    test("a fetch that a test file leaves behind for ever does not keep the mocks of the next file from loading", async () => {
+    test("a fetch that never settles in one file doesn't block the next file's mocks", async () => {
       await expectFixturesToPass(
         {
           ...files,
@@ -4532,7 +4532,7 @@ describe.concurrent(
       );
     });
 
-    test("a factory that imports what another load is fetching gets a copy of it", async () => {
+    test("a factory that imports a module another load is fetching gets its own copy", async () => {
       await expectFixturesToPass(
         {
           ...files,
@@ -4699,8 +4699,8 @@ describe.concurrent("vi.mock() with an async factory, of a module that is loaded
   });
 });
 
-describe.concurrent("what a preload has loaded, after a test file that evicts it", () => {
-  test("is linked as it was: a module that imports it is linked to all that it imports", async () => {
+describe.concurrent("a module that a preload loaded, after a test file evicts it", () => {
+  test("is the same instance, and a new importer still links to all of its re-exports", async () => {
     await expectFixturesToPass(
       {
         "variable.js": `export const four = 4;`,
@@ -4728,7 +4728,7 @@ describe.concurrent("what a preload has loaded, after a test file that evicts it
     );
   });
 
-  test("and has failed to link in the preload, fails to link again", async () => {
+  test("fails to link again if it failed to link in the preload", async () => {
     await expectFixturesToPass(
       {
         "empty.js": `export {};`,
@@ -4753,7 +4753,7 @@ describe.concurrent("what a preload has loaded, after a test file that evicts it
   });
 
   test.each(["jest.doMock", "mock.module", "vi.doMock"])(
-    "a CommonJS module that %s() has patched has its exports back",
+    "a CommonJS module that %s() patched gets its exports back",
     async mock => {
       await expectFixturesToPass(
         {
@@ -4783,7 +4783,7 @@ describe.concurrent("what a preload has loaded, after a test file that evicts it
   );
 
   test.each(["jest.doMock", "mock.module", "vi.doMock"])(
-    "what require() made of the mock that %s() put in the place of the preload's is not kept",
+    "require() returns the preload's mock again after %s() replaced it in a test file",
     async mock => {
       await expectFixturesToPass(
         {
@@ -4816,7 +4816,7 @@ describe.concurrent("what a preload has loaded, after a test file that evicts it
 });
 
 test.concurrent(
-  "a preload's mock is the preload's again after a test file that calls jest.resetModules()",
+  "a preload's mock is restored, without calling its factory again, after files reset modules and replace it",
   async () => {
     await expectFixturesToPass(
       {
@@ -4885,7 +4885,7 @@ describe.concurrent("a CommonJS module that a preload has loaded", () => {
     },
   );
 
-  test("is the preload's still after a test file has imported it, and reset", async () => {
+  test("is still the preload's instance after a test file imports it and resets modules", async () => {
     await expectFixturesToPass(
       {
         "store.cjs": `exports.id = globalThis.stores = (globalThis.stores ?? 0) + 1;`,
@@ -5034,7 +5034,7 @@ describe.concurrent("a test file mocks a module that a preload has loaded", () =
           async: ["file", "who", "file", "real"],
         },
       ],
-    ])("with vi.mock(): what the preload has loaded %s stays as it is", async (_, preloadMocks, rows) => {
+    ])("with vi.mock(), modules the preload loaded %s are left as they are", async (_, preloadMocks, rows) => {
       await expectFixturesToPass(fixture("vi", preloadMocks, rows), 9, ["--preload", "./preload.js", ...isolate]);
     });
 
@@ -5065,14 +5065,14 @@ describe.concurrent("a test file mocks a module that a preload has loaded", () =
           async: ["file", "other,who", "file", "file"],
         },
       ],
-    ])("with jest.mock(): the mock reaches what the preload has loaded %s", async (_, preloadMocks, rows) => {
+    ])("with jest.mock(), the mock reaches modules the preload loaded %s", async (_, preloadMocks, rows) => {
       await expectFixturesToPass(fixture("jest", preloadMocks, rows), 9, ["--preload", "./preload.js", ...isolate]);
     });
 
     test.each<[string, boolean, string]>([
       ["and mocked", true, "preload"],
       ["and not mocked", false, "real"],
-    ])("with mock.module(): the mock reaches what the preload has loaded %s", async (_, preloadMocks, preloaded) => {
+    ])("with mock.module(), the mock reaches modules the preload loaded %s", async (_, preloadMocks, preloaded) => {
       const rows: Rows = {
         factory: ["file", "other,who", "file", "file"],
         none: [preloaded, "other,who", preloaded, preloaded],
@@ -5090,7 +5090,7 @@ describe.concurrent("vi.doMock() of a module that a preload has loaded and the f
     ["jest.doMock", "dep.js"],
     ["mock.module", "dep.cjs"],
     ["jest.doMock", "dep.cjs"],
-  ])("with %s(): the patch of %s is taken back", async (patch, dep) => {
+  ])("with %s(), undoes the patch of %s", async (patch, dep) => {
     await expectFixturesToPass(
       {
         "dep.js": `export const a = "real";`,

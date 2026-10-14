@@ -121,7 +121,7 @@ function verdicts(stderr: string) {
 }
 
 describe.concurrent("test environment", () => {
-  test("vitest's comment is found where vitest finds it, Jest's where Jest does", async () => {
+  test("environment comments are detected exactly where vitest and Jest detect theirs", async () => {
     // Expected values come from vitest 5.0.3's `detectCodeBlock` and jest-docblock 30's `extract` on the same text.
     const comments: Record<string, [text: string, environment: string]> = {
       "line": [`// ${VITEST} jsdom\n`, "jsdom#1"],
@@ -277,7 +277,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.each(["edge-runtime", "", "JSDOM"])("--environment=%s is refused", async name => {
+    test.each(["edge-runtime", "", "JSDOM"])("--environment=%s is rejected", async name => {
       using dir = tempDir("test-environment", files);
       const { stdout, stderr, exitCode } = await bunTest(String(dir), `--environment=${name}`);
       expect({ stdout, stderr, exitCode }).toEqual({
@@ -290,7 +290,7 @@ describe.concurrent("test environment", () => {
     test.each([
       [`"edge-runtime"`, `expected "environment" to be "node", "jsdom" or "happy-dom" but received "edge-runtime"`],
       [`true`, `expected string but received boolean`],
-    ])("environment = %s in bunfig.toml is refused", async (value, message) => {
+    ])("environment = %s in bunfig.toml is rejected", async (value, message) => {
       using dir = tempDir("test-environment", { ...files, "bunfig.toml": `[test]\nenvironment = ${value}\n` });
       const { stdout, stderr, exitCode } = await bunTest(String(dir));
       expect(stderr).toContain(`error: ${message}`);
@@ -299,7 +299,7 @@ describe.concurrent("test environment", () => {
     });
   });
 
-  test("the package is the one the test file resolves", async () => {
+  test("the package is resolved from the test file", async () => {
     using dir = tempDir("test-environment", {
       "packages/a/node_modules/happy-dom/package.json": fakePackages["node_modules/happy-dom/package.json"],
       "packages/a/node_modules/happy-dom/index.js": fakePackages["node_modules/happy-dom/index.js"],
@@ -317,7 +317,7 @@ describe.concurrent("test environment", () => {
   });
 
   // Only a warning, because `bun test` ignored these comments for years and migrated suites still have them.
-  describe("a comment that cannot be followed is a warning, and the file runs without an environment", () => {
+  describe("an environment comment that fails to set up only warns, and the file runs without one", () => {
     test.each(["jsdom", "happy-dom"])("%s is not installed", async name => {
       using dir = tempDir("test-environment", {
         "a.test.js": `// ${VITEST} ${name}\n${logEnvironment}`,
@@ -435,7 +435,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("a package that cannot be required is the same for every file", async () => {
+    test("a package that require() can't load warns the same way for every file", async () => {
       using dir = tempDir("test-environment", {
         "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.mjs" }),
         "node_modules/happy-dom/index.mjs": `await 0;\nexport class Window {}`,
@@ -451,7 +451,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("--isolate: a preload that registers a DOM of its own still does", async () => {
+    test("a preload that registers its own DOM still works under --isolate", async () => {
       using dir = tempDir("test-environment", {
         "preload.js": `globalThis.document = { body: {} }; globalThis.environment = "preloaded";`,
         "1.test.js": `/** ${JEST} jsdom */\n${logEnvironment}`,
@@ -465,7 +465,7 @@ describe.concurrent("test environment", () => {
     });
   });
 
-  describe("the project's environment that cannot be set up fails the file, and the run goes on", () => {
+  describe("a project environment that fails to set up fails the file but not the run", () => {
     test.each([
       ["jsdom", ["--environment=jsdom"], ""],
       ["happy-dom", ["--environment=happy-dom"], ""],
@@ -486,7 +486,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("the options of a file are not JSON", async () => {
+    test("a file's options are not JSON", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,
         "bad.test.js": `// ${VITEST}-options { url: 1 }\n${logEnvironment}`,
@@ -535,7 +535,7 @@ describe.concurrent("test environment", () => {
       )
     `;
 
-    test("every global is put back after a file", async () => {
+    test("every global is restored after a file", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,
         // Reading a lazy global's descriptor turns it into a plain property, so read them all before comparing.
@@ -613,7 +613,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("what a file assigns or defines is there for the next file of that environment only", async () => {
+    test("window changes carry over only to later files of the same environment", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,
         "1.test.js": `// ${VITEST} happy-dom
@@ -656,7 +656,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("a global that cannot be redefined is left alone", async () => {
+    test("a non-configurable global is left alone", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,
         "preload.js": `Object.defineProperty(globalThis, "localStorage", { value: "preloaded" });`,
@@ -683,7 +683,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("whatever a file leaves patched", async () => {
+    test("switching environments works even if a file leaves builtins patched", async () => {
       // Each file undoes the patches first thing, so only the runner's work between two files sees them.
       const patches = `
         import { afterAll } from "bun:test";
@@ -738,7 +738,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("an environment that cannot be set up whole is not set up at all", async () => {
+    test("an environment that can't be fully set up is rolled back", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,
         "1.test.js": `
@@ -778,7 +778,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("the rest of an environment is taken away after a property that cannot be put back", async () => {
+    test("tears down the rest of the environment when one global can't be restored", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,
         "1.test.js": `// ${VITEST} happy-dom
@@ -798,7 +798,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("a window that a file closed is not the next file's", async () => {
+    test("a window closed by a file isn't reused for the next file", async () => {
       const closable = (name: "jsdom" | "happy-dom", window: string) => ({
         [`node_modules/${name}/index.js`]: `${fakePackages[`node_modules/${name}/index.js`]}
           const Original = exports.${window};
@@ -835,7 +835,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("assigning to a global that the window does not let be assigned", async () => {
+    test("assigning to a global works even if the window's property is read-only", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,
         "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
@@ -948,7 +948,7 @@ describe.concurrent("test environment", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a window that fails to close is an error of its file", async () => {
+  test("a window that fails to close is reported as an error", async () => {
     using dir = tempDir("test-environment", {
       ...fakePackages,
       "node_modules/jsdom/index.js": `${fakePackages["node_modules/jsdom/index.js"]}
@@ -983,7 +983,7 @@ describe.concurrent("test environment", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("a window that never finishes closing is an error of its file", async () => {
+  test("a window that never finishes closing is reported as an error", async () => {
     using dir = tempDir("test-environment", {
       ...fakePackages,
       "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
@@ -1012,7 +1012,7 @@ describe.concurrent("test environment", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("a window has as long as a hook to close", async () => {
+  test("--timeout also limits how long a window may take to close", async () => {
     using dir = tempDir("test-environment", {
       ...fakePackages,
       "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
@@ -1092,7 +1092,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("without --isolate, a first file with options of its own", async () => {
+    test("without --isolate, a first file with its own options gets a separate window", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,
         "preload.js": preload,
@@ -1148,7 +1148,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("what it defines on the window is there for every file", async () => {
+    test("window properties it defines are kept for every file in that environment", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,
         "preload.js": `Object.defineProperty(window, "matchMedia", { writable: true, value: () => "mocked" });`,
@@ -1167,7 +1167,7 @@ describe.concurrent("test environment", () => {
     });
 
     // The setup docs/test/dom.mdx has long recommended, in a project that kept its old runner's comments.
-    test("that registers a DOM of its own keeps it", async () => {
+    test("that registers its own DOM wins over environment comments", async () => {
       using dir = tempDir("test-environment", {
         "preload.js": `globalThis.document = { body: {} }; globalThis.environment = "preloaded";`,
         "1.test.js": `// ${JEST} jsdom\n${logEnvironment}`,
@@ -1373,7 +1373,7 @@ describe.concurrent("test environment with the real", () => {
   });
 
   // jsdom drops errors raised while it's already reporting one, so the next test must not start inside that report.
-  test("jsdom: an error that ends a test does not hide those of the next test", async () => {
+  test("jsdom: an error that ends a test doesn't hide the next test's errors", async () => {
     using dir = project({
       "a.test.js": `// ${VITEST} jsdom
         import { test } from "bun:test";
@@ -1485,7 +1485,7 @@ describe.concurrent("test environment with the real", () => {
       expect(exitCode).toBe(1);
     });
 
-    test("an error event of an element only if it bubbles up to the window, as in vitest", async () => {
+    test("an element's error event only counts if it bubbles to the window, as in vitest", async () => {
       const events: [code: string, isReported: boolean][] = [
         [`element.dispatchEvent(new Event("error"));`, false],
         [`element.dispatchEvent(new ErrorEvent("error", { error }));`, false],
@@ -1532,7 +1532,7 @@ describe.concurrent("test environment with the real", () => {
       expect(exitCode).toBe(1);
     });
 
-    test.each([[[]], [["--isolate"]]])("a listener of a preload is one of every file %j", async flags => {
+    test.each([[[]], [["--isolate"]]])("a preload's error listener counts for every file %j", async flags => {
       const file = `// ${VITEST} jsdom
         import { test } from "bun:test";
         ${throwInListener}
@@ -1571,7 +1571,7 @@ describe.concurrent("test environment with the real", () => {
     });
   });
 
-  describe("a window that a file closed", () => {
+  describe("a window closed by a file", () => {
     const file = (name: string, code: string) => `// ${VITEST} ${name}
       import { test, expect } from "bun:test";
       test("${name}", () => {
@@ -1580,7 +1580,7 @@ describe.concurrent("test environment with the real", () => {
         ${code}
       });`;
 
-    test("is not the next file's", async () => {
+    test("isn't reused for the next file", async () => {
       using dir = project({
         "1.test.js": file("jsdom", "window.close();"),
         "2.test.js": file("jsdom", ""),
@@ -1593,7 +1593,7 @@ describe.concurrent("test environment with the real", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.each([[[]], [["--isolate"]]])("is not the next run's of --rerun-each %j", async flags => {
+    test.each([[[]], [["--isolate"]]])("isn't reused for the next --rerun-each run %j", async flags => {
       using dir = project({
         "1.test.js": file("jsdom", "window.close();"),
         "2.test.js": file("happy-dom", "window.close();"),

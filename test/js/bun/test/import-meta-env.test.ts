@@ -64,7 +64,7 @@ describe("import.meta.env in a test file", () => {
     }
   });
 
-  test("is one object, and not process.env", () => {
+  test("is a single object, distinct from process.env", () => {
     expect(env === process.env).toBe(false);
     expect(env === import.meta.env).toBe(true);
     expect(Bun.env === process.env).toBe(true);
@@ -86,7 +86,7 @@ describe("import.meta.env in a test file", () => {
     }
   });
 
-  test("lists them after the names of process.env, once", () => {
+  test("lists Vite's variables once, after process.env's names", () => {
     const names = Object.keys(process.env);
     expect(Bun.deepEquals(Object.keys(env), [...names, ...viteVariables])).toBe(true);
     process.env.MODE = "staging";
@@ -108,7 +108,7 @@ describe("import.meta.env in a test file", () => {
     expect("IMPORT_META_ENV_TEST_B" in env).toBe(false);
   });
 
-  test("a write has the effect it has on process.env", () => {
+  test("a write has the same side effects as a write to process.env", () => {
     const date = new Date("2020-01-01T00:00:00.000Z");
     const before = process.env.TZ;
     try {
@@ -156,7 +156,7 @@ describe("import.meta.env in a test file", () => {
       expect(env[name]).toBe(read);
     });
 
-    test("has its default again once it is deleted", () => {
+    test("goes back to its default once deleted", () => {
       const initial = env[name];
       env[name] = !initial;
       expect(env[name]).toBe(!initial);
@@ -168,7 +168,7 @@ describe("import.meta.env in a test file", () => {
   test.each([
     ["MODE", "test"],
     ["BASE_URL", "/"],
-  ])("%s is a string, process.env's if it has one", (name, initial) => {
+  ])("%s is a string, taken from process.env when set there", (name, initial) => {
     env[name] = true;
     expect([process.env[name], env[name]]).toEqual(["true", "true"]);
     process.env[name] = "";
@@ -177,7 +177,7 @@ describe("import.meta.env in a test file", () => {
     expect(env[name]).toBe(initial);
   });
 
-  test("DEV and PROD do not follow a NODE_ENV or MODE that a test assigns", () => {
+  test("DEV and PROD don't change when a test assigns NODE_ENV or MODE", () => {
     const before = process.env.NODE_ENV;
     try {
       process.env.NODE_ENV = "production";
@@ -251,7 +251,7 @@ describe("import.meta.env in a test file", () => {
       expect(Bun.inspect(env, { sorted: true })).toBe("ImportMetaEnv " + Bun.inspect(whole, { sorted: true }));
     });
 
-    test("a snapshot has the variables of process.env", () => {
+    test("a snapshot includes process.env's variables", () => {
       expect(env).toMatchInlineSnapshot(`
         ImportMetaEnv {
           "BASE_URL": "/",
@@ -303,7 +303,7 @@ describe("import.meta.env in a test file", () => {
       ).toContain('"GREETING": "goodbye"');
     });
 
-    test("a snapshot of Vite's variables alone does not match once there is another", () => {
+    test("a snapshot of only Vite's variables stops matching once another variable is set", () => {
       process.env = { ADDED: "1" };
       expect(
         messageOf(() =>
@@ -320,13 +320,13 @@ describe("import.meta.env in a test file", () => {
       ).toContain('"ADDED": "1"');
     });
 
-    test("the message of a failed matcher has the variables of process.env", () => {
+    test("a failed matcher's message includes process.env's variables", () => {
       expect(messageOf(() => expect(env).toEqual({}))).toContain('"GREETING": "hello"');
       expect(messageOf(() => expect<unknown>({ nested: env }).toStrictEqual({}))).toContain('"GREETING": "hello"');
     });
 
     // The cell stores no properties, so native code that skips getOwnPropertySlot would see an empty object.
-    describe("is to every API what an ordinary object with the same properties is", () => {
+    describe("behaves like a plain object with the same properties", () => {
       const defaults = { DEV: false, BASE_URL: "/", MODE: "test", PROD: false, SSR: true };
       const unnamed = (printed: string) => printed.replaceAll("ImportMetaEnv ", "");
       const outcome = (matcher: () => void) => unnamed(messageOf(matcher));
@@ -468,7 +468,7 @@ describe("import.meta.env in a test file", () => {
       });
     });
 
-    test("structuredClone refuses it", () => {
+    test("structuredClone throws a DataCloneError", () => {
       expect(() => structuredClone(env)).toThrow(expect.objectContaining({ name: "DataCloneError" }));
     });
 
@@ -489,7 +489,7 @@ describe("import.meta.env in a test file", () => {
       expect(env.HIDDEN).toBe("secret");
     });
 
-    test("a variable of Vite's that process.env has and does not enumerate is not enumerated", () => {
+    test("a Vite variable that's non-enumerable on process.env isn't enumerated", () => {
       Object.defineProperty(process.env, "MODE", { value: "hidden", configurable: true });
       const { MODE, ...enumerable } = whole;
       const names: string[] = [];
@@ -511,7 +511,7 @@ describe("import.meta.env in a test file", () => {
       expect(env.MODE).toBe("hidden");
     });
 
-    test("an accessor runs on process.env, and only its result is seen", () => {
+    test("a process.env accessor runs with process.env as `this` and reads as a data property", () => {
       const receivers: unknown[] = [];
       Object.defineProperty(process.env, "COMPUTED", {
         get() {
@@ -540,7 +540,7 @@ describe("import.meta.env in a test file", () => {
       ]);
     });
 
-    test("a function is not a variable", () => {
+    test("a function value on process.env isn't treated as a variable", () => {
       process.env.toJSON = (() => ({ replaced: true })) as any;
       process.env.MODE = (() => {}) as any;
       expect([env.toJSON, "toJSON" in env, env.MODE]).toEqual([undefined, false, "test"]);
@@ -581,14 +581,14 @@ describe("import.meta.env in a test file", () => {
     });
   });
 
-  test("a symbol is refused as process.env refuses it", () => {
+  test("assigning a symbol key throws, as on process.env", () => {
     expect(() => {
       env[Symbol("key")] = "value";
     }).toThrow(TypeError);
     expect(env[Symbol("key")]).toBeUndefined();
   });
 
-  test("an index is a variable of process.env", () => {
+  test("an index key is stored in process.env", () => {
     try {
       env[70707] = 1;
       expect([process.env[70707], env[70707]]).toEqual(["1", "1"]);
@@ -608,7 +608,7 @@ describe("import.meta.env in a test file", () => {
     expect(String(env)).toBe("[object Object]");
   });
 
-  test("Object.defineProperty is process.env's", () => {
+  test("Object.defineProperty follows process.env's rules", () => {
     Object.defineProperty(env, "IMPORT_META_ENV_TEST_A", {
       value: 1,
       writable: true,
@@ -636,7 +636,7 @@ describe("import.meta.env in a test file", () => {
     expect(process.env.IMPORT_META_ENV_TEST_A).toBe("still writable");
   });
 
-  test("a function that has read it many times sees what changes", () => {
+  test("a function that has read it many times still sees later changes", () => {
     const read = () => [import.meta.env.DEV, import.meta.env.MODE, "IMPORT_META_ENV_TEST_A" in import.meta.env];
     for (let i = 0; i < 10_000; i++) read();
     expect<unknown>(read()).toEqual([true, "test", false]);
@@ -665,7 +665,7 @@ describe("import.meta.env in a test file", () => {
   });
 
   // On Windows process.env is a Proxy whose set trap ignores the prototype chain.
-  test.skipIf(isWindows)("as the prototype of process.env, a new variable is a RangeError", () => {
+  test.skipIf(isWindows)("as the prototype of process.env, setting a new variable throws a RangeError", () => {
     Object.setPrototypeOf(realEnv, env);
     try {
       expect<unknown>([realEnv.MODE, realEnv.DEV, realEnv.IMPORT_META_ENV_TEST_A]).toEqual(["test", true, undefined]);
@@ -682,7 +682,7 @@ describe("import.meta.env in a test file", () => {
     expect(realEnv.IMPORT_META_ENV_TEST_A).toBe("value");
   });
 
-  test("a write to an object that inherits from it is that object's", () => {
+  test("a write to an object that inherits from it stays on that object", () => {
     const child = Object.create(env);
     expect([child.MODE, child.DEV]).toEqual(["test", true]);
     child.DEV = false;
@@ -778,7 +778,7 @@ describe("import.meta.env in a test file", () => {
       expect(stored()).toBe("");
     });
 
-    test("Error.captureStackTrace, which does not write to process.env, is refused", () => {
+    test("Error.captureStackTrace, which doesn't write to process.env, throws", () => {
       expect(() => Error.captureStackTrace(env)).toThrow("invalid_argument");
       expect(stored()).toBe("");
     });
@@ -826,7 +826,7 @@ describe("import.meta.env in a test file", () => {
         expect(stored()).toBe("");
       });
 
-      test("of a variable of Vite's that process.env does not have", () => {
+      test("of a Vite variable that is not set in process.env itself", () => {
         if (refuses(environment)) {
           expect(() => spy("MODE")).toThrow(refusal);
         } else {
@@ -847,7 +847,7 @@ describe("import.meta.env in a test file", () => {
       });
 
       test.each(["get", "set"])(
-        "of the %ster of a variable of Vite's that process.env does not have throws",
+        "of the %ster of a Vite variable that is not set in process.env itself throws",
         access => {
           expect(() => spy("MODE", access)).toThrow(
             "spyOn(target, prop, accessType) expects target to have the property `MODE`",
@@ -897,7 +897,7 @@ describe("import.meta.env in a test file", () => {
       });
     });
 
-    test("stays on the object that process.env was", () => {
+    test("stays on the old object when process.env is replaced", () => {
       const first: Record<string, string | undefined> = (process.env = { [name]: "first" });
       const spied = spy(name).mockReturnValue("mocked");
       process.env = { [name]: "second" };
@@ -958,7 +958,7 @@ describe("import.meta.env in a test file", () => {
     });
 
     // Models Windows, where process.env is a Proxy and TZ is a getter like this one.
-    test("a Proxy whose target has a getter that only answers the target", () => {
+    test("a Proxy whose target has a getter that only works with the target as `this`", () => {
       const target = {
         get ONLY_THE_TARGET() {
           return this === target ? "value" : undefined;
@@ -968,7 +968,7 @@ describe("import.meta.env in a test file", () => {
       expect([process.env.ONLY_THE_TARGET, env.ONLY_THE_TARGET]).toEqual(["value", "value"]);
     });
 
-    test("a Proxy of import.meta.env, every operation is a RangeError", () => {
+    test("a Proxy of import.meta.env, every operation throws a RangeError", () => {
       process.env = new Proxy(env, {});
       expect(() => env.MODE).toThrow(RangeError);
       expect(() => "MODE" in env).toThrow(RangeError);
@@ -1072,7 +1072,7 @@ describe("import.meta.env in a test file", () => {
     });
   });
 
-  test("a document that cannot be looked for", () => {
+  test("reading SSR rethrows an error thrown while looking up document", () => {
     const error = new Error("no document");
     const prototype = Object.getPrototypeOf(globalThis);
     Object.setPrototypeOf(
@@ -1125,7 +1125,7 @@ describe.concurrent("import.meta.env", () => {
     expect(await run(String(dir), ["test"], variables)).toEqual({ printed: [expected], failures: [], exitCode: 0 });
   });
 
-  test.each([[[]], [["--isolate"]]])("a spy that a file leaves on it is not the next file's %j", async flags => {
+  test.each([[[]], [["--isolate"]]])("a spy a file leaves on it doesn't leak into the next file %j", async flags => {
     using dir = tempDir("import-meta-env", {
       // Copies process.env because the real one can't be spied on on Windows.
       "a.test.ts": `
@@ -1154,7 +1154,7 @@ describe.concurrent("import.meta.env", () => {
     });
   });
 
-  test("the variables of a .env file count", async () => {
+  test("variables from .env files are used", async () => {
     using dir = tempDir("import-meta-env", {
       ".env": "MODE=from-dotenv\nPROD=1\n",
       ".env.test": "BASE_URL=/from-dotenv-test/\nSSR=\n",
@@ -1174,7 +1174,7 @@ describe.concurrent("import.meta.env", () => {
       { "bunfig.toml": `[define]\n"import.meta.env.MODE" = "'defined'"\n"import.meta.env.DEV" = "0"\n` },
       [],
     ],
-  ])("%s comes first", async (_, files, args) => {
+  ])("%s takes precedence", async (_, files, args) => {
     using dir = tempDir("import-meta-env", {
       ...files,
       "variables.test.ts": `
@@ -1215,7 +1215,7 @@ describe.concurrent("import.meta.env", () => {
   });
 
   test.each([[["--isolate"]], [["--parallel=2"]], [[]]])(
-    "bun test %j: what a file leaves is not the next file's",
+    "bun test %j: changes a file makes don't leak into the next file",
     async args => {
       const file = `
       import { test, vi } from "bun:test";
@@ -1237,7 +1237,7 @@ describe.concurrent("import.meta.env", () => {
     },
   );
 
-  test("--isolate: every global has one, made when it is first read, that goes with the global", async () => {
+  test("is created lazily, once per global, and collected with its global under --isolate", async () => {
     const count = `
       import { heapStats } from "bun:jsc";
       Bun.gc(true);
@@ -1302,7 +1302,7 @@ describe.concurrent("import.meta.env", () => {
     });
   });
 
-  test("given to a child process as its environment, it has Vite's variables", async () => {
+  test("passed as a child process's env, it includes Vite's variables", async () => {
     using dir = tempDir("import-meta-env", {
       "child.ts": `console.log("@" + JSON.stringify(["BASE_URL", "MODE", "DEV", "PROD", "SSR"].map(name => process.env[name])));`,
       "parent.test.ts": `
@@ -1352,7 +1352,7 @@ describe.concurrent("import.meta.env", () => {
   });
 
   // Covers Windows, where process.env has its own toJSON and Bun.inspect.custom.
-  test("the real environment is shown with Vite's variables", async () => {
+  test("JSON.stringify and Bun.inspect show the real environment plus Vite's variables", async () => {
     using dir = tempDir("import-meta-env", {
       "shown.test.ts": `
         const json = JSON.parse(JSON.stringify(import.meta.env));

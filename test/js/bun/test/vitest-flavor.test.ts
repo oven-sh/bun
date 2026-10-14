@@ -79,7 +79,7 @@ describe.concurrent("test context", () => {
     });
   });
 
-  test("is a function, which tells a test that was written for a done callback so", async () => {
+  test("is callable, and calling it like done() throws a deprecation error", async () => {
     const { log, results, errors, exitCode } = await runTests({
       "a.test.js": `
         import { test, beforeEach } from "vitest";
@@ -117,7 +117,7 @@ describe.concurrent("test context", () => {
     });
   });
 
-  test("is one object for the hooks, the test, its retries and its repeats", async () => {
+  test("is the same object in the hooks, the test, its retries and its repeats", async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
         import { test, beforeEach, afterEach, onTestFinished, onTestFailed } from "vitest";
@@ -209,7 +209,7 @@ describe.concurrent("test context", () => {
     });
   });
 
-  test("task.result follows the test", async () => {
+  test("task.result is updated as the test runs", async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
         import { test, beforeEach, afterEach, expect, onTestFinished, onTestFailed } from "vitest";
@@ -503,7 +503,7 @@ describe.concurrent("test context", () => {
     });
   });
 
-  test("expect belongs to its test, also among concurrent tests", async () => {
+  test("expect is bound to its test, even among concurrent tests", async () => {
     const { log, results, stderr, exitCode } = await runTests(
       {
         "a.test.js": `
@@ -773,7 +773,7 @@ describe.concurrent("each and for", () => {
   });
 
   // The "vitest" titles come from Vitest 5.0.3. There are more in snapshot-tests/formats/vitest/titles.fixture.ts.
-  test("titles: values are printed as Vitest prints them, and as before by the other modules", async () => {
+  test(`titles: "vitest" formats values like Vitest, the other modules keep Bun's format`, async () => {
     const file = (module: string) => `
       import { test, expect } from "${module}";
       const digits = count => Buffer.alloc(count, "0123456789").toString();
@@ -965,7 +965,7 @@ describe.concurrent("each and for", () => {
   });
 
   for (const module of ["vitest", "bun:test"]) {
-    test(`for, from "${module}": the row is one argument, the context the next`, async () => {
+    test(`test.for from "${module}" passes the row as one argument, then the context`, async () => {
       const { log, results, exitCode } = await runTests({
         "a.test.js": `
           import { test, it, describe } from "${module}";
@@ -1102,7 +1102,7 @@ describe.concurrent("each and for", () => {
     });
   });
 
-  test.each(["vitest", "bun:test", "@jest/globals"])("%%s of a Proxy whose traps lead nowhere: %s", async module => {
+  test.each(["vitest", "bun:test", "@jest/globals"])("%%s of a Proxy whose traps loop or throw: %s", async module => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
         import { test } from ${JSON.stringify(module)};
@@ -1185,7 +1185,7 @@ describe.concurrent("hooks", () => {
   });
 
   for (const module of ["bun:test", "@jest/globals"]) {
-    test(`those of "${module}" still run in the order they were registered`, async () => {
+    test(`the after-hooks of "${module}" run in registration order`, async () => {
       const { log, exitCode } = await runTests({ "a.test.js": hooks(module) });
       expect({ log, exitCode }).toEqual({
         log: [
@@ -1204,7 +1204,7 @@ describe.concurrent("hooks", () => {
     });
   }
 
-  test("of both kinds in one scope: vitest's first, last registered first, then the others in order", async () => {
+  test("with both kinds in one scope, vitest's run first in reverse order, then the others", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `
         import * as vitest from "vitest";
@@ -1414,7 +1414,7 @@ describe.concurrent("hooks", () => {
     });
   });
 
-  test(`what beforeEach of "bun:test" returns is ignored`, async () => {
+  test(`beforeAll and beforeEach from "bun:test" ignore a returned function`, async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `
         import { test, beforeAll, beforeEach } from "bun:test";
@@ -1472,8 +1472,8 @@ describe.concurrent("hooks", () => {
   });
 });
 
-describe.concurrent("behaviour follows the function", () => {
-  test(`no context is made for the tests of "bun:test", and no signal for a test of "vitest" that does not read it`, async () => {
+describe.concurrent("behavior depends on the module a function is imported from", () => {
+  test(`"bun:test" tests get no context and "vitest" tests get no signal until they read it`, async () => {
     const file = (module: string) => `
       import { test, beforeEach, afterEach } from "${module}";
       import { heapStats } from "bun:jsc";
@@ -1524,7 +1524,7 @@ describe.concurrent("behaviour follows the function", () => {
     });
   });
 
-  test("modifiers keep the flavour", async () => {
+  test("modifiers keep the flavor", async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
         import { test, it, describe, xtest, xit, xdescribe } from "vitest";
@@ -1567,7 +1567,7 @@ describe.concurrent("behaviour follows the function", () => {
     });
   });
 
-  test("a helper module gives its own flavour to the file that uses it", async () => {
+  test("tests and hooks registered by a helper module keep the helper's flavor", async () => {
     const { log, results, exitCode } = await runTests({
       "helper.js": `
         import { test, afterEach } from "vitest";
@@ -1602,7 +1602,7 @@ describe.concurrent("behaviour follows the function", () => {
 });
 
 describe.concurrent("exports", () => {
-  test(`"vitest" exports what "bun:test" does, and more`, async () => {
+  test(`"vitest" exports everything "bun:test" does, and more`, async () => {
     const { log, exitCode } = await runTests({
       "a.test.ts": `
         import { suite, describe, vitest, vi, onTestFailed, onTestFinished, assertType, expectTypeOf, test } from "vitest";
@@ -1657,7 +1657,7 @@ describe.concurrent("exports", () => {
     ["a.test.js", ``, ["--globals=vitest"]],
     ["a.test.cjs", ``, ["--globals=vitest"]],
   ] as const) {
-    test(`${name}: every global comes from "vitest": ${header || args}`, async () => {
+    test(`${name}: every global comes from "vitest" with ${header || args}`, async () => {
       const { log, results, exitCode } = await runTests(
         {
           [name]: `
@@ -1692,7 +1692,7 @@ describe.concurrent("exports", () => {
   }
 
   for (const name of ["a.test.js", "a.test.cjs"]) {
-    test(`${name}: the names that only "vitest" exports are not globals of another file`, async () => {
+    test(`${name}: names only "vitest" exports aren't globals in other files`, async () => {
       const { log, results, exitCode } = await runTests({
         [name]: `
           globalThis.suite = "mine";
@@ -1710,7 +1710,7 @@ describe.concurrent("exports", () => {
       });
     });
 
-    test(`${name}: the global vi does not make the other globals those of "vitest"`, async () => {
+    test(`${name}: using the global vi doesn't switch the other globals to "vitest"`, async () => {
       const { log, results, errors, exitCode } = await runTests({
         [name]: `
           afterEach(() => console.log("afterEach 1"));
@@ -1800,7 +1800,7 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
   const bunfig = (globals: string) => `[test]\nglobals = "${globals}"\n`;
 
   for (const name of ["a.test.js", "a.test.cjs", "a.test.ts"]) {
-    test(`${name}: the globals of a file that names neither module`, async () => {
+    test(`${name}: sets the globals of a file that imports neither module`, async () => {
       const [byDefault, vitest] = await Promise.all([
         runTests({ [name]: file }),
         runTests({ [name]: file, "bunfig.toml": bunfig("vitest") }),
@@ -1848,7 +1848,7 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
     expect(exitCode).toBe(0);
   });
 
-  test("what a file imports keeps the semantics of its module, and preload scripts and helpers follow the key", async () => {
+  test("applies to globals in preloads and helpers too, but not to explicit imports", async () => {
     const { log, results, exitCode } = await runTests(
       {
         "bunfig.toml": bunfig("vitest"),
@@ -1882,7 +1882,7 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
     });
   });
 
-  test("is part of the key of the transpiler cache", async () => {
+  test("is part of the transpiler cache key", async () => {
     using cache = tempDir("vitest-flavor-cache", {});
     const env = { BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache) };
     // The transpiler cache skips small files.
@@ -1895,7 +1895,7 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
     expect(logs).toEqual([ofBun, ofVitest, ofBun, ofVitest]);
   });
 
-  test("is one of two names", async () => {
+  test(`only accepts "bun" or "vitest"`, async () => {
     const [config, flag, bun] = await Promise.all([
       runTests({ "a.test.js": file, "bunfig.toml": bunfig("jest") }),
       runTests({ "a.test.js": file }, ["--globals=jest"]),
@@ -2070,7 +2070,7 @@ describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
   test.each([
     [`import { test, vi } from "vitest";`, []],
     [``, ["--globals=vitest"]],
-  ])("a use is a ReferenceError, where it is written: %s %j", async (header, args) => {
+  ])("using one throws a ReferenceError at the point of use: %s %j", async (header, args) => {
     const { log, results, errors, exitCode } = await runTests(
       {
         "side.js": `console.log("side.js");`,
@@ -2188,7 +2188,7 @@ describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
     expect({ log, exitCode }).toEqual({ log: expected, exitCode: 0 });
   });
 
-  test("the transpiler cache keeps the two apart, and knows a test file that it holds", async () => {
+  test("the transpiler cache is keyed by flavor, and a cached test file keeps its flavor", async () => {
     using cache = tempDir("vitest-flavor-cache", {});
     const env = {
       BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache),
@@ -2212,7 +2212,7 @@ describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
     ]);
   });
 
-  test("the type of a decorated member may name it", async () => {
+  test("a decorated member's type annotation may mention jest", async () => {
     const { log, results, exitCode } = await runTests({
       "tsconfig.json": JSON.stringify({
         compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true },
@@ -2322,7 +2322,7 @@ describe.concurrent("options", () => {
     expect(ci.exitCode).toBe(1);
   });
 
-  test("the options of describe() are the defaults of what is inside it", async () => {
+  test("describe() options are the defaults for the tests inside", async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
         import { test, describe } from "vitest";
@@ -2375,7 +2375,7 @@ describe.concurrent("options", () => {
     });
   });
 
-  test(`"bun:test" does not read them`, async () => {
+  test(`"bun:test" ignores the skip, todo and fails options`, async () => {
     const { log, results, errors, exitCode } = await runTests({
       "a.test.js": `
         import { test } from "bun:test";
@@ -2433,7 +2433,7 @@ describe.concurrent("options", () => {
   });
 });
 
-test.concurrent("test.fails passes whatever it is that fails", async () => {
+test.concurrent("test.fails also passes when a hook, fixture or teardown fails", async () => {
   const file = (module: string, modifier: string) => `
     import { test as base, describe, beforeEach, afterEach } from "${module}";
     import { onTestFinished } from "vitest";
@@ -2493,7 +2493,7 @@ test.concurrent.each([
   ["vitest", "fails"],
   ["bun:test", "fails"],
   ["bun:test", "failing"],
-])("%s: an error that nothing caught is not the failure that test.%s expects", async (module, modifier) => {
+])("%s: an uncaught error doesn't count as the failure test.%s expects", async (module, modifier) => {
   const { results, errors, stderr, exitCode } = await runTests({
     "a.test.js": `
       import { test } from "${module}";
@@ -2544,7 +2544,7 @@ test.concurrent.each([
   });
 });
 
-test.concurrent("test.fails: what the hooks see, retries, repeats and inheritance", async () => {
+test.concurrent("test.fails works with hooks, retry, repeats and inherited { fails }", async () => {
   const { log, results, exitCode } = await runTests({
     "a.test.js": `
       import { test, describe, expect, afterEach, onTestFinished, onTestFailed } from "vitest";
@@ -2623,7 +2623,7 @@ test.concurrent("test.fails: what the hooks see, retries, repeats and inheritanc
 
 describe.concurrent("test.extend()", () => {
   for (const module of ["vitest", "bun:test"]) {
-    test(`from "${module}": a fixture is set up for the callbacks that destructure it, and torn down after the hooks`, async () => {
+    test(`from "${module}" sets up only destructured fixtures and tears them down after the hooks`, async () => {
       const { log, results, exitCode } = await runTests({
         "a.test.js": `
           import { test as base, describe } from "${module}";
@@ -2758,7 +2758,7 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
-  test("what extend() refuses", async () => {
+  test("extend() throws on invalid fixture definitions", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `
         import { test, describe } from "vitest";
@@ -2939,7 +2939,7 @@ describe.concurrent("test.extend()", () => {
     expect(stderr).toContain("a.test.js:28:9");
   });
 
-  test("a fixture that never finishes fails its test when the time is up, and the run goes on", async () => {
+  test("a fixture that never finishes times out its test and the run continues", async () => {
     const { results, exitCode } = await runTests({
       "a.test.js": `
         import { test as base } from "vitest";
@@ -2960,7 +2960,7 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
-  test("file and worker scope: set up once, torn down after the afterAll hooks of the file", async () => {
+  test("file and worker fixtures are set up once and torn down after the file's afterAll", async () => {
     const { log, results, errors, exitCode } = await runTests({
       "a.test.js": `
         import { test as base, describe, afterAll, beforeAll } from "vitest";
@@ -3072,7 +3072,7 @@ describe.concurrent("test.extend()", () => {
     });
   }
 
-  describe("file-scoped fixtures that the hooks of a preload script ask for are torn down after those hooks", () => {
+  describe("file-scoped fixtures used by a preload's hooks are torn down after those hooks", () => {
     const files = (hooks: string) => ({
       "preload.js": `
         import { test } from "vitest";
@@ -3139,7 +3139,7 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
-  test("a file-scoped fixture that has failed fails each test that asks for it, at once", async () => {
+  test("a failed file-scoped fixture immediately fails every test that uses it", async () => {
     const { log, results, errors, stderr, exitCode } = await runTests(
       {
         "a.test.js": `
@@ -3177,7 +3177,7 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
-  test("a fixture that calls use() when what asked for it has ended is told to tear itself down", async () => {
+  test("a fixture that calls use() after its test or file has ended tears down right away", async () => {
     const { log, results, exitCode } = await runTests({
       "shared.js": `export const sameFile = Promise.withResolvers(), nextFile = Promise.withResolvers();`,
       "a.test.js": `
@@ -3362,7 +3362,7 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
-  test("override() at the top level of a file is undone at the end of the file, that of a preload script stays", async () => {
+  test("top-level override() is reset after the file, but a preload's applies to every file", async () => {
     const files = {
       "helper.js": `
         import { test as base } from "vitest";
@@ -3407,7 +3407,7 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
-  test("what a callback destructures is not taken from another callback that has been collected", async () => {
+  test("a callback doesn't get the fixtures of an earlier one that was garbage collected", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `
         import { test as base, describe } from "vitest";
@@ -3425,7 +3425,7 @@ describe.concurrent("test.extend()", () => {
     expect({ log, exitCode }).toEqual({ log: ["300 0"], exitCode: 0 });
   });
 
-  test("a callback that is only valid where it was written gets its fixtures", async () => {
+  test("a callback that only parses in its original scope still gets its fixtures", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `
         import { test as base } from "vitest";
@@ -3459,7 +3459,7 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
-  test("a fixture may have the name of an array index", async () => {
+  test("a fixture can be named like an array index", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `
         import { test as base } from "vitest";
@@ -3548,7 +3548,7 @@ describe.concurrent("test.extend()", () => {
     });
   });
 
-  test("fixtures survive a collection between extend() and the tests, and are collected afterwards", async () => {
+  test("fixtures survive a GC between extend() and the tests, and are collected afterwards", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `
         import { test as base } from "vitest";
@@ -3574,7 +3574,7 @@ describe.concurrent("resolution", () => {
   `;
   const flavour = (module: string) => `((m) => m.test === FLAVOURS["${module}"].test)`;
 
-  test("every way to ask for the modules finds them", async () => {
+  test("every way of importing or resolving the modules finds them", async () => {
     const { log, exitCode } = await runTests({
       "esm.test.mjs": `
         import * as vitest from "vitest";
@@ -3770,7 +3770,7 @@ describe.concurrent("the name of the running test", () => {
     expect([vitest.exitCode, bun.exitCode, jest.exitCode]).toEqual([0, 0, 0]);
   });
 
-  test("goes by the test, not by the describe block, the hook or the expect", async () => {
+  test("uses the separator of the test's module, not the describe's, hook's or expect's", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `
         import * as vitest from "vitest";
@@ -3801,7 +3801,7 @@ describe.concurrent("the name of the running test", () => {
   });
 });
 
-test.concurrent("node:module does not take what stands in for a package for a builtin module", async () => {
+test.concurrent("node:module doesn't report vitest or @jest/globals as builtin modules", async () => {
   const { log, exitCode } = await runTests({
     "builtin.test.ts": `
       import { test } from "bun:test";

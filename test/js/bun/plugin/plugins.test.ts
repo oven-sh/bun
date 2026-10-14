@@ -735,7 +735,7 @@ it("import(...) without __esModule", async () => {
 });
 
 // JSC passes its own scope object as `this` when a native function is called through a captured variable.
-it("onLoad(), onResolve() and module() return the builder, and undefined when they are called by a bare name", () => {
+it("onLoad(), onResolve() and module() return the builder, or undefined when destructured", () => {
   let returned: unknown;
   plugin({
     name: "calls the functions of the builder by their names",
@@ -1683,7 +1683,7 @@ describe.concurrent("onResolve", () => {
     });
   });
 
-  it("is asked once about each import of each module, however many modules wait for what it imports", async () => {
+  it("is called once per import, even when many modules import the same file", async () => {
     const graph: Record<string, string> = { "barrel.ts": "", "index.ts": "" };
     for (let i = 0; i < 20; i++) {
       graph[`leaf${i}.ts`] = (i ? `import "./leaf${i - 1}.ts";\n` : "") + `export const leaf${i} = ${i};\n`;
@@ -1797,7 +1797,7 @@ describe.concurrent("onLoad that declines", () => {
   describe.each([...settled.map(row => [...row, false] as const), ...pending.map(row => [...row, true] as const)])(
     "with %s",
     (_, declines, isPending) => {
-      it("has the file loaded as if no plugin had matched", async () => {
+      it("loads the file as if no plugin had matched", async () => {
         expect(await run(`build.onLoad({ filter: /dep-.*\\.ts$/ }, asked("only", ${declines}));`)).toEqual({
           stdout: [
             "statement from disk",
@@ -1812,7 +1812,7 @@ describe.concurrent("onLoad that declines", () => {
         });
       });
 
-      it("has the next matching callback asked, in the order they were registered", async () => {
+      it("falls through to the next matching callback, in registration order", async () => {
         const setup = `
           build.onLoad({ filter: /dep-.*\\.ts$/ }, asked("1st", ${declines}));
           build.onLoad({ filter: /does-not-match/ }, asked("2nd", () => ({ contents: "export default '2nd'", loader: "ts" })));
@@ -1836,7 +1836,7 @@ describe.concurrent("onLoad that declines", () => {
     },
   );
 
-  it("asks each callback once for each file, and none after the one that answers", async () => {
+  it("each callback runs once per file, up to the first one that returns a result", async () => {
     const setup = `
       build.onLoad({ filter: /dep-import\\.ts$/ }, asked("sync", () => {}));
       build.onLoad({ filter: /dep-import\\.ts$/ }, asked("pending", async () => { await 0; }));
@@ -1857,7 +1857,7 @@ describe.concurrent("onLoad that declines", () => {
     ["returned", "value => value"],
     ["in a fulfilled promise", "value => Promise.resolve(value)"],
     ["in a promise that is pending", "async value => { await 0; return value; }"],
-  ])("is not what anything else that is not an object does: %s", async (_, wrap) => {
+  ])("only undefined and null decline, other non-objects throw a TypeError: %s", async (_, wrap) => {
     const names = ["number", "zero", "false", "true", "empty-string", "string", "bigint", "symbol"];
     const setup = `
       const wrap = ${wrap};
@@ -1889,7 +1889,7 @@ describe.concurrent("onLoad that declines", () => {
     ["throws", "() => { throw new Error('from the 2nd'); }"],
     ["returns a rejected promise", "() => Promise.reject(new Error('from the 2nd'))"],
     ["returns a promise that is pending, then rejected", "async () => { await 0; throw new Error('from the 2nd'); }"],
-  ])("leaves the import to fail when the next callback %s", async (_, fails) => {
+  ])("the import fails when the next callback %s", async (_, fails) => {
     for (const declines of ["() => {}", "async () => { await 0; }"]) {
       const setup = `
         build.onLoad({ filter: /dep-import\\.ts$/ }, asked("1st", ${declines}));
@@ -1908,7 +1908,7 @@ describe.concurrent("onLoad that declines", () => {
     }
   });
 
-  it("later than require() can wait for leaves nothing behind", async () => {
+  it("with a pending promise makes require() throw and leaves nothing in require.cache", async () => {
     const setup = `
       globalThis.promises = [];
       build.onLoad({ filter: /(dep-require|syntax-error)\\.ts$/ }, asked("only", () => {
@@ -1929,7 +1929,7 @@ describe.concurrent("onLoad that declines", () => {
     });
   });
 
-  it("keeps the type the file is imported with", async () => {
+  it("keeps the import's `type` attribute", async () => {
     const setup = `build.onLoad({ filter: /dep-.*\\.ts$/ }, asked("only", process.env.PENDING ? async () => { await 0; } : () => {}));`;
     const entry = `
       import statement from "./dep-statement.ts" with { type: "text" };
@@ -1976,7 +1976,7 @@ describe.concurrent("onLoad that declines", () => {
   });
 
   // After clearAll(), only the pending load keeps the remaining callbacks alive.
-  it("has the callbacks that matched asked after Bun.plugin.clearAll() and a collection", async () => {
+  it("still runs the remaining matching callbacks after Bun.plugin.clearAll() and a GC", async () => {
     const setup = `
       build.onLoad({ filter: /dep-import\\.ts$/ }, asked("1st", async () => {
         Bun.plugin.clearAll();
@@ -2002,7 +2002,7 @@ describe.concurrent("onLoad that declines", () => {
     });
   });
 
-  it("leaves a builtin to be loaded under bun test, where plugins are asked about builtins", async () => {
+  it("lets a builtin load under bun test, where onLoad runs for builtins", async () => {
     const setup = `
       build.onLoad({ filter: /.*/, namespace: "node" }, asked("sync", () => {}));
       build.onLoad({ filter: /.*/, namespace: "node" }, asked("pending", async () => { await 0; }));
@@ -2026,7 +2026,7 @@ describe.concurrent("onLoad that declines", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("in a namespace leaves nothing to load", async () => {
+  it("in a custom namespace fails the import with ENOENT", async () => {
     const setup = `build.onLoad({ filter: /.*/, namespace: "declined" }, asked("only", ({ path }) => (path === "pending" ? Bun.sleep(1) : undefined)));`;
     const entry = `
       for (const specifier of ["declined:sync", "declined:pending"])
@@ -2041,7 +2041,7 @@ describe.concurrent("onLoad that declines", () => {
 });
 
 // A file no onLoad serves is transpiled off the main thread, so microtasks alone can't finish its import().
-describe.concurrent("a graph of modules is loaded the way it is without plugins", () => {
+describe.concurrent("a module graph loads the same way as without plugins", () => {
   const count = 40;
   const children = (i: number) => [3 * i + 1, 3 * i + 2, 3 * i + 3].filter(child => child < count);
   const source = (i: number, own: number) =>
@@ -2142,7 +2142,7 @@ describe.concurrent("a graph of modules is loaded the way it is without plugins"
   });
 });
 
-describe.concurrent("onResolve is asked about a specifier with no extension and no namespace", () => {
+describe.concurrent("onResolve is called for a specifier with no extension and no namespace", () => {
   async function run(files: Record<string, string>, args: string[]) {
     using dir = tempDir("plugin-onresolve-every-specifier", files);
     await using proc = Bun.spawn({
@@ -2261,7 +2261,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
     });
   });
 
-  it("and import.meta.resolve() of a path answers what it does without plugins when onResolve declines", async () => {
+  it("and when it declines, import.meta.resolve() of a path works as without plugins", async () => {
     const source = `
       Bun.plugin({ name: "declines", setup(build) { build.onResolve({ filter: /.*/ }, ({ path }) => { console.log("onResolve", path); }); } });
       // (On Windows the URL of a file has a drive.)
@@ -2284,7 +2284,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
     });
   });
 
-  it("once when its answer matches its own filter", async () => {
+  it("once when the path it returns matches its own filter", async () => {
     const files = {
       "node_modules/my-pkg/package.json": `{ "name": "my-pkg", "main": "index.js" }`,
       "node_modules/my-pkg/index.js": `module.exports = "my-pkg";`,
@@ -2339,7 +2339,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
     "sub/index.js": `module.exports = "sub/index";`,
   };
 
-  it("and answering with what it was asked about changes nothing", async () => {
+  it("and returning the specifier unchanged is a no-op", async () => {
     const files = {
       ...packages,
       "plugin.ts": `
@@ -2377,7 +2377,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
     });
   });
 
-  it("but not about the name of a builtin", async () => {
+  it("but not for the name of a builtin", async () => {
     const files = {
       ...packages,
       "plugin.ts": `
@@ -2410,7 +2410,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
   });
 
   // Otherwise a catch-all onResolve that lazily requires a package would recurse on that package forever.
-  it("but not about what a callback, or a package it calls, loads while it runs", async () => {
+  it("but not for modules loaded while an onResolve callback is running", async () => {
     const files = {
       ...packages,
       "node_modules/helper-pkg/package.json": `{ "name": "helper-pkg", "main": "index.js" }`,
@@ -2437,7 +2437,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
     });
   });
 
-  it("and what a callback resolves is apart from the paths of the require.resolve() that asks", async () => {
+  it("and require.resolve() in a callback doesn't share `paths` with the outer call", async () => {
     const files = {
       ...packages,
       "x.js": ``,
@@ -2475,7 +2475,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
     });
   });
 
-  it("in the namespace that is its prefix, then in the namespace file as it is written", async () => {
+  it("`ns:path` is tried as `path` in namespace `ns`, then as `ns:path` in `file`", async () => {
     const source = `
       Bun.plugin({
         name: "namespaces",
@@ -2494,7 +2494,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
     });
   });
 
-  it("with a prefix, by a filter that matches the whole of it", async () => {
+  it("with a prefix, when the filter matches the whole specifier", async () => {
     const source = `
       Bun.plugin({
         name: "virtual",
@@ -2517,7 +2517,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
     });
   });
 
-  it("that names a package or a path in it", async () => {
+  it("that names a package or one of its subpaths", async () => {
     const source = `
       Bun.plugin({
         name: "intercept",
@@ -2554,7 +2554,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
     });
   });
 
-  it("and can answer with a file it has just written", async () => {
+  it("and can return a file it has just written", async () => {
     const source = `
       import { writeFileSync } from "node:fs";
       // The directory is read while the files are not there.
@@ -2682,7 +2682,7 @@ describe.concurrent("a macro called in a file that is not the entry point", () =
     });
   });
 
-  it("is an error, said once, when macros are disabled", async () => {
+  it("is reported as an error once when macros are disabled", async () => {
     const entry = `await import("./calls-plain.ts").catch(error => console.log(error.message));`;
     expect(await run({ "entry.ts": entry }, ["--no-macros", "--preload", "./plugin.ts", "entry.ts"])).toEqual({
       stdout: "Macros are disabled\n",
@@ -2723,7 +2723,7 @@ it.concurrent(
   },
 );
 
-describe.concurrent("what a plugin supplies as contents is loaded like a file that holds it", () => {
+describe.concurrent("`contents` from a plugin is loaded like a file with the same contents", () => {
   const object = { a: 1, b: { c: 2 } };
   // [loader, file extension, contents, import() result, require() result]
   const cases: Record<string, [string, string, string, unknown, unknown]> = {
@@ -2952,7 +2952,7 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
   });
 
   // --isolate caches each loaded file's source by path for the test files after it.
-  it("and is not taken for the file's by the next test file under --isolate", async () => {
+  it("and isn't cached as the file's source for the next test file under --isolate", async () => {
     const extra = {
       "dep.ts": `export default "from disk";`,
       "dep.cjs": `module.exports = "from disk";`,
@@ -2988,7 +2988,7 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
     expect(exitCode).toBe(0);
   });
 
-  it("and is transpiled once for all the test files of a process under --isolate, until it changes", async () => {
+  it("and is transpiled once per process under --isolate, until it changes", async () => {
     const test = (name: string, transpiled: number, version: number) => `
       import { readdirSync, rmSync, writeFileSync } from "node:fs";
       import imported from "./imported-esm.virtual";
@@ -3058,7 +3058,7 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
     });
   });
 
-  it("with the loader of the type it is imported with, unless the plugin names one", async () => {
+  it("with the loader for the import's `type` attribute, unless the plugin sets one", async () => {
     const plugin = `
       Bun.plugin({
         name: "supplies",
@@ -3126,7 +3126,7 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
   });
 
   // https://github.com/oven-sh/bun/issues/39786
-  it("when it is the file's own, a CommonJS module", async () => {
+  it("when onLoad returns a CommonJS file's own source", async () => {
     const extra = {
       "target.js": "module.exports.greet = function greet(name) {\n  return `hello ${name}`\n}\n",
       "app.js": `const { greet } = require('./target.js')\n\nconsole.log(greet('world'))\n`,
@@ -3147,7 +3147,7 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
     });
   });
 
-  it("CommonJS or an ES module by its extension and package.json when nothing in it says", async () => {
+  it("as CommonJS or ESM by extension and package.json when the source is ambiguous", async () => {
     const entry = `
       import { readFileSync } from "node:fs";
       Bun.plugin({ name: "passes through", setup(build) { build.onLoad({ filter: /neutral\\.[cm]?js$/ }, ({ path }) => ({ contents: readFileSync(path, "utf8"), loader: "js" })); } });
@@ -3188,7 +3188,7 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
     });
   });
 
-  it("whether it is a string or bytes, which are UTF-8", async () => {
+  it("whether it's a string or UTF-8 bytes", async () => {
     const entry = `
       const text = "é 日本 😀";
       const bytes = () => new Uint8Array(Buffer.from(text));
@@ -3225,7 +3225,7 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
     });
   });
 
-  it("a CSS module, with the names a file at that path gets", async () => {
+  it("as a CSS module, with the same class names as a file at that path", async () => {
     const css = `.title { color: red } .box { composes: title; }`;
     const entry = `console.log(JSON.stringify([require("./a.module.css"), await import("./b.module.css")]));`;
     const fromFile = await run({ "a.module.css": css, "b.module.css": css, "entry.ts": entry }, ["entry.ts"]);
@@ -3262,7 +3262,7 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
   );
 });
 
-describe.concurrent("script that has replaced the methods of Promise sees nothing of how a module is loaded", () => {
+describe.concurrent("patched Promise methods can't observe module loading", () => {
   const hooks = `
     import { describe as describeCell } from "bun:jsc";
 
@@ -3434,7 +3434,7 @@ describe.concurrent("script that has replaced the methods of Promise sees nothin
     expect(exitCode).toBe(0);
   });
 
-  it.each([[["entry.ts"]], [["test", "--timeout=60000", "./entry.ts"]]])("what plugins answer: bun %j", async args => {
+  it.each([[["entry.ts"]], [["test", "--timeout=60000", "./entry.ts"]]])("modules from plugins: bun %j", async args => {
     const answers = ["contents", "CommonJS", "JSON", "an object", "nothing"];
     const files: Record<string, string> = {};
     for (const answer of answers) {
@@ -3700,7 +3700,7 @@ describe.concurrent("script that has replaced the methods of Promise sees nothin
   });
 });
 
-describe.concurrent("what a plugin answers that cannot be followed is an error", () => {
+describe.concurrent("an invalid result from a plugin is an error", () => {
   async function run(files: Record<string, string>, args: string[]) {
     using dir = tempDir("plugin-answers", files);
     await using proc = Bun.spawn({
@@ -3771,7 +3771,7 @@ describe.concurrent("what a plugin answers that cannot be followed is an error",
     ["path", `{ path: "\\0x", namespace: "custom" }`, `'\\x00x'`],
     ["path", `{ path: "file:///tmp/a%00b/x.ts" }`, `'file:///tmp/a%00b/x.ts'`],
     ["namespace", `{ path: "x", namespace: "cus\\0tom" }`, `'cus\\x00tom'`],
-  ])("a null byte in the %s onResolve answers with: %s", async (property, answer, received) => {
+  ])("a null byte in the %s onResolve returns: %s", async (property, answer, received) => {
     const { stdout, stderr, exitCode } = await run(
       {
         "entry.ts": `
@@ -3847,7 +3847,7 @@ describe.concurrent("what a plugin answers that cannot be followed is an error",
     },
   );
 
-  it("the key of the module that calls the factories of module mocks", async () => {
+  it("except the internal bun:module-mock key, which the plugin's own onLoad serves", async () => {
     const { stdout, stderr, exitCode } = await run(
       {
         "mocked.ts": `export {};`,
@@ -3945,12 +3945,12 @@ describe.concurrent("import.meta.resolve()", () => {
     exitCode: 0,
   };
 
-  it.skipIf(process.platform === "win32")("keeps the query of what it finds on disk a query", async () => {
+  it.skipIf(process.platform === "win32")("keeps a specifier's ?query in the URL it returns", async () => {
     expect(await resolveAll("")).toEqual(withoutPlugins);
   });
 
   it.skipIf(process.platform === "win32")(
-    "answers as without plugins when onResolve answers with what it was asked about",
+    "resolves as without plugins when onResolve returns the specifier unchanged",
     async () => {
       expect(
         await resolveAll(
@@ -3960,7 +3960,7 @@ describe.concurrent("import.meta.resolve()", () => {
     },
   );
 
-  it("keeps the query of what onResolve answers a query", async () => {
+  it("keeps the ?query of the path onResolve returns", async () => {
     using dir = tempDir("plugin-import-meta-resolve-query", {
       "src/a.ts": ``,
       "entry.ts": `
@@ -3989,7 +3989,7 @@ describe.concurrent("import.meta.resolve()", () => {
     });
   });
 
-  it.skipIf(process.platform === "win32")("of a path, in an onResolve callback, asks no callback", async () => {
+  it.skipIf(process.platform === "win32")("of a path inside an onResolve callback runs no callbacks", async () => {
     using dir = tempDir("plugin-import-meta-resolve-in-callback", {
       "src/a.ts": `export const a = 1;`,
       "entry.ts": `
@@ -4040,7 +4040,7 @@ describe.concurrent("a module made from an object", () => {
   } as const;
 
   it.each(Object.keys(kinds) as (keyof typeof kinds)[])(
-    "does not keep the global object of a test file that imports it twice at once under --isolate: %s",
+    "doesn't leak the global of a test file that imports it twice at once under --isolate: %s",
     async kind => {
       const [load, data] = kinds[kind];
       const files: Record<string, string> = { "preload.ts": ``, ...data };
@@ -4090,7 +4090,7 @@ describe.concurrent("a module made from an object", () => {
   );
 
   // JSC creates the module again for a require() right after import() created it, so the object must outlive a GC.
-  it("is there to make the module from again, whenever the collector runs", async () => {
+  it("keeps the object alive across a GC so require() can create the module again", async () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 8; i++) {
       files[`data${i}.json`] = `{ "x": ${i} }`;
@@ -4137,7 +4137,7 @@ describe.concurrent("a module made from an object", () => {
   });
 });
 
-describe.concurrent("an onLoad callback that loads a module which imports the one it is asked for", () => {
+describe.concurrent("an onLoad callback that loads an importer of the module it's loading", () => {
   const files = {
     "k.js": `export const a = "file";`,
     "l.js": `export const l = "l";`,
@@ -4159,7 +4159,7 @@ describe.concurrent("an onLoad callback that loads a module which imports the on
     return { stdout: stdout.trim().split("\n"), stderr, exitCode };
   }
 
-  it("and throws fails the import that asked for it", async () => {
+  it("fails the import that triggered it if it throws", async () => {
     const source = `
       let calls = 0;
       Bun.plugin({
@@ -4188,7 +4188,7 @@ describe.concurrent("an onLoad callback that loads a module which imports the on
     });
   });
 
-  it("and is terminated leaves the module to be loaded", async () => {
+  it("doesn't stop the module from loading later if it's terminated", async () => {
     const source = `
       const vm = require("node:vm");
       globalThis.load = () => require("./m.js");
@@ -4253,7 +4253,7 @@ describe.concurrent("an onLoad callback that loads a module which imports the on
     console.log("calls:", calls);
   `;
 
-  it("which that loads, and throws, fails the require() that asked", async () => {
+  it("fails the require() that called it if it throws after the nested load succeeds", async () => {
     expect(await run(askedAgain, "call 2")).toEqual({
       stdout: [
         "require() in call 2: x+call 3",
@@ -4269,7 +4269,7 @@ describe.concurrent("an onLoad callback that loads a module which imports the on
     });
   });
 
-  it("which fails to load there, and answers", async () => {
+  it("its result is used if the nested load fails", async () => {
     expect(await run(askedAgain, "call 3")).toEqual({
       stdout: [
         "require() in call 2: call 3 fails",
@@ -4285,7 +4285,7 @@ describe.concurrent("an onLoad callback that loads a module which imports the on
     });
   });
 
-  it("which that loads, and answers", async () => {
+  it("the nested load's result is used if both succeed", async () => {
     expect(await run(askedAgain, "none")).toEqual({
       stdout: [
         "require() in call 2: x+call 3",

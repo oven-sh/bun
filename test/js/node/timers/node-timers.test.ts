@@ -377,7 +377,7 @@ it("should defer microtasks when an exception is thrown in an immediate", async 
   expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
 });
 
-it("a promise assigned to _onTimeout is fulfilled with undefined, whatever the arguments of the timer are", async () => {
+it("a promise assigned to _onTimeout resolves to undefined, not the timer's arguments", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

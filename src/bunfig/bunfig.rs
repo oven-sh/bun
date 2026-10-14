@@ -1595,6 +1595,20 @@ impl<'a> Parser<'a, '_> {
             install.offline = Some(v);
         }
 
+        if let Some(package_extensions_expr) = install_obj.get(b"packageExtensions") {
+            // [install.packageExtensions."react-redux@1"]
+            // peerDependencies = { react = "*" }
+            let list = install.package_extensions.get_or_insert_with(Vec::new);
+            bun_install_types::PackageExtensions::parse_from_expr(
+                list,
+                &package_extensions_expr,
+                self.log,
+                self.source,
+                bun_install_types::PackageExtensions::Strictness::Error,
+            )
+            .map_err(remap)?;
+        }
+
         Ok(())
     }
 

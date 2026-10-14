@@ -60,34 +60,9 @@ fn is_in_implements_or_interface_heritage(node: Expr) -> bool {
     })
 }
 
-/// tsgolint looks for a `HeritageClause` above it: the `extends` of a class too, and all that is
-/// written in it.
-fn is_in_class_extends(node: Expr) -> bool {
-    let mut child = Node::Expr(node);
-    loop {
-        let parent = child.parent();
-        match (parent, child) {
-            (Node::File(_), _) => return false,
-            (Node::Class(class), Node::Expr(child)) if class.extends() == Some(child) => {
-                return true;
-            }
-            _ => child = parent,
-        }
-    }
-}
-
-/// Whether the accesses that `object` starts with are not asked: ESLint has a `ChainExpression`
-/// there, tsgolint a `ParenthesizedExpression`, which is no access expression.
-fn ends_member_chain(object: Expr, is_oxlint: bool) -> bool {
-    match is_oxlint {
-        true => object.is_parenthesized(),
-        false => object.is_chain_root(),
-    }
-}
-
 impl NoUnsafeMemberAccess {
     /// Whether the member expression `node`, or one that it starts with, reads from an `any`.
-    fn is_unsafe(&self, mut node: Expr, is_oxlint: bool) -> bool {
+    fn is_unsafe(&self, mut node: Expr) -> bool {
         loop {
             let Some(object) = object_of(node) else {
                 return false;
@@ -98,7 +73,8 @@ impl NoUnsafeMemberAccess {
             if is_type_any_type(object.ty()) {
                 return true;
             }
-            if ends_member_chain(object, is_oxlint) {
+            // In parentheses, a chain is a `ChainExpression`.
+            if object.is_chain_root() {
                 return false;
             }
             node = object;
@@ -126,10 +102,10 @@ impl NoUnsafeMemberAccess {
             return;
         }
         // It is reported where the first of them is.
-        if !ends_member_chain(object, is_oxlint) && self.is_unsafe(object, is_oxlint) {
+        if !object.is_chain_root() && self.is_unsafe(object) {
             return;
         }
-        if is_in_implements_or_interface_heritage(node) || is_oxlint && is_in_class_extends(node) {
+        if is_in_implements_or_interface_heritage(node) {
             return;
         }
 

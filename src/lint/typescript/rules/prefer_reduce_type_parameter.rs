@@ -55,10 +55,6 @@ impl Rule for PreferReduceTypeParameter {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // tsgolint has a `ParenthesizedExpression` there, which is neither an assertion nor an access.
-        if is_oxlint && (second_arg.is_parenthesized() || callee.is_parenthesized()) {
-            return;
-        }
         let is_reduce = match is_oxlint {
             // tsgolint asks the checker's `getAccessedPropertyName`.
             true => matches!(callee.file().type_checker().get_accessed_property_name(callee), Some(b"reduce")),

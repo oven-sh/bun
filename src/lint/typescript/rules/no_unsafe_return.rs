@@ -128,10 +128,9 @@ fn check_return<'a>(return_node: Expr<'a>, reporting_node: Span, cx: &Cx<'a, NoU
         return;
     }
 
-    // tsgolint takes the first of the signatures collected from the constituents, and its sender
-    // is the node as written: `(new Map())` is not a `new` expression.
+    // tsgolint takes the first of the signatures collected from the constituents.
     let (signature, sender_node) = match is_oxlint {
-        true => (call_signatures.first().copied(), Some(return_node).filter(|it| !it.is_parenthesized())),
+        true => (call_signatures.first().copied(), Some(return_node)),
         false => (function_type.get_call_signatures().first(), Some(return_node)),
     };
     let Some(signature) = signature else {

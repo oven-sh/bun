@@ -199,8 +199,8 @@ impl Rule for PreferReadonlyParameterTypes {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
-        // tsgolint does not look at accessors.
-        if is_oxlint && matches!(func.kind(), FnKind::Getter | FnKind::Setter) {
+        // tsgolint does not look at setters.
+        if is_oxlint && func.kind() == FnKind::Setter {
             return;
         }
         // tsgolint's `isParameterProperty`: only a parameter of a constructor is one.

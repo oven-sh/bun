@@ -40,32 +40,6 @@ fn type_of_param(param: Param<'_>) -> Type<'_> {
     }
 }
 
-/// tsgolint's `GetNameFromMember`: a string, a number, a `bigint`, a regular expression or a
-/// template without substitutions in brackets is named by its value, in double quotes unless that
-/// is an identifier. Any other name that is not an identifier is its text, with its quotes or
-/// brackets.
-fn tsgolint_name_of(member: Member<'_>) -> Option<Cow<'_, [u8]>> {
-    let (key, file) = (member.key()?, member.file());
-    let quoted = |text: &[u8], suffix: &[u8]| [b"\"".as_slice(), text, suffix, b"\""].concat();
-    Some(match key.kind() {
-        KeyKind::Ident(name) | KeyKind::Private(name) => Cow::Borrowed(name.bytes()),
-        KeyKind::ComputedString(name) | KeyKind::ComputedNumber(name) => {
-            match bun_core::lexer::is_identifier(name.bytes()) {
-                true => Cow::Borrowed(name.bytes()),
-                false => Cow::Owned(quoted(name.bytes(), b"")),
-            }
-        }
-        KeyKind::Computed(e) if !e.is_parenthesized() => match e.kind() {
-            ExprKind::BigInt(value) => Cow::Owned(quoted(value.bytes(), b"n")),
-            ExprKind::Regex(_) => Cow::Owned(quoted(e.text(), b"")),
-            _ => Cow::Borrowed(file.slice(key.span(file))),
-        },
-        KeyKind::String(_) | KeyKind::Number(_) | KeyKind::Computed(_) => {
-            Cow::Borrowed(file.slice(key.span(file)))
-        }
-    })
-}
-
 #[derive(Clone, Copy)]
 enum Accessor<'a> {
     Getter(Member<'a>),
@@ -97,9 +71,7 @@ impl RelatedGetterSetterPairs {
             } else {
                 continue;
             };
-            let Some(name) = tsgolint_name_of(member) else {
-                continue;
-            };
+            let name = get_name_from_member(member).name;
             match (accessors.get(&name).copied(), accessor) {
                 (Some(Accessor::Setter(param)), Accessor::Getter(getter))
                 | (Some(Accessor::Getter(getter)), Accessor::Setter(param)) => {

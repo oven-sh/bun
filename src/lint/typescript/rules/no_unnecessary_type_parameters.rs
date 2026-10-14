@@ -52,23 +52,6 @@ fn is_type_argument(reference: Reference) -> bool {
     }
 }
 
-/// What tsgolint takes for a reference: an identifier whose parent is a type node. Not the `T` of `T.Member`, whose
-/// parent is a qualified name.
-fn is_identifier_of_type_node(reference: Reference) -> bool {
-    match reference.node() {
-        Node::Type(ty) => match ty.kind() {
-            TypeKind::Ref { name, .. } => name.len() == 1,
-            TypeKind::Predicate { .. } => true,
-            _ => false,
-        },
-        // `typeof T`, where a value of the name is one symbol with the type parameter.
-        Node::Expr(expr) => {
-            matches!(expr.parent(), Node::Type(ty) if matches!(ty.kind(), TypeKind::Typeof { .. }))
-        }
-        _ => false,
-    }
-}
-
 fn is_type_parameter_repeated_in_ast<'a>(
     node: TypeParam<'a>,
     references: impl Iterator<Item = Reference<'a>>,
@@ -83,14 +66,8 @@ fn is_type_parameter_repeated_in_ast<'a>(
         // the signature, nor a value of the same name.
         if (identifier.start < definition.end && identifier.end > definition.start)
             || identifier.start > start_of_body
+            || !reference.is_type()
         {
-            continue;
-        }
-        let is_reference = match is_oxlint {
-            true => is_identifier_of_type_node(reference),
-            false => reference.is_type(),
-        };
-        if !is_reference {
             continue;
         }
         // tsgolint leaves a type argument to the types: in `Missing<T> & { a: 1 }`, which is `any`, there is no `T`.
@@ -395,19 +372,9 @@ fn replace_usages_with_constraint<'a>(
     let is_oxlint = file.language().is_oxlint;
 
     let mut fixes = Vec::new();
-    for reference in variable.references() {
-        let is_reference = match is_oxlint {
-            true => is_identifier_of_type_node(reference),
-            false => reference.is_type(),
-        };
-        let type_reference = match reference.node() {
-            Node::Type(type_reference) if is_reference => type_reference,
-            // tsgolint replaces the parent of the identifier, which is the `typeof T` of a value of the name.
-            Node::Expr(operand) if is_reference && is_oxlint => match operand.parent() {
-                Node::Type(type_query) => type_query,
-                _ => continue,
-            },
-            _ => continue,
+    for reference in variable.references().filter(|reference| reference.is_type()) {
+        let Node::Type(type_reference) = reference.node() else {
+            continue;
         };
         // tsgolint leaves what goes with the type parameter, as in `<T extends { a: T }>`.
         let identifier = reference.span();
@@ -474,7 +441,7 @@ fn check_node<'a>(
         // oxlint points at where it is used first.
         let place = match is_oxlint {
             true => {
-                let in_ast = variable.references().find(|&reference| is_identifier_of_type_node(reference));
+                let in_ast = variable.references().find(|&reference| reference.is_type());
                 in_ast.map_or_else(|| name.span(), |reference| reference.span())
             }
             false => type_parameter.span(),
@@ -519,8 +486,6 @@ impl Rule for NoUnnecessaryTypeParameters {
         }
         let start_of_body = match node.body() {
             FnBody::Block(_) => node.body_span().map(|body| body.start),
-            // For tsgolint what a returned function mentions is part of the signature.
-            FnBody::Expr(body) if cx.language().is_oxlint && body.as_fn().is_some() && !body.is_parenthesized() => None,
             FnBody::Expr(body) => Some(body.span().start),
             FnBody::None => node.return_type().map(|return_type| return_type.annotation_span().end),
         };

@@ -125,10 +125,6 @@ impl DotNotation {
         ) {
             return;
         }
-        // tsgolint looks at the kind of the argument, which in parentheses is a ParenthesizedExpression.
-        if index.is_parenthesized() && node.file().language().is_oxlint {
-            return;
-        }
         let allow_index_signature_property_access = cx.state;
         if (self.allow_private_class_property_access
             || self.allow_protected_class_property_access

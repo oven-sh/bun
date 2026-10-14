@@ -194,8 +194,8 @@ impl<'a> Deprecations<'a> {
 fn get_call_like_node(mut callee: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
     let is_oxlint = callee.file().language().is_oxlint;
     loop {
-        // Its parent is a `ChainExpression`, or for tsgolint a `ParenthesizedExpression`.
-        if callee.is_chain_root() || is_oxlint && callee.is_parenthesized() {
+        // Its parent is a `ChainExpression`.
+        if callee.is_chain_root() {
             return None;
         }
         let Node::Expr(parent) = callee.parent() else {
@@ -471,20 +471,8 @@ impl NoDeprecated {
                     cx.state.of_property(node, name, || object.ty())
                 }
             }
-            // tsgolint looks up an identifier that is the default of a `BindingElement` as a property of what is
-            // destructured, by the property name or else by its own name. A computed key is an identifier like any other.
-            Node::PatProp(prop) if is_oxlint => match prop.default() == Some(e) && !e.is_parenthesized() {
-                true => {
-                    let Some(property_name) = binding_property_name(prop, name) else {
-                        return;
-                    };
-                    let Node::Pat(pattern) = prop.parent() else {
-                        return;
-                    };
-                    cx.state.of_property(node, property_name, || binding_pattern_source_type(pattern))
-                }
-                false => cx.state.of_identifier(node),
-            },
+            // For tsgolint a computed key is an identifier like any other.
+            Node::PatProp(_) if is_oxlint => cx.state.of_identifier(node),
             // A computed key.
             Node::PatProp(prop) if prop.default() != Some(e) => {
                 let Node::Pat(pattern) = prop.parent() else {
@@ -569,11 +557,7 @@ impl NoDeprecated {
             && is_identifier(name)
         {
             let node = IdentifierLike::new(tag.ts_node(), tag.span(), name.bytes());
-            let reason = match cx.language().is_oxlint && jsx.is_self_closing() {
-                // For tsgolint the tag of a `JsxSelfClosingElement` is not called: the symbol tells.
-                true => cx.state.of_identifier(node.node),
-                false => cx.state.of_call_like(node.node, element.ts_node()),
-            };
+            let reason = cx.state.of_call_like(node.node, element.ts_node());
             self.report(node, reason, cx);
         }
         let mut contextual_type = None;

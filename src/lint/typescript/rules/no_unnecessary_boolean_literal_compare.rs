@@ -53,8 +53,7 @@ fn is_boolean_type(expression_type: Type) -> bool {
 }
 
 /// A union that has `null` or `undefined`, has `true`, `false` or `boolean`, and has nothing else.
-/// tsgolint does not ask for the last: `boolean | string | undefined` is a nullable boolean there.
-fn is_nullable_boolean(expression_type: Type, is_oxlint: bool) -> bool {
+fn is_nullable_boolean(expression_type: Type) -> bool {
     if !expression_type.is_union() {
         return false;
     }
@@ -64,7 +63,7 @@ fn is_nullable_boolean(expression_type: Type, is_oxlint: bool) -> bool {
             has_nullable_type = true;
         } else if is_boolean_type(ty) {
             has_non_nullish_type = true;
-        } else if !is_oxlint {
+        } else {
             return false;
         }
     }
@@ -96,7 +95,7 @@ fn get_boolean_comparison(node: Expr<'_>) -> Option<BooleanComparison<'_>> {
     let constraint_type = get_constraint_info(expression.ty()).constraint_type?;
     let expression_is_nullable_boolean = match is_boolean_type(constraint_type) {
         true => false,
-        false if is_nullable_boolean(constraint_type, expression.file().language().is_oxlint) => true,
+        false if is_nullable_boolean(constraint_type) => true,
         false => return None,
     };
     Some(BooleanComparison {

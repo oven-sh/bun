@@ -21,19 +21,6 @@ fn is_number(node: Expr, value: f64) -> bool {
     get_static_value(node, Some(node.file().scope())).and_then(|it| it.as_number()) == Some(value)
 }
 
-/// tsgolint's `isNumberLiteral`: a numeric literal, or `-` before one. Nothing is evaluated.
-fn tsgolint_is_number_literal(node: Expr, value: f64) -> bool {
-    if node.is_parenthesized() {
-        return false;
-    }
-    match node.kind() {
-        ExprKind::Unary { op: UnOp::Minus, operand } => {
-            !operand.is_parenthesized() && operand.as_number().map(|number| -number) == Some(value)
-        }
-        _ => node.as_number() == Some(value),
-    }
-}
-
 fn parameters(node: TsNode<'_>) -> impl Iterator<Item = TsNode<'_>> {
     node.children().filter(|child| child.kind() == SyntaxKind::Parameter)
 }
@@ -300,27 +287,17 @@ impl PreferIncludes {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // tsgolint wants the call on the left as it is written.
-        if is_oxlint && call_node.is_parenthesized() {
-            return;
-        }
         // Upstream's selector takes every `MemberExpression` directly in the call: also an argument.
         // tsgolint takes the callee alone.
         let candidates = if is_oxlint { 1 } else { usize::MAX };
         for node in std::iter::once(call.callee()).chain(call.args()).take(candidates) {
-            let is_index_of = if is_oxlint {
-                // The property access as it is written, with a name that is no `#indexOf`.
-                matches!(node.kind(), ExprKind::Dot { name, .. } if name.name().is("indexOf"))
-                    && !node.is_parenthesized()
-                    && tsgolint_is_number_literal(right, number)
-            } else {
-                // `(a?.indexOf)(b)` calls a `ChainExpression`.
-                matches!(node.tag(), ExprTag::Dot | ExprTag::Index)
-                    && !node.is_chain_root()
-                    && is_static_member_access_of_value(node, &["indexOf"])
-                    && is_number(right, number)
-            };
-            if !is_index_of {
+            // `(a?.indexOf)(b)` calls a `ChainExpression`. For tsgolint `#indexOf` is not `indexOf`.
+            if !matches!(node.tag(), ExprTag::Dot | ExprTag::Index)
+                || node.is_chain_root()
+                || !is_static_member_access_of_value(node, &["indexOf"])
+                || !is_number(right, number)
+                || (is_oxlint && matches!(node.kind(), ExprKind::Dot { name, .. } if name.name().is("#indexOf")))
+            {
                 continue;
             }
             let (property, symbol) = match node.kind() {
@@ -339,6 +316,10 @@ impl PreferIncludes {
             let report = cx.report(compare_node, PREFER_INCLUDES);
             // `a?.indexOf(b) !== -1` is not the same as `a?.includes(b)`. tsgolint makes it that.
             if call_node.is_chain_root() && !is_oxlint {
+                continue;
+            }
+            // The fix takes the `)` of `(a.indexOf(b)) !== -1` away, and what is left cannot be parsed.
+            if is_oxlint && call_node.is_parenthesized() {
                 continue;
             }
             report.fix(|fixer| {
@@ -367,20 +348,23 @@ impl PreferIncludes {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
-        // tsgolint wants the property access as it is written, with a name that is no `#test`.
-        if is_oxlint && (callee.is_parenthesized() || !name.name().is("test")) {
+        // tsgolint wants a name that is no `#test`.
+        if is_oxlint && !name.name().is("test") {
             return;
         }
         let Some(argument) = call.args().first().filter(|_| call.args().len() == 1) else {
             return;
         };
-        // tsgolint has the pattern as it is written, and neither evaluates nor parses it.
-        let resolved: Option<(Expr<'a>, Cow<'_, [u8]>)> = if is_oxlint {
-            tsgolint_resolve_regex_pattern(obj).map(|(regex, pattern)| (regex, Cow::Borrowed(pattern)))
-        } else {
-            parse_reg_exp(obj, b"ig").map(|text| (obj, Cow::Owned(text)))
+        // tsgolint knows `/a/`, and a variable whose initializer is that or `new RegExp("a")`. Its fix has the
+        // pattern as it is written.
+        let written = match is_oxlint {
+            true => match tsgolint_resolve_regex_pattern(obj) {
+                Some(written) => Some(written),
+                None => return,
+            },
+            false => None,
         };
-        let Some((regex, text)) = resolved else {
+        let Some(text) = parse_reg_exp(obj, b"ig") else {
             return;
         };
         let includes = get_constrained_type_at_location(argument).get_property(b"includes");
@@ -388,8 +372,8 @@ impl PreferIncludes {
             return;
         }
         cx.report(call_node, PREFER_STRING_INCLUDES).fix(|fixer| {
-            if is_oxlint {
-                return tsgolint_fix_test_call(fixer, call_node, obj, regex, argument, &text);
+            if let Some((regex, pattern)) = written {
+                return tsgolint_fix_test_call(fixer, call_node, obj, regex, argument, pattern);
             }
             let needs_paren = match argument.kind() {
                 ExprKind::String(_)

@@ -49,8 +49,7 @@ fn get_array_element_type<'a>(array_type: Type<'a>, element_index: usize) -> Opt
     array_type.get_number_index_type()
 }
 
-/// As upstream, the `a` of the computed key `[a]` is taken for the name. tsgolint has a name there only for an identifier
-/// or a literal that is written without parentheses, and takes the empty name too.
+/// As upstream, the `a` of the computed key `[a]` is taken for the name. tsgolint takes the empty name too.
 fn get_property_name<'a>(key: Key<'a>, is_oxlint: bool) -> Option<&'a [u8]> {
     let name: &'a [u8] = match key.kind() {
         KeyKind::Ident(name)
@@ -59,13 +58,12 @@ fn get_property_name<'a>(key: Key<'a>, is_oxlint: bool) -> Option<&'a [u8]> {
         | KeyKind::ComputedString(name)
         | KeyKind::ComputedNumber(name) => name.bytes(),
         KeyKind::Private(_) => return None,
-        KeyKind::Computed(e) if is_oxlint && e.is_parenthesized() => return None,
         KeyKind::Computed(e) => match e.kind() {
             ExprKind::Ident(name) | ExprKind::String(name) => name.bytes(),
             ExprKind::Template(template) => template.as_static()?.bytes(),
-            ExprKind::Null if !is_oxlint => b"null",
-            ExprKind::True if !is_oxlint => b"true",
-            ExprKind::False if !is_oxlint => b"false",
+            ExprKind::Null => b"null",
+            ExprKind::True => b"true",
+            ExprKind::False => b"false",
             _ => return None,
         },
     };
@@ -154,7 +152,7 @@ fn get_type_of_property<'a>(property: PatProp<'a>, cx: &mut Context<'a>) -> Opti
 
 /// The type of what the object or array pattern `pattern` destructures.
 fn get_source_type_for_pattern<'a>(pattern: Pat<'a>, cx: &mut Context<'a>) -> Option<Type<'a>> {
-    // tsgolint also takes a rest parameter, a rest element and a parameter of a function without a body.
+    // tsgolint also takes a rest parameter and a parameter of a function without a body.
     let is_oxlint = cx.language().is_oxlint;
     match pattern.parent() {
         Node::VarDecl(declarator) => Some(declarator.init()?.ty()),
@@ -168,7 +166,7 @@ fn get_source_type_for_pattern<'a>(pattern: Pat<'a>, cx: &mut Context<'a>) -> Op
             Some(signature.get_parameters().get(param_index)?.get_type())
         }
         Node::PatProp(property) if !property.is_rest() => get_type_of_property(property, cx),
-        Node::PatElem(element) if is_oxlint || !element.is_rest() => {
+        Node::PatElem(element) if !element.is_rest() => {
             let Node::Pat(array_pattern) = element.parent() else {
                 return None;
             };
@@ -281,9 +279,7 @@ fn check_parameter<'a>(param: Param<'a>, cx: &Context<'a>) {
     if signatures.first().is_none_or(|first| first.declaration() == Some(func.ts_node())) {
         return;
     }
-    // tsgolint asks the first signature only.
-    let asked = if cx.language().is_oxlint { 1 } else { signatures.len() };
-    let default_can_be_used = signatures.iter().take(asked).any(|signature| {
+    let default_can_be_used = signatures.iter().any(|signature| {
         let Some(param_symbol) = signature.get_parameters().get(param_index) else {
             return true;
         };
@@ -399,12 +395,9 @@ impl Rule for NoUselessDefaultAssignment {
         {
             on = on.finish();
         }
-        on = on.params().pats(&[PatTag::Object, PatTag::Array]);
-        // tsgolint does not look at the defaults of a destructuring assignment.
-        match file.language().is_oxlint {
-            true => on,
-            false => on.exprs(&[ExprTag::Assign]),
-        }
+        on.params()
+            .pats(&[PatTag::Object, PatTag::Array])
+            .exprs(&[ExprTag::Assign])
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {

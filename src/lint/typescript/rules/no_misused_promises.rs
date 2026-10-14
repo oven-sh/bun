@@ -184,11 +184,7 @@ pub struct State<'a> {
 }
 
 /// Whether an annotated type is maybe a function type, as far as the syntax tells.
-fn is_possibly_function_type(node: TypeNode, is_oxlint: bool) -> bool {
-    // For tsgolint a type in parentheses is a `ParenthesizedType`, which is none of these.
-    if is_oxlint && node.is_parenthesized() {
-        return false;
-    }
+fn is_possibly_function_type(node: TypeNode) -> bool {
     match node.kind() {
         TypeKind::Cond { .. }
         | TypeKind::Fn(_)
@@ -566,12 +562,7 @@ impl NoMisusedPromises {
             StmtKind::If { test, .. }
             | StmtKind::While { test, .. }
             | StmtKind::DoWhile { test, .. }
-            | StmtKind::For { test: Some(test), .. } => {
-                // tsgolint does not check a test that is an assignment, unless it is in parentheses.
-                if !(cx.language().is_oxlint && test.tag() == ExprTag::Assign && !test.is_parenthesized()) {
-                    self.check_test(test, cx);
-                }
-            }
+            | StmtKind::For { test: Some(test), .. } => self.check_test(test, cx),
             _ => {}
         }
     }
@@ -607,11 +598,7 @@ impl NoMisusedPromises {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        // For tsgolint `(a.filter)` is a `ParenthesizedExpression`, and the callee no access expression.
-        if (is_oxlint && call.callee().is_parenthesized())
-            || !is_array_method_call_with_predicate(node)
-            || !returns_thenable(callback.ts_node())
-        {
+        if !is_array_method_call_with_predicate(node) || !returns_thenable(callback.ts_node()) {
             return;
         }
         // Upstream listens for every `MemberExpression` directly in a call: the callee, and the
@@ -666,13 +653,8 @@ impl NoMisusedPromises {
         let ExprKind::Assign { target, value, .. } = node.kind() else {
             return;
         };
-        // A default in a destructuring assignment is an `AssignmentPattern`. For tsgolint it is a
-        // `BinaryExpression` like any assignment, but not in `{ a = b }`.
-        let is_pattern = match cx.language().is_oxlint {
-            true => matches!(node.parent(), Node::Prop(property) if property.kind() == PropKind::Shorthand),
-            false => node.is_assignment_target(),
-        };
-        if is_pattern || !can_be_function(value, &cx.state.callable_literals) {
+        // A default in a destructuring assignment is an `AssignmentPattern`.
+        if !can_be_function(value, &cx.state.callable_literals) || node.is_assignment_target() {
             return;
         }
         let left = target.ts_node();
@@ -688,9 +670,7 @@ impl NoMisusedPromises {
         let Some(init) = node.init() else {
             return;
         };
-        // tsgolint has nothing about `using`.
-        let is_oxlint = cx.language().is_oxlint;
-        let (annotation, is_using) = (node.ty(), !is_oxlint && node.var_kind() == VarKind::Using);
+        let (annotation, is_using) = (node.ty(), node.var_kind() == VarKind::Using);
         if annotation.is_none() && !is_using {
             return;
         }
@@ -718,14 +698,11 @@ impl NoMisusedPromises {
         }
         let name = node.pat().ts_node();
         let variable_type = name.get_type_at_location();
-        if !is_oxlint
-            && has_dispose_method(name, variable_type, is_void_returning_function_type)
-            && disposes_asynchronously()
-        {
+        if has_dispose_method(name, variable_type, is_void_returning_function_type) && disposes_asynchronously() {
             cx.report(place(init), VOID_RETURN_VARIABLE)
                 .labels_with(|labels| tsgolint_labels_of_value(labels, init, None));
         }
-        if is_possibly_function_type(annotation, is_oxlint)
+        if is_possibly_function_type(annotation)
             && can_be_function(init, &cx.state.callable_literals)
             && is_void_returning_function_type(initializer, variable_type)
             && returns_thenable(initializer)
@@ -796,18 +773,13 @@ impl NoMisusedPromises {
         let Some(obj_type) = obj.contextual_type() else {
             return;
         };
-        // tsgolint asks the contextual type itself, by the name without its quotes: a union has only
-        // what all of its constituents have.
+        // tsgolint asks by the name without its quotes.
         let is_oxlint = cx.language().is_oxlint;
         let name_text = match key.name() {
             Some(name) if is_oxlint => name.bytes(),
             _ => cx.slice(key.span(cx.file())),
         };
-        let property_symbol = match is_oxlint {
-            true => obj_type.get_property(name_text),
-            false => union_constituents(obj_type).iter().find_map(|t| t.get_property(name_text)),
-        };
-        let Some(property_symbol) = property_symbol else {
+        let Some(property_symbol) = union_constituents(obj_type).iter().find_map(|t| t.get_property(name_text)) else {
             return;
         };
         let name = NameOf(node).ts_node();
@@ -848,8 +820,9 @@ impl NoMisusedPromises {
         let Some(function_node) = Node::Stmt(node).enclosing_function() else {
             return;
         };
-        let is_oxlint = cx.language().is_oxlint;
-        if function_node.return_type().is_some_and(|it| !is_possibly_function_type(it, is_oxlint)) {
+        // To tsgolint a type in parentheses is none of them.
+        let is_in_parentheses = |it: TypeNode| cx.language().is_oxlint && it.outer_span() != it.span();
+        if (function_node.return_type()).is_some_and(|it| !is_possibly_function_type(it) || is_in_parentheses(it)) {
             return;
         }
         let expression = argument.ts_node();
@@ -945,8 +918,8 @@ impl NoMisusedPromises {
         };
         match parent.kind() {
             ExprKind::Call(_) | ExprKind::New(_) => {}
-            // In an `ArrayPattern` it is a `RestElement`, which is a `SpreadElement` for tsgolint.
-            ExprKind::Array(_) if cx.language().is_oxlint || !parent.is_assignment_target() => {}
+            // In an `ArrayPattern` it is a `RestElement`.
+            ExprKind::Array(_) if !parent.is_assignment_target() => {}
             _ => return,
         }
         Self::check_spread_argument(argument, cx);
@@ -961,7 +934,7 @@ impl NoMisusedPromises {
                 // In an `ObjectPattern` it is a `RestElement`.
                 if self.checks_spreads
                     && let (Some(argument), Node::Expr(parent)) = (node.value(), node.parent())
-                    && (cx.language().is_oxlint || !parent.is_assignment_target())
+                    && !parent.is_assignment_target()
                 {
                     Self::check_spread_argument(argument, cx);
                 }

@@ -340,14 +340,7 @@ fn get_type_node_type_part_flags<'a>(
 }
 
 fn is_node_inside_return_type(node: TypeNode) -> bool {
-    let Node::Func(func) = node.parent() else {
-        return false;
-    };
-    // tsgolint's `ast.IsFunctionLike(node.Parent)`: also an index signature, not through the parentheses of `(A | B)`.
-    match node.file().language().is_oxlint {
-        true => !node.is_parenthesized(),
-        false => is_function_or_function_type(func),
-    }
+    matches!(node.parent(), Node::Func(func) if is_function_or_function_type(func))
 }
 
 /// Reports `any` or an error type among the constituents of a `container` type.

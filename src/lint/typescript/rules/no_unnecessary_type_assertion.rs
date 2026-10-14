@@ -177,12 +177,6 @@ fn is_type_unchanged<'a>(
         return true;
     }
     let is_oxlint = expression.file().language().is_oxlint;
-    // tsgolint's `utils.IsTypeFlagSet` is about the type itself, typescript-eslint's `isTypeFlagSet` also about the
-    // constituents of a union.
-    let has_flags = |ty: Type<'a>, flags: TypeFlags| match is_oxlint {
-        true => ty.has_flags(flags),
-        false => is_type_flag_set(ty, flags),
-    };
     // What tsgolint 7.0 has besides. A numeric enum and `number` can be assigned to each other, and are not the same.
     if is_oxlint
         && (tsgolint_has_enum_type(uncast)
@@ -194,8 +188,8 @@ fn is_type_unchanged<'a>(
     if type_annotation.is_some_and(|it| it.tag() == TypeTag::Intersection) && contains_type_variable(cast) {
         return false;
     }
-    if has_flags(uncast, TypeFlags::UNDEFINED)
-        && has_flags(cast, TypeFlags::UNDEFINED)
+    if is_type_flag_set(uncast, TypeFlags::UNDEFINED)
+        && is_type_flag_set(cast, TypeFlags::UNDEFINED)
         && is_compiler_option_enabled(
             expression.file().type_checker().compiler_options(),
             CompilerOption::ExactOptionalPropertyTypes,
@@ -206,7 +200,7 @@ fn is_type_unchanged<'a>(
     if expression.tag() != ExprTag::Object && is_conceptually_literal(expression) {
         return false;
     }
-    if (has_flags(uncast, TypeFlags::NON_PRIMITIVE) && !has_flags(cast, TypeFlags::NON_PRIMITIVE))
+    if (is_type_flag_set(uncast, TypeFlags::NON_PRIMITIVE) && !is_type_flag_set(cast, TypeFlags::NON_PRIMITIVE))
         || has_index_signature(uncast) != has_index_signature(cast)
         || contains_any(uncast)
         || contains_any(cast)
@@ -561,16 +555,13 @@ fn is_property_in_problematic_context(assertion: Assertion) -> bool {
     let object_parent = object_expr.parent();
     // tsgolint 7.0 also leaves what has its context from another assertion: `{ a: "b" as C } as D`.
     let is_assertion = |node: Node| matches!(node, Node::Expr(e) if matches!(e.tag(), ExprTag::As | ExprTag::AsConst));
-    let is_oxlint = node.file().language().is_oxlint;
-    // Between the call and the `satisfies` ESLint has a `ChainExpression` around `f?.({})`, tsgolint a
-    // `ParenthesizedExpression` around `(f({}))`.
-    let is_child_of_satisfies = |call: Expr| match is_oxlint {
-        true => !call.is_parenthesized() && is_satisfies(call.parent()),
-        false => !call.is_chain_root() && is_satisfies(call.parent()),
-    };
     is_satisfies(object_parent)
-        || is_oxlint && is_assertion(object_parent)
-        || matches!(object_parent, Node::Expr(call) if call.tag() == ExprTag::Call && is_child_of_satisfies(call))
+        || node.file().language().is_oxlint && is_assertion(object_parent)
+        || matches!(
+            object_parent,
+            // ESLint has a `ChainExpression` around `f?.({})`.
+            Node::Expr(call) if call.tag() == ExprTag::Call && !call.is_chain_root() && is_satisfies(call.parent())
+        )
 }
 
 /// The `AssignmentExpression` that `node` is the right of.

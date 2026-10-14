@@ -111,9 +111,7 @@ impl DotNotation {
             ExprKind::Dot { obj, name, chain }
                 if !self.allows_keywords
                     && keywords::is_keyword(name.bytes())
-                    // tsgolint listens on every PropertyAccessExpression: also the name of a JSX tag.
-                    && (ast_utils::is_member_expression(e)
-                        || (e.is_jsx_tag_name() && e.file().language().is_oxlint)) =>
+                    && ast_utils::is_member_expression(e) =>
             {
                 report_keyword(cx, name, Some(e), chain == Chain::Start, obj.is_ident("let"));
             }

@@ -137,14 +137,6 @@ fn is_natively_bound_member(object: &[u8], property: &[u8]) -> bool {
     members.iter().any(|member| member.as_bytes() == property)
 }
 
-/// What tsgolint's `nativelyBoundMembers` lacks: it is a table that was generated with an older Node.js.
-fn is_missing_from_tsgolint(object: &[u8], property: &[u8]) -> bool {
-    matches!(
-        (object, property),
-        (b"RegExp", b"escape") | (b"Atomics", b"pause") | (b"Math", b"f16round") | (b"Intl", b"DurationFormat")
-    )
-}
-
 const SUPPORTED_GLOBAL_TYPES: [&str; 12] = [
     "NumberConstructor",
     "ObjectConstructor",
@@ -231,7 +223,6 @@ fn is_natively_bound<'a>(object: ObjectNode<'a>, property: PropertyNode<'a>, is_
     // `@types/node`, and the signature in an interface does not say whether a method is bound.
     if let (Some(object_name), Some(property_name)) = (object.identifier, property.identifier)
         && is_natively_bound_member(object_name, property_name)
-        && !(is_oxlint && is_missing_from_tsgolint(object_name, property_name))
         && object.node.get_symbol_at_location().is_some_and(is_not_imported)
     {
         return true;
@@ -253,19 +244,17 @@ fn is_natively_bound<'a>(object: ObjectNode<'a>, property: PropertyNode<'a>, is_
     }
 }
 
-fn is_node_inside_type_declaration<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, ()>, is_oxlint: bool) -> bool {
+fn is_node_inside_type_declaration<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, ()>) -> bool {
     let is_type_declaration = |parent: Node| match parent {
         Node::Class(class) => {
             matches!(class.owner(), Node::Stmt(_)) && class.modifiers().iter().any(|it| it.flag() == Flags::AMBIENT)
         }
         Node::Member(member) => {
             member.flags().contains(Flags::ABSTRACT)
-                && match member.kind() {
-                    MemberKind::Method => true,
-                    // tsgolint knows the abstract `MethodDeclaration` only.
-                    MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor => !is_oxlint,
-                    _ => false,
-                }
+                && matches!(
+                    member.kind(),
+                    MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor
+                )
         }
         Node::Func(func) => match func.kind() {
             FnKind::Decl => !func.has_body(),
@@ -352,8 +341,6 @@ fn is_safe_use<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>, is_oxlint
                 BinOp::NotEq | BinOp::NotEqEq | BinOp::EqEq | BinOp::EqEqEq | BinOp::Instanceof => Some(true),
                 // `&&` returns its left operand only if that is falsy.
                 BinOp::And if left == node => Some(true),
-                // tsgolint's `IsLogicalBinaryOperator` knows no `??`.
-                BinOp::Nullish if is_oxlint => Some(false),
                 // It is likely to return the method, so it is as safe as its own use.
                 BinOp::And | BinOp::Or | BinOp::Nullish => None,
                 _ => Some(false),
@@ -361,14 +348,10 @@ fn is_safe_use<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>, is_oxlint
             ExprKind::Assign { op, target, .. } => {
                 // A default in a pattern is an `AssignmentPattern`, and for tsgolint an assignment like any other.
                 let is_assignment = op.is_none() && (is_oxlint || !parent.is_assignment_target());
-                // For tsgolint a `ParenthesizedExpression` is no access.
-                let is_access = |it: Expr<'a>| !(is_oxlint && it.is_parenthesized());
                 Some(
                     is_assignment
                         && (target == node
-                            || (is_access(node)
-                                && is_access(target)
-                                && is_member_of(node, |object| matches!(object, ExprKind::Super))
+                            || (is_member_of(node, |object| matches!(object, ExprKind::Super))
                                 && is_member_of(target, |object| matches!(object, ExprKind::This)))),
                 )
             }
@@ -464,11 +447,7 @@ impl UnboundMethod {
 
     fn check_member_expression<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
-        // For tsgolint the name in a JSX tag is a `PropertyAccessExpression` like any other.
-        if is_safe_use(node, &mut cx.state.safe_uses, is_oxlint)
-            || (!is_oxlint && node.is_jsx_tag_name())
-            || node.is_in_type_query()
-        {
+        if is_safe_use(node, &mut cx.state.safe_uses, is_oxlint) || node.is_jsx_tag_name() || node.is_in_type_query() {
             return;
         }
         match node.kind() {
@@ -594,9 +573,7 @@ impl UnboundMethod {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
-        if properties.is_empty()
-            || is_node_inside_type_declaration(Node::Pat(node), &mut cx.state.type_declarations, is_oxlint)
-        {
+        if properties.is_empty() || is_node_inside_type_declaration(Node::Pat(node), &mut cx.state.type_declarations) {
             return;
         }
         let (init_node, is_in_assignment_pattern) = match node.parent() {
@@ -632,7 +609,7 @@ impl UnboundMethod {
         let is_oxlint = cx.language().is_oxlint;
         if properties.is_empty()
             || !node.is_assignment_target()
-            || is_node_inside_type_declaration(Node::Expr(node), &mut cx.state.type_declarations, is_oxlint)
+            || is_node_inside_type_declaration(Node::Expr(node), &mut cx.state.type_declarations)
         {
             return;
         }
@@ -645,10 +622,6 @@ impl UnboundMethod {
             },
             _ => (None, false),
         };
-        // tsgolint checks the pattern that is the left of an assignment, and not where that is a default in a pattern.
-        if is_oxlint && (init_node.is_none() || is_in_assignment_pattern) {
-            return;
-        }
         let pattern = ObjectPattern {
             node: node.ts_node(),
             init_node,

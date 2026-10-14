@@ -839,8 +839,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         // field reads. Launder so `close()` sees fresh state.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         let parent = Self::r(this).parent();
-        // `FileSink::on_error` rejects a promise and drains microtasks. That JS can close
-        // this writer and release every other ref on the parent before `close()` below runs.
+        // `FileSink::on_error` closes this writer, then rejects a parked promise and drains
+        // microtasks. That JS can release every other ref on the parent before `close()` below runs.
         // SAFETY: parent BACKREF set via set_parent; live, this writer is a field of it.
         let _keep_alive = unsafe { KeepParentAlive::new(parent) };
         // SAFETY: as above.
@@ -2210,9 +2210,10 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             Self::r(this).last_write_result = WriteResult::Err(err.clone());
             Self::r_on_error(this, err);
             core::hint::black_box(this);
-            // `close()`, not `close_without_reporting()`: the parent must still
-            // observe `on_close` after `on_error` (the `PosixStreamingWriter`
-            // contract). FileSink's stream teardown only runs from `on_close`.
+            // `close()`, not `close_without_reporting()`: a parent that did not
+            // close this writer from `on_error` must still observe `on_close` (the
+            // `PosixStreamingWriter` contract). FileSink's stream teardown only runs
+            // from `on_close`.
             Self::r(this).close();
             return;
         }

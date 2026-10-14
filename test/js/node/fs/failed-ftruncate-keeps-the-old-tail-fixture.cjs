@@ -3,7 +3,7 @@
 // Door 1: strace makes ftruncate(2) on that one path fail with EIO:  strace -e trace=ftruncate -e inject=ftruncate:error=EIO -P <path> <runtime> <this file> <api> <path>
 // Door 2: no tracer: a Landlock sandbox (Linux 6.2+) that allows every write and refuses truncation: the kernel itself answers EACCES. Skipped where Landlock is missing.
 // exit 86 = at least one API reports success and the file holds the new bytes followed by the tail of the old file; exit 0 = every API either fails or leaves exactly the new bytes
-// exit 2 = a control failed (no fault: every API succeeds and the file holds exactly the new bytes).
+// exit 2 = a control failed (no fault: every API succeeds and the file holds exactly the new bytes), or a door did not run.
 const fs = require("node:fs"),
   fsp = require("node:fs/promises"),
   cp = require("node:child_process"),
@@ -11,8 +11,8 @@ const fs = require("node:fs"),
   path = require("node:path");
 const [, me, api, p] = process.argv,
   E = process.env.ERRNO || "EIO",
-  NEW = "n".repeat(3000),
-  OLD = "o".repeat(5000),
+  NEW = Buffer.alloc(3000, "n").toString(),
+  OLD = Buffer.alloc(5000, "o").toString(),
   cb = f => new Promise((ok, no) => f(e => (e ? no(e) : ok())));
 const API = {
   "fs.writeFileSync(p, data)": () => fs.writeFileSync(p, NEW),
@@ -99,7 +99,13 @@ const run = (name, door) => {
         : tail;
   const x = cp.spawnSync(argv[0], argv.slice(1), { encoding: "utf8" });
   if (door === 2 && x.status === 3) return null;
-  return [String(x.stdout).trim().split("\n").pop(), disk(f)];
+  const last = String(x.stdout).trim().split("\n").pop();
+  if (!/^(reports success|fails )/.test(last)) {
+    // The API never ran (strace cannot trace here, or the sandbox failed to start): not a verdict.
+    console.log(`RESULT: a door failed to run: ${argv[0]} exit ${x.status} signal ${x.signal}\n${x.stderr}`);
+    process.exit(2);
+  }
+  return [last, disk(f)];
 };
 for (const name of Object.keys(API)) {
   const plain = run(name, 0),

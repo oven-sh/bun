@@ -6523,8 +6523,19 @@ it.skipIf(!isWindows)("writeFile fails when another process maps the file and th
 // Every API that replaces a file, under two real failures of the final
 // ftruncate: an EIO injected by strace, and a Landlock sandbox (Linux 6.2+)
 // that refuses truncation. The fixture exits 86 when any API reports success
-// over a file that still holds the old tail. It also runs on node (exit 0).
-it.skipIf(!isLinux || !Bun.which("strace") || !Bun.which("python3"))(
+// over a file that still holds the old tail, and 2 when a door did not run.
+// It also runs on node (exit 0). A sandbox can forbid ptrace, so the skip
+// checks that strace can trace a child here, not only that it is installed.
+const straceCanInject =
+  isLinux &&
+  !!Bun.which("strace") &&
+  !!Bun.which("python3") &&
+  Bun.spawnSync({
+    cmd: ["strace", "-o", "/dev/null", "-e", "trace=ftruncate", "-e", "inject=ftruncate:error=EIO", "true"],
+    env: bunEnv,
+  }).exitCode === 0;
+// 36 serial child processes: the rare test that needs its own timeout.
+it.skipIf(!straceCanInject)(
   "no file API reports success when the final ftruncate fails (#42598)",
   async () => {
     await using proc = Bun.spawn({
@@ -6533,9 +6544,12 @@ it.skipIf(!isLinux || !Bun.which("strace") || !Bun.which("python3"))(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim().split("\n").pop()).toBe("RESULT: holds: every API fails or leaves exactly the new bytes");
-    expect(exitCode).toBe(0);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: stdout.trim().split("\n").pop(), stderr, exitCode }).toEqual({
+      result: "RESULT: holds: every API fails or leaves exactly the new bytes",
+      stderr: "",
+      exitCode: 0,
+    });
   },
   120_000,
 );

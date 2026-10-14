@@ -1,5 +1,6 @@
 import { test } from "bun:test";
 import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
 
 // https://github.com/oven-sh/bun/issues/12040
@@ -23,7 +24,7 @@ test("ws.send callback works as expected", async () => {
   httpServer.listen(0, () => resolve3());
   await promise3;
 
-  var ws = new WebSocket("ws://localhost:" + httpServer.address().port);
+  var ws = new WebSocket("ws://localhost:" + (httpServer.address() as AddressInfo).port);
 
   ws.on("message", msg => {});
   await Promise.all([promise, promise2]);

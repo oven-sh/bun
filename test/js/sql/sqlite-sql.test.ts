@@ -234,7 +234,7 @@ describe("Connection & Initialization", () => {
       const sql = new SQL("http://wrong-host/db", {
         adapter: "postgres",
         url: "postgres://correct-host:5432/mydb",
-      });
+      } as SQL.Options);
 
       expect(sql.options.adapter).toBe("postgres");
       expect(sql.options.hostname).toBe("correct-host");
@@ -248,7 +248,7 @@ describe("Connection & Initialization", () => {
       const sql = new SQL("http://wrong-host/wrongdb", {
         adapter: "mysql",
         url: "mysql://user:pass@mysql-host:3306/correctdb",
-      });
+      } as SQL.Options);
 
       expect(sql.options.adapter).toBe("mysql");
       expect(sql.options.hostname).toBe("mysql-host");
@@ -262,7 +262,7 @@ describe("Connection & Initialization", () => {
       const sql = new SQL("http://wrong-host:1234/wrongdb", {
         adapter: "mariadb",
         url: "mariadb://maria-host:3307/mariadb",
-      });
+      } as SQL.Options);
 
       expect(sql.options.adapter).toBe("mariadb");
       expect(sql.options.hostname).toBe("maria-host");
@@ -1649,7 +1649,7 @@ describe("SQL helpers", () => {
     try {
       await sql`UPDATE ${sql(random_name)} SET ${sql({ name: undefined, age: undefined })} WHERE id IN ${sql([1, 2])}`;
       expect.unreachable();
-    } catch (e) {
+    } catch (e: any) {
       expect(e).toBeInstanceOf(SyntaxError);
       expect(e.message).toBe("Update needs to have at least one column");
     }

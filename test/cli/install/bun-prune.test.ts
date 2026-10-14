@@ -1,6 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, runBunInstall, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
 import {
   chmodSync,
   closeSync,
@@ -18,8 +18,9 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { TestRegistry } from "registry";
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();
@@ -125,7 +126,7 @@ function expectBinRemoved(nm: string, name: string) {
   }
 }
 
-type BunfigOpts = NonNullable<Parameters<VerdaccioRegistry["createTestDir"]>[0]>["bunfigOpts"];
+type BunfigOpts = NonNullable<Parameters<TestRegistry["createTestDir"]>[0]>["bunfigOpts"];
 
 async function setup(pkgJson: Record<string, unknown>, bunfigOpts?: BunfigOpts) {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts });
@@ -325,7 +326,7 @@ test.concurrent("prunes nested node_modules folders the tree installs into", asy
   expect(existsSync(join(nested, "package.json"))).toBeTrue();
 });
 
-test.concurrent.each([["--production"], ["--prod"], ["--omit=dev"]])(
+test.concurrent.each([["--production"], ["--prod"], ["--omit=dev"]] as string[][])(
   "%s removes packages only reachable through devDependencies",
   async (...flags: string[]) => {
     const dir = await setup({

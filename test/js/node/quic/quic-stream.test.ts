@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { createPrivateKey, randomBytes, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { connect, listen } from "node:quic";
+import { connect, listen, type QuicEndpoint, type SessionOptions } from "node:quic";
 import { inspect } from "node:util";
 import { rawQuicExchange, type RawQuicOptions, type RawQuicStream } from "./raw-quic-client";
 
@@ -38,17 +38,17 @@ describe("QuicStream.destroy after the app ended the send side", () => {
       },
     );
 
-    const client = await connect(server.address, {
+    const client = await connect(server.address!, {
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: 1 },
-    });
+    } as SessionOptions);
     await client.opened;
 
     const gotHeaders = Promise.withResolvers<string>();
     const stream = await client.createBidirectionalStream({
       headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
-      onheaders(headers: Record<string, string>) {
+      onheaders(headers: Record<string, any>) {
         gotHeaders.resolve(headers[":status"]);
       },
     });
@@ -86,7 +86,7 @@ describe("HTTP/3 header encoding", () => {
       {
         sni: { "*": { keys: [key], certs: [cert] } },
         transportParams: { maxIdleTimeout: 1 },
-        onheaders(this: any, headers: Record<string, string>) {
+        onheaders(this: any, headers: Record<string, any>) {
           // Echo what the server decoded straight back to the client.
           this.sendHeaders({ ":status": "200", "x-echo": headers["x-name"] });
           this.writer.endSync();
@@ -94,11 +94,11 @@ describe("HTTP/3 header encoding", () => {
       },
     );
 
-    const client = await connect(server.address, {
+    const client = await connect(server.address!, {
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: 1 },
-    });
+    } as SessionOptions);
     await client.opened;
 
     const echoed = Promise.withResolvers<string>();
@@ -110,7 +110,7 @@ describe("HTTP/3 header encoding", () => {
         ":authority": "localhost",
         "x-name": VALUE,
       },
-      onheaders(headers: Record<string, string>) {
+      onheaders(headers: Record<string, any>) {
         echoed.resolve(headers["x-echo"]);
       },
     });
@@ -136,7 +136,7 @@ describe("HTTP/3 header encoding", () => {
       {
         sni: { "*": { keys: [key], certs: [cert] } },
         transportParams: { maxIdleTimeout: 1 },
-        onheaders(this: any, headers: Record<string, string>) {
+        onheaders(this: any, headers: Record<string, any>) {
           seen.push(headers);
           this.sendHeaders({ ":status": "200" });
           this.writer.endSync();
@@ -144,11 +144,11 @@ describe("HTTP/3 header encoding", () => {
       },
     );
 
-    const client = await connect(server.address, {
+    const client = await connect(server.address!, {
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: 1 },
-    });
+    } as SessionOptions);
     await client.opened;
 
     const attacker = await client.createBidirectionalStream();
@@ -194,12 +194,12 @@ describe("HTTP/3 header blocks that follow another header block", () => {
     ":scheme": "https",
     ":authority": "localhost",
   });
-  const connectTo = async (server: { address: unknown }) => {
-    const client = await connect(server.address, {
+  const connectTo = async (server: QuicEndpoint) => {
+    const client = await connect(server.address!, {
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: 1 },
-    });
+    } as SessionOptions);
     await client.opened;
     return client;
   };
@@ -232,7 +232,7 @@ describe("HTTP/3 header blocks that follow another header block", () => {
       {
         sni: { "*": { keys: [key], certs: [cert] } },
         transportParams: { maxIdleTimeout: 1 },
-        onheaders(this: any, headers: Record<string, string>) {
+        onheaders(this: any, headers: Record<string, any>) {
           this.sendInformationalHeaders({ ":status": "100" });
           this.sendInformationalHeaders({ ":status": "103", link: "</style.css>; rel=preload" });
           if (headers[":path"] === "/no-body") {
@@ -269,7 +269,7 @@ describe("HTTP/3 header blocks that follow another header block", () => {
         onheaders(this: any) {
           this.sendHeaders({ ":status": "200" }, { terminal: true });
         },
-        ontrailers(this: any, trailers: Record<string, string>) {
+        ontrailers(this: any, trailers: Record<string, any>) {
           requestTrailers = trailers;
         },
       },
@@ -310,13 +310,13 @@ describe("verifyClient", () => {
       },
     );
 
-    const client = await connect(server.address, {
+    const client = await connect(server.address!, {
       alpn: "quic-test",
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: 5 },
       onerror() {},
-    });
+    } as SessionOptions);
     const clientClosed = client.closed.then(
       () => undefined,
       (err: any) => err,
@@ -423,17 +423,17 @@ describe("headers queued before the handshake", () => {
       {
         sni: { "*": { keys: [key], certs: [cert] } },
         transportParams: { maxIdleTimeout: 1 },
-        onheaders(this: any, headers: Record<string, string>) {
+        onheaders(this: any, headers: Record<string, any>) {
           gotHeaders.resolve(headers[":path"]);
         },
       },
     );
 
-    const client = await connect(server.address, {
+    const client = await connect(server.address!, {
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: 1 },
-    });
+    } as SessionOptions);
     const stream = await client.createBidirectionalStream({});
     stream.closed.catch(() => {});
     stream.sendHeaders({ ":method": "POST", ":path": "/queued", ":scheme": "https", ":authority": "localhost" });

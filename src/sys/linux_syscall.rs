@@ -517,17 +517,10 @@ pub(crate) fn pidfd_open(pid: i32, flags: u32) -> Result<Fd, i32> {
     Ok(Fd::from_native(rc as i32))
 }
 
-/// `getdents64(2)` into a caller-provided byte buffer — libc-convention return
-/// (matches the existing `WrappedIterator` parser which decodes the raw
-/// `linux_dirent64` records itself).
+/// `getdents64(2)` into a caller-provided byte buffer, with the libc-convention return. `dirent::parse` reads the records.
 #[inline]
 pub(crate) unsafe fn getdents64(fd: i32, buf: *mut u8, len: usize) -> isize {
-    // rustix only exposes `RawDir` (which owns the parse loop). We need the
-    // raw byte fill to keep the existing record parser, so issue the syscall
-    // via `libc::syscall(SYS_getdents64, ..)`. This is a thin trampoline (no
-    // errno-on-return mangling beyond the standard `-1`/errno convention).
-    // PERF: switch to `rustix::fs::RawDir` once `WrappedIterator` is
-    // reworked to consume `RawDirEntry` instead of hand-parsing bytes.
+    // Not `rustix::fs::RawDir`: it advances by `d_reclen` and reads the name with no check of either.
     // SAFETY: raw `getdents64(2)`; caller guarantees `buf[..len]` is writable;
     // kernel validates `fd`.
     unsafe { libc::syscall(libc::SYS_getdents64, fd as libc::c_long, buf, len) as isize }

@@ -89,7 +89,7 @@ fn end_with_semicolon_of_statement_before(comment: &Comment, f: &Formatter<'_>) 
 }
 
 /// `node_start`: where the node starts that they lead. `is_ignored`: it is written as it is in the source. It is too if
-/// one of them says so.
+/// one of them says so and has been moved out of it.
 #[cold]
 fn write_leading_comments<'a>(
     comments: &'a [Comment],
@@ -99,8 +99,9 @@ fn write_leading_comments<'a>(
 ) {
     // A comment that has been moved out of a node that is written as it is in the source is in that
     // text.
-    let is_ignored =
-        is_ignored || (comments.iter()).any(|comment| f.comments().is_suppression_comment(comment));
+    let is_ignored = is_ignored
+        || (comments.iter())
+            .any(|comment| comment.is_moved() && f.comments().is_suppression_comment(comment));
     for comment in comments {
         f.comments_mut().increment_printed_count();
         if is_ignored && comment.is_moved() && comment.span.start >= node_start {

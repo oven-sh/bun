@@ -208,10 +208,18 @@ pub(crate) fn write_called_function_with_comments<'a>(
             || (trailing.iter().take(count_trailing(f)))
                 .any(|it| f.comments().is_suppression_comment(it));
         let content = format_with(|f| {
-            write!(f, format_leading_comments(span));
             match is_suppressed {
-                true => write!(f, FormatSuppressedNode(span)),
-                false => write_expression(e, options, f),
+                true => write!(
+                    f,
+                    [
+                        format_leading_comments_of_ignored(span),
+                        FormatSuppressedNode(span)
+                    ]
+                ),
+                false => {
+                    write!(f, format_leading_comments(span));
+                    write_expression(e, options, f);
+                }
             }
             let count = count_trailing(f);
             write!(

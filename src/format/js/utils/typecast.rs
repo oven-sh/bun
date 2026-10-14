@@ -51,16 +51,24 @@ pub(crate) fn write_type_casts<'a>(
     };
     let is_suppressed = f.comments().is_suppressed(outermost.start)
         || f.comments().has_trailing_suppression_comment(outermost.end);
-    write!(f, format_leading_comments(outermost));
     match is_suppressed {
-        true => write!(f, FormatSuppressedNode(outermost)),
+        true => write!(
+            f,
+            [
+                format_leading_comments_of_ignored(outermost),
+                FormatSuppressedNode(outermost)
+            ]
+        ),
         false => write!(
             f,
-            FormatParenthesizedExpression {
-                target: e,
-                parentheses: &parentheses,
-                write_target,
-            }
+            [
+                format_leading_comments(outermost),
+                FormatParenthesizedExpression {
+                    target: e,
+                    parentheses: &parentheses,
+                    write_target,
+                }
+            ]
         ),
     }
     write_trailing_comments_of(node, f);

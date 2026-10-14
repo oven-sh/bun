@@ -51,9 +51,7 @@ pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'
         // `(a<T>) + b`
         ExprKind::Instantiation { .. } => return true,
         // Something follows that would be taken for a part of what is made.
-        ExprKind::New(_) if f.source_text().byte_at(e.span().end - 1) != Some(b')') => {
-            return true;
-        }
+        ExprKind::New(call) if call.close_paren().is_none() => return true,
         _ => {}
     }
     // What it starts with: `{`, `function`, `class` and `let[` start a statement.
@@ -95,16 +93,19 @@ pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'
 
 /// Whether there is an `a in b` in `node` with no parentheses around it in `node`.
 fn has_bare_in(node: Node<'_>) -> bool {
-    let mut found = false;
-    node.for_each_child(|child| {
-        found = found
-            || match child {
-                Node::Expr(it) if it.is_parenthesized() => false,
-                Node::Expr(it) if it.binary_op() == Some(BinOp::In) => true,
-                _ => has_bare_in(child),
-            };
-    });
-    found || matches!(node, Node::Expr(it) if it.binary_op() == Some(BinOp::In))
+    // A loop: what is written as it is can be nested to any depth.
+    let mut pending = vec![node];
+    while let Some(next) = pending.pop() {
+        if matches!(next, Node::Expr(it) if it.binary_op() == Some(BinOp::In)) {
+            return true;
+        }
+        next.for_each_child(|child| {
+            if !matches!(child, Node::Expr(it) if it.is_parenthesized()) {
+                pending.push(child);
+            }
+        });
+    }
+    false
 }
 
 /// Whether `e` itself needs parentheses, not the `ChainExpression` around it.

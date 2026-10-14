@@ -949,6 +949,18 @@ describe.concurrent("bun fmt", () => {
           "x =\n  (a  <T>) + // prettier-ignore\n  y;\n",
           "x =\n  a  <T> + // prettier-ignore\n  y;\n",
         ],
+        [
+          "js",
+          "(new (A)) // prettier-ignore\n.b;\n",
+          "(new (A)) // prettier-ignore\n.b;\n",
+          "new (A) // prettier-ignore\n.b;\n",
+        ],
+        [
+          "js",
+          "(new (a + b)) // prettier-ignore\n(1);\n",
+          "(new (a + b)) // prettier-ignore\n(1);\n",
+          "new (a + b) // prettier-ignore\n(1);\n",
+        ],
       ],
     ],
     [
@@ -1031,6 +1043,15 @@ describe.concurrent("bun fmt", () => {
       expect(result.files).toEqual(Object.fromEntries(rows.map(([, , printed], index) => [names[index], printed])));
       expect(result.exitCode).toBe(0);
     });
+  });
+
+  test("a comment in what a `prettier-ignore` comment leads is not lost where that is formatted all the same", async () => {
+    const text = "x = <a {\n  // prettier-ignore\n  ...b\n  // c1\n  .c} />;\n";
+    const result = await format({ "a.jsx": text }, [], { reads: ["a.jsx"] });
+    expect(result.files).toEqual({
+      "a.jsx": "x = (\n  <a\n    {\n      // prettier-ignore\n      // c1\n      ...b.c\n    }\n  />\n);\n",
+    });
+    expect(result.exitCode).toBe(0);
   });
 
   test("Handlebars", async () => {

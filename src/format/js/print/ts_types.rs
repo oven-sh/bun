@@ -337,7 +337,10 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
             if f.comments().has_trailing_suppression_comment(span.end) {
                 write!(
                     f,
-                    [format_leading_comments(span), FormatSuppressedNode(span)]
+                    [
+                        format_leading_comments_of_ignored(span),
+                        FormatSuppressedNode(span)
+                    ]
                 );
                 return write_trailing_comments_of(signature.as_ast_nodes(), f);
             }

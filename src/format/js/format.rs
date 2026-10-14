@@ -231,7 +231,7 @@ pub(crate) fn format_node_without_comments<'a>(
     if f.is_quiet() || !f.comments().is_suppressed(span.start) {
         return write(f);
     }
-    format_leading_comments(span).fmt(f);
+    format_leading_comments_of_ignored(span).fmt(f);
     f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
     write_trailing_comments_in(span, parent, f);
 }
@@ -433,11 +433,12 @@ impl<'a> FormatExpr<'a> {
             write!(f, ")");
             return write_trailing_comments_of(node, f);
         }
-        format_leading_comments(print::sequence_expression::span_that_comments_lead(expr, f))
-            .fmt(f);
+        let leading = print::sequence_expression::span_that_comments_lead(expr, f);
         if is_suppressed {
+            format_leading_comments_of_ignored(leading).fmt(f);
             write_suppressed_expression(expr, is_chain_expression, f);
         } else {
+            format_leading_comments(leading).fmt(f);
             f.in_scope(span, |f| self.write_in_parentheses(is_chain_expression, f));
         }
         write_trailing_comments_of(node, f);
@@ -494,11 +495,14 @@ fn write_suppressed_expression<'a>(
         true => parentheses::expression::chain_expression_needs_parentheses(expr, f),
         false => parentheses::expression::needs_parentheses(expr, f),
     };
-    let needs_parentheses =
-        match adds_parentheses_to_what_is_ignored(f) {
-            true => needs_parentheses,
-            false => needs_parentheses && expr.is_parenthesized(),
-        } || parentheses::expression::source_text_needs_its_parentheses(expr, f);
+    // `{`, `function` and `class` start a statement, and the parentheses can be around more: `({} // .. ⏎ .a)`.
+    let starts_statement = matches!(
+        expr.kind(),
+        ExprKind::Object(_) | ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Ident(_)
+    );
+    let needs_parentheses = (needs_parentheses
+        && (adds_parentheses_to_what_is_ignored(f) || expr.is_parenthesized() || starts_statement))
+        || parentheses::expression::source_text_needs_its_parentheses(expr, f);
     // A class expression with decorators is on lines of its own.
     let is_decorated_class =
         matches!(expr.kind(), ExprKind::Class(class) if class.decorators().next().is_some());

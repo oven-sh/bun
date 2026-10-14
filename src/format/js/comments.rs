@@ -1626,7 +1626,12 @@ impl<'a> Comments<'a> {
         if !self.has_suppression_comments {
             return false;
         }
+        // The text of one that has been moved to the start of `b` is in `b`.
         let comments = self.comments_in(Span::new(left_end, right_start));
+        let count = (comments.iter())
+            .take_while(|it| it.span.end <= right_start)
+            .count();
+        let comments = comments.get(..count).unwrap_or_default();
         if !comments.iter().any(|it| self.is_suppression_comment(it)) {
             return false;
         }

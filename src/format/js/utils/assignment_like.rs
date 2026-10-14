@@ -394,7 +394,10 @@ impl<'a> AssignmentLike<'a> {
                         let span = Span::new(id.span().start, ty.span().end);
                         write!(
                             f,
-                            [format_leading_comments(span), FormatSuppressedNode(span)]
+                            [
+                                format_leading_comments_of_ignored(span),
+                                FormatSuppressedNode(span)
+                            ]
                         );
                     }
                     Some(ty) => {

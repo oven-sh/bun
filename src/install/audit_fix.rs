@@ -1002,16 +1002,19 @@ impl FixPlan {
                 print_tokens(&item.ignore_tokens);
                 prettyln!("<r>");
                 for token in &item.ignore_tokens {
-                    if !all_tokens.contains(token) {
+                    if !token.is_empty() && !all_tokens.contains(token) {
                         all_tokens.push(token.clone());
                     }
                 }
             }
-            pretty!("    <cyan>bun audit fix");
-            for token in &all_tokens {
-                pretty!(" --ignore {}", BStr::new(token));
+            if !all_tokens.is_empty() {
+                pretty!("    <cyan>bun audit fix");
+                for token in &all_tokens {
+                    // The token is the registry's text, and this line is there to be pasted.
+                    pretty!(" --ignore {}", bun_core::fmt::shell_word(&[token]));
+                }
+                prettyln!("<r>");
             }
-            prettyln!("<r>");
             prettyln!("");
         }
         if !self.unmatched.is_empty() {

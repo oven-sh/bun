@@ -158,8 +158,11 @@ macro_rules! cclog {
     };
 }
 
+/// `ENOENT`, not the bare `NOENT` that `<&str>::from(E)` yields on Windows.
 fn errno_name(e: &sys::Error) -> &'static str {
-    <&'static str>::from(e.get_errno())
+    e.get_error_code_tag_name()
+        .map(|(name, _)| name)
+        .unwrap_or("UNKNOWN")
 }
 
 /// Read-log tail for an I/O error; ENOENT uses Node's exact wording.

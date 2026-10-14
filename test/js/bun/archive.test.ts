@@ -6,12 +6,13 @@ import { join } from "path";
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
 // a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.
 // `fields` overwrites the raw 8-byte mode / 12-byte mtime fields, for values the
-// octal text form cannot hold (see `base256`).
+// octal text form cannot hold (see `base256`). `linkname` is the target of a
+// symlink ('2') entry.
 function ustarHeader(
   name: string | Buffer,
   size: number,
   typeflag: string = "0",
-  fields: { mode?: Uint8Array; mtime?: Uint8Array } = {},
+  fields: { mode?: Uint8Array; mtime?: Uint8Array; linkname?: string } = {},
 ): Buffer {
   const nameBytes = typeof name === "string" ? Buffer.from(name) : name;
   if (nameBytes.length > 99) throw new Error("ustar name too long: " + name);
@@ -26,6 +27,7 @@ function ustarHeader(
   if (fields.mtime) h.set(fields.mtime.subarray(0, 12), 136);
   h.write("        ", 148);
   h.write(typeflag, 156);
+  if (fields.linkname) h.write(fields.linkname, 157, 99);
   h.write("ustar\0", 257);
   h.write("00", 263);
   let sum = 0;
@@ -1893,6 +1895,45 @@ describe("Bun.Archive", () => {
       const count = await archive.extract(String(dir), { glob: "**/*.ts" });
 
       expect(count).toBe(0);
+    });
+
+    // The glob path creates a symlink entry as soon as it reads it. mkdir on
+    // the dangling link reports EEXIST and mkdir below it reports ENOENT, and
+    // the recursive mkdir for the next entry's parents used to retry that pair
+    // forever. Windows does not extract symlink entries, so the link never
+    // exists there.
+    test.skipIf(isWindows)("skips an entry below a dangling symlink from the same archive", async () => {
+      const tarball = Buffer.concat([
+        ustarHeader("link", 0, "2", { linkname: "nowhere" }),
+        ustarEntry("link/a/b.txt", Buffer.from("x")),
+        Buffer.alloc(1024),
+      ]);
+
+      using dir = tempDir("archive-glob-dangling-symlink", {
+        "input.tar": tarball,
+        "extract.ts": `
+          const fs = require("node:fs");
+          const archive = new Bun.Archive(new Uint8Array(fs.readFileSync("input.tar")));
+          const count = await archive.extract("out", { glob: "**" });
+          console.log(JSON.stringify({ count, nowhere: fs.existsSync("out/nowhere") }));
+        `,
+      });
+
+      // In a child process: an extraction that never settles keeps a thread of
+      // the work pool spinning, which must not happen inside the test runner.
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "extract.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // Only the symlink counts. Nothing is created through it.
+      expect(stdout).toBe(JSON.stringify({ count: 1, nowhere: false }) + "\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
     });
   });
 

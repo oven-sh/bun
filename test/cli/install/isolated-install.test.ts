@@ -1726,6 +1726,191 @@ describe("existing node_modules, missing node_modules/.bun", () => {
   });
 });
 
+// A new store resets what another linker left. When the root has no node_modules, the node_modules of each
+// workspace is still there.
+describe("workspace node_modules, missing root node_modules", () => {
+  async function install(packageDir: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function oldModules(packageDir: string) {
+    const names = (await readdirSorted(join(packageDir, "node_modules"))).filter(name =>
+      name.startsWith(".old_modules-"),
+    );
+    return names.map(name => join(packageDir, "node_modules", name));
+  }
+
+  test("the node_modules of a workspace is reset", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "app",
+          workspaces: ["packages/*"],
+          dependencies: { "has-bin-entries": "1.0.0", "no-deps": "2.0.0" },
+        }),
+        "packages/m/package.json": JSON.stringify({
+          name: "m",
+          version: "1.0.0",
+          dependencies: { "has-bin-entries": "2.0.0" },
+        }),
+        // What npm leaves after `rm -rf node_modules` in the root: has-bin-entries@2.0.0 is not the version of the
+        // root, and neither is its dependency no-deps@1.0.0.
+        "packages/m/node_modules/has-bin-entries/package.json": JSON.stringify({
+          name: "has-bin-entries",
+          version: "0.0.0-stale",
+        }),
+        "packages/m/node_modules/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "0.0.0-stale" }),
+        "packages/m/node_modules/.bin/stale": "stale",
+      },
+    });
+    const member = join(packageDir, "packages", "m");
+
+    const first = await install(packageDir);
+    expect(first.stderr).not.toContain("error:");
+    expect(await readdirSorted(join(member, "node_modules"))).toEqual([".bin", "has-bin-entries"]);
+    expect(readlinkSync(join(member, "node_modules", "has-bin-entries"))).toBe(
+      join("..", "..", "..", "node_modules", ".bun", "has-bin-entries@2.0.0", "node_modules", "has-bin-entries"),
+    );
+    // `m` does not depend on no-deps: it gets the one of the root, not a folder that is not in bun.lock.
+    const resolved = createRequire(join(member, "index.js")).resolve("no-deps/package.json");
+    expect((await file(resolved).json()).version).toBe("2.0.0");
+    // Nothing is deleted.
+    const [old] = await oldModules(packageDir);
+    expect(await readdirSorted(join(old, ".old_m_modules"))).toEqual([".bin", "has-bin-entries", "no-deps"]);
+    expect(first.exitCode).toBe(0);
+
+    const second = await install(packageDir);
+    expect(second.stdout).toContain("(no changes)");
+    expect(await oldModules(packageDir)).toEqual([old]);
+    expect(second.exitCode).toBe(0);
+  });
+
+  test("two workspaces with the same folder name are both reset", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "app", workspaces: ["packages/ui", "apps/ui"] }),
+        "packages/ui/package.json": JSON.stringify({
+          name: "ui",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+        "apps/ui/package.json": JSON.stringify({
+          name: "app-ui",
+          version: "1.0.0",
+          dependencies: { "no-deps": "2.0.0" },
+        }),
+        "packages/ui/node_modules/stale-1/index.js": "",
+        "apps/ui/node_modules/stale-2/index.js": "",
+      },
+    });
+
+    const { exitCode } = await install(packageDir);
+    expect(await readdirSorted(join(packageDir, "packages", "ui", "node_modules"))).toEqual(["no-deps"]);
+    expect(await readdirSorted(join(packageDir, "apps", "ui", "node_modules"))).toEqual(["no-deps"]);
+    const [old] = await oldModules(packageDir);
+    const moved = await readdirSorted(old);
+    expect(moved).toEqual([".old_ui_modules", expect.stringMatching(/^\.old_ui_modules-[0-9a-f]{16}$/)]);
+    expect((await Promise.all(moved.map(name => readdirSorted(join(old, name))))).flat().sort()).toEqual([
+      "stale-1",
+      "stale-2",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["missing", "from another linker"])(
+    "--filter: a workspace that the install does not link keeps its node_modules, when the root node_modules is %s",
+    async root => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
+          "packages/a/package.json": JSON.stringify({
+            name: "a",
+            version: "1.0.0",
+            dependencies: { "no-deps": "1.0.0" },
+          }),
+          "packages/b/package.json": JSON.stringify({
+            name: "b",
+            version: "1.0.0",
+            dependencies: { "no-deps": "2.0.0" },
+          }),
+          "packages/a/node_modules/stale-a/index.js": "",
+          "packages/b/node_modules/stale-b/index.js": "",
+          ...(root === "missing" ? {} : { "node_modules/other/index.js": "" }),
+        },
+      });
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--filter", "a"],
+        cwd: packageDir,
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(await readdirSorted(join(packageDir, "packages", "a", "node_modules"))).toEqual(["no-deps"]);
+      expect(await readdirSorted(join(packageDir, "packages", "b", "node_modules"))).toEqual(["stale-b"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("no workspace has a node_modules: nothing is made for them", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
+        "packages/m/package.json": JSON.stringify({
+          name: "m",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      },
+    });
+
+    const { exitCode } = await install(packageDir);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bun"]);
+    expect(await readdirSorted(join(packageDir, "packages", "m", "node_modules"))).toEqual(["no-deps"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // What is behind a link is not in this project.
+  test.each(["missing", "from another linker"])(
+    "a node_modules behind a link stays where it is, when the root node_modules is %s",
+    async root => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({ name: "app", workspaces: ["packages/linked", "packages/m"] }),
+          "outside/member/package.json": JSON.stringify({ name: "linked", version: "1.0.0" }),
+          "outside/member/node_modules/mine.txt": "mine",
+          "packages/m/package.json": JSON.stringify({ name: "m", version: "1.0.0" }),
+          "outside/modules/mine.txt": "mine",
+          ...(root === "missing" ? {} : { "node_modules/other/index.js": "" }),
+        },
+      });
+      // The folder of one workspace is a link, and the node_modules of the other one is a link.
+      await symlink(join(packageDir, "outside", "member"), join(packageDir, "packages", "linked"), "dir");
+      await symlink(join(packageDir, "outside", "modules"), join(packageDir, "packages", "m", "node_modules"), "dir");
+
+      const { exitCode } = await install(packageDir);
+      expect(await readdirSorted(join(packageDir, "outside", "member", "node_modules"))).toEqual(["mine.txt"]);
+      expect(await readdirSorted(join(packageDir, "outside", "modules"))).toEqual(["mine.txt"]);
+      expect(exitCode).toBe(0);
+    },
+  );
+});
+
 describe("--linker flag", () => {
   test("can override linker from bunfig", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

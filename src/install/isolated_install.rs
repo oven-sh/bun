@@ -1132,6 +1132,112 @@ pub(crate) fn build_store(
     })
 }
 
+/// True when `path` is a directory and not a link to one.
+fn is_real_directory(path: &bun_core::ZStr) -> bool {
+    #[cfg(windows)]
+    {
+        sys::get_file_attributes(path).is_some_and(|a| a.is_directory && !a.is_reparse_point)
+    }
+    #[cfg(not(windows))]
+    {
+        // `mode_t` is `u16` on darwin/freebsd/android, `u32` on linux.
+        sys::lstat(path).is_ok_and(|st| sys::posix::s_isdir(st.st_mode as u32))
+    }
+}
+
+/// True when a directory in `path`, which is relative to the root, is a link.
+fn path_has_link(path: &[u8]) -> bool {
+    let mut end = 0;
+    while end < path.len() {
+        end = match path[end + 1..]
+            .iter()
+            .position(|&c| paths::Platform::AUTO.is_separator(c))
+        {
+            Some(separator) => end + 1 + separator,
+            None => path.len(),
+        };
+        let mut directory = AutoRelPath::from(&path[..end]).assume_ok();
+        if !is_real_directory(directory.slice_z()) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The `node_modules` of a workspace that this install links is from another linker, or from a
+/// store that is gone. It moves to `<old_modules>/.old_<name>_modules`, where `old_modules` is
+/// `node_modules/.old_modules-<id>` of the root. `old_modules_exists` is false when that
+/// directory is not made yet: it is made for the first workspace that has a `node_modules`.
+/// A workspace that `--filter` leaves out has no entry in `store`, and its `node_modules` stays.
+fn move_workspace_node_modules_aside(
+    lockfile: &Lockfile,
+    store: &Store,
+    old_modules: &mut AutoRelPath,
+    mut old_modules_exists: bool,
+) {
+    let pkg_resolutions = lockfile.packages.items_resolution();
+    let node_pkg_ids = store.nodes.items_pkg_id();
+    for node_id in store.entries.items_node_id() {
+        let pkg_res = &pkg_resolutions[node_pkg_ids[node_id.get() as usize] as usize];
+        if pkg_res.tag != ResolutionTag::Workspace {
+            continue;
+        }
+        let workspace_path = pkg_res.workspace().slice(&lockfile.buffers.string_bytes);
+        // `AutoRelPath` does not check the length.
+        if workspace_path.is_empty()
+            || workspace_path.len() + "/node_modules".len() >= paths::MAX_PATH_BYTES
+        {
+            continue;
+        }
+        let mut workspace_node_modules = AutoRelPath::from(workspace_path).assume_ok();
+        let basename = workspace_node_modules.basename().to_vec();
+        workspace_node_modules.append(b"node_modules").assume_ok();
+
+        // Most workspaces have no `node_modules` here. A link with that name is from the user,
+        // and what is behind a link in the path of the workspace is not in this project.
+        if !is_real_directory(workspace_node_modules.slice_z()) || path_has_link(workspace_path) {
+            continue;
+        }
+
+        if !old_modules_exists {
+            if sys::mkdirat(Fd::cwd(), old_modules.slice_z(), 0o755).is_err() {
+                return;
+            }
+            old_modules_exists = true;
+        }
+
+        let old_modules_len = old_modules.len();
+        old_modules
+            .append_fmt(format_args!(".old_{}_modules", BStr::new(&basename)))
+            .assume_ok();
+        if let Err(err) = sys::renameat(
+            Fd::cwd(),
+            workspace_node_modules.slice_z(),
+            Fd::cwd(),
+            old_modules.slice_z(),
+        ) {
+            // Another workspace has a folder with the same name.
+            if matches!(err.get_errno(), sys::E::ENOTEMPTY | sys::E::EEXIST) {
+                old_modules.set_length(old_modules_len);
+                old_modules
+                    .append_fmt(format_args!(
+                        ".old_{}_modules-{}",
+                        BStr::new(&basename),
+                        bun_fmt::hex_lower(bun_core::bytes_of(&fast_random()))
+                    ))
+                    .assume_ok();
+                let _ = sys::renameat(
+                    Fd::cwd(),
+                    workspace_node_modules.slice_z(),
+                    Fd::cwd(),
+                    old_modules.slice_z(),
+                );
+            }
+        }
+        old_modules.set_length(old_modules_len);
+    }
+}
+
 /// Runs on main thread
 pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
@@ -1684,6 +1790,17 @@ pub(crate) fn install_isolated_packages(
 
         match sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {
             Ok(()) => {
+                // The root had no 'node_modules'. The 'node_modules' of a workspace is then
+                // from another linker, or from a store that is gone.
+                let mut rename_path = AutoRelPath::from(b"node_modules").assume_ok();
+                rename_path
+                    .append_fmt(format_args!(
+                        ".old_modules-{}",
+                        bun_fmt::hex_lower(bun_core::bytes_of(&fast_random()))
+                    ))
+                    .assume_ok();
+                move_workspace_node_modules_aside(lockfile, &store, &mut rename_path, false);
+
                 // fallthrough to creating bun_modules below
             }
             Err(_) => {
@@ -1767,33 +1884,7 @@ pub(crate) fn install_isolated_packages(
                     }
 
                     // 3
-                    for workspace_path in lockfile.workspace_paths.values() {
-                        let mut workspace_node_modules =
-                            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes))
-                                .assume_ok();
-
-                        // Clone basename before mutating
-                        // `workspace_node_modules`.
-                        let basename = workspace_node_modules.basename().to_vec();
-
-                        workspace_node_modules.append(b"node_modules").assume_ok();
-
-                        // Reshaped for borrowck — capture length instead
-                        // of `save()` so `rename_path` stays unborrowed.
-                        let rename_path_save = rename_path.len();
-                        rename_path
-                            .append_fmt(format_args!(".old_{}_modules", BStr::new(&basename)))
-                            .assume_ok();
-
-                        let _ = sys::renameat(
-                            Fd::cwd(),
-                            workspace_node_modules.slice_z(),
-                            Fd::cwd(),
-                            rename_path.slice_z(),
-                        );
-
-                        rename_path.set_length(rename_path_save);
-                    }
+                    move_workspace_node_modules_aside(lockfile, &store, &mut rename_path, true);
                 }
                 #[cfg(not(windows))]
                 {
@@ -1877,34 +1968,7 @@ pub(crate) fn install_isolated_packages(
                     rename_path.undo(1);
 
                     // 5
-                    for workspace_path in lockfile.workspace_paths.values() {
-                        let mut workspace_node_modules =
-                            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes))
-                                .assume_ok();
-
-                        // Clone basename before mutating
-                        // `workspace_node_modules`.
-                        let basename = workspace_node_modules.basename().to_vec();
-
-                        workspace_node_modules.append(b"node_modules").assume_ok();
-
-                        // Capture the length and truncate manually
-                        // so `rename_path` stays unborrowed between save/restore.
-                        let rename_path_save = rename_path.len();
-
-                        rename_path
-                            .append_fmt(format_args!(".old_{}_modules", BStr::new(&basename)))
-                            .assume_ok();
-
-                        let _ = sys::renameat(
-                            Fd::cwd(),
-                            workspace_node_modules.slice_z(),
-                            Fd::cwd(),
-                            rename_path.slice_z(),
-                        );
-
-                        rename_path.set_length(rename_path_save);
-                    }
+                    move_workspace_node_modules_aside(lockfile, &store, &mut rename_path, true);
                 }
 
                 break 'is_new_bun_modules true;

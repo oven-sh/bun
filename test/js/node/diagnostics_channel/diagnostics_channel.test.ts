@@ -208,7 +208,7 @@ describe("Channel", () => {
     let store1bound = true;
 
     // Bind a store with transformation of published data
-    const store2 = new AsyncLocalStorage();
+    const store2 = new AsyncLocalStorage<{ data: any }>();
     dc.bindStore(
       store2,
       mustCall(data => {
@@ -223,7 +223,7 @@ describe("Channel", () => {
         if (store1bound) {
           expect(data).toStrictEqual(store1.getStore());
         }
-        expect({ data }).toStrictEqual(store2.getStore());
+        expect({ data }).toStrictEqual(store2.getStore()!);
         expect(data).toStrictEqual(inputs[n]);
       }, 4),
     );

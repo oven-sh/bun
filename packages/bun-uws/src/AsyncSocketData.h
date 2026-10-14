@@ -156,10 +156,10 @@ struct AsyncSocketData {
 
     /* Or empty */
     AsyncSocketData() = default;
+    const char *peerCertVerifyErrorCode = nullptr;
     bool isIdle = false;
     bool isAuthorized = false; // per-socket TLS authorization status
     bool peerCertVerified = false;
-    const char *peerCertVerifyErrorCode = nullptr;
     /* Whether this socket has fired the context filter with +1. onClose and
      * upgrade only fire -1 for sockets that did, so the filter stays balanced
      * across every open/close path (TLS sockets that RST before the handshake,
@@ -170,6 +170,9 @@ struct AsyncSocketData {
      * same paths that balance +1. A filter that must account for every socket
      * that can still reach a handler counts these. */
     bool filteredAccept = false;
+    /* Whether it has fired the filter with -3 (HttpResponse::setNodeHttpTunnelIdle).
+     * +3 undoes it, and an idle socket fires -4 in place of -2. */
+    bool filteredIdleTunnel = false;
 };
 
 }

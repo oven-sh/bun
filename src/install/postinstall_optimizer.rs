@@ -154,14 +154,9 @@ impl List {
 
         // The feature flag defaults to false; `env_var` returns `Option<bool>`,
         // so unwrap_or(false) preserves the default.
-        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER
+        !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER
             .get()
             .unwrap_or(false)
-        {
-            return false;
-        }
-
-        true
     }
 
     pub(crate) fn should_ignore_lifecycle_scripts(

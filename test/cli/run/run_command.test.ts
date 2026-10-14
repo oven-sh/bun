@@ -5,7 +5,7 @@ import { chmodSync, existsSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
 import { join } from "path";
 
-let cwd: string;
+let cwd: string | undefined;
 
 describe("bun", () => {
   test("should error with missing script", () => {

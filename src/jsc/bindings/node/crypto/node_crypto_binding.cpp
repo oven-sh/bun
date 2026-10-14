@@ -367,12 +367,6 @@ __attribute__((minsize)) JSValue createNodeCryptoBinding(Zig::GlobalObject* glob
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "KeyObject"_s)),
         globalObject->m_JSKeyObjectClassStructure.constructor(globalObject));
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "SecretKeyObject"_s)),
-        globalObject->m_JSSecretKeyObjectClassStructure.constructor(globalObject));
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "PublicKeyObject"_s)),
-        globalObject->m_JSPublicKeyObjectClassStructure.constructor(globalObject));
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "PrivateKeyObject"_s)),
-        globalObject->m_JSPrivateKeyObjectClassStructure.constructor(globalObject));
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "publicEncrypt"_s)),
         JSFunction::create(vm, globalObject, 2, "publicEncrypt"_s, jsPublicEncrypt, ImplementationVisibility::Public, NoIntrinsic), 0);

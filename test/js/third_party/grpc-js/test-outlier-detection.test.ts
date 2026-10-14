@@ -22,7 +22,7 @@ import { afterAll as after, beforeAll as before, describe, it } from "bun:test";
 import * as path from "path";
 import { loadProtoFile } from "./common";
 
-function multiDone(done: Mocha.Done, target: number) {
+function multiDone(done: (err?: unknown) => void, target: number) {
   let count = 0;
   return (error?: any) => {
     if (error) {

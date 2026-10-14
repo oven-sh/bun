@@ -54,7 +54,7 @@ pub use keep_alive::KeepAlive;
 //                  process object is signaled (i.e. has terminated).
 // Downstream code calls `install()` / `enable()` / `is_enabled()`
 // unconditionally, so both arms expose the same surface.
-#[cfg(not(windows))]
+#[cfg(unix)]
 #[path = "ParentDeathWatchdog.rs"]
 pub mod parent_death_watchdog;
 #[cfg(windows)]
@@ -312,7 +312,7 @@ pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 // `uv_loop_t` whereas the impl bodies
 // (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) hand back the wrapper.
 bun_dispatch::link_interface! {
-    pub EventLoopCtx[Js, Mini] {
+    pub EventLoopCtx[Js, Mini, SpawnSync] {
         fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
         fn file_polls_ptr() -> *mut Store;
         // `alloc_file_poll() -> *mut FilePoll` was removed — it
@@ -415,10 +415,15 @@ impl EventLoopCtx {
         self.file_polls_mut().get_init(value)
     }
 
+    /// What a `FilePoll` keeps of the ctx it was made with; [`get_vm_ctx`] gives that ctx back.
     #[inline]
     #[cfg(not(windows))]
-    pub(crate) fn is_js(&self) -> bool {
-        self.is(EventLoopCtxKind::Js)
+    pub(crate) fn allocator_type(&self) -> AllocatorType {
+        match self.kind {
+            EventLoopCtxKind::Js => AllocatorType::Js,
+            EventLoopCtxKind::Mini => AllocatorType::Mini,
+            EventLoopCtxKind::SpawnSync => AllocatorType::SpawnSync,
+        }
     }
     #[inline]
     pub fn loop_(&self) -> *mut bun_uws_sys::Loop {
@@ -445,9 +450,6 @@ pub use posix_event_loop::Flags as PollKind;
 pub mod file_poll {
     pub use super::Store;
     pub use super::posix_event_loop::{Flags, FlagsSet};
-    /// Kqueue/epoll watch kind passed to `FilePoll::register`.
-    #[allow(dead_code)]
-    pub(crate) type Pollable = Flags;
 }
 
 // ── bun_io original submodules ──────────────────────────────────────────────
@@ -679,8 +681,8 @@ use bun_sys::{self as sys, E, Fd};
 
 // `loop` is a Rust keyword, so the static is
 // named `io_loop` but the runtime tagname is `"loop"` so `BUN_DEBUG_loop=1` works.
+#[cfg(not(windows))]
 #[allow(non_upper_case_globals)]
-#[allow(dead_code)]
 pub(crate) static io_loop: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("loop", bun_core::output::Visibility::Visible);
 // All `log!` call sites are inside epoll/kqueue paths (Linux/macOS/FreeBSD); on
@@ -2022,7 +2024,7 @@ pub mod waker {
     #[cfg(target_os = "macos")]
     pub struct KEventWaker {
         kq: i32,
-        machport: bun_core::mach_port,
+        machport: libc::mach_port_t,
         pub machport_buf: Box<[u8]>,
     }
 
@@ -2031,10 +2033,10 @@ pub mod waker {
 
     #[cfg(target_os = "macos")]
     unsafe extern "C" {
-        // Defined in src/io/io_darwin.cpp. `mach_port` is a by-value `u32`;
+        // Defined in src/io/io_darwin.cpp. `mach_port_t` is a by-value `u32`;
         // bad/dead ports are reported by mach return codes, not UB.
-        fn io_darwin_create_machport(kq: i32, buf: *mut c_void, len: usize) -> bun_core::mach_port;
-        safe fn io_darwin_schedule_wakeup(port: bun_core::mach_port) -> bool;
+        fn io_darwin_create_machport(kq: i32, buf: *mut c_void, len: usize) -> libc::mach_port_t;
+        safe fn io_darwin_schedule_wakeup(port: libc::mach_port_t) -> bool;
     }
 
     #[cfg(target_os = "macos")]

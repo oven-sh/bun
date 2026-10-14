@@ -18,6 +18,7 @@ pub mod thread_pool;
 pub mod work_pool;
 
 pub mod guarded;
+pub mod io_thread_pool;
 pub mod signal_ring;
 pub mod unbounded_queue;
 #[path = "WaitGroup.rs"]
@@ -30,7 +31,7 @@ pub use condition::{Condition, Condvar};
 /// `Futex` re-exported as a capitalized module alias so callers can write
 /// `Futex::wait`, `Futex::wake`, `Futex::Deadline`.
 pub use futex as Futex;
-pub use guarded::{Guarded, GuardedLock};
+pub use guarded::Guarded;
 pub use mutex::{Mutex, MutexGuard};
 pub use reset_event::ResetEvent;
 pub use rwlock::RwLock;

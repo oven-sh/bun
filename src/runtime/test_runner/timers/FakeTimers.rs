@@ -19,8 +19,10 @@ unsafe extern "C" {
 }
 
 #[derive(Default)]
-pub struct FakeTimers {
+pub(crate) struct FakeTimers {
     active: bool,
+    /// Depth of [`FakeTimers::fire`] calls on the stack; each covers the callback and its microtask drain.
+    firing: u32,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
     /// - peek/takeFirst (provided by TimerHeap)
     /// - peekLast (cannot be implemented efficiently with TimerHeap)
@@ -174,6 +176,11 @@ impl FakeTimers {
         self.active
     }
 
+    /// 1 while a fake timer's callback runs (sinon's `duringTick` rule): a zero-delay re-arm is due again in the drain that runs it.
+    pub(crate) fn min_delay_ms(&self) -> u32 {
+        if self.active && self.firing > 0 { 1 } else { 0 }
+    }
+
     fn activate(&mut self, js_now: f64, global: &JSGlobalObject) {
         self.active = true;
         CURRENT_TIME.set(global, &Timespec::EPOCH, Some(js_now));
@@ -261,9 +268,15 @@ impl FakeTimers {
             debug_assert!(now.eql(&prev.unwrap()) || now.greater(&prev.unwrap()));
         }
         CURRENT_TIME.set(global, &now, None);
+        let all = timer_all();
+        // SAFETY: `all` is the live per-thread `All`; the borrow ends at this
+        // statement, before `EventLoopTimer::fire` re-enters `All::insert`.
+        unsafe { (*all).fake_timers.firing += 1 };
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
         let fired = unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        // SAFETY: as above; the callback has returned.
+        unsafe { (*all).fake_timers.firing -= 1 };
         match fired {
             Ok(()) => Ok(()),
             Err(err) => bun_jsc::task::report_error_or_terminate(global, err)

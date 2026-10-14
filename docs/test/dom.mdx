@@ -59,6 +59,17 @@ By default, test files share one global object and one module registry. Files wi
 
 With [`--isolate` or `--parallel`](/test/parallel), every file gets its own window and its own copy of every module. Use them when files in different environments import the same DOM library, because a shared module stays bound to the first window it saw.
 
+The DOM package itself is the exception: each process loads it once, outside the files' globals, so its code stays compiled from file to file. As in Vitest's `vmThreads` and `vmForks` pools, the plain arrays, promises and functions that jsdom's own code creates belong to another realm:
+
+```ts
+event.composedPath() instanceof Array; // false with --isolate
+Array.isArray(event.composedPath()); // true
+expect(element.getAttributeNames()).toStrictEqual(["class"]); // passes
+element instanceof HTMLElement; // true
+```
+
+`require("jsdom")` in a test file loads a second copy of the package. The window's own `JSDOM` object is `globalThis.jsdom`.
+
 Preload scripts run in the project's environment. With `--isolate`, they run again for each file, in that file's environment.
 
 With jsdom, an error thrown in an event listener or a timer fails the running test, like in Vitest and Jest. If the file or a preload script has added an `error` listener to `window`, the test doesn't fail.

@@ -46,6 +46,7 @@ const fakePackages = {
     }
     exports.JSDOM = class JSDOM {
       constructor(html, options) {
+        if (!options) throw new Error("With --isolate, Bun first opens a window for jsdom to keep");
         const id = "jsdom#" + ++count;
         console.log("open", id, JSON.stringify({ html, ...options }));
         this.window = new Window();
@@ -240,6 +241,8 @@ describe.concurrent("test environment", () => {
       "jsdom.test.js jsdom#1",
       "node.test.js node",
     ];
+    // With --isolate a process numbers its windows across files, and --parallel decides which process runs which file.
+    const withoutNumbers = (lines: string[]) => lines.map(line => line.replace(/#\d+$/, ""));
 
     test.each([
       ["", [], "node"],
@@ -263,7 +266,9 @@ describe.concurrent("test environment", () => {
     test.each(["--isolate", "--parallel=2", "--parallel=2 --no-isolate"])("%s", async flags => {
       using dir = tempDir("test-environment", { ...files, "bunfig.toml": `[test]\nenvironment = "jsdom"\n` });
       const { stdout, stderr, exitCode } = await bunTest(String(dir), ...flags.split(" "));
-      expect(environments([...stdout, ...stderr.split("\n")]).sort()).toEqual(withDefault("jsdom#1"));
+      expect(withoutNumbers(environments([...stdout, ...stderr.split("\n")]).sort())).toEqual(
+        withoutNumbers(withDefault("jsdom")),
+      );
       expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     });
@@ -272,7 +277,7 @@ describe.concurrent("test environment", () => {
       using dir = tempDir("test-environment", files);
       const { stdout, stderr, exitCode } = await bunTest(String(dir), "--parallel=2", "--environment=happy-dom");
       expect(stdout).toEqual([]);
-      expect(environments(stderr.split("\n")).sort()).toEqual(withDefault("happy-dom#1"));
+      expect(withoutNumbers(environments(stderr.split("\n")).sort())).toEqual(withoutNumbers(withDefault("happy-dom")));
       expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
       expect(exitCode).toBe(0);
     });
@@ -888,10 +893,10 @@ describe.concurrent("test environment", () => {
       "afterAll happy-dom#1",
       "abort happy-dom#1",
       "close happy-dom#1",
-      "2.test.js happy-dom#1 http://localhost:3000",
-      "afterAll happy-dom#1",
-      "abort happy-dom#1",
-      "close happy-dom#1",
+      "2.test.js happy-dom#2 http://localhost:3000",
+      "afterAll happy-dom#2",
+      "abort happy-dom#2",
+      "close happy-dom#2",
       "3.test.js jsdom#1 http://localhost:3000",
       "afterAll jsdom#1",
       "close jsdom#1",
@@ -900,6 +905,72 @@ describe.concurrent("test environment", () => {
     expect(stdout.filter(line => line.startsWith("open "))).toHaveLength(3);
     expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
     expect(exitCode).toBe(0);
+  });
+
+  test("--isolate: the package is evaluated once, outside the files' globals", async () => {
+    const file = `
+      import { expect, test } from "bun:test";
+      test("environment", () => {
+        expect(globalThis.leftByAnotherFile).toBeUndefined();
+        globalThis.leftByAnotherFile = true;
+        Array.prototype.leftByAnotherFile = true;
+        console.log(environment, packageSees());
+      });`;
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      "node_modules/jsdom/index.js": `
+        console.log("evaluated");
+        ${fakePackages["node_modules/jsdom/index.js"]}
+        const { JSDOM } = exports;
+        exports.JSDOM = class extends JSDOM {
+          constructor(...args) {
+            super(...args);
+            this.window.packageSees = () => [typeof leftByAnotherFile, typeof [].leftByAnotherFile, typeof document].join();
+          }
+        };`,
+      "bunfig.toml": `[test]\nenvironment = "jsdom"\n`,
+      "1.test.js": file,
+      "2.test.js": file,
+      "3.test.js": file,
+    });
+    const { stdout, stderr, exitCode } = await bunTest(String(dir), "--isolate");
+    expect(stdout.filter(line => !/^(?:open|close) /.test(line))).toEqual([
+      "evaluated",
+      "jsdom#1 undefined,undefined,undefined",
+      "jsdom#2 undefined,undefined,undefined",
+      "jsdom#3 undefined,undefined,undefined",
+    ]);
+    expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--isolate: the window that jsdom keeps is not a test file's", async () => {
+    using dir = tempDir("test-environment", {
+      ...fakePackages,
+      "node_modules/jsdom/index.js": `
+        ${fakePackages["node_modules/jsdom/index.js"]}
+        const { JSDOM } = exports;
+        let kept;
+        exports.JSDOM = class extends JSDOM {
+          constructor(html, options = { url: "about:blank" }) {
+            super(html, options);
+            this.window.document.documentElement = {};
+            this.window.getComputedStyle = () => (kept ??= this.window).location.href;
+          }
+        };`,
+      "1.test.js": `// ${VITEST} jsdom
+        import { test } from "bun:test";
+        test("environment", () => console.log(location.href, getComputedStyle(document.documentElement)));`,
+    });
+    for (const [flags, kept] of [
+      [["--isolate"], "about:blank"],
+      [[], "http://localhost:3000"],
+    ] as const) {
+      const { stdout, stderr, exitCode } = await bunTest(String(dir), ...flags);
+      expect(stdout.filter(line => !/^(?:open|close) /.test(line))).toEqual([`http://localhost:3000 ${kept}`]);
+      expect(summary(stderr)).toEqual(["1 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    }
   });
 
   test("--isolate: a file that leaves fake timers on does not keep its window from closing", async () => {
@@ -1055,8 +1126,7 @@ describe.concurrent("test environment", () => {
       ).toEqual([
         "preload happy-dom#1",
         "1.test.js happy-dom#1",
-        ...(flags.length ? ["preload happy-dom#1"] : []),
-        "2.test.js happy-dom#1",
+        ...(flags.length ? ["preload happy-dom#2", "2.test.js happy-dom#2"] : ["2.test.js happy-dom#1"]),
       ]);
       expect(summary(stderr)).toEqual(["2 pass", "0 fail"]);
       expect(exitCode).toBe(0);

@@ -258,6 +258,9 @@ public:
     // default is not this VM's, e.g. the collector thread running a collection's end phase. gcProtect'ed for the VM's life.
     JSC::JSGlobalObject* defaultGlobalObject { nullptr };
 
+    // `bun test --isolate` loads DOM packages into this global, which outlives the test files. gcProtect'ed for the VM's life.
+    JSC::JSGlobalObject* testEnvironmentRealm { nullptr };
+
     // Idle full collections GarbageCollectionController requested that have not finished (see
     // Bun__JSC_onBeforeWait). Counted up on the JS thread, down at the end of each one's end phase, on either thread.
     std::atomic<unsigned> idleCollectionsPending { 0 };

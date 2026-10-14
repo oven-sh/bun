@@ -4,6 +4,12 @@ const { createRequire } = require("node:module");
 
 const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
 const isInPreload = $newRustFunction("environment.rs", "jsIsInPreload", 0);
+// This module's copy in a global that outlives the test files.
+const lastingCopyOfThisModule: () => typeof setup = $newCppFunction(
+  "TestEnvironment.cpp",
+  "jsFunctionTestEnvironmentModuleOfLastingRealm",
+  0,
+);
 
 const { captureStackTrace } = Error;
 const NativeBlob = Blob;
@@ -330,7 +336,16 @@ function isClosed(window: Environment["window"]) {
   return window.closed || !window.document;
 }
 
-function open(name: "jsdom" | "happy-dom", optionsText: string | undefined, file: string, keep: boolean) {
+// jsdom parses its default style sheet with the first window that's asked for a computed style, and keeps that window.
+function openWindowForJSDOMToKeep({ JSDOM }: any) {
+  try {
+    const { window } = new JSDOM();
+    window.getComputedStyle(window.document.documentElement);
+    window.close();
+  } catch {}
+}
+
+function find(name: string, file: string, outlivesTestFiles: boolean) {
   const requireFromTest = createRequire(file);
   let packagePath: string;
   try {
@@ -338,6 +353,30 @@ function open(name: "jsdom" | "happy-dom", optionsText: string | undefined, file
   } catch {
     return `cannot find package "${name}"\nnote: to install it, run "bun add -d ${name}"`;
   }
+  return {
+    packagePath,
+    requireFromTest,
+    load() {
+      if (failedToLoad.$has(packagePath)) throw failedToLoad.$get(packagePath);
+      const isLoaded = packagePath in requireFromTest.cache;
+      let exports;
+      try {
+        exports = requireFromTest(packagePath);
+      } catch (error) {
+        failedToLoad.$set(packagePath, error);
+        throw error;
+      }
+      if (outlivesTestFiles && !isLoaded && name === "jsdom") openWindowForJSDOMToKeep(exports);
+      return exports;
+    },
+  };
+}
+
+function open(name: "jsdom" | "happy-dom", optionsText: string | undefined, file: string, keep: boolean) {
+  // With --isolate every file has a new global. Loaded into that, the package would be evaluated and compiled again for each file.
+  const found = (keep ? find : lastingCopyOfThisModule().find)(name, file, !keep);
+  if (typeof found === "string") return found;
+  const { packagePath, requireFromTest } = found;
 
   const id = `${packagePath}\n${optionsText ?? ""}`;
   const last = kept.$get(id);
@@ -349,15 +388,7 @@ function open(name: "jsdom" | "happy-dom", optionsText: string | undefined, file
   } catch (error) {
     return `its options are not JSON: ${(error as Error).message}`;
   }
-  if (failedToLoad.$has(packagePath)) throw failedToLoad.$get(packagePath);
-  let exports;
-  try {
-    exports = requireFromTest(packagePath);
-  } catch (error) {
-    failedToLoad.$set(packagePath, error);
-    throw error;
-  }
-  const environment = (name === "jsdom" ? createJSDOM : createHappyDOM)(requireFromTest, exports, options ?? {});
+  const environment = (name === "jsdom" ? createJSDOM : createHappyDOM)(requireFromTest, found.load(), options ?? {});
   if (keep && typeof environment !== "string") kept.$set(id, environment);
   return environment;
 }
@@ -454,5 +485,7 @@ function setup(
   captureStackTrace(error, setup);
   throw error;
 }
+
+setup.find = find;
 
 export default setup;

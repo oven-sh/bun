@@ -41,21 +41,11 @@ pub fn mark_function_around<'a, R: Rule<State<'a> = State<'a>>>(
     node: Node<'a>,
     cx: &mut Cx<'a, R>,
 ) {
-    mark_function_with(node, cx, |_, parent| {
+    let function = cx.state.functions.find(node, |_, parent| {
         parent
             .as_func()
             .filter(|func| func.kind() != FnKind::StaticBlock)
     });
-}
-
-/// [`mark_function_around`] for a rule that has another function for a node: `decide` is what [`AncestorMemo::find`]
-/// takes, and has to be the same for every call in a file.
-pub fn mark_function_with<'a, R: Rule<State<'a> = State<'a>>>(
-    node: Node<'a>,
-    cx: &mut Cx<'a, R>,
-    decide: impl FnMut(Node<'a>, Node<'a>) -> Option<Func<'a>>,
-) {
-    let function = cx.state.functions.find(node, decide);
     if let Some(func) = function
         && let Ok(at) = cx
             .state

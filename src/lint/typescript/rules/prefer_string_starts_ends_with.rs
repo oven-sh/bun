@@ -56,13 +56,7 @@ fn is_string_type(node: Expr) -> bool {
         | TypeFlags::TYPE_PARAMETER
         | TypeFlags::UNION
         | TypeFlags::INTERSECTION;
-    // tsgolint prints every type, and one that is declared with the name `string` is printed as `string`.
-    let is_named_string = || {
-        node.file().language().is_oxlint
-            && (object_type.get_symbol().is_some_and(|it| it.name() == b"string")
-                || object_type.alias_symbol().is_some_and(|it| it.name() == b"string"))
-    };
-    (object_type.has_flags(can_be_string) || is_named_string()) && get_type_name(object_type) == b"string"
+    object_type.has_flags(can_be_string) && get_type_name(object_type) == b"string"
 }
 
 fn is_null(node: Expr) -> bool {
@@ -368,37 +362,6 @@ fn parse_reg_exp(node: Expr) -> Option<(Side, Vec<u8>)> {
     Some((if is_starts_with { Side::Start } else { Side::End }, text))
 }
 
-/// `JSON.stringify(text)`. tsgolint has Go's `strconv.Quote`: `\v`, and `\x00` for `\u0000`.
-fn to_string_literal(text: &[u8], is_oxlint: bool) -> Vec<u8> {
-    let json = json_stringify_alloc(text);
-    if !is_oxlint {
-        return json;
-    }
-    let mut quoted = Vec::with_capacity(json.len());
-    let mut rest = json.as_slice();
-    while let Some((&byte, after)) = rest.split_first() {
-        quoted.push(byte);
-        rest = match after {
-            _ if byte != b'\\' => after,
-            [b'u', b'0', b'0', b'0', b'b', after @ ..] => {
-                quoted.push(b'v');
-                after
-            }
-            // Not `\a`, which is `a` in JavaScript.
-            [b'u', b'0', b'0', high, low, after @ ..] if [*high, *low] != *b"07" => {
-                quoted.extend_from_slice(&[b'x', *high, *low]);
-                after
-            }
-            [escaped, after @ ..] => {
-                quoted.push(*escaped);
-                after
-            }
-            [] => after,
-        };
-    }
-    quoted
-}
-
 /// A comparison whose left side is `member`, or a call of it.
 #[derive(Copy, Clone)]
 struct Comparison<'a> {
@@ -520,8 +483,6 @@ impl PreferStringStartsEndsWith {
             return;
         };
         if !is_equality_comparison(it.op)
-            // tsgolint skips no parentheses here.
-            || (cx.language().is_oxlint && it.right.is_parenthesized())
             || !is_length_expression(left, it.object, false)
             || !is_length_expression(right, argument, false)
             || !is_string_type(it.object)
@@ -571,7 +532,7 @@ impl PreferStringStartsEndsWith {
                 get_property_range(it.member, it.object),
                 side.access(it.member.is_optional()),
             ));
-            fixes.push(fixer.replace(argument_range, to_string_literal(&text, is_oxlint)));
+            fixes.push(fixer.replace(argument_range, json_stringify_alloc(&text)));
             fixes.push(fixer.remove(it.after_left()));
             Some(fixes)
         });
@@ -754,7 +715,7 @@ impl PreferStringStartsEndsWith {
                 fixes.push(fixer.insert_before(arg, "("));
                 fixes.push(fixer.insert_after(arg, ")"));
             }
-            let (access, search) = (side.access(callee.is_optional()).as_bytes(), to_string_literal(&text, is_oxlint));
+            let (access, search) = (side.access(callee.is_optional()).as_bytes(), json_stringify_alloc(&text));
             fixes.push(fixer.insert_after(arg, [access, b"(", search.as_slice()].concat()));
             Some(fixes)
         });

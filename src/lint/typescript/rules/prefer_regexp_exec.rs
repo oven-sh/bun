@@ -8,7 +8,6 @@ use bun_lint::utils::ts_utils::{
     WrappingFixerParams, get_wrapping_fixer_for_chain_element, is_static_member_access_of_value,
     needs_preceding_semicolon,
 };
-use smallvec::SmallVec;
 use std::borrow::Cow;
 
 /// Enforce `RegExp#exec` over `String#match` if no global flag is provided.
@@ -96,9 +95,7 @@ fn get_static_reg_exp_constructor_call_value(node: Expr<'_>) -> StaticArgumentVa
     if pattern_node.is_some() != pattern.is_some() || flags_node.is_some() != flags.is_some() {
         return StaticArgumentValue::Unknown;
     }
-    if pattern.is_some_and(|it| {
-        Regex::from_bytes(it.bytes(), b"").is_err() && !compiles_with_regexp2(it.bytes())
-    }) {
+    if pattern.is_some_and(|it| Regex::from_bytes(it.bytes(), b"").is_err()) {
         return StaticArgumentValue::Unknown;
     }
     StaticArgumentValue::RegExp { flags: flags.map_or(&b""[..], |it| it.bytes()) }
@@ -169,135 +166,6 @@ fn definitely_does_not_contain_global_flag(node: Expr) -> bool {
     };
     get_static_value(flags, Some(node.file().scope()))
         .is_some_and(|value| !value.as_str().is_some_and(|flags| strings::contains_char(flags, b'g')))
-}
-
-/// A group that is open in a pattern of regexp2.
-#[derive(Copy, Clone)]
-enum OpenGroup {
-    Other,
-    /// `(?(a)b|c)`: regexp2 takes one `|` in it.
-    Conditional { has_alternate: bool },
-}
-
-/// Whether regexp2, which compiles the pattern for tsgolint, takes a pattern that ECMAScript does
-/// not: it has .NET's `(?>..)`, `(?'name'..)`, `(?#..)`, `(?i)`, `(?i:..)` or `(?(a)b|c)`, and is
-/// valid without.
-fn compiles_with_regexp2(pattern: &[u8]) -> bool {
-    let mut ecma_script: SmallVec<[u8; 64]> = SmallVec::new();
-    let mut open_groups: SmallVec<[OpenGroup; 16]> = SmallVec::new();
-    let (mut is_in_class, mut has_dot_net_group, mut ignore_next_paren) = (false, false, false);
-    // `(?(2)b|c)` needs a second capturing group, before it or after it.
-    let (mut max_testref, mut capture_count) = (0usize, 0usize);
-    let mut rest = pattern;
-    while let [byte, after @ ..] = rest {
-        let byte = *byte;
-        rest = after;
-        match byte {
-            b'\\' => {
-                ecma_script.push(b'\\');
-                if let [escaped, after @ ..] = rest {
-                    ecma_script.push(*escaped);
-                    rest = after;
-                }
-                continue;
-            }
-            b'[' => is_in_class = true,
-            b']' => is_in_class = false,
-            b')' if !is_in_class => {
-                open_groups.pop();
-            }
-            b'|' if !is_in_class => {
-                if let Some(OpenGroup::Conditional { has_alternate }) = open_groups.last_mut() {
-                    if *has_alternate {
-                        return false;
-                    }
-                    *has_alternate = true;
-                }
-            }
-            b'(' if !is_in_class => {
-                let is_condition = std::mem::take(&mut ignore_next_paren);
-                let [b'?', group @ ..] = rest else {
-                    capture_count += usize::from(!is_condition);
-                    open_groups.push(OpenGroup::Other);
-                    ecma_script.push(b'(');
-                    continue;
-                };
-                let (replacement, len, open_group): (&[u8], usize, Option<OpenGroup>) = match group {
-                    [b'>', ..] => (&b"(?:"[..], 1, Some(OpenGroup::Other)),
-                    // It ends at the first `)`.
-                    [b'#', comment @ ..] => match strings::index_of_char_usize(comment, b')') {
-                        Some(end) => (&b""[..], end + 2, None),
-                        None => return false,
-                    },
-                    [b'\'', name @ ..] => match strings::index_of_char_usize(name, b'\'') {
-                        Some(end) => {
-                            ecma_script.extend_from_slice(b"(?<");
-                            ecma_script.extend_from_slice(name.get(..end).unwrap_or_default());
-                            capture_count += 1;
-                            (&b">"[..], end + 2, Some(OpenGroup::Other))
-                        }
-                        None => return false,
-                    },
-                    [b'(', condition @ ..] => {
-                        let conditional = Some(OpenGroup::Conditional { has_alternate: false });
-                        let digits = condition.iter().take_while(|it| it.is_ascii_digit()).count();
-                        if digits > 0 {
-                            // `(?(1)b|c)` tests whether the group took part: only `)` follows the number.
-                            if condition.get(digits) != Some(&b')') {
-                                return false;
-                            }
-                            let number = condition.iter().take(digits).fold(0usize, |number, digit| {
-                                number.saturating_mul(10).saturating_add(usize::from(digit - b'0'))
-                            });
-                            max_testref = max_testref.max(number);
-                            (&b"(?:"[..], digits + 2, conditional)
-                        } else {
-                            // The condition is a group that does not capture: no comment and no named group.
-                            let is_comment_or_capture = match condition {
-                                [b'?', b'#' | b'\'', ..] => true,
-                                [b'?', b'<', next, ..] => !matches!(next, b'!' | b'='),
-                                _ => false,
-                            };
-                            if is_comment_or_capture {
-                                return false;
-                            }
-                            ignore_next_paren = true;
-                            (&b"(?:"[..], 0, conditional)
-                        }
-                    }
-                    _ => {
-                        let options = group
-                            .iter()
-                            .take_while(|it| strings::contains_char(b"imnsxu+-", it.to_ascii_lowercase()))
-                            .count();
-                        match group.get(options) {
-                            Some(b')') if options > 0 => (&b""[..], options + 1, None),
-                            Some(b':') if options > 0 => (&b"(?:"[..], options + 1, Some(OpenGroup::Other)),
-                            _ => {
-                                // `(?<name>`, not `(?<=` and `(?<!`.
-                                if let [b'<', next, ..] = group
-                                    && !matches!(next, b'=' | b'!')
-                                {
-                                    capture_count += 1;
-                                }
-                                open_groups.push(OpenGroup::Other);
-                                ecma_script.push(b'(');
-                                continue;
-                            }
-                        }
-                    }
-                };
-                ecma_script.extend_from_slice(replacement);
-                open_groups.extend(open_group);
-                rest = group.get(len..).unwrap_or_default();
-                has_dot_net_group = true;
-                continue;
-            }
-            _ => {}
-        }
-        ecma_script.push(byte);
-    }
-    has_dot_net_group && max_testref <= capture_count && Regex::from_bytes(&ecma_script, b"").is_ok()
 }
 
 /// tsgolint's `buildStringToRegExpLiteral`: a `\` before every `/`. Unlike it, not before one that
@@ -469,11 +337,6 @@ impl Rule for PreferRegexpExec {
         {
             let reg_exp = match Regex::from_bytes(pattern.bytes(), b"") {
                 Ok(reg_exp) => reg_exp,
-                // No fix: tsgolint's literal of such a pattern does not parse.
-                Err(_) if is_oxlint && compiles_with_regexp2(pattern.bytes()) => {
-                    cx.report(property, REG_EXP_EXEC_OVER_STRING_MATCH);
-                    return;
-                }
                 Err(_) => return,
             };
             cx.report(property, REG_EXP_EXEC_OVER_STRING_MATCH).fix(|fixer| {

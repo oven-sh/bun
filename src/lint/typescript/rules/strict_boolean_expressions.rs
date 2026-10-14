@@ -8,7 +8,7 @@ use bun_lint::types::utils::{
     get_constraint_of_type_parameter, is_array_method_call_with_predicate,
     is_type_array_type_or_union_of_array_types,
 };
-use bun_lint::types::{IdSet, Type, TypeFlags, TypePredicate, TypePredicateKind};
+use bun_lint::types::{IdSet, Type, TypeFlags};
 use bun_lint::utils::estree_span;
 use bun_lint::utils::ts_utils::{
     WrappingFixerParams, get_wrapping_fixer, is_parenless_arrow_function,
@@ -541,48 +541,6 @@ fn analyze_type_parts<'a>(types: impl Iterator<Item = Type<'a>>) -> TypeInfo {
     }
 }
 
-/// tsgolint's `findTruthinessAssertedArgument`. A predicate about a name that is no parameter
-/// asserts nothing. Where the resolved signature of a callee that is a union has no predicate,
-/// the first signature of a constituent that asserts an argument decides.
-fn tsgolint_find_truthiness_asserted_argument<'a>(node: Expr<'a>) -> Option<Expr<'a>> {
-    let call = node.as_call()?;
-    let arguments = call.args();
-    let is_spread = |argument: Expr| matches!(argument.kind(), ExprKind::Spread(_));
-    let checkable_arguments = arguments
-        .iter()
-        .position(is_spread)
-        .unwrap_or_else(|| arguments.len());
-    if checkable_arguments == 0 {
-        return None;
-    }
-    let in_predicate = |type_predicate: Option<TypePredicate<'a>>| -> Option<Expr<'a>> {
-        let type_predicate = type_predicate?;
-        if type_predicate.kind() != TypePredicateKind::AssertsIdentifier
-            || type_predicate.ty().is_some()
-        {
-            return None;
-        }
-        let parameter_index = type_predicate.parameter_index()?;
-        arguments
-            .get(parameter_index)
-            .filter(|_| parameter_index < checkable_arguments)
-    };
-    let type_predicate = node
-        .resolved_signature()
-        .and_then(|signature| signature.get_type_predicate());
-    if type_predicate.is_some() {
-        return in_predicate(type_predicate);
-    }
-    let union_types = union_constituents(call.callee().ty());
-    if union_types.len() <= 1 {
-        return None;
-    }
-    union_types
-        .iter()
-        .flat_map(|it| it.get_call_signatures())
-        .find_map(|signature| in_predicate(signature.get_type_predicate()))
-}
-
 fn get_suggestions_for_condition_error(
     node: Expr,
     condition_error: ConditionError,
@@ -830,9 +788,7 @@ impl StrictBooleanExpressions {
     fn check_array_method_call_predicate<'a>(&self, predicate_node: Expr<'a>, cx: &Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
         let function = predicate_node.as_fn();
-        // tsgolint asks the argument itself, and one in parentheses is no function.
-        let is_function = !(is_oxlint && predicate_node.is_parenthesized());
-        if is_function && function.is_some_and(Func::is_async) {
+        if function.is_some_and(Func::is_async) {
             cx.report(predicate_node, PREDICATE_CANNOT_BE_ASYNC);
             return;
         }
@@ -895,10 +851,7 @@ impl StrictBooleanExpressions {
         let Some(first_argument) = call.args().first() else {
             return;
         };
-        let asserted_argument = match cx.language().is_oxlint {
-            true => tsgolint_find_truthiness_asserted_argument(node),
-            false => find_truthiness_asserted_argument(node),
-        };
+        let asserted_argument = find_truthiness_asserted_argument(node);
         for argument in call.args() {
             if Some(argument) == asserted_argument {
                 self.traverse_node(argument, true, cx);

@@ -1029,10 +1029,7 @@ impl NoUnnecessaryCondition {
         };
         // tsgolint 7.0 goes by the type that the function returns, also where what it returns is written there.
         if cx.language().is_oxlint {
-            // For its `IsArrayMethodCallWithPredicate` a callee in parentheses is no access to a method.
-            if !node.as_call().is_some_and(|call| call.callee().is_parenthesized()) {
-                self.tsgolint_check_predicate_function(callback, cx);
-            }
+            self.tsgolint_check_predicate_function(callback, cx);
             return;
         }
         if let ExprKind::Fn(function) = callback.kind() {

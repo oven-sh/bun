@@ -485,12 +485,6 @@ impl NoDeprecated {
                 }
                 false => cx.state.of_identifier(node),
             },
-            Node::PatElem(element) if is_oxlint && element.default() == Some(e) && !e.is_parenthesized() => {
-                let Node::Pat(pattern) = element.parent() else {
-                    return;
-                };
-                cx.state.of_property(node, name, || binding_pattern_source_type(pattern))
-            }
             // A computed key.
             Node::PatProp(prop) if prop.default() != Some(e) => {
                 let Node::Pat(pattern) = prop.parent() else {
@@ -644,20 +638,19 @@ impl NoDeprecated {
                 continue;
             };
             // `getObjectLiteralPropertyName`
-            let name: Cow<'a, [u8]> = match key.kind() {
+            let name = match key.kind() {
                 KeyKind::Ident(name)
                 | KeyKind::String(name)
                 | KeyKind::Number(name)
                 | KeyKind::Private(name)
                 | KeyKind::ComputedString(name)
-                | KeyKind::ComputedNumber(name) => Cow::Borrowed(name.bytes()),
+                | KeyKind::ComputedNumber(name) => name.bytes(),
                 KeyKind::Computed(e) => match e.ty().value() {
-                    Some(LiteralValue::String(value)) => Cow::Borrowed(value),
-                    Some(LiteralValue::Number(n)) => Cow::Owned(text::number_to_string(n)),
+                    Some(LiteralValue::String(value)) => value,
                     _ => continue,
                 },
             };
-            let symbol = expected.get_property(&name).filter(|it| is_deprecated_symbol(*it));
+            let symbol = expected.get_property(name).filter(|it| is_deprecated_symbol(*it));
             let Some(reason) = cx.state.of_symbol(symbol) else {
                 continue;
             };
@@ -665,13 +658,8 @@ impl NoDeprecated {
             if type_matches_some_specifier(expected, &self.allow) {
                 continue;
             }
-            match name {
-                Cow::Borrowed(name) => {
-                    let node = IdentifierLike::new(NameOf(property).ts_node(), key.span(cx.file()), name);
-                    self.report(node, Some(reason), cx);
-                }
-                name @ Cow::Owned(_) => Self::report_at(key.span(cx.file()), name, reason, cx),
-            }
+            let node = IdentifierLike::new(NameOf(property).ts_node(), key.span(cx.file()), name);
+            self.report(node, Some(reason), cx);
         }
     }
 

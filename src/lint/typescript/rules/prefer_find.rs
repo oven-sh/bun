@@ -1,4 +1,3 @@
-use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::types::{IdSet, NodeFlags, SyntaxKind, TsSymbol, Type};
 use bun_lint::types::tsutils::{
@@ -10,7 +9,6 @@ use bun_lint::utils::eslint_utils::{StaticValue, get_static_value};
 use bun_lint::utils::is_assignment_target;
 use bun_lint::utils::ts_utils::{is_assignee, is_static_member_access_of_value};
 use smallvec::SmallVec;
-use std::borrow::Cow;
 
 /// Enforce the use of Array.prototype.find() over Array.prototype.filter() followed by [0] when
 /// looking for a single result.
@@ -121,71 +119,11 @@ enum TsgolintStaticValue<'a> {
     BigInt { is_zero: bool },
 }
 
-/// tsgolint's `toNumberFromString`, which is not `Number(s)`: a sign may come before `0x`, and the
-/// rest is Go's `strconv.ParseFloat`, which reads `inf` and `1_0`, and whose errors, also that of a
-/// value out of range, are NaN.
-fn tsgolint_to_number_from_string(s: &[u8]) -> f64 {
-    let s = strings::trim_js_whitespace(s);
-    match s {
-        b"" => return 0.0,
-        b"Infinity" | b"+Infinity" => return f64::INFINITY,
-        b"-Infinity" => return f64::NEG_INFINITY,
-        _ => {}
-    }
-    let (sign, unsigned) = match s {
-        [sign @ (b'+' | b'-'), unsigned @ ..] => (Some(*sign), unsigned),
-        _ => (None, s),
-    };
-    let prefixed = match unsigned {
-        [b'0', b'x' | b'X', digits @ ..] => Some((16, digits)),
-        [b'0', b'b' | b'B', digits @ ..] => Some((2, digits)),
-        [b'0', b'o' | b'O', digits @ ..] => Some((8, digits)),
-        _ => None,
-    };
-    if let Some((radix, digits)) = prefixed {
-        // `big.Int.SetString` reads a sign of its own.
-        let (sign, digits) = match (sign, digits) {
-            (None, [sign @ (b'+' | b'-'), digits @ ..]) => (Some(*sign), digits),
-            _ => (sign, digits),
-        };
-        if digits.is_empty() {
-            return f64::NAN;
-        }
-        let mut value = 0.0;
-        for &digit in digits {
-            let Some(digit) = char::from(digit).to_digit(radix) else {
-                return f64::NAN;
-            };
-            value = value * f64::from(radix) + f64::from(digit);
-        }
-        return if sign == Some(b'-') { -value } else { value };
-    }
-    if unsigned.eq_ignore_ascii_case(b"inf") || unsigned.eq_ignore_ascii_case(b"infinity") {
-        return if sign == Some(b'-') { f64::NEG_INFINITY } else { f64::INFINITY };
-    }
-    // An underscore is read over if it is between two digits.
-    let mut digits = Cow::Borrowed(s);
-    if strings::contains_char(s, b'_') {
-        let is_digit_at = |at: usize| s.get(at).is_some_and(u8::is_ascii_digit);
-        let mut without_underscores = Vec::with_capacity(s.len());
-        for (at, &c) in s.iter().enumerate() {
-            if c != b'_' {
-                without_underscores.push(c);
-            } else if at == 0 || !is_digit_at(at - 1) || !is_digit_at(at + 1) {
-                return f64::NAN;
-            }
-        }
-        digits = Cow::Owned(without_underscores);
-    }
-    let value = bun_core::fmt::js_string_to_number(&digits);
-    if value.is_finite() { value } else { f64::NAN }
-}
-
 /// tsgolint's `toNumber`
 fn tsgolint_to_number(value: TsgolintStaticValue) -> Option<f64> {
     match value {
         TsgolintStaticValue::Number(n) => Some(n),
-        TsgolintStaticValue::String(s) => Some(tsgolint_to_number_from_string(s)),
+        TsgolintStaticValue::String(s) => Some(bun_core::fmt::js_string_to_number(s)),
         TsgolintStaticValue::Boolean(b) => Some(f64::from(u8::from(b))),
         TsgolintStaticValue::Null => Some(0.0),
         TsgolintStaticValue::Undefined => Some(f64::NAN),
@@ -287,23 +225,6 @@ fn tsgolint_is_treated_as_zero_by_member_access(value: TsgolintStaticValue) -> b
     }
 }
 
-/// `delete filtered[0]`, also with `!`, `as`, `<T>` or `satisfies` between.
-fn is_operand_of_delete(e: Expr) -> bool {
-    let mut node = e;
-    loop {
-        let Node::Expr(parent) = node.parent() else {
-            return false;
-        };
-        match parent.kind() {
-            ExprKind::Unary { op: UnOp::Delete, .. } => return true,
-            ExprKind::NonNull(_) | ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. } => {
-                node = parent;
-            }
-            _ => return false,
-        }
-    }
-}
-
 impl PreferFind {
     /// `whole`: `object[0]`, `object.at(0)`
     fn report<'a>(
@@ -314,8 +235,8 @@ impl PreferFind {
     ) {
         let is_oxlint = cx.language().is_oxlint;
         cx.report(whole, PREFER_FIND).suggest(PREFER_FIND_SUGGESTION, |fixer| {
-            // tsgolint also suggests `a.find(f) = 1` and `a.find(f)++`, which do not parse. `delete a.find(f)` does.
-            if is_oxlint && (is_assignee(whole) || is_assignment_target(whole)) && !is_operand_of_delete(whole) {
+            // tsgolint also suggests `a.find(f) = 1` and `a.find(f)++`, which do not parse.
+            if is_oxlint && (is_assignee(whole) || is_assignment_target(whole)) {
                 return None;
             }
             // The `.` of `(..).at(0)`, the `[` of `(..)[0]` or `(..)["at"](0)`, the `?.` of `(..)?.at(0)`.
@@ -335,15 +256,9 @@ impl PreferFind {
                 })
                 .collect();
             fixes.push(fixer.remove(Span::new(token_to_start_deleting_from.start(), whole.span().end)));
-            // `(filtered.at)(0)`, which only tsgolint reports with a chain in the parentheses: their `(` goes too.
-            if is_oxlint
-                && let Some(callee) = whole.callee()
-                && callee.is_parenthesized()
-            {
-                if callee.is_chain_root() {
-                    return None;
-                }
-                fixes.push(fixer.remove(Span::new(callee.outer_span().start, callee.span().start)));
+            // `(filtered.at)(0)`: no suggestion.
+            if is_oxlint && whole.callee().is_some_and(|callee| callee.is_parenthesized()) {
+                return None;
             }
             Some(fixes)
         });

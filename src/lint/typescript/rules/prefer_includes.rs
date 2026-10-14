@@ -63,51 +63,21 @@ fn get_text(param: TsNode<'_>) -> Cow<'_, [u8]> {
     Cow::Owned(text)
 }
 
-/// What tsgolint compares: the text from `param.Pos()`, so with the trivia after the token before.
-/// The default library has no text: there it is taken to be the one space after a comma.
-fn tsgolint_get_full_text<'a>(param: TsNode<'a>, index: usize) -> Cow<'a, [u8]> {
-    let full_text = param.get_full_text();
-    if !full_text.is_empty() {
-        return Cow::Borrowed(full_text);
-    }
-    let text = get_text(param);
-    if index == 0 {
-        return text;
-    }
-    let mut full_text = Vec::with_capacity(text.len() + 1);
-    full_text.push(b' ');
-    full_text.extend_from_slice(&text);
-    Cow::Owned(full_text)
-}
-
-/// `tsgolint`: the linted file, if the texts are compared as tsgolint does.
-fn has_same_parameters<'a>(
-    node_a: TsNode<'a>,
-    node_b: TsNode<'a>,
-    tsgolint: Option<&'a File<'a>>,
-) -> bool {
-    let text = |index: usize, param: TsNode<'a>| match tsgolint {
-        Some(_) => tsgolint_get_full_text(param, index),
-        None => get_text(param),
-    };
+fn has_same_parameters<'a>(node_a: TsNode<'a>, node_b: TsNode<'a>) -> bool {
     node_a.kind().is_function_like()
         && node_b.kind().is_function_like()
         && parameters(node_a).count() == parameters(node_b).count()
-        && (parameters(node_a).zip(parameters(node_b)).enumerate())
-            .all(|(index, (a, b))| text(index, a) == text(index, b))
+        && parameters(node_a).zip(parameters(node_b)).all(|(a, b)| get_text(a) == get_text(b))
 }
 
 /// Whether the type that declares the `indexOf` method has an `includes` method with the same
 /// parameters.
-fn has_matching_includes_method<'a>(
-    index_of_method_decl: TsNode<'a>,
-    tsgolint: Option<&'a File<'a>>,
-) -> bool {
+fn has_matching_includes_method(index_of_method_decl: TsNode) -> bool {
     let Some(type_decl) = index_of_method_decl.parent() else {
         return false;
     };
     type_decl.get_type_at_location().get_property(b"includes").is_some_and(|includes| {
-        includes.declarations().any(|decl| has_same_parameters(decl, index_of_method_decl, tsgolint))
+        includes.declarations().any(|decl| has_same_parameters(decl, index_of_method_decl))
     })
 }
 
@@ -308,17 +278,8 @@ fn tsgolint_fix_test_call<'a>(
         escape_string(&value)
     };
     let file = fixer.file();
-    let written = argument.outer_span();
-    let mut start = file.token_before(written)?.end();
-    // A line break after `return` ends the statement.
-    if !needs_parens
-        && strings::contains_js_line_break(file.slice(Span::new(start, written.start)))
-        && file.token_before(call_node).is_some_and(|it| matches!(it.text(), b"return" | b"throw" | b"yield"))
-    {
-        start = written.start;
-    }
     let (open, close): (&[u8], &[u8]) = if needs_parens { (b"(", b")") } else { (b"", b"") };
-    let argument_text = file.slice(Span::new(start, written.end));
+    let argument_text = file.slice(argument.outer_span());
     Some(fixer.replace(call_node, [open, argument_text, close, b".includes('", escaped.as_slice(), b"')"].concat()))
 }
 
@@ -343,7 +304,6 @@ impl PreferIncludes {
         if is_oxlint && call_node.is_parenthesized() {
             return;
         }
-        let tsgolint = is_oxlint.then(|| compare_node.file());
         // Upstream's selector takes every `MemberExpression` directly in the call: also an argument.
         // tsgolint takes the callee alone.
         let candidates = if is_oxlint { 1 } else { usize::MAX };
@@ -372,7 +332,7 @@ impl PreferIncludes {
                 continue;
             };
             if symbol.declarations().next().is_none()
-                || !symbol.declarations().all(|it| has_matching_includes_method(it, tsgolint))
+                || !symbol.declarations().all(has_matching_includes_method)
             {
                 continue;
             }

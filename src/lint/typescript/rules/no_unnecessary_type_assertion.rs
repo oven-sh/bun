@@ -2,12 +2,12 @@ use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{
     CompilerOption, is_boolean_literal_type, is_compiler_option_enabled,
-    intersection_constituents, is_falsy_type, is_property_readonly_in_type,
-    is_strict_compiler_option_enabled, is_type_parameter, is_type_reference, union_constituents,
+    is_property_readonly_in_type, is_strict_compiler_option_enabled, is_type_parameter,
+    is_type_reference, union_constituents,
 };
 use bun_lint::types::utils::{
     get_constrained_type_at_location, get_constraint_of_type_parameter, get_contextual_type,
-    get_declaration, is_nullable_type, is_possibly_falsy, is_possibly_truthy, is_type_flag_set,
+    get_declaration, is_nullable_type, is_type_flag_set,
 };
 use bun_lint::types::{IdSet, Signature, SyntaxKind, TsNode, Type, TypeFlags};
 use bun_lint::utils::ast_utils::is_member_expression;
@@ -79,25 +79,13 @@ fn is_possibly_used_before_assigned(node: Expr) -> bool {
         && let Some(declarator_node) = declaration.to_ast()
         && !has_parser_context_flags(declarator_node)
     {
-        // tsgolint goes by TypeScript's block scope containers: the `for` of `for (var a of b)` is one.
-        if node.file().language().is_oxlint {
-            let scope = get_enclosing_block_scope_container(node.ts_node());
-            let mut parent_scope = get_enclosing_block_scope_container(declaration);
-            while let Some(it) = parent_scope {
-                parent_scope = get_enclosing_block_scope_container(it);
-                if parent_scope.is_some() && parent_scope == scope {
-                    return true;
-                }
+        let scope = Node::Expr(node).scope();
+        let mut parent_scope = declarator_node.scope().parent();
+        while let Some(it) = parent_scope {
+            if it == scope {
+                return true;
             }
-        } else {
-            let scope = Node::Expr(node).scope();
-            let mut parent_scope = declarator_node.scope().parent();
-            while let Some(it) = parent_scope {
-                if it == scope {
-                    return true;
-                }
-                parent_scope = it.parent();
-            }
+            parent_scope = it.parent();
         }
     }
 
@@ -116,33 +104,6 @@ fn is_possibly_used_before_assigned(node: Expr) -> bool {
         }
     }
     false
-}
-
-/// TypeScript's `getEnclosingBlockScopeContainer`.
-fn get_enclosing_block_scope_container(node: TsNode<'_>) -> Option<TsNode<'_>> {
-    node.ancestors().find(|it| match it.kind() {
-        SyntaxKind::SourceFile
-        | SyntaxKind::CaseBlock
-        | SyntaxKind::CatchClause
-        | SyntaxKind::ModuleDeclaration
-        | SyntaxKind::ForStatement
-        | SyntaxKind::ForInStatement
-        | SyntaxKind::ForOfStatement
-        | SyntaxKind::Constructor
-        | SyntaxKind::MethodDeclaration
-        | SyntaxKind::GetAccessor
-        | SyntaxKind::SetAccessor
-        | SyntaxKind::FunctionDeclaration
-        | SyntaxKind::FunctionExpression
-        | SyntaxKind::ArrowFunction
-        | SyntaxKind::PropertyDeclaration
-        | SyntaxKind::ClassStaticBlockDeclaration => true,
-        // The body of a function is no container of its own.
-        SyntaxKind::Block => it.parent().is_none_or(|parent| {
-            !parent.kind().is_function_like() && parent.kind() != SyntaxKind::ClassStaticBlockDeclaration
-        }),
-        _ => false,
-    })
 }
 
 /// Whether TypeScript's parser gives the nodes at `node` flags for where they are, so that the
@@ -190,55 +151,18 @@ fn tsgolint_has_enum_type(ty: Type) -> bool {
             && ty.types().iter().any(|part| is_enum(part) || part.is_intersection() && part.types().iter().any(is_enum))
 }
 
-/// TypeScript's `isWriteAccess`.
-fn is_write_access(node: Expr) -> bool {
-    let mut current = node;
-    loop {
-        current = match current.parent() {
-            Node::Expr(parent) => match parent.kind() {
-                ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } => {
-                    return true;
-                }
-                ExprKind::Assign { target, .. } => return target == current,
-                ExprKind::Array(_) => parent,
-                _ => return false,
-            },
-            Node::Prop(property)
-                if property.kind() == PropKind::Init && is_property(property) && property.value() == Some(current) =>
-            {
-                match property.parent() {
-                    Node::Expr(object) => object,
-                    _ => return false,
-                }
-            }
-            Node::Stmt(statement) => {
-                return matches!(
-                    statement.kind(),
-                    StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } if left.as_expr() == Some(current)
-                );
-            }
-            _ => return false,
-        };
-    }
-}
-
-/// tsgolint's `isReceiverOfWriteAccess`, for the assertion around `expression`: `(a as B).c.d = 1`.
+/// tsgolint's `isReceiverOfWriteAccess`, for the assertions around `expression`: `(a as B).c.d = 1`.
 fn tsgolint_is_receiver_of_write_access(expression: Expr) -> bool {
-    let Node::Expr(mut current) = expression.parent() else {
-        return false;
-    };
-    while let Node::Expr(access) = current.parent() {
-        let is_object = matches!(
-            access.kind(),
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == current
-        );
-        if !is_object {
-            return false;
+    let (mut current, mut is_access) = (expression, false);
+    while let Node::Expr(parent) = current.parent() {
+        match parent.kind() {
+            ExprKind::As { .. } if !is_access => {}
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == current => is_access = true,
+            ExprKind::Assign { target, .. } => return is_access && target == current,
+            ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } => return is_access,
+            _ => return false,
         }
-        if is_write_access(access) {
-            return true;
-        }
-        current = access;
+        current = parent;
     }
     false
 }
@@ -649,22 +573,13 @@ fn is_property_in_problematic_context(assertion: Assertion) -> bool {
         || matches!(object_parent, Node::Expr(call) if call.tag() == ExprTag::Call && is_child_of_satisfies(call))
 }
 
-/// Whether the `Assign` is an assignment expression. A default in a destructuring target is an `AssignmentPattern` for
-/// ESLint. For tsgolint it is a `BinaryExpression`, but not that of a shorthand property, `{ a = 1 }`.
-fn is_assignment_expression(assignment: Expr) -> bool {
-    match assignment.file().language().is_oxlint {
-        true => !matches!(assignment.parent(), Node::Prop(property) if property.kind() == PropKind::Shorthand),
-        false => !assignment.is_assignment_target(),
-    }
-}
-
 /// The `AssignmentExpression` that `node` is the right of.
 fn as_assigned_value(node: Expr<'_>) -> Option<(Expr<'_>, Option<BinOp>)> {
     let Node::Expr(parent) = node.parent() else {
         return None;
     };
     match parent.kind() {
-        ExprKind::Assign { op, value, .. } if value == node && is_assignment_expression(parent) => Some((parent, op)),
+        ExprKind::Assign { op, value, .. } if value == node && !parent.is_assignment_target() => Some((parent, op)),
         _ => None,
     }
 }
@@ -858,22 +773,14 @@ fn tsgolint_is_nested_in_array_literal_argument_to_generic_call<'a>(
     false
 }
 
-/// TypeScript's `getAssignmentReducedType`: the members of the union `declared` that are left after the union of
-/// `assigned` and `others` has been assigned to a variable of that type.
-fn get_assignment_reduced_type<'a>(
-    declared: Type<'a>,
-    assigned: Type<'a>,
-    others: &[Type<'a>],
-) -> SmallVec<[Type<'a>; 8]> {
-    let assigned: SmallVec<[Type<'a>; 8]> = union_constituents(assigned)
-        .iter()
-        .chain(others.iter().copied())
-        .filter(|it| !it.has_flags(TypeFlags::NEVER))
-        .collect();
-    if assigned.is_empty() {
+/// TypeScript's `getAssignmentReducedType`: the members of the union `declared` that are left after `assigned` has been
+/// assigned to a variable of that type.
+fn get_assignment_reduced_type<'a>(declared: Type<'a>, assigned: Type<'a>) -> SmallVec<[Type<'a>; 8]> {
+    if assigned.has_flags(TypeFlags::NEVER) {
         return SmallVec::new();
     }
     let members: SmallVec<[Type<'a>; 8]> = declared.types().iter().collect();
+    let assigned: SmallVec<[Type<'a>; 8]> = union_constituents(assigned).iter().collect();
     if members == assigned {
         return members;
     }
@@ -885,66 +792,12 @@ fn get_assignment_reduced_type<'a>(
     }
 }
 
-/// tsgolint's `getLogicalResultType`, for the right operand of `op`: adds to `others` what the left operand can be
-/// where it is the value. `None`: it always is. `Some(true)`: a `string`, a `number` or a `bigint` is there for the
-/// `""`, the `0` or the `0n` that `&&` leaves of it.
-fn tsgolint_get_logical_result_type<'a>(
-    op: BinOp,
-    left: Type<'a>,
-    others: &mut SmallVec<[Type<'a>; 4]>,
-) -> Option<bool> {
-    let options = left.file().type_checker().compiler_options();
-    let is_strict = is_strict_compiler_option_enabled(options, CompilerOption::StrictNullChecks);
-    // TypeScript's `hasTypeFacts` asks the constraint of a type variable. Here it can be everything.
-    let has_part = |flags: TypeFlags| {
-        union_constituents(left).iter().flat_map(intersection_constituents).any(|part| part.has_flags(flags))
-    };
-    match op {
-        // Without `strictNullChecks` the falsy part is that of the right operand: nothing is added.
-        BinOp::And if is_strict => {
-            if !is_possibly_truthy(left) {
-                return None;
-            }
-            let zeroes = TypeFlags::STRING | TypeFlags::NUMBER | TypeFlags::BIG_INT;
-            let falsy = TypeFlags::ANY | TypeFlags::UNKNOWN | zeroes;
-            let parts = union_constituents(left);
-            others.extend(parts.iter().filter(|part| is_falsy_type(*part) || part.has_flags(falsy)));
-            Some(parts.iter().any(|part| part.has_flags(zeroes)))
-        }
-        BinOp::Or => {
-            let can_be_falsy = !is_strict
-                || is_possibly_falsy(left)
-                || has_part(TypeFlags::ANY | TypeFlags::UNKNOWN | TypeFlags::INSTANTIABLE)
-                || union_constituents(left)
-                    .iter()
-                    .any(|part| part.has_flags(TypeFlags::OBJECT) && is_empty_object_type(part));
-            if !can_be_falsy {
-                return None;
-            }
-            let truthy = union_constituents(left.get_non_nullable_type());
-            others.extend(truthy.iter().filter(|part| !is_falsy_type(*part)));
-            Some(false)
-        }
-        BinOp::Nullish => {
-            if is_strict && !is_nullable_type(left) && !has_part(TypeFlags::INSTANTIABLE) {
-                return None;
-            }
-            others.extend(union_constituents(left.get_non_nullable_type()).iter());
-            Some(false)
-        }
-        _ => Some(false),
-    }
-}
-
 /// tsgolint's `isInNarrowingAssignment`, for an assertion that is all of what is assigned: `a = b as C;` narrows `a`
 /// for the statements that follow, so that `a` accepts `b` does not make the assertion unnecessary.
 fn tsgolint_is_in_narrowing_assignment<'a>(node: Expr<'a>, uncast_type: Type<'a>, cast_type: Type<'a>) -> bool {
     // Up to the assignment that `node` can be the value of, or a part of the value: `a = b && (a as C)`,
-    // `[a] = [a as C]`.
+    // `[a] = [a as C]`. What else can be the value is not looked at, which leaves more alone than tsgolint does.
     let (mut current, mut is_in_literal) = (node, false);
-    let mut has_stand_in = false;
-    // The constituents of what else can be assigned: tsgolint unites them with both types.
-    let mut others: SmallVec<[Type<'a>; 4]> = SmallVec::new();
     let target = loop {
         let parent = match current.parent() {
             Node::Expr(parent) => parent,
@@ -961,23 +814,9 @@ fn tsgolint_is_in_narrowing_assignment<'a>(node: Expr<'a>, uncast_type: Type<'a>
                     return false;
                 }
             }
-            ExprKind::Binary { op: op @ (BinOp::And | BinOp::Or | BinOp::Nullish), left, right }
-                if right == current && !is_in_literal =>
-            {
-                match tsgolint_get_logical_result_type(op, left.ty(), &mut others) {
-                    Some(it) => has_stand_in |= it,
-                    None => return false,
-                }
-            }
             ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } => {}
             ExprKind::Binary { op: BinOp::Comma, right, .. } if right == current => {}
-            ExprKind::Cond { test, yes, no } if test != current => {
-                // In a literal tsgolint takes the property of the other branch that the path leads to: not done.
-                if !is_in_literal {
-                    let other = if yes == current { no } else { yes };
-                    others.extend(union_constituents(other.ty()).iter());
-                }
-            }
+            ExprKind::Cond { test, .. } if test != current => {}
             ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Spread(_) if !parent.is_assignment_target() => {
                 is_in_literal = true;
             }
@@ -997,15 +836,9 @@ fn tsgolint_is_in_narrowing_assignment<'a>(node: Expr<'a>, uncast_type: Type<'a>
         (true, _) => return false,
     };
     let receiver_type = receiver_type.get_base_constraint_of_type().unwrap_or(receiver_type);
-    if !receiver_type.is_union() {
-        return false;
-    }
-    // Which members accept `""`, `0` or `0n` is not known from what stands for them: such an assignment is left alone.
-    if has_stand_in && receiver_type.types().iter().any(|member| member.is_literal() && is_falsy_type(member)) {
-        return true;
-    }
-    get_assignment_reduced_type(receiver_type, uncast_type, &others)
-        != get_assignment_reduced_type(receiver_type, cast_type, &others)
+    receiver_type.is_union()
+        && get_assignment_reduced_type(receiver_type, uncast_type)
+            != get_assignment_reduced_type(receiver_type, cast_type)
 }
 
 fn should_skip_contextual_type_fallback<'a>(
@@ -1336,7 +1169,7 @@ impl NoUnnecessaryTypeAssertion {
 
         if let Node::Expr(parent) = node.parent()
             && let ExprKind::Assign { op: None, target, .. } = parent.kind()
-            && is_assignment_expression(parent)
+            && !parent.is_assignment_target()
         {
             if target == node {
                 cx.report(node, CONTEXTUALLY_UNNECESSARY).fix(|fixer| fix_non_null_assertion(fixer, outermost));

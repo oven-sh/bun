@@ -535,6 +535,15 @@ describe("URL", () => {
         }
       }
       expect(util.inspect(new NumberHref(href), raw)).toBe("NumberHref [URL] {}");
+
+      // node tests `typeof href === "string"`, so it prints an empty href too: the value has no text.
+      class EmptyHref extends URL {
+        get href() {
+          return "";
+        }
+      }
+      expect(util.inspect(new EmptyHref(href), raw)).toBe("");
+      expect(util.inspect({ a: new EmptyHref(href) }, raw)).toBe("{ a:  }");
     });
 
     test("rethrows the error of a href getter, like node", () => {

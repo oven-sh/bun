@@ -40,7 +40,7 @@ pub(crate) enum FormatLeadingComments<'a> {
 }
 
 impl<'a> Format<'a> for FormatLeadingComments<'a> {
-    #[inline]
+    #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let comments = match *self {
             Self::Owner(_) if f.is_quiet() => return,
@@ -127,7 +127,7 @@ pub(crate) enum FormatTrailingComments<'a> {
 }
 
 impl<'a> Format<'a> for FormatTrailingComments<'a> {
-    #[inline]
+    #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let comments = match *self {
             Self::Owner(_) if f.is_quiet() => return,

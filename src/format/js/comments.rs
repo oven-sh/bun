@@ -540,6 +540,7 @@ impl<'a> Comments<'a> {
 
     /// Whether printing the node at `span` has to deal with comments at all: a comment starts inside it, a node inside it owns
     /// a comment that is somewhere else, or it has type cast parentheses in it.
+    #[inline]
     pub(crate) fn has_comment_or_owner_in(&self, span: Span) -> bool {
         self.has_comment_in_span(span)
             || self.file_comments.owners.has_relocated_owner_in(span)
@@ -547,10 +548,13 @@ impl<'a> Comments<'a> {
     }
 
     /// `/** @type {T} */ (a).b`: the comment is before the member access, and the parentheses it is about are inside it.
+    #[inline]
     fn has_cast_parenthesis_in(&self, span: Span) -> bool {
         let cast_parens = &self.file_comments.cast_parens;
-        let first = cast_parens.partition_point(|open_paren| *open_paren < span.start);
-        (cast_parens.get(first)).is_some_and(|open_paren| *open_paren < span.end)
+        !cast_parens.is_empty() && {
+            let first = cast_parens.partition_point(|open_paren| *open_paren < span.start);
+            (cast_parens.get(first)).is_some_and(|open_paren| *open_paren < span.end)
+        }
     }
 
     // ───────────────────────────── kinds of comments ─────────────────────────────

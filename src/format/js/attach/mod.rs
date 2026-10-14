@@ -276,6 +276,19 @@ pub(crate) fn attach<'a>(
     };
     let mut ties: Vec<usize> = Vec::new();
     for (id, comment) in file.comments_by_id().enumerate() {
+        // The usual case. See `AttachContext::list_elements_around`.
+        if nodes[id].is_before_list_element
+            && comment.has_newline_before()
+            && let Some(following_node) = nodes[id].following_node
+        {
+            let ignores_owner = comment.is_ignore_comment(options.flavor);
+            attached.has_ignore_comments |= ignores_owner;
+            attached.attachments[id] = Attachment {
+                ignores_owner,
+                ..Attachment::leading(following_node)
+            };
+            continue;
+        }
         let context = CommentContext {
             comment,
             is_ignore_comment: comment.is_ignore_comment(options.flavor),

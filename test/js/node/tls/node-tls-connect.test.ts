@@ -717,6 +717,7 @@ for (const { name, connect } of tests) {
       let socket = connect({
         port: 443,
         host: "bun.sh",
+        servername: "bun.sh",
         rejectUnauthorized: false,
       });
 
@@ -736,6 +737,7 @@ for (const { name, connect } of tests) {
     // Test using port and host
     itNetwork("should process port and host correctly", done => {
       let socket = connect(443, "bun.sh", {
+        servername: "bun.sh",
         rejectUnauthorized: false,
       });
 
@@ -760,6 +762,7 @@ for (const { name, connect } of tests) {
         443,
         "bun.sh",
         {
+          servername: "bun.sh",
           rejectUnauthorized: false,
         },
         () => {
@@ -778,6 +781,7 @@ for (const { name, connect } of tests) {
     // Additional tests to ensure the callback is optional and handled correctly
     itNetwork("should handle the absence of a callback gracefully", done => {
       let socket = connect(443, "bun.sh", {
+        servername: "bun.sh",
         rejectUnauthorized: false,
       });
 
@@ -803,6 +807,7 @@ for (const { name, connect } of tests) {
           {
             port: 443,
             host: "bun.sh",
+            servername: "bun.sh",
           },
           () => {
             socket.setTimeout(1000, () => {

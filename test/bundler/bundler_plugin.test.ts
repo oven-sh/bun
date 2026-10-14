@@ -540,6 +540,335 @@ describe("bundler", () => {
       },
     });
   }
+
+  // The bundler's path map is keyed by path text alone. A plugin module can
+  // have the same text as the specifier of an import that did not resolve to a
+  // module: an external, a builtin, a failed require(), an import that waits for
+  // a plugin. Each `SameTextModule` test gives a plugin module that text. The
+  // import must never be linked to that module.
+  const realFooPkg = {
+    "/node_modules/foo-pkg/package.json": JSON.stringify({ name: "foo-pkg", main: "./index.js" }),
+    "/node_modules/foo-pkg/index.js": `module.exports = "real";`,
+  };
+
+  // A wrapper for a package: "wrapped-foo" resolves to a plugin module with the
+  // path text "foo-pkg", and that module imports the real, external "foo-pkg".
+  // Linked by text, the wrapper imports itself.
+  for (const { name, external, answer } of [
+    // No plugin matches the wrapper's import. The `external` option decides it.
+    { name: "ExternalOption", external: ["foo-pkg"] },
+    // The plugin declines the wrapper's import. The `external` option decides it.
+    { name: "PluginDeclines", external: ["foo-pkg"], answer: () => undefined },
+    // The plugin answers external for the wrapper's import.
+    { name: "PluginAnswersExternal", answer: (args: { path: string }) => ({ path: args.path, external: true }) },
+  ] as { name: string; external?: string[]; answer?: (args: { path: string }) => object | undefined }[]) {
+    itBundled(`plugin/SameTextModule_WrappedPackage_${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import wrapper from "wrapped-foo";
+          console.log(JSON.stringify(wrapper));
+        `,
+        ...realFooPkg,
+      },
+      external,
+      plugins(builder) {
+        builder.onResolve({ filter: /^wrapped-foo$/ }, () => {
+          return { path: "foo-pkg", namespace: "wrap" };
+        });
+        if (answer) builder.onResolve({ filter: /^foo-pkg$/ }, answer as never);
+        builder.onLoad({ filter: /.*/, namespace: "wrap" }, () => {
+          return { contents: `import real from "foo-pkg"; export default { wrapped: real };`, loader: "js" };
+        });
+      },
+      run: { stdout: `{"wrapped":"real"}` },
+    });
+  }
+
+  // late.js is loaded only after the "virt" answer is queued. So the plugin
+  // module is in the path map before the bundler looks at the import in late.js.
+  for (const { name, text, late, options, setup, stdout } of [
+    {
+      name: "ExternalOption",
+      text: "react",
+      late: `import React from "react"; export default React;`,
+      options: { external: ["react"] },
+      stdout: "x real",
+    },
+    {
+      name: "PackagesExternal",
+      text: "react",
+      late: `import React from "react"; export default React;`,
+      options: { packages: "external" },
+      stdout: "x real",
+    },
+    {
+      // The plugin's answer arrives after the bundler looked at the import.
+      name: "PluginAnswersExternal",
+      text: "react",
+      late: `import React from "react"; export default React;`,
+      setup: builder => {
+        builder.onResolve({ filter: /^react$/ }, args => ({ path: args.path, external: true }));
+      },
+      stdout: "x real",
+    },
+    {
+      // With target "bun", "node:fs" is a builtin and its path text is "fs".
+      name: "NodeBuiltin",
+      text: "fs",
+      late: `import * as fs from "node:fs"; export default typeof fs.existsSync;`,
+      options: { target: "bun" },
+      stdout: "x function",
+    },
+    {
+      // A require() that fails inside try/catch is not a build error. It throws when it runs.
+      name: "FailedRequireInTryCatch",
+      text: "not-installed",
+      late: `let r; try { r = require("not-installed"); } catch { r = "caught"; } export default r;`,
+      stdout: "x caught",
+    },
+  ] as {
+    name: string;
+    text: string;
+    late: string;
+    options?: Partial<Parameters<typeof itBundled>[1]>;
+    setup?: (builder: Bun.PluginBuilder) => void;
+    stdout: string;
+  }[]) {
+    itBundled(`plugin/SameTextModule_${name}`, () => {
+      const virtAnswered = Promise.withResolvers<void>();
+      return {
+        files: {
+          "/entry.js": /* js */ `
+            import { x } from "virt";
+            import late from "./late.js";
+            console.log(x, late);
+          `,
+          "/late.js": ``,
+          "/node_modules/react/package.json": JSON.stringify({ name: "react", main: "./index.js" }),
+          "/node_modules/react/index.js": `module.exports = "real";`,
+        },
+        ...options,
+        plugins(builder) {
+          builder.onResolve({ filter: /^virt$/ }, () => {
+            virtAnswered.resolve();
+            return { path: text, namespace: "virt" };
+          });
+          builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+            return { contents: `export const x = "x"; export default "virt";`, loader: "js" };
+          });
+          setup?.(builder);
+          builder.onLoad({ filter: /late\.js$/ }, async () => {
+            await virtAnswered.promise;
+            return { contents: late, loader: "js" };
+          });
+        },
+        run: { stdout },
+      };
+    });
+  }
+
+  // The same inside one namespace: late.js imports x.js by its absolute path,
+  // which is the path map's key for the bundled x.js, and a plugin answers
+  // external for that import. late.js is loaded only after the plugin declined
+  // the import of x.js in entry.js, so x.js is in the map by then.
+  itBundled("plugin/SameTextModule_AbsolutePathAnsweredExternal", ({ root }) => {
+    const declined = Promise.withResolvers<void>();
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import x from "./x.js";
+          import "./late.js";
+          console.log(x);
+        `,
+        "/x.js": `export default "bundled-x";`,
+        "/late.js": ``,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /x\.js$/ }, args => {
+          if (args.importer.endsWith("late.js")) return { path: args.path, external: true };
+          declined.resolve();
+        });
+        builder.onLoad({ filter: /late\.js$/ }, async () => {
+          await declined.promise;
+          return { contents: `import y from ${JSON.stringify(join(root, "x.js"))}; console.log(y);`, loader: "js" };
+        });
+      },
+      onAfterBundle(api) {
+        const contents = api.readFile("/out.js");
+        expect(contents).toContain(`"bundled-x"`);
+        expect(contents).toMatch(/^import \w+ from "[^"]*x\.js";$/m);
+      },
+    };
+  });
+
+  // An import that is already linked to the real package keeps that link.
+  // first.js bundles the real "foo-pkg". late.js imports it again, after a
+  // plugin module with the text "foo-pkg" exists.
+  itBundled("plugin/SameTextModule_SecondImporterOfRealPackage", () => {
+    const virtAnswered = Promise.withResolvers<void>();
+    const realLoaded = Promise.withResolvers<void>();
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import first from "./first.js";
+          import { x } from "virt";
+          import late from "./late.js";
+          console.log(first, x, late);
+        `,
+        "/first.js": `import real from "foo-pkg"; export default real;`,
+        "/late.js": ``,
+        ...realFooPkg,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^virt$/ }, () => {
+          virtAnswered.resolve();
+          return { path: "foo-pkg", namespace: "virt" };
+        });
+        builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+          return { contents: `export const x = "x"; export default "virt";`, loader: "js" };
+        });
+        builder.onLoad({ filter: /foo-pkg[\\/]index\.js$/ }, () => {
+          realLoaded.resolve();
+          return undefined;
+        });
+        builder.onLoad({ filter: /late\.js$/ }, async () => {
+          await Promise.all([virtAnswered.promise, realLoaded.promise]);
+          return { contents: `import real from "foo-pkg"; export default real;`, loader: "js" };
+        });
+      },
+      run: { stdout: "real x real" },
+    };
+  });
+
+  // redir.cjs is only `module.exports = require("foo-pkg")`, so the bundler
+  // links its importers straight to what that require() resolves to. Both
+  // importers must get the same thing, and never the plugin module with the
+  // text "foo-pkg". The second importer is loaded only after the require() is
+  // decided.
+  for (const { name, external, answer, stdout } of [
+    { name: "ExternalOption", external: ["foo-pkg"], stdout: "true real real" },
+    {
+      name: "PluginAnswersExternal",
+      answer: (args: { path: string }) => ({ path: args.path, external: true }),
+      stdout: "true real real",
+    },
+    {
+      name: "PluginAnswersModule",
+      answer: (_: { path: string }, root: string) => ({ path: join(root, "chosen.cjs") }),
+      stdout: "true chosen chosen",
+    },
+  ] as {
+    name: string;
+    external?: string[];
+    answer?: (args: { path: string }, root: string) => object;
+    stdout: string;
+  }[]) {
+    itBundled(`plugin/SameTextModule_RedirectFile_${name}`, ({ root }) => {
+      const decided = Promise.withResolvers<void>();
+      return {
+        files: {
+          "/entry.js": /* js */ `
+            import wrapper from "wrapped-foo";
+            import first from "gate:first";
+            import second from "gate:second";
+            console.log(wrapper.isWrapper, first, second);
+          `,
+          "/redir.cjs": `module.exports = require("foo-pkg");`,
+          "/chosen.cjs": `module.exports = "chosen";`,
+          ...realFooPkg,
+        },
+        external,
+        plugins(builder) {
+          const importsRedir = `import r from ${JSON.stringify(join(root, "redir.cjs"))}; export default r;`;
+          builder.onResolve({ filter: /^wrapped-foo$/ }, () => {
+            return { path: "foo-pkg", namespace: "wrap" };
+          });
+          builder.onLoad({ filter: /.*/, namespace: "wrap" }, () => {
+            return { contents: `export default { isWrapper: true };`, loader: "js" };
+          });
+          builder.onResolve({ filter: /^gate:/ }, args => {
+            return { path: args.path.slice("gate:".length), namespace: "gate" };
+          });
+          builder.onLoad({ filter: /^first$/, namespace: "gate" }, () => {
+            return { contents: importsRedir, loader: "js" };
+          });
+          builder.onLoad({ filter: /^second$/, namespace: "gate" }, async () => {
+            await decided.promise;
+            return { contents: importsRedir, loader: "js" };
+          });
+          if (answer) {
+            builder.onResolve({ filter: /^foo-pkg$/ }, args => {
+              decided.resolve();
+              return answer(args, root) as never;
+            });
+          } else {
+            builder.onLoad({ filter: /redir\.cjs$/ }, () => {
+              decided.resolve();
+              return undefined;
+            });
+          }
+        },
+        run: { stdout },
+      };
+    });
+  }
+
+  // A barrel's records are resolved again each time a consumer un-defers one of
+  // them. The plugin's external answer for "react" must survive that: the
+  // bundled "virt" module has the same text as the path the plugin returned.
+  // late.js is loaded only after both answers are queued, so its un-defer of
+  // `a` runs after the external answer landed.
+  itBundled("plugin/SameTextModule_ExternalAnswerSurvivesBarrelUnDefer", () => {
+    const reactAnswered = Promise.withResolvers<void>();
+    const virtAnswered = Promise.withResolvers<void>();
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import { React, x } from "barrel";
+          import "./late.js";
+          console.log(React, x);
+        `,
+        "/late.js": ``,
+        "/node_modules/barrel/package.json": JSON.stringify({
+          name: "barrel",
+          main: "./index.js",
+          sideEffects: false,
+        }),
+        "/node_modules/barrel/index.js": /* js */ `
+          export { default as React } from "react";
+          export { x } from "virt";
+          export { a } from "./a.js";
+          export { b } from "./b.js";
+        `,
+        "/node_modules/barrel/a.js": `export const a = "a";`,
+        "/node_modules/barrel/b.js": `export const b = "b";`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^react$/ }, () => {
+          reactAnswered.resolve();
+          return { path: "react-vendored", external: true };
+        });
+        builder.onResolve({ filter: /^virt$/ }, () => {
+          virtAnswered.resolve();
+          return { path: "react-vendored", namespace: "virt" };
+        });
+        builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+          return { contents: `export const x = "x";`, loader: "js" };
+        });
+        builder.onLoad({ filter: /late\.js$/ }, async () => {
+          await Promise.all([reactAnswered.promise, virtAnswered.promise]);
+          return { contents: `import { a } from "barrel"; console.log(a);`, loader: "js" };
+        });
+      },
+      onAfterBundle(api) {
+        const contents = api.readFile("/out.js");
+        expect(contents).toContain(`from "react-vendored"`);
+        expect(contents).toContain(`"x"`);
+        expect(contents).not.toContain(`"react"`);
+      },
+    };
+  });
+
   itBundled("plugin/ResolveOverrideFile", ({ root }) => {
     return {
       files: {

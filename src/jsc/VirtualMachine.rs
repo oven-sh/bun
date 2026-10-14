@@ -4672,10 +4672,10 @@ impl VirtualMachine {
     fn reject_failed_reload(&mut self, err: crate::CrateError) {
         use crate::LogJsc as _;
         let global = self.global();
-        let rejected = if global.has_exception() {
-            crate::JSPromise::rejected_promise_with_caught_exception(global, jsc::JsError::Thrown)
+        let reason = if global.has_exception() {
+            Err(jsc::JsError::Thrown)
         } else {
-            let reason = match self.log_mut() {
+            match self.log_mut() {
                 Some(log) if !log.msgs.is_empty() => {
                     let reason = log.to_js(global, format_args!("Failed to reload"));
                     log.reset();
@@ -4685,8 +4685,12 @@ impl VirtualMachine {
                     "Error occurred loading entry point: {}",
                     err.name(),
                 ))),
-            };
-            reason.map(|reason| crate::JSPromise::rejected_promise(global, reason))
+            }
+        };
+        let rejected = match reason {
+            Ok(reason) => Ok(crate::JSPromise::rejected_promise(global, reason)),
+            // What the load threw, or what making the reason threw, is the reason.
+            Err(thrown) => crate::JSPromise::rejected_promise_with_caught_exception(global, thrown),
         };
         if let Ok(rejected) = rejected {
             // Whoever loads the entry point reports its promise, not the rejection tracker.

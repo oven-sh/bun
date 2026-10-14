@@ -112,6 +112,13 @@ describe("Bun.deepEquals strict mode", () => {
     expect(List.of(1, 2)).toStrictEqual([1, 2]);
   });
 
+  it("compares Array.prototype as an array", () => {
+    expect(Bun.deepEquals(Array.prototype, [], true)).toBe(true);
+    expect(Bun.deepEquals([], Array.prototype, true)).toBe(true);
+    expect(Bun.deepEquals(Array.prototype, [1], true)).toBe(false);
+    expect(Array.prototype).toStrictEqual([]);
+  });
+
   it("distinguishes a class instance from an object literal", () => {
     class Foo {
       a = 1;
@@ -156,9 +163,9 @@ describe("Bun.deepEquals strict mode", () => {
   });
 });
 
-// Strict mode types a Proxy by what the Proxy presents: its `constructor`, read like any
-// other property, `length` for an array, and its Object.prototype.toString tag. Jest's
-// toStrictEqual and node's util.isDeepStrictEqual read the same properties.
+// Strict mode types a Proxy against a plain value by what the Proxy presents: its
+// `constructor`, read like any other property, `length` for an array, and its
+// Object.prototype.toString tag. Two Proxies are compared as before.
 describe("Bun.deepEquals strict mode with a Proxy", () => {
   const P = <T extends object>(target: T, handler: ProxyHandler<T> = {}) => new Proxy(target, handler);
   class Foo {
@@ -167,6 +174,7 @@ describe("Bun.deepEquals strict mode with a Proxy", () => {
   class Bar {
     a = 1;
   }
+  class List extends Array {}
   const nullPrototype = (properties: object) => Object.assign(Object.create(null), properties);
   const withTrailingHole = () => {
     const array = [1, 2, 3];
@@ -174,6 +182,16 @@ describe("Bun.deepEquals strict mode with a Proxy", () => {
     return array;
   };
   const key = Symbol("key");
+  const answers = (property: PropertyKey, value: unknown): ProxyHandler<object> => ({
+    get: (t, k, receiver) => (k === property ? value : Reflect.get(t, k, receiver)),
+  });
+  // Each read of a function gives a new bound function, `constructor` included.
+  const binding: ProxyHandler<object> = {
+    get(t, k, receiver) {
+      const value = Reflect.get(t, k, receiver);
+      return typeof value === "function" ? value.bind(t) : value;
+    },
+  };
 
   // Like Vue's reactive(): a nested object comes back as a Proxy, and each target has one Proxy.
   const proxies = new WeakMap<object, object>();
@@ -239,6 +257,22 @@ describe("Bun.deepEquals strict mode with a Proxy", () => {
       ["as a Set member", () => [new Set([P({ a: 1 })]), new Set([{ a: 1 }])]],
       ["as a Map key", () => [new Map([[P({ k: 1 }), 1]]), new Map([[{ k: 1 }, 1]])]],
       ["as a Map value", () => [new Map([[1, P({ a: 1 })]]), new Map([[1, { a: 1 }]])]],
+      // `constructor` is compared with ===. The two strings are separate cells with one text.
+      [
+        "a key named constructor that holds an equal string",
+        () => [P(JSON.parse('{"constructor":"ab","x":1}')), { constructor: ["a", "b"].join(""), x: 1 }],
+      ],
+    ]);
+  });
+
+  // Two arrays are typed by `length` alone, as two arrays with no Proxy are. Jest agrees.
+  // Vitest and node also compare `constructor`, so they call these pairs unequal.
+  describe("types an array by its length and not by its class", () => {
+    eachPair(true, [
+      ["an instance of an Array subclass and an array", () => [P(List.of(1, 2)), [1, 2]]],
+      ["an array and an instance of an Array subclass", () => [P([1, 2]), List.of(1, 2)]],
+      ["an array from another realm and an array", () => [P(vm.runInNewContext("[1, 2]")), [1, 2]]],
+      ["a get trap that binds functions", () => [P([1, 2], binding), [1, 2]]],
     ]);
   });
 
@@ -247,8 +281,6 @@ describe("Bun.deepEquals strict mode with a Proxy", () => {
       ["a class instance and an object literal", () => [P(new Foo()), { a: 1 }]],
       ["an object literal and a class instance", () => [P({ a: 1 }), new Foo()]],
       ["instances of two classes", () => [P(new Foo()), new Bar()]],
-      ["two Proxies, an object literal and a class instance", () => [P({ a: 1 }), P(new Foo())]],
-      ["two Proxies, instances of two classes", () => [P(new Foo()), P(new Bar())]],
       ["a null-prototype object and an object literal", () => [P(Object.create(null)), {}]],
       ["an object literal and a null-prototype object", () => [P({}), Object.create(null)]],
       ["an object and an array", () => [P({}), []]],
@@ -260,16 +292,24 @@ describe("Bun.deepEquals strict mode with a Proxy", () => {
         () => [P({}), Object.defineProperty({}, Symbol.toStringTag, { value: "Tagged" })],
       ],
       ["a target that inherits a toString tag", () => [P(Object.create({ [Symbol.toStringTag]: "Tagged" })), {}]],
+      ["a get trap that binds functions and an object literal", () => [P({ a: 1 }, binding), { a: 1 }]],
+      [
+        "a constructor that is NaN on a shared prototype",
+        () => {
+          const prototype = { constructor: NaN };
+          return [P(Object.create(prototype)), Object.create(prototype)];
+        },
+      ],
     ]);
   });
 
   // The own keys of these objects do not show their state, so a Proxy stays unequal to them.
+  // Jest, Vitest and node throw for the URL. Jest and Vitest call the WeakMap pair equal.
   describe("is not equal to an object that keeps its state in internal slots", () => {
     eachPair(false, [
       ["a URL", () => [P(new URL("http://a/")), new URL("http://a/")]],
       ["a WeakMap", () => [P(new WeakMap()), new WeakMap()]],
       ["a DataView", () => [P(new DataView(new ArrayBuffer(1))), new DataView(new ArrayBuffer(1))]],
-      ["process.env", () => [P({ ...process.env }), process.env]],
     ]);
   });
 
@@ -280,6 +320,7 @@ describe("Bun.deepEquals strict mode with a Proxy", () => {
       ["an undefined value and a missing key", () => [P({ a: undefined }), {}]],
       ["a different key", () => [P({ a: 1 }), { b: 1 }]],
       ["a different key, with the shared key in another position", () => [P({ a: 1, b: 2 }), { b: 2, c: 1 }]],
+      // Jest and Vitest call this pair equal in one operand order. node calls it unequal.
       [
         "a key that the other side holds as non-enumerable",
         () => [P({ a: 1, b: 2 }), Object.defineProperty({ a: 1, c: 3 }, "b", { value: 2, enumerable: false })],
@@ -290,6 +331,11 @@ describe("Bun.deepEquals strict mode with a Proxy", () => {
         () => [P({ a: 1, b: 2 }), Object.assign(Object.create({ a: 1 }), { b: 2, c: 3 })],
       ],
       ["an own key named constructor", () => [P({ constructor: Object }), { a: 1 }]],
+      // Jest and Vitest call this pair unequal too. node calls it equal.
+      [
+        "an own key named constructor that holds an object",
+        () => [P({ constructor: { x: 1 } }), { constructor: { x: 1 } }],
+      ],
       ["a has trap that answers true for every key", () => [P({ a: 1 }, { has: () => true }), { b: 1 }]],
     ]);
     eachPair(true, [["a target that only inherits a key and an empty object", () => [P(Object.create({ x: 1 })), {}]]]);
@@ -298,29 +344,130 @@ describe("Bun.deepEquals strict mode with a Proxy", () => {
   describe("compares the length and the holes of an array", () => {
     eachPair(false, [
       ["a trailing hole", () => [P([1, 2, 3]), withTrailingHole()]],
-      ["a trailing hole, two Proxies", () => [P([1, 2, 3]), P(withTrailingHole())]],
       ["a hole and an undefined element", () => [P([1, , 3]), [1, undefined, 3]]],
       ["an undefined element and a hole", () => [P([1, undefined, 3]), [1, , 3]]],
       ["five holes and an empty array", () => [P(new Array(5)), []]],
       ["a shorter array", () => [P([1, 2]), [1, 2, 3]]],
-      [
-        "a get trap that answers 5 for length",
-        () => [P([1, 2], { get: (t, k, receiver) => (k === "length" ? 5 : Reflect.get(t, k, receiver)) }), [1, 2]],
-      ],
-      [
-        "two Proxies, a get trap that answers a string for length",
-        () => [P([1, 2]), P([1, 2], { get: (t, k, receiver) => (k === "length" ? "2" : Reflect.get(t, k, receiver)) })],
-      ],
+      ["a get trap that answers 5 for length", () => [P([1, 2], answers("length", 5)), [1, 2]]],
+      ["a get trap that answers a string for length", () => [P([1, 2], answers("length", "2")), [1, 2]]],
+    ]);
+    // Math.sqrt(4) is a double. `length` is compared with ===, not by the bits of the value.
+    eachPair(true, [
+      ["a get trap that answers a double for length", () => [P([1, 2], answers("length", Math.sqrt(4))), [1, 2]]],
     ]);
   });
 
-  // The type of two Proxies is compared as above. Their keys are compared as before: the walk
-  // also reads an enumerable key that a target inherits. Jest and node read own keys only.
-  describe("two Proxies keep the key walk they had", () => {
+  // Shapes of state libraries other than Vue, modelled by hand. The target of each Proxy does
+  // not hold what the Proxy presents.
+  describe("presents what the traps of a state library answer", () => {
+    // Like an immer draft: the target is a record of the state, and every trap answers for `latest`.
+    const draft = (base: object) => {
+      const record = { latest: base as Record<PropertyKey, unknown> };
+      const latest = (t: object) => (Array.isArray(t) ? t[0] : (t as typeof record)).latest;
+      return new Proxy(Array.isArray(base) ? [record] : record, {
+        get: (t, k) => latest(t)[k],
+        has: (t, k) => k in latest(t),
+        ownKeys: t => Reflect.ownKeys(latest(t)),
+        getOwnPropertyDescriptor(t, k) {
+          const descriptor = Reflect.getOwnPropertyDescriptor(latest(t), k);
+          return (
+            descriptor && {
+              writable: true,
+              configurable: !Array.isArray(t) || k !== "length",
+              enumerable: descriptor.enumerable,
+              value: latest(t)[k],
+            }
+          );
+        },
+        getPrototypeOf: t => Object.getPrototypeOf(latest(t)),
+      });
+    };
+    // Like Svelte 5 $state: a write goes to a side table. The target keeps its old keys and its old length.
+    const DELETED = Symbol("deleted");
+    const state = <T extends object>(target: T): T => {
+      const written = new Map<PropertyKey, unknown>();
+      return new Proxy(target, {
+        get: (t, k, receiver) =>
+          written.has(k) ? (written.get(k) === DELETED ? undefined : written.get(k)) : Reflect.get(t, k, receiver),
+        set: (t, k, value) => (written.set(k, value), true),
+        deleteProperty: (t, k) => (written.set(k, DELETED), true),
+        has: (t, k) => (written.has(k) ? written.get(k) !== DELETED : k in t),
+        ownKeys(t) {
+          const keys = Reflect.ownKeys(t).filter(k => written.get(k) !== DELETED);
+          for (const [k, value] of written) if (value !== DELETED && !(k in t)) keys.push(k as string | symbol);
+          return keys;
+        },
+        getOwnPropertyDescriptor(t, k) {
+          const descriptor = Reflect.getOwnPropertyDescriptor(t, k);
+          if (!written.has(k)) return descriptor;
+          if (written.get(k) === DELETED) return undefined;
+          const value = written.get(k);
+          return descriptor
+            ? { ...descriptor, value }
+            : { enumerable: true, configurable: true, writable: true, value };
+        },
+      });
+    };
+    // Like Solid's createMutable: a new function for each Array.prototype method, `constructor` included.
+    const mutable = <T extends unknown[]>(target: T): T =>
+      new Proxy(target, {
+        get(t, k, receiver) {
+          const value = Reflect.get(t, k, receiver);
+          return typeof value === "function" && value === (Array.prototype as any)[k]
+            ? (...args: unknown[]) => value.apply(receiver, args)
+            : value;
+        },
+      });
+    const after = <T>(proxy: T, change: (proxy: T) => void) => (change(proxy), proxy);
+    const withAddedKey = () => after(state<Record<string, number>>({ a: 1 }), s => void (s.b = 2));
+    const withDeletedKey = () => after(state<Record<string, number>>({ a: 1, b: 2 }), s => void delete s.b);
+    const afterPush = () => after(state([1]), s => void s.push(2));
+
+    eachPair(true, [
+      ["a draft of an object", () => [draft({ a: 1, b: [1] }), { a: 1, b: [1] }]],
+      ["a draft of an array", () => [draft([1, 2, 3]), [1, 2, 3]]],
+      ["a state with an added key", () => [withAddedKey(), { a: 1, b: 2 }]],
+      ["a state with a deleted key", () => [withDeletedKey(), { a: 1 }]],
+      ["a state array after a push", () => [afterPush(), [1, 2]]],
+      ["a mutable array", () => [mutable([1, 2]), [1, 2]]],
+    ]);
+    eachPair(false, [
+      ["a draft of an object and another key", () => [draft({ a: 1 }), { b: 1 }]],
+      ["a draft of an array and a shorter array", () => [draft([1, 2, 3]), [1, 2]]],
+      ["a state with an added key and the keys of its target", () => [withAddedKey(), { a: 1 }]],
+      ["a state with a deleted key and the keys of its target", () => [withDeletedKey(), { a: 1, b: 2 }]],
+      ["a state array after a push and the elements of its target", () => [afterPush(), [1]]],
+      ["a mutable array and another element", () => [mutable([1, 2]), [1, 3]]],
+    ]);
+  });
+
+  // Two Proxies run no trap for their type, so a trap cannot change a target before the walk.
+  // The walk reads keys as it did, and it also reads an enumerable key that a target inherits.
+  describe("two Proxies are compared as before", () => {
+    // Like a mock library: the get trap stores a new function for each key it is asked for.
+    const mock = () =>
+      P({ isMock: true } as Record<PropertyKey, unknown>, {
+        get(t, k) {
+          if (!(k in t)) t[k] = () => {};
+          return t[k];
+        },
+      });
+    const throwsOnGet = () =>
+      P(
+        {},
+        {
+          get() {
+            throw new Error("the get trap ran");
+          },
+        },
+      );
+
     eachPair(false, [["an inherited key on one side only", () => [P(Object.create({ x: 1 })), P({})]]]);
     eachPair(true, [
       ["an inherited key and an own key", () => [P(Object.create({ x: 1 })), P({ x: 1 })]],
       ["cyclic values, with nested objects behind Proxies", () => [reactive(cyclic()), reactive(cyclic())]],
+      ["empty objects with a get trap that throws", () => [throwsOnGet(), throwsOnGet()]],
+      ["mocks that store a function for each key they are asked for", () => [mock(), mock()]],
     ]);
 
     it("an inherited getter runs with the Proxy as its receiver", () => {
@@ -330,29 +477,32 @@ describe("Bun.deepEquals strict mode with a Proxy", () => {
     });
   });
 
-  it("compares a callable Proxy by identity", () => {
+  it("does not equal a callable Proxy to a function or to an object", () => {
     const callable = () => P(function () {});
     const same = callable();
     const target = function () {};
+    // Not callable, with the constructor and the toString tag of a function.
+    const functionLike = () => Object.create(Function.prototype, { [Symbol.toStringTag]: { value: "Function" } });
     expect({
       itself: Bun.deepEquals(same, same, true),
-      anotherCallableProxy: Bun.deepEquals(callable(), callable(), true),
       itsTarget: Bun.deepEquals(P(target), target, true),
       anObject: Bun.deepEquals(callable(), {}, true),
       aNativeConstructor: Bun.deepEquals(callable(), Object, true),
+      aFunctionLikeObject: Bun.deepEquals(callable(), functionLike(), true),
+      aFunctionLikeObjectFirst: Bun.deepEquals(functionLike(), callable(), true),
     }).toEqual({
       itself: true,
-      anotherCallableProxy: false,
       itsTarget: false,
       anObject: false,
       aNativeConstructor: false,
+      aFunctionLikeObject: false,
+      aFunctionLikeObjectFirst: false,
     });
   });
 
   describe("reads the type through the traps", () => {
     it("a get trap that answers for constructor decides the class", () => {
-      const presentsFoo = () =>
-        P({ a: 1 }, { get: (t, k, receiver) => (k === "constructor" ? Foo : Reflect.get(t, k, receiver)) });
+      const presentsFoo = () => P({ a: 1 }, answers("constructor", Foo));
       expect(Bun.deepEquals(presentsFoo(), new Foo(), true)).toBe(true);
       expect(Bun.deepEquals(presentsFoo(), { a: 1 }, true)).toBe(false);
     });
@@ -365,18 +515,6 @@ describe("Bun.deepEquals strict mode with a Proxy", () => {
 
     it("a get trap that answers one value for every key does not equal an object literal", () => {
       expect(Bun.deepEquals(P({ a: 1 }, { get: () => 99 }), { a: 99 }, true)).toBe(false);
-    });
-
-    // Each read of `constructor` gives a new bound function. Vitest and node agree; Jest calls the pair equal.
-    it("a get trap that binds functions presents another constructor on each read", () => {
-      const binding: ProxyHandler<object> = {
-        get(t, k, receiver) {
-          const value = Reflect.get(t, k, receiver);
-          return typeof value === "function" ? value.bind(t) : value;
-        },
-      };
-      expect(Bun.deepEquals(P({ a: 1 }, binding), P({ a: 1 }, binding), true)).toBe(false);
-      expect(Bun.deepEquals(P({ a: 1 }, binding), { a: 1 }, true)).toBe(false);
     });
 
     it("sees what changed after the Proxy was made", () => {

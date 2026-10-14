@@ -92,17 +92,6 @@ describe("assert.partialDeepStrictEqual", () => {
     const arr = [[]];
     assert.partialDeepStrictEqual([arr], arr);
   });
-
-  test("callable Proxies compare by identity, like functions", () => {
-    const callable = () => new Proxy(function () {}, {});
-    expect(() => assert.partialDeepStrictEqual(callable(), callable())).toThrow(assert.AssertionError);
-    expect(() => assert.partialDeepStrictEqual({ f: callable() }, { f: callable() })).toThrow(assert.AssertionError);
-    expect(() => assert.partialDeepStrictEqual(callable(), Object)).toThrow(assert.AssertionError);
-
-    const same = callable();
-    assert.partialDeepStrictEqual(same, same);
-    assert.partialDeepStrictEqual({ f: same }, { f: same });
-  });
 });
 
 describe("AssertionError diff rendering", () => {

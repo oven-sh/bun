@@ -134,7 +134,6 @@
 #include "FetchHeaders.h"
 #include "DOMURL.h"
 #include "JSDOMURL.h"
-#include "napi.h"
 
 #include <string_view>
 #include <bun-uws/src/App.h>
@@ -705,7 +704,7 @@ template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, boo
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2);
 
 template<bool enableAsymmetricMatchers>
-static std::optional<bool> strictProxyPairEquals(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2);
+static std::optional<bool> strictProxyPairEquals(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2, bool bothAreArrays);
 
 template<typename T>
 static bool looseFloatContentsEqual(std::span<const T> a, std::span<const T> b)
@@ -1120,7 +1119,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     if constexpr (isStrict && !checkPrototypes && !skipPrototypeIdentity) {
         if (mayHoldProxy) [[unlikely]] {
             // calculatedClassName() reads the cell, which is a ProxyObject for every Proxy.
-            std::optional<bool> proxyPairEqual = strictProxyPairEquals<enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, o1, o2);
+            std::optional<bool> proxyPairEqual = strictProxyPairEquals<enableAsymmetricMatchers>(globalObject, gcBuffer, stack, scope, o1, o2, v1Array && v2Array);
             RETURN_IF_EXCEPTION(scope, false);
             if (proxyPairEqual.has_value()) {
                 return *proxyPairEqual;
@@ -1430,23 +1429,18 @@ static constexpr DeepEqualsMode deepEqualsMode {
     checkPrototypes ? &nonIndexOwnPropertiesEqual<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity> : nullptr,
 };
 
-static bool keepsStateInOwnProperties(JSObject* object)
-{
-    return object->type() == FinalObjectType || object->classInfo() == Zig::NapiPrototype::info();
-}
-
-// Bun-native strict mode for a pair that holds a Proxy. nullopt: two Proxies of one type, and the caller compares their properties.
-static NEVER_INLINE std::optional<bool> strictProxyPairEqualsSlow(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2)
+// Bun-native strict mode for a pair that holds a Proxy. nullopt: two Proxies, which the caller compares as it did before.
+static NEVER_INLINE std::optional<bool> strictProxyPairEqualsSlow(const DeepEqualsMode& mode, JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2, bool bothAreArrays)
 {
     VM& vm = globalObject->vm();
-    const bool o1IsProxy = o1->type() == ProxyObjectType;
-    const bool o2IsProxy = o2->type() == ProxyObjectType;
-    // The caller returned already for an array against a value that is not an array.
-    const bool bothAreArrays = isArray(globalObject, o1);
-    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* other = o1->type() == ProxyObjectType ? o2 : o1;
 
+    // Typing two Proxies would run their traps. The `get` trap of a mock stores a key on each read, which made two equal mocks unequal.
+    if (other->type() == ProxyObjectType) {
+        return std::nullopt;
+    }
     // The own keys of a host object (URL, WeakMap) do not show its state, so it stays unequal to a Proxy.
-    if (o1IsProxy != o2IsProxy && !bothAreArrays && !keepsStateInOwnProperties(o1IsProxy ? o2 : o1)) {
+    if (!bothAreArrays && other->type() != FinalObjectType) {
         return false;
     }
     // A function is equal only to itself, and SameValue already answered that.
@@ -1469,9 +1463,6 @@ static NEVER_INLINE std::optional<bool> strictProxyPairEqualsSlow(const DeepEqua
     RETURN_IF_EXCEPTION(scope, {});
     if (!sameTag) {
         return false;
-    }
-    if (o1IsProxy && o2IsProxy) {
-        return std::nullopt;
     }
 
     JSC::PropertyNameArrayBuilder keys1(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
@@ -1511,9 +1502,9 @@ static NEVER_INLINE std::optional<bool> strictProxyPairEqualsSlow(const DeepEqua
 }
 
 template<bool enableAsymmetricMatchers>
-static std::optional<bool> strictProxyPairEquals(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2)
+static std::optional<bool> strictProxyPairEquals(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSObject* o1, JSObject* o2, bool bothAreArrays)
 {
-    return strictProxyPairEqualsSlow(deepEqualsMode<true, enableAsymmetricMatchers, false, false>, globalObject, gcBuffer, stack, scope, o1, o2);
+    return strictProxyPairEqualsSlow(deepEqualsMode<true, enableAsymmetricMatchers, false, false>, globalObject, gcBuffer, stack, scope, o1, o2, bothAreArrays);
 }
 
 // The per-type comparisons (Map, Set, Date, typed arrays, ...) are compiled once

@@ -709,7 +709,6 @@ describe("expect()", () => {
       }
       expect(reactive(new Alert())).toStrictEqual(new Alert());
       expect(reactive(new Alert())).not.toStrictEqual({ message: "1" });
-      expect(reactive(new Alert())).not.toStrictEqual(reactive({ message: "1" }));
     });
 
     // A DOM written in JavaScript hands out some nodes as Proxies (jsdom: <form>, <select>).

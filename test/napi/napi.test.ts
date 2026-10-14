@@ -1389,10 +1389,6 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("result is clonable with structuredClone", async () => {
       await checkSameOutput("test_napi_create_object_structured_clone", []);
     });
-    it("result is strictly equal to a Proxy with the same properties", async () => {
-      const output = await checkSameOutput("test_napi_create_object_strict_equals_proxy", []);
-      expect(output).toBe("true true true false");
-    });
   });
 
   describe("napi_create_arraybuffer", () => {

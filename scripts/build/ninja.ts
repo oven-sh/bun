@@ -53,6 +53,9 @@ const ruleVars = {
   pch_msvc: ["cxxflags", "pch_header", "pch_stub_obj"],
   // configure.ts
   regen: [],
+  // feature-table.ts
+  exe_features_tool: ["lib"],
+  feature_table: ["table"],
   // rust/emit.ts
   rust_build_script: ["manifest", "crate"],
   rust_plan: ["planinput", "plan"],

@@ -1072,7 +1072,62 @@ To trim down the size of the executable, enable minification:
   </Tab>
 </Tabs>
 
-This uses Bun's minifier to reduce the code size. Overall though, Bun's binary is still way too big and we need to make it smaller.
+This uses Bun's minifier to reduce the code size. Most of an executable is the Bun runtime, though. To make that part smaller, see [Excluding runtime features](#excluding-runtime-features).
+
+---
+
+## Excluding runtime features
+
+An executable contains a copy of the whole Bun runtime, including parts your program never uses. `--compile-exclude-features` leaves parts of the runtime out:
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build --compile ./index.ts --outfile myapp --compile-exclude-features=check,lint,fmt
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./index.ts"],
+      compile: {
+        outfile: "./myapp",
+        excludeFeatures: ["check", "lint", "fmt"],
+      },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+On the command line, separate names with commas or repeat the flag.
+
+| Feature          | What the executable loses                                                                |
+| ---------------- | ---------------------------------------------------------------------------------------- |
+| `check`          | The `bun check` command                                                                  |
+| `lint`           | The `bun lint` command                                                                   |
+| `fmt`            | The `bun fmt` command                                                                    |
+| `Bun.password`   | `Bun.password` is `undefined`                                                            |
+| `Bun.Transpiler` | `Bun.Transpiler` is `undefined`. Loading TypeScript and JSX files at runtime still works |
+
+Bun removes a feature together with every function and constant that nothing else in the runtime uses. Code that another part of the runtime shares stays. On Linux x64, excluding `check`, `lint`, and `fmt` takes a small program from 108 MB to 84 MB.
+
+A command is only reachable in an executable that [acts as the Bun CLI](#act-as-the-bun-cli). An excluded command prints `error: this executable was built without this command` and exits with a non-zero code.
+
+Bun does not check whether your program uses what you exclude. If your code calls `Bun.password.hash()` and you exclude `Bun.password`, the call throws a `TypeError` at runtime.
+
+A name that does not exist is an error. The error message lists the names that the targeted Bun supports.
+
+### Supported targets
+
+| --target          | Can exclude features |
+| ----------------- | -------------------- |
+| bun-linux-x64     | Yes                  |
+| bun-linux-arm64   | Yes                  |
+| bun-darwin-arm64  | Yes                  |
+| bun-windows-x64   | Yes                  |
+| All other targets | Not yet              |
+
+This works when cross-compiling: what matters is the target, not the machine you build on. The build fails if the targeted Bun cannot exclude features. That includes debug builds of Bun and versions that predate this option.
 
 ---
 
@@ -1304,6 +1359,7 @@ interface CompileBuildOptions {
   autoloadBunfig?: boolean; // Load bunfig.toml (default: true)
   bytecodeOrder?: string | string[] | false | null; // Order file(s) to lay the bytecode out by (requires bytecode: true)
   jitPolicy?: number; // JIT tier-up threshold scale at startup (default: 1 = normal)
+  excludeFeatures?: string[]; // Parts of the runtime to leave out of the executable
   windows?: {
     icon?: string; // Path to .ico file
     hideConsole?: boolean; // Hide console window

@@ -25,7 +25,7 @@ test("Rust sources linked into Bun do not use the streams of the standard librar
     ["src/router/lib.rs", 4],
   ]);
   // Programs of their own.
-  const programs = ["src/sema/standalone/"];
+  const programs = ["src/sema/standalone/", "src/exe_features/main.rs"];
   const isLinked = (file: string) =>
     !file.endsWith("/build.rs") && !file.includes("/benches/") && !programs.some(it => file.startsWith(it));
 

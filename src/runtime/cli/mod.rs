@@ -1335,9 +1335,19 @@ pub(crate) mod command {
             Tag::UpdateInteractiveCommand => exec_update_interactive(log),
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
-            Tag::CheckCommand => exec_check(log),
-            Tag::LintCommand => exec_lint(log),
-            Tag::FormatCommand => exec_format(log),
+            Tag::CheckCommand if bun_core::feature::present::<{ bun_core::feature::CHECK }>() => {
+                exec_check(log)
+            }
+            Tag::LintCommand if bun_core::feature::present::<{ bun_core::feature::LINT }>() => {
+                exec_lint(log)
+            }
+            Tag::FormatCommand if bun_core::feature::present::<{ bun_core::feature::FMT }>() => {
+                exec_format(log)
+            }
+            Tag::CheckCommand | Tag::LintCommand | Tag::FormatCommand => {
+                Output::err_generic("this executable was built without this command", ());
+                Global::exit(1);
+            }
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
@@ -1458,7 +1468,8 @@ pub(crate) mod command {
         // Scripts have no entry point to start from: the project is checked, as by `bun check`.
         let runs_several =
             ctx.parallel || ctx.sequential || !ctx.filters.is_empty() || ctx.workspaces;
-        if runs_several
+        if bun_core::feature::present::<{ bun_core::feature::CHECK }>()
+            && runs_several
             && ctx.runtime_options.check
             && !super::check_command::check_project_before()
         {
@@ -1498,7 +1509,9 @@ pub(crate) mod command {
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
-            lint_command::read_program_of_script(ctx);
+            if bun_core::feature::present::<{ bun_core::feature::LINT }>() {
+                lint_command::read_program_of_script(ctx);
+            }
             return run_command::RunCommand::exec_eval(ctx);
         }
 
@@ -1510,7 +1523,11 @@ pub(crate) mod command {
         }
 
         // `bun --check` and `bun run --check` are `bun check`, also where that is a script.
-        if no_target && ctx.runtime_options.check && ctx.runtime_options.eval.script.is_empty() {
+        if bun_core::feature::present::<{ bun_core::feature::CHECK }>()
+            && no_target
+            && ctx.runtime_options.check
+            && ctx.runtime_options.eval.script.is_empty()
+        {
             super::check_command::CheckCommand::exec_without_arguments();
         }
 
@@ -2337,7 +2354,9 @@ Execute a shell script directly from Bun.
 <b>Flags:<r>"
                 );
                 Output::flush();
-                bun_clap::simple_help(crate::cli::check_command::PARAMS);
+                if bun_core::feature::present::<{ bun_core::feature::CHECK }>() {
+                    bun_clap::simple_help(crate::cli::check_command::PARAMS);
+                }
                 pretty!(
                     "
       <cyan>--strict<r>, <cyan>--target<r><d><cyan>=\\<val\\><r>, ...  Any compiler option, as for <b>tsc<r>. Overrides tsconfig.json
@@ -2371,7 +2390,9 @@ Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r
   Format JavaScript, TypeScript, CSS, HTML, JSON, YAML, Markdown and more.
 "
                 );
-                print_flags(&crate::cli::format_command::HELP, show_all_flags);
+                if bun_core::feature::present::<{ bun_core::feature::FMT }>() {
+                    print_flags(&crate::cli::format_command::HELP, show_all_flags);
+                }
                 pretty!(
                     "
 <b>Examples:<r>
@@ -2395,7 +2416,9 @@ Full documentation is available at <magenta>https://bun.com/docs/format<r>
   Find and fix problems in JavaScript and TypeScript.
 "
                 );
-                print_flags(&crate::cli::lint_command::HELP, show_all_flags);
+                if bun_core::feature::present::<{ bun_core::feature::LINT }>() {
+                    print_flags(&crate::cli::lint_command::HELP, show_all_flags);
+                }
                 pretty!(
                     "
 <b>Examples:<r>

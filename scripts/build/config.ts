@@ -164,6 +164,11 @@ export interface Config {
    * `-Z time-passes` are recorded next to each crate (rust/run.ts). `--timings` reads both (timings.ts).
    */
   timeTrace: boolean;
+  /**
+   * The stripped `bun` says what `bun build --compile --compile-exclude-features` can leave out of it. See
+   * feature-table.ts. Default: on wherever it can be made.
+   */
+  featureTable: boolean;
 
   // ─── Environment ───
   ci: boolean;
@@ -370,6 +375,7 @@ export interface PartialConfig {
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
+  featureTable?: boolean;
   ci?: boolean;
   buildkite?: boolean;
   webkit?: WebKitMode;
@@ -1265,6 +1271,28 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     };
   }
 
+  // ─── Feature table ───
+  const whyNoFeatureTable =
+    // The one build that ships (shouldStrip). Every other kind keeps its symbols and is not compiled from.
+    debug || asan || valgrind || assertions || !lto
+      ? "only a stripped release build with LTO has one"
+      : // What it is made from is what lld writes. A native macOS build links with Apple's ld.
+        darwin && crossTarget === undefined
+        ? "a native macOS build does not link with lld"
+        : // The link command goes on after the link, which takes a shell. Releases are built on Linux.
+          host.os === "windows"
+          ? "it cannot be made on a Windows host"
+          : toolchain.objdump === undefined || toolchain.rustSysroot === undefined
+            ? "it takes llvm-objdump and rustc"
+            : // glibc: the unwind tables refer to functions and are not kept up to date. Only there does strip remove them.
+              !((linux && abi === "gnu") || (darwin && arm64) || (windows && x64))
+              ? "this target is not supported yet"
+              : undefined;
+  if (partial.featureTable === true && whyNoFeatureTable !== undefined) {
+    throw new BuildError(`--feature-table=on: ${whyNoFeatureTable}`);
+  }
+  const featureTable = partial.featureTable ?? whyNoFeatureTable === undefined;
+
   return {
     os,
     arch,
@@ -1306,6 +1334,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
+    featureTable,
     ci,
     buildkite,
     webkit: partial.webkit ?? "prebuilt",

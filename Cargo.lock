@@ -555,6 +555,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_exe_features"
+version = "0.0.0"
+
+[[package]]
 name = "bun_exe_format"
 version = "0.0.0"
 dependencies = [
@@ -1846,6 +1850,7 @@ dependencies = [
  "bun_core",
  "bun_dotenv",
  "bun_errno",
+ "bun_exe_features",
  "bun_exe_format",
  "bun_http",
  "bun_libarchive",

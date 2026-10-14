@@ -151,7 +151,10 @@ impl BuildCommand {
             .cloned()
             .unwrap_or_default();
 
-        if ctx.bundler_options.check && ctx.bundler_options.transform_only {
+        if bun_core::feature::present::<{ bun_core::feature::CHECK }>()
+            && ctx.bundler_options.check
+            && ctx.bundler_options.transform_only
+        {
             // Nothing is bundled, so nothing has been resolved or read.
             let entry_points = this_transpiler.options.entry_points.iter();
             let checked = options::TypeChecked {
@@ -169,7 +172,9 @@ impl BuildCommand {
                 Output::flush();
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
-        } else if ctx.bundler_options.check {
+        } else if bun_core::feature::present::<{ bun_core::feature::CHECK }>()
+            && ctx.bundler_options.check
+        {
             this_transpiler.options.type_check =
                 Some(crate::cli::check_command::check_for_build_command);
         }
@@ -936,6 +941,7 @@ impl BuildCommand {
                         .as_deref()
                         .unwrap_or(b""),
                     ctx.bundler_options.compile_executable_path.as_deref(),
+                    &ctx.bundler_options.compile_exclude_features,
                     {
                         use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
                         let mut flags = Flags::default();

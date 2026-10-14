@@ -2327,11 +2327,13 @@ impl TestCommand {
         }
 
         // After the file watcher is enabled: see `watching`.
-        let has_type_errors = ctx.runtime_options.check && {
-            use crate::cli::check_command::{EntryPoint, check_before, watching};
-            let paths = test_files.iter().map(|path| EntryPoint::file(path));
-            !check_before(&paths.collect::<Vec<_>>(), watching(vm))
-        };
+        let has_type_errors = bun_core::feature::present::<{ bun_core::feature::CHECK }>()
+            && ctx.runtime_options.check
+            && {
+                use crate::cli::check_command::{EntryPoint, check_before, watching};
+                let paths = test_files.iter().map(|path| EntryPoint::file(path));
+                !check_before(&paths.collect::<Vec<_>>(), watching(vm))
+            };
         if has_type_errors {
             // No test is run.
             if !vm.is_watcher_enabled() {

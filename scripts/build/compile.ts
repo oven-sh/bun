@@ -11,6 +11,7 @@ import { availableParallelism } from "node:os";
 import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
+import { featureTableLinkCapture, featureTableLinkCommand } from "./feature-table.ts";
 import { linksWithLld } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, PoolName, Rule } from "./ninja.ts";
@@ -185,10 +186,14 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // empty everywhere else): ninja runs the whole command through `sh -c`,
   // so the fixup runs after the link succeeds and the declared output is
   // already the final, patched, re-signed artifact. See shims.ts.
+  //
+  // A build with a feature table goes on in the same way: it keeps what the
+  // linker prints, and makes the link's table at the end. See feature-table.ts.
+  const after = `${featureTableLinkCapture(cfg)}${machoPostlinkCommand(cfg)}${featureTableLinkCommand(cfg)}`;
   n.rule("link", {
     command: cfg.windows
-      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp $lazy /Fe$out /link $ldflags`
-      : `${cxx} @$out.rsp $lazy $ldflags -o $out${machoPostlinkCommand(cfg)}`,
+      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp $lazy /Fe$out /link $ldflags${after}`
+      : `${cxx} @$out.rsp $lazy $ldflags -o $out${after}`,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
@@ -469,8 +474,8 @@ export interface LinkOpts {
    * Editing these should trigger relink (cmake's LINK_DEPENDS equivalent).
    */
   implicitInputs?: string[];
-  /** Map files the link's flags make it write alongside the executable (flags.ts linkerMapOutputs). */
-  linkerMapOutputs?: string[];
+  /** What the link command writes besides the executable: the maps (flags.ts linkerMapOutputs), the link's feature table. */
+  sideOutputs?: string[];
   /** Checks to run on the executable whenever it is linked (ninja validations): stamp paths of edges emitted elsewhere. */
   validations?: string[];
 }
@@ -482,8 +487,8 @@ export interface LinkOpts {
 export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts: LinkOpts): string {
   const absOut = resolve(cfg.buildDir, out + cfg.exeSuffix);
 
-  // Linker maps are implicit outputs (ninja tracks them but they're not in $out)
-  const implicitOutputs = (opts.linkerMapOutputs ?? []).map(map => resolve(cfg.buildDir, map));
+  // Implicit outputs: ninja tracks them but they're not in $out.
+  const implicitOutputs = (opts.sideOutputs ?? []).map(file => resolve(cfg.buildDir, file));
 
   const lazy = opts.lazyObjects ?? [];
   const lazyInputs: string[] = [];

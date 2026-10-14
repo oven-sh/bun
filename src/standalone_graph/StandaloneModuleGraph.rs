@@ -2064,10 +2064,47 @@ impl<'a> Injected<'a> {
     }
 }
 
+/// `executable` without the features of `--compile-exclude-features`, or what is wrong with the request.
+fn without_features(executable: Vec<u8>, exclude: &[Box<[u8]>]) -> Result<Vec<u8>, CompileError> {
+    use bun_exe_features::{Error, Features, table_section, without_table};
+    if exclude.is_empty() {
+        // What says how to exclude features is of no use to the executable.
+        return Ok(without_table(&executable).unwrap_or(executable));
+    }
+    let explain = |e: Error| match e {
+        Error::MissingTable => CompileError::fmt(format_args!(
+            "--compile-exclude-features needs a release build of Bun to compile from: this one does not say what can be excluded"
+        )),
+        e => CompileError::fmt(format_args!(
+            "failed to exclude features from the executable: {e}"
+        )),
+    };
+    let table = bun_zstd::decompress_alloc(table_section(&executable).map_err(explain)?)
+        .map_err(|_| explain(Error::InvalidTable))?;
+    let features = Features::open(&executable, &table).map_err(explain)?;
+    let is_known = |name: &[u8]| features.names().any(|known| known == name);
+    if let Some(unknown) = exclude.iter().find(|name| !is_known(name)) {
+        let mut message = Vec::new();
+        message.extend_from_slice(b"--compile-exclude-features: there is no feature called \"");
+        message.extend_from_slice(unknown);
+        message.extend_from_slice(b"\". These can be excluded:");
+        for known in features.names() {
+            message.extend_from_slice(b"\n  ");
+            message.extend_from_slice(known);
+        }
+        return Err(CompileError::Message(message));
+    }
+    let exclude: Vec<&[u8]> = exclude.iter().map(|name| &**name).collect();
+    features.remove(&exclude).map_err(explain)
+}
+
 pub(crate) fn inject<'a>(
     bytes: &[u8],
     self_exe: &ZStr,
     inject_options: &InjectOptions,
+    exclude: &[Box<[u8]>],
+    // Why `exclude` could not be honored. Every other failure is printed.
+    exclude_error: &mut Option<CompileError>,
     target: &CompileTarget,
     temp_path_buf: &'a mut PathBuffer,
 ) -> Option<Injected<'a>> {
@@ -2301,6 +2338,14 @@ pub(crate) fn inject<'a>(
                     return None;
                 }
             };
+            let input_bytes = match without_features(input_bytes, exclude) {
+                Ok(b) => b,
+                Err(e) => {
+                    *exclude_error = Some(e);
+                    cleanup(zname, cloned_executable_fd);
+                    return None;
+                }
+            };
             let mut macho_file = match bun_macho::MachoFile::init(&input_bytes, bytes.len()) {
                 Ok(f) => f,
                 Err(e) => {
@@ -2372,6 +2417,14 @@ pub(crate) fn inject<'a>(
                     return None;
                 }
             };
+            let input_bytes = match without_features(input_bytes, exclude) {
+                Ok(b) => b,
+                Err(e) => {
+                    *exclude_error = Some(e);
+                    cleanup(zname, cloned_executable_fd);
+                    return None;
+                }
+            };
             let mut pe_file = match bun_pe::PEFile::init(&input_bytes) {
                 Ok(f) => f,
                 Err(e) => {
@@ -2435,6 +2488,14 @@ pub(crate) fn inject<'a>(
                 Ok(b) => b,
                 Err(err) => {
                     bun_core::pretty_errorln!("Error reading executable: {}", err);
+                    cleanup(zname, cloned_executable_fd);
+                    return None;
+                }
+            };
+            let input_bytes = match without_features(input_bytes, exclude) {
+                Ok(b) => b,
+                Err(e) => {
+                    *exclude_error = Some(e);
                     cleanup(zname, cloned_executable_fd);
                     return None;
                 }
@@ -2851,6 +2912,7 @@ pub fn to_executable(
     windows_options: &WindowsOptions,
     compile_exec_argv: &[u8],
     self_exe_path: Option<&[u8]>,
+    exclude: &[Box<[u8]>],
     flags: Flags,
     runtime_options: RuntimeOptions,
 ) -> crate::Result<CompileResult> {
@@ -2884,13 +2946,19 @@ pub fn to_executable(
     };
 
     let mut temp_path_buf = bun_paths::path_buffer_pool::get();
+    let mut exclude_error = None;
     let Some(injected) = inject(
         &bytes,
         &self_exe,
         windows_options,
+        exclude,
+        &mut exclude_error,
         target,
         &mut temp_path_buf,
     ) else {
+        if let Some(e) = exclude_error {
+            return Ok(CompileResult::Err(e));
+        }
         // inject() has already printed the specific error.
         return Ok(CompileResult::fail_fmt(format_args!(
             "failed to write compiled executable {}",

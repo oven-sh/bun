@@ -440,6 +440,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"
         ),
         parse_param!(
+            "--compile-exclude-features <STR>... Leave features of the runtime out of the standalone executable, e.g. --compile-exclude-features=lint,fmt"
+        ),
+        parse_param!(
             "--asset <STR>...                 Embed a file or directory into the compiled executable, preserving its relative path (requires --compile)"
         ),
         parse_param!("--bytecode                       Use a bytecode cache"),
@@ -1259,6 +1262,9 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.smol = args.flag(b"--smol");
         // To `node`, `--check` means something else.
         ctx.runtime_options.check = args.flag(b"--check") && cmd != CommandTag::RunAsNodeCommand;
+        if ctx.runtime_options.check {
+            exit_if_built_without_check();
+        }
         // Nothing runs unchecked, so the process starts again, as under `--watch`. Decided here: on
         // Windows the process that starts it again is set up right after this.
         if ctx.runtime_options.check && ctx.debug.hot_reload == HotReload::Hot {
@@ -2080,6 +2086,16 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 }
 
+fn exit_if_built_without_check() {
+    if !bun_core::feature::present::<{ bun_core::feature::CHECK }>() {
+        Output::err_generic(
+            "--check: this executable was built without type checking",
+            (),
+        );
+        Global::exit(1);
+    }
+}
+
 /// Cold path: `bun build` option-group parsing — bundler flags, `--app` (Bake),
 /// `--compile` / `CompileTarget`, sourcemap / format / minify, Windows executable
 /// metadata, etc. Split out of [`parse`] for the same reason as
@@ -2095,6 +2111,9 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.check = args.flag(b"--check");
+    if ctx.bundler_options.check {
+        exit_if_built_without_check();
+    }
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
     if let Some(depth) = args.option(b"--bytecode-depth") {
         ctx.bundler_options.bytecode_depth = match strings::parse_int::<u32>(depth, 10) {
@@ -2437,6 +2456,18 @@ fn parse_build_command_options(
             Global::crash();
         }
         ctx.bundler_options.compile_executable_path = Some(path.into());
+    }
+
+    for names in args.options(b"--compile-exclude-features") {
+        if !ctx.bundler_options.compile {
+            Output::err_generic("--compile-exclude-features requires --compile", ());
+            Global::crash();
+        }
+        ctx.bundler_options.compile_exclude_features.extend(
+            strings::split(names, b",")
+                .filter(|name| !name.is_empty())
+                .map(Box::<[u8]>::from),
+        );
     }
 
     if args.flag(b"--windows-hide-console") {

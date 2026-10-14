@@ -22,6 +22,7 @@
 import { registerCodegenRules } from "./codegen.ts";
 import { registerCompileRules, registerDirStamps } from "./compile.ts";
 import type { Config } from "./config.ts";
+import { registerFeatureTableRules } from "./feature-table.ts";
 import type { Ninja } from "./ninja.ts";
 import { registerRustRules } from "./rust.ts";
 import { registerShimRules } from "./shims.ts";
@@ -54,4 +55,7 @@ export function registerAllRules(n: Ninja, cfg: Config): void {
 
   // host_tool_cc (darwin cross)
   registerShimRules(n, cfg);
+
+  // exe_features_tool, feature_table
+  registerFeatureTableRules(n, cfg);
 }

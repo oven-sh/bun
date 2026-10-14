@@ -4430,7 +4430,9 @@ pub mod bv2_impl {
                     return Err(crate::Error::BuildFailed);
                 }
                 this.fail_if_no_entry_points()?;
-                this.type_check()?;
+                if bun_core::feature::present::<{ bun_core::feature::CHECK }>() {
+                    this.type_check()?;
+                }
 
                 this.scan_for_secondary_paths();
 
@@ -5631,7 +5633,9 @@ pub mod bv2_impl {
                 return Err(crate::Error::BuildFailed);
             }
             self.fail_if_no_entry_points()?;
-            self.type_check()?;
+            if bun_core::feature::present::<{ bun_core::feature::CHECK }>() {
+                self.type_check()?;
+            }
 
             self.scan_for_secondary_paths();
 

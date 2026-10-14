@@ -1076,6 +1076,14 @@ export const linkerFlags: Flag[] = [
     desc: "Linker maps: the order file tracer's symbol table (see windows-symbols.ts)",
   },
   {
+    // What the link's feature table is made from (feature-table.ts), besides
+    // lld's map: the objects LTO generated, which library each member came
+    // from, and in the map the names the object files use.
+    flag: ["/lldsavetemps:prelink", "/verbose", "/demangle:no"],
+    when: c => c.windows && c.featureTable,
+    desc: "Feature table: leave behind what refers to what",
+  },
+  {
     // lld-link's spelling of the symbol ordering file (the Linux entry below
     // explains it): one COMDAT leader name per line, laid out first in .text.
     // Every function is its own COMDAT here — /Gy for bun's C++ and for the
@@ -1189,6 +1197,14 @@ export const linkerFlags: Flag[] = [
     flag: c => ["-dead_strip", "-dead_strip_dylibs", `-Wl,-map,${linkerMapPath(c)}`],
     when: c => c.darwin && c.release,
     desc: "Dead-code strip + emit linker map",
+  },
+  {
+    // The hints let the linker turn adrp + add into adr + nop and the like,
+    // after which the object files' relocations, which the feature table is
+    // made from (feature-table.ts), no longer describe the instructions.
+    flag: "-Wl,-ignore_optimization_hints",
+    when: c => c.darwin && c.featureTable,
+    desc: "Feature table: instructions stay as the relocations describe them",
   },
   {
     // Mach-O keeps DWARF in the input .o files and records their paths in
@@ -1387,6 +1403,22 @@ export const linkerFlags: Flag[] = [
     flag: c => `-Wl,-Map=${linkerMapPath(c)}`,
     when: c => c.linux && writesLinkerMap(c),
     desc: "Linker map",
+  },
+  {
+    // What the link's feature table is made from (feature-table.ts), besides
+    // the map: the relocations, the objects LTO generated, and which sections
+    // identical code folding merged. `bun-exe-features table`, at the end of
+    // the link command, removes the first two again.
+    flag: ["-Wl,--emit-relocs", "-Wl,--save-temps=prelink", "-Wl,--print-icf-sections"],
+    when: c => c.linux && c.featureTable,
+    desc: "Feature table: leave behind what refers to what",
+  },
+  {
+    // Relaxation turns adrp + add into nop + adr, which reaches 1 MB. Leaving
+    // features out packs code and constants apart from each other.
+    flag: "-Wl,--no-relax",
+    when: c => c.linux && c.arm64 && c.featureTable,
+    desc: "Feature table: every address keeps its full reach",
   },
   {
     // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage

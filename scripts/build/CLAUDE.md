@@ -174,7 +174,7 @@ For `mode: "full"` (the normal case):
 5. **PCH** — compile `root-pch.h` → PCH.
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.
 7. **Link** — `emitShims(n, cfg)` for platform workaround dylibs, then `link(n, cfg, exeName, objects, {libs, flags})`.
-8. **Post-link** — strip (release only), dsymutil (darwin release only).
+8. **Post-link** — strip (release only), dsymutil (darwin release only). With `cfg.featureTable` (`feature-table.ts`) the link command ends by making the link's feature table, strip writes `bun.stripped`, and `bun` is that with the table embedded.
 9. **Checks** — validations of the link edge (`ninja check` names them too), all static except the first: `<exe> --revision` (load-time failures; only when the host can run the target), `verify-binary.ts binary` (exported symbols vs the lists in src/, exact NEEDED/dylib/DLL set and glibc/FBSD symbol-version ceilings, forbidden imports, static-initializer allowlist, W^X / nx-stack / PIE / DllCharacteristics, debug-info shape — expectations in `binary-expectations.ts`), and `verify-binary.ts duplicates` (no symbol strongly defined by two link inputs). Only CI fails on a finding: local builds (`cfg.ci` unset), and ASan and debug builds in CI, run the two scans with `--warn-only` (`binaryChecksWarnOnly` in `bun.ts`) — same report, the step passes.
 
 CI's `build-bun` step builds the same graph (`ci-build` profile: release, prebuilt WebKit); `build.ts` then packages and uploads the zips.
@@ -231,6 +231,7 @@ It is configured by `configureCodegen()`, not `configure()`, and resolves a `Cod
 | `workarounds.ts`               | Self-obsoleting workaround registry, `checkWorkarounds()`                                                                                                               |
 | `macos-sdk.ts`                 | macOS SDK resolution/download for darwin cross-compiles — `resolveMacosSdkPath()`, `ensureMacosSdk()`                                                                   |
 | `features-json.ts`             | Host-side `features.json` for cross lanes — `parsePackedFeaturesList()`, `crossFeaturesJson()`                                                                          |
+| `feature-table.ts`             | `cfg.featureTable`: the table behind `--compile-exclude-features`, made after the link by the host tool (src/exe_features) and embedded in `bun`                        |
 | `depVersionsHeader.ts`         | Generates `bun_dependency_versions.h` for `process.versions`                                                                                                            |
 | `buildOptionsRs.ts`            | Generates `build_options.rs` (`bun_core::build_options`) from `Config`                                                                                                  |
 | `jsonByteClass.ts`             | Generates `json_byte_class.{h,rs}` — the JSON byte classification shared by the SIMD kernel and the Rust scalar indexer                                                 |

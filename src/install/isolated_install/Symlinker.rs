@@ -1,6 +1,9 @@
 use bun_core::strings;
 use bun_paths;
+use bun_paths::path_options::AssumeOk as _;
 use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
+
+use crate::package_manager_real::patch_package::is_patch_copy_link;
 
 pub(crate) struct Symlinker {
     pub(crate) dest: bun_paths::Path,
@@ -54,7 +57,7 @@ impl Symlinker {
                     },
                 };
             }
-            Strategy::ExpectExisting => {
+            Strategy::ExpectExisting | Strategy::ExpectExistingOrPatchCopy => {
                 let mut current_link_buf = bun_paths::path_buffer_pool::get();
                 let current_link_len =
                     match bun_sys::readlink(self.dest.slice_z(), &mut current_link_buf) {
@@ -118,12 +121,18 @@ impl Symlinker {
                 }
 
                 #[cfg(windows)]
-                {
-                    if strings::eql_long(current_link, self.fallback_junction_target.slice(), true)
-                    {
-                        return Ok(false);
-                    }
+                if strings::eql_long(current_link, self.fallback_junction_target.slice(), true) {
+                    return Ok(false);
+                }
 
+                if matches!(strategy, Strategy::ExpectExistingOrPatchCopy)
+                    && self.is_link_to_patch_copy(current_link)
+                {
+                    return Ok(false);
+                }
+
+                #[cfg(windows)]
+                {
                     // this existing link is pointing to the wrong package.
                     // on windows rmdir must be used for symlinks created to point
                     // at directories, even if the target no longer exists
@@ -147,10 +156,34 @@ impl Symlinker {
             }
         }
     }
+
+    /// `bun patch` points the link of a dependency at its copy until `bun patch --commit`. A
+    /// link to a copy that is gone, or that has no package.json, is a link with a wrong target.
+    #[cold]
+    fn is_link_to_patch_copy(&mut self, current_link: &[u8]) -> bool {
+        if !is_patch_copy_link(self.dest.slice(), current_link) {
+            return false;
+        }
+        let manifest = [self.dest.slice(), &[bun_paths::SEP], b"package.json"].concat();
+        // `Path::from` does not check the length.
+        if manifest.len() >= bun_paths::MAX_PATH_BYTES {
+            return true;
+        }
+        let mut manifest = bun_paths::Path::<u8>::from(&*manifest).assume_ok();
+        !matches!(
+            bun_sys::stat(manifest.slice_z()).map_err(|err| err.get_errno()),
+            Err(Errno::ENOENT | Errno::ENOTDIR)
+        )
+    }
 }
 
 #[derive(Clone, Copy)]
 pub enum Strategy {
     ExpectExisting,
+    /// `ExpectExisting`, for the links of the root and of a workspace: the link that
+    /// `bun patch` points at its copy stays.
+    ExpectExistingOrPatchCopy,
     ExpectMissing,
 }
+
+const _: () = assert!(core::mem::size_of::<Strategy>() == 1);

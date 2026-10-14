@@ -3533,11 +3533,10 @@ describe("global virtual store", () => {
   });
 
   test("preserves bun patch workspace when install runs before --commit", async () => {
-    // Regression: `bun patch <pkg>` detaches the project store entry from the
-    // global virtual store (symlink → real directory) so the user can edit it.
-    // A subsequent `bun install` (e.g. to add another dep) before `--commit`
-    // must not see that real directory as a stale pre-GVS layout and
-    // `deleteTree` the user's in-progress edits.
+    // Regression: `bun patch <pkg>` gives the user a copy of the package to
+    // edit, which is not the entry in the global virtual store. A subsequent
+    // `bun install` (e.g. to add another dep) before `--commit` must keep the
+    // copy and the user's in-progress edits.
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: gvsBunfigOpts });
 
     await write(
@@ -3564,20 +3563,22 @@ describe("global virtual store", () => {
     expect(stdout).toContain("To patch");
     expect(exitCode).toBe(0);
 
-    // `bun patch` detached the top-level dep symlink into a real directory
-    // for the user to edit. The `.bun/<storepath>` GVS symlink is untouched.
-    expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
-    expect(lstatSync(workspace).isDirectory()).toBe(true);
+    // `bun patch` pointed the top-level dep symlink at a copy for the user to
+    // edit. The `.bun/<storepath>` GVS symlink is untouched.
+    const copy = join(".bun-patches", "no-deps@1.0.0");
+    expect(readlinkSync(workspace)).toBe(copy);
+    expect(lstatSync(join(packageDir, "node_modules", copy)).isDirectory()).toBe(true);
 
     const edited = join(workspace, "index.js");
     await write(edited, "module.exports = 'USER_EDITS';\n");
+    const globalEntry = join(packageDir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules", "no-deps");
+    expect(await file(join(globalEntry, "index.js")).text()).not.toContain("USER_EDITS");
 
     await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
 
-    // The real-directory workspace is preserved across the install; before
-    // this fix `.expect_existing` would `deleteTree` it on readlink EINVAL
-    // and re-symlink, wiping the edits.
-    expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
+    // The link to the copy is preserved across the install, and the copy has
+    // the edits.
+    expect(readlinkSync(workspace)).toBe(copy);
     expect(await file(edited).text()).toBe("module.exports = 'USER_EDITS';\n");
   });
 });

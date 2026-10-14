@@ -2620,6 +2620,8 @@ pub(crate) fn install_isolated_packages(
             }
         }
 
+        installer.finish_patch_commit();
+
         if installer.manager().options.log_level.show_progress() {
             progress.root.end();
             *progress = Progress::default();

@@ -1,7 +1,8 @@
-import { $ } from "bun";
+import { $, file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { lstatSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "fs";
+import { rm, symlink, unlink } from "fs/promises";
+import { bunEnv, bunExe, isASAN, readdirSorted, tempDir } from "harness";
 import { isAbsolute, join, sep } from "path";
 import { TestRegistry } from "registry";
 
@@ -1233,5 +1234,484 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
     // name-only argument exercises the name-and-version lookup path
     const patchKey = await expectPatchFlowWorks(String(dir), env, "pkg-to-patch");
     expect(patchKey).toBe("pkg-to-patch@./dep.tgz");
+  });
+});
+
+// With the isolated linker, `node_modules/<name>` of the root and of each workspace is a link into `node_modules/.bun`.
+// `bun patch` keeps it a link: the copy to edit is in `node_modules/.bun-patches`, and the link points at the copy until
+// `bun patch --commit` has installed the patched package.
+describe("bun patch with the isolated linker keeps the link of a dependency", () => {
+  const registry = new TestRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  // CI exports one BUN_INSTALL_CACHE_DIR for the whole file. `bun patch --commit` writes to the cache, so each
+  // project here has its own.
+  async function run(packageDir: string, args: string[], cwd: string = packageDir) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  async function version(folder: string) {
+    return (await file(join(folder, "package.json")).json()).version;
+  }
+
+  // `bun patch` prints the folder to edit and the command that commits it.
+  function printed(stdout: string) {
+    const folder = stdout.match(/edit the following folder:\n\n  (.+)\n/)?.[1];
+    const commit = stdout.match(/bun patch --commit '([^']+)'/)?.[1];
+    expect(commit).toBe(folder);
+    return folder!;
+  }
+
+  const storeLink = (name: string, version: string) => join(".bun", `${name}@${version}`, "node_modules", name);
+  const copyOf = (nodeModules: string, key: string) => join(nodeModules, ".bun-patches", key);
+  const edit = "module.exports = 'EDITED';\n";
+  const rootWithNoDeps = {
+    "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.0" } }),
+  };
+
+  // A project with an open `bun patch no-deps` session and an edit in the copy.
+  async function session(globalStore = false) {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore },
+      files: rootWithNoDeps,
+    });
+    const nodeModules = join(packageDir, "node_modules");
+    const slot = join(nodeModules, "no-deps");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+    expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
+    await write(join(slot, "index.js"), edit);
+    return { packageDir, nodeModules, slot, copy: copyOf(nodeModules, "no-deps@1.0.0") };
+  }
+
+  test("the link points at the copy until --commit", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: rootWithNoDeps,
+    });
+    const nodeModules = join(packageDir, "node_modules");
+    const slot = join(nodeModules, "no-deps");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    const patch = await run(packageDir, ["patch", "no-deps"]);
+    expect(patch.stderr).not.toContain("error:");
+    expect(printed(patch.stdout)).toBe("node_modules/no-deps");
+    expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
+    expect(await readdirSorted(copyOf(nodeModules, "no-deps@1.0.0"))).toEqual(["index.js", "package.json"]);
+    expect(patch.exitCode).toBe(0);
+
+    // The user edits the package through the link.
+    await write(join(slot, "index.js"), edit);
+    // The copy is not the store entry.
+    expect(await file(join(nodeModules, storeLink("no-deps", "1.0.0"), "index.js")).text()).not.toBe(edit);
+    const loaded = await run(packageDir, ["-p", "require('no-deps')"]);
+    expect(loaded.stdout).toBe("EDITED\n");
+
+    // A second `bun patch` makes a new copy.
+    expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
+    expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
+    expect(await file(join(slot, "index.js")).text()).not.toBe(edit);
+  });
+
+  test.each(["install", "install --force", "add a-dep@1.0.1"])("bun %s keeps the link to the copy", async command => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: rootWithNoDeps,
+    });
+    const slot = join(packageDir, "node_modules", "no-deps");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+    expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
+    await write(join(slot, "index.js"), edit);
+
+    const install = await run(packageDir, command.split(" "));
+    expect(install.stderr).not.toContain("note:");
+    expect(install.stderr).not.toContain("warn:");
+    expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
+    expect(await file(join(slot, "index.js")).text()).toBe(edit);
+    expect(install.exitCode).toBe(0);
+  });
+
+  test.each(["is gone", "has no package.json"])(
+    "a link to a copy that %s is a link with a wrong target",
+    async state => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: rootWithNoDeps,
+      });
+      const nodeModules = join(packageDir, "node_modules");
+      const slot = join(nodeModules, "no-deps");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+      expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
+
+      if (state === "is gone") {
+        await rm(copyOf(nodeModules, "no-deps@1.0.0"), { recursive: true, force: true });
+      } else {
+        // The user removes the files of the package through the link.
+        await unlink(join(slot, "index.js"));
+        await unlink(join(slot, "package.json"));
+      }
+
+      const install = await run(packageDir, ["install"]);
+      expect(install.stderr).not.toContain("error:");
+      expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+      expect(await version(slot)).toBe("1.0.0");
+      expect(install.exitCode).toBe(0);
+    },
+  );
+
+  test.each([
+    "node_modules/no-deps",
+    "node_modules/no-deps/",
+    "no-deps",
+    "no-deps@1.0.0",
+    "node_modules/.bun-patches/no-deps@1.0.0",
+  ])(
+    "--commit %s writes the patch, removes the copy, and the link is the link to the patched package",
+    async argument => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: rootWithNoDeps,
+      });
+      const nodeModules = join(packageDir, "node_modules");
+      const slot = join(nodeModules, "no-deps");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+      expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
+      await write(join(slot, "index.js"), edit);
+
+      const commit = await run(packageDir, ["patch", "--commit", argument]);
+      expect(commit.stderr).not.toContain("error:");
+      expect(commit.stderr).not.toContain("note:");
+      expect(commit.exitCode).toBe(0);
+
+      const patchFile = await file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text();
+      expect(patchFile).toContain("+module.exports = 'EDITED';");
+      expect(patchFile).not.toContain("new file mode 120000");
+      // The link is a link into the store again, and the store has the patched package.
+      expect(await readdirSorted(nodeModules)).toEqual([".bun", "no-deps"]);
+      expect(readlinkSync(slot)).toStartWith(join(".bun", "no-deps@1.0.0"));
+      expect(await file(join(slot, "index.js")).text()).toBe(edit);
+
+      // The link follows the lockfile after the commit.
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.1" } }),
+      );
+      const install = await run(packageDir, ["install"]);
+      expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.1"));
+      expect(await version(slot)).toBe("1.0.1");
+      expect(install.exitCode).toBe(0);
+    },
+  );
+
+  test.each([
+    ["./node_modules/no-deps", "no-deps"],
+    ["node_modules//no-deps", "no-deps"],
+    ["node_modules/no-deps/.", "no-deps"],
+    ["node_modules/no-deps/", "no-deps"],
+    ["./node_modules/@types//is-number/", "@types/is-number"],
+  ])("bun patch %s and --commit of the same path", async (argument, name) => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "app", dependencies: { [name]: "1.0.0" } }),
+      },
+    });
+    const nodeModules = join(packageDir, "node_modules");
+    const slot = join(nodeModules, name);
+    const key = `${name.replace("/", "%2F")}@1.0.0`;
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    const patch = await run(packageDir, ["patch", argument]);
+    expect(patch.stderr).not.toContain("error:");
+    expect(printed(patch.stdout)).toBe(`node_modules/${name}`);
+    expect(readlinkSync(slot)).toBe(join(name.startsWith("@") ? ".." : "", ".bun-patches", key));
+    expect(await readdirSorted(copyOf(nodeModules, key))).toContain("package.json");
+    expect(patch.exitCode).toBe(0);
+    await write(join(slot, "index.js"), edit);
+
+    const commit = await run(packageDir, ["patch", "--commit", argument]);
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+    expect(await file(join(packageDir, "patches", `${key}.patch`)).text()).toContain("+module.exports = 'EDITED';");
+    expect(await readdirSorted(nodeModules)).toEqual([".bun", name.split("/")[0]]);
+    expect(readlinkSync(slot)).toContain(join(".bun", `${name.replace("/", "+")}@1.0.0`));
+    expect(await file(join(slot, "index.js")).text()).toBe(edit);
+  });
+
+  test("a workspace and a scoped name: the copy is in the node_modules of the link", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
+        "packages/m/package.json": JSON.stringify({
+          name: "m",
+          version: "1.0.0",
+          dependencies: { "@types/is-number": "1.0.0" },
+        }),
+      },
+    });
+    const nodeModules = join(packageDir, "packages", "m", "node_modules");
+    const slot = join(nodeModules, "@types", "is-number");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    const patch = await run(packageDir, ["patch", "packages/m/node_modules/@types/is-number"]);
+    expect(patch.stderr).not.toContain("error:");
+    expect(printed(patch.stdout)).toBe("packages/m/node_modules/@types/is-number");
+    expect(readlinkSync(slot)).toBe(join("..", ".bun-patches", "@types%2Fis-number@1.0.0"));
+    expect(patch.exitCode).toBe(0);
+    await write(join(slot, "index.js"), edit);
+
+    const install = await run(packageDir, ["install"]);
+    expect(install.stderr).not.toContain("note:");
+    expect(readlinkSync(slot)).toBe(join("..", ".bun-patches", "@types%2Fis-number@1.0.0"));
+    expect(await file(join(slot, "index.js")).text()).toBe(edit);
+    expect(install.exitCode).toBe(0);
+
+    const commit = await run(packageDir, ["patch", "--commit", "packages/m/node_modules/@types/is-number"]);
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+    expect(await file(join(packageDir, "patches", "@types%2Fis-number@1.0.0.patch")).text()).toContain(
+      "+module.exports = 'EDITED';",
+    );
+    expect(await readdirSorted(nodeModules)).toEqual(["@types"]);
+    expect(readlinkSync(slot)).toStartWith(
+      join("..", "..", "..", "..", "node_modules", ".bun", "@types+is-number@1.0.0"),
+    );
+    expect(await file(join(slot, "index.js")).text()).toBe(edit);
+  });
+
+  test.each(["node_modules/.bun-patches/no-deps@1.1.0", "no-deps@1.1.0"])(
+    "a package that is nested in a dependency: the link of the dependency stays as it is, --commit %s",
+    async argument => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          // one-range-dep depends on no-deps@^1.0.0, which is 1.1.0.
+          "package.json": JSON.stringify({
+            name: "app",
+            dependencies: { "no-deps": "2.0.0", "one-range-dep": "1.0.0" },
+          }),
+        },
+      });
+      const nodeModules = join(packageDir, "node_modules");
+      const parent = join(nodeModules, "one-range-dep");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+      for (const round of [1, 2]) {
+        const patch = await run(packageDir, ["patch", "no-deps@1.1.0"]);
+        expect(patch.stderr).not.toContain("error:");
+        expect(printed(patch.stdout)).toBe("node_modules/.bun-patches/no-deps@1.1.0");
+        expect(readlinkSync(parent)).toBe(storeLink("one-range-dep", "1.0.0"));
+        expect(await version(copyOf(nodeModules, "no-deps@1.1.0"))).toBe("1.1.0");
+        expect(patch.exitCode).toBe(0);
+      }
+      await write(join(copyOf(nodeModules, "no-deps@1.1.0"), "index.js"), edit);
+
+      const install = await run(packageDir, ["install"]);
+      expect(install.stderr).not.toContain("note:");
+      expect(await file(join(copyOf(nodeModules, "no-deps@1.1.0"), "index.js")).text()).toBe(edit);
+      expect(install.exitCode).toBe(0);
+
+      const commit = await run(packageDir, ["patch", "--commit", argument]);
+      expect(commit.stderr).not.toContain("error:");
+      expect(commit.exitCode).toBe(0);
+      expect(await file(join(packageDir, "patches", "no-deps@1.1.0.patch")).text()).toContain(
+        "+module.exports = 'EDITED';",
+      );
+      expect(await readdirSorted(nodeModules)).toEqual([".bun", "no-deps", "one-range-dep"]);
+      // one-range-dep loads the patched package.
+      expect(await file(join(realpathSync(parent), "..", "no-deps", "index.js")).text()).toBe(edit);
+      expect(await version(join(nodeModules, "no-deps"))).toBe("2.0.0");
+    },
+  );
+
+  test("a link to a folder that bun patch did not make is a link with a wrong target", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        ...rootWithNoDeps,
+        // The name of the directory of the copies is in this path, but this folder is not in node_modules.
+        "shared/.bun-patches/work/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+        "shared/.bun-patches/work/index.js": edit,
+      },
+    });
+    const slot = join(packageDir, "node_modules", "no-deps");
+    const work = join(packageDir, "shared", ".bun-patches", "work");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+    await unlink(slot);
+    await symlink(work, slot, "dir");
+
+    const refused = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
+    expect(refused.stderr).toMatch(
+      /^error: "node_modules\/no-deps" is a link to ".+work", not a folder that bun patch prepared$/m,
+    );
+    expect(existsSync(join(packageDir, "patches"))).toBe(false);
+    expect(refused.exitCode).toBe(1);
+
+    // An install writes the link that bun.lock names, and does not touch the folder.
+    const install = await run(packageDir, ["install"]);
+    expect(install.stderr).not.toContain("note:");
+    expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+    expect(install.exitCode).toBe(0);
+
+    expect(await readdirSorted(work)).toEqual(["index.js", "package.json"]);
+    expect(await file(join(work, "index.js")).text()).toBe(edit);
+  });
+
+  test("--commit names the copy of an earlier bun patch when its link is gone", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: rootWithNoDeps,
+    });
+    const nodeModules = join(packageDir, "node_modules");
+    const slot = join(nodeModules, "no-deps");
+    const copy = "node_modules/.bun-patches/no-deps@1.0.0";
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+    expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
+    await write(join(slot, "index.js"), edit);
+
+    // The user removes the link, and an install writes the link into the store.
+    await unlink(slot);
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+    expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+    expect(await file(join(packageDir, copy, "index.js")).text()).toBe(edit);
+
+    const refused = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
+    expect(refused.stderr).toContain(
+      `error: "node_modules/no-deps" is a link to "${storeLink("no-deps", "1.0.0")}", not a folder that bun patch prepared\n` +
+        `note: An earlier bun patch prepared a copy. To commit that copy, run bun patch --commit '${copy}'\n` +
+        `note: To prepare a new copy, run bun patch 'node_modules/no-deps'\n`,
+    );
+    expect(await file(join(packageDir, copy, "index.js")).text()).toBe(edit);
+    expect(refused.exitCode).toBe(1);
+
+    const commit = await run(packageDir, ["patch", "--commit", copy]);
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+    expect(await file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text()).toContain(
+      "+module.exports = 'EDITED';",
+    );
+    expect(await readdirSorted(nodeModules)).toEqual([".bun", "no-deps"]);
+    expect(await file(join(slot, "index.js")).text()).toBe(edit);
+  });
+
+  test("--commit with the global store: the link goes back into the store, and the copy is removed", async () => {
+    const { packageDir, nodeModules, slot } = await session(true);
+
+    const commit = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+    expect(await readdirSorted(nodeModules)).toEqual([".bun", "no-deps"]);
+    expect(readlinkSync(slot)).toStartWith(join(".bun", "no-deps@1.0.0"));
+    expect(await file(join(slot, "index.js")).text()).toBe(edit);
+  });
+
+  // The install of the commit ends the session only when the store has the package with the new patch.
+  test("--commit with a patch that does not apply keeps the link and the copy", async () => {
+    const { packageDir, slot, copy } = await session();
+    // The patch parser refuses a patch that adds a link.
+    await symlink("index.js", join(copy, "link.js"));
+
+    const commit = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
+    expect(commit.stderr).toContain("error:");
+    expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
+    expect(await file(join(copy, "index.js")).text()).toBe(edit);
+    expect(lstatSync(join(copy, "link.js")).isSymbolicLink()).toBe(true);
+    expect(commit.exitCode).toBe(1);
+  });
+
+  // git prints `Binary files ... differ` for it, and the patch parser drops that file.
+  test("--commit with the change of a binary file keeps the link and the copy, and warns", async () => {
+    const { packageDir, slot, copy } = await session();
+    await write(join(copy, "data.bin"), new Uint8Array([0, 1, 2, 0, 255, 254, 0]));
+
+    const commit = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
+    expect(commit.stderr).toContain(
+      `warn: git cannot diff a binary file as text. The patch does not have the changes of the binary files in "node_modules/.bun-patches/no-deps@1.0.0"\n`,
+    );
+    expect(commit.stderr).toContain(
+      `note: The patch does not have everything in "node_modules/.bun-patches/no-deps@1.0.0", so that copy stays\n`,
+    );
+    expect(await file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text()).toContain(
+      "+module.exports = 'EDITED';",
+    );
+    expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
+    expect(await readdirSorted(copy)).toEqual(["data.bin", "index.js", "package.json"]);
+    expect(commit.exitCode).toBe(0);
+  });
+
+  // The diff leaves out the node_modules folder of the copy.
+  test("--commit of a copy that has a node_modules folder keeps the link and the copy", async () => {
+    const { packageDir, slot, copy } = await session();
+    await write(join(copy, "node_modules", "mine", "index.js"), "mine");
+
+    const commit = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
+    expect(commit.stderr).toContain(
+      `note: The patch does not have everything in "node_modules/.bun-patches/no-deps@1.0.0", so that copy stays\n`,
+    );
+    expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
+    expect(await file(join(copy, "node_modules", "mine", "index.js")).text()).toBe("mine");
+    expect(commit.exitCode).toBe(0);
+  });
+
+  test("--commit with no change keeps the link and the copy", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: rootWithNoDeps,
+    });
+    const slot = join(packageDir, "node_modules", "no-deps");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+    expect((await run(packageDir, ["patch", "no-deps"])).exitCode).toBe(0);
+
+    const commit = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
+    expect(commit.stdout).toContain("No changes detected");
+    expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
+    expect(existsSync(join(packageDir, "patches"))).toBe(false);
+    expect(commit.exitCode).toBe(0);
+  });
+
+  // The script of the workspace runs in the install of the commit, after the link is in the store again.
+  test("--commit: a postinstall script of the workspace loads the patched package and its dependency", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
+        "packages/m/package.json": JSON.stringify({
+          name: "m",
+          version: "1.0.0",
+          // index.js of has-bin-entries requires no-deps, its dependency.
+          dependencies: { "has-bin-entries": "1.0.0" },
+          scripts: { postinstall: `"${bunExe().replaceAll("\\", "/")}" post.js` },
+        }),
+        "packages/m/post.js": `require("fs").writeFileSync("loaded.txt", String(require("has-bin-entries").patched));`,
+      },
+    });
+    const member = join(packageDir, "packages", "m");
+    const slot = join(member, "node_modules", "has-bin-entries");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+    expect(await file(join(member, "loaded.txt")).text()).toBe("undefined");
+    expect((await run(packageDir, ["patch", "packages/m/node_modules/has-bin-entries"])).exitCode).toBe(0);
+    const source = await file(join(slot, "index.js")).text();
+    await write(join(slot, "index.js"), source + "\nmodule.exports.patched = 'PATCHED';\n");
+
+    const commit = await run(packageDir, ["patch", "--commit", "packages/m/node_modules/has-bin-entries"]);
+    expect(commit.stderr).not.toContain("error:");
+    expect(await file(join(member, "loaded.txt")).text()).toBe("PATCHED");
+    expect(await readdirSorted(join(member, "node_modules"))).toEqual([".bin", "has-bin-entries"]);
+    expect(commit.exitCode).toBe(0);
   });
 });

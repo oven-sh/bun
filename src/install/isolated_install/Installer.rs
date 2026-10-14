@@ -37,6 +37,7 @@ use crate::bun_fs;
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::directories;
 use crate::package_manager_real::package_manager_options::Do;
+use crate::package_manager_real::patch_package::CommittedPatchCopy;
 
 /// The enum lives at module level in `crate::resolution`.
 type ResolutionTag = resolution::Tag;
@@ -1479,20 +1480,22 @@ impl Task {
                 Step::SymlinkDependencies => {
                     let current_step = Step::SymlinkDependencies;
                     let relinking = self.relink != Relink::Off;
-                    let strategy = if relinking
-                        || matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace)
-                    {
+                    let strategy = if relinking {
                         symlinker::Strategy::ExpectExisting
+                    } else if matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace)
+                    {
+                        symlinker::Strategy::ExpectExistingOrPatchCopy
                     } else {
                         symlinker::Strategy::ExpectMissing
                     };
 
-                    let changed = match installer.symlink_dependencies(self.entry_id, strategy) {
-                        sys::Result::Ok(changed) => changed,
-                        sys::Result::Err(err) => {
-                            return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
-                        }
-                    };
+                    let changed =
+                        match installer.symlink_dependencies(self.entry_id, strategy, None) {
+                            sys::Result::Ok(changed) => changed,
+                            sys::Result::Err(err) => {
+                                return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
+                            }
+                        };
 
                     if relinking {
                         if !changed {
@@ -1535,6 +1538,13 @@ impl Task {
 
                 Step::SymlinkDependencyBinaries => {
                     let current_step = Step::SymlinkDependencyBinaries;
+                    if matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
+                        if let sys::Result::Err(err) =
+                            installer.relink_committed_patch(self.entry_id)
+                        {
+                            return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
+                        }
+                    }
                     if let Err(err) = installer.link_dependency_bins(self.entry_id) {
                         return Ok(Yield::failure(TaskError::Binaries(err)));
                     }
@@ -2234,10 +2244,13 @@ impl<'a> Installer<'a> {
     }
 
     /// Ok(true) when at least one dependency link of the entry was written.
+    /// `only_committed` limits the links to the link of that commit, and to when the store has
+    /// the package with its patch.
     fn symlink_dependencies(
         &self,
         entry_id: StoreEntryId,
         strategy: symlinker::Strategy,
+        only_committed: Option<&CommittedPatchCopy>,
     ) -> sys::Result<bool> {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -2278,6 +2291,14 @@ impl<'a> Installer<'a> {
                 self.append_store_path(&mut dep_store_path, dep.entry_id);
             }
 
+            if let Some(committed) = only_committed {
+                if !committed.is_linked_from(dest.slice())
+                    || !self.store_holds_commit(committed, dep.entry_id, &mut dep_store_path)
+                {
+                    continue;
+                }
+            }
+
             let dest_len = dest.len();
             dest.undo(1);
             let target = dest.relative(&dep_store_path);
@@ -2295,6 +2316,88 @@ impl<'a> Installer<'a> {
         }
 
         Ok(changed)
+    }
+
+    /// True when `store_path`, the folder of the package of `entry_id`, has the tag file of the
+    /// patch of `committed`. A patch that did not apply leaves no tag.
+    fn store_holds_commit(
+        &self,
+        committed: &CommittedPatchCopy,
+        entry_id: StoreEntryId,
+        store_path: &mut AutoAbsPath,
+    ) -> bool {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let pkgs = self.lockfile().packages.slice();
+        let Ok(PatchInfo::Patch(patch)) = self.package_patch_info(
+            pkgs.items_name()[pkg_id as usize],
+            pkgs.items_name_hash()[pkg_id as usize],
+            &pkgs.items_resolution()[pkg_id as usize],
+        ) else {
+            return false;
+        };
+        if patch.name_and_version_hash != committed.name_and_version_hash {
+            return false;
+        }
+
+        let mut tag_buf: install::BuntagHashBuf = Default::default();
+        let tag = install::buntaghashbuf_make(&mut tag_buf, patch.contents_hash);
+        let store_path_len = store_path.len();
+        store_path.append(&*tag).assume_ok();
+        let has_tag = sys::exists_z(store_path.slice_z());
+        store_path.set_length(store_path_len);
+        has_tag
+    }
+
+    /// `bun patch --commit` wrote a patch from the copy behind a link of this root or workspace
+    /// entry. When the store has the package with that patch, the link goes back into the
+    /// store. The dependencies of the entry are installed, and its scripts did not run yet.
+    fn relink_committed_patch(&self, entry_id: StoreEntryId) -> sys::Result<()> {
+        let Some(committed) = self.manager().committed_patch_copy.as_ref() else {
+            return Ok(());
+        };
+        self.symlink_dependencies(
+            entry_id,
+            symlinker::Strategy::ExpectExisting,
+            Some(committed),
+        )?;
+        Ok(())
+    }
+
+    /// Main thread, when the tasks are done. Ends the session of `bun patch --commit` when
+    /// the store has the package with the new patch: the copy is not needed then.
+    pub(crate) fn finish_patch_commit(&mut self) {
+        let Some(committed) = self.manager().committed_patch_copy.as_ref() else {
+            return;
+        };
+        let pkg_resolutions = self.lockfile().packages.items_resolution();
+        let node_pkg_ids = self.store.nodes.items_pkg_id();
+
+        let mut installed = false;
+        let mut relink_failed = false;
+        for (entry_id, node_id) in self.store.entries.items_node_id().iter().enumerate() {
+            let entry_id = StoreEntryId::from(u32::try_from(entry_id).expect("int cast"));
+            let pkg_res = &pkg_resolutions[node_pkg_ids[node_id.get() as usize] as usize];
+            if matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
+                // An entry in a dependency cycle does not wait for its dependencies, so its
+                // task can be before the package is installed.
+                if let sys::Result::Err(err) = self.relink_committed_patch(entry_id) {
+                    Output::err(err, "failed to link the patched package again", ());
+                    Output::flush();
+                    relink_failed = true;
+                }
+            } else if !installed {
+                let mut store_path = AutoAbsPath::init_top_level_dir();
+                self.append_store_path(&mut store_path, entry_id);
+                installed = self.store_holds_commit(committed, entry_id, &mut store_path);
+            }
+        }
+
+        if relink_failed {
+            self.summary.fail += 1;
+        } else if installed {
+            committed.remove_copy();
+        }
     }
 
     pub(crate) fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {

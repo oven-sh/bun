@@ -53,6 +53,194 @@ pub struct PatchCommitResult {
     pub(crate) not_in_workspace_root: bool,
 }
 
+/// The copy in `PATCH_COPIES_DIR` that `bun patch --commit` diffed. The install of that commit
+/// ends the session when the store has the package with the new patch: the link of the
+/// dependency goes back into the store, and the copy is removed. A patch that does not apply
+/// leaves the link and the copy as they are.
+pub struct CommittedPatchCopy {
+    pub(crate) name_and_version_hash: u64,
+    pub(crate) copy: Box<[u8]>,
+    real_path: Box<[u8]>,
+}
+
+impl CommittedPatchCopy {
+    fn new(copy: &[u8], name_and_version_hash: u64) -> sys::Result<CommittedPatchCopy> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        Ok(CommittedPatchCopy {
+            name_and_version_hash,
+            copy: Box::from(copy),
+            real_path: Box::from(real_path_of_folder(copy, &mut buf)?),
+        })
+    }
+
+    /// True when `link` is the link that `prepare_patch` pointed at this copy.
+    pub(crate) fn is_linked_from(&self, link: &[u8]) -> bool {
+        if !link_target(link).is_some_and(|target| is_patch_copy_link(link, &target)) {
+            return false;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        real_path_of_folder(link, &mut buf).is_ok_and(|real_path| real_path == &*self.real_path)
+    }
+
+    /// The store has the package with the new patch, and no link leads to the copy.
+    pub(crate) fn remove_copy(&self) {
+        let _ = Fd::cwd().delete_tree(&self.copy);
+        if let Some(copies_dir) = patch_copies_dir_of(&self.copy) {
+            let mut copies_dir_buf = bun_paths::path_buffer_pool::get();
+            let _ = sys::rmdir(resolve_path::join_z_buf::<platform::Auto>(
+                &mut copies_dir_buf[..],
+                &[copies_dir],
+            ));
+        }
+    }
+}
+
+fn real_path_of_folder<'a>(folder: &[u8], buf: &'a mut PathBuffer) -> sys::Result<&'a [u8]> {
+    let dir = Dir::cwd().open_dir(folder, sys::OpenDirOptions::default())?;
+    dir.get_fd_path(buf).map(|real_path| &*real_path)
+}
+
+/// With the isolated linker, `node_modules/<name>` of the root and of each workspace is a link
+/// to the package in `node_modules/.bun`. `bun patch` keeps it a link: the copy to edit goes to
+/// this directory in the same `node_modules`, and the link points at the copy until the install
+/// of `bun patch --commit` (`CommittedPatchCopy`).
+pub(crate) const PATCH_COPIES_DIR: &[u8] = b".bun-patches";
+
+/// `path` without its last component, and that component.
+fn split_last_component(path: &[u8]) -> (&[u8], &[u8]) {
+    match path.iter().rposition(|&c| Platform::AUTO.is_separator(c)) {
+        Some(separator) => (&path[..separator], &path[separator + 1..]),
+        None => (b"", path),
+    }
+}
+
+/// True when `target` is the target that `point_link_at_patch_copy` writes for the link at
+/// `link`: `PATCH_COPIES_DIR/<one name>` in the `node_modules` that holds the link. A link to
+/// another folder that has `PATCH_COPIES_DIR` in its path is not from `bun patch`.
+pub(crate) fn is_patch_copy_link(link: &[u8], target: &[u8]) -> bool {
+    let (copies_dir, name) = split_last_component(strings::without_trailing_slash(target));
+    if name.is_empty() || name == b"." || name == b".." {
+        return false;
+    }
+    let (link_dir, _) = split_last_component(link);
+    let (scope_parent, link_dir_name) = split_last_component(link_dir);
+    // `node_modules/<name>`
+    if copies_dir == PATCH_COPIES_DIR {
+        return link_dir_name == b"node_modules";
+    }
+    let (above, copies_dir_name) = split_last_component(copies_dir);
+    if copies_dir_name != PATCH_COPIES_DIR {
+        return false;
+    }
+    // `node_modules/@<scope>/<name>`
+    if above == b".." {
+        return link_dir_name.first() == Some(&b'@')
+            && split_last_component(scope_parent).1 == b"node_modules";
+    }
+    // Windows writes a junction where it cannot write a symbolic link. A junction has an
+    // absolute target.
+    cfg!(windows)
+        && Platform::AUTO.is_absolute(target)
+        && split_last_component(above).1 == b"node_modules"
+}
+
+/// The `PATCH_COPIES_DIR` that holds `copy`, when `copy` is where `prepare_patch` puts a copy:
+/// `<node_modules>/PATCH_COPIES_DIR/<one name>`.
+fn patch_copies_dir_of(copy: &[u8]) -> Option<&[u8]> {
+    let (copies_dir, name) = split_last_component(copy);
+    let (node_modules, copies_dir_name) = split_last_component(copies_dir);
+    (!name.is_empty()
+        && copies_dir_name == PATCH_COPIES_DIR
+        && split_last_component(node_modules).1 == b"node_modules")
+        .then_some(copies_dir)
+}
+
+/// True when `target`, the target of a link, is a package in `node_modules/.bun`.
+fn is_store_link(target: &[u8]) -> bool {
+    let mut components = strings::tokenize_any(target, b"/\\");
+    while let Some(component) = components.next() {
+        if component == b".bun" {
+            return components
+                .next()
+                .is_some_and(|entry| strings::contains_char(entry, b'@'));
+        }
+    }
+    false
+}
+
+/// The target of the link at `path`, or `None` when `path` is not a link.
+fn link_target(path: &[u8]) -> Option<Vec<u8>> {
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    let mut target_buf = bun_paths::path_buffer_pool::get();
+    let path = resolve_path::join_z_buf::<platform::Auto>(&mut path_buf[..], &[path]);
+    let len = sys::readlink(path, &mut target_buf[..]).ok()?;
+    Some(target_buf[..len].to_vec())
+}
+
+const NODE_MODULES_DIR: &[u8] = b"node_modules/";
+
+/// The folder for the copy of the package `patch_key` (`<name>@<version>`), in the
+/// `node_modules` that holds `link`. `link` has `/` separators.
+fn patch_copy_folder(link: &[u8], patch_key: &[u8]) -> Option<Vec<u8>> {
+    let node_modules_len = strings::last_index_of(link, NODE_MODULES_DIR)? + NODE_MODULES_DIR.len();
+    let escaped = escape_patch_filename(patch_key);
+    Some(
+        [
+            &link[..node_modules_len],
+            PATCH_COPIES_DIR,
+            b"/",
+            escaped.as_deref().unwrap_or(patch_key),
+        ]
+        .concat(),
+    )
+}
+
+/// Removes the link at `path`. A link that is not there is not an error.
+fn remove_link(path: &ZStr) -> sys::Result<()> {
+    // Windows removes a link to a directory with rmdir.
+    #[cfg(windows)]
+    if sys::rmdir(path).is_ok() {
+        return Ok(());
+    }
+    match sys::unlink(path) {
+        Err(e) if e.get_errno() != sys::E::ENOENT => Err(e),
+        _ => Ok(()),
+    }
+}
+
+/// Points the link at `link` at `copy`, which is in `PATCH_COPIES_DIR` of the same
+/// `node_modules`. Both have `/` separators.
+fn point_link_at_patch_copy(link: &[u8], copy: &[u8]) -> sys::Result<()> {
+    let node_modules_len =
+        copy.len() - bun_paths::basename(copy).len() - 1 - PATCH_COPIES_DIR.len();
+    // A scoped name has one more directory between `node_modules` and the link.
+    let mut target = Vec::new();
+    for _ in 0..strings::count_char(&link[node_modules_len..], b'/') {
+        target.extend_from_slice(b"../");
+    }
+    target.extend_from_slice(&copy[node_modules_len..]);
+
+    let mut link_buf = bun_paths::path_buffer_pool::get();
+    let mut target_buf = bun_paths::path_buffer_pool::get();
+    let link = resolve_path::join_z_buf::<platform::Auto>(&mut link_buf[..], &[link]);
+    let target = resolve_path::join_z_buf::<platform::Auto>(&mut target_buf[..], &[&target]);
+    remove_link(link)?;
+    #[cfg(windows)]
+    {
+        let mut abs_buf = bun_paths::path_buffer_pool::get();
+        let abs = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+            FileSystem::instance().top_level_dir(),
+            &mut abs_buf[..],
+            &[copy],
+        );
+        sys::symlink_or_junction(link, target, Some(abs))
+    }
+    #[cfg(not(windows))]
+    {
+        sys::symlink(target, link)
+    }
+}
+
 /// - Arg is the dir containing the package with changes OR name and version
 /// - Get the patch file contents by running git diff on the temp dir and the original package dir
 /// - Write the patch file to $PATCHES_DIR/$PKG_NAME_AND_VERSION.patch
@@ -126,8 +314,12 @@ pub fn do_patch_commit(
             workspace_package_id,
             argument,
         ) {
-            // prepare_patch detaches symlinks; a symlink here means the prepared copy is at the root
-            if !is_real_dir_not_symlink(&rel_path) && is_real_dir_not_symlink(argument) {
+            // The prepared copy is a real directory, or a link that prepare_patch pointed at its
+            // copy. Any other link here means the prepared copy is at the root.
+            let is_prepared_copy = is_real_dir_not_symlink(&rel_path)
+                || link_target(&rel_path)
+                    .is_some_and(|target| is_patch_copy_link(&rel_path, &target));
+            if !is_prepared_copy && is_real_dir_not_symlink(argument) {
                 argument
             } else {
                 argument_owned = Some(rel_path);
@@ -267,6 +459,85 @@ pub fn do_patch_commit(
         }
     };
 
+    let mut patch_key = Vec::new();
+    write!(
+        &mut patch_key,
+        "{}@{}",
+        bstr::BStr::new(lockfile.str(&pkg.name)),
+        pkg.resolution
+            .fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)
+    )
+    .expect("formatting into a Vec is infallible");
+
+    // The path can have `./`, `//` or a separator at the end. `readlink` follows a link then,
+    // and the directory of the link is not the directory of that path.
+    let mut changes_dir =
+        strings::without_trailing_slash(resolve_path::join::<platform::Auto>(&[&changes_dir]))
+            .to_vec();
+    // The link that `prepare_patch` pointed at its copy. The copy has the changes.
+    if let Some(target) = link_target(&changes_dir) {
+        // `git diff` records a link as `new file mode 120000`, and no install can apply that
+        // patch.
+        if !is_patch_copy_link(&changes_dir, &target) {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> {} is a link to {}, not a folder that bun patch prepared",
+                bun_fmt::quote(&changes_dir),
+                bun_fmt::quote(&target),
+            );
+            // The link of an earlier `bun patch` is gone, and its copy is not.
+            #[cfg(windows)]
+            let mut posix_buf = bun_paths::path_buffer_pool::get();
+            #[cfg(windows)]
+            let link: &[u8] =
+                resolve_path::path_to_posix_buf::<u8>(&changes_dir, &mut posix_buf[..]);
+            #[cfg(not(windows))]
+            let link: &[u8] = &changes_dir;
+            if let Some(copy) =
+                patch_copy_folder(link, &patch_key).filter(|copy| is_real_dir_not_symlink(copy))
+            {
+                bun_core::note!(
+                    "An earlier bun patch prepared a copy. To commit that copy, run <cyan>bun patch --commit '{}'<r>",
+                    bstr::BStr::new(&copy),
+                );
+            }
+            bun_core::note!(
+                "To prepare a new copy, run <cyan>bun patch '{}'<r>",
+                bstr::BStr::new(manager.options.positionals[1]),
+            );
+            Global::crash();
+        }
+        let target = strings::without_trailing_slash(&target);
+        let copy = if Platform::AUTO.is_absolute(target) {
+            target.to_vec()
+        } else {
+            resolve_path::join::<platform::Auto>(&[
+                bun_paths::dirname(&changes_dir).unwrap_or(b"."),
+                target,
+            ])
+            .to_vec()
+        };
+        changes_dir = copy;
+    } else if arg_kind == PatchArgKind::NameAndVersion && !is_real_dir_not_symlink(&changes_dir) {
+        // A package that is nested in another one has no link of its own. `prepare_patch` puts
+        // that copy in the `node_modules` of the first link above the package.
+        #[cfg(windows)]
+        let mut posix_buf = bun_paths::path_buffer_pool::get();
+        #[cfg(windows)]
+        let mut above: &[u8] =
+            resolve_path::path_to_posix_buf::<u8>(&changes_dir, &mut posix_buf[..]);
+        #[cfg(not(windows))]
+        let mut above: &[u8] = &changes_dir;
+        while let Some(node_modules) = strings::last_index_of(above, NODE_MODULES_DIR) {
+            let copy =
+                patch_copy_folder(&above[..node_modules + NODE_MODULES_DIR.len()], &patch_key);
+            above = &above[..node_modules];
+            if let Some(copy) = copy.filter(|copy| is_real_dir_not_symlink(copy)) {
+                changes_dir = copy;
+                break;
+            }
+        }
+    }
+
     // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
     manager.lockfile = lockfile;
     let name = manager.lockfile.str(&pkg.name).to_vec();
@@ -277,18 +548,8 @@ pub fn do_patch_commit(
     let changes_dir: &[u8] = &changes_dir;
     let lockfile: &Lockfile = &manager.lockfile;
 
-    let name = name.as_slice();
-    let mut patch_key = Vec::new();
-    write!(
-        &mut patch_key,
-        "{}@{}",
-        bstr::BStr::new(name),
-        pkg.resolution
-            .fmt(lockfile.buffers.string_bytes.as_slice(), PathSep::Posix)
-    )
-    .expect("formatting into a Vec is infallible");
-
-    let patchfile_contents: Vec<u8> = 'brk: {
+    // `copy_has_more`: the folder has something that the patch does not have.
+    let (patchfile_contents, copy_has_more): (Vec<u8>, bool) = 'brk: {
         let new_folder = changes_dir;
         let mut buf2 = bun_paths::path_buffer_pool::get();
         let mut buf3 = bun_paths::path_buffer_pool::get();
@@ -540,7 +801,19 @@ pub fn do_patch_commit(
             return Ok(None);
         }
 
-        break 'brk contents;
+        // git prints this line where a text diff cannot hold the change of a file, and the
+        // patch parser drops that file.
+        let has_binary_file = strings::split(&contents, b"\n")
+            .any(|line| line.starts_with(b"Binary files ") && line.ends_with(b" differ"));
+        if has_binary_file {
+            bun_core::warn!(
+                "git cannot diff a binary file as text. The patch does not have the changes of the binary files in {}",
+                bun_fmt::quote(new_folder),
+            );
+        }
+
+        // The diff leaves out the `node_modules` folder of `new_folder`.
+        break 'brk (contents, has_binary_file || has_nested_node_modules);
     };
 
     // write the patch contents to temp file then rename
@@ -599,6 +872,30 @@ pub fn do_patch_commit(
         changes_dir,
         b".bun-patch-tag",
     ]));
+
+    // `prepare_patch` made this copy. The install that follows ends the session when it has
+    // installed the package with this patch (`Installer::finish_patch_commit`).
+    if patch_copies_dir_of(changes_dir).is_some() {
+        if copy_has_more {
+            bun_core::note!(
+                "The patch does not have everything in {}, so that copy stays",
+                bun_fmt::quote(changes_dir),
+            );
+        } else {
+            manager.committed_patch_copy =
+                match CommittedPatchCopy::new(changes_dir, string_hash(&patch_key)) {
+                    Ok(committed) => Some(committed),
+                    Err(e) => {
+                        Output::err(
+                            e,
+                            "failed to open directory <b>{s}<r>",
+                            (bstr::BStr::new(changes_dir),),
+                        );
+                        Global::crash();
+                    }
+                };
+        }
+    }
 
     Ok(Some(PatchCommitResult {
         patch_key: patch_key.into_boxed_slice(),
@@ -732,6 +1029,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         argument
     };
 
+    // `<name>@<version>` of the package.
+    let patch_key: Vec<u8>;
     let (cache_dir, cache_dir_subpath, module_folder, pkg_name): (Fd, &[u8], Vec<u8>, Vec<u8>) =
         match arg_kind {
             PatchArgKind::Path => 'brk: {
@@ -834,15 +1133,15 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 };
 
                 let name = lockfile.str(&package.name).to_vec();
+                let mut name_and_version = Vec::new();
+                write!(
+                    &mut name_and_version,
+                    "{}@{}",
+                    bstr::BStr::new(&name),
+                    actual_package.resolution.fmt(strbuf, PathSep::Posix)
+                )
+                .expect("unreachable");
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
-                    let mut name_and_version = Vec::new();
-                    write!(
-                        &mut name_and_version,
-                        "{}@{}",
-                        bstr::BStr::new(&name),
-                        actual_package.resolution.fmt(strbuf, PathSep::Posix)
-                    )
-                    .expect("unreachable");
                     let name_and_version_hash = string_hash(&name_and_version);
                     if let Some(patched_dep) =
                         lockfile.patched_dependencies.get(&name_and_version_hash)
@@ -870,6 +1169,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 #[cfg(not(windows))]
                 let buf = argument.to_vec();
 
+                patch_key = name_and_version;
                 break 'brk (cache_dir, cache_dir_subpath.as_bytes(), buf, name);
             }
             PatchArgKind::NameAndVersion => 'brk: {
@@ -891,15 +1191,15 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 let pkg = *manager.lockfile.packages.get(pkg_id as usize);
                 let pkg_name = pkg.name.slice(strbuf).to_vec();
 
+                let mut name_and_version = Vec::new();
+                write!(
+                    &mut name_and_version,
+                    "{}@{}",
+                    bstr::BStr::new(name),
+                    pkg.resolution.fmt(strbuf, PathSep::Posix)
+                )
+                .expect("unreachable");
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
-                    let mut name_and_version = Vec::new();
-                    write!(
-                        &mut name_and_version,
-                        "{}@{}",
-                        bstr::BStr::new(name),
-                        pkg.resolution.fmt(strbuf, PathSep::Posix)
-                    )
-                    .expect("unreachable");
                     let name_and_version_hash = string_hash(&name_and_version);
                     if let Some(patched_dep) = manager
                         .lockfile
@@ -934,10 +1234,16 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 #[cfg(not(windows))]
                 let buf = module_folder_.to_vec();
 
+                patch_key = name_and_version;
                 break 'brk (cache_dir, cache_dir_subpath.as_bytes(), buf, pkg_name);
             }
         };
 
+    // The path can have `./`, `//` or a separator at the end. `lstat` follows a link then, and
+    // the directory of the link is not the directory of that path.
+    let module_folder =
+        strings::without_trailing_slash(resolve_path::join::<platform::Posix>(&[&module_folder]))
+            .to_vec();
     let module_folder: &[u8] = &module_folder;
     let pkg_name: &[u8] = &pkg_name;
 
@@ -954,10 +1260,26 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
     // edits into the shared cache. Detach first: walk up `module_folder` to
     // find the first symlink ancestor, replace it with a real directory, and
     // recreate the path below it so the copy lands in a project-local tree.
-    detach_module_folder_from_shared_store(module_folder);
+    // The link of a dependency stays a link, and the copy goes to `PATCH_COPIES_DIR`.
+    let place = detach_module_folder_from_shared_store(module_folder, &patch_key);
+    let copy_folder: &[u8] = match &place {
+        PatchCopyPlace::InPlace => module_folder,
+        PatchCopyPlace::BesideLink { copy, .. } | PatchCopyPlace::BesideAncestorLink(copy) => {
+            // The copy of the files does not check the length.
+            if copy.len() >= bun_paths::MAX_PATH_BYTES {
+                Output::err_generic(
+                    "the path of the copy to edit is too long: {f}",
+                    (bun_fmt::quote(copy),),
+                );
+                Global::crash();
+            }
+            let _ = Fd::cwd().make_path(bun_paths::dirname(copy).unwrap_or(b"."));
+            copy
+        }
+    };
 
     if let Err(e) =
-        overwrite_package_in_node_modules_folder(cache_dir, cache_dir_subpath, module_folder)
+        overwrite_package_in_node_modules_folder(cache_dir, cache_dir_subpath, copy_folder)
     {
         bun_core::pretty_error!(
             "<r><red>error<r>: error overwriting folder in node_modules: {}\n<r>",
@@ -965,6 +1287,24 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         );
         Global::crash();
     }
+
+    if let PatchCopyPlace::BesideLink { link, copy } = &place {
+        if let Err(e) = point_link_at_patch_copy(link, copy) {
+            Output::err(
+                e,
+                "failed to point {f} at the copy to edit, {f}",
+                (bun_fmt::quote(link), bun_fmt::quote(copy)),
+            );
+            Global::crash();
+        }
+    }
+
+    // The user edits the package through its link. A package that is nested in another one has
+    // no link of its own.
+    let edit_folder: &[u8] = match &place {
+        PatchCopyPlace::BesideAncestorLink(copy) => copy,
+        PatchCopyPlace::InPlace | PatchCopyPlace::BesideLink { .. } => module_folder,
+    };
 
     if not_in_workspace_root {
         let mut bufn = bun_paths::path_buffer_pool::get();
@@ -975,7 +1315,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 &mut bufn[..],
                 &[
                     FileSystem::instance().top_level_dir_without_trailing_slash(),
-                    module_folder
+                    edit_folder
                 ]
             )),
         );
@@ -985,7 +1325,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
                 &mut bufn[..],
                 &[
                     FileSystem::instance().top_level_dir_without_trailing_slash(),
-                    module_folder
+                    edit_folder
                 ]
             )),
         );
@@ -993,11 +1333,11 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         bun_core::pretty!(
             "\nTo patch <b>{}<r>, edit the following folder:\n\n  <cyan>{}<r>\n",
             bstr::BStr::new(pkg_name),
-            bstr::BStr::new(module_folder)
+            bstr::BStr::new(edit_folder)
         );
         bun_core::pretty!(
             "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
-            bstr::BStr::new(module_folder)
+            bstr::BStr::new(edit_folder)
         );
     }
 
@@ -1040,7 +1380,22 @@ fn is_real_dir_not_symlink(path: &[u8]) -> bool {
     }
 }
 
-fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
+/// Where `prepare_patch` puts its copy of the package.
+enum PatchCopyPlace {
+    /// At the folder of the package.
+    InPlace,
+    /// In `PATCH_COPIES_DIR`. The folder of the package is the link of a dependency, and
+    /// `prepare_patch` points it at the copy.
+    BesideLink { link: Vec<u8>, copy: Vec<u8> },
+    /// In `PATCH_COPIES_DIR`. The package is nested in a dependency, and the link of that
+    /// dependency stays as it is.
+    BesideAncestorLink(Vec<u8>),
+}
+
+fn detach_module_folder_from_shared_store(
+    module_folder: &[u8],
+    patch_key: &[u8],
+) -> PatchCopyPlace {
     // `module_folder` reaches here normalised to forward slashes on every
     // platform (see `pathToPosixBuf` in `preparePatch`). Re-normalise to the
     // platform separator so `undo()`/`basename()` walk the path correctly on
@@ -1065,13 +1420,19 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
         }
     }
     let mut depth: usize = 0;
+    // The package is not at `module_folder`. Then only the link of a dependency above it changes
+    // where the copy goes.
+    let mut missing = false;
     while depth < components {
         let is_symlink: bool = {
             #[cfg(windows)]
             {
                 match sys::get_file_attributes(p.slice_z()) {
                     Some(attrs) => attrs.is_reparse_point,
-                    None => return,
+                    None => {
+                        missing = true;
+                        false
+                    }
                 }
             }
             #[cfg(not(windows))]
@@ -1080,45 +1441,40 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
                     // `mode_t` is `u16` on darwin/freebsd, `u32` on linux.
                     sys::posix::s_islnk(st.st_mode as u32)
                 } else {
-                    return;
+                    missing = true;
+                    false
                 }
             }
         };
         if is_symlink {
-            // Windows directory symlinks/junctions are removed with rmdir,
-            // file symlinks with unlink; on POSIX unlink covers both. If
-            // removal fails the symlink is still live, and the caller's
+            #[cfg(windows)]
+            let mut link_buf = bun_paths::path_buffer_pool::get();
+            #[cfg(windows)]
+            let link: &[u8] = resolve_path::path_to_posix_buf::<u8>(p.slice(), &mut link_buf[..]);
+            #[cfg(not(windows))]
+            let link: &[u8] = p.slice();
+            if link_target(link)
+                .is_some_and(|target| is_patch_copy_link(link, &target) || is_store_link(&target))
+            {
+                if let Some(copy) = patch_copy_folder(link, patch_key) {
+                    return if depth == 0 {
+                        PatchCopyPlace::BesideLink {
+                            link: link.to_vec(),
+                            copy,
+                        }
+                    } else {
+                        PatchCopyPlace::BesideAncestorLink(copy)
+                    };
+                }
+            }
+            if missing {
+                return PatchCopyPlace::InPlace;
+            }
+            // If removal fails the symlink is still live, and the caller's
             // `deleteTree` + `FileCopier` would follow it into the shared
             // global-store entry — so fail loudly here rather than silently
             // corrupting the cache.
-            let remove_err: Option<sys::Error> = {
-                #[cfg(windows)]
-                'remove: {
-                    if sys::rmdir(p.slice_z()).is_err() {
-                        if let Err(e) = sys::unlink(p.slice_z()) {
-                            break 'remove if e.get_errno() == sys::E::ENOENT {
-                                None
-                            } else {
-                                Some(e)
-                            };
-                        }
-                    }
-                    break 'remove None;
-                }
-                #[cfg(not(windows))]
-                {
-                    if let Err(e) = sys::unlink(p.slice_z()) {
-                        if e.get_errno() == sys::E::ENOENT {
-                            None
-                        } else {
-                            Some(e)
-                        }
-                    } else {
-                        None
-                    }
-                }
-            };
-            if let Some(e) = remove_err {
+            if let Err(e) = remove_link(p.slice_z()) {
                 Output::err(
                     e,
                     "failed to detach <b>{s}<r> from the shared package store; refusing to patch through it",
@@ -1132,11 +1488,12 @@ fn detach_module_folder_from_shared_store(module_folder: &[u8]) {
             if !parent.is_empty() {
                 let _ = Fd::cwd().make_path(parent);
             }
-            return;
+            return PatchCopyPlace::InPlace;
         }
         p.undo(1);
         depth += 1;
     }
+    PatchCopyPlace::InPlace
 }
 
 fn overwrite_package_in_node_modules_folder(

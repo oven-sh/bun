@@ -62,7 +62,8 @@ impl Checker<'_, '_> {
             hir.exprs[i].kind,
             ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
         ) || bound.is_unchecked(i)
-            || self.is_never_checked(hir.exprs[i].pos)
+            // The ranges are those of the file of the task.
+            || self.task.file == Some(file) && self.is_never_checked(hir.exprs[i].pos)
         {
             return;
         }

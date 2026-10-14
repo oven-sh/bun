@@ -751,6 +751,7 @@ impl<'s> Program<'s> {
             is_emitting: false,
             cached_by_emit: Vec::new(),
             reported: Vec::new(),
+            is_checking_in_flow_loop: false,
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
             never_in_progress_from: Vec::new(),
@@ -1446,6 +1447,9 @@ pub struct Checker<'p, 's> {
     cached_by_emit: Vec<ExprId>,
     /// The diagnostics reported for the queries in progress, and with none in progress: see `sink`.
     reported: Vec<Reported>,
+    /// `check_expression` runs for `check_expression_in_flow_loop`, maybe in a file that is not that of the task. It notes
+    /// nothing for the end of `checkSourceFile`, which is for the walk of the file to do, and checks the calls that it visits.
+    is_checking_in_flow_loop: bool,
     /// The spans of `task.file` that `checkSourceFile` never visits. The passes that iterate over
     /// all nodes of a kind do visit them.
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,

@@ -2781,33 +2781,18 @@ impl<'p, 's> Checker<'p, 's> {
     /// loop is being analysed it reports with the types the loop has collected so far, which the walk, with the final types,
     /// does not: `last = last.next = node` after `last === null` assigns to `never`.
     pub(super) fn check_expression_in_flow_loop(&mut self, file: FileId, e: ExprId) {
-        if self.is_in_flow_loop() {
-            let reported = self.reported.len();
-            self.check_expression(file, e);
-            self.check_calls_within(file, e);
-            self.log_reported_in_flow_loop(reported, file, e);
+        if !self.is_in_flow_loop() {
+            return;
         }
-    }
-
-    /// `check_call_like` for the calls that `checkExpression(e)` resolves: not those in a function or a class in `e`, whose
-    /// bodies are checked later.
-    fn check_calls_within(&mut self, file: FileId, e: ExprId) {
-        let hir = self.hir(file);
-        let mut pending = vec![hir.node(e)];
-        while let Some(node) = pending.pop() {
-            let kind = hir.kind(node);
-            if kind.is_function_like()
-                || matches!(kind, Kind::ClassExpression | Kind::ClassDeclaration)
-            {
-                continue;
-            }
-            if let NodeData::Expr(e) = hir.data(node) {
-                self.check_call_like(file, e);
-            }
-            hir.for_each_child(node, &mut |child| {
-                pending.push(child);
-                false
-            });
+        let reported = self.reported.len();
+        let cuts = (self.unmarked_refusals, self.cuts(), self.refused_at);
+        let outer = std::mem::replace(&mut self.is_checking_in_flow_loop, true);
+        self.check_expression(file, e);
+        self.is_checking_in_flow_loop = outer;
+        // What a check that was cut short has reported is not all: it stays with the frames in progress, which drop it, and
+        // the task that gets through has the owner.
+        if cuts == (self.unmarked_refusals, self.cuts(), self.refused_at) {
+            self.log_reported_in_flow_loop(reported, file, e);
         }
     }
 

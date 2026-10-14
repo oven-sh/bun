@@ -3679,11 +3679,8 @@ pub(crate) mod __gated_printer {
                             return;
                         }
                         if e.is_import_property_use
-                            && let Some(binding) = self.import_member_binding(
-                                e.target,
-                                &e.name,
-                                Self::dot_name_loc(&e),
-                            )
+                            && let Some(binding) =
+                                self.import_member_binding(e.target, &e.name, Self::dot_name_loc(e))
                         {
                             self.print_expr(binding, level, flags);
                             return;

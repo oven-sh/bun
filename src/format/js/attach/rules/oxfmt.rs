@@ -253,14 +253,18 @@ impl<'a> Rules<'_, 'a, '_> {
     ///
     ///   implements C {}
     /// ```
+    ///
+    /// `class /* comment */ implements A {}` stays as it is. Prettier prints `class implements /* comment */ A {}`.
     fn handle_comment_before_implements_for_oxfmt(&self) -> Option<Attachment<'a>> {
         let Owner::Node(node @ N::Class(class)) = self.enclosing_node? else {
             return None;
         };
         let first = Owner::Node(class.implements().first()?.as_ast_nodes());
-        let is_before_implements = self.context.text_position == OwnLine
-            && class.extends().is_some()
-            && self.following_node == Some(first);
+        let is_after_class_keyword =
+            class.name().is_none() && class.type_params().is_empty() && class.extends().is_none();
+        let is_before_implements = self.following_node == Some(first)
+            && (is_after_class_keyword
+                || (self.context.text_position == OwnLine && class.extends().is_some()));
         is_before_implements.then(|| Attachment {
             is_unignored: true,
             ..Attachment::dangling_with_marker(Owner::Node(node), Marker::Implements)

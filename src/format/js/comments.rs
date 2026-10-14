@@ -223,6 +223,19 @@ pub(crate) struct OwnedComments<'a> {
     pub(crate) is_ignored: bool,
 }
 
+impl OwnedComments<'_> {
+    pub(crate) const NONE: Self = OwnedComments {
+        leading: CommentList::empty(),
+        trailing: CommentList::empty(),
+        dangling: CommentList::empty(),
+        is_ignored: false,
+    };
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.leading.is_empty() && self.trailing.is_empty() && self.dangling.is_empty()
+    }
+}
+
 /// How a comment is attached, without the owner.
 #[derive(Copy, Clone)]
 pub(crate) struct AttachmentInfo {
@@ -386,6 +399,12 @@ impl<'a> Comments<'a> {
     #[inline]
     pub(crate) fn of_node(&self, node: AstNodes<'_>) -> OwnedComments<'a> {
         self.owned(self.file_comments.owners.of_node(node))
+    }
+
+    /// Prettier's `hasComment(node)`. For an expression, see `utils::typecast::has_comments`.
+    #[inline]
+    pub(crate) fn has_comments(&self, node: AstNodes<'_>) -> bool {
+        !self.of_node(node).is_empty()
     }
 
     /// Whether one of the `AstNodes` that are made of `raw` owns a comment or is ignored. Cheaper than making the `AstNodes`

@@ -7,12 +7,11 @@ use super::arrow_function_expression::is_multiline_template_starting_on_same_lin
 use super::type_parameters::type_arguments;
 use crate::js::parentheses::expression::chain_expression_needs_parentheses;
 use crate::js::utils::call_expression::{
-    FormatCallee, comments_of_expression, has_comment, is_call_expression,
-    is_test_call_expression_in_flavor,
+    FormatCallee, is_call_expression, is_test_call_expression_in_flavor,
 };
 use crate::js::utils::member_chain::write_member_chain;
 use crate::js::utils::tailwindcss::{InTailwindContext, TailwindContext, context_of_function};
-use crate::js::utils::typecast::is_cast_target;
+use crate::js::utils::typecast::{comments_of_outermost_node, has_comments, is_cast_target};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -181,9 +180,9 @@ fn is_template_on_its_own_line_only_argument<'a>(
 /// Whether the only argument is a string without comments.
 fn is_lone_string_without_comments<'a>(args: List<'a, Expr<'a>>, f: &Formatter<'a>) -> bool {
     args.len() == 1
-        && args
-            .first()
-            .is_some_and(|first| first.tag() == ExprTag::String && !has_comment(first, f))
+        && args.first().is_some_and(|first| {
+            first.tag() == ExprTag::String && (f.is_quiet() || !has_comments(first, f))
+        })
 }
 
 fn is_identifier(e: Expr<'_>, name: &[u8]) -> bool {
@@ -247,9 +246,10 @@ fn is_commonjs_or_amd_module_definition<'a>(
                     .first()
                     .is_some_and(|first| match only_leading_comment_breaks_require(f) {
                         true => {
-                            !f.is_quiet() && !comments_of_expression(first, f).leading.is_empty()
+                            !f.is_quiet()
+                                && !comments_of_outermost_node(first, f).leading.is_empty()
                         }
-                        false => has_comment(first, f),
+                        false => !f.is_quiet() && has_comments(first, f),
                     })
         }
         b"define" => {

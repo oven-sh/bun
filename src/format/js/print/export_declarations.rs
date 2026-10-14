@@ -1,7 +1,7 @@
 use super::decorators::FormatDecorators;
 use super::import_declaration::{
     FormatSpecifiers, format_ignorable_name, format_import_and_export_source_with_clause,
-    has_comments, module_export_name,
+    module_export_name,
 };
 
 use super::semicolon::OptionalSemicolon;
@@ -218,7 +218,8 @@ pub(crate) fn write_export_named_declaration<'a>(
     match specifiers.first() {
         None => write!(f, "{}"),
         Some(only)
-            if specifiers.len() == 1 && !has_comments(AstNodes::ExportSpecifier(only), f) =>
+            if specifiers.len() == 1
+                && !f.comments().has_comments(AstNodes::ExportSpecifier(only)) =>
         {
             write!(
                 f,

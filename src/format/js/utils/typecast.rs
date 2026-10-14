@@ -61,11 +61,16 @@ pub(crate) fn is_chain_expression_without_comments<'a>(e: Expr<'a>, f: &Formatte
 /// This and the functions below can be asked about the expression that is being written. Its leading and trailing comments
 /// are outside of it, so [`Formatter::is_quiet`] says nothing about them.
 pub(crate) fn has_comments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    if is_chain_expression_without_comments(e, f) {
-        return false;
+    !comments_of_outermost_node(e, f).is_empty()
+}
+
+/// The comments of the outermost node that Prettier has in the place of `e`. They are those of [`comments_of_expression`],
+/// but a `ChainExpression` has none.
+pub(crate) fn comments_of_outermost_node<'a>(e: Expr<'a>, f: &Formatter<'a>) -> OwnedComments<'a> {
+    match is_chain_expression_without_comments(e, f) {
+        true => OwnedComments::NONE,
+        false => comments_of_expression(e, f),
     }
-    let comments = comments_of_expression(e, f);
-    !comments.leading.is_empty() || !comments.trailing.is_empty() || !comments.dangling.is_empty()
 }
 
 /// The leading comments of the node that Prettier has in the place of `e`.

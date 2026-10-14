@@ -1,6 +1,6 @@
 use super::class::dangling_comments_with_marker;
 use super::function::{FormatContentWithCacheMode, FormatFunctionBody};
-use super::parameters::{FormatFormalParameters, has_comment, has_only_simple_parameters};
+use super::parameters::{FormatFormalParameters, has_only_simple_parameters};
 use super::type_parameters::type_parameters;
 use crate::js::attach::Marker;
 use crate::js::format::{ExprOptions, FormatTypeAnnotation, write_expression};
@@ -152,6 +152,7 @@ fn write_arrow<'a>(
 
     let is_block_after_comments = body_has_leading_own_line_comment(tail, f)
         && options.call_argument_layout.is_some()
+        && !is_nested
         && get_expression(tail).is_none()
         && block_of_grouped_argument_stays_after_arrow(f);
     let has_own_line_comment =
@@ -198,7 +199,7 @@ fn write_arrow<'a>(
         // The `)` of the call, or the `}` in JSX, is on a line of its own if the body is.
         let should_add_soft_line = (expand_last_arg
             || matches!(e.ast_parent(), AstNodes::JSXExpressionContainer(_)))
-            && !has_comment(arrow.as_ast_nodes(), f);
+            && !f.comments().has_comments(arrow.as_ast_nodes());
         let trailing_line = should_add_soft_line.then_some(soft_line_break());
         if breaks_with_chain {
             write!(
@@ -263,7 +264,7 @@ fn write_arrow<'a>(
     let follows_comment = match only_comment_directly_before_chain_replaces_line_break(f) {
         true => (f.comments().of_node(arrow.as_ast_nodes()).leading.last())
             .is_some_and(|comment| comment.next_token_start() >= e.outer_span().start),
-        false => has_comment(arrow.as_ast_nodes(), f),
+        false => f.comments().has_comments(arrow.as_ast_nodes()),
     };
     let should_print_soft_line = should_indent_signatures
         && options.assignment_layout != Some(AssignmentLikeLayout::BreakAfterOperator)
@@ -644,8 +645,8 @@ impl<'a> Format<'a> for FormatSignature<'a> {
     }
 }
 
-/// `a((b) => // comment⏎{ c; })` is `a((b) => // comment⏎{⏎  c;⏎});` for oxfmt. Anywhere else the comment and the block are
-/// indented, on lines of their own.
+/// `a((b) => // comment⏎{ c; })` is `a((b) => // comment⏎{⏎  c;⏎});` for oxfmt. Anywhere else, as in `a((b) => (c) => ..)`,
+/// the comment and the block are indented, on lines of their own.
 fn block_of_grouped_argument_stays_after_arrow(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }

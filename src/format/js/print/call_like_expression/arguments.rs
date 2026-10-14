@@ -10,13 +10,12 @@ use crate::js::print::arrow_function_expression::{
 use crate::js::print::function::FormatFunctionOptions;
 use crate::js::print::parameters::{FormatFormalParameters, has_only_simple_parameters};
 use crate::js::print::program::is_next_line_empty;
-use crate::js::utils::call_expression::{
-    comments_around_expression, comments_of_expression, has_comment, is_call_expression,
-    strip_chain_element_wrappers,
-};
+use crate::js::utils::call_expression::{is_call_expression, strip_chain_element_wrappers};
 use crate::js::utils::is_long_curried_call;
 use crate::js::utils::member_chain::simple_argument::SimpleArgument;
-use crate::js::utils::typecast::is_cast_target;
+use crate::js::utils::typecast::{
+    comments_of_expression, comments_of_outermost_node, has_comments, is_cast_target,
+};
 use crate::prelude::*;
 use crate::{format_args, write};
 use smallvec::SmallVec;
@@ -219,7 +218,7 @@ fn is_empty_line_kept_after<'a>(args: List<'a, Expr<'a>>, index: usize, f: &Form
     match (counts_line_breaks_between_arguments(f), args.get(index + 1)) {
         (true, Some(next)) => {
             let first_comment = (!f.is_quiet())
-                .then(|| comments_around_expression(next, f).leading.first())
+                .then(|| comments_of_expression(next, f).leading.first())
                 .flatten();
             let first_comment = first_comment.map(|comment| comment.span());
             (f.source_text()).get_lines_before(next.span(), first_comment, false) > 1
@@ -400,7 +399,7 @@ fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Format
 
     if match f.options().flavor.is_oxfmt() {
         true => has_comment_around_first_argument_for_oxfmt(first, second, f),
-        false => has_comment(first, f),
+        false => !f.is_quiet() && has_comments(first, f),
     } {
         return false;
     }
@@ -418,7 +417,7 @@ fn has_comment_around_first_argument_for_oxfmt<'a>(
         return false;
     }
     let between = Span::new(first.span().end, second.span().start);
-    !comments_around_expression(first, f).leading.is_empty()
+    !comments_of_expression(first, f).leading.is_empty()
         || (f.comments().comments_in_span(between).iter()).any(|comment| {
             comment.has_newline_after() || comment.prev_token_end() <= first.outer_span().end
         })
@@ -456,7 +455,7 @@ fn should_group_last_argument_impl<'a>(
     }
 
     if !f.is_quiet() {
-        let owned = comments_of_expression(last, f);
+        let owned = comments_of_outermost_node(last, f);
         if !owned.leading.is_empty() || !owned.trailing.is_empty() {
             return false;
         }
@@ -525,8 +524,8 @@ fn is_hopefully_short_call_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -
 /// `hasComment(arg)` in Prettier's `couldExpandArg`, for `{}` and `[]`. oxfmt only looks at the comments inside.
 fn empty_literal_has_comment<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
     match f.options().flavor.is_oxfmt() {
-        true => !f.is_quiet() && !comments_of_expression(argument, f).dangling.is_empty(),
-        false => has_comment(argument, f),
+        true => !f.is_quiet() && !comments_of_outermost_node(argument, f).dangling.is_empty(),
+        false => !f.is_quiet() && has_comments(argument, f),
     }
 }
 
@@ -935,10 +934,10 @@ fn is_react_hook_with_deps_array<'a>(arguments: &FormatArguments<'a>, f: &Format
             .iter()
             .any(|argument| match only_comments_around_arguments_count(f) {
                 true => {
-                    let owned = comments_of_expression(argument, f);
+                    let owned = comments_of_outermost_node(argument, f);
                     !owned.leading.is_empty() || !owned.trailing.is_empty()
                 }
-                false => has_comment(argument, f),
+                false => !f.is_quiet() && has_comments(argument, f),
             })
 }
 

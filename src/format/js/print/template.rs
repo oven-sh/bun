@@ -7,10 +7,11 @@ use super::type_parameters::type_arguments;
 use crate::css::embed;
 use crate::cursor::around_node_at;
 use crate::ir::width::string_width_as;
-use crate::js::utils::call_expression::{has_comment, is_test_each_pattern};
+use crate::js::utils::call_expression::is_test_each_pattern;
 use crate::js::utils::tailwindcss::{
     InTailwindContext, context_of_function, has_white_space, sorted_template_text,
 };
+use crate::js::utils::typecast::has_comments;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -312,17 +313,15 @@ enum Place {
 
 /// Prettier's `hasComment(node)`. oxfmt only looks at the comments of expressions.
 fn type_has_comment<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
-    if f.is_quiet() || f.options().flavor.is_oxfmt() {
-        return false;
-    }
-    let owned = f.comments().of_node(ty.as_ast_nodes());
-    !owned.leading.is_empty() || !owned.trailing.is_empty() || !owned.dangling.is_empty()
+    !f.is_quiet() && !f.options().flavor.is_oxfmt() && f.comments().has_comments(ty.as_ast_nodes())
 }
 
 impl<'a> Format<'a> for FormatTemplateExpression<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let (has_comment, interned_expression) = match self.expression {
-            TemplateExpression::Expression(e) => (has_comment(e, f), f.intern(&e)),
+            TemplateExpression::Expression(e) => {
+                (!f.is_quiet() && has_comments(e, f), f.intern(&e))
+            }
             TemplateExpression::TSType(t) => (type_has_comment(t, f), f.intern(&t)),
         };
         let Some(element) = interned_expression else {

@@ -135,6 +135,9 @@ const knownDifferences = [
   "comments/between-two-non-null-marks.ts:71 Prettier: T TSNonNullExpression 68, bun: D TSNonNullExpression 68",
   "comments/between-two-non-null-marks.ts:109 Prettier: T TSNonNullExpression 98, bun: D TSNonNullExpression 98",
   // An `Identifier` includes its type annotation in ESTree.
+  "ignore/comment-after-the-type-of-a-variable.ts:23 Prettier: T Identifier 4, bun: T BindingIdentifier 4",
+  "ignore/comment-after-the-type-of-a-variable.ts:67 Prettier: T Identifier 54, bun: T BindingIdentifier 54",
+  "ignore/comment-after-the-type-of-a-variable.ts:108 Prettier: T Identifier 98, bun: T BindingIdentifier 98",
   "ignore/comment-that-trails-on-its-own-line.ts:432 Prettier: T Identifier 418, bun: T BindingIdentifier 418",
   // The `<>` and the `</>` of a fragment are no nodes here. The fragment owns their comments.
   "ignore/ignore-comment-in-the-tag-of-a-fragment.jsx:12 Prettier: D JSXOpeningFragment 10, bun: D JSXFragment 10",

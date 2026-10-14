@@ -235,7 +235,7 @@ fn comments_alone_in_braces_are_not_hugged(f: &Formatter<'_>) -> bool {
 }
 
 /// Prettier's `hasComment(node)`, for what is in braces.
-fn has_comments<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
+fn has_comments_in_braces<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     if f.is_quiet() || is_chain_expression_without_comments(expression, f) {
         return false;
     }
@@ -254,7 +254,7 @@ fn should_inline_jsx_expression<'a>(
     f: &Formatter<'a>,
 ) -> bool {
     loop {
-        if has_comments(expression, f) || is_cast_target(expression, f) {
+        if has_comments_in_braces(expression, f) || is_cast_target(expression, f) {
             return false;
         }
         match expression.as_ast_nodes() {
@@ -342,7 +342,7 @@ impl<'a> Format<'a> for FormatJsxAttributeValue<'a> {
 
 /// `{...argument}`. Prettier's `printJsxSpreadAttributeOrChild`: the comments of the argument are written before the dots.
 fn write_jsx_spread<'a>(argument: Expr<'a>, f: &mut Formatter<'a>) {
-    if !has_comments(argument, f) {
+    if !has_comments_in_braces(argument, f) {
         return write!(f, ["{...", argument, "}"]);
     }
     let comments = comments_of_expression(argument, f);

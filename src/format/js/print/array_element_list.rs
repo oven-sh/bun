@@ -1,7 +1,7 @@
 use crate::js::format::write_trailing_comments_of;
 use crate::js::utils::array::{is_line_after_element_empty, write_array_node};
-use crate::js::utils::call_expression::has_comment;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use crate::js::utils::typecast::has_comments;
 use crate::prelude::*;
 use crate::write;
 
@@ -97,7 +97,10 @@ pub(crate) fn can_concisely_print_array_list<'a>(
                 ExprKind::Unary {
                     op: UnOp::Plus | UnOp::Minus,
                     operand,
-                } => matches!(operand.kind(), ExprKind::Number(_)) && !has_comment(operand, f),
+                } => {
+                    matches!(operand.kind(), ExprKind::Number(_))
+                        && (f.is_quiet() || !has_comments(operand, f))
+                }
                 _ => false,
             };
             is_number && !has_line_comment_behind_code(element, f)

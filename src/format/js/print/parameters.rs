@@ -152,19 +152,12 @@ fn write_dangling_comments_in_parentheses<'a>(func: Func<'a>, f: &mut Formatter<
     }
 }
 
-/// Prettier's `hasComment(node)`. The leading and trailing comments of a node are outside of it, so this does not ask
-/// `f.is_quiet()`, which is about what is inside the node that is being written.
-pub(crate) fn has_comment<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> bool {
-    let owned = f.comments().of_node(node);
-    !owned.leading.is_empty() || !owned.trailing.is_empty() || !owned.dangling.is_empty()
-}
-
 /// Prettier's `hasComment(parameter)`. A parameter without a default value is the same node as its pattern in ESTree.
 fn parameter_has_comment<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
-    has_comment(param.as_ast_nodes(), f)
+    f.comments().has_comments(param.as_ast_nodes())
         || (param.default().is_none()
             && !hugs_pattern_with_comments(f)
-            && has_comment(param.pat().as_ast_nodes(), f))
+            && f.comments().has_comments(param.pat().as_ast_nodes()))
 }
 
 /// ```js

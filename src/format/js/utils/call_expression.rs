@@ -1,8 +1,7 @@
 //! Calls that are written in a special way because of what they call: `it("..", () => {})`.
 
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use super::typecast::is_cast_target;
-use crate::js::comments::OwnedComments;
+use super::typecast::comments_of_expression;
 use crate::prelude::*;
 use crate::write;
 
@@ -34,49 +33,6 @@ pub(crate) fn strip_chain_element_wrappers(mut e: Expr<'_>) -> Expr<'_> {
         e = expression;
     }
     e
-}
-
-/// The comments that `write!(f, e)` prints around `e`. If `e` is in the parentheses of a type cast, they are the comments of
-/// the outermost parentheses, which are Babel's `ParenthesizedExpression`.
-pub(crate) fn comments_around_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> OwnedComments<'a> {
-    let comments = f.comments();
-    if comments.has_type_cast_comments()
-        && e.is_parenthesized()
-        && let Some(parentheses) =
-            (e.parens().rev()).find(|it| comments.is_cast_parenthesis(it.start))
-    {
-        return comments.of_cast_parens(parentheses.start);
-    }
-    comments.of_node(e.as_chain_element())
-}
-
-/// The comments attached to the node that Prettier has for `e`.
-///
-/// For `a?.b` in TypeScript, that node is a `ChainExpression`, which cannot have comments. They are attached to the member
-/// access inside it. For oxfmt the `ChainExpression` has them.
-pub(crate) fn comments_of_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> OwnedComments<'a> {
-    if !f.context().has_tree_of_babel()
-        && !f.options().flavor.is_oxfmt()
-        && e.is_chain_root()
-        && !is_cast_target(e, f)
-    {
-        return OwnedComments {
-            leading: CommentList::empty(),
-            trailing: CommentList::empty(),
-            dangling: CommentList::empty(),
-            is_ignored: false,
-        };
-    }
-    comments_around_expression(e, f)
-}
-
-/// Prettier's `hasComment(node)`.
-pub(crate) fn has_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    if f.is_quiet() {
-        return false;
-    }
-    let owned = comments_of_expression(e, f);
-    !owned.leading.is_empty() || !owned.trailing.is_empty() || !owned.dangling.is_empty()
 }
 
 /// oxfmt leaves the comments between a callee and the `(`, the `?.` or the `<` after it where they are. Prettier attaches most
@@ -137,7 +93,7 @@ impl<'a> Format<'a> for FormatCallee<'a> {
             return write!(f, callee);
         }
         write!(f, FormatNodeWithoutTrailingComments(&callee));
-        write_comments_behind_callee(comments_around_expression(callee, f).trailing, f);
+        write_comments_behind_callee(comments_of_expression(callee, f).trailing, f);
     }
 }
 

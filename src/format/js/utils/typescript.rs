@@ -32,12 +32,6 @@ pub(crate) fn without_lone_operator(mut ty: TypeNode<'_>) -> TypeNode<'_> {
     ty
 }
 
-/// Prettier's `hasComment(node)`.
-pub(crate) fn has_comments<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> bool {
-    let owned = f.comments().of_node(node);
-    !(owned.leading.is_empty() && owned.trailing.is_empty() && owned.dangling.is_empty())
-}
-
 /// Prettier's `hasLeadingOwnLineComment`: a leading comment of `node` is the last thing on its line.
 pub(crate) fn has_leading_own_line_comment<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> bool {
     !f.is_quiet()
@@ -59,5 +53,8 @@ pub(crate) fn should_hug_type<'a>(types: List<'a, TypeNode<'a>>, f: &Formatter<'
     };
     types.iter().all(|t| {
         t == object_type || matches!(t.kind(), TypeKind::Keyword(Keyword::Void | Keyword::Null))
-    }) && (f.is_quiet() || !types.iter().any(|t| has_comments(t.as_ast_nodes(), f)))
+    }) && (f.is_quiet()
+        || !types
+            .iter()
+            .any(|t| f.comments().has_comments(t.as_ast_nodes())))
 }

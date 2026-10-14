@@ -1,5 +1,4 @@
 use super::FormatJsxName;
-use crate::js::comments::OwnedComments;
 use crate::js::print::type_parameters::type_arguments;
 use crate::js::utils::tailwindcss::loses_line_breaks;
 use crate::prelude::*;
@@ -24,11 +23,6 @@ fn as_string_literal_attribute_value(attribute: Prop<'_>) -> Option<Expr<'_>> {
 fn has_line_break<'a>(string: Expr<'a>, f: &Formatter<'a>) -> bool {
     bun_core::strings::index_of_any(string.text(), b"\r\n").is_some()
         && !loses_line_breaks(string, f)
-}
-
-/// Prettier's `hasComment(node)`.
-fn has_comments(comments: &OwnedComments<'_>) -> bool {
-    !comments.leading.is_empty() || !comments.trailing.is_empty() || !comments.dangling.is_empty()
 }
 
 /// ```jsx
@@ -64,8 +58,8 @@ impl<'a> FormatOpeningElement<'a> {
                     .or(name)
                     .is_some_and(|last| !comments.of_node(last).trailing.is_empty()),
                 false => {
-                    name.is_some_and(|name| has_comments(&comments.of_node(name)))
-                        || has_comments(&comments.of_node(type_arguments))
+                    name.is_some_and(|name| comments.has_comments(name))
+                        || comments.has_comments(type_arguments)
                 }
             };
             if let Some(last) = attributes.last() {
@@ -73,7 +67,7 @@ impl<'a> FormatOpeningElement<'a> {
                 let has_comments_after_slash = !self.comments_after_slash(f).is_empty();
                 last_attribute_has_trailing_comments =
                     !comments.trailing.is_empty() || has_comments_after_slash;
-                only_attribute_has_comments = has_comments(&comments) || has_comments_after_slash;
+                only_attribute_has_comments = !comments.is_empty() || has_comments_after_slash;
             }
         }
 

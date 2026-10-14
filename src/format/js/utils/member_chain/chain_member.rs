@@ -6,9 +6,9 @@ use crate::js::print::member_expression::{
 };
 use crate::js::print::type_parameters::type_arguments;
 use crate::js::utils::call_expression::{
-    FormatCallee, comments_of_expression, comments_stay_behind_callee, has_comment,
-    write_comments_behind_callee,
+    FormatCallee, comments_stay_behind_callee, write_comments_behind_callee,
 };
+use crate::js::utils::typecast::{comments_of_outermost_node, has_comments};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -57,7 +57,7 @@ impl<'a> ChainMember<'a> {
     /// The comments attached to the node that Prettier's `printedNodes` has for the link.
     pub(super) fn comments(&self, f: &Formatter<'a>) -> OwnedComments<'a> {
         match *self {
-            Self::Node(node) => comments_of_expression(node, f),
+            Self::Node(node) => comments_of_outermost_node(node, f),
             _ => f.comments().of_node(self.expr().as_chain_element()),
         }
     }
@@ -163,7 +163,7 @@ impl<'a> ChainMember<'a> {
 
 /// oxfmt writes `a[0 /* comment */]` like `a[b /* comment */]`, with a way to break after the `[`.
 fn breaks_around_a_number_with_comments<'a>(index: Expr<'a>, f: &Formatter<'a>) -> bool {
-    f.options().flavor.is_oxfmt() && has_comment(index, f)
+    f.options().flavor.is_oxfmt() && !f.is_quiet() && has_comments(index, f)
 }
 
 /// The `[b]` or `?.[b]` of `a[b]`. Prettier's `printMemberLookup`.

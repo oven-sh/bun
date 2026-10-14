@@ -120,7 +120,9 @@ fn write_import_specifiers<'a>(import: Import<'a>, f: &mut Formatter<'a>) {
 
     match named.first() {
         None => write!(f, "{}"),
-        Some(only) if is_only_specifier && !has_comments(AstNodes::ImportSpecifier(only), f) => {
+        Some(only)
+            if is_only_specifier && !f.comments().has_comments(AstNodes::ImportSpecifier(only)) =>
+        {
             write!(
                 f,
                 [
@@ -137,15 +139,6 @@ fn write_import_specifiers<'a>(import: Import<'a>, f: &mut Formatter<'a>) {
             ["{", FormatSpecifiers(named, AstNodes::ImportSpecifier), "}"]
         ),
     }
-}
-
-/// Prettier's `hasComment`: whether `node` owns a comment.
-pub(crate) fn has_comments<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> bool {
-    if f.is_quiet() {
-        return false;
-    }
-    let owned = f.comments().of_node(node);
-    !(owned.leading.is_empty() && owned.trailing.is_empty() && owned.dangling.is_empty())
 }
 
 /// `import {⏎⏎// comment⏎a } from "b"`: oxfmt keeps the empty line, also behind the `{`.
@@ -323,8 +316,10 @@ fn is_type_attribute_without_comments<'a>(attribute: Prop<'a>, f: &Formatter<'a>
     let key_comments = f.comments().of_name(key.span(f.file()).start);
     key_comments.leading.is_empty()
         && key_comments.trailing.is_empty()
-        && !has_comments(AstNodes::ObjectProperty(attribute), f)
-        && !has_comments(value.as_ast_nodes(), f)
+        && !f
+            .comments()
+            .has_comments(AstNodes::ObjectProperty(attribute))
+        && !f.comments().has_comments(value.as_ast_nodes())
 }
 
 /// `type: "json"`

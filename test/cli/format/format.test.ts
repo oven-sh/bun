@@ -1104,6 +1104,24 @@ describe.concurrent("bun fmt", () => {
       {},
       [["ts", "type A = `${B}-${ // c\nC}`;\n", "type A = `${\n  B // c\n}-${C}`;\n", "type A = `${B // c}-${C}`;\n"]],
     ],
+    [
+      "Prettier 3.9.9 writes what a class without a name implements after a line comment",
+      {},
+      [
+        [
+          "ts",
+          "x = class // c\nimplements A {};\n",
+          "x = class // c\nimplements A {};\n",
+          "x = class implements // cA {};\n",
+        ],
+        [
+          "ts",
+          "export default class\n// a\n// b\nimplements A {}\n",
+          "export default class // a\n// b\nimplements A {}\n",
+          "export default class implements // a\n// bA {}\n",
+        ],
+      ],
+    ],
   ])("%s", (_, config, rows) => {
     test("and `bun fmt` does not", async () => {
       const names = rows.map(([extension], index) => `${index}.${extension}`);

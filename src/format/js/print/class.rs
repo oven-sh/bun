@@ -460,8 +460,20 @@ impl<'a> Format<'a> for FormatClass<'a> {
                         ]
                     );
                 } else {
-                    let format_inner =
-                        format_args!("implements", space(), format_comments, implements);
+                    // `class // comment⏎implements A {}`: Prettier 3.9.9 prints `class implements // commentA {}`.
+                    let are_before_keyword = comments_are_before_implements(f)
+                        || comments.iter().any(|comment| comment.is_line());
+                    let format_inner = format_with(|f| match comments.last() {
+                        Some(last) if are_before_keyword => {
+                            write!(f, format_comments);
+                            match last.is_line() || last.has_newline_after() {
+                                true => write!(f, hard_line_break()),
+                                false => write!(f, space()),
+                            }
+                            write!(f, ["implements", space(), implements]);
+                        }
+                        _ => write!(f, ["implements", space(), format_comments, implements]),
+                    });
                     match group_mode {
                         true => write!(f, [soft_line_break_or_space(), group(&format_inner)]),
                         false => write!(f, [space(), format_inner]),
@@ -586,6 +598,11 @@ fn super_class_has_comments<'a>(super_class: Expr<'a>, f: &Formatter<'a>) -> boo
 /// Prettier's `hasMultipleHeritage`.
 fn has_multiple_heritage(class: Class<'_>) -> bool {
     usize::from(class.extends().is_some()) + class.implements().len() > 1
+}
+
+/// `class /* comment */ implements A {}` is `class implements /* comment */ A {}` for Prettier.
+fn comments_are_before_implements(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// `class A extends B⏎// comment⏎⏎implements C {}`: oxfmt keeps the empty line after the comment.

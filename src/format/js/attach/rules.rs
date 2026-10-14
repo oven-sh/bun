@@ -924,17 +924,19 @@ impl<'a> Rules<'_, 'a, '_> {
             }
             return Some(Attachment::leading(body));
         }
-        let (preceding_node, following_node) = (self.preceding_node?, self.following_node?);
-        let is_after_name = Some(preceding_node) == id || Some(preceding_node) == type_parameters;
-        if Some(following_node) == super_class && is_after_name {
-            return Some(Attachment::trailing(preceding_node));
+        let following_node = self.following_node?;
+        let name =
+            (self.preceding_node).filter(|it| Some(*it) == id || Some(*it) == type_parameters);
+        if Some(following_node) == super_class {
+            return name.map(Attachment::trailing);
         }
         let (_, marker) = (clauses.into_iter())
             .find(|(first_of_clause, _)| *first_of_clause == Some(following_node))?;
-        if !is_after_name && Some(preceding_node) != super_class {
-            return Some(Attachment::dangling_with_marker(Owner::Node(node), marker));
+        // `class // comment⏎implements A {}` has nothing before the comment.
+        match name.or_else(|| self.preceding_node.filter(|it| Some(*it) == super_class)) {
+            Some(preceding_node) => Some(Attachment::trailing(preceding_node)),
+            None => Some(Attachment::dangling_with_marker(Owner::Node(node), marker)),
         }
-        Some(Attachment::trailing(preceding_node))
     }
 
     /// Flow: `| a⏎// comment⏎| b` in a pattern of a `match`.

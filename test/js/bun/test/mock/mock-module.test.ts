@@ -1809,6 +1809,101 @@ describe.concurrent("a factory that returns a module namespace object", () => {
   });
 });
 
+describe.concurrent("a mock behind a barrel", () => {
+  test.each([
+    ["a sync factory", `() => ({ x: "mocked", own: "mocked" })`, "mocked"],
+    ["an async factory", `async () => ({ x: "mocked", own: "mocked" })`, "mocked"],
+    ["importOriginal", `async importOriginal => ({ ...(await importOriginal()), x: "mocked" })`, "real"],
+  ])("a name from a mock and from another export * isn't ambiguous, with %s", async (_, factory, own) => {
+    await expectFixturesToPass(
+      {
+        "leaf.ts": `export const x = "real";`,
+        "barrel.ts": `export * from "./leaf"; export const own = "real";`,
+        "leaf-first.ts": `export * from "./leaf"; export * from "./barrel";`,
+        "barrel-first.ts": `export * from "./barrel"; export * from "./leaf";`,
+        "bindings.ts": `
+          import { x as leafFirst, own } from "./leaf-first";
+          import { x as barrelFirst } from "./barrel-first";
+          export const seen = () => [leafFirst, barrelFirst, own];
+        `,
+        "order.test.ts": `
+          import { expect, test, vi } from "vitest";
+          import { seen } from "./bindings";
+          import * as leafFirst from "./leaf-first";
+          import * as barrelFirst from "./barrel-first";
+          vi.mock("./barrel", ${factory});
+          test("the first export * that has it wins", () => {
+            expect(seen()).toEqual(["real", "mocked", "${own}"]);
+            expect([{ ...leafFirst }, { ...barrelFirst }]).toEqual([{ x: "real", own: "${own}" }, { x: "mocked", own: "${own}" }]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test.each([
+    ["a sync factory", `() => ({ a: "mocked" })`],
+    ["an async factory", `async () => ({ a: "mocked" })`],
+    ["importOriginal", `async importOriginal => ({ a: "mocked", own: (await importOriginal()).own })`],
+  ])("a name the factory didn't return can be imported from a barrel, with %s", async (_, factory) => {
+    await expectFixturesToPass(
+      {
+        "leaf.ts": `export const a = "real"; export const missing = "real";`,
+        "barrel.ts": `export * from "./leaf"; export const own = "own";`,
+        "outer.ts": `export * from "./barrel";`,
+        "bindings.ts": `
+          import { a, missing, own } from "./barrel";
+          import { missing as outer } from "./outer";
+          export const seen = () => [a, missing, own, outer];
+        `,
+        "barrel.test.ts": `
+          import { expect, test, vi } from "vitest";
+          import { seen } from "./bindings";
+          import * as barrel from "./barrel";
+          vi.mock("./leaf", ${factory});
+          test("and is undefined", () => {
+            expect(seen()).toEqual(["mocked", undefined, "own", undefined]);
+            expect(barrel.missing).toBeUndefined();
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("a name the factory didn't return is undefined through a re-export", async () => {
+    await expectFixturesToPass(
+      {
+        "a.ts": `export const a = "real-a"; export const missing = "real";`,
+        "named.ts": `export { missing, missing as renamed } from "./a";`,
+        "star.ts": `export * from "./named";`,
+        "bindings.ts": `
+          import { missing as direct } from "./a";
+          import { missing as reexported } from "./named";
+          import { renamed } from "./star";
+          export const readDirect = () => direct;
+          export const readReexported = () => [reexported, renamed];
+        `,
+        "missing.test.ts": `
+          import { expect, test, vi } from "vitest";
+          import * as named from "./named";
+          import * as star from "./star";
+          import { readDirect, readReexported } from "./bindings";
+          vi.mock("./a", () => ({ a: "mocked-a" }));
+          test("and only throws when it's imported from the mock itself", () => {
+            expect(readReexported()).toEqual([undefined, undefined]);
+            expect([Object.keys(named), Object.keys(star)]).toEqual([["missing", "renamed"], ["missing", "renamed"]]);
+            expect([{ ...named }, { ...star }]).toEqual(Array(2).fill({ missing: undefined, renamed: undefined }));
+            expect(readDirect).toThrow('No "missing" export is defined on the');
+          });
+        `,
+      },
+      1,
+    );
+  });
+});
+
 describe.concurrent("an export the factory did not return", () => {
   const files = {
     "dep.ts": `export const a = "real-a"; export const b = "real-b"; export default "real-default";`,
@@ -1849,7 +1944,7 @@ describe.concurrent("an export the factory did not return", () => {
             expect(() => user.typeofB()).toThrow(new Error(message("b")));
             expect(() => ns.b).toThrow(new Error(message("b")));
             expect(() => ns["0"]).toThrow(new Error(message("0")));
-            expect(() => named.b).toThrow(new Error(message("b")));
+            expect(named.b).toBeUndefined();
           });
 
           test("asked about", async () => {
@@ -1881,8 +1976,8 @@ describe.concurrent("an export the factory did not return", () => {
           test.each(["./star-first", "./named-first"])("export * and export {} of it next to each other: %s", async specifier => {
             const ns = await import(specifier);
             expect(ns.a).toBe("mocked-a");
-            expect(() => ns.b).toThrow('No "b" export is defined on the mock of "./dep".');
-            expect((await import(specifier + "-user")).read).toThrow('No "b" export is defined on the mock of "./dep".');
+            expect(ns.b).toBeUndefined();
+            expect((await import(specifier + "-user")).read()).toEqual(["mocked-a", undefined]);
           });
         `,
         "names.test.ts": `

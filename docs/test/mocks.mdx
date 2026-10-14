@@ -438,7 +438,7 @@ test("getter", () => {
 });
 ```
 
-If a module imports a name the factory didn't return, the module still loads. With `vi.mock()` and `vi.doMock()`, using that name throws an error that says which export is missing from which mock, as in Vitest. With `mock.module()`, `jest.mock()` and `jest.doMock()`, the name is `undefined`.
+If a module imports a name the factory didn't return, the module still loads. With `vi.mock()` and `vi.doMock()`, using that name throws an error that says which export is missing from which mock, as in Vitest. With `mock.module()`, `jest.mock()` and `jest.doMock()`, the name is `undefined`. A name that reaches the module through another module's `export * from` or `export { name } from` is `undefined` instead, as in Vitest.
 
 ### Mocking Without a Factory
 

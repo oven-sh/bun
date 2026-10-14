@@ -6,7 +6,7 @@ import { constants, createContext, runInContext, Script } from "node:vm";
 describe.each([
   ["DONT_CONTEXTIFY", () => createContext(constants.DONT_CONTEXTIFY)],
   ["a contextified object", () => createContext({})],
-])("programs run with a Proxy in the global's prototype chain: %s", (_, makeContext) => {
+])("programs run with a Proxy in the global's prototype chain: %s", (kind, makeContext) => {
   function makeContextWithProxy() {
     const ctx = makeContext();
     const inner = runInContext("this", ctx);
@@ -69,6 +69,18 @@ describe.each([
     expect(runInContext("typeof missingName", ctx)).toBe("undefined");
     expect(runInContext("'fromProxy' in globalThis", ctx)).toBe(true);
     expect(runInContext("'missingName' in globalThis", ctx)).toBe(false);
+  });
+
+  // Node reads the names a contextified global inherits with [[Get]] alone.
+  test.skipIf(kind !== "DONT_CONTEXTIFY")("the Proxy is asked whether it has a name before the name is read", () => {
+    const { ctx, traps } = makeContextWithProxy();
+    expect(runInContext("typeof missingName", ctx)).toBe("undefined");
+    expect(() => runInContext("missingName", ctx)).toThrow(expect.objectContaining({ name: "ReferenceError" }));
+    expect(traps).toContain("has missingName");
+    expect(traps).not.toContain("get missingName");
+    traps.length = 0;
+    expect(runInContext("fromProxy", ctx)).toBe(7);
+    expect([traps[0], traps.at(-1)]).toEqual(["has fromProxy", "get fromProxy"]);
   });
 
   test("an assignment creates an own property on the global", () => {

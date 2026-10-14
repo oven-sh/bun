@@ -1195,7 +1195,6 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
     if (JSObject* contextifiedObject = thisObject->contextifiedObject()) {
         if (slot.internalMethodType() == JSC::PropertySlot::InternalMethodType::Get) {
-            // A separate slot, because a Proxy taints the one it fills and JSC then asks [[HasProperty]] whether the variable exists.
             PropertySlot contextifiedSlot(contextifiedObject, PropertySlot::InternalMethodType::Get);
             bool result = getPropertySlotOfContextifiedObject(globalObject, contextifiedObject, propertyName, contextifiedSlot);
             RETURN_IF_EXCEPTION(scope, false);

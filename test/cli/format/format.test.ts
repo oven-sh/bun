@@ -1218,6 +1218,8 @@ describe.concurrent("bun fmt", () => {
     const rows = [
       ["a // b\n; /**\n * c\n */\n", "a; // b\n/**\n * c\n */\n"],
       ["a\n/* b */\n; /**\n * c\n */\n", "a;\n/* b */ /**\n * c\n */\n"],
+      // Prettier: `import a from /** // b⏎ * c⏎ */ "d";`
+      ['import a // b\n/**\n * c\n */ from "d";\n', 'import a from  // b\n/**\n * c\n */ "d";\n'],
     ];
     const names = rows.map((_, index) => `${index}.js`);
     const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));

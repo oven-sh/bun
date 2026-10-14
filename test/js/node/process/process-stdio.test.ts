@@ -401,9 +401,17 @@ describe.concurrent.skipIf(isWindows)(
         .toString()
         .replace(/(\d)\1+/g, m => `[${m[0]}*${m.length}]`);
 
+    // A pipeline's status is its last command's, so the writer's own goes out with the reports.
+    const stdoutPipeline = `( "$0" -e "$1"; echo "{\\"writer\\":$?}" >&2 ) | "$0" -e "$2"`;
+    const stderrPipeline = `{ ( "$0" -e "$1"; echo "{\\"writer\\":$?}" ) 2>&1 >&3 | "$0" -e "$2"; } 3>&2`;
+    async function expectWriterExitedCleanly(events: ReturnType<typeof jsonLines>) {
+      expect(await events.next()).toEqual({ writer: 0 });
+      expect(await events.rest()).toBe("");
+    }
+
     test.each([
-      ["stdout", stdoutCalls, `"$0" -e "$1" | "$0" -e "$2"`],
-      ["stderr", stderrCalls, `{ "$0" -e "$1" 2>&1 >&3 | "$0" -e "$2"; } 3>&2`],
+      ["stdout", stdoutCalls, stdoutPipeline],
+      ["stderr", stderrCalls, stderrPipeline],
     ] as const)(
       "console output on %s comes after what the stream buffered on a full pipe",
       async (stream, calls, pipeline) => {
@@ -413,9 +421,11 @@ describe.concurrent.skipIf(isWindows)(
           stdout: "pipe",
           stderr: "pipe",
         });
-        await signalReaderOnceFull(jsonLines(proc.stderr));
+        const events = jsonLines(proc.stderr);
+        await signalReaderOnceFull(events);
         const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
         expect(squash(stdout)).toBe(inCallOrder(calls));
+        await expectWriterExitedCleanly(events);
         expect(exitCode).toBe(0);
       },
     );
@@ -427,14 +437,16 @@ describe.concurrent.skipIf(isWindows)(
         console.log("<log>");
         process.stdout.write(Buffer.alloc(1 << 20, "1"), () => process.exit(0));`;
       await using proc = spawn({
-        cmd: ["sh", "-c", `"$0" -e "$1" | "$0" -e "$2"`, bunExe(), script, gatedReader],
+        cmd: ["sh", "-c", stdoutPipeline, bunExe(), script, gatedReader],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
-      await signalReaderOnceFull(jsonLines(proc.stderr));
+      const events = jsonLines(proc.stderr);
+      await signalReaderOnceFull(events);
       const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
       expect(squash(stdout)).toBe(`[0*${1 << 20}]<log>\n[1*${1 << 20}]`);
+      await expectWriterExitedCleanly(events);
       expect(exitCode).toBe(0);
     });
 
@@ -448,7 +460,7 @@ describe.concurrent.skipIf(isWindows)(
           report("after console.log");
         });`;
       await using proc = spawn({
-        cmd: ["sh", "-c", `"$0" -e "$1" | "$0" -e "$2"`, bunExe(), script, gatedReader],
+        cmd: ["sh", "-c", stdoutPipeline, bunExe(), script, gatedReader],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -456,10 +468,11 @@ describe.concurrent.skipIf(isWindows)(
       const events = jsonLines(proc.stderr);
       await signalReaderOnceFull(events);
       expect([await events.next(), await events.next()]).toEqual(["after console.log", "callback"]);
+      await expectWriterExitedCleanly(events);
       expect(await proc.exited).toBe(0);
     });
 
-    // The result without the console too: the flush leaves a reader that is gone for the event loop to report.
+    // The result without the console too: the flush stops at a write error and leaves it for the event loop to report.
     test("the reader going away while the console waits fails the buffered write and the next one with EPIPE", async () => {
       const script = `
         const report = v => require("fs").writeSync(2, JSON.stringify(v) + "\\n");
@@ -471,7 +484,7 @@ describe.concurrent.skipIf(isWindows)(
         setInterval(() => {}, 1 << 30);
         require("fs").writeSync(2, JSON.stringify({ reader: process.pid }) + "\\n");`;
       await using proc = spawn({
-        cmd: ["sh", "-c", `"$0" -e "$1" | "$0" -e "$2"`, bunExe(), script, leavingReader],
+        cmd: ["sh", "-c", stdoutPipeline, bunExe(), script, leavingReader],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -479,6 +492,7 @@ describe.concurrent.skipIf(isWindows)(
       const events = jsonLines(proc.stderr);
       await signalReaderOnceFull(events);
       expect([await events.next(), await events.next()]).toEqual([{ buffered: "EPIPE" }, { next: "EPIPE" }]);
+      await expectWriterExitedCleanly(events);
       expect(await proc.exited).toBe(0);
     });
 

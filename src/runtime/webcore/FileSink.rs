@@ -231,12 +231,19 @@ fn __bun_flush_stdio_sink(global: &JSGlobalObject, fd: Fd) {
     unsafe {
         let this = &raw mut (*this_ptr).sink;
         let _guard = RefPtr::init_ref(this);
-        // What the event loop does once the fd is writable. A closed writer or a reader that is gone is left for it to report.
         while (*this).writer.get().has_pending_data()
             && (*this).writer.get().get_poll().is_some()
-            && sys::wait_for_writable((*this).writer.get().get_fd()).unwrap_or(false)
+            && sys::wait_for_writable((*this).writer.get().get_fd()).is_ok()
         {
-            (*this).writer.with_mut(|w| w.on_poll(0, false));
+            let (written, status) =
+                match (*this).writer.get().drain_buffered_data(usize::MAX, false) {
+                    WriteResult::Pending(written) => (written, WriteStatus::Pending),
+                    WriteResult::Wrote(written) => (written, WriteStatus::Drained),
+                    WriteResult::Done(written) => (written, WriteStatus::EndOfFile),
+                    // Nothing was written. The event loop's poll is still armed: it finds the same error and reports it between two turns of JS, not inside one.
+                    WriteResult::Err(_) => break,
+                };
+            (*this).writer.with_mut(|w| w.on_write(written, status));
         }
     }
 }

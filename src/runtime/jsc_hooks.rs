@@ -4251,9 +4251,13 @@ unsafe fn get_loader_and_virtual_source<'a>(
         unsafe { normalize_specifier_for_loader(jsc_vm, specifier_str) };
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
-    // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
-    let mut loader: Option<Loader> =
-        loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders });
+    // A `data:` URL has no file name. What follows its last "." is part of the module's text.
+    let mut loader: Option<Loader> = if path.text.starts_with(b"data:") {
+        None
+    } else {
+        // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.
+        loader_for_path(&path, unsafe { &(*jsc_vm).transpiler.options.loaders })
+    };
     let mut virtual_source: Option<&'a bun_ast::Source> = None;
     let attribute_loader = type_attribute_str.and_then(Loader::from_string);
     let suffix = match attribute_loader {
@@ -4400,6 +4404,9 @@ fn module_type_of(
     path: &Fs::Path<'_>,
     package_json: Option<&bun_resolver::package_json::PackageJSON>,
 ) -> ModuleType {
+    if path.text.starts_with(b"data:") {
+        return ModuleType::Unknown;
+    }
     let ext = path.name().ext;
     // regex /\.[cm][jt]s$/
     if ext.len() == b".cjs".len() {
@@ -4669,7 +4676,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             unsafe { ((*jsc_vm).has_loaded, (*jsc_vm).is_in_preload) };
         if has_loaded || is_in_preload {
             // Extensionless files in this context are treated as the JS loader.
-            if lr.path.name().ext.is_empty() {
+            if lr.path.name().ext.is_empty() || lr.path.text.starts_with(b"data:") {
                 break 'loader Loader::Tsx;
             }
             // Unknown extensions are to be treated as file loader.

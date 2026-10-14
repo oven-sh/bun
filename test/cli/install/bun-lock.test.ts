@@ -13,7 +13,7 @@ import {
   toBeValidBin,
 } from "harness";
 import { join } from "path";
-import { TestRegistry } from "registry";
+import { TestRegistry, type RegistryOptions } from "registry";
 
 expect.extend({
   toBeValidBin,
@@ -930,6 +930,184 @@ it("escapes double quotes in npm registry tarball URLs when saving bun.lock", as
   expect(out).toContain("Done! Checked");
   expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
   expect(await exited).toBe(0);
+});
+
+// The parser rebuilds an empty registry entry from the reader's configured registry,
+// so a tarball URL that is the canonical one under the writer's top-level registry is
+// written as "". A mirror used locally then does not end up in the committed lockfile.
+describe.concurrent("registry-independent npm entries in bun.lock", () => {
+  const lockfileEntry = (lockfile: string, name: string) => {
+    const match = lockfile.match(new RegExp(`"${name}": (\\[.*\\]),\\n`));
+    return match ? JSON.parse(match[1]) : undefined;
+  };
+
+  it('writes "" for a tarball URL under the configured registry and reads it back', async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(packageJson, JSON.stringify({ name: "mirror-registry", dependencies: { "no-deps": "1.0.0" } }));
+
+    let { exited, stdout, stderr } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfileEntry(lockfile, "no-deps")).toEqual([
+      "no-deps@1.0.0",
+      "",
+      {},
+      "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+    ]);
+    expect(lockfile).not.toContain(registry.registryUrl());
+
+    // A fresh checkout resolves "" against its own registry and installs from it.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+    ({ exited, stdout, stderr } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    }));
+    [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+
+    // A later save does not put the registry back.
+    ({ exited, stdout, stderr } = spawn({
+      cmd: [bunExe(), "add", "a-dep@1.0.1"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    }));
+    [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    const resaved = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfileEntry(resaved, "no-deps")?.[1]).toBe("");
+    expect(lockfileEntry(resaved, "a-dep")?.[1]).toBe("");
+    expect(resaved).not.toContain(registry.registryUrl());
+  });
+
+  it("keeps the tarball URL of a package with a @scope registry", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "/")}"\nregistry = "${registry.registryUrl()}"\n[install.scopes]\nscoped = { url = "${registry.registryUrl()}" }\n`,
+    );
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "scoped-registry",
+        dependencies: { "no-deps": "1.0.0", "@scoped/has-bin-entry": "1.0.0" },
+      }),
+    );
+
+    const { exited, stdout, stderr } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfileEntry(lockfile, "no-deps")?.[1]).toBe("");
+    // The reader may not have this scope configured. "" would send it to the
+    // public registry, so the URL stays.
+    expect(lockfileEntry(lockfile, "@scoped/has-bin-entry")?.[1]).toBe(
+      `${registry.registryUrl()}@scoped/has-bin-entry/-/has-bin-entry-1.0.0.tgz`,
+    );
+  });
+
+  // The credentials are split off when bunfig.toml is read. A `$VAR` registry is
+  // expanded later and keeps them in the href, so both spellings are covered.
+  it.each([
+    ["written in bunfig.toml", (href: string) => ({ registry: href, env: {} })],
+    [
+      "expanded from an environment variable",
+      (href: string) => ({ registry: "$BUN_LOCK_TEST_REGISTRY", env: { BUN_LOCK_TEST_REGISTRY: href } }),
+    ],
+  ])("never writes the credentials of the registry URL %s", async (_, config) => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const url = new URL(registry.registryUrl());
+    url.username = "user";
+    url.password = "pass";
+    const { registry: registryValue, env: extraEnv } = config(url.href);
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "/")}"\nregistry = "${registryValue}"\n`,
+    );
+    await write(packageJson, JSON.stringify({ name: "auth-registry", dependencies: { "no-deps": "1.0.0" } }));
+
+    const { exited, stdout, stderr } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env: { ...env, ...extraEnv },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfileEntry(lockfile, "no-deps")?.[1]).toBe("");
+    expect(lockfile).not.toContain("user:pass");
+  });
+
+  // The configured registry is stored in its WHATWG form (lower-case host, no
+  // default port). A manifest can spell the same tarball URL differently.
+  it('writes "" for a tarball URL that only differs from the registry by normalization', async () => {
+    const spelled = new TestRegistry();
+    await spelled.start();
+    try {
+      const port = new URL(spelled.registryUrl()).port;
+      // The port is only known once the registry listens. `publicUrl` is read per request.
+      (spelled.options as RegistryOptions).publicUrl = `http://LOCALHOST:${port}`;
+      expect((await (await fetch(`${spelled.registryUrl()}no-deps/1.0.0`)).json()).dist.tarball).toBe(
+        `http://LOCALHOST:${port}/no-deps/-/no-deps-1.0.0.tgz`,
+      );
+
+      const { packageDir, packageJson } = await spelled.createTestDir();
+      await write(packageJson, JSON.stringify({ name: "spelled-registry", dependencies: { "no-deps": "1.0.0" } }));
+
+      const { exited, stdout, stderr } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+      expect(err).not.toContain("error:");
+      expect(err).toContain("Saved lockfile");
+      expect(await exited).toBe(0);
+
+      const lockfile = await file(join(packageDir, "bun.lock")).text();
+      expect(lockfileEntry(lockfile, "no-deps")?.[1]).toBe("");
+      expect(lockfile).not.toContain("LOCALHOST");
+    } finally {
+      spelled.stop();
+    }
+  });
 });
 
 // --frozen-lockfile compares the tree built from bun.lock with the tree a clean install

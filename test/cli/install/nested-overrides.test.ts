@@ -1139,16 +1139,22 @@ describe.concurrent("lockfile", () => {
     expect(await lock(z)).toBe(xLock);
   });
 
-  // The registry's tarball URLs are not under the default registry, so a row with an empty integrity walks the writer down to v1.
+  // The writer keeps a tarball URL that is not the canonical one under the configured registry (here: a query string),
+  // so such a row with an empty integrity walks the writer down to v1.
   const walkFallbackDeps = { "one-dep": "1.0.0" };
+  const walkFallbackUrl = () => `${registry.registryUrl()}one-dep/-/one-dep-1.0.0.tgz?walk-fallback`;
   async function projectWithWalkFallbackLock(stampVersion: 1 | 2 | 3) {
     const dir = await project({ dependencies: walkFallbackDeps });
     await installOk(dir);
     const text = await lock(dir);
     expect(text).toContain('"lockfileVersion": 2');
-    expect(text).toContain('one-dep-1.0.0.tgz", ');
+    expect(text).toContain('"one-dep": ["one-dep@1.0.0", "", ');
     const stripped = text
       .replace('"lockfileVersion": 2', `"lockfileVersion": ${stampVersion}`)
+      .replace(
+        '"one-dep": ["one-dep@1.0.0", "", ',
+        `"one-dep": ["one-dep@1.0.0", ${JSON.stringify(walkFallbackUrl())}, `,
+      )
       .replace(/, "sha512-[^"]*"\]/g, ', ""]');
     expect(stripped).not.toContain("sha512-");
     await write(join(dir, "bun.lock"), stripped);
@@ -1165,7 +1171,7 @@ describe.concurrent("lockfile", () => {
     expect(err).toContain("Saved lockfile");
     const after = await lock(dir);
     expect(after).toContain('"lockfileVersion": 1');
-    expect(after).toContain('one-dep-1.0.0.tgz", {');
+    expect(after).toContain(`${JSON.stringify(walkFallbackUrl())}, {`);
     expect(after).toContain(', ""]');
   });
 
@@ -1203,7 +1209,7 @@ describe.concurrent("lockfile", () => {
     const dir = await projectWithWalkFallbackLock(1);
     const foreignUrl = "http://127.0.0.1:1/one-dep/-/one-dep-1.0.0.tgz";
     const before = await lock(dir);
-    const rewritten = before.replace(/"[^"]*\/one-dep-1\.0\.0\.tgz"/, JSON.stringify(foreignUrl));
+    const rewritten = before.replace(JSON.stringify(walkFallbackUrl()), JSON.stringify(foreignUrl));
     expect(rewritten).not.toBe(before);
     await write(join(dir, "bun.lock"), rewritten);
     await write(

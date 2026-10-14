@@ -339,13 +339,20 @@ test.concurrent("default trusted dependencies require the canonical registry tar
   // install must still succeed, but the package must no longer inherit the
   // default lifecycle-script grant because the URL is not the canonical
   // registry tarball for `electron@1.0.0`.
+  //
+  // The canonical registry tarball URL is written as "" in bun.lock, so the
+  // tamper replaces that placeholder with an explicit URL.
   const lockfilePath = join(packageDir, "bun.lock");
   const lockfile = await file(lockfilePath).text();
-  expect(lockfile).toContain("/electron/-/electron-1.0.0.tgz");
+  const canonicalEntry = '["electron@1.0.0", ""';
+  expect(lockfile).toContain(canonicalEntry);
   await writeFile(
     lockfilePath,
     lockfile
-      .replace("/electron/-/electron-1.0.0.tgz", "/all-lifecycle-scripts/-/all-lifecycle-scripts-1.0.0.tgz")
+      .replace(
+        canonicalEntry,
+        `["electron@1.0.0", "http://localhost:${verdaccio.port}/all-lifecycle-scripts/-/all-lifecycle-scripts-1.0.0.tgz"`,
+      )
       .replace(/"sha512-[^"]+"/, '""'),
   );
 
@@ -390,11 +397,12 @@ test.concurrent("default trusted dependencies require the canonical registry tar
       });
     },
   });
-  const canonicalUrl = `http://localhost:${verdaccio.port}/electron/-/electron-1.0.0.tgz`;
-  expect(lockfile).toContain(canonicalUrl);
   await writeFile(
     lockfilePath,
-    lockfile.replace(canonicalUrl, `http://localhost:${proxy.port}/electron/-/electron-1.0.0.tgz`),
+    lockfile.replace(
+      canonicalEntry,
+      `["electron@1.0.0", "http://localhost:${proxy.port}/electron/-/electron-1.0.0.tgz"`,
+    ),
   );
 
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });

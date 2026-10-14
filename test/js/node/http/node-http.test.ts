@@ -7495,6 +7495,8 @@ describe("req.headers and req.rawHeaders", () => {
 });
 
 describe("the head of a response", () => {
+  const persist = "Connection: keep-alive\r\nKeep-Alive: timeout=5\r\n";
+
   // What the server writes for each path, requested one after the other on one connection.
   async function written(paths: string[], listener: http.RequestListener, setUp?: (server: Server) => void) {
     const server = createServer(listener);
@@ -7528,6 +7530,48 @@ describe("the head of a response", () => {
       server.close();
     }
   }
+
+  it.each([
+    { contentLength: "the listener's", own: true },
+    { contentLength: "the server's", own: false },
+  ])(
+    "holds values and names of any length, and any number of them, before $contentLength Content-Length",
+    async ({ own }) => {
+      const filled = (length: number, fill: string) => Buffer.alloc(length, fill).toString();
+      const heads: Record<string, [string, string][]> = {
+        "/empty": [["X-Empty", ""]],
+        "/long-value": [
+          ["X-Before", "1"],
+          ["X-Long", filled(20_000, "v")],
+          ["X-After", "2"],
+        ],
+        "/long-name": [
+          ["X-Before", "1"],
+          [filled(20_000, "n"), "value"],
+          ["X-After", "2"],
+        ],
+        // A line of as many bytes as are copied at once (LoopData::CORK_COPY_MAX), and of one more.
+        "/limit": [["X-Edge", filled(16 * 1024 - "X-Edge: \r\n".length, "e")]],
+        "/past-limit": [["X-Edge", filled(16 * 1024 - "X-Edge: \r\n".length + 1, "e")]],
+        "/many": Array.from({ length: 24 }, (_, i): [string, string] => [`X-Many-${i}`, filled(9_000 + i, "m")]),
+        "/short-again": [["X-Short", "3"]],
+      };
+      expect(
+        await written(Object.keys(heads), (req, res) => {
+          res.sendDate = false;
+          for (const [name, value] of heads[req.url!]) res.setHeader(name, value);
+          if (own) res.setHeader("Content-Length", "5");
+          res.end("<end>");
+        }),
+      ).toEqual(
+        Object.values(heads).map(
+          head =>
+            `HTTP/1.1 200 OK\r\n${head.map(([name, value]) => `${name}: ${value}\r\n`).join("")}` +
+            `${own ? "Content-Length: 5\r\n" : ""}${persist}${own ? "" : "Content-Length: 5\r\n"}\r\n<end>`,
+        ),
+      );
+    },
+  );
 
   it("names the requests a connection still takes when there is a limit", async () => {
     const limits: Record<string, unknown> = {

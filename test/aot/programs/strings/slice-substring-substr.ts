@@ -1,4 +1,4 @@
-// Slice, substring, substr: every kind of string, every kind of place.
+// `slice`, `substring` and `substr` on every internal representation of a string, with every kind of position.
 // CALLS- slice2 CallHostFunction|CallValue
 // CALLS- slice1 CallHostFunction|CallValue
 // CALLS- substring2 CallHostFunction|CallValue

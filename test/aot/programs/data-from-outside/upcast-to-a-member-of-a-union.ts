@@ -1,4 +1,4 @@
-// Data from outside the program is cast to one member of a union.
+// Parsed JSON is cast to one member of a union.
 declare const console: { log(...values: unknown[]): void };
 type P = { a: number; b?: string; in: { c: number }; list: number[]; f?: () => number };
 type G = P & { g?: 1 };

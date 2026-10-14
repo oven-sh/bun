@@ -1,4 +1,4 @@
-// Numbers and element reads at the edges: everything here has to come out as the language says.
+// Numbers and array element reads in edge cases: everything must behave exactly as ECMAScript specifies.
 function count(from: number, step: number, times: number): string { let x = from, s = ""; for (let i = 0; i < times; i++) { x += step; s += x + "," } return s }
 function down(from: number, step: number, times: number): string { let x = from, s = ""; for (let i = 0; i < times; i++) { x -= step; s += x + "," } return s }
 function hash(text: string): number { let h = 7; for (let i = 0; i < text.length; i++) h = h * 31 + text.charCodeAt(i); return h }

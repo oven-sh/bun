@@ -1,4 +1,4 @@
-// A small benchmark: a long string built-in a loop.
+// A long string is built with `+=` in a loop and then hashed.
 let src = ""; for (let i = 0; i < 2000; i++) src += `let v_${i % 97} = foo_${i % 13}(a${i % 7} + ${i} * bar) - 12;\n`
 console.log(src.length)
 let h = 0

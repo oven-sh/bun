@@ -1,4 +1,4 @@
-// The value of a JSON module is plain data.
+// An imported JSON module is plain data without a declared type.
 import catalog from "./files/catalog.json" with { type: "json" }
 function ids(): string[] {
   const found: string[] = []

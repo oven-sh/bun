@@ -1,4 +1,4 @@
-// A callee with a rest parameter that is known or predicted and is too large to be copied: it is called at its general entry with the arguments in memory.
+// Direct calls of large functions with a rest parameter.
 declare const console: any;
 const kept: unknown[][] = [];
 class Point { constructor(public x: number, public name: string) {} }

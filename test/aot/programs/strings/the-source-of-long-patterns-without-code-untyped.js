@@ -1,4 +1,4 @@
-// Strings: the source of long patterns without code (the same program without type annotations).
+// The `source` property of regular-expression literals longer than 65,536 characters, which are not compiled at build time (the same program without type annotations).
 function sum(s) {
   let h = 0;
   for (let i = 0;i < s.length; i++)

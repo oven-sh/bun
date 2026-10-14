@@ -1,4 +1,4 @@
-// `new` on a value, where making the object here would be wrong, or has to come to the same.
+// `new` on a function value, in the cases where allocating the object at the call site would be observable.
 declare const console: any;
 const log: any[] = [];
 interface P { x: number; y?: number }

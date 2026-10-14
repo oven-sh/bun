@@ -1,4 +1,4 @@
-// `let x;` with no type and no value, in a typed file, holds what is stored to it.
+// `let x;` without a type or an initializer in a TypeScript file holds whatever is assigned to it.
 function ends(text: string) { let end; let count = 0; for (let i = 0; i < text.length; i++) { if (text.charCodeAt(i) === 32) { end = i; count++ } } return end === undefined ? -1 : end * 10 + count }
 function label(n: number) { let s; if (n > 0) s = "above"; else if (n < 0) s = "below"; return s ?? "zero" }
 function mixed(n: number) { let v; v = n > 1 ? n : "one"; return typeof v === "number" ? v + 1 : v + "!" }

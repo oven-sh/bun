@@ -686,6 +686,7 @@ struct Search {
     reduced: Vec<(FlowId, FlowId, u32)>,
     pending: Vec<(FlowId, u32)>,
     exhaustive: FxHashSet<StmtId>,
+    goes_on_from_where_a_function_is_made: bool,
 }
 
 /// Where the code that constructs an object uses `this`.
@@ -1230,7 +1231,7 @@ impl<'p, 's> Checker<'p, 's> {
                     None => self.type_handed_on(file, expr),
                 };
                 // What the program is given stays what it is, and the type is what it is expected to be. What the program has made is known for what it is.
-                if (self.has_tainted_part(target) || self.is_given(file, expr)) && (self.says_nothing(source) || self.is_untyped(source)) {
+                if (self.has_tainted_part(target) || self.is_given(file, expr) || self.requires_nothing(target)) && (self.says_nothing(source) || self.is_untyped(source)) {
                     return TypeId::UNKNOWN;
                 }
                 return self.type_coerced(source, target);
@@ -2075,12 +2076,14 @@ impl<'p, 's> Checker<'p, 's> {
             let reads = || index.of(ExprTag::Ident).iter().copied().filter(|&e| bound.expr_symbol[e.idx()] == local && !bound.is_in_type_query(e) && bound.access_kind(hir, e) != AccessKind::Write);
             let without_clause: Vec<StmtId> = bound.flow.iter().filter_map(|flow| if let Flow::Switch { stmt, from, to, .. } = *flow { (from == to).then_some(stmt) } else { None }).collect();
             let exhaustive: FxHashSet<StmtId> = without_clause.into_iter().filter(|&stmt| self.is_exhaustive_switch(file, stmt)).collect();
-            let mut search = Search { exhaustive, ..Search::default() };
-            let read = match reads().find(|&e| self.site_of(file, bound.expr_parent[e.idx()]) != site) {
+            let mut search = Search { exhaustive: exhaustive.clone(), ..Search::default() };
+            let mut outward = Search { exhaustive, goes_on_from_where_a_function_is_made: true, ..Search::default() };
+            let is_elsewhere = |c: &Self, e: ExprId| c.site_of(file, bound.expr_parent[e.idx()]) != site;
+            let read = match reads().find(|&e| is_elsewhere(self, e) && self.is_reached_without(file, bound.expr_flow[e.idx()], Store::Variable(local), &mut outward)) {
                 Some(e) => EarlyRead::ByOtherCode(e),
-                None => match reads().find(|&e| self.is_reached_without(file, bound.expr_flow[e.idx()], Store::Variable(local), &mut search)) {
+                None => match reads().find(|&e| !is_elsewhere(self, e) && self.is_reached_without(file, bound.expr_flow[e.idx()], Store::Variable(local), &mut search)) {
                     Some(e) => EarlyRead::OnSomePath(e),
-                    None if !search.exhaustive.is_empty() && reads().any(|e| self.is_reached_without(file, bound.expr_flow[e.idx()], Store::Variable(local), &mut Search::default())) => continue,
+                    None if reads().any(|e| is_elsewhere(self, e) || self.is_reached_without(file, bound.expr_flow[e.idx()], Store::Variable(local), &mut Search::default())) => continue,
                     None => EarlyRead::ByOtherFiles,
                 },
             };
@@ -5793,6 +5796,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 flow = match bound.flow[flow.idx()] {
                     Flow::Unreachable => break,
+                    Flow::Start { outer, .. } if search.goes_on_from_where_a_function_is_made && outer.is_some() => outer,
                     Flow::Start { .. } => return true,
                     // What is called where it is written starts where the code around it has got to.
                     Flow::StartInvoked { outer, .. } => outer,

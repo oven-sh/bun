@@ -1,4 +1,4 @@
-// The negative test: a frame that really does not fit is a RangeError that can be caught, as before, and the operation that handles events is not entered for it.
+// A real stack overflow is still a RangeError that can be caught.
 // ENV JSC_useAOTOperationCounters=1
 declare const console: any;
 declare const aotOperationCount: (name: string) => number;

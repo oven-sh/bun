@@ -1,4 +1,4 @@
-// Which fields an object gets right after its allocation: a prediction for field placement, so the program behaves the same whatever it says.
+// Which fields an object gets right after its allocation is only a hint for the compiler: the program behaves the same when the hint is wrong.
 interface Sym { flags: number; name: string; parent: Sym | undefined; decls?: string[] }
 interface Links { type?: Ty; target?: Sym; mapper?: string; nameType?: Ty }
 interface TransientLinks extends Links { check: number }

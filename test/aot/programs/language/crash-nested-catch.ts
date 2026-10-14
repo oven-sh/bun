@@ -1,4 +1,4 @@
-// The value of an outer `catch` clause is thrown again and used in the inner handler.
+// The parameter of an outer `catch` clause is thrown again and used in an inner `catch` clause.
 function used(p: number) { const out: number[] = []; try { throw p + p; } catch (e1: any) { try { throw e1; } catch (e2: any) { out.push(e1); } } return out.join(); }
 function added(p: number) { const out: number[] = []; try { throw p + p; } catch (e1: any) { try { throw e1; } catch (e2: any) { out.push(e1 + e2); } } return out.join(); }
 function captured(p: number) { const fs: (() => number)[] = []; try { throw p + p; } catch (e1: any) { try { throw e1; } catch (e2: any) { fs.push(() => e1); } } return fs.map(f => f()).join(); }

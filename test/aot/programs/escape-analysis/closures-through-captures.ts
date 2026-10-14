@@ -1,4 +1,4 @@
-// The bit for captures: a function value that an inner function declaration has captured by value and that comes to it as a capture of a direct call.
+// A function value that an inner function declaration has captured is called from there.
 function outer(list: number[], check: (x: number) => boolean): number {
   function one(x: number, depth: number): number {
     if (depth > 3) return 0;

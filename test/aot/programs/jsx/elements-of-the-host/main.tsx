@@ -1,4 +1,4 @@
-// Who calls a callback that is a prop decides what is known of its parameters.
+// What is known about the parameters of a callback prop depends on who calls the callback.
 /** @jsxImportSource ./minicjs */
 declare global {
   namespace JSX {

@@ -797,6 +797,8 @@ mod draft {
 
                 PANIC_STAGE.with(|s| s.set(1));
                 let _ = PANICKING.fetch_add(1, Ordering::SeqCst);
+                let addresses_in_trace: [usize; 20];
+                let number_of_addresses_in_trace: usize;
 
                 {
                     let _panic_guard = PANIC_MUTEX.lock();
@@ -1047,6 +1049,8 @@ mod draft {
                         };
                         &trace_buf
                     };
+                    addresses_in_trace = addr_buf;
+                    number_of_addresses_in_trace = trace.index.min(addr_buf.len());
 
                     if debug_trace {
                         // SAFETY: single-threaded mutation under panic_mutex
@@ -1190,6 +1194,31 @@ mod draft {
                 // because if multiple threads segfault (more often the case on Windows), we don't
                 // want another thread to interrupt the crashing of the first one.
                 reset_segfault_handler();
+
+                #[cfg(unix)]
+                {
+                    let mut compiled_frames = [0u8; 4096];
+                    // SAFETY: that many entries of the trace are initialized, and no more than the buffer's length is written; alarm() has no preconditions
+                    let compiled_frames_len = unsafe {
+                        libc::alarm(2);
+                        let len = Bun__AOT__describeAddresses(
+                            addresses_in_trace.as_ptr(),
+                            number_of_addresses_in_trace,
+                            compiled_frames.as_mut_ptr(),
+                            compiled_frames.len(),
+                        );
+                        libc::alarm(0);
+                        len
+                    };
+                    if compiled_frames_len > 0 {
+                        let writer = &mut stderr_writer();
+                        let _ = writer.write_all(b"Compiled JavaScript on the stack:\n");
+                        let _ = writer.write_all(&compiled_frames[..compiled_frames_len]);
+                        let _ = writer.write_all(b"\n");
+                    }
+                }
+                #[cfg(not(unix))]
+                let _ = (addresses_in_trace, number_of_addresses_in_trace);
 
                 if bun_core::auto_reload_on_crash()
                 // Do not reload if the panic arose FROM the reload function.
@@ -2416,6 +2445,13 @@ mod draft {
 
     unsafe extern "C" {
         safe fn Bun__AOT__offsetInCode(address: *const core::ffi::c_void) -> i64;
+        fn Bun__AOT__describeAddresses(
+            addresses: *const usize,
+            count: usize,
+            buffer: *mut u8,
+            capacity: usize,
+        ) -> usize;
+        safe fn Bun__AOT__addressOfOffsetInCode(offset: usize) -> usize;
     }
 
     impl StackLine {
@@ -2572,6 +2608,35 @@ mod draft {
             writer.write_all(VLQ::encode(known.address).slice())?;
             Ok(())
         }
+    }
+
+    pub fn compiled_frames_of_report(report: &[u8]) -> Vec<u8> {
+        const AHEAD_OF_OFFSET: &[u8] = b"CGaot";
+        let mut addresses: Vec<usize> = Vec::new();
+        let mut at = 0;
+        while let Some(found) = strings::index_of(&report[at..], AHEAD_OF_OFFSET) {
+            at += found + AHEAD_OF_OFFSET.len();
+            let offset = bun_base64::vlq::decode(report, at);
+            if offset.start == at {
+                continue;
+            }
+            at = offset.start;
+            if let Ok(offset) = usize::try_from(offset.value) {
+                addresses.push(Bun__AOT__addressOfOffsetInCode(offset + 1));
+            }
+        }
+        let mut frames = vec![0u8; 1024 * addresses.len()];
+        // SAFETY: both are initialized for the lengths that are passed, and no more than the buffer's length is written
+        let len = unsafe {
+            Bun__AOT__describeAddresses(
+                addresses.as_ptr(),
+                addresses.len(),
+                frames.as_mut_ptr(),
+                frames.len(),
+            )
+        };
+        frames.truncate(len);
+        frames
     }
 
     struct TraceString<'a> {

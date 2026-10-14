@@ -1,4 +1,4 @@
-// `new` on a function or a class of untyped code that is known: CreateThis and a direct call, which is inlined like any other.
+// `new` on a known function or class in untyped code is an allocation and a direct call, which can be inlined.
 // IR= 0 makesPoints Construct
 // IR= 1 makesPoints CreateThis
 // IR= 1 makesPoints CallDirect

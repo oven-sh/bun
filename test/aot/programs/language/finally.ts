@@ -1,4 +1,4 @@
-// `finally`: at the end, after an exception, on `return`, `break` and `continue`; and what overrides what.
+// `finally`: after normal completion, after an exception, on `return`, `break` and `continue`, and which completion overrides which.
 let log = ""
 function f(mode: number): string {
   try {

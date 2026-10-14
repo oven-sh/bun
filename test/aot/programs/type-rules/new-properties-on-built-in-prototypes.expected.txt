@@ -1,0 +1,8 @@
+String.prototype: TypeError
+Map.prototype: TypeError
+Error.prototype: TypeError
+Function.prototype: TypeError
+Object.prototype: TypeError
+Object.prototype, defineProperty: TypeError
+undefined undefined undefined undefined undefined undefined
+false,false,false,false,false,false

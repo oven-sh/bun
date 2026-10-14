@@ -1,4 +1,4 @@
-// `(v as T) = value` is a store to `v` that the type checker's list of assignments leaves out.
+// `(v as T) = value` is an assignment to `v`.
 let v: number | string = 1
 let w: number | string = 2
 function flip(): void { (v as number | string) = "text"; (<number | string>w) = "more" }

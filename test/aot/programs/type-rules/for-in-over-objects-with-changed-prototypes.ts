@@ -1,4 +1,4 @@
-// Runtime type checks: `for..in` over objects with changed prototypes.
+// `for..in` over typed objects after attempts to change their prototype, their class's prototype, or the kind of their fields.
 interface Rec { a: number; b?: string; c?: boolean; d: number }
 function keysOf(o: object): string { const out: string[] = []; for (const k in o) out.push(k); return out.join("") }
 function at(o: Rec, k: string): string { return String((o as unknown as Record<string, unknown>)[k]) }

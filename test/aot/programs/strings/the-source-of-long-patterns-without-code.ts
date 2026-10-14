@@ -1,4 +1,4 @@
-// Strings: the source of long patterns without code.
+// The `source` property of regular-expression literals longer than 65,536 characters, which are not compiled at build time.
 declare const console: { log(...a: unknown[]): void }
 function sum(s: string): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h }
 function show(name: string, r: RegExp): void { const s = r.source, again = r.source, t = r.toString(); console.log(name, s.length, sum(s), s === again, t.length, sum(t), JSON.stringify(s.slice(0, 14)), r.test("xXy"), r.test("aaaaaaaaa~"), r.test("q")) }

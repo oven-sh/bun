@@ -1,4 +1,4 @@
-// Data from outside the program goes through casts and stays what it was.
+// Parsed JSON goes through several casts and stays the same object.
 interface Base { id: string }
 interface Derived extends Base { extra: number; inner: { n: number } }
 const parsed = JSON.parse('{"id":"a"}') as Base

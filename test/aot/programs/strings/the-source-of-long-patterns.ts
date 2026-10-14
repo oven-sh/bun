@@ -1,4 +1,4 @@
-// Strings: the source of long patterns.
+// The `source` property of very long regular expressions, with slashes and escapes.
 declare const console: { log(...a: unknown[]): void }
 function sum(s: string): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h }
 function fill(n: number, head: string): string { return head + "|[" + "a".repeat(n - head.length - 7) + "]{9}~" }

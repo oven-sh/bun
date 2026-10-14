@@ -1,4 +1,4 @@
-// A member by fit alone forces no merge of slots.
+// Object types that merely fit a union structurally, without being declared members of it.
 interface T { bs: number; cs: string; o: number[] }
 interface U { bs?: number; cs: string }
 const readU = (u: U) => u.bs

@@ -1,0 +1,6 @@
+heir of an object of the type: TypeError
+then: typed code reads it: TypeError
+then: a store makes an own property: TypeError
+then: the parent changes: TypeError
+then: an ill-typed own property shadows: TypeError
+heir of a frozen literal: TypeError

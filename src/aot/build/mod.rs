@@ -1944,6 +1944,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.shared.constants.own_paths.is_none() && self.shared.constants.function_texts.is_none() {
             return 0;
         }
+        if let Source::Function { file, .. } | Source::DefaultConstructor { file, .. } = source
+            && self.hir(file).text.ends_with(b"\n// bun --aot: this file is not UTF-8: read as the runtime reads it")
+        {
+            return 0;
+        }
         let place = match source {
             Source::Function { file, func, class, .. } => {
                 let f = &self.hir(file)[func];
@@ -2395,7 +2400,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.seal(evaluated);
                 fx.b.switch_to(thrown);
                 let error = self.emit(&mut fx, Op::GlobalGet(evaluation));
-                fx.b.terminate(Term::Throw { value: error, unwind: None });
+                fx.b.terminate(Term::Throw { value: error, unwind: None, pos: 0 });
                 fx.b.switch_to(evaluated);
                 self.terminate_with_return(&mut fx, V::NONE);
                 fx.b.switch_to(evaluate);
@@ -2415,7 +2420,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let no = self.emit(&mut fx, Op::Bool(false));
                 self.emit(&mut fx, Op::GlobalSet(flag, no));
                 self.emit(&mut fx, Op::GlobalSet(evaluation, error));
-                fx.b.terminate(Term::Throw { value: error, unwind: None });
+                fx.b.terminate(Term::Throw { value: error, unwind: None, pos: 0 });
             }
             Source::ModuleTouch(file) => {
                 let (ran, thrown) = self.state_of_module_that_waits(file);
@@ -2444,7 +2449,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.seal(early);
                 fx.b.switch_to(rethrows);
                 let error = self.emit(&mut fx, Op::GlobalGet(thrown));
-                fx.b.terminate(Term::Throw { value: error, unwind: None });
+                fx.b.terminate(Term::Throw { value: error, unwind: None, pos: 0 });
                 fx.b.switch_to(early);
                 let wanted = self.emit(&mut fx, Op::Int(0));
                 self.emit(&mut fx, Op::GlobalSet(ran, wanted));
@@ -2463,7 +2468,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let no = self.emit(&mut fx, Op::Bool(false));
                 self.emit(&mut fx, Op::GlobalSet(ran, no));
                 self.emit(&mut fx, Op::GlobalSet(thrown, error));
-                fx.b.terminate(Term::Throw { value: error, unwind: None });
+                fx.b.terminate(Term::Throw { value: error, unwind: None, pos: 0 });
             }
             Source::ModuleSettling(file) => {
                 let (ran, _) = self.state_of_module_that_waits(file);
@@ -2523,7 +2528,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let error = self.emit(&mut fx, Op::Caught);
                 let undefined = self.emit(&mut fx, Op::Undefined);
                 self.emit(&mut fx, Op::GlobalSet(flag, undefined));
-                fx.b.terminate(Term::Throw { value: error, unwind: None });
+                fx.b.terminate(Term::Throw { value: error, unwind: None, pos: 0 });
             }
             Source::ModuleDriver(file) => self.emit_module_driver(&mut fx, file),
             Source::DynamicImport(file, is_node_mode) if self.is_async_module(file) => self.emit_dynamic_import_with_ticket(&mut fx, file, is_node_mode),

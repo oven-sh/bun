@@ -1,4 +1,4 @@
-// An object made as `Node` whose `kind` IS Kind.Dot cannot become `Token<Kind.Dot>`: "expected DotToken, got Node".
+// An object created as `Node` with `kind` equal to `Kind.Dot` cannot become a `Token<Kind.Dot>`.
 const enum Kind { Unknown, Dot, Comma }
 interface Node { readonly kind: Kind; readonly pos: number }
 interface Token<K extends Kind> extends Node { readonly kind: K }

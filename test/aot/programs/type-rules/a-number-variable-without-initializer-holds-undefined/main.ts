@@ -1,4 +1,4 @@
-// A variable declared `number` without initializer holds `undefined`.
+// A variable declared `number` without an initializer holds `undefined`, and reading it throws.
 function attempt(f: () => unknown): string { try { return String(f()) } catch (e) { return (e as Error).constructor.name } }
 function cases(x: number): string {
   switch (x) {

@@ -1,4 +1,4 @@
-// Bindings read before they are initialized.
+// Variables that are read before they are initialized.
 function early() { return later }
 function attempt(f: () => unknown) { try { return String(f()) } catch (e) { return (e as Error).name } }
 console.log(attempt(early))

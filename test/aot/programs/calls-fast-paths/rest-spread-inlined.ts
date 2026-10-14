@@ -1,4 +1,4 @@
-// A rest parameter of an inlined call that is spread into another call: no array, and the inner call is direct.
+// A rest parameter of an inlined function that is spread into another call needs no array, and the inner call is direct.
 // IR- NewArray
 // IR- CallBuiltin Apply
 declare const console: any;

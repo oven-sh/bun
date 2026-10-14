@@ -1,2 +1,2 @@
-// `f?.(..)`: `undefined` where `f` is `undefined` OR `null`, whatever holds `f` (the same program without type annotations).
+// `f?.(..)` returns `undefined` when `f` is undefined or null, wherever `f` is stored (the same program without type annotations).
 import "./impl.js";

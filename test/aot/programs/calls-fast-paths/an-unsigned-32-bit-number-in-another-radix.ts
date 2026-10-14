@@ -1,4 +1,4 @@
-// Calls: an unsigned 32-bit number in another radix.
+// `(h >>> 0).toString(16)` on numbers whose top bit is set.
 declare const console: any;
 function hide<T>(x: T): T { return [x, x][console ? 0 : 1]!; }
 function hex(h: number): string { return (h >>> 0).toString(16); }

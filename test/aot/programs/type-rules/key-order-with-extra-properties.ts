@@ -1,4 +1,4 @@
-// Runtime type checks: key order with extra properties.
+// The order of own keys of typed objects when optional fields and extra properties are added in turn.
 interface O { a: number; b?: number; c?: string; d?: boolean }
 function show(o: object) { return Object.keys(o).join() + " " + JSON.stringify(o) }
 const mixed: O = { a: 1, d: true }

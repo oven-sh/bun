@@ -1,4 +1,4 @@
-// Runtime type checks: new properties on built-in prototypes.
+// Adding properties to the prototypes of built-in classes (`String.prototype`, `Map.prototype` ..) throws.
 try { (String.prototype as any).poop = 1; console.log("String.prototype: no error") } catch (e) { console.log("String.prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { (Map.prototype as any).poop = 1; console.log("Map.prototype: no error") } catch (e) { console.log("Map.prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { (Error.prototype as any).poop = 1; console.log("Error.prototype: no error") } catch (e) { console.log("Error.prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }

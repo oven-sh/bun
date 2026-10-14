@@ -576,6 +576,7 @@ pub struct RuntimeOptions {
     pub aot: bool,
     pub aot_logs_type_errors: bool,
     pub aot_graph_fd: Option<i32>,
+    pub aot_decode_crash_report: Option<Box<[u8]>>,
     pub aot_audit: bool,
     /// `--check`: type check what is about to be run, and do not run it if there are errors.
     pub check: bool,
@@ -653,6 +654,7 @@ impl Default for RuntimeOptions {
             aot: false,
             aot_logs_type_errors: false,
             aot_graph_fd: None,
+            aot_decode_crash_report: None,
             aot_audit: false,
             check: false,
             debugger: Debugger::Unspecified,

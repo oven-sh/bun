@@ -1,4 +1,4 @@
-// Untyped JavaScript: empty literals of numbers pushed to.
+// Arrays that start as `[]` and are filled with `push`: integers, doubles, booleans, mixed values and strings.
 function say(name: string, f: () => unknown) { let r: unknown; try { r = f(); } catch (e) { r = "threw " + (e as Error).name; } console.log(name + ": " + r); }
 const T = (v: unknown) => typeof v === "string" ? JSON.stringify(v) : Object.is(v, -0) ? "-0" : String(v);
 const S = (a: unknown[]) => "[" + Array.from(a, T).join(",") + "]" + a.length;

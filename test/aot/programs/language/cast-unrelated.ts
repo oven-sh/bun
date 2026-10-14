@@ -1,4 +1,4 @@
-// An object made as one type is held, through `any`, to a type that is neither above nor below it.
+// An object created as one type is cast, through `any`, to an unrelated type.
 interface Sys { read(p: string): string; cwd(): string; args: string[] }
 interface Host { read(p: string): string; cwd(): string; onError: (m: string) => void }
 const sys: Sys = { read: p => "r:" + p, cwd: () => "/", args: ["x"] }

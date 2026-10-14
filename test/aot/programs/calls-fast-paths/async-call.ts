@@ -1,4 +1,4 @@
-// A call of an async function, awaited.
+// A loop that awaits a call of an async function.
 declare const console: any;
 async function one(i: number) { return i; }
 async function loop(n: number) { let s = 0; for (let i = 0; i < n; i++) { s += await one(i); } return s; }

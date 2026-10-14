@@ -814,7 +814,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let caught = self.emit(fx, Op::CaughtException);
                 self.close_iterator_of_loop(fx, iter, true);
                 let unwind = fx.handlers.last().map(|&handler| Target::new(handler));
-                fx.b.terminate(Term::Throw { value: caught, unwind });
+                fx.b.terminate(Term::Throw { value: caught, unwind, pos: 0 });
                 fx.b.seal(next);
                 fx.b.switch_to(next);
                 let at = match &table {
@@ -985,7 +985,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             StmtKind::Throw(e) => {
                 let value = self.expr(fx, e);
                 let unwind = fx.handlers.last().map(|&handler| Target::new(handler));
-                fx.b.terminate(Term::Throw { value, unwind });
+                let pos = self.last_pos(fx, e);
+                fx.b.terminate(Term::Throw { value, unwind, pos });
             }
             StmtKind::Break(label) => {
                 let Some(at) = fx.jumps.iter().rposition(|j| if label.is_some() { j.break_to.is_some() && j.label == label } else { j.is_unlabeled_break_target }) else {
@@ -1388,7 +1389,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(rethrow);
         fx.b.switch_to(rethrow);
         let unwind = fx.handlers.last().map(|&handler| Target::new(handler));
-        fx.b.terminate(Term::Throw { value: caught, unwind });
+        fx.b.terminate(Term::Throw { value: caught, unwind, pos: 0 });
         for (&block, &(from, exit)) in after.iter().zip(&exits) {
             fx.b.seal(block);
             fx.b.switch_to(block);

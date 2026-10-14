@@ -1,4 +1,4 @@
-// `++` and `--` add to a bigint the bigint one.
+// `++` and `--` on a BigInt add and subtract `1n`.
 let b = 5n
 b++
 const o = { n: 1n }

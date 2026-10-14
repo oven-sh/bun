@@ -1,3 +1,3 @@
-// Untyped JavaScript: tables of the instance and young-generation collections.
+// Constants in literals, runs of property stores and template objects survive young-generation garbage collections.
 import "../../jsc-shell-functions.ts";
 import "./program.ts";

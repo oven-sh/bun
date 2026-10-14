@@ -1,4 +1,4 @@
-// Key order of class instances: fields without initializers, assigned in the constructor in another order.
+// The key order of class instances whose fields have no initializers and are assigned in the constructor in another order.
 class A { a: number; b: number; c = 3; constructor() { this.b = 2; this.a = 1 } }
 class B { declare p: number; q: number | undefined; r?: string; constructor(set: boolean) { if (set) { this.r = "r"; this.p = 1 } } }
 class D extends A { d = 4; e: number; constructor() { super(); this.e = 5 } }

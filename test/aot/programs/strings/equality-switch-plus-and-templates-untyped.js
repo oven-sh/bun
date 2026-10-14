@@ -1,4 +1,4 @@
-// ===, !==, switch, + and templates: what goes through the same primitives as the built-ins (the same program without type annotations).
+// `===`, `!==`, `switch`, `+` and templates on strings (the same program without type annotations).
 const print = (s) => console.log(s);
 function show(x) {
   if (typeof x !== "string")

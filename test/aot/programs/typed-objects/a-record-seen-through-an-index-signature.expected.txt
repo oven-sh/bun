@@ -1,0 +1,5 @@
+store TypeError
+looked at 1
+typeof number
+arithmetic 2
+held 2

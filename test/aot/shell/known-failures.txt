@@ -1,6 +1,6 @@
 # <program> TAB <expectation line>: expectations that are known to fail today. See expectations.py.
-calls-fast-paths/by-key	// IR= 1 run CallDirect
 calls-fast-paths/constructor-at-any-depth	// IR= 0 top CallDirect
+calls-fast-paths/listener-under-a-constant-key	// IR= 1 run CallDirect
 calls-fast-paths/rest-callee-called-by-name	// IR+ CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+, v[0-9]+\)
 calls-fast-paths/size-at-the-call	// IR= 0 knowsInTheLoop NewArray
 calls-fast-paths/size-at-the-call	// IR= 0 knowsInTheLoopBorrowing NewArray
@@ -14,31 +14,21 @@ strings/access	// CALLS- element_ CallHostFunction|CallValue|GetByVal
 strings/buffer-byte-length	// CALLS+ ofTextWithHyphen StringUTF8Length8
 strings/characters-outside-loops	// CALLS- byIndex Flatten
 strings/characters-outside-loops	// CALLS- endsWithNewline StringIsText|StringHasAt|(^|[ f])TypedString(;|$)
-strings/comparisons-with-texts	// CALLS+ ofUnion StringIsText
+strings/comparisons-with-string-literals	// CALLS+ ofUnion StringIsText
 strings/entries-of-arrays	// CALLS+ elementOnly operationAOTTypedNewEntriesOfArray
 strings/entries-of-arrays	// CALLS+ indexOnly operationAOTTypedNewEntriesOfArray
 strings/entries-of-arrays	// CALLS+ nestedPattern operationAOTTypedNewEntriesOfArray
 strings/entries-of-arrays	// CALLS+ ofArraysOnly operationAOTTypedNewEntriesOfArray
-strings/entries-of-arrays	// CALLS+ typed operationAOTTypedNewEntriesOfArray
 strings/keys-in-one-piece	// CALLS+ cached operationAOTTypedConcatenateWithIntegers
 strings/keys-in-one-piece	// CALLS+ getPair operationAOTTypedConcatenateWithIntegers
-strings/keys-in-one-piece	// CALLS+ hasTemplate operationAOTTypedConcatenateWithIntegers
 strings/keys-in-one-piece	// CALLS+ property operationAOTTypedConcatenateWithIntegers
 strings/keys-in-one-piece	// CALLS+ throughJoin operationAOTTypedConcatenateWithIntegers
-strings/keys-in-one-piece	// CALLS+ twoStrings operationAOTTypedConcatenateWithIntegers
-strings/literals-nothing-keeps	// CALLS+ heldInConstant operationAOTTypedSharedRegExpLiteral
 strings/locale-compare	// CALLS+ sorted operationAOTTypedStringLocaleCompare
-strings/one-code-unit-compared	// CALLS+ wideCases equality with .*\b233\b
-strings/parts-outside-loops	// CALLS+ trimmed StringTrim(;|$)
-strings/parts-outside-loops	// CALLS+ trimmedInLoop StringTrim(;|$)
-strings/regexp	// CALLS+ constants operationAOTTypedNewRegExpLiteral
 strings/regexp	// CALLS+ fromSource operationAOTTypedNewRegExp
-strings/regexp	// CALLS+ literal operationAOTTypedNewRegExpLiteral
-strings/regexp	// CALLS+ vowels operationAOTTypedStringReplaceRegExpString
-strings/regular-expressions-built-from-written-texts	// UNKNOWN byfu+nctionX
-strings/regular-expressions-built-from-written-texts	// UNKNOWN fromca+ll
-strings/regular-expressions-built-from-written-texts	// UNKNOWN na+med
-strings/regular-expressions-built-from-written-texts	// UNKNOWN ti+me
+strings/regexps-built-from-string-literals-1	// UNKNOWN byfu+nctionX
+strings/regexps-built-from-string-literals-1	// UNKNOWN fromca+ll
+strings/regexps-built-from-string-literals-1	// UNKNOWN na+med
+strings/regexps-built-from-string-literals-1	// UNKNOWN ti+me
 strings/regular-expressions-known-at-build-time	// UNKNOWN [ab]joi+ned
 strings/regular-expressions-known-at-build-time	// UNKNOWN assi+gned
 strings/regular-expressions-known-at-build-time	// UNKNOWN fromca+ll
@@ -63,16 +53,16 @@ strings/single-characters	// CALLS- slashAt StringHasAt|StringIsText
 strings/string-from-char-code-concat-normalize	// CALLS- fromCharCode1 CallHostFunction|CallValue
 strings/string-from-char-code-concat-normalize	// CALLS- fromCodePointByte CallHostFunction|CallValue|CharToString|FromC
 strings/string-from-char-code-concat-normalize	// CALLS- fromCodePointMasked CallHostFunction|CallValue|CharToString|FromC
-strings/strings-built-in-the-frame	// CALLS+ lookUp ConcatenateWithIntegers|StringBuilderFinish
-strings/strings-built-in-the-frame	// REMARK+ acrossBranches (Add|Strcat): stack
-strings/strings-built-in-the-frame	// REMARK+ nearTheLimit (Add|Strcat): stack
-strings/strings-built-in-the-frame	// REMARK+ notAKeyAcrossBranches rejected: not in a loop and not a map key
-strings/strings-built-in-the-frame	// REMARK+ startsFromString (Add|Strcat): stack
-strings/strings-built-in-the-frame	// REMARK+ withNilOperands (Add|Strcat): stack
-strings/strings-built-in-the-frame	// REMARK+ wordsAndNumbers (Add|Strcat): stack
-strings/strings-built-in-the-frame	// REMARK- nearTheLimit rejected
+strings/strings-built-and-consumed-in-one-function	// CALLS+ lookUp ConcatenateWithIntegers|StringBuilderFinish
+strings/strings-built-and-consumed-in-one-function	// REMARK+ acrossBranches (Add|Strcat): stack
+strings/strings-built-and-consumed-in-one-function	// REMARK+ nearTheLimit (Add|Strcat): stack
+strings/strings-built-and-consumed-in-one-function	// REMARK+ notAKeyAcrossBranches rejected: not in a loop and not a map key
+strings/strings-built-and-consumed-in-one-function	// REMARK+ startsFromString (Add|Strcat): stack
+strings/strings-built-and-consumed-in-one-function	// REMARK+ withNilOperands (Add|Strcat): stack
+strings/strings-built-and-consumed-in-one-function	// REMARK+ wordsAndNumbers (Add|Strcat): stack
+strings/strings-built-and-consumed-in-one-function	// REMARK- nearTheLimit rejected
 strings/switch	// CALLS+ kind tables [2-9]
 strings/switch	// CALLS- kind tests for equality with .* (9|10|11|12|13|32)\b
 strings/switch	// CALLS- kindPlain tests for equality with .* (9|10|11|12|13|32)\b
-strings/texts-branched-on-for-any-value	// CALLS+ whichUnknown ^whichUnknown: ([0-9]{1,2}|1[0-9]{2}|2[0-4][0-9]) instructions
+strings/switch-over-string-literals-on-unknown-values	// CALLS+ whichUnknown ^whichUnknown: ([0-9]{1,2}|1[0-9]{2}|2[0-4][0-9]) instructions
 strings/two-strings-compared	// CALLS+ sameOrNil StringsAreEqual

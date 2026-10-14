@@ -22,6 +22,9 @@ Prints one line per program and exits with 1 if any line is a failure:
     NO IR           the front end rejected the program
     NOT COMPILED    JavaScriptCore's compiler rejected it
     skipped         the shell cannot judge it; the line says why
+
+A program with a .build-errors.txt is run here all the same: `bun build --aot` rejects it because it would always throw, but
+the front end alone still translates it, and the runtime type checks that it exercises must keep working.
 """
 import difflib, json, os, re, subprocess, sys, tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -74,8 +77,6 @@ def without_times(output):
 
 
 def why_skipped(base, options, compiler_options):
-    if os.path.isfile(base + ".build-errors.txt"):
-        return "`bun build --aot` is expected to reject it"
     if os.path.isfile(base + ".todo.txt"):
         reason = open(base + ".todo.txt").readline().strip()
         # The shell has the functions that such a program is waiting for.

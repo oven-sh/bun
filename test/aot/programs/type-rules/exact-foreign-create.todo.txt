@@ -1,1 +1,0 @@
-Expected: "heir of an object of the type: TypeError". --aot prints: "heir of an object of the type: no error 80".

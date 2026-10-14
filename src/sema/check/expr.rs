@@ -4955,10 +4955,11 @@ impl<'p, 's> Checker<'p, 's> {
         shape.props.reserve_exact(props.len());
         // The names of `shape.props`, of a literal with many members.
         let has_many = props.len() > 16;
-        let mut names = crate::util::FxHashSet::<Atom>::default();
+        let mut names = crate::util::FxHashMap::<Atom, usize>::default();
         if has_many {
             names.reserve(props.len());
         }
+        let mut replaced: Vec<usize> = Vec::new();
         let mut has_repeated_name = false;
         for p in props.iter() {
             let Some(name) = self.name_of_literal_member(file, p) else {
@@ -4967,16 +4968,25 @@ impl<'p, 's> Checker<'p, 's> {
             let (source, flags) = self.property_of_literal_member_in(file, p, name, context);
             let is_accessor = flags.contains(PropFlags::ACCESSOR);
             // `propertiesTable[member.Name] = member`: the last member with the name is the property.
-            let may_exist = !has_many || !names.insert(name);
-            if may_exist && let Some(existing) = shape.props.iter().position(|x| x.name == name) {
+            let existing = match has_many {
+                true => names.get(&name).copied(),
+                false => shape.props.iter().position(|x| x.name == name),
+            };
+            if let Some(existing) = existing {
                 // The other accessor of the same symbol.
                 if is_accessor
                     && matches!(shape.props[existing].source, PropSource::Literal(_, q) if q == source)
                 {
                     continue;
                 }
-                shape.props.remove(existing);
+                match has_many {
+                    true => replaced.push(existing),
+                    false => drop(shape.props.remove(existing)),
+                }
                 has_repeated_name = true;
+            }
+            if has_many {
+                names.insert(name, shape.props.len());
             }
             let (source, written) =
                 self.source_of_literal_member_in(file, source, name, is_written);
@@ -4986,6 +4996,16 @@ impl<'p, 's> Checker<'p, 's> {
                 source,
                 mapper: MapperId::IDENTITY,
                 name_type: TypeId::UNRESOLVED,
+            });
+        }
+        if !replaced.is_empty() {
+            replaced.sort_unstable();
+            let (mut at, mut next) = (0, 0);
+            shape.props.retain(|_| {
+                let is_replaced = replaced.get(next) == Some(&at);
+                next += usize::from(is_replaced);
+                at += 1;
+                !is_replaced
             });
         }
         // FOR SPEED: in any other literal every member is the first declaration of its symbol. The binder adds a declaration to the

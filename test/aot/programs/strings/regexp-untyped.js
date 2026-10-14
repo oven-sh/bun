@@ -1,4 +1,4 @@
-// Literals, and the methods of strings that take a RegExp or a string (the same program without type annotations).
+// RegExp literals, and the string methods that take a RegExp or a string (the same program without type annotations).
 const print = (s) => console.log(s);
 function show(x) {
   if (typeof x !== "string")

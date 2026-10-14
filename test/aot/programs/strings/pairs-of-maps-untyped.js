@@ -1,4 +1,4 @@
-// `for (const [k, v] of map)`: the pair is not made where it is only taken apart; whatever else is done with it, or with the Map meanwhile, shows as ever (the same program without type annotations).
+// `for (const [k, v] of map)` allocates no pair when the pair is only destructured; everything else that is done with it, or with the Map meanwhile, is observable as usual (the same program without type annotations).
 const print = (s) => console.log(s);
 function show(x) {
   if (typeof x !== "string")

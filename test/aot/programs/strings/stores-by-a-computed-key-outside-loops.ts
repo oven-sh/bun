@@ -1,4 +1,4 @@
-// Strings: stores by a computed key outside loops.
+// `a[k] = v` outside loops on receivers of unknown type: in bounds, at and beyond the end, negative and non-numeric keys.
 declare const console: { log(...args: unknown[]): void }
 function put(a: any, k: any, v: any): string { try { a[k] = v; return "ok" } catch (e) { return (e as Error).constructor.name } }
 function putStrictly(a: any, k: any, v: any): string { "use strict"; try { a[k] = v; return "ok" } catch (e) { return (e as Error).constructor.name } }

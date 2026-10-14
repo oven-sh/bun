@@ -1,4 +1,4 @@
-// A type guard on the parent narrows the type of a child: the guard looks at the child's `kind`, and the parent's narrowed type says the child is a Token of fewer kinds.
+// A type guard on a parent node narrows the type of its child.
 const enum Kind { Plus, OrEquals, AndEquals, Binary }
 type BinaryOperator = Kind.Plus | Kind.OrEquals | Kind.AndEquals
 type LogicalAssignmentOperator = Kind.OrEquals | Kind.AndEquals

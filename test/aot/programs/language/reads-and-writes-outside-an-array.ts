@@ -1,4 +1,4 @@
-// Reads and writes outside, and numbers that are missing, in arithmetic.
+// Out-of-bounds reads and writes, and missing numbers in arithmetic.
 function at(a: number[], i: number): number | undefined { return a[i] }
 function plus(a: number[], i: number): number { return a[i] + 1 }
 function less(a: number[], i: number): boolean { return a[i] < 5 }

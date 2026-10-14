@@ -303,10 +303,7 @@ public:
             }
         } else if (value.isCell() && isSlimClosureType(value.asCell()->type())) {
             JSObject* fn = asObject(value);
-            JSValue nameValue = fn->get(global, vm.propertyNames->name);
-            RETURN_IF_EXCEPTION(scope, );
-            nameToUse = nameValue.toWTFString(global);
-            RETURN_IF_EXCEPTION(scope, );
+            nameToUse = JSC::AOT::nameOfSlimClosure(fn);
             JSValue lengthJSValue = fn->get(global, vm.propertyNames->length);
             RETURN_IF_EXCEPTION(scope, );
             if (lengthJSValue.isNumber())
@@ -401,7 +398,7 @@ public:
             // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
             target->putDirectIndex(globalObject, *index, implValue, attributes, PutDirectIndexLikePutDirect);
             RETURN_IF_EXCEPTION(scope, );
-        } else if (target->structure()->hasImmutableShape()) {
+        } else if (target->structure()->hasImmutableShape() && !(attributes & PropertyAttribute::ReadOnly)) {
             target->methodTable()->defineOwnProperty(target, globalObject, identifier, PropertyDescriptor(implValue, attributes), true);
             RETURN_IF_EXCEPTION(scope, );
         } else {
@@ -1600,7 +1597,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             } else if (auto index = parseIndex(propertyKey)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
                 object->putDirectIndex(globalObject, *index, mock, attributes, PutDirectIndexLikePutDirect);
-            } else if (object->structure()->hasImmutableShape()) {
+            } else if (object->structure()->hasImmutableShape() && !(slot.slotBase() == object && (attributes & PropertyAttribute::ReadOnly))) {
                 object->methodTable()->defineOwnProperty(object, globalObject, propertyKey, PropertyDescriptor(mock, slot.slotBase() == object ? attributes : 0), true);
             } else {
                 object->putDirect(vm, propertyKey, mock, attributes);

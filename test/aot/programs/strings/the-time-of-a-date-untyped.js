@@ -1,4 +1,4 @@
-// Strings: the time of a date (the same program without type annotations).
+// Subclasses of Date that override `valueOf`, `getTime` or `Symbol.toPrimitive`.
 const seen = [];
 
 class Stamp extends Date {

@@ -1,4 +1,4 @@
-// For-of written out: whatever of the protocol a program can see.
+// `for..of` and everything of the iterator protocol that a program can observe.
 declare const console: { log(...v: unknown[]): void };
 let log: string[] = []; const say = (s: string): void => { log.push(s); }; const flush = (title: string): void => { console.log(title + ": " + log.join(" ")); log = []; };
 const kind = (e: unknown): string => (e as Error).constructor.name + ((e as Error).message.length < 12 ? "(" + (e as Error).message + ")" : "");

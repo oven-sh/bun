@@ -1,4 +1,4 @@
-// Scanning a string: the length read once, the code unit compared as an integer.
+// Loops that scan a string: the length is read once, and code units are compared as integers.
 // CALLS- countSlashes ucvtf|fcmp|fcvtzs
 // CALLS- classify ucvtf|fcmp|fcvtzs
 // CALLS- countDigits ucvtf|fcmp|fcvtzs

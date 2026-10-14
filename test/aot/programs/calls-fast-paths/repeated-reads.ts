@@ -1,4 +1,4 @@
-// A read that repeats one whose outcome still holds is that one's value.
+// A property read that repeats an earlier one, with nothing in between that could change the result, reuses its value.
 // IR= 1 straight GetById v[0-9]+ "alpha"
 // IR= 1 chain GetById v[0-9]+ "beta"
 // IR= 1 arms GetById v[0-9]+ "gamma"

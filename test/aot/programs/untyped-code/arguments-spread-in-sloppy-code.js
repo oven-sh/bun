@@ -1,4 +1,4 @@
-// Untyped JavaScript: arguments spread in sloppy code.
+// `f(...arguments)` and `f(...rest)` in sloppy-mode code, where `arguments` aliases the parameters.
 const H = globalThis;
 const one = v => Object.is(v, -0) ? "-0" : v === undefined ? "undefined" : typeof v === "function" ? "fn" : typeof v === "symbol" ? "symbol" : typeof v === "string" ? JSON.stringify(v) : v !== null && typeof v === "object" ? (Array.isArray(v) ? "[" + Array.from(v, one).join() + "]" : Object.prototype.toString.call(v) === "[object Arguments]" ? "A(" + Array.prototype.map.call(v, one).join() + ")" : "{" + Object.keys(v).map(k => k + ":" + one(v[k])).join() + "}") : String(v);
 const S = a => a === undefined || a === null || typeof a !== "object" ? one(a) : Array.isArray(a) ? a.length + one(a) : one(a);

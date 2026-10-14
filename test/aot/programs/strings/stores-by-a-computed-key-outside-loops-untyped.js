@@ -1,4 +1,4 @@
-// Strings: stores by a computed key outside loops (the same program without type annotations).
+// `a[k] = v` outside loops on receivers of unknown type: in bounds, at and beyond the end, negative and non-numeric keys (the same program without type annotations).
 function put(a, k, v) {
   try {
     a[k] = v;

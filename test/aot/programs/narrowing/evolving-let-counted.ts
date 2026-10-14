@@ -1,4 +1,4 @@
-// A `let` without type or value at the top level of a module that awaits.
+// A `let` without a type or an initializer at the top level of a module with top-level `await`.
 class Socket { handlers: Record<string, (e?: unknown) => void> = {}; on(name: string, f: (e?: unknown) => void) { this.handlers[name] = f; return this } end() { Promise.resolve().then(() => this.handlers["close"]?.()) } }
 const connect = (options: { path: string }) => { const socket = new Socket(); Promise.resolve().then(() => socket.handlers["connect"]?.()); return socket }
 const sleep = (ms: number) => new Promise<void>(done => Promise.resolve(ms).then(() => done()))

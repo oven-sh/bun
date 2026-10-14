@@ -1,4 +1,4 @@
-// Parsed JSON: assigned to a union without a cast.
+// A value of a type that comes from JSON is assigned to a union of object types without a cast: as an argument, a result, a store and an element.
 declare const console: { log(...values: unknown[]): void };
 type Named = { name: string };
 type Shape = { name: string; size?: number } | { side: number };

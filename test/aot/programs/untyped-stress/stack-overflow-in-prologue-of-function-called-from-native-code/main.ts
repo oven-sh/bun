@@ -1,2 +1,2 @@
-// Untyped JavaScript: stack overflow in prologue of function called from native code.
+// The stack overflows at the entry of a function that native code calls.
 import "./impl.js";

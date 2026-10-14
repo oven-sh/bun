@@ -1,4 +1,4 @@
-// String(x), String.fromCharCode, String.fromCodePoint, concat, normalize, isWellFormed, toWellFormed (the same program without type annotations).
+// `String(x)`, `String.fromCharCode`, `String.fromCodePoint`, `concat`, `normalize`, `isWellFormed` and `toWellFormed` (the same program without type annotations).
 const print = (s) => console.log(s);
 function show(x) {
   if (typeof x !== "string")

@@ -1,4 +1,4 @@
-// What the bundler replaces by constants, and the code a build leaves out.
+// `--define` constants and `feature()` flags: what the bundler replaces with constants, and the code that a build leaves out.
 import { feature } from "bun:bundle"
 declare const BUILD_INFO: { VERSION: string, COUNT: number, FLAG: boolean }
 declare const require: (name: string) => any

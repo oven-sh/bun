@@ -1,4 +1,4 @@
-// Runtime type checks: an optional method found on the prototype chain.
+// An optional method such as `toString?` that is absent on the object is found on `Object.prototype`.
 interface Printable { id: number; toString?: () => string }
 const plain: Printable = { id: 1 }
 console.log(typeof plain.toString, plain.toString === Object.prototype.toString, plain.toString?.())

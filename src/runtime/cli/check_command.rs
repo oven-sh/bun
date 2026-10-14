@@ -835,6 +835,10 @@ fn analyze_on_this_thread(
         .collect(),
         ..Default::default()
     };
+    provided.constants_of_imports = (constants.resolved.iter().flatten())
+        .filter(|(_, to)| to.ends_with(b".text.json") || to.ends_with(b".file.json"))
+        .map(|(import, to)| (import.clone(), to.clone()))
+        .collect();
     for &(name, text) in bun_aot::prelude::FILES {
         let path = bun_aot::prelude::path_of(cwd, name);
         provided.already_read.insert(from_native(&path), text.as_bytes().to_vec());
@@ -848,6 +852,15 @@ fn analyze_on_this_thread(
         .collect();
     if paths.is_empty() {
         return None;
+    }
+    if rewrite_jest_for_tests {
+        let path = bun_aot::prelude::path_of(cwd, "test-globals.d.ts");
+        let also = br#"
+declare module "@jest/globals" { export * from "bun:test"; }
+declare module "vitest" { export * from "bun:test"; }
+"#;
+        provided.already_read.insert(from_native(&path), [&b"// @ts-nocheck\n"[..], &include_bytes!("../../../packages/bun-types/test-globals.d.ts")[..], &also[..]].concat());
+        paths.push(path);
     }
     // `TypeChecked::react_compiler_outputs`: the code is under a path of its own. What is written is no code any more, so no root by that: it is
     // checked in its own right.

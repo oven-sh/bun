@@ -395,10 +395,12 @@ fn add_edges_in(function: &NilFlowsInFunction, edges: &mut Vec<(u32, u32, u8)>, 
     // The immediate dominators (Cooper, Harvey, Kennedy).
     let mut dominator = vec![NONE; blocks];
     dominator[0] = 0;
+    let (mut climbed_for, mut findings) = (vec![0u32; blocks], 0u32);
     loop {
         let mut has_changed = false;
         for &block in order.iter().skip(1) {
             let mut found = NONE;
+            findings += 1;
             for &before in &preceding[block as usize] {
                 if dominator[before as usize] == NONE {
                     continue;
@@ -410,6 +412,10 @@ fn add_edges_in(function: &NilFlowsInFunction, edges: &mut Vec<(u32, u32, u8)>, 
                 let (mut a, mut b) = (before, found);
                 while a != b {
                     while number[a as usize] > number[b as usize] {
+                        if std::mem::replace(&mut climbed_for[a as usize], findings) == findings {
+                            a = b;
+                            break;
+                        }
                         a = dominator[a as usize];
                     }
                     while number[b as usize] > number[a as usize] {

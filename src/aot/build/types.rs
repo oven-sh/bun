@@ -66,7 +66,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.is_object_type_of_program(ty)
             && let Some(layout) = self.record_layout(ty)
         {
-            let described = self.with_primitives(ty, Declared::part(Part::Class(layout)));
+            // Nobody has declared the view that a coercion makes, so no primitive is of it.
+            let described = Declared::part(Part::Class(layout));
+            let described = if self.c.is_view_made_by_coercion(ty) { described } else { self.with_primitives(ty, described) };
             let id = self.out.tys.intern(described.nilable());
             self.tys.insert((ty, depth), id);
             return id;
@@ -529,6 +531,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             is_allocated: false,
             may_be_frozen: false,
             admits_foreign: false,
+            is_opened_for_the_log: false,
             members: Vec::new(),
             members_by_fit: Vec::new(),
             specializations: Vec::new(),

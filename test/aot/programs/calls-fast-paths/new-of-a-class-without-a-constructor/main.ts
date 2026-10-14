@@ -1,4 +1,4 @@
-// Calls: `new` on a class without a constructor.
+// `new` on a derived class without a constructor, or whose constructor only forwards its arguments, costs the same as writing the constructor out.
 // IR= 0 implicit SuperConstruct
 // IR= 0 implicit ConstructSuper
 // IR= 0 implicit NewArray

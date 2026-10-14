@@ -1,4 +1,4 @@
-// `f?.(..)`: `undefined` where `f` is `undefined` OR `null`, whatever holds `f`.
+// `f?.(..)` returns `undefined` when `f` is undefined or null, wherever `f` is stored.
 function attempt(label: string, f: () => unknown) { try { console.log(label, String(f())); } catch (e: any) { console.log(label, e.constructor.name); } }
 type F = ((s: string) => string) | null;
 type G = ((s: string) => string) | undefined;

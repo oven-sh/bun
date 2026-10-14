@@ -557,6 +557,7 @@ pub fn for_each_id_of_layout(layout: &mut Layout, ids: &mut impl Ids) {
         is_allocated: _,
         may_be_frozen: _,
         admits_foreign: _,
+        is_opened_for_the_log: _,
         members,
         members_by_fit,
         specializations,

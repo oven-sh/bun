@@ -1,4 +1,4 @@
-// Declarations: a function declared over a var.
+// A function declaration with the same name as a `var` in the same function, in strict code.
 function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
 function row(label, f) { console.log(label + ": " + said(f)); }
 row("control: which mode this file is in", () => (function () { return this === undefined ? "strict" : "sloppy"; })());

@@ -1,4 +1,4 @@
-// A declared property of a typed record is redefined as a getter, by a key that is one of several names.
+// A declared property of a typed object is redefined as a getter, by a key that can be one of several names.
 type Item = { kind: "a"; name: string; label: string; hint?: string; note?: string; run(): number }
 function later(item: Item, key: "label" | "hint" | "note", value: string | (() => string | undefined) | undefined): void {
   if (typeof value !== "function") return

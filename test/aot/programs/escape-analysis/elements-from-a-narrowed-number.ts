@@ -1,4 +1,4 @@
-// Escape analysis: elements from a narrowed number.
+// An array literal in a `switch` case holds the narrowed number; its element is incremented and then read in every way.
 declare const console: { log(...a: unknown[]): void };
 function row(name: string, f: () => unknown): void { let got: unknown; try { got = f(); } catch (e) { got = "threw " + (e as Error).name + " " + (e as Error).message; } console.log(name + ": " + got); }
 function e1(k: number) { switch (k) { case 1: { const a = [k]; a[0]++; return a[0]; } } }

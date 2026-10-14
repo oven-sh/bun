@@ -1,4 +1,4 @@
-// Calls whose callee is not known statically: compiled closures of every kind, and what is not a closure.
+// Calls whose callee is not known statically: compiled functions of every kind, and values that are not functions.
 class K { v = 1; constructor(public w = 2) {} m(a?: number, b?: number) { return [this?.v, a, b].join() } static s(x: number) { return x + 1 } }
 function plain(a: unknown, b: unknown, c: unknown) { return [a, b, c].join("|") }
 function rest(...all: unknown[]) { return all.length + ":" + all.join() }
@@ -11,7 +11,7 @@ async function later(a: number) { return a + 1 }
 function* gen(a: number) { yield a; yield a + 1 }
 const bound = plain.bind(null, "B")
 const table: any[] = [plain, rest, args, usesThis, withProps, arrow, bound, K.s, new K().m, Math.max, String, (x: any) => x, parseInt]
-// Without an argument these get `undefined` for a `number`: type-rules/callees-not-known-statically.
+// Without an argument these get `undefined` for a `number`: type-rules/typed-functions-called-through-any-with-missing-arguments.
 const needAnArgument = new Set<unknown>([usesThis, withProps, K.s])
 function callAll(fs: any[]) {
   const out: string[] = []

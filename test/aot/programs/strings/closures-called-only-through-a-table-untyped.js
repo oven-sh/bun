@@ -1,4 +1,4 @@
-// Strings: closures called only through a table (the same program without type annotations).
+// Closures that build regular expressions are stored in a Map and called only through it (the same program without type annotations).
 const handlers = new Map;
 function register(name, prefix) {
   handlers.set(name, (s) => new RegExp(prefix + "[0-9]+y").test(s));

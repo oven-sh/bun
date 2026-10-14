@@ -236,6 +236,28 @@ impl<'p, 's> Checker<'p, 's> {
         self.captures_of_file(file).captured_ahead_of_iterations.contains(&statement)
     }
 
+    pub fn place_of_environment_of_more_than(&mut self, file: FileId, most: usize) -> Option<u32> {
+        let bound = self.bound(file);
+        let (mut around, mut declared): (Vec<usize>, Vec<usize>) = (Vec::with_capacity(bound.scopes.len()), vec![0; bound.scopes.len()]);
+        for (index, scope) in bound.scopes.iter().enumerate() {
+            let is_counted_alone = matches!(scope.kind, crate::bind::ScopeKind::File | crate::bind::ScopeKind::Module(_) | crate::bind::ScopeKind::Fn(_)) || scope.parent.is_none() || scope.parent.idx() >= index;
+            around.push(if is_counted_alone { index } else { around[scope.parent.idx()] });
+            let is_held_once = matches!(scope.kind, crate::bind::ScopeKind::File | crate::bind::ScopeKind::Module(_));
+            declared[around[index]] += if is_held_once { 0 } else { bound.table(scope.locals).len() };
+        }
+        if declared.iter().all(|&names| names <= most) {
+            return None;
+        }
+        let captures = self.captures_of_file(file);
+        let first = captures.environments.iter().filter(|(_, variables)| variables.len() > most).map(|(&activation, _)| activation).min()?;
+        let hir = self.hir(file);
+        Some(match first {
+            Activation::Call(func) | Activation::Expression(func) => hir[func].start,
+            Activation::Iteration(statement) | Activation::Block(statement) => hir[statement].start,
+            Activation::Class(class) => hir[class].start,
+        })
+    }
+
     pub fn has_environment(&mut self, file: FileId, activation: Activation) -> bool {
         self.captures_of_file(file).environments.contains_key(&activation)
     }

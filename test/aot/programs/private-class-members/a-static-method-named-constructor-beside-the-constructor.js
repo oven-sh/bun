@@ -1,4 +1,4 @@
-// Private class members: a static method named constructor beside the constructor.
+// A class with both a constructor and a static method named `constructor`: `new` runs the real constructor.
 function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
 function row(label, f) { console.log(label + ": " + said(f)); }
 let calls = 0;

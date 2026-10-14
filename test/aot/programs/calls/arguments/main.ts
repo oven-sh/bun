@@ -1,3 +1,3 @@
-// `arguments` objects that must be made, and reads that are not reads of an element.
+// `arguments` objects that must really be allocated, and reads on them that are not element reads.
 // @ts-ignore
 import "./untyped.js";

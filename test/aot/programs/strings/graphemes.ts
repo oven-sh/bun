@@ -1,4 +1,4 @@
-// Intl.Segmenter by graphemes: where icu is not asked the answer is what icu gives: plain Bun asks it everything.
+// `Intl.Segmenter` with grapheme granularity: the fast path that avoids ICU gives the same answers as ICU.
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

@@ -1,4 +1,4 @@
-// `"" + x`, `x + ""`, a template and String(x) of values whose TYPE is a union of primitives, of every kind the union allows, and of anything.
+// `"" + x`, `x + ""`, templates and `String(x)` on values whose type is a union of primitives.
 const values: any[] = ["", "a", "text", "€", "a" + Math.random().toString().slice(0, 0) + "b", 0, -0, 1, -1, 7, 255, 256, 65535, 2147483647, -2147483648, 2147483648, -2147483649, 4294967296, 9007199254740991, 1e21, 1e-7, 0.1, 1.5, -1.5, NaN, Infinity, -Infinity, 5.0, 10n, -10n, 10n ** 30n, true, false, null, undefined];
 function stringOrNumber(x: string | number): string[] { return ["" + x, x + "", `${x}`, `<${x}>`, String(x), "k" + x + "k"]; }
 function withBigInt(x: string | number | bigint): string[] { return ["" + x, x + "", `${x}`, `<${x}>`, String(x)]; }

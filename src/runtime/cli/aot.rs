@@ -178,6 +178,12 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
         );
         Global::exit(1);
     }
+    if for_tests && ctx.test_options.coverage.enabled {
+        pretty_errorln!(
+            "<r><yellow>warn<r><d>:<r> <b>--coverage<r> is ignored with <b>--aot<r>: code that is compiled ahead of time is not counted. Run without <b>--aot<r> to measure coverage."
+        );
+        bun_core::Output::flush();
+    }
     if !ctx.runtime_options.eval.script.is_empty() {
         pretty_errorln!(
             "<r><red>error<r>: <b>--aot<r> cannot be combined with <b>-e<r>, <b>-p<r> or a script from stdin"

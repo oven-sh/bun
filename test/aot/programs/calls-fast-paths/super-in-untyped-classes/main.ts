@@ -1,4 +1,4 @@
-// `new Derived(..)` in untyped code: the derived constructor is called directly and `super(..)` enters the parent without the run time.
+// `new Derived(..)` in untyped code calls the derived constructor directly, and `super(..)` does not go through the runtime.
 // IR+ ConstructSuper
 // IR= 0 run SuperConstruct
 // IR= 0 run NewArray

@@ -194,7 +194,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.expr(fx, e)
         };
         let held = self.fit_at(fx, e, value, want, why);
-        if matches!(self.hir(fx.file)[e].kind, ExprKind::Object(_)) {
+        let mut written = e;
+        while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) = self.hir(fx.file)[written].kind {
+            written = expr;
+        }
+        if matches!(self.hir(fx.file)[written].kind, ExprKind::Object(_)) {
             self.mark_cast_of_what_is_fresh(fx, held, value);
         }
         held
@@ -1197,6 +1201,23 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// The namespace object of a module that is not compiled with the program.
     pub(crate) fn external_module(&mut self, fx: &mut Fx, specifier: Atom) -> V {
         let global = self.external_module_global(fx.file, specifier);
+        let known = self.emit(fx, Op::GlobalGet(global));
+        if !self.is_dropped_import(fx.file, specifier) {
+            return known;
+        }
+        let undefined = self.emit(fx, Op::Undefined);
+        let is_missing = self.emit(fx, Op::StrictEq { a: known, b: undefined });
+        let (first, there) = (fx.b.new_block(), fx.b.new_block());
+        self.branch(fx, is_missing, first, there);
+        fx.b.seal(first);
+        fx.b.switch_to(first);
+        let asked_for = self.as_the_host_finds_it(fx.file, specifier);
+        let asked_for = self.str(asked_for);
+        let namespace = self.emit_throwing(fx, Op::ExternalModule(asked_for));
+        self.emit(fx, Op::GlobalSet(global, namespace));
+        fx.b.jump(there);
+        fx.b.seal(there);
+        fx.b.switch_to(there);
         self.emit(fx, Op::GlobalGet(global))
     }
 
@@ -1232,7 +1253,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         fx.b.switch_to(throws);
         let unwind = fx.handlers.last().map(|&handler| Target::new(handler));
-        fx.b.terminate(Term::Throw { value: received, unwind });
+        fx.b.terminate(Term::Throw { value: received, unwind, pos: 0 });
         fx.b.switch_to(returns);
         // In an async generator, `return(value)` awaits the value.
         let returned = if is_async { self.emit_throwing(fx, Op::Await(received)) } else { received };
@@ -1806,7 +1827,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     return forced;
                 }
                 // What the program is given stays what it is.
-                if self.c.says_nothing(known) && self.c.is_given(fx.file, expr) {
+                if self.c.says_nothing(known) && (self.c.is_given(fx.file, expr) || self.c.requires_nothing(checked)) {
                     return value;
                 }
                 let (tries, result) = (Ty { id: self.ty_of(checked), checked }, Ty { id: self.ty_of(known), checked: known });

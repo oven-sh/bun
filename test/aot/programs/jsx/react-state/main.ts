@@ -1,4 +1,4 @@
-// React's hooks are containers of what the program put in, like `Map.get`.
+// React's hooks return what the program put in, like `Map.get`.
 import * as React from "react"
 import { breakContract, keepContract, render, useReducer, useState as state } from "react"
 interface Row { id: number; name: string }

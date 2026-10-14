@@ -1,4 +1,4 @@
-// Strings: strings in order at the edges of words (the same program without type annotations).
+// `<`, `<=`, `>` and `>=` on strings of lengths 0, 7, 8, 9, 16 and 17 that differ at every position (the same program without type annotations).
 const narrow = (text) => text.split("").join("");
 function typed(a, b) {
   return (a < b ? 1 : 0) + (a <= b ? 2 : 0) + (a > b ? 4 : 0) + (a >= b ? 8 : 0);

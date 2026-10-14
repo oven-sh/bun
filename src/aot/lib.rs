@@ -121,6 +121,7 @@ struct Begun<'a> {
     /// `None` unless that is empty. Nothing is made of a tree that is not whole, and the translation of a file looks into the trees of
     /// others.
     translating: Option<(build::Shared<'a>, Fragments)>,
+    refused_at: Option<(FileId, u32)>,
 }
 
 impl<'a> Translation<'a> {
@@ -139,7 +140,20 @@ impl<'a> Translation<'a> {
         let mut without_whole_trees = program.files_without_whole_trees();
         without_whole_trees.retain(|&file| program.files.hir(file).kind != FileKind::Declaration);
         let translating = without_whole_trees.is_empty().then(|| (build::Shared::new(program, entry_points, self.constants, in_parallel).counting_literals(self.explain.literals, self.explain.literal_at), Fragments::new(program.files.modules.len())));
-        *self.begun.write().unwrap_or_else(PoisonError::into_inner) = Some(Begun { without_whole_trees, translating });
+        let most = usize::from(u16::MAX);
+        let mut suspects: Vec<(FileId, Option<u32>)> = match &translating {
+            Some((shared, _)) if !self.constants.notes_spans => {
+                (0..program.files.modules.len() as u32).map(FileId).filter(|&file| program.files.modules[file.idx()].bound.symbols.len() > most && shared.is_compiled(file)).map(|file| (file, None)).collect()
+            }
+            _ => Vec::new(),
+        };
+        for_each_mut(&mut suspects, in_parallel, &|(file, place)| *place = program.checker().place_of_environment_of_more_than(*file, most));
+        let refused_at = suspects.into_iter().find_map(|(file, place)| Some((file, place?)));
+        if refused_at.is_some() {
+            program.give_up();
+        }
+        let translating = translating.filter(|_| refused_at.is_none());
+        *self.begun.write().unwrap_or_else(PoisonError::into_inner) = Some(Begun { without_whole_trees, translating, refused_at });
     }
 
     /// `Request::before_visits`. What JavaScript is expected to do goes by how the whole program uses it. So the files that are
@@ -149,7 +163,7 @@ impl<'a> Translation<'a> {
         if let Some((shared, _)) = &begun.as_ref().expect(IS_BEGUN).translating
             && shared.is_compiled(file)
         {
-            c.while_translating(|c| {
+            c.while_translating_behind_the_check(|c| {
                 c.note_uses_of_functions_in(file);
                 c.note_evidence_of_strangers_in(file);
             });
@@ -176,12 +190,13 @@ impl<'a> Translation<'a> {
         if !shared.is_compiled(file) {
             return;
         }
-        let fragment = c.while_translating(|c| {
-            if !c.knows_uses_of_functions() {
+        let fragment = match c.knows_uses_of_functions() {
+            true => c.while_translating_behind_the_check(|c| build::translate_file(c, shared, file)),
+            false => c.while_translating(|c| {
                 c.note_uses_of_functions_in(file);
-            }
-            build::translate_file(c, shared, file)
-        });
+                build::translate_file(c, shared, file)
+            }),
+        };
         if !c.is_warming_up() {
             fragments.put(fragment);
         }
@@ -228,7 +243,8 @@ impl<'a> Translation<'a> {
             // A file that is only code is not checked, so that nobody has reported it.
             None => {
                 let does_not_parse = |&file: &FileId| Problem { file, pos: program.files.hir(file).error_pos, what: "a file that does not parse".into() };
-                Linked { problems: begun.without_whole_trees.iter().map(does_not_parse).collect(), errors: errors.iter().map(|_| None).collect(), ..Linked::default() }
+                let refused = begun.refused_at.map(|(file, pos)| Problem { file, pos, what: "a function with more than 65,535 variables that inner functions use".into() });
+                Linked { problems: begun.without_whole_trees.iter().map(does_not_parse).chain(refused).collect(), errors: errors.iter().map(|_| None).collect(), ..Linked::default() }
             }
         };
         linked.program.logs_type_errors = self.constants.logs_type_errors;

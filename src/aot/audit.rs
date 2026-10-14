@@ -1123,6 +1123,7 @@ pub fn program_of_fragment(fragment: crate::fragment::Fragment, shown_from: &[u8
                 is_allocated: false,
                 may_be_frozen: false,
                 admits_foreign: false,
+                is_opened_for_the_log: false,
                 members: Vec::new(),
                 members_by_fit: Vec::new(),
                 specializations: Vec::new(),

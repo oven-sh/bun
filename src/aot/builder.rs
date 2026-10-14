@@ -5,7 +5,7 @@
 
 use crate::id::{BlockId, TyId, V};
 use crate::ir::{Func, Op, Prediction, Target, Term};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// A local variable of the function being built that no inner function captures.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -146,14 +146,16 @@ impl FuncBuilder {
     /// It keeps its own list of where it has to go on: a function has as many blocks in a row as it has statements.
     fn read_in(&mut self, var: Var, block: BlockId) -> V {
         let mut awaiting: Vec<Awaiting> = Vec::new();
-        let mut found_held: Vec<V> = Vec::new();
+        let mut found_held: FxHashSet<V> = FxHashSet::default();
         let mut block = block;
         loop {
             // Up from `block` to where the variable has a value.
             let mut with_one_pred_in_a_row = 0;
             let mut value = loop {
                 if let Some(&v) = self.states[block.idx()].defs.get(&var) {
-                    found_held.push(v);
+                    if !awaiting.is_empty() {
+                        found_held.insert(v);
+                    }
                     break v;
                 }
                 let (is_sealed, preds) = (self.states[block.idx()].is_sealed, self.states[block.idx()].preds.len());

@@ -1,4 +1,4 @@
-// JSX with the classic runtime: factory const in an arrow.
+// Classic JSX runtime: the factory is a `const` declared inside an arrow function.
 /** @jsxRuntime classic */ /** @jsx h */
 const h = t => t;
 console.log((() => <a />)());

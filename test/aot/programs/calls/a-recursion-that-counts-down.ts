@@ -1,4 +1,4 @@
-// Calls: a recursion that counts down.
+// A recursive function that counts down and then uses a small array.
 function probe(n: number): number {
   if (n > 0) return probe(n - 1)
   const xs = [1, 2, 3]

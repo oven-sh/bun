@@ -1,4 +1,4 @@
-// Strings: replace with a RegExp that finds nothing or something.
+// `replace` with a RegExp that matches nothing, once or several times.
 declare const console: { log(...a: unknown[]): void }
 const g: any = globalThis
 const collect: () => void = g.fullGC ? () => { g.fullGC(); g.fullGC() } : () => { g.Bun.gc(true); g.Bun.gc(true) }

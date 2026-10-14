@@ -1,4 +1,4 @@
-// Strings: keys put together by adds.
+// Lookup keys built with `+` (`a + "," + b`) and used at once in a Map, a Set or an object.
 declare const console: { log(...args: unknown[]): void }
 interface Item { name: string; other: string; n: number }
 const seen: string[] = []

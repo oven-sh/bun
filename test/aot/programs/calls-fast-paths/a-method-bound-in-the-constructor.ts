@@ -1,4 +1,4 @@
-// `constructor() { this.add = this.add.bind(this) }`: `k.add(x)` reads the property the object has of its own, finds the method bound, and calls the method.
+// `constructor() { this.add = this.add.bind(this) }`: a later `k.add(x)` finds the bound own property and calls the method.
 // IR+ IsClosureOf v[0-9]+ f[0-9]+ as made
 // IR+ function [0-9]+ "bound add" Bound
 // IR+ frame [0-9]+ = IsClosureOf v[0-9]+ f[0-9]+$

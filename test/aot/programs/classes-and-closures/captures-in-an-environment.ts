@@ -1,4 +1,4 @@
-// Captured variables that are stored to after an inner function can have seen them: they stay in an environment, one per activation.
+// Captured variables that are assigned after a closure could have seen them are shared, once per call of the enclosing function.
 function call<T>(f: () => T): T { return f(); }
 function assignedAfter() { let n = 1; const f = () => n; n = 2; return f(); }
 function assignedInside() { let n = 1; const f = () => { n = 5; }; f(); return n; }

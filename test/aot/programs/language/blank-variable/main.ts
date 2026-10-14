@@ -1,4 +1,4 @@
-// What a variable holds before anything is stored to it is `undefined`, and it goes wherever nobody wrote a type: an inferred result, a variable without an annotation.
+// A variable holds `undefined` before anything is assigned to it, and that value can flow into inferred results and unannotated variables.
 const show = (...values: unknown[]) => console.log(values.map(String).join(" "))
 function direct() { return n }
 function conditional(c: boolean) { return c ? n : 0 }

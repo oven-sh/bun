@@ -1,4 +1,4 @@
-// Runtime type checks: the prototype of a typed object is fixed.
+// Changing the prototype of a typed object is a build error.
 const plain = { a: 1 }
 const parent = { inherited: "yes", hello() { return "hi " + (this as any).a } }
 try { Object.setPrototypeOf(plain, parent); console.log("another prototype: no error") } catch (e) { console.log("another prototype:", e instanceof TypeError ? "TypeError" : "other " + e) }

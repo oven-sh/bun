@@ -1,4 +1,4 @@
-// Parsed JSON: one member of a union.
+// An object with the same property names and kinds as one member of a union arrives from JSON under another type.
 declare const console: { log(...values: unknown[]): void };
 type Done = { lines: string[] };
 type Verdict =

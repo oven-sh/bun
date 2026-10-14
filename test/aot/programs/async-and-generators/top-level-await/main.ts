@@ -1,4 +1,4 @@
-// Top-level await: dependencies start in order, and a module runs once all it imports are done.
+// Top-level `await`: dependencies start in order, and a module runs once everything it imports has finished.
 import { say, lines } from "./tla/log.ts"
 import { all } from "./tla/parent.ts"
 say("main " + all)

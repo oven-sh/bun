@@ -31,11 +31,6 @@ static bool isUserFunction(JSC::JSCell* callee)
     if (!function || function->isHostFunction() || function->isBuiltinFunction()) {
         return false;
     }
-#if ENABLE(AOT)
-    if (JSC::AOT::hasCompiledCode(function->vm(), function)) {
-        return false;
-    }
-#endif
 
     // A generator or async body function takes JSC-internal arguments: a call from JS corrupts memory.
     return !JSC::isGeneratorOrAsyncFunctionBodyParseMode(function->jsExecutable()->parseMode());

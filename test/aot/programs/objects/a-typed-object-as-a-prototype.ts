@@ -1,4 +1,4 @@
-// A compiled object as the prototype of another object.
+// A typed object serves as the prototype of another object.
 const base = { greeting: "hello", count: 1 }
 const derived = Object.create(base)
 derived.own = true

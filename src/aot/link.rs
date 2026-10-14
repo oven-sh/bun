@@ -2403,9 +2403,21 @@ pub fn link(
     times.add("flows", &mut since);
     let mut has_run_out = false;
     let mut cut_short = Vec::new();
-    for is_second_run in [false, true] {
-        if is_second_run {
+    for run in 0..4 {
+        if run == 1 {
             subtypes = subtypes.begin_again();
+        }
+        if run == 2 {
+            if !subtypes.logs_type_errors() {
+                break;
+            }
+            subtypes = subtypes.begin_the_final_run_again(true);
+        }
+        if run == 3 {
+            if !subtypes.has_opened_too_much_for_the_log() {
+                break;
+            }
+            subtypes = subtypes.begin_the_final_run_again(false);
         }
         while !subtypes.questions().is_empty() || !subtypes.own_questions().is_empty() {
             let (answers, has_this_run_out) = answers_to(checked, subtypes.questions(), subtypes.stored(), &mut cut_short, in_parallel);
@@ -2437,6 +2449,7 @@ pub fn link(
             out.class_flags |= class_flags::MAY_HAVE_OTHER_PROTOTYPE;
         }
         out.admits_foreign = reach.admits_foreign;
+        out.is_opened_for_the_log = reach.is_opened_for_the_log;
         out.members = layouts_at(&reach.members);
         out.members_by_fit = layouts_at(&reach.members_by_fit);
         out.specializations = layouts_at(&reach.specializations);
@@ -2772,7 +2785,7 @@ pub fn link(
             let before = &text[(starts[line] as usize).min(text.len())..(pos as usize).min(text.len())];
             (line as u32 + 1, String::from_utf8_lossy(before).encode_utf16().count() as u32 + 1)
         };
-        explained.append(&mut throws::explain(&program, explain.throws_json, explain.throws_all, &line_and_column, in_parallel));
+        explained.append(&mut throws::explain(&program, checked.checker().logs_type_errors(), explain.throws_json, explain.throws_all, &line_and_column, in_parallel));
     }
     if explain.literals {
         explained.append(&mut literals);

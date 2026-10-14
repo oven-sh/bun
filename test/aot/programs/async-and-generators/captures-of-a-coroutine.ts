@@ -1,4 +1,4 @@
-// Coroutines: captures are parameters, so they live in the frame.
+// Variables captured by async functions and generators.
 function* counter(from: number, step: number) { let at = from; const bump = () => { at += step; }; while (at < from + 3 * step) { yield at; bump(); } }
 async function sum(list: number[], scale: number) { let total = 0; for (const x of list) { await null; [x].forEach(v => { total += v * scale; }); } return total; }
 function makers(k: number) { return { gen: function* () { yield k; yield k + 1; }, run: async () => { await null; return k * 2; } }; }

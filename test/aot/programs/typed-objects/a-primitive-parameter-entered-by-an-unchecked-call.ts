@@ -1,4 +1,4 @@
-// A parameter declared with primitive kinds only, entered by a call the type checker did not check.
+// A parameter declared with primitive types only receives a value from a call that TypeScript did not check.
 /* expected
 seen TypeError
 unseen TypeError

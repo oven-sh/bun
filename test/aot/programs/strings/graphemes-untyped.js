@@ -1,4 +1,4 @@
-// Intl.Segmenter by graphemes: where icu is not asked the answer is what icu gives: plain Bun asks it everything (the same program without type annotations).
+// `Intl.Segmenter` with grapheme granularity: the fast path that avoids ICU gives the same answers as ICU (the same program without type annotations).
 const print = (s) => console.log(s);
 function show(x) {
   if (typeof x !== "string")

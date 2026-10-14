@@ -1,4 +1,4 @@
-// Length, [i], at, charAt, charCodeAt, codePointAt: every kind of string, every kind of index.
+// `length`, `[i]`, `at`, `charAt`, `charCodeAt` and `codePointAt` on every internal representation of a string, with every kind of index.
 // CALLS- length_ CallHostFunction|operationAOTTyped(Call|GetByName)
 // CALLS- charCodeAt_ CallHostFunction|CallValue
 // CALLS- charAt_ CallHostFunction|CallValue

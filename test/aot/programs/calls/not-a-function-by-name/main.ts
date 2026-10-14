@@ -1,4 +1,4 @@
-// `o.m(..)` written as `GetById` + `Call`: the TypeError names `m`, as that of a call by name does.
+// The TypeError for calling `o.m(..)` when `m` is not a function names `m`.
 // @ts-ignore
 import untyped from "./untyped.js";
 declare const console: any;

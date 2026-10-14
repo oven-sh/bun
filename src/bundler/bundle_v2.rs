@@ -2764,6 +2764,29 @@ pub mod bv2_impl {
                         | ExprData::ENull(_)) => root,
                         _ => return None,
                     };
+                    let mut work = vec![root];
+                    while let Some(data) = work.pop() {
+                        match data {
+                            ExprData::EObject(object) => {
+                                for property in object.properties.slice() {
+                                    let (bun_ast::G::PropertyKind::Normal, Some(bun_ast::Expr { data: ExprData::EString(_), .. }), Some(value)) = (property.kind, property.key, property.value) else {
+                                        return None;
+                                    };
+                                    work.push(value.data);
+                                }
+                            }
+                            ExprData::EArray(array) => work.extend(array.items.slice().iter().map(|item| item.data)),
+                            ExprData::EString(string) if string.toml_datetime.is_some() => return None,
+                            ExprData::ENumber(number) if !number.value().is_finite() => return None,
+                            ExprData::EString(_)
+                            | ExprData::EObjectJSON(_)
+                            | ExprData::EArrayJSON(_)
+                            | ExprData::ENumber(_)
+                            | ExprData::EBoolean(_)
+                            | ExprData::ENull(_) => {}
+                            _ => return None,
+                        }
+                    }
                     let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
                     let options = bun_js_printer::PrintJsonOptions { minify_whitespace: true, ..Default::default() };
                     bun_js_printer::print_json(&mut printer, bun_ast::Expr { data: root, loc: stmt.loc }, source, options).ok()?;

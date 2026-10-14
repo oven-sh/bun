@@ -1,4 +1,4 @@
-// A store to an imported binding: a `const` arrow function that captures, by an array pattern with a default.
+// An imported `const` arrow function that captures a variable is the target of an array pattern with a default, which is a build error.
 import * as ns from "./m.js";
 const log = []; const note = (x) => (log.push(x), x);
 const tell = (name, f) => { try { const r = f(); console.log(name + ": " + (typeof r === "function" ? "function" : String(r))); } catch (e) { console.log(name + ": threw " + e.name); } };

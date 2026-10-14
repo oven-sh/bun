@@ -1,8 +1,8 @@
-// Small things found by compiling large programs.
+// Small language features that compiling large programs showed to be missing.
 type Box = { inner?: { value: number, get(): number } }
 const full: Box = { inner: { value: 4, get() { return this.value + 1 } } }
 const empty: Box = {}
-// What `get` is called on is of the type that its `this` has. On another object: type-rules/this-is-asserted-on-entry.
+// What `get` is called on is of the type that its `this` has. On another object: type-rules/this-is-checked-on-entry.
 const other: NonNullable<Box["inner"]> = { value: 9, get() { return 0 } }
 function paren(b: Box): string { try { return "v" + (b.inner?.value)!.toString() } catch (e) { return (e as Error).constructor.name } }
 console.log(paren(full), paren(empty), (full.inner?.value)?.toFixed(1), (empty.inner?.value)?.toFixed(1), (full.inner?.get)?.call(other), full.inner?.["get"](), empty.inner?.["get"]())

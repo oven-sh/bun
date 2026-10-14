@@ -1,4 +1,4 @@
-// Calls: a slice of a string that became 16-bit.
+// A substring of an 8-bit string whose characters were replaced by those of an equal 16-bit interned string is compared with an equal literal.
 const table: Record<string, number> = {};
 const wide = "qwertyuiopasdfghjkl☃".slice(0, 19);
 Symbol(wide);

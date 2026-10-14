@@ -225,6 +225,7 @@ pub struct Layout {
     /// The layout as a way to look at objects: a place of this type may also hold an object that is not laid out, an array, a function,
     /// what the host or a package has made.
     pub admits_foreign: bool,
+    pub is_opened_for_the_log: bool,
     /// The layout as a way to look at objects: the allocated layouts whose type is assignable to this type, itself among them if it is
     /// allocated. No other object of the program is in a place of this type. Sorted.
     pub members: Vec<LayoutId>,
@@ -501,7 +502,7 @@ pub enum Term {
     Switch { value: V, cases: Vec<(i64, Target)>, default: Target },
     Return(V),
     /// `unwind`: the handler in this function.
-    Throw { value: V, unwind: Option<Target> },
+    Throw { value: V, unwind: Option<Target>, pos: u32 },
     /// The last operation of the block may throw: control goes to `unwind` then.
     Invoke { normal: Target, unwind: Target },
     Unreachable,

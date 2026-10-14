@@ -1,4 +1,4 @@
-// `var S = allocator.getSym()`, `new S(..) as T`: the callee is a call result, so it is only expected.
+// `var S = allocator.getSym(); new S(..) as T`: the constructor is the result of a call, so it can only be predicted.
 // IR+ IsClosureOf
 // IR+ : TransientSym\.[0-9]+ (frame [0-9]+ )?= NewObjectWithShape
 // IR+ ConstructWith

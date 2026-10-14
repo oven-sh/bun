@@ -1,4 +1,4 @@
-// An exported variable is named by one symbol in its own file and by another from outside.
+// An exported `let` is assigned in its own module and read from another module.
 import { bump, hits, label, limit, read, state } from "./dep"
 export let count = 0
 export let total: number = 10

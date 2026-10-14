@@ -756,7 +756,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let is_for_any = self.c.contextual_type_of_literal(fx.file, e).is_some_and(|expected| self.c.is_any(expected) || expected == TypeId::UNKNOWN);
         let has_room = want.is_none() && !is_for_any || want.is_some() && {
             let wanted = self.out.tys.get(want);
-            wanted.parts.iter().any(|part| matches!(part, Part::Class(_))) && (wanted.any_object || wanted.parts.iter().any(|part| matches!(part, Part::Global(..))))
+            wanted.parts.iter().any(|part| matches!(part, Part::Class(_))) && (wanted.any_object || wanted.parts.iter().any(|part| matches!(part, Part::Global(..))) || !self.is_made_by_casts(want))
         };
         fx.is_typed
             && has_room
@@ -1125,7 +1125,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let checked = self.type_of_value(fx, e);
         let own = self.ty_of(checked);
         let described = self.out.tys.get(own);
-        own != self.out.tys.anything && described.has_objects() && !described.any_object && !self.is_made_by_casts(own)
+        own != self.out.tys.anything
+            && described.has_objects()
+            && !described.any_object
+            && (!self.is_made_by_casts(own)
+                || matches!(self.hir(fx.file)[e].kind, ExprKind::Dot { .. } | ExprKind::Index { .. }) && matches!((described.only_layout(), self.out.tys.get(want).only_layout()), (Some(read_as), Some(looked_at_as)) if read_as != looked_at_as))
     }
 
     /// `const wide: Loose = narrow; wide.n = "text"`: an object is accessed as the type of the expression says, whatever else is known of
@@ -1221,6 +1225,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if ty == self.out.tys.anything || self.out.tys.get(ty).is_never() {
             return true;
         }
+        if self.shared.constants.logs_type_errors && self.out.tys.get(ty).parts.iter().any(|part| matches!(part, Part::Class(_))) {
+            return false;
+        }
         let may_throw = matches!(
             fx.b.func.op(value),
             Some(Op::PropGet { .. } | Op::ElemGet { .. } | Op::Call { .. } | Op::CallMethod { .. } | Op::Construct { .. } | Op::Await(_) | Op::Operation { .. } | Op::IterGet { .. })
@@ -1239,6 +1246,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     pub(crate) fn new_var(&mut self, fx: &mut Fx, ty: Ty) -> Var {
+        let ty = if ty.id.is_some() && self.out.tys.get(ty.id).is_never() { Ty::NONE } else { ty };
         let var = fx.b.new_var(self.or_anything(ty.id));
         let blank = self.blank_of(ty.id);
         if blank != Op::Undefined {

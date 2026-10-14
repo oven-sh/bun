@@ -1,4 +1,4 @@
-// Each iteration of a loop at the top level of a module has bindings of its own.
+// Each iteration of a loop at the top level of a module has its own bindings.
 const made: Record<string, { get(): string }> = {}
 for (const [name, value] of Object.entries({ a: 1, b: 2, c: 3 })) {
   made[name] = { get() { return name + value } }

@@ -1,4 +1,4 @@
-// A lookup in a map that only compiled code holds, with a key of unknown type, and a claim on what is found.
+// A lookup in a local Map with a key of unknown type, whose result is cast to a type.
 interface Entry { name: string }
 const entries = new Map<unknown, Entry>()
 function find(key: unknown): Entry | undefined { return entries.get(key) }

@@ -1,4 +1,4 @@
-// Wrappers that pass their arguments on make no array.
+// Wrappers that pass their arguments on allocate no array.
 // IR= 0 viaSpread CreateRest
 // IR= 1 viaSpread CallForwardVarargs
 // IR= 1 viaApplyRest CallForwardVarargs .* 1$

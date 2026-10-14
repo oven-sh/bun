@@ -1,4 +1,4 @@
-// Typed objects: optional fields of an interface.
+// Optional and nullable fields of interfaces are added, set to null, deleted and read.
 interface Author { nick: string; age?: number }
 interface Doc { id: number; title?: string; author: Author; editor?: Author | null; refs: number[] }
 function make(id: number): Doc { return { id, title: "t" + id, author: { nick: "a" + id }, editor: null, refs: [id] } }

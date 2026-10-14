@@ -480,7 +480,9 @@ impl Checker<'_, '_> {
             return self.discarded.insert(diagnostic);
         }
         if self.is_reported_too_late(None, diagnostic.file) {
-            self.mark_tainted_from(0);
+            if !self.is_behind_the_check() {
+                self.mark_tainted_from(0);
+            }
             return self.discarded.insert(diagnostic);
         }
         self.reported.push(diagnostic);
@@ -703,6 +705,9 @@ impl Checker<'_, '_> {
         if self.is_type_checked && diagnostic.file == NOWHERE.0
             || self.is_reported_too_late(owner, diagnostic.file)
         {
+            if diagnostic.file != NOWHERE.0 && self.is_behind_the_check() {
+                return;
+            }
             return self.mark_tainted_from(0);
         }
         diagnostic.by_emit |= self.is_emitting;

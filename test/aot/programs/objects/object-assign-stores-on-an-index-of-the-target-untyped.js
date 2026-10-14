@@ -1,4 +1,4 @@
-// Objects: `Object.assign` stores on an index of the target (the same program without type annotations).
+// `Object.assign` onto a target that has an accessor for an index key calls the setter for every source, as the specification says.
 const target = () => ({ get 1() { return 5; }, set 1(v) {} });
 console.log("one plain source", Object.assign(target(), { 1: "x" })[1]);
 console.log("behind a getter source (row 129)", Object.assign(target(), { get b() { return 1; } }, { 1: "x" })[1]);

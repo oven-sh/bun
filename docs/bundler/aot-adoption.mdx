@@ -3,7 +3,7 @@ title: "Adopting --aot"
 description: "Find what changes when your program is compiled ahead of time, fix it, and roll it out in four steps"
 ---
 
-<Warning>Ahead-of-time compilation is experimental. It supports macOS on Apple silicon.</Warning>
+<Warning>Ahead-of-time compilation is experimental. It works on macOS arm64 and on Linux x64 with glibc.</Warning>
 
 [`--aot`](/bundler/executables#ahead-of-time-compilation) does not erase your TypeScript types. It uses them to generate machine code, so it also holds your program to them:
 
@@ -18,7 +18,7 @@ Most programs have a few places where data from outside the type system, such as
 | ---- | ---------------------------------------------------------- | --------------------- | -------------------------------------- |
 | 1    | `bun --aot-audit`, `bun test --aot-audit`                  | development, CI       | runs as usual, and logs                |
 | 2    | `bun check --aot`, `bun check --aot --aot-explain=throws`  | CI, every build       | is not run                             |
-| 3    | `bun build --compile --aot --aot-type-errors=log`          | production            | is compiled, logs, and keeps going     |
+| 3    | `bun build --compile --aot --aot-type-errors=log`          | production            | is compiled, logs, and keeps going where it can |
 | 4    | `bun build --compile --aot`                                | production            | is compiled, and throws                |
 
 The examples use this program:
@@ -101,7 +101,7 @@ Bun type checks and analyzes the whole program before it starts, so the first st
 - There is no way to silence a line. If the value is right and the type is not, change the type.
 - A file that calls `eval()` directly is not audited. Bun says so.
 - Under `bun test`, when a test file or a preload can replace a module (`mock.module()`, `jest.mock()`, `vi.mock()`, `spyOn()` on a module namespace), arguments passed to imported functions are not checked in that run.
-- Functions do not make tail calls while the audit is on, so stacks are deeper and very deep recursion can overflow.
+- Functions do not make tail calls while the audit is on, so stacks are deeper and very deep recursion overflows. The executable [makes none either](#common-fixes).
 - Code with many type checks in hot loops runs 5% to 20% slower.
 
 The exit code does not change either. To fail a CI job, write the lines to a file and test that it is empty. Bun appends to the file, so remove it first. The audit reads the [same two environment variables](#3-log-in-production) as the executable:
@@ -171,7 +171,11 @@ const result = await Bun.build({
 
 ## 3. Log in production
 
-Tests do not see all the data that production sees. Build with `--aot-type-errors=log`, and the executable writes a line where it would throw, then continues the way plain JavaScript does where it can.
+Tests do not see all the data that production sees. Build with `--aot-type-errors=log`, and the executable writes a line where it would throw.
+
+<Warning>
+  A log build does not keep going everywhere yet. It goes on, the way plain JavaScript does, after a string, number or boolean of the wrong kind is passed to a function (`continued`), and after `as` on such a value (`converted`). **An object that does not match its type still throws** after its line is written (`threw`): parsed JSON that lacks a required property, or an object from a package where your type says something else. Such a request fails as it does in step 4. The log tells you where.
+</Warning>
 
 <Tabs>
   <Tab title="CLI">
@@ -262,11 +266,15 @@ if (typeof visits !== "number") throw new Error("visits must be a number"); // [
 double(visits); // [!code ++]
 ```
 
-**A `number` or `boolean` variable without a value.** `bun check --aot` reports `TS100001: Variable 'port' has no initializer and may be read before it is assigned` when another function reads it.
+**Very deep recursion.** Without `--aot`, a function that ends in `return f(x)` gives its stack frame to `f`. Compiled code keeps a frame for every call, as Node.js does, so `sum(1_000_000)` throws `RangeError: Maximum call stack size exceeded`. It does under the audit too. Write a loop.
 
 ```ts
-let port: number; // [!code --]
-let port: number | undefined; // [!code ++]
+function sum(n: number, total = 0): number {
+  if (n === 0) return total; // [!code --]
+  return sum(n - 1, total + n); // [!code --]
+  for (; n > 0; n--) total += n; // [!code ++]
+  return total; // [!code ++]
+}
 ```
 
 **A declaration that says too little.** `expected string, got native Buffer` means that the value is fine and the type is not. Widen the parameter, or convert at the call.

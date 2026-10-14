@@ -1,2 +1,2 @@
-// Untyped JavaScript: members of values that may be built-in functions.
+// `x.call`, `typeof x.call` and similar reads on a value that is either a built-in function or something else.
 import "./impl.js";

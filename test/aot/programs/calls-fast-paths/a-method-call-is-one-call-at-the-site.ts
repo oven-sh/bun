@@ -1,4 +1,4 @@
-// A CallMethod site is one `bl`: where the slot has no answer the thunk makes a frame, has the method read, restores what is passed and calls.
+// A method call on a receiver of unknown type is a single call instruction at the call site.
 
 declare const console: any; declare const globalThis: any;
 const said: string[] = [];

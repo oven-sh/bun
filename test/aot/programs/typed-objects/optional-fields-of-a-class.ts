@@ -1,4 +1,4 @@
-// Optional fields of a class, declared without initializer: there from the start, holding undefined.
+// Optional class fields that are declared without an initializer exist from the start and hold undefined.
 class C { label = "x"; tag?: string; n?: number }
 function read(c: C): string { return String(c.tag) + "/" + String(c.n) + "/" + ("tag" in c) + "/" + Object.hasOwn(c, "tag") }
 const list: C[] = []

@@ -1,2 +1,2 @@
-// Untyped JavaScript: built-in method called on wrong receiver.
+// Built-in methods called on receivers of the wrong kind throw the right TypeError.
 import "./impl.js";

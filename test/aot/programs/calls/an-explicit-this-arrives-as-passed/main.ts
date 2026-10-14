@@ -1,4 +1,4 @@
-// The explicit `this` arrives as it was passed.
+// An explicit `this` passed with `call`, `apply` or `bind` arrives unchanged.
 // @ts-ignore
 import * as m from "./untyped.js";
 declare const console: any;

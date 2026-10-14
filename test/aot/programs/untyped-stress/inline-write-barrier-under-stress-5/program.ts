@@ -2,4 +2,4 @@
 // ENV JSC_largeHeapSize=65536
 // ENV JSC_useZombieMode=1
 // ENV JSC_sweepSynchronously=1
-import "./inline-write-barrier-impl.js";
+import "./impl.js";

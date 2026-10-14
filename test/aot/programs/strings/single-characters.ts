@@ -1,4 +1,4 @@
-// A string of one character that an access has just made, compared with a constant of one character or with another such string.
+// A one-character string that was just read from a string is compared with a one-character literal or with another such string.
 // CALLS- slashAt StringHasAt|StringIsText
 // CALLS- slashCharAt StringHasAt|StringIsText
 // CALLS- slashByAt StringHasAt|StringIsText

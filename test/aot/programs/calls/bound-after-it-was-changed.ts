@@ -1,4 +1,4 @@
-// For 157: `f.bind(..)` of a closure that is KNOWN at the site.
+// `f.bind(..)` on a known function that was given properties or another prototype beforehand.
 const say = (what: string, ...values: unknown[]): void => console.log(what + ": " + values.map(v => typeof v === "function" ? "function" : String(v)).join(" | "))
 { const arrow = (a: number) => a; say("as made", arrow.bind(null).name, arrow.bind(null).length, arrow.bind(null)(3)) }
 { const arrow = (a: number) => a; Object.defineProperty(arrow, "name", { value: "renamed" }); say("a name", arrow.name, arrow.bind(null).name, arrow.bind(null)(3)) }

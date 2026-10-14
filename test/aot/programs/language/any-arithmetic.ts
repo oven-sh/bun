@@ -1,4 +1,4 @@
-// What an operator makes of `any` is a number or a bigint, whatever TypeScript infers for it: nobody wrote that type.
+// The result of an arithmetic operator on `any` operands is a number or a BigInt, whatever TypeScript infers for it.
 const show = (name: string, f: () => unknown) => {
   let text: string
   try { const v = f(); text = typeof v + " " + String(v) } catch (e) { text = "throws " + (e as Error).constructor.name }

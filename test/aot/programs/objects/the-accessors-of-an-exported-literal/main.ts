@@ -1,4 +1,4 @@
-// Objects: the accessors of an exported literal.
+// An object literal with getters and setters is exported from one file and used through a declared type in another.
 import { own, only, pair, make, annotated } from "./files/lib.ts";
 declare const console: any;
 function line(name: string, f: () => unknown) { try { console.log(name, JSON.stringify(f())); } catch (e: any) { console.log(name, "THREW", e.constructor.name, String(e.message).slice(0, 70)); } }

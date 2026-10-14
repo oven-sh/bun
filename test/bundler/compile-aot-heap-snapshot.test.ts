@@ -89,3 +89,43 @@ test.each([[["--aot"]], [[]]])("a heap snapshot names the properties that hold o
   expect(JSON.parse(stdout)).toEqual({ first: 1, others: 99, settings: 1, v8: [], closures: [] });
   expect(exitCode).toBe(0);
 });
+
+const manyShapes = {
+  "app.ts": `
+declare const Bun: { isMainThread: boolean; generateHeapSnapshot(format: "v8"): string };
+const lines = "${"\\n".repeat(6000)}";
+const kept: object[] = [];
+${Array.from({ length: 400 }, (_, i) => `kept.push({ field_${i}_of_a_literal: [${i}], another_${i}: "text ${i}" });`).join("\n")}
+const text = Bun.generateHeapSnapshot("v8");
+const said = [lines.length, kept.length, text.includes("field_399_of_a_literal")];
+if (Bun.isMainThread) {
+  const worker = new Worker(import.meta.url);
+  worker.onmessage = event => {
+    console.log(JSON.stringify({ main: said, worker: event.data }));
+    worker.terminate();
+  };
+} else {
+  postMessage(said);
+}
+`,
+  "tsconfig.json": files["tsconfig.json"],
+};
+
+test.each([[["--aot"]], [[]]])("a heap snapshot of a program with many shapes, in a Worker too: bun build --compile %p", async flags => {
+  const dir = String(tempDir("compile-aot-heap-snapshot", manyShapes));
+  await using build = spawn({
+    cmd: [bunExe(), "build", "--compile", ...flags, "app.ts", "--outfile", "app"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [buildErrors, buildExitCode] = await Promise.all([build.stderr.text(), build.exited]);
+  expect(buildErrors).not.toContain("error");
+  expect(buildExitCode).toBe(0);
+  await using run = spawn({ cmd: [join(dir, "app")], cwd: dir, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ main: [6000, 400, true], worker: [6000, 400, true] });
+  expect(exitCode).toBe(0);
+});

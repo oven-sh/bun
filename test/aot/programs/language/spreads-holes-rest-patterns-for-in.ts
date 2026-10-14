@@ -1,4 +1,4 @@
-// Spreads, holes, rest, patterns, regular expressions, object literals of every kind, `for in`, logical assignment, `this` in arrows.
+// Spread, holes, rest, patterns, regular expressions, object literals of every kind, `for..in`, logical assignment, and `this` in arrow functions.
 const a = [1, 2, 3]
 const b = [0, ...a, 4, ...[5, 6], ..."xy"]
 console.log(b.join(","), b.length, [...new Set([1, 1, 2])].join(""), [1, , 3].length, 1 in [1, , 3])

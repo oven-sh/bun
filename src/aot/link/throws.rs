@@ -206,6 +206,16 @@ impl Site {
         self.risk == "primitive" && self.is_at_an_entry
     }
 
+    fn in_a_log_build(&self) -> &'static str {
+        if self.name == "as-convert" {
+            "converts"
+        } else if self.goes_on_when_logged() || self.risk == "open" {
+            "continues"
+        } else {
+            "throws"
+        }
+    }
+
     pub(super) fn message(&self) -> (u32, Vec<Vec<u8>>) {
         let bytes = |text: &str| text.as_bytes().to_vec();
         match self.kind {
@@ -2734,7 +2744,7 @@ fn find(program: &Program, in_parallel: InParallel<'_>) -> (Vec<Site>, Vec<(Kind
     (sites, fine, rounds, report.throws_either_way, [prepared, settled - prepared, begun.elapsed().as_secs_f64() - settled])
 }
 
-pub(super) fn explain(program: &Program, as_json: bool, lists_all: bool, line_and_column: &dyn Fn(u32, u32) -> (u32, u32), in_parallel: InParallel<'_>) -> Vec<String> {
+pub(super) fn explain(program: &Program, logs_type_errors: bool, as_json: bool, lists_all: bool, line_and_column: &dyn Fn(u32, u32) -> (u32, u32), in_parallel: InParallel<'_>) -> Vec<String> {
     let (sites, fine, rounds, throws_either_way, [prepared, settled, looked]) = find(program, in_parallel);
     let path_of = |module: u32| String::from_utf8_lossy(program.strs.get(program.modules[module as usize].display_path)).into_owned();
     let mut lines = Vec::new();
@@ -2782,6 +2792,9 @@ pub(super) fn explain(program: &Program, as_json: bool, lists_all: bool, line_an
                 let _ = write!(text, ",\"callId\":\"{id_of_call}\"");
             }
             let _ = write!(text, ",\"action\":\"{verdict}\",\"category\":\"{}\"", site.tier.text());
+            if logs_type_errors {
+                let _ = write!(text, ",\"logBuild\":\"{}\"", site.in_a_log_build());
+            }
             for (key, value) in [("risk", site.risk), ("source", &site.door[..])] {
                 if !value.is_empty() {
                     let _ = write!(text, ",\"{key}\":\"{}\"", escaped(value));
@@ -2802,6 +2815,9 @@ pub(super) fn explain(program: &Program, as_json: bool, lists_all: bool, line_an
             let _ = write!(text, ": expected {}, {} {}", site.expected, if site.verdict == Verdict::Wrong { "always gets" } else { "may get" }, site.shown());
         }
         let _ = write!(text, "; {verdict}");
+        if logs_type_errors {
+            let _ = write!(text, "; this log build {} here", site.in_a_log_build());
+        }
         if let Some(id_of_call) = &id_of_call {
             let _ = write!(text, "; call {id_of_call}");
         }
@@ -2859,6 +2875,11 @@ pub(super) fn explain(program: &Program, as_json: bool, lists_all: bool, line_an
     let counted = if lists_all { 0 } else { sites.iter().filter(|site| site.tier == Tier::Typed && site.verdict != Verdict::Wrong).count() };
     let always = sites.iter().filter(|site| site.verdict == Verdict::Wrong).count();
     let mut summary = format!("[aot] type-check summary: {} checks can fail when the program runs, {always} always fail", sites.len() - counted - always);
+    if logs_type_errors {
+        let listed = || sites.iter().filter(|site| site.verdict != Verdict::Wrong && (lists_all || site.tier != Tier::Typed));
+        let count = |what: &str| listed().filter(|site| site.in_a_log_build() == what).count();
+        let _ = write!(summary, "; behind its line in the log, this build continues at {}, converts at {} and still throws at {}", count("continues"), count("converts"), count("throws"));
+    }
     if counted != 0 {
         let _ = write!(summary, "; {counted} more fail only if TypeScript code of the program itself produces a value of the wrong type (--aot-explain=throws-all lists them)");
     }

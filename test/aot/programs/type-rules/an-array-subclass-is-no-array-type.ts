@@ -1,4 +1,4 @@
-// Runtime type checks: an array subclass is no array type.
+// An instance of a subclass of Array is rejected where the array type `T[]` is declared.
 class Sub extends Array<number> { *[Symbol.iterator](): Generator<number, undefined, unknown> { yield 100; yield 200 } }
 class Plain extends Array<number> {}
 function each(x: any) { const out: unknown[] = []; for (const v of x) out.push(v); return out.join() }

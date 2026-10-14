@@ -1,4 +1,4 @@
-// `delete` of a property that is optional in the type it is deleted through.
+// `delete` of a property that is optional in the type through which it is deleted.
 interface Base { kind: number; }
 interface WithFlags extends Base { flags?: number; }
 interface Everything extends Base { flags: number; }

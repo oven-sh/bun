@@ -1255,6 +1255,16 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM
         // on this thread.
         let vm = unsafe { &mut *vm_ptr };
+        if let Some(report) = ctx.runtime_options.aot_decode_crash_report.take() {
+            let frames = bun_crash_handler::compiled_frames_of_report(&report);
+            if frames.is_empty() {
+                Output::err_generic("--aot-decode-crash-report: there are no frames of this executable's compiled code in that report", ());
+                Global::exit(1);
+            }
+            let _ = Output::writer().write_all(&frames);
+            Output::flush();
+            Global::exit(0);
+        }
         if graph.runtime_options.jit_policy > 1.0 {
             vm.jsc_vm()
                 .set_startup_jit_deferral_scale(f64::from(graph.runtime_options.jit_policy));

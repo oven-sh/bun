@@ -1,3 +1,3 @@
-// Runtime type checks: an optional field found on a changed prototype chain.
+// An optional field that is absent on the object but present on its prototype chain is found there.
 import "../../jsc-shell-functions.ts";
 import "./program.ts";

@@ -1,4 +1,4 @@
-// `new F(x)` where nothing is known of F, for plain functions, functions with properties of their own, with more parameters than arguments, classes.
+// `new F(x)` where `F` is not known statically: plain functions, functions with own properties, with more parameters than arguments, and classes.
 // @ts-ignore
 import untyped from "./untyped.js";
 declare const console: any;

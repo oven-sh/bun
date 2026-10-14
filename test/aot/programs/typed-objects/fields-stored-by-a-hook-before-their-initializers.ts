@@ -1,4 +1,4 @@
-// Fields that a hook stores to before their initializers run.
+// Fields that a method called from the base constructor assigns before their own initializers run.
 class B { s = "s"; constructor() { console.log(JSON.stringify(this)); this.hook() } hook() {} }
 class D extends B { x = 1; y?: number; z: string | undefined; hook() { this.y = 5; this.z = "hook"; console.log(this.y, this.z, JSON.stringify(this)) } }
 const d = new D()

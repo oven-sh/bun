@@ -1,0 +1,8 @@
+a number as a function: TypeError []
+an object as an array: TypeError []
+old k
+an object as a Map: no error
+real new new
+own property named like a method: TypeError square3
+own property named like a method: TypeError circle3
+own property named like a method: TypeError square3

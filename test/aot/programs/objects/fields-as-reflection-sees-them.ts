@@ -1,4 +1,4 @@
-// The fields of a compiled object as reflection sees them.
+// The fields of a typed object as reflection sees them: descriptors, enumerability, order.
 interface Command { name: string; description: string; hidden: boolean; count: number }
 function command(name: string, dynamic: boolean): Command {
   const made: Command = { name, description: dynamic ? "" : "static " + name, hidden: false, count: 1 }

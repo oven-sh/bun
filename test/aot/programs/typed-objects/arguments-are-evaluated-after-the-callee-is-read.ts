@@ -1,4 +1,4 @@
-// Typed objects: arguments are evaluated after the callee is read.
+// The callee of a method call is read before the arguments are evaluated, so an argument that replaces the method has no effect on the call.
 interface Speaker { id: number; speak(greeting: string): string }
 function sharedSpeak(this: Speaker, greeting: string): string { return greeting + " shared " + this.id }
 class ClassSpeaker implements Speaker {

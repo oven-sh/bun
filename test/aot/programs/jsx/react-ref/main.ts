@@ -1,4 +1,4 @@
-// `useRef` yields an object that React makes: an ordinary object, looked at as what the declaration says.
+// `useRef` returns an ordinary object that React creates, used through its declared type.
 import { breakContract, createContext, keepContract, render, useContext, useRef } from "react"
 interface Theme { color: string; depth: number }
 const Themed = createContext<Theme>({ color: "red", depth: 1 })

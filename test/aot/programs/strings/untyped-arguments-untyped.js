@@ -1,4 +1,4 @@
-// Methods of strings called in code without types: the receiver and the arguments may be anything (the same program without type annotations).
+// String methods called in code without type annotations, where the receiver and the arguments can be anything (the same program without type annotations).
 const print = (s) => console.log(s);
 function show(x) {
   if (typeof x !== "string")

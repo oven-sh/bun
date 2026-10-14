@@ -1,4 +1,4 @@
-// The key of a read of a rest array, or of `arguments`, that is not made.
+// Reads of a rest parameter or of `arguments` with keys that are not valid indices.
 // IR= 0 byBoolean CreateRest
 // IR= 1 byBoolean GetMyArgumentByVal
 // IR= 1 byInteger GetMyArgumentByVal

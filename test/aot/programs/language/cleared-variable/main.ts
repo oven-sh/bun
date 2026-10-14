@@ -1,4 +1,4 @@
-// A `var`, or a variable declared without a value, has room for `undefined` by how it is declared.
+// A `var`, or a variable declared without an initializer, can hold `undefined` whatever its declared type.
 const text = (value: unknown) => String(value)
 const show = (...values: unknown[]) => console.log(values.map(text).join(" "))
 enum Target { ES5, ES2015 }

@@ -212,8 +212,10 @@ pub struct Disk {
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
     /// `Provided::jsx_of_files`, by `tspath.Path`.
     pub(crate) jsx_of_files: Vec<(Vec<u8>, JsxOfFile)>,
+    pub(crate) constants_of_imports: FxHashMap<(Vec<u8>, Vec<u8>), Vec<u8>>,
     /// `Request::is_one_program`: what is compiled.
     pub(crate) compiled: Option<Compiled>,
+    pub(crate) reads_as_the_runtime: bool,
 }
 
 /// What `Host::builtin_files` goes by, and what it has found.
@@ -278,6 +280,7 @@ pub struct Provided {
     pub scripts_of_page: Option<ScriptsOfPage>,
     /// By path, as the caller has it.
     pub jsx_of_files: Vec<(Vec<u8>, JsxOfFile)>,
+    pub constants_of_imports: Vec<((Vec<u8>, Vec<u8>), Vec<u8>)>,
     /// With `Request::is_one_program`: none of the runtime's own modules is compiled with the program (`Host::builtin_files`).
     pub without_builtin_modules: bool,
     /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
@@ -394,6 +397,54 @@ fn decoded(mut bytes: Vec<u8>, keeps_mark: bool) -> Cow<'static, [u8]> {
     })
 }
 
+fn as_the_runtime_reads(bytes: &[u8]) -> Vec<u8> {
+    const LEAST: [u32; 5] = [0, 0, 0x80, 0x800, 0x10000];
+    let mut units: Vec<u32> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let lead = bytes[i];
+        let len = if !(0xC0..0xF8).contains(&lead) { 1 } else if lead < 0xE0 { 2 } else if lead < 0xF0 { 3 } else { 4 };
+        let mut character = if len == 1 { u32::from(lead) } else { u32::from(lead & (0x7F >> len)) };
+        let mut is_whole = i + len <= bytes.len();
+        for k in 1..len {
+            if !is_whole {
+                break;
+            }
+            is_whole = bytes[i + k] & 0xC0 == 0x80;
+            character = character << 6 | u32::from(bytes[i + k] & 0x3F);
+        }
+        if !is_whole || character < LEAST[len] || character > 0x10FFFF {
+            units.push(0xFFFD);
+            i += 1;
+            continue;
+        }
+        i += len;
+        if character < 0x10000 {
+            units.push(character);
+        } else {
+            units.push(0xD7C0 + (character >> 10));
+            units.push(0xDC00 | (character & 0x3FF));
+        }
+    }
+    let mut text = Vec::with_capacity(bytes.len() + bytes.len() / 8 + 16);
+    let mut j = 0;
+    while j < units.len() {
+        let mut character = units[j];
+        j += 1;
+        if (0xD800..0xDC00).contains(&character) && units.get(j).is_some_and(|next| (0xDC00..0xE000).contains(next)) {
+            character = 0x10000 + ((character - 0xD800) << 10) + (units[j] - 0xDC00);
+            j += 1;
+        }
+        match character {
+            0..=0x7F => text.push(character as u8),
+            0x80..=0x7FF => text.extend_from_slice(&[0xC0 | (character >> 6) as u8, 0x80 | (character & 0x3F) as u8]),
+            0x800..=0xFFFF => text.extend_from_slice(&[0xE0 | (character >> 12) as u8, 0x80 | (character >> 6 & 0x3F) as u8, 0x80 | (character & 0x3F) as u8]),
+            _ => text.extend_from_slice(&[0xF0 | (character >> 18) as u8, 0x80 | (character >> 12 & 0x3F) as u8, 0x80 | (character >> 6 & 0x3F) as u8, 0x80 | (character & 0x3F) as u8]),
+        }
+    }
+    text
+}
+
 /// `vfs.FS.ReadFile` of the file at `path`, by that path alone.
 pub(crate) fn read_at(path: &[u8], keeps_mark: bool) -> Option<Cow<'static, [u8]>> {
     let bytes = bun_sys::File::read_from(Fd::cwd(), for_the_system(path)?);
@@ -498,7 +549,9 @@ impl Disk {
             before_read: None,
             scripts_of_page: None,
             jsx_of_files: Vec::new(),
+            constants_of_imports: FxHashMap::default(),
             compiled: None,
+            reads_as_the_runtime: false,
         }
     }
 
@@ -1452,10 +1505,19 @@ impl Host for Disk {
         }))
     }
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
-        self.read(path).unwrap_or_else(|| {
+        let text = self.read(path).unwrap_or_else(|| {
             self.unreadable.lock().push(path.to_vec());
             Cow::default()
-        })
+        });
+        if !self.reads_as_the_runtime || is_valid_utf8(&text) {
+            return text;
+        }
+        if path.ends_with(b".json") {
+            return Cow::Owned(String::from_utf8_lossy(&text).into_owned().into_bytes());
+        }
+        let mut text = as_the_runtime_reads(&text);
+        text.extend_from_slice(b"\n// bun --aot: this file is not UTF-8: read as the runtime reads it");
+        Cow::Owned(text)
     }
     fn take_unreadable(&self) -> Vec<Vec<u8>> {
         std::mem::take(&mut *self.unreadable.lock())
@@ -1533,6 +1595,11 @@ impl Host for Disk {
         files
     }
     fn builtin_import(&self, importer: &[u8], specifier: &[u8]) -> Option<Option<Vec<u8>>> {
+        if !self.constants_of_imports.is_empty()
+            && let Some(constant) = self.constants_of_imports.get(&(importer.to_vec(), specifier.to_vec()))
+        {
+            return Some(Some(constant.clone()));
+        }
         let importer = importer.strip_prefix(bun_builtin_syntax::VIRTUAL_ROOT)?;
         let archive = bun_builtin_syntax::Archive::embedded();
         let path = archive.manifest().resolve(specifier, importer).map(|id| archive.path(id));

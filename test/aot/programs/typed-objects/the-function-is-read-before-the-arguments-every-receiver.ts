@@ -18,7 +18,7 @@ const withGetter = { get f() { log.push("get"); return (x: number) => x * 2 } }
 console.log(withGetter.f(note("arg", 4)), flush())
 class Getting { get f(): (x: number) => number { log.push("get"); return x => x * 3 } }
 console.log(new Getting().f(note("arg", 4)), flush())
-// What is claimed to be an array, a map or a function and is none: type-rules/casts-that-lie-and-an-own-property-named-like-a-method.
+// What is claimed to be an array, a map or a function and is none: type-rules/wrong-casts-and-own-property-named-like-a-method.
 function pushTo(a: number[]): unknown { return a.push(note("arg", 7)) }
 function getFrom(m: Map<string, string>): unknown { return m.get(((m as any).get = () => "new", "k")) }
 console.log(pushTo([1, 2]), flush(), getFrom(new Map([["k", "real"]]) ) === "real" || "patched")

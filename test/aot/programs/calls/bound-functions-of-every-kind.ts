@@ -1,4 +1,4 @@
-// Bound functions: with and without bound arguments, of each other, of classes, constructed, and `call` bound to what cannot be called.
+// Bound functions: with and without bound arguments, of other bound functions, of classes, constructed, and `call` bound to non-callable values.
 declare const console: any;
 const log: any[] = [];
 function attempt(what: string, run: () => any) { try { log.push(what + ": " + String(run())); } catch (e: any) { log.push(what + " throws " + e.constructor.name); } }

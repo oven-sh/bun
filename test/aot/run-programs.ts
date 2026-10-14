@@ -1,12 +1,14 @@
 // Builds every program under ./programs with `bun build --compile --aot`, runs the executable, and compares its output with
 // what plain `bun run` prints for the same file, computed on the spot. Nothing is stored for a program that behaves the same
-// in both. Each <topic>.test.ts next to this file runs one folder of programs, or one part of a large folder.
+// in both. Each <topic>.test.ts next to this file runs one folder of programs, or one part of a large folder; each
+// variant-<name>.test.ts runs the quick subset again with an option that changes how the compiler lays out its code.
 //
 //   programs/<topic>/<name>.ts            a program in a single file (.ts, .tsx or .js); its first line says what it tests
 //   programs/<topic>/<name>/main.ts       a program that consists of several files
 //   <program>.expected.txt                the output under --aot where it is meant to differ from plain Bun, for example
 //                                         because a value that does not match its declared type throws a TypeError
-//   <program>.build-errors.txt            the build must fail with exit code 1 and exactly these `error:` lines
+//   <program>.build-errors.txt            the build must fail with exit code 1 and exactly these `error:` lines; an
+//                                         .expected.txt next to it is only used by shell/quick.py, which still runs the program
 //   <program>.todo.txt                    the program fails today, and why; it is listed as a todo and not run
 //   <program>.json                        { "build": [flags for `bun build`], "env": { .. }, "reference": "compiled" }
 //                                         "compiled": compare with `bun build --compile` without --aot, for features that
@@ -24,6 +26,27 @@
 //   AOT_PROGRAMS_UPDATE=1 bun test ..                     rewrites the .expected.txt and .build-errors.txt files
 //
 // shell/ has two tools for working on the compiler without building Bun; perf/ has an opt-in performance test.
+//
+// Terms used in the first lines of the programs:
+//   plain Bun             `bun run` on the same file, without --aot
+//   typed object          an object created where TypeScript knows its type: a class instance or an object literal in a
+//                         TypeScript file. --aot gives it a fixed layout and checks what is stored into its fields.
+//   untyped code          JavaScript files, and TypeScript that works through `any`. It is compiled too, without type information.
+//   runtime type check    where a value flows from untyped code into a declared type, --aot checks it and throws a TypeError
+//                         if it does not match. Plain JavaScript has no such check, so these programs have an .expected.txt.
+//   predicted             what the compiler expects but cannot prove, such as the callee of a call. It is checked at run time,
+//                         and a wrong prediction costs time but never changes the result.
+//   internal representation (of a string)
+//                         how JavaScriptCore stores it: 8-bit or 16-bit; flat, rope (a concatenation that has not been
+//                         flattened yet) or substring of another string
+//
+// Some topics come in pairs, and many programs have a counterpart of the same name in the other folder:
+//   typed-objects         typed objects must behave exactly as in plain JavaScript here
+//   type-rules            where --aot differs from plain Bun on purpose; most have an .expected.txt or a .build-errors.txt
+//   calls-fast-paths      what the generated code must look like, stated in `// IR` and `// CALLS` lines for shell/expectations.py
+//   calls                 the cases in which those optimizations must not change the result
+//   untyped-code          code without type information
+//   untyped-stress        the same, ported from stress tests that were written for the `jsc` shell
 import { afterAll, describe, expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
@@ -32,11 +55,11 @@ import { join, relative } from "path";
 
 const root = join(import.meta.dir, "programs");
 // A debug or ASAN build of Bun is many times slower, so it runs the quick subset unless told otherwise.
-const wanted = process.env.AOT_PROGRAMS ?? (isASAN || isDebug ? "quick" : "");
+export const wanted = process.env.AOT_PROGRAMS ?? (isASAN || isDebug ? "quick" : "");
 const updates = !!process.env.AOT_PROGRAMS_UPDATE;
 
 // Not every build of Bun includes the compiler. One that lacks it says so before it looks for the entry point.
-const unsupported = /^error: --aot: (.*)$/m.exec(
+export const unsupported = /^error: --aot: (.*)$/m.exec(
   Bun.spawnSync({ cmd: [bunExe(), "build", "--compile", "--aot", "./no-such-file.ts"], cwd: root, env: bunEnv, stdout: "ignore", stderr: "pipe" }).stderr.toString(),
 )?.[1];
 
@@ -53,7 +76,7 @@ function find(folder: string, into: string[]) {
 // Each build keeps one core busy for about a second and writes an executable the size of Bun.
 let free = Math.max(1, Number(process.env.AOT_PROGRAMS_JOBS) || availableParallelism());
 const waiting: (() => void)[] = [];
-async function slot<T>(work: () => Promise<T>): Promise<T> {
+export async function slot<T>(work: () => Promise<T>): Promise<T> {
   if (free > 0) free--;
   else await new Promise<void>(resolve => waiting.push(resolve));
   try {
@@ -65,7 +88,7 @@ async function slot<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 
-async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
+export async function spawned(cmd: string[], cwd: string, env: Record<string, string | undefined>) {
   // A child that hangs is killed here, and the signal fails the test. A test that merely timed out would leave it running.
   await using proc = Bun.spawn({ cmd, cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 90_000, killSignal: "SIGKILL" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -73,7 +96,7 @@ async function spawned(cmd: string[], cwd: string, env: Record<string, string | 
 }
 
 /** The parts of a run's result that must be equal between two ways of running a program. */
-function told(run: { stdout: string; stderr: string; exitCode: number }) {
+export function told(run: { stdout: string; stderr: string; exitCode: number }) {
   return {
     // A duration that a program measures is not part of its behavior.
     stdout: run.stdout.replace(/ [0-9]+ms$/gm, ""),
@@ -84,13 +107,13 @@ function told(run: { stdout: string; stderr: string; exitCode: number }) {
   };
 }
 
-function built(build: { stderr: string; exitCode: number }) {
+export function built(build: { stderr: string; exitCode: number }) {
   expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: expect.not.stringMatching(/^error\b/m), exitCode: 0 });
 }
 
 let executables = 0;
 
-async function run(path: string, beside: string, folder: string) {
+async function run(path: string, beside: string, folder: string, buildEnv: Record<string, string>) {
   const options: { build?: string[]; env?: Record<string, string>; reference?: "compiled"; skipInShell?: string } = existsSync(beside + ".json")
     ? JSON.parse(readFileSync(beside + ".json", "utf8"))
     : {};
@@ -99,7 +122,7 @@ async function run(path: string, beside: string, folder: string) {
   const cwd = join(path, "..");
   const executable = join(folder, `program-${executables++}${isWindows ? ".exe" : ""}`);
   try {
-    const build = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, path, "--outfile", executable], cwd, bunEnv);
+    const build = await spawned([bunExe(), "build", "--compile", "--aot", ...flags, path, "--outfile", executable], cwd, { ...bunEnv, ...buildEnv });
     if (existsSync(beside + ".build-errors.txt")) {
       // Each distinct error counts once; how often it is repeated for different positions is not what is tested.
       const errors = [...new Set(build.stderr.split("\n").filter(line => line.startsWith("error: ")))].join("\n") + "\n";
@@ -131,27 +154,56 @@ async function run(path: string, beside: string, folder: string) {
   }
 }
 
-/** Defines one test per program in a folder. A large folder is split into `parts` by a hash of the path. */
-export function programs(topic: string, part = 1, parts = 1) {
-  const all: string[] = [];
-  find(join(root, topic), all);
-  const hash = (path: string) => BigInt(Bun.hash(relative(root, path).replaceAll("\\", "/")));
-  const chosen = all
-    .filter(path => Number(hash(path) % BigInt(parts)) === part - 1)
-    .filter(path => (wanted === "quick" ? (hash(path) >> 8n) % 10n === 0n : relative(root, path).includes(wanted)));
+const hash = (path: string) => BigInt(Bun.hash(relative(root, path).replaceAll("\\", "/")));
+const isQuick = (path: string) => (hash(path) >> 8n) % 10n === 0n;
+const besideOf = (path: string) => path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
+
+function define(title: string, chosen: string[], buildEnv: Record<string, string>) {
   const folder = String(tempDir("aot-programs", {}));
   afterAll(() => rmSync(folder, { recursive: true, force: true }));
 
-  describe.concurrent(`compile/aot/${topic}`, () => {
+  describe.concurrent(title, () => {
     if (unsupported) return void test.skip(unsupported, () => {});
     // A filter can leave a test file without any program.
     if (chosen.length === 0) test.skip("no program selected", () => {});
     for (const path of chosen) {
-      const beside = path.replace(/[\\/]main\.[a-z]+$/, "").replace(/\.[a-z]+$/, "");
+      const beside = besideOf(path);
       const name = relative(root, beside).replaceAll("\\", "/");
       if (existsSync(beside + ".todo.txt")) test.todo(name);
       // The child processes have their own time limits; this one also covers the wait for a free slot.
-      else test(name, () => slot(() => run(path, beside, folder)), 600_000);
+      else test(name, () => slot(() => run(path, beside, folder, buildEnv)), 600_000);
     }
   });
+}
+
+/** Defines one test per program in a folder. A large folder is split into `parts` by a hash of the path. */
+export function programs(topic: string, part = 1, parts = 1) {
+  const all: string[] = [];
+  find(join(root, topic), all);
+  define(
+    `compile/aot/${topic}`,
+    all
+      .filter(path => Number(hash(path) % BigInt(parts)) === part - 1)
+      .filter(path => (wanted === "quick" ? isQuick(path) : relative(root, path).includes(wanted))),
+    {},
+  );
+}
+
+/**
+ * Runs the quick subset of all topics once more, built with a JavaScriptCore option that forces the compiler down a path which
+ * small programs otherwise never take. AOT_PROGRAMS=<text> selects other programs, as above.
+ */
+export function variant(label: string, buildEnv: Record<string, string>) {
+  const all: string[] = [];
+  find(root, all);
+  define(
+    `compile/aot/variant/${label}`,
+    all
+      // A file directly in ./programs is a helper, not a program.
+      .filter(path => /[\\/]/.test(relative(root, path)))
+      .filter(path => (wanted === "" || wanted === "quick" ? isQuick(path) : relative(root, path).includes(wanted)))
+      // Nothing is compiled for a program that the build rejects.
+      .filter(path => !existsSync(besideOf(path) + ".build-errors.txt") && !existsSync(besideOf(path) + ".todo.txt")),
+    buildEnv,
+  );
 }

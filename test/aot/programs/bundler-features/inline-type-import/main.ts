@@ -1,4 +1,4 @@
-// `import { type A } from ..`: every name is a type: nothing is left of the statement, and the module is not evaluated for it.
+// `import { type A } from ..` with only type names is erased completely, so the module is not evaluated because of it.
 import { type Point } from "./files/only_types.ts"
 import { type Shape, type Name } from "./files/shapes.ts"
 import { square } from "./files/shapes.ts"

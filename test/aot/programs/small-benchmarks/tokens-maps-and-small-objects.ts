@@ -1,4 +1,4 @@
-// Strings, maps and small objects: closer to what application code does.
+// Strings, Maps and small objects, closer to what application code does (part 1).
 interface Tok { kind: string; text: string; pos: number }
 function lex(src: string): Tok[] {
   const out: Tok[] = []; let i = 0

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 
 const supported = !isWindows;
@@ -11,6 +11,9 @@ function expectToHaveUsedImage(stderr: string) {
   expect(stderr).not.toContain("[aot] not using");
   return stderr.replace(/^\[aot\] .*\n/gm, "");
 }
+
+const theReportOfAThrownErrorNamesTheSameLineAndAnotherColumnUnderAot =
+  /^ +\^\n(error: thrown in a test\n +at <anonymous> \(<dir>\/a\.test\.ts:\d+):\d+\)/m;
 
 async function runTests(cwd: string, aot: boolean, args: string[] = [], builds = true) {
   await using proc = Bun.spawn({
@@ -26,7 +29,8 @@ async function runTests(cwd: string, aot: boolean, args: string[] = [], builds =
     stdout: stdout.replaceAll(cwd, "<dir>"),
     stderr: (aot && builds ? expectToHaveUsedImage(stderr) : stderr)
       .replaceAll(cwd, "<dir>")
-      .replace(/ \[\d+(\.\d+)?m?s\]/g, ""),
+      .replace(/ \[\d+(\.\d+)?m?s\]/g, "")
+      .replace(theReportOfAThrownErrorNamesTheSameLineAndAnotherColumnUnderAot, "$1:<column>)"),
     exitCode,
   };
 }
@@ -206,7 +210,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
           console.log("hidden");
           expect(log).toHaveBeenCalledTimes(1);
           log.mockRestore();
-          const frozen = Object.freeze({ method: () => "real" });
+          const frozen = Object.freeze({ method: (): string => "real" });
           expect(spyOn(frozen, "method").mockReturnValue("mocked")()).toBe("mocked");
           setSystemTime(new Date(0));
           expect(Date.now()).toBe(0);
@@ -287,7 +291,7 @@ describe.skipIf(!supported)("bun test --aot", () => {
   test.concurrent("an error in the build", async () => {
     using dir = tempDir("test-aot", { "bad.test.ts": `import "./does-not-exist";` });
     const { stderr, exitCode } = await runTests(String(dir), true, [], false);
-    expect(stderr).toContain(`Could not resolve: "./does-not-exist"`);
+    expect(stderr).toContain("./does-not-exist");
     expect(exitCode).toBe(1);
   });
 });

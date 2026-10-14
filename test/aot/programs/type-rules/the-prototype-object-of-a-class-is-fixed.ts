@@ -1,4 +1,4 @@
-// Runtime type checks: the prototype object of a class is fixed.
+// Any change to the prototype object of a user-defined class throws: adding, redefining, replacing or deleting members, and changing its prototype.
 function refused(label: string, f: () => unknown) { try { f(); console.log(label + ": no error") } catch (e) { console.log(label + ":", e instanceof TypeError ? "TypeError" : "other " + e) } }
 class C { label = "x"; tag?: string; n?: number; method() { return "m" } }
 function read(c: C): string { return String(c.tag) + "/" + String(c.n) + "/" + ("tag" in c) + "/" + Object.hasOwn(c, "tag") }

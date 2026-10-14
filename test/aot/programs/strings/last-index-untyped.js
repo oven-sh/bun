@@ -1,4 +1,4 @@
-// `re.lastIndex`, read and stored, on whatever `re` is (the same program without type annotations).
+// `re.lastIndex` is read and written, whatever kind of value `re` is (the same program without type annotations).
 const print = (s) => console.log(s);
 function show(x) {
   if (typeof x !== "string")

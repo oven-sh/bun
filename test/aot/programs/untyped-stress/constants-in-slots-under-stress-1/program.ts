@@ -2,4 +2,4 @@
 // ENV JSC_scribbleFreeCells=1
 // ENV JSC_useZombieMode=1
 // ENV JSC_slowPathAllocsBetweenGCs=10
-import "./constants-in-slots-impl.js";
+import "./impl.js";

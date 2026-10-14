@@ -1,4 +1,4 @@
-// What must stay or must still be seen: a setter runs, a holder that escapes keeps what it holds.
+// Objects that are only written to but must still be allocated or observed: a setter runs, or an escaping object holds them.
 const seen: number[] = [];
 const sink: object[] = [];
 class S { y = 0; set x(v: number) { seen.push(v) } }

@@ -1,4 +1,4 @@
-// Runtime type checks: new properties on array and `Object.prototype`.
+// Adding properties, by name or by index, to `Array.prototype` and `Object.prototype` throws.
 const protoAny: any = Array.prototype
 try { protoAny.foo = 1; console.log("Array.prototype.foo: no error") } catch (e) { console.log("Array.prototype.foo:", e instanceof TypeError ? "TypeError" : "other " + e) }
 try { protoAny["1"] = 1; console.log("Array.prototype['1']: no error") } catch (e) { console.log("Array.prototype['1']:", e instanceof TypeError ? "TypeError" : "other " + e) }

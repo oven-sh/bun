@@ -1,4 +1,4 @@
-// Runtime type checks: delete of a field that is not optional.
+// `delete` of a field that is required in the type the object was created as throws, also through a type in which the field is optional.
 interface Author { nick: string; age?: number }
 interface Doc { id: number; title?: string; author: Author; refs: number[] }
 function make(id: number): Doc { return { id, title: "t" + id, author: { nick: "a" + id }, refs: [id] } }

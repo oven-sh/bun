@@ -1,4 +1,4 @@
-// Two evaluations of a function expression are two objects, whether or not it captures anything.
+// Two evaluations of a function expression give two distinct objects, whether or not the function captures anything.
 function make() { return () => 1; }
 function makeCapturing(x: number) { return () => x; }
 function declared() { function inner() { return 1; } return inner; }

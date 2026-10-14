@@ -358,12 +358,6 @@ extern "C" JSC::BytecodeLinkEncoder* Bun__BytecodeLinkEncoder__create(JSC::Encod
     hints.evaluatedModules.append(std::span { evaluatedModules, evaluatedModuleCount });
     hints.notEvaluatedModules.append(std::span { notEvaluatedModules, notEvaluatedModuleCount });
     hints.compileAheadOfTime = compileAheadOfTime;
-    auto& options = vm.bytecodeGenerationOptions;
-    options = { };
-    options.resolveAllScopeSlotsStatically |= compileAheadOfTime;
-    options.evaluateObjectLiteralValuesFirst |= compileAheadOfTime;
-    options.definePlainInstanceFieldsInConstructor |= compileAheadOfTime;
-    options.keepAllSourceLineStarts |= compileAheadOfTime;
     vm.useImmutableIntrinsics |= compileAheadOfTime;
     return new JSC::BytecodeLinkEncoder(vm, externalStrings, WTF::move(hints));
 }
@@ -632,6 +626,23 @@ static bool keepsOnlyCodeExecutable(const uint8_t* bytes, size_t length)
 }
 #endif
 
+extern "C" bool Bun__AOT__symbolsOfImage(const uint8_t* image, size_t length, void* ctx, uint8_t* (*reserve)(void* ctx, size_t size))
+{
+#if ENABLE(AOT)
+    auto symbols = JSC::AOT::symbolsOfImage({ image, length });
+    if (symbols.isEmpty())
+        return false;
+    memcpy(reserve(ctx, symbols.size()), symbols.span().data(), symbols.size());
+    return true;
+#else
+    UNUSED_PARAM(image);
+    UNUSED_PARAM(length);
+    UNUSED_PARAM(ctx);
+    UNUSED_PARAM(reserve);
+    return false;
+#endif
+}
+
 extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int fileDescriptor, int64_t offsetInFile)
 {
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD) || OS(WINDOWS)
@@ -693,6 +704,32 @@ extern "C" int64_t Bun__AOT__offsetInCode(const void* address)
 #else
     UNUSED_PARAM(address);
     return -1;
+#endif
+}
+
+extern "C" uintptr_t Bun__AOT__addressOfOffsetInCode(size_t offset)
+{
+#if ENABLE(AOT)
+    return JSC::AOT::startOfImageCode() + offset;
+#else
+    return offset;
+#endif
+}
+
+extern "C" size_t Bun__AOT__describeAddresses(const void* const* addresses, size_t count, char* buffer, size_t capacity)
+{
+#if ENABLE(AOT)
+    auto text = JSC::AOT::describeCodeAddresses({ addresses, count }).utf8();
+    size_t length = std::min(capacity, text.length());
+    if (length)
+        memcpy(buffer, text.data(), length);
+    return length;
+#else
+    UNUSED_PARAM(addresses);
+    UNUSED_PARAM(count);
+    UNUSED_PARAM(buffer);
+    UNUSED_PARAM(capacity);
+    return 0;
 #endif
 }
 

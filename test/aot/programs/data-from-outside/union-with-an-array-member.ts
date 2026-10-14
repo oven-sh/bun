@@ -1,4 +1,4 @@
-// Unions of a record and an array, a promise, a map.
+// Unions of an object type with an array, a promise or a Map.
 declare const console: { log(...values: unknown[]): void };
 type Mine = { mine: number };
 type Other = { other: string };

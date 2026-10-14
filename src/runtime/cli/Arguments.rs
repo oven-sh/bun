@@ -169,6 +169,7 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--aot-type-errors <STR>           With --aot: what to do when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue"
     ),
     parse_param!("--aot-graph-fd <STR>"),
+    parse_param!("--aot-decode-crash-report <STR>"),
     parse_param!(
         "--aot-audit                       Run normally and log the places where the program would behave differently under --aot"
     ),
@@ -1322,6 +1323,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.aot_graph_fd = args
             .option(b"--aot-graph-fd")
             .and_then(|fd| core::str::from_utf8(fd).ok()?.parse().ok());
+        ctx.runtime_options.aot_decode_crash_report = args.option(b"--aot-decode-crash-report").map(Box::from);
         // To `node`, `--check` means something else.
         ctx.runtime_options.check = args.flag(b"--check") && cmd != CommandTag::RunAsNodeCommand;
         // Nothing runs unchecked, so the process starts again, as under `--watch`. Decided here: on

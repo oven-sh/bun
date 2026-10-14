@@ -1,4 +1,4 @@
-// Static members, enums and namespaces as they are used, default exports of expressions.
+// Static members, enums and namespaces in everyday use, and default exports of expressions.
 class Registry {
   static count = 0
   static readonly names: string[] = []

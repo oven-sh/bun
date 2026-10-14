@@ -1,4 +1,4 @@
-// Untyped JavaScript: promises of async functions patched before they are awaited.
+// The promise of a known async function is modified (`constructor`, `then`, prototype) in every possible way before it is awaited.
 declare const console: any;
 const lines: string[] = [];
 let looks: string[] = [];

@@ -1152,3 +1152,18 @@ unsafe extern "C" fn WTF__parseDouble(p: *const u8, len: usize, counted: *mut us
 pub extern "C" fn Bun__AOT__offsetInCode(_address: *const c_void) -> i64 {
     -1
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__describeAddresses(
+    _addresses: *const usize,
+    _count: usize,
+    _buffer: *mut u8,
+    _capacity: usize,
+) -> usize {
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__addressOfOffsetInCode(offset: usize) -> usize {
+    offset
+}

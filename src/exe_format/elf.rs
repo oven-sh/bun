@@ -699,6 +699,209 @@ impl<'a> ElfFile<&'a mut [u8]> {
     }
 }
 
+pub struct SymbolsTail {
+    pub bytes: Vec<u8>,
+    pub offset: u64,
+    pub section_headers_offset: u64,
+    pub number_of_sections: u16,
+}
+
+pub fn symbols_tail(
+    file_size: u64,
+    mut read: impl FnMut(u64, &mut [u8]) -> bool,
+    table: &[u8],
+    image_in_payload: u64,
+) -> Option<SymbolsTail> {
+    let mut header = [0u8; size_of::<Elf64_Ehdr>()];
+    if !read(0, &mut header) || validate_elf64_le(&header).is_err() {
+        return None;
+    }
+    let ehdr = read_ehdr(&header);
+    let (frame_pointer, return_address): (u8, u8) = match ehdr.e_machine {
+        EM_X86_64 => (6, 16),
+        EM_AARCH64 => (29, 30),
+        _ => return None,
+    };
+    let shdr_size = size_of::<Elf64_Shdr>();
+    let shnum = ehdr.e_shnum as usize;
+    let names_index = ehdr.e_shstrndx as usize;
+    if names_index >= shnum || shnum + 4 >= SHN_LORESERVE {
+        return None;
+    }
+    let mut headers = vec![0u8; shnum * shdr_size];
+    if !read(ehdr.e_shoff, &mut headers) {
+        return None;
+    }
+    let section = |headers: &[u8], index: usize| -> Elf64_Shdr {
+        read_struct(&headers[index * shdr_size..][..shdr_size])
+    };
+    let mut names_section = section(&headers, names_index);
+    if names_section.sh_size > file_size {
+        return None;
+    }
+    let mut names = vec![0u8; usize::try_from(names_section.sh_size).ok()?];
+    if !read(names_section.sh_offset, &mut names) {
+        return None;
+    }
+    let mut bun: Option<(u16, u64)> = None;
+    for index in 0..shnum {
+        let shdr = section(&headers, index);
+        if shdr.sh_type == SHT_SYMTAB {
+            return None;
+        }
+        if names.get(shdr.sh_name as usize..).is_some_and(|name| slice_to_nul(name) == b".bun") {
+            bun = Some((index as u16, shdr.sh_addr));
+        }
+    }
+    let (bun_index, bun_address) = bun?;
+    let first_new_name = names.len() as u32;
+    let pointer: Option<Elf64_Shdr> = (bun_index as usize).checked_sub(1).and_then(|index| {
+        let ahead = section(&headers, index);
+        if ahead.sh_type == SHT_NOBITS || ahead.sh_flags & SHF_ALLOC == 0 {
+            return None;
+        }
+        let address = align_up(ahead.sh_addr.checked_add(ahead.sh_size)?, 8);
+        let offset = ahead.sh_offset.checked_add(address - ahead.sh_addr)?;
+        let mut held = [0u8; 8];
+        (read(offset, &mut held) && u64::from_le_bytes(held) == bun_address).then_some(Elf64_Shdr {
+            sh_name: first_new_name + 29,
+            sh_type: SHT_PROGBITS,
+            sh_flags: SHF_ALLOC | SHF_WRITE,
+            sh_addr: address,
+            sh_offset: offset,
+            sh_size: 8,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 8,
+            sh_entsize: 0,
+        })
+    });
+
+    let word = |at: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(table.get(at..at.checked_add(4)?)?.try_into().ok()?))
+    };
+    let count = word(0)? as usize;
+    let rows_end = count.checked_mul(12)?.checked_add(16)?;
+    let rows = table.get(16..rows_end)?;
+    let names_of_symbols = table.get(rows_end..rows_end.checked_add(word(4)? as usize)?)?;
+    let code = bun_address
+        .checked_add(size_of::<u64>() as u64)?
+        .checked_add(image_in_payload)?
+        .checked_add(word(8)? as u64)?;
+    let bytes_of_code = word(12)? as u64;
+
+    let offset = align_up(file_size, 8);
+    let place = |bytes: &mut Vec<u8>| -> u64 {
+        bytes.resize(align_up(bytes.len() as u64, 8) as usize, 0);
+        offset + bytes.len() as u64
+    };
+    let mut bytes: Vec<u8> = Vec::with_capacity(
+        names.len() + names_of_symbols.len() + 24 * (count + 1) + headers.len() + 512,
+    );
+
+    names.extend_from_slice(b".symtab\0.strtab\0.debug_frame\0.bun.pointer\0");
+    names_section.sh_offset = place(&mut bytes);
+    names_section.sh_size = names.len() as u64;
+    bytes.extend_from_slice(&names);
+    write_struct(&mut headers[names_index * shdr_size..][..shdr_size], &names_section);
+    let mut bun_section = section(&headers, bun_index as usize);
+    bun_section.sh_flags |= SHF_EXECINSTR;
+    write_struct(&mut headers[bun_index as usize * shdr_size..][..shdr_size], &bun_section);
+
+    let strtab_offset = place(&mut bytes);
+    bytes.push(0);
+    bytes.extend_from_slice(names_of_symbols);
+
+    let symtab_offset = place(&mut bytes);
+    bytes.extend_from_slice(&[0u8; 24]);
+    for row in rows.chunks_exact(12) {
+        let at = |index: usize| u32::from_le_bytes([row[index], row[index + 1], row[index + 2], row[index + 3]]);
+        bytes.extend_from_slice(&at(8).checked_add(1)?.to_le_bytes());
+        bytes.extend_from_slice(&[STT_FUNC, 0]);
+        bytes.extend_from_slice(&bun_index.to_le_bytes());
+        bytes.extend_from_slice(&code.checked_add(at(0) as u64)?.to_le_bytes());
+        bytes.extend_from_slice(&(at(4) as u64).to_le_bytes());
+    }
+
+    let frame_offset = place(&mut bytes);
+    bytes.extend_from_slice(&20u32.to_le_bytes());
+    bytes.extend_from_slice(&u32::MAX.to_le_bytes());
+    bytes.extend_from_slice(&[
+        1,
+        0,
+        1,
+        0x78,
+        return_address,
+        0x0c,
+        frame_pointer,
+        16,
+        0x80 | return_address,
+        1,
+        0x80 | frame_pointer,
+        2,
+        0,
+        0,
+        0,
+        0,
+    ]);
+    bytes.extend_from_slice(&20u32.to_le_bytes());
+    bytes.extend_from_slice(&0u32.to_le_bytes());
+    bytes.extend_from_slice(&code.to_le_bytes());
+    bytes.extend_from_slice(&bytes_of_code.to_le_bytes());
+
+    let section_headers_offset = place(&mut bytes);
+    bytes.extend_from_slice(&headers);
+    let new_sections = [
+        Elf64_Shdr {
+            sh_name: first_new_name + 8,
+            sh_type: SHT_STRTAB,
+            sh_flags: 0,
+            sh_addr: 0,
+            sh_offset: strtab_offset,
+            sh_size: 1 + names_of_symbols.len() as u64,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 1,
+            sh_entsize: 0,
+        },
+        Elf64_Shdr {
+            sh_name: first_new_name,
+            sh_type: SHT_SYMTAB,
+            sh_flags: 0,
+            sh_addr: 0,
+            sh_offset: symtab_offset,
+            sh_size: 24 * (count as u64 + 1),
+            sh_link: shnum as u32,
+            sh_info: count as u32 + 1,
+            sh_addralign: 8,
+            sh_entsize: 24,
+        },
+        Elf64_Shdr {
+            sh_name: first_new_name + 16,
+            sh_type: SHT_PROGBITS,
+            sh_flags: 0,
+            sh_addr: 0,
+            sh_offset: frame_offset,
+            sh_size: 48,
+            sh_link: 0,
+            sh_info: 0,
+            sh_addralign: 8,
+            sh_entsize: 0,
+        },
+    ];
+    for shdr in new_sections.iter().chain(pointer.iter()) {
+        let at = bytes.len();
+        bytes.resize(at + shdr_size, 0);
+        write_struct(&mut bytes[at..], shdr);
+    }
+    Some(SymbolsTail {
+        bytes,
+        offset,
+        section_headers_offset,
+        number_of_sections: (shnum + 3 + pointer.iter().count()) as u16,
+    })
+}
+
 struct BunSectionInfo {
     /// File offset of the .bun section's data (sh_offset).
     file_offset: u64,
@@ -876,6 +1079,14 @@ const SHF_TLS: u64 = 0x400;
 
 const EM_PPC64: u16 = 21;
 const EM_AARCH64: u16 = 183;
+const EM_X86_64: u16 = 62;
+const SHT_PROGBITS: u32 = 1;
+const SHT_SYMTAB: u32 = 2;
+const SHT_STRTAB: u32 = 3;
+const SHN_LORESERVE: usize = 0xff00;
+const STT_FUNC: u8 = 2;
+const SHF_WRITE: u64 = 0x1;
+const SHF_EXECINSTR: u64 = 0x4;
 
 #[repr(C)]
 #[derive(Clone, Copy)]

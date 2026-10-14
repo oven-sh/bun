@@ -1,4 +1,4 @@
-// Destructuring with defaults: default in an inner function.
+// A variable holding a function is reassigned by a destructuring pattern with a default inside an inner function.
 const show = (x) => { try { return typeof x === "function" ? "function " + x.name : typeof x === "symbol" ? "symbol" : typeof x === "bigint" ? "bigint" : typeof x === "object" && x ? "object" : String(x); } catch (e) { return "threw " + e.name; } };
 const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
 const two = () => "two"; const three = (m) => () => "three" + m;

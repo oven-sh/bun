@@ -24,7 +24,7 @@ async function plain(program: string, env: Record<string, string> = {}) {
 test.failing(
   "Array.prototype.sort writes every sorted item back although the comparator has changed the array in its last comparison",
   async () => {
-    const program = "untyped-code/sort-stores-back-into-an-array-changed-at-the-last-moment";
+    const program = "arrays/sort-writes-back-after-late-changes-to-the-array";
     const correct = { stdout: readFileSync(join(import.meta.dir, "programs", program + ".expected.txt"), "utf8"), exitCode: 0 };
     const runs = await Promise.all([plain(program, { BUN_JSC_useConcurrentJIT: "0" }), ...Array.from({ length: 10 }, () => plain(program))]);
     for (const run of runs) expect(run).toEqual(correct);

@@ -1,4 +1,4 @@
-// Strings: the source of long patterns (the same program without type annotations).
+// The `source` property of very long regular expressions, with slashes and escapes (the same program without type annotations).
 function sum(s) {
   let h = 0;
   for (let i = 0;i < s.length; i++)

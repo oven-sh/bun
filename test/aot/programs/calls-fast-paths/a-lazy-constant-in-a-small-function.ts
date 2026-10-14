@@ -1,4 +1,4 @@
-// A function of 13 operations that reads a constant of its module is copied to its calls (the limit is 15).
+// A small function that reads a lazily initialized module constant is still inlined.
 // IR= 0 one CallDirect f[0-9]+ \(v
 // IR= 0 five CallDirect f[0-9]+ \(v
 declare const console: any;

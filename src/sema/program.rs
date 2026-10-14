@@ -8163,6 +8163,13 @@ impl<'s> Files<'s> {
         }
         // A file that is not a module ends the search anyway.
         if let Some(&target) = self.module(file).imports.get(&(spec, mode)) {
+            if self.options.follows_javascript_only_as_code
+                && self.module(target).hir.is_js
+                && !self.module(file).hir.is_js
+                && let Some(declared) = self.module_by_pattern(spec)
+            {
+                return Some(Some(declared));
+            }
             return Some(
                 self.module(target)
                     .is_module()

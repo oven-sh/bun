@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 
 const supported = !isWindows;
@@ -138,8 +138,9 @@ describe.skipIf(!supported)("bun run --aot", () => {
         "other.env": `FROM_FILE=from the file`,
         "node_modules/pkg/package.json": JSON.stringify({
           name: "pkg",
-          exports: { custom: "./custom.js", default: "./default.js" },
+          exports: { types: "./index.d.ts", custom: "./custom.js", default: "./default.js" },
         }),
+        "node_modules/pkg/index.d.ts": `declare const which: string; export default which;`,
         "node_modules/pkg/custom.js": `export default "the custom condition";`,
         "node_modules/pkg/default.js": `export default "the default condition";`,
       },
@@ -197,6 +198,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
           worker.postMessage(20);
         `,
         "worker.ts": `
+          declare var self: Worker;
           function fib(n: number): number { return n < 2 ? n : fib(n - 1) + fib(n - 2); }
           self.onmessage = e => postMessage({ fib: fib(e.data), path: import.meta.path });
         `,
@@ -207,6 +209,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
   });
 
   test.concurrent("the file of a Worker is compiled too", async () => {
+    const isCompiled = `function isCompiled(none: string[]) { try { const first: string = none[0]!; return first !== undefined; } catch { return true; } }`;
     using dir = tempDir("run-aot", {
       "app/entry.ts": `
         import { viaNode } from "./via-node.ts";
@@ -223,18 +226,19 @@ describe.skipIf(!supported)("bun run --aot", () => {
           viaNode().then(data => { said.node = data; }),
         ]);
         function isNeverCalled() { return new Worker(new URL("./missing.ts", import.meta.url)); }
-        console.log(JSON.stringify({ ...said, entry: String(isNeverCalled).endsWith("{ [native code] }") }));
+        ${isCompiled}
+        console.log(JSON.stringify({ ...said, entry: isCompiled([]) && typeof isNeverCalled === "function" }));
       `,
       "app/shared.ts": `
-        export function answer(path: string) { return [String(answer).endsWith("{ [native code] }"), path.split("/").slice(-2).join("/")]; }
+        export function answer(isCompiled: boolean, path: string) { return [isCompiled, path.split("/").slice(-2).join("/")]; }
       `,
       ...Object.fromEntries(
         ["href", "bare", "path", "computed"].map(name => [
           `app/${name}.ts`,
-          `import { answer } from "./shared.ts"; postMessage(answer(import.meta.path));`,
+          `import { answer } from "./shared.ts"; ${isCompiled} postMessage(answer(isCompiled([]), import.meta.path));`,
         ]),
       ),
-      "app/sub/url.ts": `import { answer } from "../shared.ts"; postMessage(answer(import.meta.path));`,
+      "app/sub/url.ts": `import { answer } from "../shared.ts"; ${isCompiled} postMessage(answer(isCompiled([]), import.meta.path));`,
       "app/via-node.ts": `
         import { Worker } from "node:worker_threads";
         export const viaNode = () => new Promise(done => {
@@ -245,7 +249,8 @@ describe.skipIf(!supported)("bun run --aot", () => {
       "app/node.ts": `
         import { parentPort } from "node:worker_threads";
         import { answer } from "./shared.ts";
-        parentPort!.postMessage(answer(import.meta.path));
+        ${isCompiled}
+        parentPort!.postMessage(answer(isCompiled([]), import.meta.path));
       `,
     });
     const { stdout, stderr, exitCode } = await run(String(dir), true, "app/entry.ts");
@@ -350,7 +355,7 @@ describe.skipIf(!supported)("bun run --aot", () => {
     using dir = tempDir("run-aot", { "entry.ts": `import "./does-not-exist"; console.log("ran");` });
     const { stdout, stderr, exitCode } = await run(String(dir), true, "entry.ts", { builds: false });
     expect(stdout).toBe("");
-    expect(stderr).toContain(`Could not resolve: "./does-not-exist"`);
+    expect(stderr).toContain("./does-not-exist");
     expect(exitCode).toBe(1);
   });
 

@@ -1,4 +1,4 @@
-// Strings: strings in order at the edges of words.
+// `<`, `<=`, `>` and `>=` on strings of lengths 0, 7, 8, 9, 16 and 17 that differ at every position.
 declare const $vm: any;
 const narrow = (text: string): string => text.split("").join("");
 function typed(a: string, b: string): number { return (a < b ? 1 : 0) + (a <= b ? 2 : 0) + (a > b ? 4 : 0) + (a >= b ? 8 : 0); }

@@ -1,4 +1,4 @@
-// A string that a loop reads and does not define is opened once in front of the loop.
+// A loop reads a string that it does not modify.
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

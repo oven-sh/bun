@@ -174,6 +174,9 @@ impl Program {
             if layout.admits_foreign {
                 o.push_str(" foreign");
             }
+            if layout.is_opened_for_the_log {
+                o.push_str(" for the log");
+            }
             o.push('\n');
             for (what, layouts) in [("members", &layout.members), ("members by fit", &layout.members_by_fit), ("specializations", &layout.specializations)] {
                 if !layouts.is_empty() {

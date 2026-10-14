@@ -1,4 +1,4 @@
-// An exported `let` of a number without initializer, which only ANOTHER file reads before the first store.
+// An exported `let` of type `number` without an initializer is read by another file before the first assignment.
 import { flag, level, set } from "./dep"
 console.log(level, flag, typeof level, level === undefined)
 set()

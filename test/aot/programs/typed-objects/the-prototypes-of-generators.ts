@@ -1,4 +1,4 @@
-// How the prototypes of generators are reached in a compiled program.
+// How the prototypes of generator functions and generator objects are reached.
 const above = Object.getPrototypeOf
 function keys(o: any): string { return o === null ? "null" : o === undefined ? "undefined" : o === Object.prototype ? "Object.prototype" : o === Function.prototype ? "Function.prototype" : "{" + Reflect.ownKeys(o).map(String).join() + "}" }
 function chain(o: any): string { const out: string[] = []; for (let p = above(o); p !== null; p = above(p)) out.push(keys(p)); return out.join(" > ") }

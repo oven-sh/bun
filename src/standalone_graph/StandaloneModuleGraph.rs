@@ -1022,6 +1022,12 @@ const TRAILER: &[u8] = b"\n---- Bun! ----\n";
 unsafe extern "C" {
     safe fn Bun__AOT__imageAlignment() -> usize;
     fn Bun__AOT__imageStringTable(bytes: *const u8, len: usize, result: *mut usize) -> bool;
+    fn Bun__AOT__symbolsOfImage(
+        image: *const u8,
+        length: usize,
+        ctx: *mut core::ffi::c_void,
+        reserve: extern "C" fn(*mut core::ffi::c_void, usize) -> *mut u8,
+    ) -> bool;
     fn Bun__WTFStringHashLatin1(ptr: *const u8, len: usize) -> u32;
     fn Bun__WTFStringHashUTF16(ptr: *const u16, len: usize) -> u32;
 }
@@ -1584,6 +1590,7 @@ pub(crate) fn to_bytes(
     compile_exec_argv: &[u8],
     flags: Flags,
     runtime_options: RuntimeOptions,
+    aot_image_at: &mut Option<usize>,
 ) -> crate::Result<Vec<u8>> {
     // RAII trace handle ends on drop.
     let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
@@ -2097,6 +2104,7 @@ pub(crate) fn to_bytes(
         flags |= Flags::HAS_LINKED_BYTECODE_PAYLOAD;
     }
     if let Some(ptr) = aot_image_ptr {
+        *aot_image_at = Some(ptr.offset as usize);
         let mut record = [0u8; 12];
         record[0..4].copy_from_slice(&ptr.offset.to_le_bytes());
         record[4..8].copy_from_slice(&ptr.length.to_le_bytes());
@@ -2304,6 +2312,48 @@ fn write_elf_in_pieces(original: &mut [u8], payload: &[u8], fd: Fd) -> Result<bo
     Syscall::ftruncate(fd, offset).map_err(|error| error.to_string())?;
     bun_core::scoped_log!(StandaloneModuleGraph, "inject: ELF written in pieces: {} bytes", offset);
     Ok(true)
+}
+
+#[cfg(unix)]
+fn add_elf_symbols(fd: Fd, image: &[u8], image_in_payload: usize) {
+    extern "C" fn reserve(table: *mut core::ffi::c_void, size: usize) -> *mut u8 {
+        let table = unsafe { &mut *table.cast::<Vec<u8>>() };
+        table.resize(size, 0);
+        table.as_mut_ptr()
+    }
+    let mut aligned: Vec<u128> = Vec::new();
+    let image: &[u8] = if (image.as_ptr() as usize).is_multiple_of(align_of::<u128>()) {
+        image
+    } else {
+        aligned.resize(image.len().div_ceil(size_of::<u128>()), 0);
+        let copy = unsafe { core::slice::from_raw_parts_mut(aligned.as_mut_ptr().cast::<u8>(), image.len()) };
+        copy.copy_from_slice(image);
+        copy
+    };
+    let mut table: Vec<u8> = Vec::new();
+    if !unsafe { Bun__AOT__symbolsOfImage(image.as_ptr(), image.len(), (&raw mut table).cast(), reserve) } {
+        bun_core::scoped_log!(StandaloneModuleGraph, "ELF symbols: the engine lists no functions for this image");
+        return;
+    }
+    let Some(size) = Syscall::fstat(fd).ok().and_then(|stat| u64::try_from(stat.st_size).ok()) else {
+        return;
+    };
+    let file = bun_sys::File::borrow(&fd);
+    let read = |offset: u64, into: &mut [u8]| {
+        let wanted = into.len();
+        file.pread_all(into, offset).is_ok_and(|count| count == wanted)
+    };
+    let Some(tail) = bun_elf::symbols_tail(size, read, &table, image_in_payload as u64) else {
+        bun_core::scoped_log!(StandaloneModuleGraph, "ELF symbols: none added (the executable has a .symtab, or is not as expected)");
+        return;
+    };
+    if file.pwrite_all(&tail.bytes, tail.offset as i64).is_err() {
+        let _ = Syscall::ftruncate(fd, size as i64);
+        return;
+    }
+    if file.pwrite_all(&tail.section_headers_offset.to_le_bytes(), 40).is_ok() {
+        let _ = file.pwrite_all(&tail.number_of_sections.to_le_bytes(), 60);
+    }
 }
 
 pub(crate) fn inject<'a>(
@@ -3169,6 +3219,7 @@ pub fn to_graph_fd(
         compile_exec_argv,
         flags | Flags::PRESERVES_SOURCE_PATHS,
         runtime_options,
+        &mut None,
     )
     .map_err(|e| message("failed to generate module graph bytes", e.name().as_ref()))?;
     if bytes.is_empty() {
@@ -3216,6 +3267,7 @@ pub fn to_executable(
 ) -> crate::Result<CompileResult> {
     #[cfg(windows)]
     let _ = root_dir;
+    let mut aot_image_at: Option<usize> = None;
     let bytes = match to_bytes(
         target,
         module_prefix,
@@ -3224,6 +3276,7 @@ pub fn to_executable(
         compile_exec_argv,
         flags,
         runtime_options,
+        &mut aot_image_at,
     ) {
         Ok(b) => b,
         Err(e) => {
@@ -3261,6 +3314,15 @@ pub fn to_executable(
         )));
     };
     let fd = injected.fd;
+    #[cfg(unix)]
+    if let (Some(at), CompileTargetOs::Linux | CompileTargetOs::Freebsd) = (aot_image_at, target.os) {
+        if let Some(image) = output_files
+            .iter()
+            .find(|file| file.output_kind == options::OutputKind::AotImage)
+        {
+            add_elf_symbols(fd, image.value.as_slice(), at);
+        }
+    }
     // Closed explicitly at every return below rather than by a guard: on Windows
     // the handle has to be closed mid-function, before `MoveFileExW`.
     debug_assert!(fd.kind() == bun_sys::FdKind::System);

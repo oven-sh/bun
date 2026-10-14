@@ -39,13 +39,13 @@
   function cast(type, value) {
     const kind = typeof value;
     const hasNumber = (type.p & NUMBER) !== 0 || type.i !== undefined, hasString = (type.p & STRING) !== 0, hasBoolean = (type.p & (TRUE | FALSE)) !== 0;
-    if (kind === "object" || kind === "function" || !(hasString ? kind !== "symbol" : hasNumber ? kind !== "symbol" && kind !== "bigint" : hasBoolean)) return;
+    if ((kind === "object" && value !== null) || kind === "function" || !(hasString ? kind !== "symbol" : hasNumber ? kind !== "symbol" && kind !== "bigint" : hasBoolean)) return;
     const result = hasString ? toString(value) : hasNumber ? toNumber(value) : toBoolean(value);
     if (fits(type, result)) return result;
   }
 
   function whatACastMadeOf(type, value) {
-    if (numberOfResultsOfCasts > 4096) return value === undefined ? undefined : cast(type, value);
+    if (numberOfResultsOfCasts > 4096) return value === undefined || value === null ? undefined : cast(type, value);
     const results = apply(mapGet, resultsOfCasts, [value]);
     if (results !== undefined) for (let i = 0; i < results.length; i++) if (fits(type, results[i])) return results[i];
   }

@@ -264,7 +264,7 @@ pub fn end_of(term: &Term) -> (u32, V, Vec<&Target>, Vec<i64>) {
             (2, *value, targets, cases.iter().map(|(case, _)| *case).collect())
         }
         Term::Return(v) => (3, *v, Vec::new(), Vec::new()),
-        Term::Throw { value, unwind } => (4, *value, unwind.iter().collect(), Vec::new()),
+        Term::Throw { value, unwind, pos } => (4, *value, unwind.iter().collect(), if *pos == 0 { Vec::new() } else { vec![i64::from(*pos)] }),
         Term::Invoke { normal, unwind } => (5, V::NONE, vec![normal, unwind], Vec::new()),
         Term::Unreachable => (6, V::NONE, Vec::new(), Vec::new()),
     }
@@ -556,7 +556,7 @@ pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
             methods,
             layout.methods.len() as u32,
             layout.constructor.0,
-            u32::from(layout.is_allocated) | u32::from(layout.may_be_frozen) << 1 | layout.class_flags | u32::from(layout.admits_foreign) << 7,
+            u32::from(layout.is_allocated) | u32::from(layout.may_be_frozen) << 1 | layout.class_flags | u32::from(layout.admits_foreign) << 7 | u32::from(layout.is_opened_for_the_log) << 11,
             members[0],
             members[1],
             members_by_fit[0],

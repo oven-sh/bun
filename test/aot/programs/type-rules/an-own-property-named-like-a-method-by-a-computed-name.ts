@@ -1,4 +1,4 @@
-// Runtime type checks: an own property named like a method by a computed name.
+// Storing an own property with the name of a method of the object's class, by a computed key, throws.
 interface Speaker { id: number; speak(greeting: string): string }
 class ClassSpeaker implements Speaker {
   constructor(public id: number) {}

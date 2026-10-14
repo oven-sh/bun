@@ -1,4 +1,4 @@
-// `Function.prototype.call.bind(f)` with a compiled closure for `f`.
+// `Function.prototype.call.bind(f)` with a compiled function `f`.
 declare const console: any;
 let n = 0;
 const f = function (this: any, v: number) { n += v; };

@@ -1,4 +1,4 @@
-// Strings: buffer byte length every length.
+// `Buffer.byteLength` on strings of every length from 0 up, 8-bit and 16-bit.
 // CALLS+ ofText StringUTF8Length8
 const g = globalThis as any
 if (!g.Buffer) {

@@ -1,4 +1,4 @@
-// `x as T` with T a primitive type, from unknown, any and unions.
+// `x as T` where `T` is a primitive type and `x` is `unknown`, `any` or a union.
 /* expected
 a1 NaN
 a2 2

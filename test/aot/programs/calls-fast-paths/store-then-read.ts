@@ -1,4 +1,4 @@
-// What a place was stored is what a read of it yields: a field of an object that came from elsewhere, read back by name.
+// A field of an object from elsewhere is written and then read back by name: the read returns the stored value without a load.
 // IR= 0 setLinks GetById v[0-9]+ "links"
 // IR= 1 next GetField
 // IR= 0 bumpModule GetModuleVariable

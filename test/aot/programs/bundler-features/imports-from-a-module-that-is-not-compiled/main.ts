@@ -1,4 +1,4 @@
-// Imports from a module that is not compiled with the program.
+// Imports from a module that is not compiled together with the program.
 import def, { add, counter, bump, Thing } from "./ext-lib.js"
 import * as lib from "./ext-lib.js"
 console.log(def, add(2, 3), counter, lib.counter)

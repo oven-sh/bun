@@ -78,10 +78,11 @@ def bodies(ir, wanted):
 
 def calls(image, map_file):
     """function -> a line about its machine code: `<function>: <n> instructions; <what it calls or jumps to, by name, sorted; another function as f:<name>>; uses <the kinds of floating-point
-    instructions it has: ucvtf scvtf fcvtzs fcmp>; tables <number of br>; tests for equality with <the immediates of cmp xN, #imm; b.eq | b.ne> .` A function that is split at its calls is one function here."""
+    instructions it has: ucvtf scvtf fcvtzs fcmp>; tables <number of br>; tests for equality with <the immediates of cmp xN | wN, #imm; b.eq | b.ne> .` A function that is split at its calls is one function here.
+    Of the bodies that have one name the typed one is described, not the ones for untyped callers. A function without a name is a body that call sites of a built-in share: what it calls counts for its callers."""
     data = open(image, 'rb').read()
     offset, _ = struct.unpack_from('<QQ', data, 24)
-    thunks, functions, first, waiting, sizes = {}, [], {}, {}, {}
+    thunks, functions, first, waiting, sizes, typed = {}, [], {}, {}, {}, []
     for line in open(map_file, errors='replace'):
         f = line.rstrip('\n').split('\t')
         if f[0] == 'T': thunks[int(f[1])] = f[2]
@@ -90,17 +91,17 @@ def calls(image, map_file):
             if kind == 'typed': sizes.setdefault(f[7], int(f[3]))
             if kind == 'continuation' and f[7] in first: functions[first[f[7]]][1].append(part)
             elif kind == 'continuation': waiting.setdefault(f[7], []).append(part)
-            elif kind.startswith('generic'): functions.append((f[7] + ' [general entry]', [part]))
+            elif kind.startswith('generic'): functions.append((f[7] + ' [general entry]', [part])); typed.append(False)
             else:
-                first[f[7]] = len(functions); functions.append((f[7], [part] + waiting.pop(f[7], [])))
+                first[f[7]] = len(functions); functions.append((f[7], [part] + waiting.pop(f[7], []))); typed.append(kind == 'typed')
     starts = {start: (name, i) for i, (name, parts) in enumerate(functions) for start, _ in parts}
-    result = {}
+    result, found = {}, []
     for number, (name, parts) in enumerate(functions):
-        called, kinds, tested, tables = set(), set(), set(), 0
+        called, kinds, tested, tables, shared = set(), set(), set(), 0, set()
         for start, length in parts:
             words = struct.unpack_from('<%dI' % (length // 4), data, offset + start)
             for k, word in enumerate(words):
-                if word & 0xffc0001f == 0xf100001f and k + 1 < len(words) and words[k + 1] & 0xff00001e == 0x54000000: tested.add((word >> 10) & 0xfff)  # cmp xN, #imm; b.eq | b.ne
+                if word & 0x7fc0001f == 0x7100001f and k + 1 < len(words) and words[k + 1] & 0xff00001e == 0x54000000: tested.add((word >> 10) & 0xfff)  # cmp xN | wN, #imm; b.eq | b.ne
                 if word & 0xfffffc1f == 0xd61f0000: tables += 1  # br xN
                 if word & 0x7f3ffc00 == 0x1e230000: kinds.add('ucvtf')
                 if word & 0x7f3ffc00 == 0x1e220000: kinds.add('scvtf')
@@ -111,8 +112,21 @@ def calls(image, map_file):
                     if distance & 0x2000000: distance -= 0x4000000
                     target = start + 4 * k + 4 * distance
                     if target in thunks: called.add(thunks[target])
-                    elif target in starts and starts[target][1] != number: called.add('f:' + starts[target][0])
-        result.setdefault(name, '%s: %d instructions; %s; uses %s; tables %d; tests for equality with %s .' % (name, sum(length for _, length in parts) // 4, '; '.join(sorted(called)), ' '.join(sorted(kinds)), tables, ' '.join(map(str, sorted(tested)))))
+                    elif target in starts and starts[target][1] != number:
+                        called.add('f:' + starts[target][0])
+                        if not starts[target][0]: shared.add(starts[target][1])
+        found.append((called, kinds, tested, tables, shared))
+
+    def reached(number, seen):
+        called = set(found[number][0])
+        for other in found[number][4] - seen: called |= reached(other, seen | {number, other})
+        return called
+
+    for wanted in (True, False):
+        for number, (name, parts) in enumerate(functions):
+            if typed[number] != wanted: continue
+            _, kinds, tested, tables, _ = found[number]
+            result.setdefault(name, '%s: %d instructions; %s; uses %s; tables %d; tests for equality with %s .' % (name, sum(length for _, length in parts) // 4, '; '.join(sorted(reached(number, {number}))), ' '.join(sorted(kinds)), tables, ' '.join(map(str, sorted(tested)))))
     return result, sizes
 
 

@@ -1,4 +1,4 @@
-// Async functions: results, errors, and above all the order in which things happen.
+// Async functions: results, errors, and the exact order in which everything runs.
 const log: string[] = []
 const say = (s: string) => { log.push(s) }
 async function plain(n: number): Promise<number> { say("plain " + n); return n * 2 }

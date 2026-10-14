@@ -1,4 +1,4 @@
-// The predicted callee follows the prototype chain between constructor functions, through names that are `any` to the type checker, and is wrong without harm.
+// The predicted callee follows the prototype chain between constructor functions, through names of type `any`, and a wrong prediction does no harm.
 import middle from "./req/un_chain_middle";
 declare const console: any;
 const { Middle, helper } = middle;

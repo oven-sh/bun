@@ -1,4 +1,4 @@
-// `re.lastIndex`, read and stored, on whatever `re` is.
+// `re.lastIndex` is read and written, whatever kind of value `re` is.
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

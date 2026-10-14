@@ -1,4 +1,4 @@
-// Objects: the accessors of a literal come with its type.
+// Object literals with getters and setters that are used through annotated types.
 declare const console: any;
 function line(name: string, f: () => unknown) { try { console.log(name, JSON.stringify(f())); } catch (e: any) { console.log(name, "THREW", e.constructor.name, String(e.message).slice(0, 60)); } }
 line("door 1: annotated", () => { const g: { x: number } = { get x() { return 5; } }; return g.x; });

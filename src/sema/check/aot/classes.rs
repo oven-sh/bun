@@ -474,6 +474,21 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     pub fn binding_of_identifier(&mut self, file: FileId, e: ExprId, name: Atom) -> Option<Sym> {
+        let local = self.bound(file).expr_symbol[e.idx()];
+        if self.hir(file).is_js && local.is_some() {
+            let own = self.files().sym(file, local);
+            let flags = self.files().flags(own);
+            if flags.contains(SymFlags::ALIAS)
+                && !flags.intersects(SymFlags::VALUE)
+                && !self.files().means(own, SymFlags::VALUE)
+                && let Some(target) = self.files().resolve_alias(own)
+            {
+                let declared: Vec<FileId> = self.files().decls(target).into_iter().map(|(of, _)| of).collect();
+                if !declared.is_empty() && declared.iter().all(|&of| self.hir(of).kind == FileKind::Declaration) {
+                    return Some(own);
+                }
+            }
+        }
         self.symbol_of_identifier(file, e, name)
     }
 

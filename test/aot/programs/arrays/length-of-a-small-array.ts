@@ -1,4 +1,4 @@
-// Arrays: length of a small array.
+// `length` of a small array literal, directly and through a function.
 const a = [1, 2];
 console.log(a.length);
 function f(x: number[]) { return x.length; }

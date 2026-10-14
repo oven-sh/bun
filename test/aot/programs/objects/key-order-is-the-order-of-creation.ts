@@ -1,4 +1,4 @@
-// The order of own keys is the order of creation, whatever the order in a declared type.
+// The order of own keys is the order of creation, whatever the order in the declared type.
 interface P { a: number; opt?: number; b: number }
 const later: P = { a: 1, b: 2 }
 later.opt = 3

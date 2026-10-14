@@ -1,4 +1,4 @@
-// Runtime type checks: `new` through `any` on a function with typed `this`.
+// `new`, through `any`, on plain functions whose `this` parameter is typed.
 import { type Node, type Token } from "./req/shapes.js"
 function Node(this: { kind: number }, kind: number) { this.kind = kind }
 function Token(this: { text: string }, text: string) { this.text = text }

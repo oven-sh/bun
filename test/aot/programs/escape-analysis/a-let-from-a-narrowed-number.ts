@@ -1,4 +1,4 @@
-// Escape analysis: a let from a narrowed number.
+// A `let` in a `switch` case is initialized from the narrowed number and then incremented, decremented and captured.
 declare const console: { log(...a: unknown[]): void };
 function f(k: number) { switch (k) { case 1: let w = k; return ++w; } }
 function g(k: number) { switch (k) { case 1: let w = k; w++; w++; return w * 2; } return 0; }

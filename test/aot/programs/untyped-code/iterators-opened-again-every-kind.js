@@ -1,4 +1,4 @@
-// Untyped JavaScript: iterators opened again every kind.
+// One iterator object (array, Map, Set, string ..) is used by a loop more than once: after exhaustion, after `break`, and in nested loops.
 function row(name, f) { try { console.log(name + ": " + f()); } catch (e) { console.log(name + ": threw " + e.name + " " + e.message); } }
 const KINDS = {
   "array entries": () => [7, 8, 9, 10].entries(), "array keys": () => [7, 8, 9, 10].keys(), "array values": () => [7, 8, 9, 10].values(), "array @@iterator": () => [7, 8, 9, 10][Symbol.iterator](),

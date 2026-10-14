@@ -1,4 +1,4 @@
-// Key order when fields are created late, deleted and created again.
+// The key order when fields are added late, deleted and added again.
 interface O { a: number; b?: number; c?: string; d?: boolean }
 function show(o: object) { return Object.keys(o).join() + " " + JSON.stringify(o) }
 function build(x: boolean, y: boolean): O { const o: O = { a: 1 }; if (x) o.c = "c"; if (y) o.b = 2; return o }

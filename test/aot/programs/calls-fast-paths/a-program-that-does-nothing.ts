@@ -1,2 +1,2 @@
-// Nothing at all: what it costs to start and to end.
+// An empty program: the cost of starting and exiting.
 export {};

@@ -1,4 +1,4 @@
-// A variable of numbers or bigints that has been found to hold a number, and that other code has stored a bigint to since.
+// A variable of type `number | bigint` that was found to hold a number is assigned a BigInt by other code.
 let x: number | bigint = 1
 let y: number | bigint = 2
 function flip(): void { x = 5n; y = 3n }

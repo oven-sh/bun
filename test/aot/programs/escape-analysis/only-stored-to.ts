@@ -1,4 +1,4 @@
-// An object that is only stored to is not made, whatever the store is written as.
+// An object that is only ever written to is not allocated, however the stores are written.
 function assertNotAllocated(_: unknown): void {}
 class P { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y } }
 class Q { x = 1; y: number; constructor(y: number) { this.y = y } }

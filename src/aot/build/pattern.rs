@@ -142,7 +142,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(throw);
         fx.b.switch_to(throw);
         let unwind = fx.handlers.last().map(|&handler| Target::new(handler));
-        fx.b.terminate(Term::Throw { value: caught, unwind });
+        fx.b.terminate(Term::Throw { value: caught, unwind, pos: 0 });
 
         fx.b.switch_to(after);
     }
@@ -167,7 +167,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let message = self.emit(fx, Op::Str(message));
         let error = self.emit_throwing(fx, Op::Construct { callee, args: [message].into_iter().collect() });
         let unwind = fx.handlers.last().map(|&handler| Target::new(handler));
-        fx.b.terminate(Term::Throw { value: error, unwind });
+        fx.b.terminate(Term::Throw { value: error, unwind, pos: 0 });
     }
 
     // ───────────────────────────── NamedEvaluation ─────────────────────────────

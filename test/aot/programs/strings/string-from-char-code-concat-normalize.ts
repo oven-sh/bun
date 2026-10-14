@@ -1,4 +1,4 @@
-// String(x), String.fromCharCode, String.fromCodePoint, concat, normalize, isWellFormed, toWellFormed.
+// `String(x)`, `String.fromCharCode`, `String.fromCodePoint`, `concat`, `normalize`, `isWellFormed` and `toWellFormed`.
 // CALLS- stringOfString CallHostFunction|CallValue
 // CALLS- stringOfNumber CallHostFunction|CallValue
 // CALLS- stringOfInteger CallHostFunction|CallValue

@@ -1,4 +1,4 @@
-// Imported bindings and temporal dead zones: constant in its dead zone.
+// Modules in an import cycle read each other's constants while those are still in their temporal dead zone.
 // @ts-nocheck
 declare const console: { log(...values: unknown[]): void };
 import { seen, readLater } from "./files/a";

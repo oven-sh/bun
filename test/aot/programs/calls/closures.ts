@@ -1,4 +1,4 @@
-// Indirect calls of every kind of closure, with every number of arguments the two calling conventions tell apart.
+// Indirect calls of every kind of function with every number of arguments.
 declare const console: any;
 const log: any[] = [];
 function attempt(what: string, run: () => any) { try { log.push(what + ": " + String(run())); } catch (e: any) { log.push(what + " throws " + e.constructor.name); } }

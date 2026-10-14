@@ -1,4 +1,4 @@
-// import(): the module is evaluated on first use, once, after its own dependencies, and not before the importing code goes on.
+// `import()`: the module is evaluated on first use, once, after its own dependencies, and asynchronously.
 import { log } from "./dynimp-log.ts"
 log("main start")
 async function load(): Promise<number> {

@@ -1,4 +1,4 @@
-// A typed function reads its rest array under an integer: the argument is loaded where it is: no array, no boxed key, no slow path, and nothing is summed up for the read.
+// A typed function reads its rest parameter by an integer index: no array, no boxing, no slow path.
 // IR= 0 defined CreateRest
 // IR= 1 defined GetMyArgumentByVal
 // IR= 1 defined GetRestLength

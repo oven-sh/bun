@@ -4,6 +4,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 
+#include "JavaScriptCore/AOTProgramData.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/DeferTermination.h"
@@ -336,6 +337,15 @@ WTF::String formatStackTrace(
         originalLineColumns[i] = {};
 
         if (!frame.hasLineAndColumnInfo()) continue;
+
+        if (frame.isTypedAOTFrame()) {
+            if (auto position = frame.reportedPosition()) {
+                originalLineColumns[i] = position->lineColumn;
+                if (position->source)
+                    sourceURLs[i] = JSC::AOT::ProgramData::get()->sourceName(position->source);
+            }
+            continue;
+        }
 
         originalLineColumns[i] = frame.computeLineAndColumn();
 

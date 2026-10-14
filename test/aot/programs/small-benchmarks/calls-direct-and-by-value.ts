@@ -1,4 +1,4 @@
-// A small benchmark: calls direct and by value.
+// A loop of calls to two small functions, directly and through an array of type `any[]`.
 function inc(a: number) { return a + 1 }
 function dec(a: number) { return a - 1 }
 const fs: any[] = [inc, dec, inc]

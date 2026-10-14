@@ -1,4 +1,4 @@
-// `f.apply(thisArg, array)`, neither known: the elements go from the array to the argument registers.
+// `f.apply(thisArg, array)` with an unknown callee and array passes the elements without an intermediate copy.
 // IR+ IsBuiltinFunction v[0-9]+ Function.apply
 // IR+ CallBuiltin Apply
 // IR- CallMethod v[0-9]+ "apply"

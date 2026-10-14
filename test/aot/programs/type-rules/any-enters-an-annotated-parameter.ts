@@ -1,4 +1,4 @@
-// Runtime type checks: `any` enters an annotated parameter.
+// A value of type `any` is passed to an annotated parameter of an interface type with methods.
 interface Speaker { id: number; speak(greeting: string): string }
 const literalMethod: Speaker = { id: 1, speak(greeting) { return greeting + " method " + this.id } }
 function replacing(s: Speaker): string { return s.speak?.((s.speak = () => "replaced " + s.id, "old")) + " then " + s.speak("new") }

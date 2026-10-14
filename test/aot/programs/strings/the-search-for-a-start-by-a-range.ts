@@ -1,4 +1,4 @@
-// Strings: the search for a start by a range.
+// Regular expressions that start with a character or a character range, searched in strings where the match begins at every position.
 declare const console: { log(...a: unknown[]): void }
 const runs: RegExp[] = [/ab?c/, /[a-f]x/, /a|bc|d/, /[0-9][0-9]x/, /[a-z]+@/, /[a-z][a-z][a-z]!/, /[A-Z]\d/, /[b-e]{2}z/, /[x-z]{3}/, /(?:a|b|c|d)q/, /[0-9a]:/, /[\x7e-\x82]y/, /[\x7f\x80\x81]y/, /[àáâ]x/, /[\xe0-\xe5]{2}/, /[一-丅]x/, /[乾-亂]x/, /[一丁丂]x/, /[a-c]|[d-f]g/, /[!-\/]{2}#/]
 const others: RegExp[] = [/[acegi]x/, /[a-cx-z]q/, /[a-f]x/i, /[0-9a-f]{2}:/, /[aeiou][aeiou]!/, /(?:a|c|e)q/, /[\x41\xc3\x45]y/, /ab/, /a|b/, /[ab]x/]

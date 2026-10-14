@@ -1,4 +1,4 @@
-// Private class members: every kind of mention in a key (the same program without type annotations).
+// Every kind of expression with a private name (read, store, call, `in`) inside a computed member key (the same program without type annotations).
 function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + (e).name; } }
 const lines = [];
 const o = JSON.parse("{}");

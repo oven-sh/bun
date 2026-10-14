@@ -1,4 +1,4 @@
-// Strings: buffer byte length every length (the same program without type annotations).
+// `Buffer.byteLength` on strings of every length from 0 up, 8-bit and 16-bit (the same program without type annotations).
 const g = globalThis;
 if (!g.Buffer) {
   g.Buffer = {

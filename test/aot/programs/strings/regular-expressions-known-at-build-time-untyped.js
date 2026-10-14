@@ -1,4 +1,4 @@
-// Expressions that are no literals and are known at build time all the same, as public packages make them (ansi-regex, wrap-ansi), and some that are not (the same program without type annotations).
+// Regular expressions that are not literals but are still known at build time, built the way the packages ansi-regex and wrap-ansi build them, and some that are not known (the same program without type annotations).
 function make(text) {
   return Array.from(text).join("");
 }

@@ -1,2 +1,2 @@
-// Untyped JavaScript: members read from variables stored elsewhere.
+// Properties are read from variables that other functions assign.
 import "./impl.js";

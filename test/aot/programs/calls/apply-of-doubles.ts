@@ -1,4 +1,4 @@
-// `f.apply(t, list)` and `f(...list)` where the list has double storage: the elements are boxed on their way into the registers.
+// `f.apply(t, list)` and `f(...list)` where the array holds unboxed doubles.
 declare const console: any;
 const show: any = function (this: any, ...a: any[]) { return String(this) + "/" + a.length + ":" + a.map(v => Object.is(v, -0) ? "-0" : String(v)).join(); };
 const fixed: any = function (a: any, b: any, c: any) { return [a, b, c].map(v => typeof v + " " + (Object.is(v, -0) ? "-0" : String(v))).join(); };

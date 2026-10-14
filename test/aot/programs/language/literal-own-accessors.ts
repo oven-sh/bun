@@ -1,4 +1,4 @@
-// A typed read of an object literal's own accessor.
+// A typed read of an accessor that an object literal defines.
 const round = 5;
 const reads = {
   n: round,

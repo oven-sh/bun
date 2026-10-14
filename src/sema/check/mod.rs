@@ -3214,6 +3214,7 @@ impl<'p, 's> Checker<'p, 's> {
             current != symbol.file && self.is_checked_no_later_than(symbol.file, current)
         });
         if !is_resolved_by_check
+            && !self.p.files.options.pops_every_type_resolution
             && let Some(frame) = self.frames.last()
             && self.unpopped_resolutions.insert(symbol)
         {

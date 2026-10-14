@@ -1,4 +1,4 @@
-// A predicted callee that is wrong costs time and never an answer.
+// A predicted callee that turns out to be wrong costs time but never changes the result.
 // @ts-ignore
 import Emitter from "./req/un_emitter.js";
 declare const console: any;

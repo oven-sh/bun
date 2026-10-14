@@ -1,4 +1,4 @@
-// Private class members: a dynamic key and every brand test outside it.
+// A class with a computed member key, and `#name in object` tests in every other position of the class body.
 function said(f) { try { return String(f()); } catch (e) { return "threw " + e.name; } }
 const name = () => "k";
 const o = JSON.parse("{}");

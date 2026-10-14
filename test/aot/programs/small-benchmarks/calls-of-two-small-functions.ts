@@ -1,4 +1,4 @@
-// A small benchmark: calls of two small functions.
+// A loop of calls to two small functions that have been given a property.
 function inc(a: number) { return a + 1 }
 function dec(a: number) { return a - 1 }
 ;(inc as any).p = 1; (dec as any).p = 1

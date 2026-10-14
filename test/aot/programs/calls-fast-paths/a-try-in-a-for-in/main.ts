@@ -1,4 +1,4 @@
-// Calls: a try in a `for..in`.
+// `try .. catch` in the body of a `for..in` loop, in typed and untyped code.
 // @ts-ignore
 import untyped from "./untyped-loops-with-a-try.js";
 declare const console: any;

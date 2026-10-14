@@ -1,4 +1,4 @@
-// Static functions that make an object of the class they are called on.
+// Static factory methods that create an instance of the class they are called on (`new this()`).
 const a = Uint8Array.of(1, 2, 300)
 const b = Float64Array.of(1.5, 2.5)
 console.log(a.length, a[2], a instanceof Uint8Array, b[1], b.constructor.name)

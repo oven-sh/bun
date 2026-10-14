@@ -505,6 +505,7 @@ pub struct Reach {
     pub may_have_other_prototype: bool,
     /// An object that is not laid out can be in places of this type.
     pub admits_foreign: bool,
+    pub is_opened_for_the_log: bool,
     /// The allocated types whose objects can be in places of this type, itself among them if it is allocated. Ascending.
     pub members: Vec<u32>,
     pub members_by_fit: Vec<u32>,
@@ -824,6 +825,8 @@ pub enum WhyForeign {
     Flat { at: Place },
     /// More layouts may fit it than phase B asks about for one target, and a value that only its type vouches for is held to it.
     TooMany { at: Place },
+    ForTheLog { at: Place },
+    NothingIsMadeAsIt { at: Place },
 }
 
 /// A kind of objects that are not laid out. `Checker::name_of_candidate` says which.
@@ -4258,23 +4261,24 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The primitive types that are assignable to the object type `ty`: a string is a `{ length: number }`.
+    pub fn requires_nothing(&mut self, ty: TypeId) -> bool {
+        let objects: Vec<TypeId> = self.parts(ty).iter().copied().filter(|&part| !self.has_primitive_flag(part)).collect();
+        !objects.is_empty()
+            && objects.into_iter().all(|part| {
+                self.says_properties(part)
+                    && self.members(part).is_some_and(|members| {
+                        let shape = members.shape();
+                        !shape.props.is_empty() && shape.index.is_empty() && shape.call.is_empty() && shape.construct.is_empty() && shape.props.iter().all(|prop| prop.flags.contains(PropFlags::OPTIONAL))
+                    })
+            })
+    }
+
     pub fn primitives_of_type(&mut self, ty: TypeId) -> Vec<TypeId> {
         let mut primitives = Vec::new();
         for primitive in [TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN, TypeId::BIGINT, TypeId::SYMBOL] {
             let wrapper = self.apparent_type(primitive);
             let not_known_before = self.aot.flows.times_not_known;
-            let lacks_all_it_names = match (self.members(ty), self.members(wrapper)) {
-                (Some(of_type), Some(of_wrapper)) => {
-                    let shape = of_type.shape();
-                    !shape.props.is_empty()
-                        && shape.index.is_empty()
-                        && shape.call.is_empty()
-                        && shape.construct.is_empty()
-                        && shape.props.iter().all(|prop| prop.flags.contains(PropFlags::OPTIONAL) && of_wrapper.resolved.prop(prop.name).is_none())
-                }
-                _ => false,
-            };
-            if lacks_all_it_names || self.has_the_names_of(wrapper, ty) && (self.is_of_type(primitive, ty) || self.aot.flows.times_not_known != not_known_before) {
+            if self.has_the_names_of(wrapper, ty) && (self.is_of_type(primitive, ty) || self.aot.flows.times_not_known != not_known_before) {
                 primitives.push(primitive);
             }
         }
@@ -5009,6 +5013,10 @@ impl<'p, 's> Checker<'p, 's> {
             tests,
             vouched,
             held_untyped,
+            logs_type_errors: self.logs_type_errors(),
+            opens_for_the_log: false,
+            admitting_when_closed: Vec::new(),
+            about_kinds_once_more: Vec::new(),
             foreign,
             about_kinds,
             altered,
@@ -5089,6 +5097,9 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let named = self.literals_of_type(of_prop);
+            if prop.flags.contains(PropFlags::OPTIONAL) || self.parts(of_prop).iter().any(|&part| matches!(self.data(part), TypeData::Intrinsic(_))) {
+                constants.push((name, 0x7FF8_0002_0000_0000));
+            }
             if !named.is_empty() {
                 flags |= subtypes::HAS_CONSTANTS | if named.len() == 1 { subtypes::IS_CONCRETE } else { 0 };
             }
@@ -5248,9 +5259,11 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     WhyForeign::GivenAndKeptByNobody { at } => line += &format!("given: a value that only its type vouches for is held to it or to what holds it at {}, and a type that the program is given and that no task could keep, such as untyped code makes, has its names", self.place_for_people(at)),
                     WhyForeign::DeclaredOnly => line += "declared in a declaration file",
+                    WhyForeign::ForTheLog { at } => line += &format!("for the log: something untyped is held to it at {}, and few views open with it", self.place_for_people(at)),
                     WhyForeign::Instance => line += "a class: the text shows that an object its constructor has not made can come to be: an object of it or a method of it is handed to what is not typed code, or to a built-in that lets it out",
                     WhyForeign::Flat { at } => line += &format!("flat: all its properties are primitives, and something untyped is held to it at {}", self.place_for_people(at)),
                     WhyForeign::TooMany { at } => line += &format!("too many layouts may fit it to ask about each, and a value that only its type vouches for is held to it at {}", self.place_for_people(at)),
+                    WhyForeign::NothingIsMadeAsIt { at } => line += &format!("nothing is made as it and no layout fits it, and a value that only its type vouches for is held to it at {}", self.place_for_people(at)),
                     WhyForeign::Weak { at } => line += &format!("weak: it requires no live field, and a value that only its type vouches for is held to it at {}", self.place_for_people(at)),
                     WhyForeign::Inherited { from, at } => {
                         let from_whom = self.name_of_view(views, from);

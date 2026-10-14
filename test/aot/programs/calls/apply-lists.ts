@@ -1,4 +1,4 @@
-// Every kind of list `apply` takes, and what it turns away.
+// Every kind of argument list that `apply` accepts, and everything it rejects.
 declare const console: any;
 const log: any[] = [];
 function attempt(what: string, run: () => any) { try { log.push(what + ": " + String(run())); } catch (e: any) { log.push(what + " throws " + e.constructor.name); } }

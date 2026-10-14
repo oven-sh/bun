@@ -1,4 +1,4 @@
-// A call in a loop of a coroutine that does not suspend is treated as in any other function; a call outside a loop, and one in a loop with an `await` in it, stay calls.
+// Inlining in async functions: calls in loops without `await` are inlined, calls outside loops and in loops with `await` are not.
 // IR= 0 mixed CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+\)$
 // IR= 4 mixed frame [0-9]+ = Mul
 declare const console: any;

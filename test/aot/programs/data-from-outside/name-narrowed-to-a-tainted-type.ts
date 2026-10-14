@@ -1,4 +1,4 @@
-// Parsed JSON: name narrowed to a tainted type.
+// A value that was checked against its type where it was created keeps that type although a type guard later narrows a variable for it to another type.
 type Child = { d: PropertyDescriptor | null }
 type Alike = { get: () => string }
 function guard(d: PropertyDescriptor): d is PropertyDescriptor & { get(): string } { return typeof d.get === "function" }

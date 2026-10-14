@@ -1,4 +1,4 @@
-// `useMemo` and `useCallback` are a cache and no more.
+// `useMemo` and `useCallback` only cache: they return what the program passed in.
 import * as React from "react"
 import { breakContract, keepContract, render, useCallback, useMemo as memo } from "react"
 interface Row { id: number; name: string }

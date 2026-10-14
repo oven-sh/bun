@@ -24,7 +24,7 @@ def cut(tree, text):
     if tree.endswith('.doors'): return re.sub(r'/\*L\*/.*?/\*L\*/', '', re.sub(r'/\*D\*/.*?/\*D\*/', 'import { carry } from "./carried.js";', text, flags=re.S), flags=re.S)
     return text
 FACTS = {  # tree -> the package it judges and the pins (percent, percent, a ratio, the named records that may admit foreign objects); `by`: by the installed version where a tree serves several. Two points down, or a tenth more bytes, fails
-    'client': dict(of='react-reconciler', receiver=61.4, read=44.3, bytes=0.725, strangers='AbortSignalLike AsyncDispatcher Dispatcher EventFunctionRef OffscreenProps'),
+    'client': dict(of='react-reconciler', receiver=61.4, read=44.3, bytes=0.725, strangers='AbortSignalLike AsyncDispatcher Dispatcher EffectInstance EventFunctionRef OffscreenProps'),
     'server': dict(of='react-dom', strangers='ComponentIdentity Ping RefObject PostponedHoles', by={'19.3.': dict(receiver=61.1, read=49.5, bytes=1.012), '19.2.': dict(receiver=63.3, read=52.5, bytes=0.99), '19.1.': dict(receiver=60.6, read=49.4, bytes=0.965), '19.0.': dict(receiver=59.1, read=48.0, bytes=0.968)}),
     'seroval.born': dict(of='seroval', receiver=46.5, read=41.6, bytes=0.976, strangers='Sequence Stream'), 'seroval.doors': dict(of='seroval', receiver=46.6, read=41.1, bytes=0.976, strangers='Sequence Stream'),
     'fuse.born': dict(of='fuse.js', receiver=42.6, read=34.5, bytes=1.064, strangers='FuseIndex FuseOptionKeyObject<Book> FuseOptionKeyObject<Row> FuseOptionKeyObject<string> FuseSearchOptions FuseSortFunctionArg FuseSortFunctionMatch FuseSortFunctionMatchList IndexOptions QueryNode'), 'fuse.doors': dict(of='fuse.js', receiver=42.5, read=34.2, bytes=1.068, strangers='FuseIndex FuseOptionKeyObject<Book> FuseOptionKeyObject<Row> FuseOptionKeyObject<string> FuseSearchOptions FuseSortFunctionArg FuseSortFunctionMatch FuseSortFunctionMatchList IndexOptions QueryNode'),
@@ -148,6 +148,8 @@ elif STEP == 'answers':
             for h in differ[:12]:
                 a, b = got.get(h, ['(no such head)']), want.get(h, ['(no such head)']); i = next((i for i in range(max(len(a), len(b))) if (a[i:i + 1] or ['']) != (b[i:i + 1] or [''])), 0)
                 print('       %s\n          here:  %s\n          plain: %s' % (h, (a[i:i + 1] or [''])[0][:190], (b[i:i + 1] or [''])[0][:190]))
+                thrown = [l.strip() for l in a if re.search(r'TypeError|THREW|uncaught', l) and l not in b]  # the first line that differs may be a mere consequence: a lost update, where the cause is an error that the package caught further down
+                if thrown: print('          AN ERROR THAT PLAIN Bun DOES NOT PRINT, in this scenario: %s' % thrown[0][:230])
             for l in lines[:20]: print('       ' + l[:200])
 else: sys.exit(__doc__)
 print('run.py %s: %s' % (STEP, 'ALL AS DUE' if not bad else '%d NOT AS DUE' % bad)); sys.exit(1 if bad else 0)

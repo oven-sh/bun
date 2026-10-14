@@ -1,4 +1,4 @@
-// Calls: native functions with rare data.
+// Native functions whose `name`, `length` or other properties were inspected before they are called.
 declare const console: any;
 const x: any = JSON.parse('{"k":"key","n":3}'); x.m = new Map([["key", 1]]); x.s = new Set(["key"]); x.a = [3, 1, 2];
 const looked: any[] = [Map.prototype.set, Map.prototype.get, Set.prototype.has, Array.prototype.indexOf, Math.max, String.prototype.charCodeAt, Object.prototype.hasOwnProperty];

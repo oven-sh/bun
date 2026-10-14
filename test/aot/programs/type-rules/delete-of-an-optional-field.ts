@@ -1,4 +1,4 @@
-// Runtime type checks: delete of an optional field.
+// `delete` of optional and nested fields through `any` and through optional chains.
 const made = { a: { b: 1, c: 2 }, n: null }
 const o: any = made
 try { delete o.a?.b; console.log("delete o.a?.b: no error") } catch (e) { console.log("delete o.a?.b:", e instanceof TypeError ? "TypeError" : "other " + e) }

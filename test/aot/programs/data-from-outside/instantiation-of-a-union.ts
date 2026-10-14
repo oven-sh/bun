@@ -1,4 +1,4 @@
-// A generic union of records, one instantiation of which comes from JSON.
+// A generic union of object types, one instantiation of which comes from JSON.
 declare const console: { log(...values: unknown[]): void };
 type Either<A, B> = { early: A; late?: undefined } | { late: B; early?: undefined };
 function text<A, B>(e: Either<A, B>): string {

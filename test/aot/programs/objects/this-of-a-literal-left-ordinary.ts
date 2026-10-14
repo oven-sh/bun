@@ -1,4 +1,4 @@
-// Objects: `this` of a literal left ordinary.
+// `this` in the getters, setters and methods of object literals that are only spread, copied with `Object.assign` or extended with `defineProperty`.
 declare const console: any;
 function line(name: string, f: () => unknown) { try { console.log(name, JSON.stringify(f())); } catch (e: any) { console.log(name, "THREW", e.constructor.name, String(e.message).slice(0, 60)); } }
 line("185: only spread, getter", () => ({ ...{ a: 1, get g() { return this.a + 1; } } }.g));

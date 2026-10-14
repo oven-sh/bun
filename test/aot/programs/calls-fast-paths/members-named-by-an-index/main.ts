@@ -1,4 +1,4 @@
-// Calls: members named by an index.
+// Class members whose names are array indices: setters, getters and methods, on the prototype and on the class, in typed and untyped code.
 // @ts-ignore
 import untyped from "./untyped-classes-with-members-named-by-an-index.js";
 declare const console: any;

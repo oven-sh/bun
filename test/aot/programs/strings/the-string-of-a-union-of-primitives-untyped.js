@@ -1,4 +1,4 @@
-// `"" + x`, `x + ""`, a template and String(x) of values whose TYPE is a union of primitives, of every kind the union allows, and of anything (the same program without type annotations).
+// `"" + x`, `x + ""`, templates and `String(x)` on values whose type is a union of primitives (the same program without type annotations).
 const values = ["", "a", "text", "\u20AC", "a" + Math.random().toString().slice(0, 0) + "b", 0, -0, 1, -1, 7, 255, 256, 65535, 2147483647, -2147483648, 2147483648, -2147483649, 4294967296, 9007199254740991, 1000000000000000000000, 0.0000001, 0.1, 1.5, -1.5, NaN, 1 / 0, -1 / 0, 5, 10n, -10n, 10n ** 30n, true, false, null, undefined];
 function stringOrNumber(x) {
   return ["" + x, x + "", `${x}`, `<${x}>`, String(x), "k" + x + "k"];

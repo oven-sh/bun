@@ -1,4 +1,4 @@
-// A union that is written in a module of types alone (`import type`), generic, made in a generic async function and read at an instantiation.
+// A generic union that is declared in a types-only module (`import type`), created in a generic async function and read at one instantiation.
 import type * as Types from "./types";
 declare const console: { log(...values: unknown[]): void };
 async function either<In, Result>(act: Types.Act<In>, chain: Promise<Result>): Promise<Types.Either<In, Result>> {

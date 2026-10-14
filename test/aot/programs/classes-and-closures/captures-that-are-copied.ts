@@ -1,4 +1,4 @@
-// Captured variables that nothing stores to once an inner function can have seen them: copied, no environment.
+// Captured variables that are never assigned after a closure could have seen them can be copied into the closure.
 function call<T>(f: () => T): T { return f(); }
 function parameter(a: number, b: string) { return call(() => a + b.length); }
 function withDefault(a: number, depth = 3) { return call(() => a * depth); }

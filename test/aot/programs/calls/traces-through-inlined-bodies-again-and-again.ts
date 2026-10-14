@@ -1,4 +1,4 @@
-// A trace and an unwinding through functions with inlined bodies must be the same the first time (the visitor resolves every return address) and every later time.
+// Stack traces and unwinding through functions with inlined calls give the same result the first time and every later time.
 declare const console: { log(...args: unknown[]): void }
 function say(label: string, value: unknown): void { console.log(label + ": " + String(value)) }
 function shape(e: unknown): string { return String((e as Error).stack).split("\n").map(l => /^(?:\s*at\s+)?(?:async\s+)?(?:([A-Za-z_$][\w$]*)(?: \(|@))?.*?:(\d+):\d+\)?$/.exec(l)).filter(m => m && m[1] && m[1] !== "module").map(m => m![1] + "@" + m![2]).slice(0, 9).join(" ") }

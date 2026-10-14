@@ -1,4 +1,4 @@
-// `any` enters a property of an object literal that is checked against a type.
+// A value of type `any` becomes a property of an object literal that is checked against a type.
 /* expected
 plain TypeError
 spread TypeError

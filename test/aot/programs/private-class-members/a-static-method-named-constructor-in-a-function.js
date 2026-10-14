@@ -1,4 +1,4 @@
-// Private class members: a static method named constructor in a function.
+// A static method named `constructor` in a class expression that a function returns.
 function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
 function row(label, f) { console.log(label + ": " + said(f)); }
 let calls = 0;

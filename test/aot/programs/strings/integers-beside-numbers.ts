@@ -1,4 +1,4 @@
-// Numbers that are defined by a conversion from an integer, compared with integer constants: by the integer.
+// Numbers that were converted from integers are compared with integer constants.
 // CALLS- countLetters uses.* fcmp
 // CALLS- countJoined uses.* fcmp
 // CALLS- countNested uses.* fcmp

@@ -1,4 +1,4 @@
-// Scanning a string: the length read once, the code unit compared as an integer (the same program without type annotations).
+// Loops that scan a string: the length is read once, and code units are compared as integers (the same program without type annotations).
 const print = (s) => console.log(s);
 function show(x) {
   if (typeof x !== "string")

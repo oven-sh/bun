@@ -1,4 +1,4 @@
-// Strings: keys put together by adds (the same program without type annotations).
+// Lookup keys built with `+` (`a + "," + b`) and used at once in a Map, a Set or an object (the same program without type annotations).
 class Holder {
   tag;
   v;

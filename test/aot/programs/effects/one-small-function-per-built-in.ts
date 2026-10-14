@@ -1,4 +1,4 @@
-// One small function per built-in: nothing else in the function raises its effect summary, so the summary has to cover the built-in alone.
+// One small function per built-in function, so that the compiler's summary of each function's side effects covers that built-in alone.
 const m = new Map<unknown, number>([[1, 10], ["a", 20]])
 const nums = new Map<number, number>([[1, 10]])
 const list = [3, 1, 2]

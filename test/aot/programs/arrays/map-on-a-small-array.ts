@@ -1,4 +1,4 @@
-// Arrays: map on a small array.
+// `map` on a small array literal, with one element read.
 const xs = [1, 2, 3]
 const d = xs.map(x => x * 2)
 const v = d[2]

@@ -1,4 +1,4 @@
-// Methods bound to their object, by a name known at compile time and by names that are not.
+// Methods are bound to their object in the constructor, by names that are known at compile time and by names that are not.
 function bindAll(self: any) {
   for (const key of Reflect.ownKeys(Object.getPrototypeOf(self))) {
     if (key === "constructor") continue

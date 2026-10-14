@@ -1,4 +1,4 @@
-// Strings: replace with a RegExp that finds nothing or something (the same program without type annotations).
+// `replace` with a RegExp that matches nothing, once or several times (the same program without type annotations).
 const g = globalThis;
 const collect = g.fullGC ? () => {
   g.fullGC();

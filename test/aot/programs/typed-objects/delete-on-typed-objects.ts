@@ -1,4 +1,4 @@
-// Delete on typed objects: through the type, `any`, Reflect and computed keys; absent is not undefined; a field stored again goes to the end of the keys.
+// `delete` on typed objects: through the type, `any`, `Reflect` and computed keys; absent is not the same as undefined; a field that is added again moves to the end of the keys.
 interface Author { toLocaleString?: () => string; nick: string; age?: number }
 interface Doc { toLocaleString?: () => string; id: number; title?: string; pages?: number; draft?: boolean; author: Author; editor?: Author | null; refs: number[] }
 function attempt(f: () => unknown): string { try { return String(f()) } catch (e) { return (e as Error).constructor.name } }

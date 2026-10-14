@@ -1,4 +1,4 @@
-// `arguments[i]` with a key that is not known to be a number, and `slice.call(arguments)`: no arguments object.
+// `arguments[i]` with a key of unknown type, and `slice.call(arguments)`, need no `arguments` object.
 // IR- CreateArguments
 // IR+ GetMyArgumentByVal
 // @ts-ignore

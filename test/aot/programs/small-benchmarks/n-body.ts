@@ -1,4 +1,4 @@
-// The n-body kernel of the benchmarks game, with classes.
+// The n-body benchmark, with classes.
 class Body {
   x: number; y: number; z: number; vx: number; vy: number; vz: number; mass: number
   constructor(x: number, y: number, z: number, vx: number, vy: number, vz: number, mass: number) {

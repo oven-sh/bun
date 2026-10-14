@@ -1,4 +1,4 @@
-// A function that mentions `arguments` or has a rest parameter, is too large to be copied, is called by name only and is never a value (TypeScript's reduceLeft).
+// A large function that uses `arguments` or a rest parameter and is only ever called by name (like TypeScript's `reduceLeft`).
 // IR= 0 run = Call v
 // IR= 0 run = CallMethod
 // IR+ CallDirect f[0-9]+ \(v[0-9]+\)

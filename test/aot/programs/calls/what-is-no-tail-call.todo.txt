@@ -1,1 +1,0 @@
-Plain Bun prints "behind a try: 0"; --aot prints "behind a try: throws RangeError".

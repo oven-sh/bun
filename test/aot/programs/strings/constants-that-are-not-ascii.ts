@@ -1,4 +1,4 @@
-// Strings: constants that are not ASCII.
+// String literals with Latin-1, CJK, emoji and unpaired-surrogate characters, in every string method.
 declare const console: { log(...args: unknown[]): void }
 const show = (s: unknown) => typeof s === "string" ? JSON.stringify(s) + ":" + s.length + ":" + Array.from({ length: s.length }, (_, i) => s.charCodeAt(i).toString(16)).join(".") : String(s)
 function values(): string[] { return ["café", "é", "ÿÿ", "→ an arrow", "a → b → c", "日本語のテキスト", "😀", "a😀b😀", "\ud800", "x\ud800y", "\udc00\ud800", "\ud83d", "é→😀\ud800", "ends in é", "é starts", "–—…‘’“”", "\u0000é", "ǅ", "ß", "İ"] }

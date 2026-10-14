@@ -1,4 +1,4 @@
-// CommonJS: dynamic import of a CommonJS module with then.
+// Dynamic `import()` of a CommonJS module that exports a function named `then`.
 function show(label, v) { console.log(label + ": " + v); }
 show("then is a function", (await import("./files/d1.cjs")).a);
 { const { a } = await import("./files/d1.cjs"); show("a pattern", a); }

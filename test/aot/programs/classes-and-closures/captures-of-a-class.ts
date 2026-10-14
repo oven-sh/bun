@@ -1,4 +1,4 @@
-// Classes that are not evaluated once: members capture the environment of the class, which holds what they need from outside.
+// Classes that are evaluated more than once: their members capture the variables of the enclosing scope.
 function make(base: number, label: string) {
   let count = 0;
   class Counter {

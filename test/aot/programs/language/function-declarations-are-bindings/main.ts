@@ -1,4 +1,4 @@
-// Function declarations are bindings: one closure per activation, assignable.
+// Function declarations are bindings: one closure per call of the enclosing function, and assignable.
 import snapshot, { bump, current } from "./untyped/counter"
 import crypto2, { hasSubtle } from "./untyped/ambient"
 import * as counter from "./untyped/counter"

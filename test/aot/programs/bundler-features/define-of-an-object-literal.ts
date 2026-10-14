@@ -1,4 +1,4 @@
-// A define whose value is an object literal.
+// A `--define` whose value is an object literal.
 declare const OBJ: { A: string, N: { B: number }, L: number[], U: string, missing?: string }
 console.log(OBJ.A, OBJ.N.B, OBJ.L.length, OBJ.L[1], OBJ.U, OBJ.missing, typeof OBJ.toString)
 console.log(JSON.stringify(OBJ), OBJ === OBJ, OBJ.N === OBJ.N)

@@ -1,4 +1,4 @@
-// A file that is embedded in the executable and imported for its path.
+// A file is embedded in the executable and imported for its path.
 /// <reference path="./asset/types.d.ts" />
 import path from "./asset/data.bin" with { type: "file" }
 import { readFileSync } from "node:fs"

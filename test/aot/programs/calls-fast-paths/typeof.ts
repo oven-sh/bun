@@ -1,4 +1,4 @@
-// `typeof x === "function"`: no string.
+// `typeof x === "function"` creates no string.
 // IR+ TypeOfIs v[0-9]+ function
 // IR- = TypeOf v
 declare const console: any;

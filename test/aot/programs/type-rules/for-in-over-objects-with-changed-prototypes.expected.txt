@@ -1,0 +1,15 @@
+abd
+inheritor of a compiled object cast to its type: no error
+another prototype: no error
+a compiled object for prototype: no error
+no prototype: no error
+ad 3 undefined undefined
+property added to the prototype of a class: TypeError
+pq
+true
+absent property of the prototype of a class deleted: no error
+05adxb
+field made an accessor: no error
+field made non-enumerable: no error
+ad 0 a=7&d=2 1 ad h
+1dza 1=3&d=1&z=0&a=2

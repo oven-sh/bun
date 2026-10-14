@@ -1,4 +1,4 @@
-// Arrays: `Object.entries` in fourteen forms.
+// `Object.entries` consumed in fourteen ways, on objects that change, lose or hide properties during or between the calls.
 import * as impl from "./impl.js"
 declare const console: { log(...values: unknown[]): void };
 const leftOut = new Set<string>(["one | warmThenChanged", "one | warmThenDeleted", "one | warmThenHidden", "one | warmThenAGetter", "four | warmThenChanged", "four | warmThenDeleted", "four | warmThenHidden", "four | warmThenAGetter", "values of every kind | loop", "values of every kind | untyped", "seven: beyond the cell | warmThenChanged", "seven: beyond the cell | warmThenDeleted", "seven: beyond the cell | warmThenHidden", "seven: beyond the cell | warmThenAGetter", "a getter | warmThenChanged", "a getter | warmThenDeleted", "a getter | warmThenHidden", "a getter | warmThenAGetter", "sealed | warmThenChanged", "a text | entriesOfRecord", "a number | entriesOfRecord", "a proxy | warmThenChanged", "a proxy | warmThenDeleted", "a proxy | warmThenHidden", "a proxy | warmThenAGetter"]);

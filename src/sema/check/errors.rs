@@ -418,7 +418,9 @@ impl Checker<'_, '_> {
         }
         if !self.is_plain_js(d.file) {
             d.directive = directives.preceding(d.file, hir, d.start);
-        } else if errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_err() {
+        } else if errors_js::PLAIN_JS_ERRORS.binary_search(&d.code).is_err()
+            || self.files().options.one_name_is_one_binding && matches!(d.code, 1100..=1102 | 1210 | 1212 | 1214 | 1215) && self.is_sloppy_function(d.file, FnId::NONE)
+        {
             return None;
         }
         self.settle_place(&mut d);
@@ -429,7 +431,8 @@ impl Checker<'_, '_> {
     /// Reports the HIR diagnostics of `file` whose kind is in `kinds`.
     fn report_hir_diagnostics(&mut self, file: FileId, kinds: &[DiagnosticKind]) {
         let diagnostics = self.hir(file).diagnostics.iter();
-        let diagnostics = diagnostics.filter(|d| kinds.contains(&d.kind));
+        let is_left_to_the_bundler = self.files().options.one_name_is_one_binding && self.hir(file).is_js;
+        let diagnostics = diagnostics.filter(|d| kinds.contains(&d.kind) && !(is_left_to_the_bundler && d.kind == DiagnosticKind::Parse && matches!(d.code, 18030 | 1121 | 1487 | 1488 | 1489)));
         self.reported
             .extend(diagnostics.map(|d| Reported::from_hir(file, d)));
     }

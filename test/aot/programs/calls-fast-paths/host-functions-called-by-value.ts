@@ -1,4 +1,4 @@
-// Calls: native functions called by value.
+// Native functions called as values: ones that call back into JavaScript, bound ones, proxies, `call` and `apply`, with every number of arguments.
 declare const console: any; declare const globalThis: any;
 const said: string[] = [];
 function block(name: string, body: () => unknown) { try { said.push(name + ": " + body()); } catch (error) { said.push(name + ": THROWS " + (error as any)?.constructor?.name + " " + (error as any)?.message); } }

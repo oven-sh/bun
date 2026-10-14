@@ -1356,9 +1356,16 @@ fn is_about_what_the_run_time_brings(reported: &Diagnostic) -> bool {
         2580 | 2582 | 2584 | 2591 | 2593 | 2867 | 2868 => true,
         2304 | 2552 => reported.text.strip_prefix(b"Cannot find name '").and_then(|rest| rest.split(|&byte| byte == b'\'').next()).is_some_and(|name| GLOBALS.contains(&name)),
         2307 => match reported.text.strip_prefix(b"Cannot find module '").and_then(|rest| rest.split(|&byte| byte == b'\'').next()) {
-            Some(name) => name == b"bun" || name.starts_with(b"bun:") || name.starts_with(b"node:") || OF_NODE.contains(&name.split(|&byte| byte == b'/').next().unwrap_or(name)),
+            Some(name) => {
+                name == b"bun"
+                    || name.starts_with(b"bun:")
+                    || name.starts_with(b"node:")
+                    || OF_NODE.contains(&name.split(|&byte| byte == b'/').next().unwrap_or(name))
+                    || [&b".txt"[..], b".toml", b".yaml", b".yml", b".jsonc", b".json5", b".xml", b".html", b"/bun.lock"].iter().any(|end| name.ends_with(end))
+            }
             None => false,
         },
+        2339 => reported.text.ends_with(b"' does not exist on type 'ImportMeta'."),
         _ => false,
     }
 }
@@ -1553,6 +1560,7 @@ pub fn check_provided_then<R>(
         }
     }
     let mut disk = host::Disk::with_already_read(threads, already_read, &project);
+    disk.reads_as_the_runtime = request.is_one_program;
     let paths_of = |disk: &host::Disk, named: Vec<&[u8]>| -> Vec<Vec<u8>> {
         let mut paths: Vec<(&[u8], Vec<u8>)> = named.into_iter().map(|named| (named, Vec::new())).collect();
         bun_sema::util::for_each_mut(&mut paths, &|count, work| disk.parallel(count, work), &|(named, path)| {
@@ -1572,6 +1580,7 @@ pub fn check_provided_then<R>(
     disk.before_read = provided.before_read;
     disk.scripts_of_page = provided.scripts_of_page;
     disk.keeps_byte_order_marks = provided.keeps_byte_order_marks;
+    disk.constants_of_imports = provided.constants_of_imports.into_iter().collect();
     if let Libs::Bundled(libs) = request.libs {
         disk.bundled_libs = Some(libs);
     }
@@ -2610,6 +2619,7 @@ fn check_project_of(
     }
     if request.is_one_program {
         project.options.gives_direct_evals_their_scopes = true;
+        project.options.pops_every_type_resolution = true;
         project.options.tolerate_removed_options();
         project.options.emit_nothing();
         project.options.ignore_paths_of(|specifier| {
@@ -2622,6 +2632,7 @@ fn check_project_of(
             project.options.libs = vec![b"esnext.full".to_vec()];
         }
         project.errors.retain(|error| !(error.is_about_options && project.options.is_removed_option_error(error.code)));
+        project.options.follows_javascript_only_as_code = !project.options.allow_js;
         project.options.allow_js = true;
         project.options.module_detection = bun_sema::resolve::ModuleDetection::Force;
         project.references.clear();
@@ -3893,7 +3904,7 @@ fn check_named_files(
     project.options.one_name_is_one_binding = request.is_one_program;
     project.options.undefined_properties_name_nobody = request.is_one_program;
     project.options.reports_uninitialized_variables = project.options.strict_null_checks
-        && (project.options.strict_variable_initialization).unwrap_or(request.is_one_program);
+        && (project.options.strict_variable_initialization).unwrap_or(false);
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that is allocated in it, so it is dropped last.
@@ -4040,7 +4051,7 @@ fn check_named_files(
         to_check.retain(|&f| strings::contains(program.files.modules[f.idx()].file_name(), only));
     }
     let mut compiled_untyped: Vec<Diagnostic> = Vec::new();
-    if request.is_one_program {
+    if request.is_one_program && !program.is_given_up() {
         let modules = &program.files.modules;
         let mut is_left_out = vec![false; modules.len()];
         let compiled = request.code.iter().map(|path| host::from_argument(&host::from_native(request.cwd), path));
@@ -4114,7 +4125,7 @@ fn check_named_files(
         }));
     }
     let lists_files_only = is_true(b"listFilesOnly") && request.stops_like_tsc;
-    if lists_files_only {
+    if lists_files_only || program.is_given_up() {
         to_check.clear();
     }
     // Program order (`program.files`): an imported file precedes its importers. The position of a file in `to_check` is its index.
@@ -4956,6 +4967,10 @@ fn check_named_files(
         report.diagnostics.append(&mut about_options);
         // `ListFilesOnly`: no checker is asked for anything, and `Emit` is not called.
         if lists_files_only {
+            break 'stages;
+        }
+        if program.is_given_up() {
+            is_all_checked = true;
             break 'stages;
         }
         if stops {

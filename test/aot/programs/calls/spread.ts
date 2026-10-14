@@ -1,4 +1,4 @@
-// `f(...x)` for every kind of iterable, what is not iterable, and the order of things.
+// `f(...x)` for every kind of iterable and for values that are not iterable, with the order of evaluation.
 declare const console: any;
 const log: any[] = [];
 function attempt(what: string, run: () => any) { try { log.push(what + ": " + String(run())); } catch (e: any) { log.push(what + " throws " + e.constructor.name); } }

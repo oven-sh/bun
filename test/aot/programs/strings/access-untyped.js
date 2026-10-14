@@ -1,4 +1,4 @@
-// Length, [i], at, charAt, charCodeAt, codePointAt: every kind of string, every kind of index (the same program without type annotations).
+// `length`, `[i]`, `at`, `charAt`, `charCodeAt` and `codePointAt` on every internal representation of a string, with every kind of index (the same program without type annotations).
 const print = (s) => console.log(s);
 function show(x) {
   if (typeof x !== "string")

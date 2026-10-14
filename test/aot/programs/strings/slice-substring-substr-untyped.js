@@ -1,4 +1,4 @@
-// Slice, substring, substr: every kind of string, every kind of place (the same program without type annotations).
+// `slice`, `substring` and `substr` on every internal representation of a string, with every kind of position (the same program without type annotations).
 const print = (s) => console.log(s);
 function show(x) {
   if (typeof x !== "string")

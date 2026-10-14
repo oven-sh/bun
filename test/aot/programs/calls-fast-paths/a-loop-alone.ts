@@ -1,4 +1,4 @@
-// A loop alone: what to subtract from the programs that have such a loop.
+// An empty loop: the baseline to subtract from the other programs that have such a loop.
 declare const console: any;
 let n = 0;
 const table: number[] = [1, -1];

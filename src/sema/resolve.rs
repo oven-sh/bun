@@ -629,7 +629,7 @@ pub struct Options {
     /// `strictVariableInitialization`, which TypeScript does not have, as it is specified. It is no part of the `strict` family.
     pub strict_variable_initialization: Option<bool>,
     /// Whether 100001 is reported: `strict_variable_initialization`, with `strict_null_checks`. Where the option is not specified the
-    /// driver says: it is on for a program that is compiled by its types.
+    /// driver says: it is off: what such a variable is kept as does not go by the report.
     pub reports_uninitialized_variables: bool,
     /// JavaScript without imports and exports that names `exports` or `module` is a CommonJS module, as it is for the runtime. TypeScript wants `require(..)`, `module.exports = ..` or
     /// `exports.a = ..`, and takes a file with `var util = exports;` for a script. Not a TypeScript option. The driver says: it is on for a program that is compiled.
@@ -639,6 +639,8 @@ pub struct Options {
     /// that is goes by the order of the check, so here by the files that share a task. Not a TypeScript option. The driver says: it is on for a program that is compiled, where a type
     /// has to be the same in every task.
     pub undefined_properties_name_nobody: bool,
+    pub pops_every_type_resolution: bool,
+    pub follows_javascript_only_as_code: bool,
     pub no_implicit_this: bool,
     pub allow_unreachable_code: Option<bool>,
     pub allow_unused_labels: Option<bool>,

@@ -1,4 +1,4 @@
-// Numbers that are defined by a conversion from an integer, compared with integer constants: by the integer (the same program without type annotations).
+// Numbers that were converted from integers are compared with integer constants (the same program without type annotations).
 const print = (s) => console.log(s);
 function show(x) {
   if (typeof x !== "string")

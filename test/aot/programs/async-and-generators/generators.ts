@@ -1,4 +1,4 @@
-// Generators: values, what is sent in, throw and return with finally, delegation, and consumers of every kind.
+// Generators: yielded and sent values, `throw` and `return` with `finally`, delegation with `yield*`, and consumers of every kind.
 function* count(from: number, to: number): Generator<number, string, unknown> { for (let i = from; i < to; i++) yield i; return "done" }
 console.log([...count(0, 4)].join(), Array.from(count(2, 5)).join())
 let total = 0

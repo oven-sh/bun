@@ -1,4 +1,4 @@
-// TypeScript narrows a `let` by what was last assigned to it in the SAME function and does not see assignments made in nested functions.
+// TypeScript narrows a `let` by the last assignment in the same function and ignores assignments in nested functions.
 async function withRetry<T>(f: () => Promise<T>): Promise<T> { return await f(); }
 type Reply = { headers: string };
 async function query(n: number) {

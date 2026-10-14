@@ -1,4 +1,4 @@
-// A `var` that only sees `= 0`, `++`, `--`, `+= 1` is an integer, where nothing reads it before its declaration has run.
+// A `var` that only sees `= 0`, `++`, `--` and `+= 1` is an integer, provided that nothing reads it before its declaration has run.
 var moduleCount = 0
 function stackOf() {
   var count = 0

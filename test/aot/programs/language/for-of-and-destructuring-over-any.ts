@@ -1,4 +1,4 @@
-// For-of and destructuring over iterables whose type is not known statically.
+// `for..of` and destructuring over iterables whose type is not known statically.
 function each(x: any, stop = Infinity) { const out: unknown[] = []; let n = 0; for (const v of x) { out.push(v); if (++n >= stop) break } return out.join() }
 class Sub extends Array<number> { *[Symbol.iterator](): Generator<number, undefined, unknown> { yield 100; yield 200 } }
 class Plain extends Array<number> {}

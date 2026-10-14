@@ -1,4 +1,4 @@
-// Strings: constants that are not ASCII (the same program without type annotations).
+// String literals with Latin-1, CJK, emoji and unpaired-surrogate characters, in every string method (the same program without type annotations).
 class C {
   "\xE9"() {
     return "method \xE9";

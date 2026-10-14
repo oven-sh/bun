@@ -1,4 +1,4 @@
-// What must still be looked at for `then`: a field, a method, an accessor, a property that was added, a prototype that has one.
+// Objects returned from async functions that have a `then`: as a field, a method, an accessor, an added property, or on the prototype.
 declare const console: any;
 const log: string[] = [];
 interface Plain { v: number }

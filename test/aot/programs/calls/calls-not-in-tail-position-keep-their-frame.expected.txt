@@ -1,0 +1,22 @@
+1 + f(): throws RangeError
+in a try: throws RangeError
+in a try with finally: throws RangeError
+in a catch: 0
+in a finally: 0
+behind a try: throws RangeError
+assigned first: throws RangeError
+converted: throws RangeError
+no return: throws RangeError
+the handler above: ["got 1","caught three"]
+constructors: [1,1,5]
+async: 0
+generator: [{"value":4,"done":false},{"value":8,"done":true},{"done":true}]
+a getter: 8
+a literal's method: 4
+defaults: 0
+eleven arguments: 55
+kept otherwise: [0.5,5,"s",true]
+through a var: throws RangeError
+through a parameter: throws RangeError
+through a variable outside: throws RangeError
+true

@@ -1523,6 +1523,7 @@ impl VirtualMachine {
             }
             let (fd, offset_in_file) = graph.aot_image_file().unwrap_or((-1, 0));
             unsafe { Bun__AOT__useImage(image.as_ptr(), image.len(), fd, offset_in_file) };
+            bun_analytics::features::aot.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         });
     }
 

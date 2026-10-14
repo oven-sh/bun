@@ -1,4 +1,4 @@
-// Untyped JavaScript: closures as prototypes then changed.
+// Functions that serve as prototypes of other objects and then get, lose or change properties.
 const T = v => typeof v === "function" ? "function" : typeof v === "object" && v !== null ? "object" : String(v);
 const out = [];
 { const F = () => 1, H = Object.create(F), HH = Object.create(H);

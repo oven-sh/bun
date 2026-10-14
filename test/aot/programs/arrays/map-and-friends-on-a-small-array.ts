@@ -1,4 +1,4 @@
-// Arrays: map and friends on a small array.
+// `map` and `join` on a small array literal.
 const xs = [1, 2, 3]
 const d = xs.map(x => x * 2)
 console.log(d[2], d.length, d[0] + d[1], d.join(","))

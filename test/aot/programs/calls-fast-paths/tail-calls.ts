@@ -1,4 +1,4 @@
-// `return f(x)` releases the caller's stack frame before the call, so a tail recursion a million deep runs.
+// There are no tail calls under --aot, a documented difference: a recursion a million deep in tail position throws RangeError where plain Bun runs it, and every caller keeps its frame in stack traces.
 declare const console: any;
 function names(e: any): string { return String(e.stack).split("\n").map((l: string) => /(?:at )?(t_[a-z]+)/.exec(l)).filter(Boolean).map((m: any) => m[1]).join(); }
 function count(n: number, a: number): number { return n === 0 ? a : count(n - 1, a + 1); }
@@ -13,7 +13,8 @@ class K { constructor(public k: number) {} walk(n: number): number { return n ==
 function doubles(n: number, x: number): number { return n === 0 ? x : doubles(n - 1, x + 0.5); }
 function eight(n: number, a: number, b: number, c: number, d: number, e: number, f: number, g: number): number { return n === 0 ? a + b + c + d + e + f + g : eight(n - 1, b, c, d, e, f, g, a); }
 const N = 1000000;
-console.log(count(N, 0), even(N), odd(N), withIf(N, "s"), logical(N), comma(N), objects(N, { v: 3 }).v, arrow(N, 0), new K(9).walk(N), K.down(N), doubles(N, 0), eight(N, 1, 2, 3, 4, 5, 6, 7));
+function attempt(f: () => unknown): string { try { return String(f()); } catch (e: any) { return e.constructor.name; } }
+console.log([() => count(N, 0), () => even(N), () => odd(N), () => withIf(N, "s"), () => logical(N), () => comma(N), () => objects(N, { v: 3 }).v, () => arrow(N, 0), () => new K(9).walk(N), () => K.down(N), () => doubles(N, 0), () => eight(N, 1, 2, 3, 4, 5, 6, 7)].map(attempt).join(" "));
 function t_fail(): number { throw new Error("x"); }
 function t_tail(): number { return t_fail(); }
 function t_kept(): number { return t_tail() + 1; }

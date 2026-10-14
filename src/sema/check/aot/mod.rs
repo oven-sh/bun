@@ -168,8 +168,19 @@ impl<'p, 's> Checker<'p, 's> {
         result
     }
 
+    pub fn while_translating_behind_the_check<R>(&mut self, work: impl FnOnce(&mut Checker<'p, 's>) -> R) -> R {
+        let before = std::mem::replace(&mut self.aot.is_behind_the_check, true);
+        let result = self.while_translating(work);
+        self.aot.is_behind_the_check = before;
+        result
+    }
+
     pub(in crate::check) fn is_translating(&self) -> bool {
         self.aot.is_translating
+    }
+
+    pub(in crate::check) fn is_behind_the_check(&self) -> bool {
+        self.aot.is_behind_the_check
     }
 
     pub(in crate::check) fn asks_out_of_order(&self) -> bool {
@@ -210,6 +221,17 @@ pub(super) struct Shared {
     javascript: javascript::Shared,
     storage: storage::Shared,
     undeclared_fields: undeclared_fields::Shared,
+    is_given_up: std::sync::atomic::AtomicBool,
+}
+
+impl Program<'_> {
+    pub fn give_up(&self) {
+        self.aot.is_given_up.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn is_given_up(&self) -> bool {
+        self.aot.is_given_up.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 /// What the queries of this module have found so far, a field for each part of it. It belongs to a checker.
@@ -231,6 +253,7 @@ pub(super) struct State {
     javascript: javascript::State,
     storage: storage::State,
     is_translating: bool,
+    is_behind_the_check: bool,
 }
 
 impl<'p, 's> Checker<'p, 's> {

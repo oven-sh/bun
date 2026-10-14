@@ -1,4 +1,4 @@
-// JSX with the automatic runtime, and tagged templates.
+// JSX with the automatic runtime, and tagged templates (second part).
 /** @jsxImportSource ./minicjs */
 import type { Node } from "./mini/jsx-runtime"
 declare global { namespace JSX { type Element = any; interface IntrinsicElements { [name: string]: any } interface IntrinsicAttributes { key?: unknown } interface ElementChildrenAttribute { children: {} } } }

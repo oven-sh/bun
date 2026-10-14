@@ -188,7 +188,7 @@ for (const mode of MODES) {
         expect(await origin.receive(sent * FRAME + 8)).toBe(sent * FRAME + 8);
         // A server stops reading at the Close frame, so a frame behind it is lost.
         expect([...origin.tail().subarray(0, 2)]).toEqual([0x88, 0x82]);
-        peer.write(CLOSE_1000);
+        peer.end(CLOSE_1000);
         const { code, wasClean } = await closed;
         expect({ code, wasClean }).toEqual({ code: 1000, wasClean: true });
       } finally {
@@ -256,8 +256,8 @@ for (const mode of MODES) {
         peer.resume();
         expect(await Promise.race([origin.receive(sent), lost])).toBe(sent);
         expect(ws.bufferedAmount).toBe(0);
-        peer.write(CLOSE_1000);
-        expect(await Promise.race([closed.promise, lost])).toBe(1000);
+        peer.end(CLOSE_1000);
+        expect(await closed.promise).toBe(1000);
       } finally {
         proxy?.close();
         origin.close();

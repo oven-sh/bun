@@ -3,10 +3,11 @@
 // section 7 require of the client. The base received-close-code matrix lives
 // in websocket.test.js ("WebSocket CloseEvent reports the received close code").
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tls as tlsCert } from "harness";
 import crypto from "node:crypto";
 import { once } from "node:events";
 import { type AddressInfo, connect, createServer, type Socket } from "node:net";
+import { createServer as createTlsServer } from "node:tls";
 import { type Departure, departure, startRawWssServer, startRecordingProxy } from "./proxy-test-utils";
 
 describe.concurrent("WebSocket close() argument validation", () => {
@@ -180,18 +181,22 @@ describe.concurrent("WebSocket closing handshake", () => {
 
   // One connection a raw server accepted. `seen` is what the client did, in order: "text 5" for a frame
   // and its payload length, "close 1000 bye", "close" for a Close frame without a payload, then "FIN" or
-  // the error code of a reset. The server sends its FIN after the client's unless a test ends the socket.
+  // the error code of a reset. The server sends its FIN after the client's unless a test ends the socket,
+  // or the server `lingers`: then only the test ends the connection.
   class Peer {
     seen: string[] = [];
     gone: Promise<void>;
     #pending = Buffer.alloc(0);
     #waiting: [prefix: string, resolve: () => void][] = [];
 
-    constructor(readonly socket: Socket) {
+    constructor(
+      readonly socket: Socket,
+      lingers: boolean,
+    ) {
       socket.on("data", chunk => this.#parse(chunk));
       socket.on("end", () => {
         this.note("FIN");
-        socket.end();
+        if (!lingers) socket.end();
       });
       socket.on("error", (error: NodeJS.ErrnoException) => this.note(error.code!));
       this.gone = new Promise(resolve => {
@@ -247,10 +252,10 @@ describe.concurrent("WebSocket closing handshake", () => {
     }
   }
 
-  // A raw ws:// server for one client. It answers the opening handshake. `deaf`: it reads nothing after that.
-  async function startPeer({ deaf = false } = {}) {
+  // A raw ws:// or wss:// server for one client. It answers the opening handshake. `deaf`: it reads nothing after that.
+  async function startPeer({ deaf = false, lingers = false, secure = false } = {}) {
     const accepted = Promise.withResolvers<Peer>();
-    const server = createServer({ allowHalfOpen: true }, socket => {
+    const onConnection = (socket: Socket) => {
       let head = "";
       socket.on("data", function onHead(chunk: Buffer) {
         head += chunk.toString("latin1");
@@ -265,15 +270,18 @@ describe.concurrent("WebSocket closing handshake", () => {
           "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
             `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
         );
-        const peer = new Peer(socket);
+        const peer = new Peer(socket, lingers);
         if (deaf) socket.pause();
         accepted.resolve(peer);
       });
-    });
+    };
+    const server = secure
+      ? createTlsServer({ ...tlsCert, allowHalfOpen: true }, onConnection)
+      : createServer({ allowHalfOpen: true }, onConnection);
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     return {
-      url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}`,
+      url: `${secure ? "wss" : "ws"}://127.0.0.1:${(server.address() as AddressInfo).port}`,
       peer: accepted.promise,
       [Symbol.dispose]() {
         server.close();
@@ -364,33 +372,15 @@ describe.concurrent("WebSocket closing handshake", () => {
     expect(peer.seen).toEqual([echo, "FIN"]);
   });
 
-  it.each([
-    ["ends the connection", (socket: Socket) => void socket.end()],
-    ["resets the connection", (socket: Socket) => void socket.resetAndDestroy()],
-  ] as const)("close() reports 1006 when the server %s without a Close frame", async (_label, act) => {
+  it("close() reports 1006 when the server resets the connection without a Close frame", async () => {
     using server = await startPeer();
     const ws = new WebSocket(server.url);
     const { closed } = observe(ws);
     ws.onopen = () => ws.close(1000);
     const peer = await server.peer;
     await peer.saw("close");
-    await roundTrip();
-    // No FIN behind the Close frame.
-    expect(peer.seen).toEqual(["close 1000"]);
-    act(peer.socket);
+    peer.socket.resetAndDestroy();
     expect(await closed).toEqual([{ code: 1006, reason: "", wasClean: false }]);
-  });
-
-  it("the end of an open connection is answered with a FIN and reported as 1006 without an error", async () => {
-    using server = await startPeer();
-    const ws = new WebSocket(server.url);
-    const { closed } = observe(ws);
-    await opened(ws);
-    const peer = await server.peer;
-    peer.socket.end();
-    expect(await closed).toEqual([{ code: 1006, reason: "", wasClean: false }]);
-    await peer.gone;
-    expect(peer.seen).toEqual(["FIN"]);
   });
 
   it("terminate() closes the connection as socket.destroy() does: what was sent still arrives", async () => {
@@ -463,6 +453,126 @@ describe.concurrent("WebSocket closing handshake", () => {
     expect(await closed).toEqual([{ code: 4000, reason: "in ping", wasClean: true }]);
     await peer.gone;
     expect(peer.seen).toEqual(["pong 2", "close 4000 in ping", "FIN"]);
+  });
+
+  // RFC 6455 section 7.1.4: "the WebSocket connection is closed" when the underlying connection is, and that
+  // is what the close event reports, as in Node. On TLS, "FIN" below is the client's close_notify.
+  describe.each(["ws", "wss"] as const)("the close event waits for the connection to close (%s:)", scheme => {
+    const secure = scheme === "wss";
+    const dial = (url: string) => new WebSocket(url, { tls: { rejectUnauthorized: false } });
+    const CLOSING = { readyState: WebSocket.CLOSING, events: [] };
+
+    // The client's FIN tells that it has read the server's Close frame.
+    async function afterTheHandshake(ws: WebSocket, events: Observed[], peer: Peer) {
+      await peer.saw("FIN");
+      await roundTrip();
+      return { readyState: ws.readyState, events: [...events] };
+    }
+
+    it("close(), and a server that answers and keeps the connection open: CLOSING until terminate()", async () => {
+      using server = await startPeer({ secure, lingers: true });
+      const ws = dial(server.url);
+      const { events, closed } = observe(ws);
+      ws.onopen = () => ws.close(1000, "mine");
+      const peer = await server.peer;
+      await peer.saw("close");
+      peer.socket.write(closeFrame(1000, "theirs"));
+      expect(await afterTheHandshake(ws, events, peer)).toEqual(CLOSING);
+      ws.terminate();
+      expect(await closed).toEqual([{ code: 1000, reason: "theirs", wasClean: true }]);
+    });
+
+    it("close(), and a server that answers and ends the connection later: CLOSING until its FIN", async () => {
+      using server = await startPeer({ secure, lingers: true });
+      const ws = dial(server.url);
+      const { events, closed } = observe(ws);
+      ws.onopen = () => ws.close(1000, "mine");
+      const peer = await server.peer;
+      await peer.saw("close");
+      peer.socket.write(closeFrame(1000, "theirs"));
+      expect(await afterTheHandshake(ws, events, peer)).toEqual(CLOSING);
+      peer.socket.end();
+      expect(await closed).toEqual([{ code: 1000, reason: "theirs", wasClean: true }]);
+      await peer.gone;
+      expect(peer.seen).toEqual(["close 1000 mine", "FIN"]);
+    });
+
+    it("a Close frame from a server that keeps the connection open: CLOSING until the connection is lost", async () => {
+      using server = await startPeer({ secure, lingers: true });
+      const ws = dial(server.url);
+      const { events, closed } = observe(ws);
+      const peer = await server.peer;
+      peer.socket.write(closeFrame(1001, "away"));
+      expect(await afterTheHandshake(ws, events, peer)).toEqual(CLOSING);
+      expect(peer.seen).toEqual(["close 1001 away", "FIN"]);
+      peer.socket.destroy();
+      expect(await closed).toEqual([{ code: 1001, reason: "away", wasClean: true }]);
+    });
+
+    it("a Close frame from a server that ends the connection after the echo", async () => {
+      using server = await startPeer({ secure, lingers: true });
+      const { closed } = observe(dial(server.url));
+      const peer = await server.peer;
+      peer.socket.write(closeFrame(1001, "away"));
+      await peer.saw("close");
+      peer.socket.end();
+      expect(await closed).toEqual([{ code: 1001, reason: "away", wasClean: true }]);
+      await peer.gone;
+      expect(peer.seen).toEqual(["close 1001 away", "FIN"]);
+    });
+
+    it("a protocol error does not wait for a server that keeps the connection open", async () => {
+      using server = await startPeer({ secure, lingers: true });
+      const { closed } = observe(dial(server.url));
+      const peer = await server.peer;
+      peer.socket.write(Buffer.from([0x83, 0x00]));
+      expect(await closed).toEqual([{ error: "WS_ERR_INVALID_OPCODE" }, { code: 1006, reason: "", wasClean: false }]);
+      await peer.saw("FIN");
+      expect({ seen: peer.seen, ended: peer.socket.writableEnded }).toEqual({
+        seen: ["close 1002", "FIN"],
+        ended: false,
+      });
+    });
+
+    it("a protocol error is reported once when the server ends the connection after the Close frame", async () => {
+      using server = await startPeer({ secure });
+      const { events, closed } = observe(dial(server.url));
+      const peer = await server.peer;
+      peer.socket.write(Buffer.from([0x83, 0x00]));
+      await closed;
+      await peer.gone;
+      await roundTrip();
+      expect(events).toEqual([{ error: "WS_ERR_INVALID_OPCODE" }, { code: 1006, reason: "", wasClean: false }]);
+      expect(peer.seen).toEqual(["close 1002", "FIN"]);
+    });
+
+    it("the end of an open connection is answered with a FIN and reported as 1006 without an error", async () => {
+      using server = await startPeer({ secure });
+      const ws = dial(server.url);
+      const { closed } = observe(ws);
+      await opened(ws);
+      const peer = await server.peer;
+      peer.socket.end();
+      expect(await closed).toEqual([{ code: 1006, reason: "", wasClean: false }]);
+      await peer.gone;
+      expect(peer.seen).toEqual(["FIN"]);
+    });
+
+    it("close(), and a server that never answers: CLOSING, no FIN, and 1006 when it ends the connection", async () => {
+      using server = await startPeer({ secure });
+      const ws = dial(server.url);
+      const { events, closed } = observe(ws);
+      ws.onopen = () => ws.close(1000);
+      const peer = await server.peer;
+      await peer.saw("close");
+      await roundTrip();
+      expect({ readyState: ws.readyState, events: [...events], seen: [...peer.seen] }).toEqual({
+        ...CLOSING,
+        seen: ["close 1000"],
+      });
+      peer.socket.end();
+      expect(await closed).toEqual([{ code: 1006, reason: "", wasClean: false }]);
+    });
   });
 
   // RFC 6455 section 7.1.7, "fail the WebSocket connection": a Close frame that says why, no wait for an
@@ -611,13 +721,22 @@ describe.concurrent("WebSocket closing handshake", () => {
 
   // The timeout is the only thing that ends these waits, and uSockets sweeps its timeouts every 4 s:
   // a timeout of 1 s takes 4 to 8 s. They run beside the wss:// tests below that wait for it too.
+  const FLOOD = "for (let i = 0; i < 256; i++) ws.send(chunk);";
   it.each([
-    ["never answers", false, ""],
-    ["stopped reading, with the Close frame behind unsent data", true, "for (let i = 0; i < 256; i++) ws.send(chunk);"],
+    ["never answers", {}, "", "1006 false\n"],
+    ["stopped reading, with the Close frame behind unsent data", { deaf: true }, FLOOD, "1006 false\n"],
+    // The handshake is over, so its result stands.
+    ["answers and never closes the connection", { lingers: true }, "", "4000 true\n"],
   ] as const)(
-    "close() gives up on a server that %s: 1006, and the process ends",
-    async (_label, deaf, before) => {
-      using server = await startPeer({ deaf });
+    "close() gives up on a server that %s, and the process ends",
+    async (_label, options, before, output) => {
+      using server = await startPeer(options);
+      if ("lingers" in options) {
+        server.peer.then(async peer => {
+          await peer.saw("close");
+          peer.socket.write(closeFrame(4000));
+        });
+      }
       await using client = Bun.spawn({
         cmd: [
           bunExe(),
@@ -638,7 +757,7 @@ describe.concurrent("WebSocket closing handshake", () => {
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
-      expect(stdout).toBe("1006 false\n");
+      expect(stdout).toBe(output);
       expect(exitCode).toBe(0);
     },
     20_000,
@@ -646,7 +765,7 @@ describe.concurrent("WebSocket closing handshake", () => {
 });
 
 // RFC 6455 section 7.1.1: the client lets the server close the TCP connection first, but not forever.
-describe.concurrent("wss:// after the close event", () => {
+describe.concurrent("wss:// after the closing handshake", () => {
   const CLOSE_1000 = Buffer.from([0x88, 0x02, 0x03, 0xe8]);
 
   it("the server's Close frame gets no second Close frame back", async () => {
@@ -666,12 +785,15 @@ describe.concurrent("wss:// after the close event", () => {
 
   // Stands between the client and its peer and sees how the client's TCP connection ends. After
   // `freeze()` the peer hears nothing more from the client, like a peer that stopped reading.
+  // It answers the client's FIN only in `hangUp()`.
   async function startRelay(port: number) {
     let frozen = false;
     let fromClient = Buffer.alloc(0);
+    let hangUp = () => {};
     const departed = Promise.withResolvers<Departure>();
-    const relay = createServer(client => {
+    const relay = createServer({ allowHalfOpen: true }, client => {
       departed.resolve(departure(client));
+      hangUp = () => void client.end();
       const peer = connect(port, "127.0.0.1");
       peer.on("error", () => {});
       peer.pipe(client);
@@ -687,6 +809,7 @@ describe.concurrent("wss:// after the close event", () => {
       port: (relay.address() as AddressInfo).port,
       departed: departed.promise,
       freeze: () => void (frozen = true),
+      hangUp: () => hangUp(),
       // The content type of the last TLS record the client sent.
       lastRecordType() {
         let offset = 0;
@@ -706,7 +829,14 @@ describe.concurrent("wss:// after the close event", () => {
   ] as const)(
     "the client closes a connection that its peer keeps open: %s",
     async (route, lastRecordType) => {
-      using server = await startRawWssServer(socket => socket.write(CLOSE_1000), { maxVersion: "TLSv1.2" });
+      // The server answers the Close frame and hears nothing of what the client does then.
+      using server = await startRawWssServer(
+        socket => {
+          socket.write(CLOSE_1000);
+          relay.freeze();
+        },
+        { maxVersion: "TLSv1.2" },
+      );
       using proxy = await startRecordingProxy({ tls: true });
       using relay = await startRelay(route === "direct" ? server.port : proxy.port);
       await using client = Bun.spawn({
@@ -738,8 +868,8 @@ describe.concurrent("wss:// after the close event", () => {
       });
       const { value } = await client.stdout.getReader().read();
       expect(new TextDecoder().decode(value)).toBe("1000 true\n");
-      relay.freeze();
-      // A FIN and not a reset, which drops what is still in flight behind the clean close event.
+      relay.hangUp();
+      // A FIN and not a reset.
       expect({ departure: await relay.departed, lastRecordType: relay.lastRecordType() }).toEqual({
         departure: { fin: true },
         lastRecordType,

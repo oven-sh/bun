@@ -459,6 +459,8 @@ socket.addEventListener("close", event => {});
 socket.addEventListener("error", event => {});
 ```
 
+`socket.close(code, reason)` sends a Close frame and sets `readyState` to `CLOSING`. The `close` event fires when the connection is closed. Its `code` and `reason` are those of the server's Close frame (`1005` if it had no code), or `1006` if the connection ended without one. If the server has not closed the connection after 30 seconds ([`BUN_CONFIG_WS_CLOSE_TIMEOUT`](/runtime/environment-variables)), Bun closes it. `socket.terminate()` closes it at once.
+
 ### Backpressure
 
 The browser `WebSocket` API has no way to slow down a peer that sends faster than you consume: incoming messages are buffered in memory without bound. Bun adds `pause()` and `resume()`, which stop and restart reads from the underlying socket so the sender sees TCP backpressure instead. This is a Bun-specific extension. _It does not work in browsers._

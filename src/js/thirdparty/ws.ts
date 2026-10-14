@@ -237,7 +237,8 @@ interface ClientHandlers extends Omit<ServerHandlers, "close"> {
   body(this: WebSocket, chunk: Buffer | null, aborted: boolean, reset: boolean): void;
   open(this: WebSocket): void;
   error(this: WebSocket, error: NativeError): void;
-  close(this: WebSocket, code: number, reason: string): void;
+  conclude(this: WebSocket, code: number, reason: string): void;
+  close(this: WebSocket): void;
   write(this: WebSocket, chunk: Buffer): void;
   end(this: WebSocket): void;
   destroy(this: WebSocket): void;
@@ -1786,18 +1787,13 @@ const clientHandlers: ClientHandlers = {
     this._req = null;
     emitErrorAndClose(this, connectError(native, error));
   },
-  close(code, reason) {
-    if (this[kTransport] === STREAM) {
-      receiverOnConclude(this, code, Buffer.from(reason));
-      return;
-    }
-
-    if (code !== 1006) {
-      this._closeFrameReceived = true;
-      this._closeFrameSent = true;
-      this._closeMessage = Buffer.from(reason);
-      this._closeCode = code;
-    }
+  // The peer's Close frame has arrived, and ours is out.
+  conclude(code, reason) {
+    receiverOnConclude(this, code, Buffer.from(reason));
+  },
+  // The connection is closed. That of a stream is `_socket`, whose 'close' event says so.
+  close() {
+    if (this[kTransport] === STREAM) return;
 
     clearTimeout(this._closeTimer!);
     this.emitClose();

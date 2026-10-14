@@ -140,11 +140,10 @@ impl HangUp {
 
 /// How a connection ended; see [`WebSocket::finish`].
 enum Outcome {
-    /// Both Close frames are exchanged (RFC 6455 §7.1.4).
-    Clean,
-    /// Before that: TCP ended, the close timeout ran out, or `terminate()`.
-    Unclean,
-    /// The client failed the connection (RFC 6455 §7.1.7). The string goes into the error's message.
+    /// It is closed, or is now: by the peer, the close timeout or `terminate()`.
+    Closed,
+    /// The client failed it (RFC 6455 §7.1.7) and does not wait for the peer.
+    /// The string goes into the error's message.
     Failed(ErrorCode, BunString),
 }
 
@@ -176,6 +175,8 @@ pub struct WebSocket<const SSL: bool> {
     close_sent: Cell<bool>,
     /// Code and reason of the peer's Close frame, which the `close` event reports (RFC 6455 §7.1.5).
     close_received: RefCell<Option<(u16, BunString)>>,
+    /// Our Close frame is written, nothing more is read, and the peer was told so with a half-close.
+    ended_our_side: Cell<bool>,
 
     pub(crate) receive_body_remain: Cell<usize>,
     pub(crate) receive_buffer: RefCell<LinearFifo<u8, DynamicBuffer<u8>>>,
@@ -302,8 +303,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         log!("cancel");
         let _guard = RefPtr::from_this(this);
         match this.io() {
-            Io::Stream => cpp_websocket::without_checkpoint(|| this.finish(Outcome::Unclean)),
-            Io::Socket | Io::Tunnel(_) => this.finish(Outcome::Unclean),
+            Io::Stream => cpp_websocket::without_checkpoint(|| this.finish(Outcome::Closed)),
+            Io::Socket | Io::Tunnel(_) => this.finish(Outcome::Closed),
         }
     }
 
@@ -311,6 +312,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// A JS stream is told by `finish`, the one caller that may run JS.
     fn drop_connection(&self, how: HangUp) {
         let tunnel = self.tunnel().map(RefPtr::from_this);
+        self.receive_state.set(ReceiveState::Closed);
         self.clear_data();
         match tunnel {
             Some(tunnel) => tunnel.close_socket(how),
@@ -318,9 +320,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// The one exit: tells C++ how the connection ended and forgets it. What is
-    /// left frees everything but the socket, and after `Outcome::Clean` waits
-    /// unref'd for the server to close that, or for the close timeout.
+    /// The one exit: drops the connection if it is still there, tells C++ how it
+    /// ended and forgets C++. The closing handshake was clean (RFC 6455 §7.1.4)
+    /// if both Close frames were exchanged, however the connection ended after that.
     ///
     /// Every caller holds a ref guard (the uws dispatcher, a C++ entry point,
     /// or the tunnel callback), so `self` outlives the releases below.
@@ -332,38 +334,26 @@ impl<const SSL: bool> WebSocket<SSL> {
         let buffered_amount = self.buffered_amount();
         let received = self.close_received.take();
         let over_stream = matches!(self.io(), Io::Stream);
-        match outcome {
-            Outcome::Clean => {
-                // Neither `resume()` nor `terminate()` reaches what is left.
-                if self.options.ws_mode {
-                    self.resume();
-                    self.arm_close_timeout();
-                }
-                // Our side has nothing more to send; the server closes the connection (RFC 6455 §7.1.1).
-                // TLS and a tunnel leave the FIN to it too.
-                if !SSL && self.tunnel().is_none() {
-                    self.tcp.get().shutdown();
-                }
-                self.clear_data();
-            }
-            Outcome::Unclean | Outcome::Failed(..) => self.drop_connection(HangUp::Fin),
-        }
+        self.drop_connection(HangUp::Fin);
         if over_stream {
-            match outcome {
-                Outcome::Clean | Outcome::Failed(..) => ws.stream_end(),
-                Outcome::Unclean => ws.stream_destroy(),
-            }
+            ws.stream_destroy();
         }
-        let was_clean = matches!(outcome, Outcome::Clean);
         match outcome {
             Outcome::Failed(code, detail) => {
                 ws.did_fail(code, buffered_amount, BunString::EMPTY, detail);
             }
-            Outcome::Clean | Outcome::Unclean => {
+            Outcome::Closed => {
+                let was_clean = received.is_some() && self.ended_our_side.get();
                 let (code, reason) = received.unwrap_or((1006, BunString::EMPTY));
                 ws.did_close(code, reason, was_clean, buffered_amount);
             }
         }
+    }
+
+    /// RFC 6455 §5.5.1: what follows a Close frame is not a frame. Nor is what follows a failure.
+    fn stop_reading(&self) {
+        self.receive_state.set(ReceiveState::Closed);
+        self.clear_receive_buffers(true);
     }
 
     fn fail(&self, code: ErrorCode) {
@@ -371,15 +361,22 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// RFC 6455 §7.1.7: tell the peer why, best effort, and do not wait for its answer.
+    /// `ws` reports the error now and, as after a closing handshake, the close when the connection closes.
     fn fail_with_detail(&self, code: ErrorCode, detail: BunString) {
-        if self.cpp_websocket().is_none() {
+        let Some(ws) = self.cpp_websocket() else {
             return;
-        }
+        };
         log!("fail ({})", <&'static str>::from(code));
-        if let Some(close_code) = code.close_code() {
-            self.send_close(&close_code.to_be_bytes(), false);
+        let Some(close_code) = code.close_code() else {
+            return self.finish(Outcome::Failed(code, detail));
+        };
+        self.send_close(&close_code.to_be_bytes());
+        if !self.options.ws_mode {
+            return self.finish(Outcome::Failed(code, detail));
         }
-        self.finish(Outcome::Failed(code, detail));
+        self.stop_reading();
+        ws.did_error(code, detail);
+        self.end_our_side_if_done();
     }
 
     /// Only a TLS renegotiation reaches this: the upgrade client handles the first handshake.
@@ -416,7 +413,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         log!("onClose");
         self.detach_tcp();
         self.parse_initial_data();
-        self.finish(Outcome::Unclean);
+        self.finish(Outcome::Closed);
 
         // For the socket.
         self.release_io_ref();
@@ -651,11 +648,6 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn handle_data_loop(&self, data: &[u8]) {
-        // RFC 6455 §5.5.1: what follows a Close frame is not a frame.
-        if self.close_received.borrow().is_some() {
-            return;
-        }
-
         // In the WebSocket specification, control frames may not be fragmented.
         // However, the frame parser should handle fragmented control frames nonetheless.
         // Whether or not the frame parser is given a set of fragmented bytes to parse is subject
@@ -669,8 +661,8 @@ impl<const SSL: bool> WebSocket<SSL> {
         };
 
         loop {
-            // The connection is finished: by an earlier read, or by a listener in this one.
-            if self.cpp_websocket().is_none() {
+            // By an earlier read, or by this one: its last frame, or a listener.
+            if self.receive_state.get() == ReceiveState::Closed {
                 return;
             }
             log!("onData ({})", <&'static str>::from(cursor.state));
@@ -689,6 +681,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 ReceiveState::Close => self.recv_close(&mut cursor),
                 ReceiveState::MaskKey => self.recv_mask_key(&mut cursor),
                 ReceiveState::MaskedBody => self.recv_masked_body(&mut cursor),
+                ReceiveState::Closed => Step::Terminated,
             };
             match step {
                 Step::Continue => {}
@@ -697,6 +690,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
         }
 
+        if self.receive_state.get() == ReceiveState::Closed {
+            return;
+        }
         self.receive_state.set(cursor.state);
         self.receiving_type.set(cursor.last_data_type);
         self.receive_body_remain.set(cursor.body_remain);
@@ -1058,12 +1054,14 @@ impl<const SSL: bool> WebSocket<SSL> {
                 (code, BunString::clone_utf8(reason))
             }
         };
+        let (code, reason) = received.clone();
         self.close_received.replace(Some(received));
+        self.stop_reading();
+        self.send_close(payload);
         if let Some(ws) = self.cpp_websocket() {
-            ws.did_start_closing_handshake();
+            ws.did_start_closing_handshake(code, reason);
         }
-        self.send_close(payload, false);
-        self.finish_if_closed_cleanly();
+        self.end_our_side_if_done();
         Step::Terminated
     }
 
@@ -1081,7 +1079,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         match self.write_to_transport(bytes) {
             Some(wrote) if wrote == bytes.len() => {}
             Some(wrote) => self.copy_to_send_buffer(&bytes[wrote..]),
-            None => self.finish(Outcome::Unclean),
+            None => self.finish(Outcome::Closed),
         }
     }
 
@@ -1217,7 +1215,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         buf.discard(wrote.unwrap_or(0));
         self.send_buffer.replace(buf);
         if wrote.is_none() {
-            self.finish(Outcome::Unclean);
+            self.finish(Outcome::Closed);
         }
     }
 
@@ -1228,30 +1226,25 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// Our half of the closing handshake. `payload` is the status code and the
-    /// reason, or empty. The frame goes behind what is unsent, and the rest of
-    /// the handshake has `close_timeout_seconds` from now. `asked_by_owner`: `close()`
-    /// was called, for which `ws` has started a timer of its own that ends in `terminate()`,
-    /// and after which a socket it paused stays paused.
-    fn send_close(&self, payload: &[u8], asked_by_owner: bool) {
+    /// reason, or empty. The frame goes behind what is unsent. From now the
+    /// connection has `close_timeout_seconds` to close; `ws` has a timer of its own
+    /// for that, which ends in `terminate()`, and a socket it paused stays paused.
+    fn send_close(&self, payload: &[u8]) {
         if !self.can_send() {
             return;
         }
         log!("Sending close ({} bytes)", payload.len());
         self.close_sent.set(true);
-        if !(asked_by_owner && self.options.ws_mode) {
+        if !self.options.ws_mode {
             // Only a read sees the peer's Close frame and its FIN.
             self.resume();
-            self.arm_close_timeout();
+            match self.io() {
+                Io::Socket => self.tcp.get().set_timeout(close_timeout_seconds()),
+                Io::Tunnel(tunnel) => tunnel.set_timeout(close_timeout_seconds()),
+                Io::Stream => {}
+            }
         }
         self.send_control_frame(Opcode::Close, payload);
-    }
-
-    fn arm_close_timeout(&self) {
-        match self.io() {
-            Io::Socket => self.tcp.get().set_timeout(close_timeout_seconds()),
-            Io::Tunnel(tunnel) => tunnel.set_timeout(close_timeout_seconds()),
-            Io::Stream => {}
-        }
     }
 
     fn send_control_frame(&self, opcode: Opcode, payload: &[u8]) {
@@ -1272,12 +1265,25 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.enqueue_encoded_bytes(&frame[..frame_size]);
     }
 
-    fn finish_if_closed_cleanly(&self) {
-        if self.close_sent.get()
-            && !self.has_backpressure()
-            && self.close_received.borrow().is_some()
+    /// After the last frame in each direction: half-close, and wait for the peer to close
+    /// the connection (RFC 6455 §7.1.1), which is what `finish` reports.
+    fn end_our_side_if_done(&self) {
+        if self.ended_our_side.get()
+            || !self.close_sent.get()
+            || self.has_backpressure()
+            || self.receive_state.get() != ReceiveState::Closed
         {
-            self.finish(Outcome::Clean);
+            return;
+        }
+        self.ended_our_side.set(true);
+        match self.io() {
+            Io::Socket => self.tcp.get().shutdown(),
+            Io::Tunnel(tunnel) => WebSocketProxyTunnel::end(tunnel),
+            Io::Stream => {
+                if let Some(ws) = self.cpp_websocket() {
+                    ws.stream_end();
+                }
+            }
         }
     }
 
@@ -1294,7 +1300,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 ws.did_drain();
             }
         }
-        self.finish_if_closed_cleanly();
+        self.end_our_side_if_done();
     }
 
     pub(crate) fn is_same_socket(&self, socket: &Socket<SSL>) -> bool {
@@ -1306,10 +1312,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.flush_send_queue();
     }
 
-    /// Only `arm_close_timeout` arms one.
-    pub fn handle_timeout(&self, socket: Socket<SSL>) {
-        self.finish(Outcome::Unclean);
-        socket.close_now();
+    /// Only `send_close` arms one.
+    pub fn handle_timeout(&self, _socket: Socket<SSL>) {
+        self.finish(Outcome::Closed);
     }
 
     pub(crate) fn has_backpressure(&self) -> bool {
@@ -1483,7 +1488,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 .and_then(|str| encode_close_reason(str, reason_bytes))
                 .unwrap_or(0);
         }
-        this.send_close(&payload[..payload_len], true);
+        this.send_close(&payload[..payload_len]);
     }
 
     /// Allocate a client with `ref_count == 1` (the I/O-layer ref, released by
@@ -1515,6 +1520,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             }),
             close_sent: Cell::new(false),
             close_received: RefCell::new(None),
+            ended_our_side: Cell::new(false),
             receive_body_remain: Cell::new(0),
             receive_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
             send_buffer: RefCell::new(LinearFifo::<u8, DynamicBuffer<u8>>::init()),
@@ -1701,7 +1707,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if matches!(this.io(), Io::Stream) {
             this.transport.set(Transport::Socket);
         }
-        cpp_websocket::without_checkpoint(|| this.finish(Outcome::Unclean));
+        cpp_websocket::without_checkpoint(|| this.finish(Outcome::Closed));
     }
 
     /// Handle data received from the proxy tunnel (already decrypted).
@@ -1718,7 +1724,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             tunnel.close_socket(HangUp::Fin);
         }
         this.parse_initial_data();
-        this.finish(Outcome::Unclean);
+        this.finish(Outcome::Closed);
     }
 
     /// Called by the WebSocketProxyTunnel when the underlying socket drains.
@@ -2202,6 +2208,8 @@ pub enum ReceiveState {
     /// A server only, as the next one.
     MaskKey,
     MaskedBody,
+    /// Nothing more is read: see `stop_reading`.
+    Closed,
 }
 
 /// Per-`handle_data_loop` parse cursor; the epilogue persists it across socket reads.

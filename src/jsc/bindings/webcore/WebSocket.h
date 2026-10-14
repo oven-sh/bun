@@ -225,9 +225,12 @@ public:
     // Both return the connected client, or null if `open` already dropped it.
     void* didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx, std::span<const uint8_t> verifiedHostname);
     void* didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params);
-    void didStartClosingHandshake();
+    // The peer's Close frame arrived: 1005 for one without a code. The `ws` module hears of it: handlers.conclude(code, reason).
+    void didStartClosingHandshake(unsigned short code, String&& reason);
     void didClose(unsigned short code, String&& reason, bool wasClean, size_t bufferedAmount);
     void didFail(Bun::WebSocketErrorCode, size_t bufferedAmount, String&& systemCode, String&& detail);
+    // The `ws` module's open connection failed: handlers.error now. The native client stays until the connection is closed, then didClose().
+    void didError(Bun::WebSocketErrorCode, String&& detail);
     void didDrain();
     void streamWrite(std::span<const uint8_t>);
     void streamEnd();

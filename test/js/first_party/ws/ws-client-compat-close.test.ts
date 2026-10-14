@@ -137,29 +137,61 @@ describe.each(implementations)("ws client, closing ($name)", ({ ws: implementati
     expect(conn.tcp).toEqual(["end", "close"]);
   });
 
-  test.each([
-    { first: "the client", start: (ws, conn) => (ws.close(1000), conn.close(1000)) },
-    { first: "the peer", start: (ws, conn) => conn.close(1000) },
-  ] as { first: string; start(ws: Client["ws"], conn: Client["conn"]): void }[])(
-    `$first closes first: after both Close frames the client sends FIN and ${
-      builtin ? "emits 'close'" : "stays CLOSING until the server's FIN"
-    }`,
-    async ({ start }) => {
-      await using client = await openClient(implementation);
-      const { ws, conn, events } = client;
-      start(ws, conn);
-      await conn.ended;
-      expect(conn.tcp).toEqual(["end"]);
-      // The built-in does not wait for the server to end the connection.
-      if (!builtin) {
+  describe.each([
+    { transport: "ws:", secure: false },
+    { transport: "wss:", secure: true },
+  ])("after both Close frames, $transport", ({ secure }) => {
+    test.each([
+      { first: "the client", start: (ws, conn) => (ws.close(1000), conn.close(1000)) },
+      { first: "the peer", start: (ws, conn) => conn.close(1000) },
+    ] as { first: string; start(ws: Client["ws"], conn: Client["conn"]): void }[])(
+      "$first closes first: the client ends its side and stays CLOSING until the server ends its own",
+      async ({ start }) => {
+        await using client = await openClient(implementation, { rejectUnauthorized: false }, { secure });
+        const { ws, conn, events } = client;
+        start(ws, conn);
+        await conn.ended;
+        expect(conn.tcp).toEqual(["end"]);
         expect(ws.readyState).toBe(WebSocket.CLOSING);
         expect(events).toEqual(opening);
         conn.end();
-      }
+        await client.closed;
+        expect(events).toEqual([...opening, "close 1000 Buffer() rs=3"]);
+      },
+    );
+  });
+
+  // `closeTimeout` is an option of ws 8.19 and later. The package in node_modules has a constant 30 s.
+  describe.skipIf(!builtin)("closeTimeout", () => {
+    test.each([
+      { first: "the client", start: (ws, conn) => (ws.close(1000, "mine"), conn.close(4001, "theirs")) },
+      { first: "the peer", start: (ws, conn) => conn.close(4001, "theirs") },
+    ] as { first: string; start(ws: Client["ws"], conn: Client["conn"]): void }[])(
+      "$first closes first and the server never ends the connection: 'close' with the peer's code, clean",
+      async ({ start }) => {
+        await using client = await openClient(implementation, { closeTimeout: 50 } as {});
+        const { ws, conn, events } = client;
+        const clean = new Promise(resolve => ws.addEventListener("close", event => resolve(event.wasClean)));
+        start(ws, conn);
+        await client.closed;
+        expect(events).toEqual([...opening, 'close 4001 Buffer("theirs") rs=3']);
+        expect(await clean).toBe(true);
+        await conn.ended;
+        expect(conn.tcp).toEqual(["end"]);
+      },
+    );
+
+    test("the peer never answers close(): 'close' 1006, not clean", async () => {
+      await using client = await openClient(implementation, { closeTimeout: 50 } as {});
+      const { ws, conn, events } = client;
+      const clean = new Promise(resolve => ws.addEventListener("close", event => resolve(event.wasClean)));
+      ws.close(1000);
       await client.closed;
-      expect(events).toEqual([...opening, "close 1000 Buffer() rs=3"]);
-    },
-  );
+      expect(events).toEqual([...opening, "close 1006 Buffer() rs=3"]);
+      expect(await clean).toBe(false);
+      expect(await conn.rest()).toEqual(["close 1000"]);
+    });
+  });
 
   test("messages and pings that arrive after close() are delivered, and no Pong goes out", async () => {
     await using client = await openClient(implementation);
@@ -469,10 +501,14 @@ describe.each(implementations)("ws client, closing ($name)", ({ ws: implementati
   });
 
   // The global WebSocket gives up on a closing handshake by itself. It is the clock here: it closes after the `ws`
-  // socket, so its time is up later.
-  test.concurrent(
-    "'close' waits for the peer as long as `closeTimeout` says, longer than the global WebSocket does",
-    async () => {
+  // socket, so its time is up later. Then a third connection goes to the peer, after which the `ws` socket must still
+  // be waiting.
+  test.concurrent.each([
+    { waits: "for the peer's Close frame", answered: false },
+    { waits: "for the end of the connection, after both Close frames", answered: true },
+  ])(
+    "'close' waits $waits as long as `closeTimeout` says, longer than the global WebSocket does",
+    async ({ answered }) => {
       await using peer = await createPeer();
       const script = `
         const ws = new WebSocket(process.env.PEER_URL + "/ws");
@@ -481,17 +517,28 @@ describe.each(implementations)("ws client, closing ($name)", ({ ws: implementati
           ws.close(1000);
           const clock = new globalThis.WebSocket(process.env.PEER_URL + "/clock");
           clock.onopen = () => clock.close(1000);
-          clock.onclose = event => console.log("the global WebSocket gave up", event.code, "readyState", ws.readyState);
+          clock.onclose = event => {
+            console.log("the global WebSocket gave up", event.code);
+            const probe = new WebSocket(process.env.PEER_URL + "/probe");
+            probe.on("open", () => {
+              console.log("readyState", ws.readyState);
+              probe.terminate();
+            });
+          };
         });
       `;
       const child = runScript({ specifier }, script, { PEER_URL: peer.url, BUN_CONFIG_WS_CLOSE_TIMEOUT: "1" });
       const conn = await peer.connection();
-      const clock = await peer.connection();
-      await clock.ended;
-      conn.close(1000, "late");
+      expect(await conn.next()).toBe("close 1000");
+      if (answered) conn.close(1000, "late");
+      await peer.connection();
+      const probe = await peer.connection();
+      await probe.ended;
+      if (!answered) conn.close(1000, "late");
       conn.end();
       expect((await child).lines).toEqual([
-        "the global WebSocket gave up 1006 readyState 2",
+        "the global WebSocket gave up 1006",
+        "readyState 2",
         'close 1000 Buffer("late")',
       ]);
     },

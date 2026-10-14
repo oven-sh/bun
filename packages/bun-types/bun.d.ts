@@ -5212,8 +5212,8 @@ declare module "bun" {
     onerror: ((this: WebSocket, ev: ErrorEvent) => any) | null;
 
     /**
-     * Event handler for close event. After `close()` it fires once the server's Close
-     * frame has arrived: `code` and `reason` are the server's (`1005` if it sent no code).
+     * Event handler for close event. It fires when the connection is closed. `code` and
+     * `reason` are those of the server's Close frame (`1005` if it had no code).
      * `code` is `1006` when the connection ended without a Close frame.
      */
     onclose: ((this: WebSocket, ev: CloseEvent) => any) | null;
@@ -5226,7 +5226,8 @@ declare module "bun" {
 
     /**
      * Starts the closing handshake: sends a Close frame and sets `readyState` to `CLOSING`.
-     * The `close` event fires when the server answers, or after 30 seconds without an answer.
+     * The `close` event fires when the connection is closed: the server answers with its own
+     * Close frame and closes it. After 30 seconds Bun closes it itself.
      * @param code A close code an endpoint is allowed to send (RFC 6455): `1000`-`1014` except
      * the reserved `1004`-`1006`, or `3000`-`4999`. Any other code throws an `InvalidAccessError`.
      * Without a code the Close frame is empty.

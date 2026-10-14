@@ -117,7 +117,16 @@ unsafe extern "C" {
         was_clean: bool,
         buffered_amount: usize,
     );
-    safe fn WebSocket__didStartClosingHandshake(websocket_context: &CppWebSocket);
+    safe fn WebSocket__didStartClosingHandshake(
+        websocket_context: &CppWebSocket,
+        code: u16,
+        reason: BunString,
+    );
+    safe fn WebSocket__didError(
+        websocket_context: &CppWebSocket,
+        reason: ErrorCode,
+        detail: BunString,
+    );
     safe fn WebSocket__didReceiveText(websocket_context: &CppWebSocket, text: BunString);
     safe fn WebSocket__didReceiveBytes(
         websocket_context: &CppWebSocket,
@@ -167,7 +176,7 @@ impl CppWebSocket {
         unsafe { &*WebSocket__bunContext(self).cast::<bun_jsc::ScriptExecutionContext>() }
     }
 
-    /// The client failed the connection: `error`, then `close` with 1006.
+    /// The client failed the connection and has dropped it: `error`, then `close` with 1006.
     /// `system_code` becomes `error.code`; `detail` is appended to the message.
     pub(crate) fn did_fail(
         &self,
@@ -238,9 +247,21 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    /// `readyState` becomes CLOSING. A field write on the C++ side: no JS runs, so no event-loop entry.
-    pub(crate) fn did_start_closing_handshake(&self) {
-        WebSocket__didStartClosingHandshake(self);
+    /// The peer's Close frame is in and ours is written or queued: `readyState` becomes CLOSING,
+    /// and `ws` hears of it. `code` is 1005 for a frame without a payload.
+    pub(crate) fn did_start_closing_handshake(&self, code: u16, reason: BunString) {
+        let event_loop = VirtualMachine::get().event_loop_mut();
+        event_loop.enter();
+        WebSocket__didStartClosingHandshake(self, code, reason);
+        event_loop.exit();
+    }
+
+    /// `ws` only: the `error` of a failed connection, whose `did_close` follows when it has closed.
+    pub(crate) fn did_error(&self, reason: ErrorCode, detail: BunString) {
+        let event_loop = VirtualMachine::get().event_loop_mut();
+        event_loop.enter();
+        WebSocket__didError(self, reason, detail);
+        event_loop.exit();
     }
 
     pub(crate) fn did_receive_text(&self, text: BunString) {

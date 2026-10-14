@@ -705,19 +705,26 @@ describe.each(implementations)("ws client, receiving ($name)", ({ ws: implementa
       expect(events[3]).toBe(lost);
     });
 
-    test(`after the 'error' ${builtin ? "comes 'close'" : "'close' waits for the server's FIN"}`, async () => {
+    test("after the 'error' the socket is CLOSING, and 'close' waits for the server's FIN", async () => {
       await using client = await openClient(implementation);
       const { ws, conn, events } = client;
       conn.send(3, "x");
       await conn.ended;
-      // The built-in does not wait for the server to end the connection.
-      if (!builtin) {
-        expect(ws.readyState).toBe(implementation.CLOSING);
-        expect(events).toEqual([...opening, `error ${opcode(3).error} rs=2`]);
-        conn.end();
-      }
+      expect(ws.readyState).toBe(implementation.CLOSING);
+      expect(events).toEqual([...opening, `error ${opcode(3).error} rs=2`]);
+      conn.end();
+      await client.closed;
+      expect(events.slice(3)).toEqual([lost]);
+    });
+
+    // `closeTimeout` is an option of ws 8.19 and later. The package in node_modules has a constant 30 s.
+    test.skipIf(!builtin)("after the 'error', a server that never ends the connection: `closeTimeout`", async () => {
+      await using client = await openClient(implementation, { closeTimeout: 50 } as {});
+      const { conn, events } = client;
+      conn.send(3, "x");
       await client.closed;
       expect(events).toEqual([...opening, `error ${opcode(3).error} rs=2`, lost]);
+      expect(await conn.rest()).toEqual(["close 1002"]);
     });
 
     test("the error has the status code of the Close frame under Symbol(status-code)", async () => {

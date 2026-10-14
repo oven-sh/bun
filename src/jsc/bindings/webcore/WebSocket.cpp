@@ -1342,11 +1342,20 @@ void WebSocket::didEndResponseBody(bool aborted, bool reset)
     m_pendingActivity = nullptr;
 }
 
-void WebSocket::didStartClosingHandshake()
+void WebSocket::didStartClosingHandshake(unsigned short code, String&& reason)
 {
     if (m_state == CLOSED)
         return;
     m_state = CLOSING;
+    RefPtr context = scriptExecutionContext();
+    if (!isWsMode() || !context)
+        return;
+
+    auto& vm = context->vm();
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(JSC::jsNumber(code));
+    arguments.append(JSC::jsString(vm, reason));
+    callHandler(JSC::Identifier::fromString(vm, "conclude"_s), arguments);
 }
 
 void WebSocket::didClose(unsigned short code, String&& reason, bool wasClean, size_t bufferedAmount)
@@ -1358,6 +1367,17 @@ void WebSocket::didFail(Bun::WebSocketErrorCode code, size_t bufferedAmount, Str
 {
     auto description = describeFailure(code);
     failConnection(description.text, bufferedAmount, systemCode.isEmpty() ? String(description.code) : WTF::move(systemCode), WTF::move(detail));
+}
+
+void WebSocket::didError(Bun::WebSocketErrorCode code, String&& detail)
+{
+    if (m_state == CLOSED)
+        return;
+    m_state = CLOSING;
+    if (!scriptExecutionContext())
+        return;
+    auto description = describeFailure(code);
+    reportFailure({ description.text, String(description.code), WTF::move(detail) });
 }
 
 void WebSocket::failConnection(ASCIILiteral text, size_t bufferedAmount, String&& code, String&& detail)
@@ -1546,9 +1566,14 @@ extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t code
     webSocket->didClose(code, reason.transferToWTFString(), wasClean, bufferedAmount);
 }
 
-extern "C" void WebSocket__didStartClosingHandshake(WebCore::WebSocket* webSocket)
+extern "C" void WebSocket__didStartClosingHandshake(WebCore::WebSocket* webSocket, uint16_t code, BunString reason)
 {
-    webSocket->didStartClosingHandshake();
+    webSocket->didStartClosingHandshake(code, reason.transferToWTFString());
+}
+
+extern "C" void WebSocket__didError(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode, BunString detail)
+{
+    webSocket->didError(errorCode, detail.transferToWTFString());
 }
 
 extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, BunString text)

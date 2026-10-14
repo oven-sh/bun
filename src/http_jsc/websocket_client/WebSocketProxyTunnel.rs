@@ -536,6 +536,17 @@ impl WebSocketProxyTunnel {
         }
     }
 
+    /// Half-close TLS inside the tunnel: our close_notify goes out and reading goes on until
+    /// the peer's, which `on_close` reports. The proxy connection stays as it is.
+    ///
+    /// Takes `ThisPtr<Self>` for the same reason as `shutdown()`.
+    pub(crate) fn end(this: ThisPtr<Self>) {
+        let _guard = RefPtr::from_this(this);
+        if let Some(w) = this.wrapper.get() {
+            let _ = w.shutdown(false);
+        }
+    }
+
     /// False once the proxy connection is closed: what `write` takes from then on goes nowhere.
     pub(crate) fn has_socket(&self) -> bool {
         !matches!(self.socket.get(), SocketUnion::None)

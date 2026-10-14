@@ -804,15 +804,23 @@ describe.concurrent("wss:// through a proxy: the end of the proxy connection", (
 
   const CLOSE_1000 = Buffer.from([0x88, 0x02, 0x03, 0xe8]);
   test.each([
-    ["terminate()", "terminate", undefined, "30", "1006 false\n"],
-    // Both Close frames are exchanged: what is left of the connection does not hold the process.
-    ["close(), with a server that answers and never closes the connection", "close", CLOSE_1000, "30", "1000 true\n"],
+    ["terminate()", "terminate", undefined, false, "30", "1006 false\n"],
+    // The server ends the connection when it reads the client's close_notify.
+    ["close(), with a server that answers", "close", CLOSE_1000, false, "30", "1000 true\n"],
     // uSockets sweeps its timeouts every 4 s, so a timeout of 1 s takes 4 to 8 s.
-    ["close(), with a server that never answers, at the close timeout", "close", undefined, "1", "1006 false\n"],
+    [
+      "close(), with a server that answers and never closes the connection",
+      "close",
+      CLOSE_1000,
+      true,
+      "1",
+      "1000 true\n",
+    ],
+    ["close(), with a server that never answers, at the close timeout", "close", undefined, false, "1", "1006 false\n"],
   ] as const)(
     "the process exits after %s",
-    async (_label, method, answer, closeTimeout, output) => {
-      using origin = await startRawWssServer(socket => void (answer && socket.write(answer)));
+    async (_label, method, answer, allowHalfOpen, closeTimeout, output) => {
+      using origin = await startRawWssServer(socket => void (answer && socket.write(answer)), { allowHalfOpen });
       using recorded = await startRecordingProxy();
       await using client = Bun.spawn({
         cmd: [

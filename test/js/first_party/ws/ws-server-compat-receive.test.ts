@@ -1,11 +1,10 @@
 // What a `ws` server socket does with the frames it receives, from a raw TCP client. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { tls as harnessTls } from "harness";
-import { once } from "node:events";
 import http from "node:http";
 import https from "node:https";
 import zlib from "node:zlib";
-import type { ServerOptions, WebSocket, WebSocketServer } from "ws";
+import type { ServerOptions, WebSocket } from "ws";
 import {
   attempt,
   closePayload,

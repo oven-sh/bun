@@ -1,11 +1,9 @@
 // close(), terminate() and the closing handshake of a `ws` server socket, wss.close() and wss.clients, against a raw
 // TCP client. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { isWindows, tls as certificate } from "harness";
-import { once } from "node:events";
+import { tls as certificate, isWindows } from "harness";
 import http from "node:http";
 import https from "node:https";
-import net from "node:net";
 import type { WebSocket as WsSocket } from "ws";
 import {
   attempt,

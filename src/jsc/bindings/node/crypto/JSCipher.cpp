@@ -79,7 +79,7 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     // parsing so an invalid digest is reported even when the key material itself is invalid.
     ncrypto::Digest digest;
     int32_t padding = defaultPadding;
-    std::optional<WTF::Vector<uint8_t>> oaepLabel;
+    BorrowedBytes oaepLabel;
     JSValue encodingValue = jsUndefined();
     if (JSObject* options = optionsValue.getObject()) {
         JSValue paddingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "padding"_s));
@@ -111,12 +111,9 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         JSValue oaepLabelValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepLabel"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!oaepLabelValue.isUndefined()) {
-            // Key parsing below runs user JS (option getters, warning events) that could
-            // detach a borrowed label buffer, so copy the bytes instead of holding a view.
-            auto view = getArrayBufferOrView2(lexicalGlobalObject, scope, oaepLabelValue, "options.oaepLabel"_s, encodingValue);
+            // The key parsing below runs user JS, so the bytes of the label are read after it.
+            oaepLabel = borrowArrayBufferOrView(lexicalGlobalObject, scope, oaepLabelValue, "options.oaepLabel"_s, encodingValue);
             RETURN_IF_EXCEPTION(scope, {});
-            oaepLabel = copyArgumentBytes(lexicalGlobalObject, scope, std::span { view->data(), view->size() }, "oaepLabel"_s);
-            if (!oaepLabel) return {};
         }
     }
 
@@ -183,18 +180,16 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         return {};
     }
 
-    ncrypto::Buffer<const void> labelBuf = {};
-    if (oaepLabel) {
-        labelBuf = {
-            .data = oaepLabel->begin(),
-            .len = oaepLabel->size(),
-        };
+    if (oaepLabel.isTooBig()) [[unlikely]] {
+        ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "oaepLabel is too big"_s);
+        return {};
     }
 
+    auto label = oaepLabel.span();
     ncrypto::Cipher::CipherParams cipherParams {
         .padding = padding,
         .digest = digest,
-        .label = labelBuf,
+        .label = { .data = label.data(), .len = label.size() },
     };
 
     ncrypto::Buffer<const void> bufferBuf {

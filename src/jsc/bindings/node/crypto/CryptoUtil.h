@@ -6,10 +6,14 @@
 #include <JavaScriptCore/ThrowScope.h>
 #include "CryptoAlgorithmRegistry.h"
 #include "JSBufferEncodingType.h"
+#include "BunString.h"
+#include "VectorSizeLimit.h"
 
 namespace Bun {
 
 using namespace JSC;
+
+class ByteSource;
 
 enum class DSASigEnc {
     DER,
@@ -57,14 +61,17 @@ std::optional<int32_t> getIntOption(JSC::JSGlobalObject* globalObject, JSC::Thro
 int32_t getPadding(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue options, const ncrypto::EVPKeyPointer& pkey);
 std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSValue options);
 DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue options);
-bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig, const ncrypto::EVPKeyPointer& pkey, WTF::Vector<uint8_t>& derBuffer);
+bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig, const ncrypto::EVPKeyPointer& pkey, ByteSource& derBuffer);
 GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue, bool arrayBufferViewOnly = false);
+class BorrowedBytes;
+// getArrayBufferOrView2 for a caller that runs user JS before it reads the bytes.
+BorrowedBytes borrowArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue, bool arrayBufferViewOnly = false);
+// One allocation and one pass. nullopt only when the allocation fails: an empty input gives an empty buffer.
+[[nodiscard]] std::optional<ncrypto::DataPointer> tryCopyBytes(std::span<const uint8_t> bytes);
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding = false);
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, BufferEncodingType encoding);
 bool isKeyValidForCurve(const EC_GROUP* group, const ncrypto::BignumPointer& privateKey);
 std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer);
-// Throws ERR_OUT_OF_RANGE "<argName> is too big" past INT32_MAX bytes, like Node.
-std::optional<WTF::Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> bytes, ASCIILiteral argName);
 
 // For output encoding
 void parsePublicKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);
@@ -133,6 +140,56 @@ private:
         , size_(size)
     {
     }
+};
+
+// The bytes of a Buffer, TypedArray, DataView, ArrayBuffer or string argument, read in place
+// instead of copied. Stack-only: it keeps the argument alive.
+class BorrowedBytes {
+    WTF_FORBID_HEAP_ALLOCATION;
+
+public:
+    BorrowedBytes() = default;
+    BorrowedBytes(JSC::JSArrayBufferView* view)
+        : m_owner(view)
+        , m_kind(Kind::View)
+    {
+    }
+    BorrowedBytes(JSC::JSArrayBuffer* buffer)
+        : m_owner(buffer)
+        , m_kind(Kind::Buffer)
+    {
+    }
+    BorrowedBytes(JSC::JSString* string, UTF8View&& utf8)
+        : m_owner(string)
+        , m_kind(Kind::String)
+        , m_utf8(WTF::move(utf8))
+    {
+    }
+    BorrowedBytes(BorrowedBytes&&) = default;
+    BorrowedBytes& operator=(BorrowedBytes&&) = default;
+    ~BorrowedBytes() { JSC::ensureStillAliveHere(m_owner); }
+
+    // Any call that runs user JS can detach or resize a buffer, so this reads it again on
+    // every call. Do not hold the result across such a call.
+    std::span<const uint8_t> span() const;
+    // Node's CheckSizeInt32(): INT_MAX bytes, which maxVectorSize also is. Tests can lower it.
+    bool isTooBig() const { return span().size() > Bun::maxVectorSize<uint8_t>(); }
+    [[nodiscard]] std::optional<ncrypto::DataPointer> tryCopy() const { return tryCopyBytes(span()); }
+    // For a job context. A job that runs on the work pool owns a copy, and nullopt means the
+    // copy could not be allocated. A job that runs before the call returns reads in place.
+    [[nodiscard]] std::optional<ByteSource> toByteSource(bool ownedCopy) const;
+
+private:
+    enum class Kind : uint8_t {
+        None,
+        View,
+        Buffer,
+        String,
+    };
+
+    JSC::JSCell* m_owner { nullptr };
+    Kind m_kind { Kind::None };
+    std::optional<UTF8View> m_utf8;
 };
 
 }

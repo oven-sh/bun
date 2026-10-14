@@ -21,7 +21,9 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSGlobalObject * lexicalGlobalObject,
     JSValue signatureValue = callFrame->argument(3);
     JSValue callbackValue = callFrame->argument(4);
 
-    auto ctx = SignJobCtx::fromJS(lexicalGlobalObject, scope, SignJobCtx::Mode::Verify, algorithmValue, dataValue, keyValue, signatureValue, callbackValue);
+    // The ctx reads the bytes that `inputs` keeps alive, so `inputs` outlives runTask.
+    SignJobCtx::Inputs inputs;
+    auto ctx = SignJobCtx::fromJS(lexicalGlobalObject, scope, SignJobCtx::Mode::Verify, algorithmValue, dataValue, keyValue, signatureValue, callbackValue, inputs);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!callbackValue.isUndefined()) {
@@ -52,7 +54,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
     JSValue keyValue = callFrame->argument(2);
     JSValue callbackValue = callFrame->argument(3);
 
-    auto ctx = SignJobCtx::fromJS(lexicalGlobalObject, scope, SignJobCtx::Mode::Sign, algorithmValue, dataValue, keyValue, jsUndefined(), callbackValue);
+    // The ctx reads the bytes that `inputs` keeps alive, so `inputs` outlives runTask.
+    SignJobCtx::Inputs inputs;
+    auto ctx = SignJobCtx::fromJS(lexicalGlobalObject, scope, SignJobCtx::Mode::Sign, algorithmValue, dataValue, keyValue, jsUndefined(), callbackValue, inputs);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!callbackValue.isUndefined()) {
@@ -143,10 +147,7 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
 
     switch (m_mode) {
     case Mode::Sign: {
-        auto dataBuf = ncrypto::Buffer<const uint8_t> {
-            .data = m_data.begin(),
-            .len = m_data.size(),
-        };
+        ncrypto::Buffer<const uint8_t> dataBuf = m_data;
 
         if (key.isOneShotVariant()) {
             auto data = context.signOneShot(dataBuf);
@@ -198,14 +199,8 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
         break;
     }
     case Mode::Verify: {
-        auto dataBuf = ncrypto::Buffer<const uint8_t> {
-            .data = m_data.begin(),
-            .len = m_data.size(),
-        };
-        auto sigBuf = ncrypto::Buffer<const uint8_t> {
-            .data = m_signature.begin(),
-            .len = m_signature.size(),
-        };
+        ncrypto::Buffer<const uint8_t> dataBuf = m_data;
+        ncrypto::Buffer<const uint8_t> sigBuf = m_signature;
         m_verifyResult = context.verify(dataBuf, sigBuf);
         if (!m_verifyResult.has_value()) {
             m_opensslError = ERR_get_error();
@@ -271,7 +266,7 @@ std::optional<int32_t> getPadding(JSGlobalObject* globalObject, ThrowScope& scop
 }
 
 std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScope& scope, Mode mode,
-    JSValue algorithmValue, JSValue dataValue, JSValue keyValue, JSValue signatureValue, JSValue callbackValue)
+    JSValue algorithmValue, JSValue dataValue, JSValue keyValue, JSValue signatureValue, JSValue callbackValue, Inputs& inputs)
 {
     if (!algorithmValue.isUndefinedOrNull()) {
         V::validateString(scope, globalObject, algorithmValue, "algorithm"_s);
@@ -283,11 +278,10 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    auto dataView = getArrayBufferOrView2(globalObject, scope, dataValue, "data"_s, jsUndefined());
+    // The option getters and the key parsing below run user JS, so the bytes of `data` and
+    // `signature` are read after them, as Node does.
+    inputs.data = borrowArrayBufferOrView(globalObject, scope, dataValue, "data"_s, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
-
-    auto data = copyArgumentBytes(globalObject, scope, std::span { dataView->data(), dataView->size() }, "data"_s);
-    if (!data) return std::nullopt;
 
     if (mode == Mode::Sign) {
         if (keyValue.pureToBoolean() == TriState::False) {
@@ -317,13 +311,9 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         }
     }
 
-    Vector<uint8_t> signatureData;
     if (mode == Mode::Verify) {
-        auto signatureView = getArrayBufferOrView2(globalObject, scope, signatureValue, "signature"_s, jsUndefined(), true);
+        inputs.signature = borrowArrayBufferOrView(globalObject, scope, signatureValue, "signature"_s, jsUndefined(), true);
         RETURN_IF_EXCEPTION(scope, {});
-        auto copy = copyArgumentBytes(globalObject, scope, std::span { signatureView->data(), signatureView->size() }, "signature"_s);
-        if (!copy) return std::nullopt;
-        signatureData = WTF::move(*copy);
     }
 
     auto prepareResult = mode == Mode::Verify
@@ -352,6 +342,11 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
             prepareResult.cipher,
             WTF::move(prepareResult.passphrase));
         RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (inputs.data.isTooBig()) [[unlikely]] {
+        ERR::OUT_OF_RANGE(scope, globalObject, "data is too big"_s);
+        return {};
     }
 
     Digest digest = {};
@@ -417,18 +412,37 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         }
     }
 
+    // No user JS runs from here on. With a callback the job runs on the work pool.
+    bool ownsBytes = !callbackValue.isUndefined();
+    auto data = inputs.data.toByteSource(ownsBytes);
+    if (!data) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
     if (mode == Mode::Verify) {
-        Vector<uint8_t> signature;
+        if (inputs.signature.isTooBig()) [[unlikely]] {
+            ERR::OUT_OF_RANGE(scope, globalObject, "signature is too big"_s);
+            return {};
+        }
+
+        std::optional<ByteSource> signature;
         if (keyObject.asymmetricKey().isSigVariant() && dsaSigEnc == DSASigEnc::P1363) {
+            auto signatureBytes = inputs.signature.span();
+            signature.emplace();
             convertP1363ToDER(
                 ncrypto::Buffer<const uint8_t> {
-                    .data = signatureData.span().data(),
-                    .len = signatureData.size(),
+                    .data = signatureBytes.data(),
+                    .len = signatureBytes.size(),
                 },
                 keyObject.asymmetricKey(),
-                signature);
+                *signature);
         } else {
-            signature = WTF::move(signatureData);
+            signature = inputs.signature.toByteSource(ownsBytes);
+            if (!signature) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
         }
 
         return SignJobCtx(
@@ -440,7 +454,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
             pssSaltLength,
             dsaSigEnc,
             unsupportedContext,
-            WTF::move(signature));
+            WTF::move(*signature));
     }
 
     return SignJobCtx(

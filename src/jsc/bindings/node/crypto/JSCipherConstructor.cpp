@@ -115,10 +115,8 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
         }
     }
 
-    KeyObject keyObject = KeyObject::prepareSecretKey(globalObject, scope, keyValue, encodingValue);
+    auto keyInput = KeyObject::prepareSecretKey(globalObject, scope, keyValue, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
-
-    auto keyData = keyObject.symmetricKey().span();
 
     JSArrayBufferView* ivView = nullptr;
     if (!ivValue.isNull()) {
@@ -143,6 +141,12 @@ JSC_DEFINE_HOST_FUNCTION(constructCipher, (JSC::JSGlobalObject * globalObject, J
 
     WTF::String cipherString = cipherValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // The authTagLength getter above runs user JS, so the key bytes are read only now.
+    auto keyData = keyInput.span();
+    if (keyData.size() > Bun::maxVectorSize<uint8_t>()) [[unlikely]] {
+        return ERR::OUT_OF_RANGE(scope, globalObject, "key is too big"_s);
+    }
 
     int32_t ivLen = 0;
     if (ivView) {

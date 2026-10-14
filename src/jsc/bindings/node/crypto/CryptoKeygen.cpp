@@ -25,10 +25,8 @@ extern "C" void Bun__SecretKeyJobCtx__runTask(SecretKeyJobCtx* ctx, JSGlobalObje
 }
 void SecretKeyJobCtx::runTask(JSGlobalObject* lexicalGlobalObject)
 {
-    Vector<uint8_t> key;
-    key.grow(m_length);
-
-    if (!ncrypto::CSPRNG(key.begin(), key.size())) {
+    auto key = ncrypto::DataPointer::Alloc(m_length);
+    if (!key || !ncrypto::CSPRNG(key.get(), key.size())) {
         return;
     }
 
@@ -51,7 +49,7 @@ JSCallbackArgs SecretKeyJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject)
         return { err };
     }
 
-    KeyObject keyObject = KeyObject::create(WTF::move(*m_result));
+    KeyObject keyObject = KeyObject::create(WTF::move(m_result));
 
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
     JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTF::move(keyObject));
@@ -157,10 +155,9 @@ JSC_DEFINE_HOST_FUNCTION(jsGenerateKeySync, (JSC::JSGlobalObject * lexicalGlobal
         return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "key generation failed"_s);
     }
 
-    auto& result = ctx->m_result.value();
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    KeyObject keyObject = KeyObject::create(WTF::move(result));
+    KeyObject keyObject = KeyObject::create(WTF::move(ctx->m_result));
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
     JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTF::move(keyObject));
 

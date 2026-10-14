@@ -7,6 +7,7 @@
 #include "ErrorCode.h"
 #include "NodeValidator.h"
 #include "AsymmetricKeyValue.h"
+#include "VectorSizeLimit.h"
 #include "CryptoAlgorithm.h"
 #include "CryptoAlgorithmParameters.h"
 #include "CryptoAlgorithmRegistry.h"
@@ -339,7 +340,7 @@ JSC::JSValue KeyObject::exportJwkSecretKey(JSC::JSGlobalObject* lexicalGlobalObj
 
     JSObject* jwk = JSC::constructEmptyObject(lexicalGlobalObject);
 
-    JSValue encoded = JSValue::decode(StringBytes::encode(lexicalGlobalObject, scope, m_data->symmetricKey, BufferEncodingType::base64url));
+    JSValue encoded = JSValue::decode(StringBytes::encode(lexicalGlobalObject, scope, symmetricKey().span(), BufferEncodingType::base64url));
     RETURN_IF_EXCEPTION(scope, {});
 
     auto ktyKey = commonStrings.jwkKtyString()->value(lexicalGlobalObject);
@@ -704,13 +705,13 @@ JSValue KeyObject::exportSecret(JSGlobalObject* lexicalGlobalObject, ThrowScope&
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     auto exportBuffer = [this, lexicalGlobalObject, globalObject, &scope]() -> JSValue {
-        auto key = symmetricKey();
+        auto key = symmetricKey().span();
         auto buf = ArrayBuffer::tryCreateUninitialized(key.size(), 1);
         if (!buf) {
             throwOutOfMemoryError(lexicalGlobalObject, scope);
             return {};
         }
-        memcpy(buf->data(), key.begin(), key.size());
+        memcpy(buf->data(), key.data(), key.size());
         return JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(buf), 0, key.size());
     };
 
@@ -982,8 +983,13 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
             return throwDOMException(WebCore::NotSupportedError, "Unrecognized algorithm name"_s);
         }
 
+        // A CryptoKey holds its bytes in a WTF::Vector, which a secret key can exceed.
         Vector<uint8_t> keyData;
-        keyData.appendVector(symmetricKey());
+        auto key = symmetricKey().span();
+        if (key.size() > Bun::maxVectorSize<uint8_t>() || !keyData.tryAppend(key)) [[unlikely]] {
+            throwOutOfMemoryError(lexicalGlobalObject, scope);
+            return {};
+        }
         auto importAlgorithm = WebCore::CryptoAlgorithmRegistry::singleton().create(identifier);
         importAlgorithm->importKey(format, WebCore::KeyData { WTF::move(keyData) }, *params, extractable, usagesBitmap, WTF::move(keyCallback), WTF::move(exceptionCallback));
     } else {
@@ -1081,9 +1087,11 @@ WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
             return WebCore::Exception { WebCore::ExceptionCode::CryptoOperationFailedError, "Failed to extract secret key material"_s };
         }
 
-        WTF::Vector<uint8_t> copy;
-        copy.appendVector(*keyData.value());
-        return create(WTF::move(copy));
+        auto copy = tryCopyBytes(keyData.value()->span());
+        if (!copy) [[unlikely]] {
+            return WebCore::Exception { WebCore::ExceptionCode::OutOfMemoryError };
+        }
+        return create(WTF::move(*copy));
     }
 
     case WebCore::CryptoKeyType::Public: {
@@ -1118,7 +1126,7 @@ WebCore::ExceptionOr<KeyObject> KeyObject::create(WebCore::CryptoKey& key)
     return WebCore::Exception { WebCore::ExceptionCode::CryptoOperationFailedError, "Unknown key type"_s };
 }
 
-KeyObject KeyObject::create(WTF::Vector<uint8_t>&& symmetricKey)
+KeyObject KeyObject::create(ncrypto::DataPointer&& symmetricKey)
 {
     RefPtr<KeyObjectData> data = KeyObjectData::create(WTF::move(symmetricKey));
     return KeyObject(CryptoKeyType::Secret, WTF::move(data));
@@ -2079,7 +2087,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::preparePublicOrPrivateKey(JSGlo
     return prepareAsymmetricKey(globalObject, scope, keyValue, PrepareAsymmetricKeyMode::ConsumePublic);
 }
 
-KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue, JSValue encodingValue, bool bufferOnly)
+KeyObject::SecretKeyInput KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue, JSValue encodingValue, bool bufferOnly)
 {
     if (!bufferOnly) {
         if (JSKeyObject* keyObject = dynamicDowncast<JSKeyObject>(keyValue)) {
@@ -2088,7 +2096,7 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
                 ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, handle.type(), "secret"_s);
                 return {};
             }
-            return handle;
+            return { handle.data(), {} };
         } else if (JSCryptoKey* cryptoKey = dynamicDowncast<JSCryptoKey>(keyValue)) {
             auto& key = cryptoKey->wrapped();
             if (key.type() != CryptoKeyType::Secret) {
@@ -2102,7 +2110,7 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
                 WebCore::propagateException(globalObject, scope, keyObject.releaseException());
                 return {};
             }
-            return keyObject.releaseReturnValue();
+            return { keyObject.releaseReturnValue().data(), {} };
         }
     }
 
@@ -2131,23 +2139,15 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
             return {};
         }
 
-        auto copy = copyArgumentBytes(globalObject, scope, view->span(), "key"_s);
-        if (!copy) return {};
-        return create(WTF::move(*copy));
+        return { nullptr, view };
     }
 
-    // TODO(dylan-conway): avoid copying by keeping the buffer alive
     if (auto* view = dynamicDowncast<JSArrayBufferView>(keyValue)) {
-        auto copy = copyArgumentBytes(globalObject, scope, view->span(), "key"_s);
-        if (!copy) return {};
-        return create(WTF::move(*copy));
+        return { nullptr, view };
     }
 
-    // TODO(dylan-conway): avoid copying by keeping the buffer alive
     if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(keyValue)) {
-        auto copy = copyArgumentBytes(globalObject, scope, arrayBuffer->impl()->span(), "key"_s);
-        if (!copy) return {};
-        return create(WTF::move(*copy));
+        return { nullptr, arrayBuffer };
     }
 
     if (bufferOnly) {

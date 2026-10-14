@@ -3245,8 +3245,9 @@ DataPointer CipherImpl(const EVPKeyPointer& key,
         return {};
     }
 
-    if (params.label.len != 0 && params.label.data != nullptr && !ctx.setRsaOaepLabel(DataPointer::Copy(params.label))) {
-        return {};
+    if (params.label.len != 0 && params.label.data != nullptr) {
+        auto label = DataPointer::Copy(params.label);
+        if (!label || !ctx.setRsaOaepLabel(WTF::move(label))) return {};
     }
 
     size_t out_len = 0;

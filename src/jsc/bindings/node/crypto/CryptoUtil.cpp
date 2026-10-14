@@ -507,7 +507,7 @@ DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSV
 
 bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
     const ncrypto::EVPKeyPointer& pkey,
-    WTF::Vector<uint8_t>& derBuffer)
+    ByteSource& derBuffer)
 {
     // Get the size of r and s components from the key
     auto bytesOfRS = pkey.getBytesOfRS();
@@ -551,8 +551,7 @@ bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
     // Encode the signature in DER format
     auto buf = asn1_sig.encode();
     if (buf.len < 0) return false;
-    auto bsource = ByteSource::allocated(buf);
-    if (!derBuffer.tryAppend(bsource.span())) return false;
+    derBuffer = ByteSource::allocated(buf);
     return true;
 }
 
@@ -634,6 +633,15 @@ GCOwnedDataScope<std::span<const uint8_t>> getArrayBufferOrView2(JSGlobalObject*
     return Return(nullptr, {});
 }
 
+BorrowedBytes borrowArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue dataValue, ASCIILiteral argName, JSValue encodingValue, bool arrayBufferViewOnly)
+{
+    auto view = getArrayBufferOrView2(globalObject, scope, dataValue, argName, encodingValue, arrayBufferViewOnly);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(const_cast<JSCell*>(view.owner)))
+        return arrayBuffer;
+    return uncheckedDowncast<JSArrayBufferView>(const_cast<JSCell*>(view.owner));
+}
+
 JSC::JSArrayBufferView* getArrayBufferOrView(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, ASCIILiteral argName, JSValue encodingValue, bool defaultBufferEncoding)
 {
     if (value.isString()) {
@@ -710,16 +718,6 @@ std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer)
     }
 
     return std::nullopt;
-}
-
-std::optional<Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> bytes, ASCIILiteral argName)
-{
-    static_assert(WTF::isValidCapacityForVector<uint8_t>(INT32_MAX));
-    if (bytes.size() > INT32_MAX) [[unlikely]] {
-        throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, makeString(argName, " is too big"_s));
-        return std::nullopt;
-    }
-    return Vector<uint8_t>(bytes);
 }
 
 bool isStringOrBuffer(JSValue value)
@@ -1054,6 +1052,41 @@ ByteSource ByteSource::allocated(void* data, size_t size)
 ByteSource ByteSource::foreign(const void* data, size_t size)
 {
     return ByteSource(data, nullptr, size);
+}
+
+std::optional<ncrypto::DataPointer> tryCopyBytes(std::span<const uint8_t> bytes)
+{
+    auto copy = ncrypto::DataPointer::Copy({ .data = bytes.data(), .len = bytes.size() });
+    if (!copy && !bytes.empty())
+        return std::nullopt;
+    return copy;
+}
+
+std::span<const uint8_t> BorrowedBytes::span() const
+{
+    switch (m_kind) {
+    case Kind::None:
+        return {};
+    case Kind::View:
+        return uncheckedDowncast<JSArrayBufferView>(m_owner)->span();
+    case Kind::Buffer:
+        return uncheckedDowncast<JSArrayBuffer>(m_owner)->impl()->span();
+    case Kind::String:
+        return m_utf8->bytes();
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+std::optional<ByteSource> BorrowedBytes::toByteSource(bool ownedCopy) const
+{
+    if (!ownedCopy) {
+        auto bytes = span();
+        return ByteSource::foreign(bytes.data(), bytes.size());
+    }
+    auto copy = tryCopy();
+    if (!copy)
+        return std::nullopt;
+    return ByteSource::allocated(copy->release());
 }
 
 }

@@ -19,8 +19,16 @@ JSC_DEFINE_HOST_FUNCTION(jsCreateSecretKey, (JSC::JSGlobalObject * lexicalGlobal
     JSValue keyValue = callFrame->argument(0);
     JSValue encodingValue = callFrame->argument(1);
 
-    KeyObject keyObject = KeyObject::prepareSecretKey(lexicalGlobalObject, scope, keyValue, encodingValue, true);
+    auto input = KeyObject::prepareSecretKey(lexicalGlobalObject, scope, keyValue, encodingValue, true);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // A KeyObject owns a snapshot of the bytes, so this is the one caller that copies them.
+    auto copy = input.bytes.tryCopy();
+    if (!copy) [[unlikely]] {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+        return {};
+    }
+    KeyObject keyObject = KeyObject::create(WTF::move(*copy));
 
     Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(lexicalGlobalObject);
     JSSecretKeyObject* secretKey = JSSecretKeyObject::create(vm, structure, lexicalGlobalObject, WTF::move(keyObject));

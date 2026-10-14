@@ -19,7 +19,7 @@ void JSKeyObject::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     Base::finishCreation(vm);
 
     if (auto data = m_handle.data()) {
-        m_sizeForGC = sizeof(KeyObjectData) + data->symmetricKey.sizeInBytes() + data->asymmetricKey.size();
+        m_sizeForGC = sizeof(KeyObjectData) + data->symmetricKey.size() + data->asymmetricKey.size();
         vm.heap.reportExtraMemoryAllocated(this, m_sizeForGC);
     }
 }

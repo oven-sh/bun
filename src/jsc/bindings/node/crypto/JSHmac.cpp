@@ -290,10 +290,11 @@ JSC_DEFINE_HOST_FUNCTION(constructHmac, (JSC::JSGlobalObject * globalObject, JSC
 
     JSValue key = callFrame->argument(1);
 
-    KeyObject keyObject = KeyObject::prepareSecretKey(globalObject, scope, key, encodingValue);
+    auto keyInput = KeyObject::prepareSecretKey(globalObject, scope, key, encodingValue);
     RETURN_IF_EXCEPTION(scope, {});
 
-    hmac->init(globalObject, scope, algorithm, keyObject.symmetricKey().span());
+    // No size bound: HMAC_Init_ex takes a size_t here. Node fails past INT_MAX only because OpenSSL's takes an int.
+    hmac->init(globalObject, scope, algorithm, keyInput.span());
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSC::JSValue::encode(hmac);

@@ -5,6 +5,7 @@
 #include "ExceptionOr.h"
 #include "CryptoKeyType.h"
 #include "KeyObjectData.h"
+#include "CryptoUtil.h"
 
 namespace WebCore {
 class CryptoKey;
@@ -26,7 +27,7 @@ public:
     ~KeyObject() = default;
 
     static WebCore::ExceptionOr<KeyObject> create(WebCore::CryptoKey&);
-    static KeyObject create(WTF::Vector<uint8_t>&& symmetricKey);
+    static KeyObject create(ncrypto::DataPointer&& symmetricKey);
     static KeyObject create(WebCore::CryptoKeyType type, ncrypto::EVPKeyPointer&& asymmetricKey);
     static KeyObject create(WebCore::CryptoKeyType type, RefPtr<KeyObjectData>&& data);
 
@@ -86,7 +87,17 @@ public:
     static PrepareAsymmetricKeyResult prepareAsymmetricKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode);
     static PrepareAsymmetricKeyResult preparePrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue);
     static PrepareAsymmetricKeyResult preparePublicOrPrivateKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue);
-    static KeyObject prepareSecretKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, JSC::JSValue encodingValue, bool bufferOnly = false);
+    // A secret key argument, not copied: an existing key's data, or the caller's bytes.
+    struct SecretKeyInput {
+        WTF_FORBID_HEAP_ALLOCATION;
+
+    public:
+        RefPtr<KeyObjectData> keyData;
+        BorrowedBytes bytes;
+
+        std::span<const uint8_t> span() const { return keyData ? keyData->symmetricKey.span() : bytes.span(); }
+    };
+    static SecretKeyInput prepareSecretKey(JSC::JSGlobalObject*, JSC::ThrowScope&, JSC::JSValue keyValue, JSC::JSValue encodingValue, bool bufferOnly = false);
 
     JSC::JSValue exportJwkEdKey(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::CryptoKeyType exportType);
     JSC::JSValue exportJwkEcKey(JSC::JSGlobalObject*, JSC::ThrowScope&, WebCore::CryptoKeyType exportType);
@@ -115,7 +126,7 @@ public:
 
     inline WebCore::CryptoKeyType type() const { return m_type; }
     inline WebCore::CryptoKeyType& type() { return m_type; }
-    const WTF::Vector<uint8_t>& symmetricKey() const { return m_data->symmetricKey; }
+    const ncrypto::DataPointer& symmetricKey() const { return m_data->symmetricKey; }
     const ncrypto::EVPKeyPointer& asymmetricKey() const { return m_data->asymmetricKey; }
     RefPtr<KeyObjectData> data() const { return m_data; }
 

@@ -7,7 +7,7 @@
 struct KeyObjectData : ThreadSafeRefCounted<KeyObjectData> {
     WTF_MAKE_TZONE_ALLOCATED(KeyObjectData);
 
-    KeyObjectData(WTF::Vector<uint8_t>&& symmetricKey)
+    KeyObjectData(ncrypto::DataPointer&& symmetricKey)
         : symmetricKey(WTF::move(symmetricKey))
     {
     }
@@ -20,7 +20,7 @@ struct KeyObjectData : ThreadSafeRefCounted<KeyObjectData> {
 public:
     ~KeyObjectData() = default;
 
-    static RefPtr<KeyObjectData> create(WTF::Vector<uint8_t>&& symmetricKey)
+    static RefPtr<KeyObjectData> create(ncrypto::DataPointer&& symmetricKey)
     {
         return adoptRef(*new KeyObjectData(WTF::move(symmetricKey)));
     }
@@ -30,6 +30,6 @@ public:
         return adoptRef(*new KeyObjectData(WTF::move(asymmetricKey)));
     }
 
-    WTF::Vector<uint8_t> symmetricKey;
+    const ncrypto::DataPointer symmetricKey;
     const ncrypto::EVPKeyPointer asymmetricKey;
 };

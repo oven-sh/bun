@@ -20,7 +20,7 @@ struct SecretKeyJobCtx {
 
     size_t m_length;
 
-    std::optional<WTF::Vector<uint8_t>> m_result { std::nullopt };
+    ncrypto::DataPointer m_result;
 
     WTF_MAKE_TZONE_ALLOCATED(SecretKeyJobCtx);
 };

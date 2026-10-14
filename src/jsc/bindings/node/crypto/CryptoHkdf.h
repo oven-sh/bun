@@ -19,11 +19,21 @@ struct HkdfJobCtx {
         Async,
     };
 
-    HkdfJobCtx(ncrypto::Digest digest, size_t length, KeyObject&& key, WTF::Vector<uint8_t>&& info, WTF::Vector<uint8_t>&& salt);
+    // The byte arguments of one call. A synchronous ctx reads them in place.
+    struct Inputs {
+        WTF_FORBID_HEAP_ALLOCATION;
+
+    public:
+        BorrowedBytes key;
+        BorrowedBytes salt;
+        BorrowedBytes info;
+    };
+
+    HkdfJobCtx(ncrypto::Digest digest, size_t length, RefPtr<KeyObjectData>&& keyData, ByteSource&& key, ByteSource&& info, ByteSource&& salt);
     HkdfJobCtx(HkdfJobCtx&&);
     ~HkdfJobCtx();
 
-    static std::optional<HkdfJobCtx> fromJS(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::ThrowScope&, Mode);
+    static std::optional<HkdfJobCtx> fromJS(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::ThrowScope&, Mode, Inputs&);
 
     void runTask(JSC::JSGlobalObject*);
     JSCallbackArgs runFromJS(JSC::JSGlobalObject*);
@@ -31,9 +41,11 @@ struct HkdfJobCtx {
 
     ncrypto::Digest m_digest;
     size_t m_length;
-    KeyObject m_key;
-    WTF::Vector<uint8_t> m_info;
-    WTF::Vector<uint8_t> m_salt;
+    // Set when ikm is a KeyObject. m_key then points into it.
+    RefPtr<KeyObjectData> m_keyData;
+    ByteSource m_key;
+    ByteSource m_info;
+    ByteSource m_salt;
 
     std::optional<ByteSource> m_result;
 

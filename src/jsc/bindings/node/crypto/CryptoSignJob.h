@@ -20,7 +20,16 @@ public:
         Verify
     };
 
-    SignJobCtx(Mode mode, RefPtr<KeyObjectData> keyData, Vector<uint8_t>&& data, ncrypto::Digest digest, std::optional<int32_t> padding, std::optional<int32_t> saltLength, DSASigEnc dsaSigEnc, bool unsupportedContext, Vector<uint8_t>&& signature = {})
+    // The byte arguments of one call. A ctx without a callback reads them in place.
+    struct Inputs {
+        WTF_FORBID_HEAP_ALLOCATION;
+
+    public:
+        BorrowedBytes data;
+        BorrowedBytes signature;
+    };
+
+    SignJobCtx(Mode mode, RefPtr<KeyObjectData> keyData, ByteSource&& data, ncrypto::Digest digest, std::optional<int32_t> padding, std::optional<int32_t> saltLength, DSASigEnc dsaSigEnc, bool unsupportedContext, ByteSource&& signature = {})
         : m_mode(mode)
         , m_keyData(keyData)
         , m_data(WTF::move(data))
@@ -47,7 +56,7 @@ public:
     }
 
     static std::optional<SignJobCtx> fromJS(JSC::JSGlobalObject*, JSC::ThrowScope&, Mode mode,
-        JSValue algorithmValue, JSValue dataValue, JSValue keyValue, JSValue signatureValue, JSValue callbackValue);
+        JSValue algorithmValue, JSValue dataValue, JSValue keyValue, JSValue signatureValue, JSValue callbackValue, Inputs&);
 
     void runTask(JSC::JSGlobalObject*);
     JSCallbackArgs runFromJS(JSC::JSGlobalObject*);
@@ -55,8 +64,8 @@ public:
 
     Mode m_mode;
     RefPtr<KeyObjectData> m_keyData;
-    Vector<uint8_t> m_data;
-    Vector<uint8_t> m_signature;
+    ByteSource m_data;
+    ByteSource m_signature;
     ncrypto::Digest m_digest;
     std::optional<int32_t> m_padding;
     std::optional<int32_t> m_saltLength;

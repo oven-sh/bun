@@ -96,6 +96,7 @@
 #include "ncrypto.h"
 #include "JSKeyObject.h"
 #include "JSSecretKeyObject.h"
+#include "VectorSizeLimit.h"
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "CryptoKeyType.h"
@@ -1460,7 +1461,15 @@ private:
 
                 switch (handle.type()) {
                 case CryptoKeyType::Secret: {
-                    write(handle.symmetricKey());
+                    // A secret key can be larger than the serialized buffer, a WTF::Vector, can hold.
+                    auto key = handle.symmetricKey().span();
+                    size_t needed = m_buffer.size() + sizeof(uint32_t) + key.size();
+                    if (needed > Bun::maxVectorSize<uint8_t>() || !m_buffer.tryReserveCapacity(needed)) [[unlikely]] {
+                        code = SerializationReturnCode::DataCloneError;
+                        return true;
+                    }
+                    write(static_cast<uint32_t>(key.size()));
+                    write(key.data(), static_cast<uint32_t>(key.size()));
                     return true;
                 }
                 case CryptoKeyType::Public: {
@@ -3421,13 +3430,19 @@ private:
 
         switch (keyType) {
         case CryptoKeyType::Secret: {
-            Vector<uint8_t> keyData;
-            if (!read(keyData)) {
+            uint32_t size;
+            if (!read(size) || static_cast<size_t>(m_end - m_ptr) < size) {
                 fail();
                 return JSValue();
             }
+            auto keyData = Bun::tryCopyBytes({ m_ptr, size });
+            if (!keyData) [[unlikely]] {
+                fail();
+                return JSValue();
+            }
+            m_ptr += size;
 
-            KeyObject keyObject = KeyObject::create(WTF::move(keyData));
+            KeyObject keyObject = KeyObject::create(WTF::move(*keyData));
             Structure* structure = globalObject->m_JSSecretKeyObjectClassStructure.get(m_globalObject);
             auto* obj = JSSecretKeyObject::create(vm, structure, m_globalObject, WTF::move(keyObject));
             addTerminalToObjectPool(obj);

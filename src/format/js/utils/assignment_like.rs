@@ -79,16 +79,10 @@ fn computed_key_width<'a>(key: Key<'a>, f: &Formatter<'a>) -> Option<usize> {
     let span = key.span(f.file());
     if let KeyKind::Computed(e) = key.kind() {
         // A comment in the brackets is a piece of its own.
-        let inner = e.outer_span();
-        let is_blank = |start: u32, end: u32| {
-            (f.source_text().text_for(&Span::new(start.min(end), end)))
-                .trim_ascii()
-                .is_empty()
+        return match !f.is_quiet() && has_comments(e, f) {
+            true => None,
+            false => plain_expression_width(e, f).map(|width| width + 2),
         };
-        return (is_blank(span.start + 1, inner.start)
-            && is_blank(inner.end, span.end.saturating_sub(1)))
-        .then(|| plain_expression_width(e, f))?
-        .map(|width| width + 2);
     }
     // A template is written with a `lineSuffixBoundary`.
     let is_template = f
@@ -97,6 +91,16 @@ fn computed_key_width<'a>(key: Key<'a>, f: &Formatter<'a>) -> Option<usize> {
         .get(1..)
         .is_some_and(|it| it.trim_ascii_start().starts_with(b"`"));
     (!is_template).then(|| f.source_text().span_width(span))
+}
+
+/// `{ a /* comment */: b }`: for Prettier a name with a comment is more than one piece of text, so it is not short. oxfmt only
+/// looks at the name.
+fn comments_make_name_long<'a>(key: Key<'a>, f: &Formatter<'a>) -> bool {
+    if f.is_quiet() || f.options().flavor.is_oxfmt() {
+        return false;
+    }
+    let comments = f.comments().of_name(key.inner_span(f.file()).start);
+    !comments.leading.is_empty() || !comments.trailing.is_empty()
 }
 
 /// See [`computed_key_width`]: `a`, `1`, `-1`, `!a`, `typeof a`, `a++`, `a!`, `await a`, `a as T`,
@@ -392,6 +396,7 @@ impl<'a> AssignmentLike<'a> {
                 }
                 Some(key) => {
                     write_member_name(key, || property.as_ast_nodes(), f) < text_width_for_break
+                        && !comments_make_name_long(key, f)
                 }
                 None => false,
             },
@@ -406,7 +411,10 @@ impl<'a> AssignmentLike<'a> {
                         write!(f, ["[", FormatKey::new(key, node), "]"]);
                         computed_key_width(key, f).is_some_and(|width| width < text_width_for_break)
                     }
-                    Some(key) => write_member_name(key, || node, f) < text_width_for_break,
+                    Some(key) => {
+                        write_member_name(key, || node, f) < text_width_for_break
+                            && !comments_make_name_long(key, f)
+                    }
                     None => false,
                 }
             }

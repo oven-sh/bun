@@ -309,11 +309,20 @@ enum Place {
     After(TemplateElementIndention),
 }
 
+/// Prettier's `hasComment(node)`. oxfmt only looks at the comments of expressions.
+fn type_has_comment<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
+    if f.is_quiet() || f.options().flavor.is_oxfmt() {
+        return false;
+    }
+    let owned = f.comments().of_node(ty.as_ast_nodes());
+    !owned.leading.is_empty() || !owned.trailing.is_empty() || !owned.dangling.is_empty()
+}
+
 impl<'a> Format<'a> for FormatTemplateExpression<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let (has_comment, interned_expression) = match self.expression {
             TemplateExpression::Expression(e) => (has_comment(e, f), f.intern(&e)),
-            TemplateExpression::TSType(t) => (false, f.intern(&t)),
+            TemplateExpression::TSType(t) => (type_has_comment(t, f), f.intern(&t)),
         };
         let Some(element) = interned_expression else {
             return write!(f, "${}");
@@ -336,26 +345,26 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
             }
             TemplateElementLayout::SingleLine => f.write_without_soft_lines(&content),
             TemplateElementLayout::Fit => {
-                let indent = matches!(self.expression, TemplateExpression::Expression(e) if {
-                    // Prettier's `stripChainElementWrappers`
-                    let mut stripped = e;
-                    while let ExprKind::NonNull(inner) = stripped.kind() {
-                        stripped = inner;
-                    }
-                    has_comment
-                        || matches!(stripped.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. })
-                        || matches!(
-                            e.as_ast_nodes(),
-                            AstNodes::ConditionalExpression(_)
-                                | AstNodes::SequenceExpression(_)
-                                | AstNodes::TSAsExpression(_)
-                                | AstNodes::TSSatisfiesExpression(_)
-                                | AstNodes::BinaryExpression(_)
-                                | AstNodes::LogicalExpression(_)
-                                | AstNodes::PrivateInExpression(_)
-                                | AstNodes::IdentifierReference(_)
-                        )
-                });
+                let indent = has_comment
+                    || matches!(self.expression, TemplateExpression::Expression(e) if {
+                        // Prettier's `stripChainElementWrappers`
+                        let mut stripped = e;
+                        while let ExprKind::NonNull(inner) = stripped.kind() {
+                            stripped = inner;
+                        }
+                        matches!(stripped.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. })
+                            || matches!(
+                                e.as_ast_nodes(),
+                                AstNodes::ConditionalExpression(_)
+                                    | AstNodes::SequenceExpression(_)
+                                    | AstNodes::TSAsExpression(_)
+                                    | AstNodes::TSSatisfiesExpression(_)
+                                    | AstNodes::BinaryExpression(_)
+                                    | AstNodes::LogicalExpression(_)
+                                    | AstNodes::PrivateInExpression(_)
+                                    | AstNodes::IdentifierReference(_)
+                            )
+                    });
                 match indent {
                     true => write!(f, soft_block_indent(&content)),
                     false => write!(f, content),

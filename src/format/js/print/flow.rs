@@ -33,18 +33,22 @@ impl<'a> Format<'a> for FormatModifiers<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         for modifier in self.0.iter() {
             let span = modifier.token_span();
-            write!(f, [source_text(span), (span.len() > 1).then_some(space())]);
+            format_name(span, f, |f| write!(f, source_text(span)));
+            write!(f, (span.len() > 1).then_some(space()));
         }
     }
 }
 
+/// `+`, `-`, `in`, `out`: Flow's `Variance`, which is a node for Prettier.
+pub(crate) fn is_variance(modifier: Modifier<'_>) -> bool {
+    modifier.flag().intersects(Flags::IN | Flags::OUT)
+}
+
 /// The `+` or `-` of a property of a class.
 pub(crate) fn write_variance_sign<'a>(modifiers: List<'a, Modifier<'a>>, f: &mut Formatter<'a>) {
-    for modifier in modifiers
-        .iter()
-        .filter(|it| it.flag().intersects(Flags::IN | Flags::OUT))
-    {
-        write!(f, source_text(modifier.token_span()));
+    for modifier in modifiers.iter().filter(|it| is_variance(*it)) {
+        let span = modifier.token_span();
+        format_name(span, f, |f| write!(f, source_text(span)));
     }
 }
 

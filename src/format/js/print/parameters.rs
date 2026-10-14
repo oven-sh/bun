@@ -91,7 +91,7 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
 
 /// The node whose parameters Prettier prints for `func`. It owns the comments in empty parentheses. Babel has no
 /// `FunctionExpression` in a method, so there it is the method.
-pub(crate) fn function_node<'a>(func: Func<'a>, f: &Formatter<'a>) -> AstNodes<'a> {
+fn function_node<'a>(func: Func<'a>, f: &Formatter<'a>) -> AstNodes<'a> {
     let node = func.as_ast_nodes();
     if !matches!(node, AstNodes::Function(_)) || !f.context().has_tree_of_babel() {
         return node;

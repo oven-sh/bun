@@ -60,7 +60,8 @@ impl<'a> ChainMember<'a> {
         }
     }
 
-    /// The comments that are printed before the link.
+    /// The comments that are printed before the link. For `[b]` oxfmt has them between a line break and the `[`:
+    /// [`FormatComputedMemberExpressionWithoutObject`] prints them.
     pub(super) fn leading_comments(&self, f: &Formatter<'a>) -> CommentList<'a> {
         match *self {
             Self::StaticMember(member) if comments_in_member_access_stay(f) => member
@@ -68,9 +69,7 @@ impl<'a> ChainMember<'a> {
                 .map_or(CommentList::empty(), |start| {
                     f.comments().of_name(start).leading
                 }),
-            Self::ComputedMember(_) if comments_in_member_access_stay(f) => {
-                self.comments(f).dangling
-            }
+            Self::ComputedMember(_) if comments_in_member_access_stay(f) => CommentList::empty(),
             _ => self.comments(f).leading,
         }
     }
@@ -128,7 +127,14 @@ impl<'a> ChainMember<'a> {
             Self::TSNonNullExpression(e) => write!(f, FormatNonNullMarks(e)),
             Self::CallExpression { expression, .. } => write_call_without_callee(expression, f),
             Self::ComputedMember(member) => {
-                write!(f, FormatComputedMemberExpressionWithoutObject(member));
+                let boundary = comments_in_member_access_stay(f).then_some(line_suffix_boundary());
+                write!(
+                    f,
+                    [
+                        boundary,
+                        FormatComputedMemberExpressionWithoutObject(member)
+                    ]
+                );
             }
             Self::Node(node) => write!(f, node),
         }
@@ -149,6 +155,15 @@ impl<'a> Format<'a> for FormatComputedMemberExpressionWithoutObject<'a> {
         let ExprKind::Index { index, .. } = member.kind() else {
             return;
         };
+        if !f.is_quiet() && comments_in_member_access_stay(f) {
+            let comments = f.comments().of_node(member.as_chain_element()).dangling;
+            if !comments.is_empty() {
+                write!(
+                    f,
+                    [soft_line_break(), FormatLeadingComments::Comments(comments)]
+                );
+            }
+        }
         let optional = member.is_optional().then_some("?.");
         if matches!(index.kind(), ExprKind::Number(_))
             && !breaks_around_a_number_with_comments(index, f)

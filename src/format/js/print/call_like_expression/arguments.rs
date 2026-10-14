@@ -11,7 +11,8 @@ use crate::js::print::function::FormatFunctionOptions;
 use crate::js::print::parameters::{FormatFormalParameters, has_only_simple_parameters};
 use crate::js::print::program::is_next_line_empty;
 use crate::js::utils::call_expression::{
-    comments_of_expression, has_comment, is_call_expression, strip_chain_element_wrappers,
+    comments_around_expression, comments_of_expression, has_comment, is_call_expression,
+    strip_chain_element_wrappers,
 };
 use crate::js::utils::is_long_curried_call;
 use crate::js::utils::member_chain::simple_argument::SimpleArgument;
@@ -218,7 +219,7 @@ fn is_empty_line_kept_after<'a>(args: List<'a, Expr<'a>>, index: usize, f: &Form
     match (counts_line_breaks_between_arguments(f), args.get(index + 1)) {
         (true, Some(next)) => {
             let first_comment = (!f.is_quiet())
-                .then(|| comments_of_expression(next, f).leading.first())
+                .then(|| comments_around_expression(next, f).leading.first())
                 .flatten();
             let first_comment = first_comment.map(|comment| comment.span());
             (f.source_text()).get_lines_before(next.span(), first_comment, false) > 1

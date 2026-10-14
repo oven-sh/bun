@@ -16,7 +16,6 @@ pub(crate) fn write_member_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
             [
                 object,
                 boundary_behind_object(f),
-                FormatCommentsBeforeBracket(e),
                 FormatComputedMemberExpressionWithoutObject(e)
             ]
         ),
@@ -60,24 +59,6 @@ fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, f: &mut For
 /// ```
 pub(crate) fn comments_in_member_access_stay(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
-}
-
-/// See [`comments_in_member_access_stay`]: the comments on their own lines between the object of `a[b]` and the `[`.
-struct FormatCommentsBeforeBracket<'a>(Expr<'a>);
-
-impl<'a> Format<'a> for FormatCommentsBeforeBracket<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        if f.is_quiet() || !comments_in_member_access_stay(f) {
-            return;
-        }
-        let comments = f.comments().of_node(self.0.as_chain_element()).dangling;
-        if !comments.is_empty() {
-            write!(
-                f,
-                [hard_line_break(), FormatLeadingComments::Comments(comments)]
-            );
-        }
-    }
 }
 
 /// See [`comments_in_member_access_stay`]: the comments of the property of `member`, if one of them ends its line. They are

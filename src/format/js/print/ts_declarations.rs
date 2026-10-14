@@ -204,11 +204,6 @@ pub(crate) fn write_ts_interface_declaration<'a>(
     write!(f, group(&content));
 }
 
-/// `type A = B /* comment */;` is `type A = B; /* comment */` for oxfmt, as after any other statement.
-fn comments_before_semicolon_of_type_alias_go_behind_it(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
-}
-
 /// `type A = B`. Prettier's `printTypeAlias`, with what its `printAssignment` does if the right side
 /// is a type.
 pub(crate) fn write_ts_type_alias_declaration<'a>(
@@ -256,40 +251,21 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
             format_node(node, f, |f| type_parameters.write_without_comments(f));
         }
     });
-    let moves_trailing_comments =
-        !f.is_quiet() && comments_before_semicolon_of_type_alias_go_behind_it(f);
-    let right = format_with(|f| {
-        if moves_trailing_comments {
-            f.context_mut().set_skip_trailing_comments(true);
+    let right = format_with(|f| match ty.kind() {
+        TypeKind::Union(types)
+            if layout == AssignmentLikeLayout::BreakAfterOperator
+                && union_prints_own_comments(ty, f)
+                && !f.comments().is_ignored(right_node) =>
+        {
+            around_node(ty.span(), f, |f| write_ts_union_type_in(ty, types, true, f));
         }
-        match ty.kind() {
-            TypeKind::Union(types)
-                if layout == AssignmentLikeLayout::BreakAfterOperator
-                    && union_prints_own_comments(ty, f)
-                    && !f.comments().is_ignored(right_node) =>
-            {
-                around_node(ty.span(), f, |f| write_ts_union_type_in(ty, types, true, f));
-            }
-            _ if ty != alias.ty()
-                && matches!(alias.ty().kind(), TypeKind::Intersection(_))
-                && lone_type_of_intersection_is_a_group(f) =>
-            {
-                write!(f, group(&ty))
-            }
-            _ => write!(f, ty),
+        _ if ty != alias.ty()
+            && matches!(alias.ty().kind(), TypeKind::Intersection(_))
+            && lone_type_of_intersection_is_a_group(f) =>
+        {
+            write!(f, group(&ty))
         }
-        f.context_mut().set_skip_trailing_comments(false);
-        // `type A = B[/* comment */];`
-        if moves_trailing_comments {
-            let trailing_comments = f.comments().of_node(right_node).trailing;
-            let in_type = (trailing_comments.iter())
-                .take_while(|comment| comment.span().end <= ty.span().end)
-                .count();
-            write!(
-                f,
-                FormatTrailingComments::Comments(trailing_comments.slice(0, in_type))
-            );
-        }
+        _ => write!(f, ty),
     });
     let content = format_with(|f| {
         match layout {
@@ -332,9 +308,6 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
         }
     });
     write!(f, [group(&content), OptionalSemicolon]);
-    if moves_trailing_comments {
-        write!(f, trailing_comments(right_node));
-    }
 }
 
 /// oxfmt follows Prettier 3.8: a comment that ends the line of the left side of a type alias, or the line of the `=`, stays

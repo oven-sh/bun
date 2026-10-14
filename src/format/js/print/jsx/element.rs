@@ -1,8 +1,10 @@
 use super::child_list::{FormatChildrenResult, format_children};
 use super::opening_element::FormatOpeningElement;
 use super::{FormatJsxChild, write_jsx_closing_element, write_jsx_fragment_tag};
+use crate::js::attach::Marker;
 use crate::js::format::format_node;
 use crate::js::parentheses::expression::needs_parentheses;
+use crate::js::print::class::dangling_comments_with_marker;
 use crate::js::utils::jsx::WrapState;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
@@ -24,17 +26,12 @@ impl<'a> AnyJsxTagWithChildren<'a> {
         self.expr.ast_parent()
     }
 
-    /// The comments inside `<>` and the comments inside `</>`.
-    fn comments_in_fragment_tags(&self, f: &Formatter<'a>) -> (CommentList<'a>, CommentList<'a>) {
-        if f.is_quiet() {
-            return (CommentList::empty(), CommentList::empty());
+    /// The comments inside `<>`, which have no marker, or inside `</>`.
+    fn comments_in_fragment_tag(&self, marker: Marker, f: &Formatter<'a>) -> CommentList<'a> {
+        match f.is_quiet() {
+            true => CommentList::empty(),
+            false => dangling_comments_with_marker(self.expr.as_ast_nodes(), marker, f),
         }
-        let comments = f.comments().of_node(self.expr.as_ast_nodes()).dangling;
-        let opening_end = self.jsx.opening_span().end;
-        let count_in_opening = (comments.iter())
-            .take_while(|comment| comment.span().start < opening_end)
-            .count();
-        comments.split_at(count_in_opening)
     }
 
     /// Prettier's `isNoWrapParent`.
@@ -78,7 +75,9 @@ impl<'a> AnyJsxTagWithChildren<'a> {
 
     fn fmt_opening(&self, f: &mut Formatter<'a>) {
         match self.jsx.is_fragment() {
-            true => write_jsx_fragment_tag(self.comments_in_fragment_tags(f).0, false, f),
+            true => {
+                write_jsx_fragment_tag(self.comments_in_fragment_tag(Marker::None, f), false, f)
+            }
             false => FormatOpeningElement {
                 expr: self.expr,
                 jsx: self.jsx,
@@ -91,7 +90,8 @@ impl<'a> AnyJsxTagWithChildren<'a> {
         match self.jsx.close_tag() {
             Some(name) => write_jsx_closing_element(name, f),
             None if self.jsx.is_fragment() => {
-                write_jsx_fragment_tag(self.comments_in_fragment_tags(f).1, true, f);
+                let comments = self.comments_in_fragment_tag(Marker::ClosingFragment, f);
+                write_jsx_fragment_tag(comments, true, f);
             }
             None => {}
         }

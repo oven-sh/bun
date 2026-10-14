@@ -440,10 +440,16 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
                     && is_angular_pipe(operator, f) == is_pipe
             }
         };
-        let should_group = !(matches!(binary_like_expression.expr.parent(), Node::Expr(parent) if is_same_kind(parent))
+        // For Prettier what is in the parentheses of a type cast is in a `ParenthesizedExpression`.
+        let is_operand_of_same_kind = |operand: Expr<'a>| {
+            is_same_kind(operand) && !is_cast_target_that_hides_its_kind(operand, f)
+        };
+        let is_in_same_kind = matches!(binary_like_expression.expr.parent(), Node::Expr(parent) if is_same_kind(parent))
+            && !is_cast_target_that_hides_its_kind(binary_like_expression.expr, f);
+        let should_group = !(is_in_same_kind
             || (is_pipe && is_argument_of_angular_pipe(binary_like_expression.expr))
-            || is_same_kind(left)
-            || is_same_kind(right)
+            || is_operand_of_same_kind(left)
+            || is_operand_of_same_kind(right)
             || (inside_parenthesis && logical_operator.is_some()));
 
         // A line comment after the left side breaks the line after the operator:

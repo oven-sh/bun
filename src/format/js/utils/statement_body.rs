@@ -143,9 +143,11 @@ pub(crate) fn write_space_before_body<'a>(body: AstNodes<'a>, f: &mut Formatter<
     }
 }
 
-/// See [`comments_stay_between_head_and_body`]: writes `comments`, which are between the end of a block or a statement and
-/// the keyword that continues it (`else`, `catch`, `finally`, `while`). The ones on the line of the block trail it, the
-/// others keep their lines. Returns whether the caller still has to separate the keyword from what is before it.
+/// See [`comments_stay_between_head_and_body`]: writes the comments between the end of a block or a statement and the
+/// keyword that continues it (`else`, `catch`, `finally`, `while`). The ones on the line of the block trail it, the others
+/// keep their lines. Returns whether the caller still has to separate the keyword from what is before it.
+///
+/// `trailing`: the trailing comments of the block. `others`: the comments after them, which something else owns.
 ///
 /// ```js
 /// if (a) {
@@ -155,6 +157,18 @@ pub(crate) fn write_space_before_body<'a>(body: AstNodes<'a>, f: &mut Formatter<
 /// }
 /// ```
 pub(crate) fn write_comments_before_keyword<'a>(
+    trailing: CommentList<'a>,
+    others: CommentList<'a>,
+    f: &mut Formatter<'a>,
+) -> bool {
+    let needs_separator = write_run_of_comments_before_keyword(trailing, f);
+    match others.is_empty() {
+        true => needs_separator,
+        false => write_run_of_comments_before_keyword(others, f),
+    }
+}
+
+fn write_run_of_comments_before_keyword<'a>(
     comments: CommentList<'a>,
     f: &mut Formatter<'a>,
 ) -> bool {

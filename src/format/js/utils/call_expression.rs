@@ -38,7 +38,7 @@ pub(crate) fn strip_chain_element_wrappers(mut e: Expr<'_>) -> Expr<'_> {
 
 /// The comments that `write!(f, e)` prints around `e`. If `e` is in the parentheses of a type cast, they are the comments of
 /// the outermost parentheses, which are Babel's `ParenthesizedExpression`.
-fn comments_around_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> OwnedComments<'a> {
+pub(crate) fn comments_around_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> OwnedComments<'a> {
     let comments = f.comments();
     if comments.has_type_cast_comments()
         && e.is_parenthesized()
@@ -85,15 +85,42 @@ pub(crate) fn has_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 ///                   );
 /// ```
 ///
-/// Not after `new A` without type arguments, and not after `a[b]`.
+/// Not after `new A` without type arguments, not after `a[b]`, not between `a.b` and `?.`, and not after a call that is a link
+/// of a member chain.
 pub(crate) fn comments_stay_behind_callee<'a>(callee: Expr<'a>, f: &Formatter<'a>) -> bool {
-    f.options().flavor.is_oxfmt()
-        && callee.tag() != ExprTag::Index
-        && matches!(callee.parent(), Node::Expr(parent) if match parent.kind() {
-            ExprKind::Call(call) => call.callee() == callee,
-            ExprKind::New(call) => call.callee() == callee && !call.type_args().is_empty(),
-            _ => false,
-        })
+    f.options().flavor.is_oxfmt() && comments_stay_behind_callee_for_oxfmt(callee)
+}
+
+/// See [`comments_stay_behind_callee`]. The attachment of comments asks this too.
+pub(crate) fn comments_stay_behind_callee_for_oxfmt(callee: Expr<'_>) -> bool {
+    matches!(callee.parent(), Node::Expr(parent) if match parent.kind() {
+        ExprKind::Call(call) => call.callee() == callee && match callee.tag() {
+            ExprTag::Index => false,
+            ExprTag::Dot => !call.is_optional(),
+            ExprTag::Call => !is_link_of_member_chain(parent),
+            _ => true,
+        },
+        ExprKind::New(call) => call.callee() == callee && !call.type_args().is_empty(),
+        _ => false,
+    })
+}
+
+/// Whether `e` is written as a link of a member chain: it is the `a()` of `a().b()`, `a().b.c()` or `a()().b()`.
+fn is_link_of_member_chain(mut e: Expr<'_>) -> bool {
+    while let Node::Expr(parent) = e.parent() {
+        match parent.kind() {
+            ExprKind::Dot { .. } | ExprKind::NonNull(_) => {}
+            ExprKind::Index { obj, .. } if obj == e => {}
+            ExprKind::Call(call) if call.callee() == e => {
+                if matches!(e.tag(), ExprTag::Dot | ExprTag::Index) {
+                    return true;
+                }
+            }
+            _ => return false,
+        }
+        e = parent;
+    }
+    false
 }
 
 /// The callee of a call or a `new`, with its comments.

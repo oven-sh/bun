@@ -32,14 +32,6 @@ impl<'a> FormatDecorators<'a> {
         (self.decorators.first()).is_some_and(|first| first.span().end <= self.parent.span().start)
     }
 
-    fn follow_comment_that_ends_its_line(&self, f: &Formatter<'a>) -> bool {
-        self.decorators.first().is_some_and(|first| {
-            let class = AstNodes::Decorator(*first).parent();
-            (f.comments().of_node(class).leading.last())
-                .is_some_and(|comment| comment.has_newline_after())
-        })
-    }
-
     /// Whether one of them is followed by a line break in the source.
     fn should_expand(&self, f: &Formatter<'a>) -> bool {
         self.decorators.iter().any(|it| {
@@ -89,13 +81,8 @@ impl<'a> Format<'a> for FormatDecorators<'a> {
             {
                 write!(f, expand_parent());
             }
-            // `export // comment⏎@a class B {}`: Prettier's `printDecorators` starts with a line break, also behind the one that
-            // ends a leading comment of the class.
             AstNodes::ExportNamedDeclaration(_) | AstNodes::ExportDefaultDeclaration(_) => {
-                match self.follow_comment_that_ends_its_line(f) {
-                    true => write!(f, empty_line()),
-                    false => write!(f, hard_line_break()),
-                }
+                write!(f, hard_line_break());
             }
             _ => write!(f, expand_parent()),
         }

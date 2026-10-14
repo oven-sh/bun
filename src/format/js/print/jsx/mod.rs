@@ -184,8 +184,9 @@ struct FormatJsxEmptyExpression<'a>(Expr<'a>);
 impl<'a> Format<'a> for FormatJsxEmptyExpression<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let comments = (f.comments()).of_node(AstNodes::JSXEmptyExpression(self.0));
+        // `{   /* prettier-ignore */   }`: for Prettier the comment also applies to the `JSXEmptyExpression` that owns it, which
+        // is everything between the braces, so the blanks stay.
         if comments.is_ignored
-            && ignore_comment_applies_to_empty_expression(f)
             && let Some(braces) = self.0.jsx_container_span()
         {
             return write!(
@@ -200,12 +201,6 @@ impl<'a> Format<'a> for FormatJsxEmptyExpression<'a> {
         };
         write!(f, FormatDanglingComments::Comments { comments, indent });
     }
-}
-
-/// `{   /* prettier-ignore */   }`: for Prettier the comment also applies to the `JSXEmptyExpression` that owns it, which is
-/// everything between the braces, so the blanks stay. oxfmt prints `{/* prettier-ignore */}`.
-fn ignore_comment_applies_to_empty_expression(f: &Formatter<'_>) -> bool {
-    !f.options().flavor.is_oxfmt()
 }
 
 /// ```jsx

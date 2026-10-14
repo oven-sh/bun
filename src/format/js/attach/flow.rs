@@ -5,7 +5,7 @@
 use crate::js::ast_nodes::{AsAstNodes, AstNodes as N};
 use crate::js::print::flow::{
     as_match_expression, head_of_match_statement, is_inexact_mark, is_return_type_of_function_type,
-    is_unknown_members_mark, keyword_of_function_type,
+    is_unknown_members_mark, is_variance, keyword_of_function_type,
 };
 use bun_lint::ast::comments::NodeOrName;
 use bun_lint::ast::{
@@ -229,27 +229,39 @@ pub(super) fn is_no_node(node: N<'_>) -> bool {
         N::ObjectExpression(e) => is_braces_of_match(e),
         N::LogicalExpression(e) => as_pattern_with_guard(e).is_some(),
         N::BinaryExpression(e) => last_of_inner_or_pattern(e).is_some(),
-        N::TSTypeAnnotation(ty) => is_return_type_of_function_type(ty),
+        N::TSTypeAnnotation(ty) => {
+            is_return_type_of_function_type(ty)
+                // The `T` of `: T %checks`
+                || matches!(ty.parent(), Node::Type(parent) if matches!(parent.kind(),
+                    TypeKind::Predicate { param, .. } if param.is("%checks")))
+        }
         _ => false,
     }
 }
 
-/// The `: T` around the type `node`, where Flow has a `TypeAnnotation` and TypeScript has no `TSTypeAnnotation`: the bound of a
-/// type parameter, `(e: T)` and `declare module.exports: T`.
-pub(super) fn type_annotation_around(node: N<'_>) -> Option<N<'_>> {
+/// The parent of the type `node`, where `AstNodes::parent` gives that of TypeScript's tree:
+/// - The `: T` around it, where Flow has a `TypeAnnotation` and TypeScript has no `TSTypeAnnotation`: the bound of a type
+///   parameter, `(e: T)` and `declare module.exports: T`.
+/// - The class, for a type after `mixins`.
+pub(super) fn parent_of_type(node: N<'_>) -> Option<N<'_>> {
     let Node::Type(ty) = node.raw() else {
         return None;
     };
-    let has_type_annotation = node == ty.as_ast_nodes()
-        && match ty.parent() {
-            Node::TypeParam(param) => {
-                param.constraint() == Some(ty) && param.flow_token_after_name() == b":"
-            }
-            Node::Expr(e) => e.is_flow_type_cast(),
-            Node::Stmt(statement) => matches!(statement.kind(), StmtKind::TypeAlias(alias)
-                if alias.name().name().is("module.exports")),
-            _ => false,
-        };
+    if node != ty.as_ast_nodes() {
+        return None;
+    }
+    let has_type_annotation = match ty.parent() {
+        Node::TypeParam(param) => {
+            param.constraint() == Some(ty) && param.flow_token_after_name() == b":"
+        }
+        Node::Expr(e) => e.is_flow_type_cast(),
+        Node::Stmt(statement) => matches!(statement.kind(), StmtKind::TypeAlias(alias)
+            if alias.name().name().is("module.exports")),
+        Node::Class(class) if class.flow_mixins().iter().any(|it| it == ty) => {
+            return Some(N::Class(class));
+        }
+        _ => false,
+    };
     has_type_annotation.then_some(N::TSTypeAnnotation(ty))
 }
 
@@ -260,13 +272,13 @@ pub(super) fn preceding_node<'a>(
     enclosing_node: Option<Node<'a>>,
 ) -> Option<NodeOrName<'a>> {
     let node = match node {
-        // The name of a type parameter is a string.
         NodeOrName::Name(start) => {
-            let is_name_of_type_parameter = matches!(enclosing_node, Some(Node::TypeParam(param))
-                if param.name().span().start == start);
-            let is_no_node = is_name_of_type_parameter
+            let is_no_node = is_name_of_type_parameter(enclosing_node, start)
                 || members_of_enum_with_explicit_type(enclosing_node, start).is_some();
-            return (!is_no_node).then_some(node);
+            return match is_no_node {
+                true => unrecorded_preceding_node(enclosing_node, start),
+                false => Some(node),
+            };
         }
         NodeOrName::Node(node) => node,
     };
@@ -308,16 +320,34 @@ fn members_of_enum_with_explicit_type(
     (declaration.flow_explicit_type()?.start == start).then(|| declaration.members())
 }
 
-/// `component A(a /* comment */ as b) {}`: the `a`, which the parser does not record. `comment_start`: where the comment starts.
-pub(super) fn outer_name_of_component_parameter(
+/// `<T>`: the name of a type parameter is a string in Flow's tree.
+fn is_name_of_type_parameter(enclosing_node: Option<Node<'_>>, start: u32) -> bool {
+    matches!(enclosing_node, Some(Node::TypeParam(param)) if param.name().span().start == start)
+}
+
+/// A node of Flow's tree that ends before `offset` in `enclosing_node` and that the parser does not record:
+/// - `component A(a /* comment */ as b) {}`: the `a`.
+/// - `{ + /* comment */ a: A }`, `<+ /* comment */ T>`: the `Variance`.
+pub(super) fn unrecorded_preceding_node(
     enclosing_node: Option<Node<'_>>,
-    comment_start: u32,
+    offset: u32,
 ) -> Option<NodeOrName<'_>> {
-    let Some(Node::Param(param)) = enclosing_node else {
-        return None;
+    let modifiers = match enclosing_node? {
+        Node::Param(param) => {
+            let outer_name = param.flow_outer_name()?;
+            return (outer_name.end <= offset).then_some(NodeOrName::Name(outer_name.start));
+        }
+        Node::Member(member) => member.modifiers(),
+        Node::TypeParam(param) => param.modifiers(),
+        // `+[K in T]: V` is a member whose type is a mapped type with the same span.
+        Node::Type(ty) => match (ty.kind(), ty.parent()) {
+            (TypeKind::Mapped(_), Node::Member(member)) => member.modifiers(),
+            _ => return None,
+        },
+        _ => return None,
     };
-    let outer_name = param.flow_outer_name()?;
-    (outer_name.end <= comment_start).then_some(NodeOrName::Name(outer_name.start))
+    let variance = modifiers.iter().find(|it| is_variance(*it))?.token_span();
+    (variance.end <= offset).then_some(NodeOrName::Name(variance.start))
 }
 
 /// The same for the node after a comment.
@@ -326,6 +356,7 @@ pub(super) fn following_node<'a>(
     enclosing_node: Option<Node<'a>>,
 ) -> Option<NodeOrName<'a>> {
     let node = match node {
+        NodeOrName::Name(start) if is_name_of_type_parameter(enclosing_node, start) => return None,
         NodeOrName::Name(start) => {
             return match members_of_enum_with_explicit_type(enclosing_node, start) {
                 Some(members) => (members.first())

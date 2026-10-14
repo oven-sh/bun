@@ -41,6 +41,8 @@ pub(crate) enum Marker {
     Extends,
     /// Before the `mixins` keyword of Flow's `declare class`.
     Mixins,
+    /// In the `</>` of a fragment, which is a node for Prettier. A comment in the `<>` has no marker.
+    ClosingFragment,
     /// The comment is inside an ignored node, so it is copied along with the node's source text. Prettier does not attach such
     /// a comment at all.
     InIgnoredNode,
@@ -229,6 +231,36 @@ fn break_ties<'a>(
     }
 }
 
+/// Whether an ignore comment that trails `owner` ignores it in the oxfmt flavor. For Prettier every comment of a node counts.
+/// For oxfmt the comment has to come right after the node, with nothing but separators between them. And it has to end its
+/// line, or be the last thing in what the node is in.
+///
+/// ```js
+/// a  +  b; // prettier-ignore            is copied
+/// f(a  +  b /* prettier-ignore */);      `a  +  b` is copied
+/// (a  +  b) // prettier-ignore           is formatted: a `)` is between the two
+///   .c;
+/// (a  +  b /* prettier-ignore */ + c);   is formatted
+/// ```
+fn trailing_ignore_comment_counts_for_oxfmt<'a>(
+    cx: &AttachContext<'a, '_>,
+    comment: Comment<'a>,
+    owner: Owner<'a>,
+    text_position: TextPosition,
+) -> bool {
+    let text = cx.file.text();
+    let owner_end = cx.file.without_semicolon(cx.span_of(owner)).end as usize;
+    let between = (text.get(owner_end..comment.prev_token_end() as usize)).unwrap_or_default();
+    let is_at_end_of_line_of_owner = text_position == TextPosition::EndOfLine
+        && (between.iter()).all(|byte| matches!(byte, b' ' | b'\t' | b'=' | b':' | b',' | b';'));
+    let is_last_in_enclosing_node = matches!(
+        text.get(comment.next_token_start() as usize),
+        None | Some(b'}' | b']' | b')')
+    ) && (between.iter())
+        .all(|byte| byte.is_ascii_whitespace() || matches!(byte, b',' | b';'));
+    is_at_end_of_line_of_owner || is_last_in_enclosing_node
+}
+
 /// `cast_parens`: see [`super::comments::cast_parens`].
 pub(crate) fn attach<'a>(
     file: &'a File<'a>,
@@ -293,6 +325,23 @@ pub(crate) fn attach<'a>(
         };
     }
     break_ties(&cx, &mut ties, &nodes, &mut attached.attachments);
+    if options.flavor.is_oxfmt() && attached.has_ignore_comments {
+        for (id, comment) in file.comments_by_id().enumerate() {
+            let attachment = &mut attached.attachments[id];
+            if attachment.ignores_owner
+                && attachment.placement == Placement::Trailing
+                && !trailing_ignore_comment_counts_for_oxfmt(
+                    &cx,
+                    comment,
+                    attachment.owner,
+                    text_position(file, &nodes, id),
+                )
+            {
+                attachment.ignores_owner = false;
+                attachment.is_unignored = true;
+            }
+        }
+    }
     let ignored_starts = attached.ignored_nodes.iter().map(|node| cx.start_of(*node));
     attached.relocated_owner_starts.extend(ignored_starts);
     // `let a: /* comment */ | B`: the comment belongs to `B`, and the printers get to `B` by way of the union `| B`, which does not

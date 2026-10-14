@@ -37,7 +37,7 @@ pub(crate) fn list<'a>(
             Placement::Dangling => "D",
         };
         let marker = match attachment.marker {
-            Marker::None | Marker::InIgnoredNode => "-",
+            Marker::None | Marker::InIgnoredNode | Marker::ClosingFragment => "-",
             Marker::CommentBeforeArrow => "commentBeforeArrow",
             Marker::Implements => "implements",
             Marker::Extends => "extends",

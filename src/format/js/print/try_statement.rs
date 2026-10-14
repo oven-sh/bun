@@ -7,18 +7,20 @@ use crate::write;
 
 /// Writes `part`, which is followed by `catch` or `finally`, and the space before that keyword.
 ///
-/// See [`comments_stay_between_head_and_body`]: for oxfmt the comments between the two trail `node`, which `part` writes,
-/// and keep their lines.
+/// See [`comments_stay_between_head_and_body`]: for oxfmt the comments between the two keep their lines. They are the
+/// trailing comments of `node`, which `part` writes, and `comments_before_keyword`.
 fn write_part_before_keyword<'a>(
     part: &(impl Format<'a> + Spanned),
     node: AstNodes<'a>,
+    comments_before_keyword: impl FnOnce(&Formatter<'a>) -> CommentList<'a>,
     f: &mut Formatter<'a>,
 ) {
     if f.is_quiet() || !comments_stay_between_head_and_body(f) {
         return write!(f, [part, space()]);
     }
     write!(f, FormatNodeWithoutTrailingComments(part));
-    if write_comments_before_keyword(f.comments().of_node(node).trailing, f) {
+    let trailing = f.comments().of_node(node).trailing;
+    if write_comments_before_keyword(trailing, comments_before_keyword(f), f) {
         write!(f, space());
     }
 }
@@ -33,7 +35,20 @@ pub(crate) fn write_try_statement<'a>(
 ) {
     write!(f, "try");
     write_space_before_body(block.as_ast_nodes(), f);
-    write_part_before_keyword(&block, block.as_ast_nodes(), f);
+    let before_catch = |f: &Formatter<'a>| {
+        f.comments()
+            .of_node(AstNodes::CatchClause(statement))
+            .leading
+    };
+    let before_finally = |f: &Formatter<'a>| {
+        f.comments()
+            .of_node(AstNodes::TryStatement(statement))
+            .dangling
+    };
+    match handler {
+        Some(_) => write_part_before_keyword(&block, block.as_ast_nodes(), before_catch, f),
+        None => write_part_before_keyword(&block, block.as_ast_nodes(), before_finally, f),
+    }
     if let Some(body) = handler {
         let catch_clause = FormatCatchClause {
             statement,
@@ -41,7 +56,9 @@ pub(crate) fn write_try_statement<'a>(
             body,
         };
         match finalizer {
-            Some(_) => write_part_before_keyword(&catch_clause, catch_clause.node(), f),
+            Some(_) => {
+                write_part_before_keyword(&catch_clause, catch_clause.node(), before_finally, f);
+            }
             None => write!(f, catch_clause),
         }
     }

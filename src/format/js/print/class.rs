@@ -461,6 +461,11 @@ impl<'a> Format<'a> for FormatClass<'a> {
     }
 }
 
+/// `class A extends B /* comment */⏎<C> {}` is `B<C> /* comment */` for Prettier and `B /* comment */<C>` for oxfmt.
+fn comments_of_super_class_are_around_its_type_arguments(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
+}
+
 /// What follows `extends`: the super class with its type arguments. The comments of the super class are around both.
 struct FormatSuperClass<'a> {
     class: Class<'a>,
@@ -470,13 +475,12 @@ struct FormatSuperClass<'a> {
 impl<'a> Format<'a> for FormatSuperClass<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let FormatSuperClass { class, extends } = *self;
-        // A JSX element writes its own comments, and so does what is in a `ChainExpression`. One of the comments of what is
-        // ignored can be in the text that is copied.
+        // A JSX element writes its own comments, and so does what is in a `ChainExpression`.
         let comments = (!f.is_quiet()
+            && comments_of_super_class_are_around_its_type_arguments(f)
             && extends.tag() != ExprTag::Jsx
             && !is_chain_expression_without_comments(extends, f))
-        .then(|| comments_of_expression(extends, f))
-        .filter(|comments| !comments.is_ignored);
+        .then(|| comments_of_expression(extends, f));
         let type_arguments = type_arguments(class.extends_args(), Node::Class(class));
         let are_type_arguments_in_parentheses =
             type_arguments_of_super_class_are_in_its_parentheses(f);
@@ -492,7 +496,15 @@ impl<'a> Format<'a> for FormatSuperClass<'a> {
 
         // They are written here, so `extends` does not write them again.
         if let Some(comments) = comments {
-            write!(f, FormatLeadingComments::Comments(comments.leading));
+            // `extends a⏎// prettier-ignore⏎.b`: the comment leads `a.b`, and is copied with it.
+            let is_copied = |comment: &Comment<'a>| {
+                comments.is_ignored && comment.span().start >= extends.span().start
+            };
+            let count = (comments.leading.iter())
+                .take_while(|it| !is_copied(it))
+                .count();
+            let leading_comments = comments.leading.slice(0, count);
+            write!(f, FormatLeadingComments::Comments(leading_comments));
         }
         // Prettier's `printSuperClass`.
         if matches!(
@@ -519,6 +531,24 @@ impl<'a> Format<'a> for FormatSuperClass<'a> {
     }
 }
 
+/// Prettier's `hasComment(node.superClass)`. For oxfmt only the comments around the super class count:
+///
+/// ```js
+/// class A              class A extends b(
+///   extends b(           // comment
+///     // comment       ) {}
+///   ) {}
+/// ```
+///
+/// Prettier on the left, oxfmt on the right.
+fn super_class_has_comments<'a>(super_class: Expr<'a>, f: &Formatter<'a>) -> bool {
+    if !f.options().flavor.is_oxfmt() {
+        return has_comments(super_class, f);
+    }
+    let comments = comments_of_expression(super_class, f);
+    !comments.leading.is_empty() || !comments.trailing.is_empty()
+}
+
 /// Prettier's `hasMultipleHeritage`.
 fn has_multiple_heritage(class: Class<'_>) -> bool {
     usize::from(class.extends().is_some()) + class.implements().len() > 1
@@ -536,7 +566,7 @@ fn should_group<'a>(class: Class<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -
         let type_parameters = AstNodes::TSTypeParameterDeclaration(Node::Class(class));
         if (class.name()).is_some_and(|id| !comments.of_name(id.span().start).trailing.is_empty())
             || !comments.of_node(type_parameters).trailing.is_empty()
-            || super_class.is_some_and(|super_class| has_comments(super_class, f))
+            || super_class.is_some_and(|super_class| super_class_has_comments(super_class, f))
         {
             return true;
         }

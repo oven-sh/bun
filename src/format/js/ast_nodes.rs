@@ -1277,6 +1277,13 @@ impl<'a> AstNodes<'a> {
             N::ExportSpecifier(spec) => spec.span(),
             N::BindingIdentifier(pat) | N::ObjectPattern(pat) | N::ArrayPattern(pat) => pat.span(),
             N::BindingProperty(prop) => prop.span(),
+            // The `T` of `a is T` has no `:` to start at.
+            N::TSTypeAnnotation(ty)
+                if matches!(ty.parent(), Node::Type(parent)
+                    if matches!(parent.kind(), TypeKind::Predicate { .. })) =>
+            {
+                ty.outer_span()
+            }
             N::TSTypeAnnotation(ty) => ty.annotation_span(),
             N::TSKeywordType(ty)
             | N::TSThisType(ty)

@@ -12,7 +12,7 @@ use crate::js::utils::statement_body::{
     FormatStatementBody, TrailingComments, write_comments_before_keyword,
     write_comments_before_token, write_space_before_body,
 };
-use crate::js::utils::typecast::{comments_of_expression, is_cast_target};
+use crate::js::utils::typecast::{comments_of_expression, has_comments, is_cast_target};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -210,11 +210,13 @@ pub(crate) fn write_expression_statement<'a>(
 }
 
 pub(crate) fn write_do_while_statement<'a>(
-    _statement: Stmt<'a>,
+    statement: Stmt<'a>,
     body: Stmt<'a>,
     test: Expr<'a>,
     f: &mut Formatter<'a>,
 ) {
+    // For oxfmt the comments before the `while` keep their lines. Those on the line of a body that is no block break the
+    // group: `do⏎  a; // comment⏎while (b);`
     let comments_stay = !f.is_quiet() && comments_stay_between_head_and_body(f);
     let trailing_comments = match (comments_stay, body.kind()) {
         (false, _) => TrailingComments::All,
@@ -224,7 +226,11 @@ pub(crate) fn write_do_while_statement<'a>(
     let format_body = FormatStatementBody::new(body).with_trailing_comments(trailing_comments);
     write!(f, group(&format_args!("do", format_body)));
     let needs_separator = !comments_stay
-        || write_comments_before_keyword(f.comments().of_node(body.as_ast_nodes()).trailing, f);
+        || write_comments_before_keyword(
+            f.comments().of_node(body.as_ast_nodes()).trailing,
+            (f.comments().of_node(AstNodes::DoWhileStatement(statement))).dangling,
+            f,
+        );
     match (needs_separator, body.kind()) {
         (false, _) => {}
         (true, StmtKind::Block(_)) => write!(f, space()),
@@ -269,14 +275,10 @@ fn hugs_negated_condition(f: &Formatter<'_>) -> bool {
 /// Prettier's `shouldInlineCondition`: a negated logical expression starts right after the `(` of the statement, so that
 /// its operands are indented as they are without the `!`.
 fn should_inline_condition<'a>(test: Expr<'a>, f: &Formatter<'a>) -> bool {
-    if !is_negated_logical_expression(test) || !hugs_negated_condition(f) {
-        return false;
-    }
-    if f.is_quiet() {
-        return true;
-    }
-    let owned = f.comments().of_node(test.as_ast_nodes());
-    owned.leading.is_empty() && owned.trailing.is_empty() && !is_cast_target(test, f)
+    is_negated_logical_expression(test)
+        && hugs_negated_condition(f)
+        && !has_comments(test, f)
+        && !is_cast_target(test, f)
 }
 
 /// Prettier's `printIfOrWhileConditionOrWithStatementObject`: what is between the parentheses of an `if`, a `while`, a
@@ -408,7 +410,7 @@ fn write_for_head_with_comments_in_place<'a>(
         .take_while(precedes_parenthesis)
         .count();
     let (in_init, rest) = dangling.split_at(init_count);
-    let (in_test, in_update) = rest.split_at(rest.len() - update_count);
+    let (in_test, in_update) = rest.split_at(rest.len().saturating_sub(update_count));
 
     let is_empty = init.is_none() && test.is_none() && update.is_none();
     let separator = (!is_empty).then_some(soft_line_break_or_space());
@@ -614,11 +616,11 @@ pub(crate) fn write_if_statement<'a>(
         false => f.comments().of_node(node).dangling,
     };
     if comments_stay {
-        let mut needs_separator = !moves_trailing_comments
-            || write_comments_before_keyword(f.comments().of_node(consequent_node).trailing, f);
-        if !comments.is_empty() {
-            needs_separator = write_comments_before_keyword(comments, f);
-        }
+        let trailing = match moves_trailing_comments {
+            true => f.comments().of_node(consequent_node).trailing,
+            false => CommentList::empty(),
+        };
+        let needs_separator = write_comments_before_keyword(trailing, comments, f);
         match (needs_separator, is_consequent_block) {
             (false, _) => {}
             (true, true) => write!(f, space()),

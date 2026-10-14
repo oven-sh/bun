@@ -97,8 +97,8 @@ fn first_signature_starts_where_chain_starts(f: &Formatter<'_>) -> bool {
 }
 
 /// `((a) /* comment */ => (b) =>⏎c⏎)()` for Prettier, for which any comment of the first arrow function counts.
-/// `(⏎(a) /* comment */ => (b) =>⏎c⏎)()` for oxfmt.
-fn only_leading_comment_replaces_line_break_before_chain(f: &Formatter<'_>) -> bool {
+/// `(⏎(a) /* comment */ => (b) =>⏎c⏎)()` for oxfmt, for which `a /* comment */ = (b) => (c) => d` does not count either.
+fn only_comment_directly_before_chain_replaces_line_break(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -244,8 +244,9 @@ fn write_arrow<'a>(
     // As a callee or on the right of an assignment, all signatures are indented by one level.
     let should_indent_signatures = is_callee || options.assignment_layout.is_some();
     // Prettier asks for `CommentCheckFlags.Leading & CommentCheckFlags.Line`, which is no flag at all.
-    let follows_comment = match only_leading_comment_replaces_line_break_before_chain(f) {
-        true => !(f.comments().of_node(arrow.as_ast_nodes()).leading).is_empty(),
+    let follows_comment = match only_comment_directly_before_chain_replaces_line_break(f) {
+        true => (f.comments().of_node(arrow.as_ast_nodes()).leading.last())
+            .is_some_and(|comment| comment.next_token_start() >= e.outer_span().start),
         false => has_comment(arrow.as_ast_nodes(), f),
     };
     let should_print_soft_line = should_indent_signatures
@@ -356,9 +357,16 @@ fn body_has_leading_own_line_comment<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> 
     match arrow.body() {
         FnBody::Expr(body) => has_leading_own_line_comment(body, f),
         _ if f.is_quiet() => false,
-        _ => (f.comments().of_node(AstNodes::FunctionBody(arrow)).leading)
-            .iter()
-            .any(|comment| comment.has_newline_after()),
+        _ => {
+            // `() =>⏎/* comment */ {}` stays as it is for oxfmt. See `write_space_before_body`.
+            let keeps_line_break_before = comments_stay_between_head_and_body(f);
+            (f.comments().of_node(AstNodes::FunctionBody(arrow)).leading)
+                .iter()
+                .any(|comment| {
+                    comment.has_newline_after()
+                        || (keeps_line_break_before && comment.has_newline_before())
+                })
+        }
     }
 }
 

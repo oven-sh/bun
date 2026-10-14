@@ -350,6 +350,11 @@ fn write_import_attribute<'a>(attribute: Prop<'a>, f: &mut Formatter<'a>) {
         None => {}
     }
     write!(f, ":");
+    // `type: // comment⏎"json"`: for oxfmt the attribute owns the comment. It is `type: "json", // comment`.
+    if !f.is_quiet() {
+        let comments = f.comments().of_node(AstNodes::ObjectProperty(attribute));
+        write!(f, FormatTrailingComments::Comments(comments.dangling));
+    }
 
     let Some(value) = attribute.value() else {
         return;

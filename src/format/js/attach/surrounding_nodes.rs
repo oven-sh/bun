@@ -14,8 +14,8 @@ use crate::js::print::flow::is_flow_opaque_type;
 use crate::js::source_text::SourceText;
 use bun_lint::ast::comments::{self, NodeOrName};
 use bun_lint::ast::{
-    Expr, ExprKind, File, FnBody, FnKind, Func, List, Node, Stmt, StmtKind, StmtTag, TypeKind,
-    TypeNode,
+    Expr, ExprKind, File, FnBody, FnKind, Func, List, Node, Param, Pat, Stmt, StmtKind, StmtTag,
+    TypeKind, TypeNode,
 };
 use bun_lint::span::Span;
 
@@ -86,10 +86,12 @@ fn type_annotation_of_predicate(node: N<'_>) -> Option<N<'_>> {
     let Node::Type(ty) = node.raw() else {
         return None;
     };
-    let is_type_of_predicate = node == ty.as_ast_nodes()
-        && matches!(ty.parent(), Node::Type(parent)
-            if matches!(parent.kind(), TypeKind::Predicate { .. }));
-    is_type_of_predicate.then_some(N::TSTypeAnnotation(ty))
+    (node == ty.as_ast_nodes() && is_type_of_predicate(ty)).then_some(N::TSTypeAnnotation(ty))
+}
+
+/// Whether `ty` is the `T` of `a is T`.
+fn is_type_of_predicate(ty: TypeNode<'_>) -> bool {
+    matches!(ty.parent(), Node::Type(parent) if matches!(parent.kind(), TypeKind::Predicate { .. }))
 }
 
 /// `namespace A.B { .. }` is a namespace `B` in a namespace `A` in the HIR, and the statements are in `B`. In ESTree it is one
@@ -228,7 +230,32 @@ fn account_for_type_annotation_of_identifier(nodes: &mut SurroundingNodes<'_>) {
         && !matches!(name.parent(), Node::Param(param) if param.is_rest())
     {
         nodes.enclosing_node = Some(identifier);
-        nodes.preceding_node = None;
+        nodes.preceding_node = decorated_identifier(name)
+            .and_then(|param| param.decorators().last())
+            .map(|decorator| Owner::Node(N::Decorator(decorator)));
+    }
+}
+
+/// The parameter that `name` is, if it is an `Identifier` with decorators in ESTree: `(@a b: T) => {}`.
+fn decorated_identifier(name: Pat<'_>) -> Option<Param<'_>> {
+    match name.parent() {
+        Node::Param(param)
+            if param.default().is_none() && !param.is_rest() && !param.is_parameter_property() =>
+        {
+            Some(param)
+        }
+        _ => None,
+    }
+}
+
+/// `(@a /* comment */ b: T) => {}`: the children of the `Identifier` are the decorators and the type annotation. The name
+/// itself is no node, so the following node is `: T`.
+fn account_for_decorators_of_identifier(nodes: &mut SurroundingNodes<'_>) {
+    if let (Some(Owner::Node(N::Decorator(_))), Some(Owner::Node(N::BindingIdentifier(name)))) =
+        (nodes.preceding_node, nodes.following_node)
+        && let Some(param) = decorated_identifier(name)
+    {
+        nodes.following_node = param.ty().map(|ty| Owner::Node(N::TSTypeAnnotation(ty)));
     }
 }
 
@@ -367,9 +394,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                 import_attribute_of_value(node)
                     .or_else(|| opening_element_of_name(node))
                     .or_else(|| type_annotation_of_predicate(node))
-                    .or_else(|| {
-                        (self.file.is_flow()).then(|| flow::type_annotation_around(node))?
-                    })
+                    .or_else(|| (self.file.is_flow()).then(|| flow::parent_of_type(node))?)
                     .unwrap_or_else(|| node.parent())
             }
         };
@@ -468,7 +493,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         if self.file.is_flow() {
             preceding_node = match preceding_node {
                 Some(node) => flow::preceding_node(node, enclosing_node),
-                None => flow::outer_name_of_component_parameter(enclosing_node, comment.start),
+                None => flow::unrecorded_preceding_node(enclosing_node, comment.start),
             };
             following_node = following_node.and_then(|it| flow::following_node(it, enclosing_node));
         }
@@ -540,6 +565,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         self.account_for_rebalanced_logical_expression(&mut nodes);
         if !self.options.flavor.is_oxfmt() {
             account_for_type_annotation_of_identifier(&mut nodes);
+            account_for_decorators_of_identifier(&mut nodes);
         }
         account_for_names_of_meta_property(&mut nodes);
         self.stay_in_template_substitution(&mut nodes, comment);

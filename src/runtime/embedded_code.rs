@@ -39,20 +39,17 @@ pub(crate) extern "C" fn Bun__isEmbeddedModule(
     bytecode_entry_offset: usize,
 ) -> bool {
     let source = core::ptr::slice_from_raw_parts(source, source_len);
-    if static_module_sources()
-        .iter()
-        .any(|&known| core::ptr::eq(known, source))
-    {
-        return bytecode_len == 0;
-    }
-    let Some(file) = bun_standalone_graph::Graph::get_ref()
+    if let Some(file) = bun_standalone_graph::Graph::get_ref()
         .and_then(|graph| graph.find_javascript_module_by_address(source))
-    else {
-        return false;
-    };
+    {
+        return bytecode_len == 0
+            || (core::ptr::eq(
+                file.bytecode.cast_const(),
+                core::ptr::slice_from_raw_parts(bytecode, bytecode_len),
+            ) && file.bytecode_entry_offset as usize == bytecode_entry_offset);
+    }
     bytecode_len == 0
-        || (core::ptr::eq(
-            file.bytecode.cast_const(),
-            core::ptr::slice_from_raw_parts(bytecode, bytecode_len),
-        ) && file.bytecode_entry_offset as usize == bytecode_entry_offset)
+        && static_module_sources()
+            .iter()
+            .any(|&known| core::ptr::eq(known, source))
 }

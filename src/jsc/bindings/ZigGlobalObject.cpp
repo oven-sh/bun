@@ -3548,14 +3548,11 @@ extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject*);
 extern "C" bool Bun__VM__resolveEntryPointSpecifier(void* bunVM, const BunString* specifier, BunString* entryPointPath);
 
-// bun:main is the same text whatever the entry point is: it imports a specifier that stands for the entry point's path.
-static JSValue resolveEntryPointSpecifier(Zig::GlobalObject* globalObject, JSValue key, JSValue referrer)
+static constexpr ASCIILiteral bunMain = "bun:main"_s;
+
+static JSValue resolveEntryPointSpecifierSlow(Zig::GlobalObject* globalObject, JSValue key, JSString* referrer)
 {
-    static constexpr ASCIILiteral bunMain = "bun:main"_s;
-    if (!referrer || !referrer.isString() || !key.isString())
-        return key;
-    auto* referrerString = uncheckedDowncast<JSString>(referrer);
-    if (referrerString->length() != bunMain.length() || WTF::String(referrerString->tryGetValue()) != bunMain)
+    if (!key.isString() || WTF::String(referrer->tryGetValue()) != bunMain)
         return key;
     WTF::String specifierString = uncheckedDowncast<JSString>(key)->tryGetValue();
     BunString specifier = Bun::toString(specifierString);
@@ -3563,6 +3560,14 @@ static JSValue resolveEntryPointSpecifier(Zig::GlobalObject* globalObject, JSVal
     if (!Bun__VM__resolveEntryPointSpecifier(globalObject->bunVM(), &specifier, &entryPointPath))
         return key;
     return jsString(globalObject->vm(), entryPointPath.transferToWTFString());
+}
+
+// bun:main is the same text whatever the entry point is: it imports a specifier that stands for the entry point's path.
+static inline JSValue resolveEntryPointSpecifier(Zig::GlobalObject* globalObject, JSValue key, JSValue referrer)
+{
+    if (!referrer || !referrer.isString() || uncheckedDowncast<JSString>(referrer)->length() != bunMain.length()) [[likely]]
+        return key;
+    return resolveEntryPointSpecifierSlow(globalObject, key, uncheckedDowncast<JSString>(referrer));
 }
 
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,

@@ -1,7 +1,6 @@
 // @ts-nocheck
 import { describe, test, expect, vi } from "vitest";
 
-// Elements as React 18 and React 19 make them.
 for (const version of [18, 19]) {
   const element = Symbol.for(version === 18 ? "react.element" : "react.transitional.element");
   const h = (type: unknown, props?: Record<string, unknown> | null, ...children: unknown[]) => {

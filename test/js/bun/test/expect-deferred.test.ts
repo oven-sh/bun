@@ -16,7 +16,7 @@ async function run(cmd: string[], files: Record<string, string>, written: string
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",
-    // A matcher that blocks on a promise which never settles cannot be interrupted from inside.
+    // A matcher that blocks on a never-settling promise can't be stopped by the child's own test timeout.
     timeout: 60_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -24,7 +24,7 @@ async function run(cmd: string[], files: Record<string, string>, written: string
     .split("\n")
     .filter(line => /^\((pass|fail|skip|todo)\)/.test(line))
     .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
-  // Where each reported error points, in order, among the results.
+  // results plus the error lines, in order, to show which test each error is reported under.
   const report = stderr
     .split("\n")
     .map(line => line.replace(/ \[[\d.]+ms\]$/, ""))
@@ -42,7 +42,7 @@ async function run(cmd: string[], files: Record<string, string>, written: string
 
 const runTests = (source: string, written?: string[]) => run(["test"], { "a.test.js": prelude + source }, written);
 
-/** The line of `a.test.js` that the first frame of each stack trace is on. */
+/** The source line of a.test.js that each error's first stack frame points at. */
 function failingLines(stderr: string, source: string) {
   const lines = (prelude + source).split("\n");
   return [...stderr.matchAll(/^error: .*\n(?:(?!\s+at ).*\n)*?\s+at .*a\.test\.js:(\d+):\d+\)?$/gm)].map(match =>
@@ -1874,7 +1874,7 @@ describe.concurrent("expect.poll()", () => {
       "Error Matcher did not succeed in time. <- ",
       "checked",
     ]);
-    // Each failure, then its cause.
+    // Each failure is followed by its cause, which has its own stack trace.
     expect(failingLines(stderr, source)).toEqual([
       'await expect.poll(() => 1, { timeout: 5, interval: 1 }).toBe("awaited");',
       'await expect.poll(() => 1, { timeout: 5, interval: 1 }).toBe("awaited");',

@@ -260,7 +260,7 @@ pub struct VirtualMachine {
 
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
     pub is_in_preload: bool,
-    /// `Watcher::get_hash()` of the path of the preload script that is loaded.
+    /// `Watcher::get_hash()` of the preload script currently loading.
     pub preload_hash: u32,
     pub has_patched_run_main: bool,
 
@@ -372,7 +372,6 @@ pub struct VirtualMachine {
     /// graph has been collected; its context may not have been stopped yet: that is queued from
     /// the finalizer). Not the current context: that is what the async context says.
     pub(crate) entered_context: Cell<Option<crate::ContextId>>,
-    /// An `onResolve` callback of `Bun.plugin()` is on the stack.
     pub(crate) is_in_on_resolve: Cell<bool>,
     pub test_isolation_enabled: bool,
     /// Counts `bun test --isolate` file swaps. The realm's context keeps its identifier across
@@ -1786,17 +1785,16 @@ impl VirtualMachine {
         self.is_event_loop_alive_excluding_immediates() || self.has_immediates()
     }
 
-    /// [`is_event_loop_alive`](Self::is_event_loop_alive) for `bun test`, which goes on after an unhandled error.
+    /// `is_event_loop_alive` for `bun test`, which keeps running after an unhandled error.
     pub(crate) fn is_event_loop_alive_despite_errors(&self) -> bool {
         self.is_platform_loop_active()
             || self.has_queued_work_excluding_immediates()
             || self.has_immediates()
     }
 
-    /// Whether anything is left that could run script again. [`is_event_loop_alive`](Self::is_event_loop_alive) asks
-    /// what keeps the process alive; a handle or a timer that does not (unref'd) can still settle what a wait is for.
+    /// Unlike `is_event_loop_alive`, also counts unref'd handles and timers, since they can still run JS.
     pub fn has_work_left(&self) -> bool {
-        // Read before the queues: the waiter thread posts a child's exit, then stops counting the child.
+        // Must be read before the queues: the waiter thread posts a child's exit, then stops counting the child.
         #[cfg(unix)]
         if bun_spawn::process::WaiterThread::is_watching() {
             return true;
@@ -1812,19 +1810,19 @@ impl VirtualMachine {
             || crate::cpp::Bun__hasDeferredWorkNotKeepingEventLoopAlive(self.global())
     }
 
-    /// What wakes the loop from a thread of its own: a `Worker`, `fs.watch()`, a napi threadsafe function.
+    /// Handles that wake the loop from their own thread: a `Worker`, `fs.watch()`, a napi threadsafe function.
     fn has_handles_off_the_loop(&self) -> bool {
         !self.child_workers.is_empty() || !self.root_context.owns_nothing()
     }
 
-    /// Every ref on the loop counts as a poll too.
+    /// `num_polls` also counts plain loop refs, so subtract the entries that can't settle anything a test waits on.
     #[cfg(not(windows))]
     fn has_handles(&self, timers_hold_loop_ref: bool) -> bool {
         let rare = self.rare_data.as_deref();
-        // The only socket of a `--parallel` worker's group is the one to its coordinator.
+        // A `--parallel` worker's IPC group only ever holds the socket to its coordinator.
         let has_coordinator =
             rare.is_some_and(|rare| !rare.test_parallel_ipc_group.head_sockets.is_null());
-        // `process.stdout` on a pipe, for one, with nothing left to write.
+        // e.g. `process.stdout` on a pipe with nothing left to write.
         let disarmed = rare
             .and_then(|rare| rare.file_polls.as_deref())
             .map_or(0, bun_io::Store::disarmed_count);
@@ -1833,7 +1831,7 @@ impl VirtualMachine {
             .is_some_and(|h| h.num_polls > fires_nothing)
     }
 
-    /// `uv_loop_alive` cannot leave out the timers' ref, nor the pipe to a `--parallel` worker's coordinator.
+    /// Over-reports: `uv_loop_alive` can't exclude the timers' ref or a `--parallel` worker's pipe to its coordinator.
     #[cfg(windows)]
     fn has_handles(&self, _timers_hold_loop_ref: bool) -> bool {
         self.platform_loop_opt()
@@ -2816,12 +2814,11 @@ pub struct WorkerExecArgvFlags {
     pub invalid: Option<usize>,
 }
 
-/// The timers' part of [`VirtualMachine::has_work_left`].
 #[derive(Copy, Clone, Default)]
 pub struct TimersLeft {
-    /// A timer other than the runtime's own upkeep is armed on the real clock.
+    /// A real-clock timer is armed, not counting `Tag::is_housekeeping` ones.
     pub armed: bool,
-    /// The one ref on the loop that the ref'd JS timers share. The faked ones, which nothing fires, share it too.
+    /// All ref'd JS timers share one loop ref, including fake ones that nothing fires.
     pub holds_loop_ref: bool,
 }
 
@@ -2885,7 +2882,7 @@ pub struct RuntimeHooks {
     ),
     /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
     pub timer_min_delay_ms: fn() -> u32,
-    /// Of the calling thread's VM. A slot for the same reason as `timer_insert`.
+    /// Reads the calling thread's `Timer::All`; see `timer_insert`.
     pub timers_left: fn() -> TimersLeft,
     /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
     /// `SSL_CTX*`, shared by every `tls: true` outbound connection that didn't
@@ -5300,7 +5297,7 @@ impl VirtualMachine {
                             if dir.len() > buf.len() {
                                 return Err(crate::CrateError::ModuleNotFound);
                             }
-                            // `load_as_file` caches the listing under the slashes of the specifier.
+                            // `load_as_file` caches the listing under the specifier's own slashes, so bust that key too.
                             busted_as_spelled = self.transpiler.resolver.bust_dir_cache(
                                 bun_paths::string_paths::without_trailing_slash_windows_path(dir),
                             );
@@ -5396,8 +5393,7 @@ impl VirtualMachine {
         )
     }
 
-    /// What the answer of an `onResolve` about `specifier` resolves to. `None` when none answers,
-    /// or, if `same_is_no_answer`, with `specifier`.
+    /// `None` when no `onResolve` claims `specifier`, or `same_is_no_answer` is set and it returns `specifier` unchanged.
     pub(crate) fn resolve_with_on_resolve<const IS_A_FILE_PATH: bool>(
         global: &JSGlobalObject,
         specifier: &bun_core::String,
@@ -5417,8 +5413,8 @@ impl VirtualMachine {
         if let Some(name) = global.resolve_virtual_module(&answer, source) {
             return Ok(Some(Ok(name)));
         }
-        // A bare name that an `onLoad` could serve may be a package's in the registry. It is the
-        // plugin's own, and not installed, if `onResolve` answers about it as well.
+        // A bare name that `onLoad` could serve might also be a registry package. If `onResolve` claims
+        // it too, it's the plugin's own name, so don't auto-install it.
         let answer_utf8 = answer.to_utf8();
         let is_bare = bun_resolver::is_package_path(&answer_utf8)
             && ModuleLoader::on_load_namespace_and_path(&answer_utf8)
@@ -5762,7 +5758,6 @@ impl VirtualMachine {
                 .unwrap_or(false)
     }
 
-    /// Whether what is transpiled now has the globals of "vitest".
     #[unsafe(export_name = "Bun__VM__hasGlobalsOfVitest")]
     pub extern "C" fn has_globals_of_vitest(&self) -> bool {
         self.transpiler.options.vitest_globals || self.transpiler.options.test_file_imports_vitest
@@ -5835,8 +5830,7 @@ impl VirtualMachine {
         Ok(promise)
     }
 
-    /// `bun test`'s wait for `pending_internal_promise`, the load of `module`, to settle. A load that
-    /// never can has failed: returns the promise, rejected with what is known about it, that takes its place.
+    /// Waits for `pending_internal_promise` to settle. If it never can, replaces it with a rejected promise and returns that.
     pub fn wait_for_test_runner_load(
         &mut self,
         module: core::fmt::Arguments<'_>,
@@ -5858,7 +5852,7 @@ impl VirtualMachine {
                 "{module} never finished loading\nnote: {nothing_left}{notes}"
             )),
         );
-        // Like the loader's: whoever loads the file reports it, not the rejection tracker.
+        // The caller reports it, so keep it away from the unhandled-rejection tracker.
         rejected.set_handled();
         let rejected = std::ptr::from_mut(rejected);
         self.set_pending_internal_promise(Some(rejected));
@@ -6022,7 +6016,7 @@ impl VirtualMachine {
             // node:quic events into the dead realm.
             rare.node_quic_callbacks.deinit();
         }
-        // A macro that ran on this thread is a function of the outgoing global, which runs nothing from now on.
+        // Cached macro functions belong to the outgoing global, which must not run again.
         for callback in self.macros.values() {
             callback.unprotect();
         }
@@ -7463,7 +7457,7 @@ impl VirtualMachine {
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             )?;
             if !matches!(tag.tag, TagPayload::NativeCode) {
-                // Nor for what it holds, as for the properties of an Error.
+                // Nested values skip custom inspect too, like an Error's properties.
                 let prev_disable_inspect_custom = formatter.disable_inspect_custom;
                 formatter.disable_inspect_custom = true;
                 let _ = if allow_ansi_color {
@@ -7472,7 +7466,7 @@ impl VirtualMachine {
                     formatter.format::<false>(tag, writer, error_instance, global_ref)
                 };
                 formatter.disable_inspect_custom = prev_disable_inspect_custom;
-                // What printing it throws is not what is being reported.
+                // An exception thrown while printing must not replace the one being reported.
                 if global_ref.has_exception() && global_ref.clear_exception_except_termination() {
                     pretty_write!(writer, "<r><d>[threw while it was printed]<r>")?;
                 }
@@ -7865,11 +7859,10 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js())
 }
 
-/// What `onResolve` callbacks resolve themselves is apart from the resolve they are asked about.
+/// Keeps a resolve made inside an `onResolve` callback from inheriting the outer resolve's state.
 struct OnResolveScope<'a> {
     vm: &'a VirtualMachine,
     was_in_on_resolve: bool,
-    /// The `paths` of the `require.resolve()` that asks.
     custom_dir_paths: Option<&'static [bun_core::String]>,
 }
 
@@ -7904,9 +7897,9 @@ fn run_on_resolve(
     let (namespace, path) = ModuleLoader::namespace_and_path(&specifier);
     let namespace: &[u8] = if namespace == b"file" { b"" } else { namespace };
     let vm = global.bun_vm();
-    // "virtual:thing" is "thing" to the namespace "virtual", then "virtual:thing" to the namespace "file".
+    // "virtual:thing" is offered as "thing" in namespace "virtual", then as "virtual:thing" in namespace "file".
     let asks_namespace = in_another_namespace && !namespace.is_empty();
-    // Except for a path with an extension: not a builtin, nor what a callback loads, or a catch-all would call itself without end.
+    // Without an extension, skip builtins and anything a callback resolves, or a catch-all filter would recurse forever.
     let asks_file_namespace = in_file_namespace
         && !specifier.is_empty()
         && ((namespace.is_empty() && ModuleLoader::has_extension_or_namespace(&specifier))

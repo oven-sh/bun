@@ -408,7 +408,7 @@ impl RuntimeTranspilerStore {
 // the 64-slot hive is unconditional here.
 const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 
-/// The parser's error for a call of a macro under `no_macros`.
+/// Must match the parser's error text for a macro call under `no_macros`.
 const MACROS_ARE_DISABLED: &[u8] = b"Macros are disabled";
 
 pub(crate) type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
@@ -436,7 +436,7 @@ pub struct TranspilerJob {
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
     pub(crate) generation_number: u32,
-    /// A macro is loaded through `Bun.plugin()` callbacks, so the JS thread runs it: the pool thread's VM has none.
+    /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
@@ -744,7 +744,7 @@ impl TranspilerJob {
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         transpiler.macro_context = None;
-        // No job is part of a macro, but the JS thread may be in macro mode by now.
+        // The JS thread may have been in macro mode when its options were copied, but a job is never part of a macro.
         transpiler.options.target = bun_ast::Target::Bun;
         if self.has_plugins {
             transpiler.options.no_macros = true;

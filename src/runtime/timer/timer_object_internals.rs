@@ -76,7 +76,7 @@ pub(crate) use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
 
 // C++ symbol emitted from ImmediateList.cpp / setTimeout.cpp; already linked.
 unsafe extern "C" {
-    /// `thrown`: where to put what the callback throws; null to report it as uncaught.
+    /// A non-null `thrown` receives the callback's exception. Null reports it as uncaught.
     fn Bun__JSTimeout__call(
         global_object: &JSGlobalObject,
         timer: JSValue,
@@ -510,9 +510,6 @@ impl TimerObjectInternals {
     /// `crate::jsc_hooks::runtime_state()` — low-tier `VirtualMachine.timer`
     /// is `()` (see `set_enable_keeping_event_loop_alive`).
     ///
-    /// `thrown`: where the driver of the fake clock wants what the callback
-    /// throws; null to report it as uncaught.
-    ///
     /// # Safety
     /// `this` points at a live `TimerObjectInternals` embedded in its
     /// `TimeoutObject`/`ImmediateObject` parent (FIRE_TIMER hook contract);
@@ -632,7 +629,7 @@ impl TimerObjectInternals {
 
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
             let fake_clock_after = unsafe { (*state).timer.fake_timers.installs() };
-            // The callback ended the fake clock this timer was on, which dropped the timers in its heap.
+            // The callback tore down this timer's fake clock. `FakeTimers::clear` can't see a firing timer, so cancel it here.
             if s.flags.get().fake() && fake_clock_after != fake_clock {
                 s.cancel(vm);
             }
@@ -745,16 +742,13 @@ impl TimerObjectInternals {
         unsafe { (*(*vm).event_loop()).exit() };
     }
 
-    /// [`fire_catching`](Self::fire_catching) for the real heap's drain.
-    ///
     /// # Safety
-    /// As `fire_catching`.
+    /// Same as `fire_catching`.
     pub(crate) unsafe fn fire(this: *mut Self, _now: &ElTimespec, vm: *mut VirtualMachine) {
         // SAFETY: fn contract.
         unsafe { Self::fire_catching(this, vm, core::ptr::null_mut()) }
     }
 
-    /// Calls what the faked `process.nextTick()` or `queueMicrotask()` was given. Returns what it threw, or empty.
     pub(crate) fn call_catching(
         global: &JSGlobalObject,
         callback: JSValue,
@@ -774,7 +768,6 @@ impl TimerObjectInternals {
         thrown
     }
 
-    /// The time on the clock this timer is armed on.
     fn clock_now(&self) -> Timespec {
         if self.flags.get().fake() {
             // SAFETY: the boxed per-thread `RuntimeState`; field read only.

@@ -24,7 +24,7 @@ type FileId = super::jest::FileId;
 
 bun_core::declare_scope!(inline_snapshot, visible);
 
-/// The conventions of the tool that wrote a snapshot file. Its first line names the tool, and the file keeps them.
+/// Which tool wrote the snapshot file, going by its header line. Bun keeps writing the file in that format.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Format {
     Bun,
@@ -52,7 +52,6 @@ impl Format {
         }
     }
 
-    /// Between the names of the `describe` blocks and of the test.
     fn name_separator(self) -> &'static [u8] {
         if self == Format::Vitest { b" > " } else { b" " }
     }
@@ -61,7 +60,6 @@ impl Format {
         if self == Format::Vitest { b" > " } else { b": " }
     }
 
-    /// Jest and Vitest print values with pretty-format, and keep the entries of a file sorted.
     pub(crate) fn is_pretty_format(self) -> bool {
         self != Format::Bun
     }
@@ -76,16 +74,15 @@ impl Format {
 
 struct Entry {
     value: Box<[u8]>,
-    /// A snapshot matcher asked for it in this run.
     checked: bool,
-    /// None did, and it is not obsolete: see `remove_obsolete`.
+    /// Its test was skipped or failed, so `remove_obsolete` keeps it even if unchecked.
     stays: bool,
 }
 
 pub(crate) enum Outcome {
     Passed,
     Written,
-    /// Not counted yet.
+    /// Not counted yet: the caller bumps `passed` or `failed`.
     Mismatch { saved: Box<[u8]> },
 }
 
@@ -93,7 +90,6 @@ pub(crate) enum FileOutcome {
     Passed,
     Written,
     Mismatch { saved: Box<[u8]> },
-    /// The path is that of the file that `toMatchSnapshot()` uses.
     IsSnapshotFile,
     NotAllowedInCI,
     NoTest(Error),
@@ -107,7 +103,7 @@ pub(crate) struct Snapshots {
     pub(crate) passed: usize,
     pub(crate) failed: usize,
 
-    /// The text of a file in Bun's format, which new entries are appended to.
+    /// The file's text. Kept only for Bun's format, where new entries are appended to it.
     file_buf: Vec<u8>,
     values: StringArrayHashMap<Entry>,
     counts: StringHashMap<usize>,
@@ -161,7 +157,6 @@ pub(crate) struct InlineSnapshotToWrite {
     pub(crate) start_indent: Option<Box<[u8]>>,
     /// owned (was: owned by Snapshots.allocator)
     pub(crate) end_indent: Option<Box<[u8]>>,
-    /// Vitest indents a new snapshot by a tab where the line of the matcher is indented by tabs.
     pub(crate) is_in_vitest_test: bool,
 }
 
@@ -180,7 +175,6 @@ impl InlineSnapshotToWrite {
     }
 }
 
-/// The errors of updating the inline snapshots of one file, printed when it is done with.
 struct ReportedLog<'a> {
     log: bun_ast::Log,
     success: &'a core::cell::Cell<bool>,
@@ -208,12 +202,12 @@ impl Drop for ReportedLog<'_> {
     }
 }
 
-/// A slot that `TSXParser::init` has filled.
+/// Invariant: `TSXParser::init` has filled the slot.
 struct InitializedParser<'a>(core::mem::MaybeUninit<js_parser::TSXParser<'a>>);
 
 impl Drop for InitializedParser<'_> {
     fn drop(&mut self) {
-        // SAFETY: only made of a slot that is initialized.
+        // SAFETY: only constructed from an initialized slot.
         unsafe { self.0.assume_init_drop() };
     }
 }
@@ -221,18 +215,16 @@ impl Drop for InitializedParser<'_> {
 pub(crate) struct File {
     pub(crate) id: FileId,
     format: Format,
-    /// Open while entries may be appended: Bun's format, from the first snapshot matcher on.
     file: Option<bun_sys::File>,
-    /// What `values` holds is not what the file holds. Jest's and Vitest's formats, which are written as a whole.
     dirty: bool,
-    /// Bun used to take any file for its own, and to append to it: entries with its keys and its way of printing.
-    /// Jest and Vitest keep their files sorted, so one whose keys are in order has none.
+    /// Older versions of Bun appended entries in their own format to Jest's and Vitest's files.
+    /// Jest and Vitest keep their files sorted, so a file whose keys are in order has none.
     may_hold_entries_of_bun: bool,
 }
 
-/// `path` of the snapshot file of a test file, and how much of it is the directory.
+/// Fills `buf` with the `.snap` path. Returns (test file's directory, length through `__snapshots__/`, full length).
 fn snapshot_file_path(file_id: FileId, buf: &mut [u8]) -> (&'static [u8], usize, usize) {
-    // `Jest::runner()` would alias the `&mut Snapshots` of every caller, a field of the runner.
+    // `Jest::runner()` would alias the caller's `&mut Snapshots`, which is a field of the runner.
     // SAFETY: the runner is set before any `Snapshots` method runs; only its `.files` is read.
     let test_file_source = unsafe {
         let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
@@ -253,7 +245,7 @@ fn snapshot_file_path(file_id: FileId, buf: &mut [u8]) -> (&'static [u8], usize,
     (dir_path, dir_len, pos - 1)
 }
 
-/// jest-snapshot `printBacktickString`
+/// jest-snapshot's `printBacktickString`.
 fn write_backtick_string(out: &mut Vec<u8>, text: &[u8]) {
     out.push(b'`');
     let mut rest = text;
@@ -278,7 +270,6 @@ impl Snapshots {
         }
     }
 
-    /// Takes back one `add_count` per name: the run of the test that asked for them does not count.
     pub(crate) fn undo_counts(&mut self, names: &[Box<[u8]>]) {
         for name in names {
             if let Some(count) = self.counts.get_mut(&**name) {
@@ -287,7 +278,6 @@ impl Snapshots {
         }
     }
 
-    /// The name the snapshots of the running test have in a file of `format`, and which of them this one is.
     pub(crate) fn add_count(&mut self, expect: &Expect, format: Format, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
         let snapshot_name = Self::name_of(expect, format, hint)?;
@@ -340,7 +330,7 @@ impl Snapshots {
         Ok(name)
     }
 
-    /// The format of the snapshot file of the running test. Reads the file, and creates nothing.
+    /// Loads the running test's snapshot file if it isn't the current one. Never creates it.
     pub(crate) fn format_of(&mut self, expect: &Expect) -> Result<Format, Error> {
         let buntest_strong = expect.bun_test().ok_or(Error::SnapshotFailed)?;
         let buntest = buntest_strong.get();
@@ -384,17 +374,14 @@ impl Snapshots {
         Ok(format)
     }
 
-    /// As Jest and Vitest sort them.
     fn keys_are_sorted(&self) -> bool {
         self.values.keys().is_sorted_by(|a, b| natural_compare(a, b).is_le())
     }
 
-    /// Whether a snapshot of the current file that does not match may be one that an older Bun wrote.
     pub(crate) fn may_hold_entries_of_bun(&self) -> bool {
         self._current_file.as_ref().is_some_and(|file| file.may_hold_entries_of_bun)
     }
 
-    /// Compares `received` with the snapshot of the running test that it is the next one of, or saves it.
     pub(crate) fn match_or_write(
         &mut self,
         expect: &Expect,
@@ -553,8 +540,7 @@ impl Snapshots {
         Ok(())
     }
 
-    /// With `--update-snapshots`, the entries that no test asks for any more go. Those of a test that was skipped or
-    /// failed stay: it did not come to ask.
+    /// With `--update-snapshots`, drops the entries no test asked for. Entries of skipped or failed tests stay.
     pub(crate) fn remove_obsolete(&mut self, buntest: &BunTest) {
         let Some(file) = self._current_file.as_mut().filter(|file| file.id == buntest.file_id) else { return };
         if !self.update_snapshots || file.format == Format::Bun || self.values.values().iter().all(|entry| entry.checked) {
@@ -572,7 +558,7 @@ impl Snapshots {
         self.values.retain(|_, entry| entry.checked || entry.stays);
     }
 
-    /// Marks the entries of the tests under `root`, but for those in `except`.
+    /// Sets `stays` on the entries of every test under `root` that isn't in `except`.
     fn keep_entries_of_tests(
         values: &mut StringArrayHashMap<Entry>,
         format: Format,
@@ -598,7 +584,7 @@ impl Snapshots {
 
         let separator = format.hint_separator();
         for i in 0..values.len() {
-            // The name of a test, perhaps a hint, and a number.
+            // Keys look like `<test name>[<separator><hint>] <count>`.
             let key = &values.keys()[i];
             let Some(end) = strings::last_index_of_char(key, b' ') else { continue };
             if end + 1 == key.len() || !key[end + 1..].iter().all(u8::is_ascii_digit) {
@@ -615,7 +601,6 @@ impl Snapshots {
         }
     }
 
-    /// `toMatchFileSnapshot()`: `received` is all that the file at `path`, relative to the test file, holds.
     #[cold]
     pub(crate) fn match_or_write_file(&mut self, expect: &Expect, path: &[u8], received: &[u8], hint: &[u8]) -> FileOutcome {
         let format = match self.format_of(expect) {
@@ -643,7 +628,7 @@ impl Snapshots {
             Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => None,
             Err(err) => return FileOutcome::Failed(err.with_path(path)),
         };
-        // In Vitest it takes a number of the test's snapshots like the others.
+        // Vitest counts a file snapshot among the test's snapshots too.
         if let Err(err) = self.add_count(expect, format, hint) {
             return FileOutcome::NoTest(err);
         }
@@ -694,7 +679,7 @@ impl Snapshots {
         Ok(())
     }
 
-    /// jest-snapshot `saveSnapshotFile`
+    /// jest-snapshot's `saveSnapshotFile`.
     #[cold]
     fn write_sorted(&self, file: &File) -> Result<(), Error> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -708,9 +693,9 @@ impl Snapshots {
         }
 
         let keys = self.values.keys();
-        // Insertion, because the comparison is not known to be a total order, which `sort_by` may panic on.
+        // Insertion sort: `natural_compare` may not be a total order, and `sort_by` can panic on one that isn't.
         let mut order: Vec<usize> = Vec::with_capacity(keys.len());
-        // What this run has not seen may still be an entry of Bun's: the file goes on saying so.
+        // Unchecked entries may be an older Bun's. Stay unsorted so the next run still sets `may_hold_entries_of_bun`.
         let stays_as_it_is = file.may_hold_entries_of_bun && self.values.values().iter().any(|entry| !entry.checked);
         for (i, key) in keys.iter().enumerate() {
             let at = if stays_as_it_is { i } else { order.partition_point(|other| natural_compare(&keys[*other], key).is_le()) };
@@ -1183,7 +1168,6 @@ impl Snapshots {
         Ok(success.get())
     }
 
-    /// Bun's format: makes the directory and the file.
     fn open_to_append(&mut self) -> bun_sys::Result<()> {
         let Some(current) = self._current_file.as_mut().filter(|file| file.file.is_none()) else {
             return Ok(());

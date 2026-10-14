@@ -102,7 +102,7 @@ pub struct Ast<'a> {
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
     pub import_meta_ref: Ref,
-    /// A macro ran or `import.meta.glob()` read directories: the same source can parse differently.
+    /// Output depends on more than the source text (macros, `import.meta.glob`), so don't cache it.
     pub depends_on_more_than_source: bool,
 }
 

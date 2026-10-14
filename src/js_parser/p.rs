@@ -492,17 +492,15 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) server_components_wrap_ref: Ref,
 
     pub(crate) jest: Jest,
-    /// The `vi` / `vitest` / `jest` this file imports from a test module.
     pub(crate) imported_mock_apis: HashMap<Ref, MockApi>,
-    /// `inject_jest_globals` changed what this file is transpiled to.
+    /// Only read by a debug assertion that `uses_test_api()` covers every test-only transform.
     pub(crate) did_apply_test_feature: bool,
-    /// `bun test` hoists a statement of this file.
+    /// Also computed outside `bun test`, for `uses_test_api()`.
     pub(crate) has_hoisted_mock_stmt: bool,
 
     pub(crate) import_meta_glob_use: crate::lower::import_meta_glob::ImportMetaGlobUse,
-    /// The `S::Import`s of the `import.meta.glob(..., { eager: true })` calls visited so far.
     pub(crate) import_meta_glob_imports: List<'a, Stmt>,
-    /// `(() => ({ ... }))()`, which read what those import, where the module may be CommonJS.
+    /// The `(() => ({ ... }))()` wrappers that `reject_eager_import_meta_globs` makes throw in a CommonJS module.
     pub(crate) import_meta_glob_eager_calls: List<'a, Expr>,
 
     // Imports (both ES6 and CommonJS) are tracked at the top level
@@ -8441,7 +8439,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         r#ref
     }
 
-    /// `bun run` prints names as they are, so there a generated name gets a per-file counter.
+    /// `bun run` doesn't rename symbols, so there a generated name gets a per-file counter.
     pub(crate) fn temp_var_name(&mut self, name: &'a [u8]) -> &'a [u8] {
         if self.will_use_renamer() {
             return name;
@@ -8452,7 +8450,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .as_bytes()
     }
 
-    /// A lowering's own `var`.
     pub(crate) fn generate_temp_var(&mut self, name: &'a [u8]) -> Ref {
         let name = self.temp_var_name(name);
         let ref_ = self.new_symbol(js_ast::symbol::Kind::Other, name);

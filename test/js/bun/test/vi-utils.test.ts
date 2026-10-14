@@ -1738,8 +1738,7 @@ describe.concurrent("a wait that is still pending", () => {
   });
 });
 
-// A native function is given the raw `this` of a call. When the function is called by a bare name that is not a
-// local variable, that is the engine's own scope object, which holds the variables of the scope the name is in.
+// A native function called by a bare captured variable gets JSC's internal scope object as `this`. It must not leak.
 describe("a function that returns `this` for chaining", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -1747,7 +1746,7 @@ describe("a function that returns `this` for chaining", () => {
     vi.unstubAllGlobals();
   });
 
-  /** `callee` is a variable of this call's scope, which the arrow function finds it in. */
+  /** The inner arrow makes `callee` a captured variable, not a local, so the call's `this` is the scope object. */
   const byBareName = (callee: Function, ...args: unknown[]) => (() => callee(...args))();
 
   const ofViAndJest: [name: string, ...args: unknown[]][] = [
@@ -1812,12 +1811,12 @@ describe("a function that returns `this` for chaining", () => {
 
   test("the getter of mock.settledResults does not read the variables of a scope", () => {
     const getter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(vi.fn().mock), "settledResults")!.get!;
-    // The getter reads `this.results`.
+    // Named `results` because the getter reads `this.results`, which a scope object would resolve to this variable.
     const results = [{ type: "return", value: "a variable, not a result" }];
     expect((() => [getter(), results.length])()).toEqual([undefined, 1]);
   });
 
-  // Hundreds of calls, most of which throw: seconds in a debug build that validates exception checks.
+  // Hundreds of calls that mostly throw take seconds in a debug build that validates exception checks.
   test.concurrent(
     "no function of the test module lets a scope object out",
     async () => {

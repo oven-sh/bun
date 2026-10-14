@@ -108,7 +108,7 @@ impl EventLoopTimer {
 
         let order = a_ns.cmp(&b_ns);
         if order == core::cmp::Ordering::Equal {
-            // Only a faked `setImmediate` is in a heap. It runs before the timeouts of its instant.
+            // Only a fake `setImmediate` is ever in a heap. It runs before timeouts due at the same instant.
             if (a.tag == Tag::ImmediateObject) != (b.tag == Tag::ImmediateObject) {
                 return a.tag == Tag::ImmediateObject;
             }
@@ -230,7 +230,7 @@ impl Tag {
         )
     }
 
-    /// The runtime's own upkeep: nothing the program waits for comes of it firing.
+    /// Runtime-internal timers that never settle anything the program waits on.
     pub fn is_housekeeping(self) -> bool {
         match self {
             Tag::WTFTimer
@@ -406,8 +406,7 @@ impl TimerFlags {
     pub fn set_epoch(&mut self, v: u32) {
         self.0 = (self.0 & !Self::EPOCH_MASK) | (v & Self::EPOCH_MASK);
     }
-    /// Created by a function that `jest.useFakeTimers()` installed: every time
-    /// the timer is armed it is on the fake clock, in the fake heap.
+    /// Created by a function `jest.useFakeTimers()` installed, so it always arms on the fake clock and heap.
     #[inline]
     pub fn fake(self) -> bool {
         self.0 & Self::FAKE != 0

@@ -472,23 +472,18 @@ pub struct LoaderResult<'a> {
     pub package_json: Option<&'a PackageJSON>,
 }
 
-/// What one of Vite's suffixes on an import path, as in `./icon.svg?raw`, imports.
+/// Vite's import path suffixes, as in `./icon.svg?raw`.
 #[derive(Clone, Copy)]
 pub enum ImportSuffix {
-    /// `?raw`, and `?inline` on a style sheet: the text of the file.
     Raw,
-    /// `?url`, `?worker&url`: its path.
     Url,
-    /// `?inline` on a file that is neither code nor data nor a style sheet: a `data:` URL of it.
     Inline,
-    /// `?init`: a function that instantiates the WebAssembly module.
     Init,
-    /// `?worker`, `?sharedworker`: a function that constructs the global of this name with the path.
     Worker(&'static str),
 }
 
 impl ImportSuffix {
-    /// `query` is empty or starts with `?`. Which parameter wins is as in Vite.
+    /// Parameter precedence matches Vite.
     pub fn find(query: &[u8], by_extension: Option<Loader>) -> Option<Self> {
         let (mut raw, mut url, mut inline, mut init, mut worker) =
             (false, false, false, false, None);
@@ -496,11 +491,11 @@ impl ImportSuffix {
             match parameter {
                 b"raw" => raw = true,
                 b"url" => url = true,
-                // On WebAssembly the first of `init` and `inline` wins.
+                // On WebAssembly, whichever of `init` and `inline` comes first wins.
                 b"init" => init = !inline,
                 b"worker" => worker = worker.or(Some("Worker")),
                 b"sharedworker" => worker = worker.or(Some("SharedWorker")),
-                // `/[?&]inline\b/`
+                // Vite matches `/[?&]inline\b/`.
                 _ => {
                     inline |= parameter.strip_prefix(b"inline").is_some_and(|rest| {
                         !matches!(
@@ -536,7 +531,7 @@ impl ImportSuffix {
         }
     }
 
-    /// Loaded instead of `file`, under the name `specifier`: an error in it is not shown with the file's source.
+    /// Loaded instead of `file`. Named `specifier` so an error in it isn't shown with `file`'s source.
     pub fn module(self, file: &[u8], specifier: &[u8]) -> Option<bun_ast::Source> {
         let quoted = bun_core::fmt::format_json_string_utf8(file, Default::default());
         let contents = match self {
@@ -1408,9 +1403,9 @@ pub struct BundleOptions<'a> {
     pub rewrite_jest_for_tests: bool,
     /// `bun test --globals=vitest`
     pub vitest_globals: bool,
-    /// As if it were set, for what is loaded for a test file that imports from "vitest".
+    /// Same effect as `vitest_globals`, for everything loaded by a test file that imports "vitest".
     pub test_file_imports_vitest: bool,
-    /// `RuntimeFeatures::own_test_globals`
+    /// See `RuntimeFeatures::own_test_globals`.
     pub own_test_globals: u32,
 
     pub macro_remap: MacroRemap,

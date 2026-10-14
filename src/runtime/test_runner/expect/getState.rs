@@ -9,7 +9,7 @@ use super::super::jest::{FileColumns as _, Jest};
 use super::expect_matcher_utils_js as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils};
 
-/// The names of the enclosing `describe` blocks and of the test. Only Jest counts a `describe("")` among them.
+/// `with_empty_names` keeps `describe("")` blocks in the name, which only Jest's snapshot format does.
 pub(crate) fn full_test_name(entry: &ExecutionEntry, separator: &[u8], with_empty_names: bool) -> Vec<u8> {
     let mut names: Vec<&[u8]> = vec![entry.base.name.as_deref().unwrap_or(b"(unnamed)")];
     let mut parent = entry.base.parent;
@@ -27,10 +27,10 @@ pub(crate) fn full_test_name(entry: &ExecutionEntry, separator: &[u8], with_empt
     names.join(separator)
 }
 
-/// The test to read or write, if not the one that is running.
+/// `None` means the running test.
 type Test = Option<RefDataValue>;
 
-/// `None` where `expect.assertions()` is not supported either: outside of a test, and in concurrent tests unless `test` names one.
+/// Returns `None` outside a test, and in concurrent tests unless `test` names one.
 fn with_sequence<R>(test: Test, f: impl FnOnce(&mut ExecutionSequence) -> R) -> Option<R> {
     let buntest_strong = bun_test::clone_active_strong()?;
     let buntest = buntest_strong.get();
@@ -80,7 +80,7 @@ fn to_count(global: &JSGlobalObject, name: &'static str, value: JSValue) -> JsRe
 }
 
 impl Expect {
-    /// One object per global, so that what `setState` and the caller put on it stays.
+    /// One object per global, so properties that `setState` or a caller adds persist between calls.
     fn state_object(global: &JSGlobalObject) -> JSValue {
         let utils = ExpectMatcherUtils::singleton(global);
         js::state_get_cached(utils).unwrap_or_else(|| {
@@ -162,7 +162,7 @@ impl Expect {
 }
 
 impl ExpectMatcherContext {
-    /// The test that called `expect()`, which `expect` of a test context knows among concurrent tests too.
+    /// The test that called `expect()`. A test context's `expect` knows it even among concurrent tests.
     fn test(&self) -> Test {
         let parent = self.parent.as_ref()?;
         let names_a_test = matches!(parent.phase, RefDataValue::Execution { entry_data: Some(_), .. });

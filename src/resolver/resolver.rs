@@ -5826,7 +5826,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Try the path with extensions. What does not fit a path buffer cannot name a file.
+        // Try the path with extensions. A path that doesn't fit the buffer can't name a file.
         let Some(prefix) = bufs!(load_as_file).get_mut(..path.len()) else {
             dec_ret!(None);
         };

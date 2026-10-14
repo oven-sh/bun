@@ -1,4 +1,4 @@
-// What a value that only looks like something pretty-format has a plugin for may hold, member by member.
+// Fakes each shape a pretty-format plugin recognizes, then puts every hostile value in each member the plugin reads.
 class Captured {
   constructor(value) {
     this.value = value;

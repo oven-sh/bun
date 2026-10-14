@@ -1,12 +1,12 @@
-// What `test`, `describe` and the hooks do depends on the module they are imported from: those of "vitest" behave as
-// vitest's, those of "bun:test" and "@jest/globals" as Jest's. Expected outputs were taken from vitest 5.0.
+// `test`, `describe` and the hooks behave like Vitest's when imported from "vitest", and like Jest's otherwise.
+// Expected outputs were taken from Vitest 5.0.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isCI, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
-// A run that never ends is killed, and what it printed is compared: a test that times out leaves it running.
-// An ASAN build looks for leaks as it exits, and CI gives it minutes for a test.
+// Kills a hung child before this test's own timeout, which would leave it running and lose its output.
+// ASAN's leak check makes exit slow, and CI gives ASAN tests minutes.
 const beforeTheTestTimesOut = isASAN && isCI ? 60_000 : 4000;
 
 async function runTests(
@@ -697,7 +697,7 @@ describe.concurrent("beforeAll and afterAll", () => {
       ],
       exitCode: 1,
     });
-    // The error is reported where the hook was registered.
+    // The error points at the line that registered the hook.
     expect(stderr).toContain("a.test.js:4:37");
   });
 
@@ -772,8 +772,7 @@ describe.concurrent("each and for", () => {
     ]);
   });
 
-  // The titles of "vitest" are those that Vitest 5.0.3 gives this file. More of them, as the keys of snapshots that
-  // Vitest wrote: snapshot-tests/formats/vitest/titles.fixture.ts
+  // The "vitest" titles come from Vitest 5.0.3. There are more in snapshot-tests/formats/vitest/titles.fixture.ts.
   test("titles: values are printed as Vitest prints them, and as before by the other modules", async () => {
     const file = (module: string) => `
       import { test, expect } from "${module}";
@@ -829,11 +828,11 @@ describe.concurrent("each and for", () => {
       "10n|10n|10n|10",
       "Symbol(s)|NaN|NaN|NaN",
       "1.5px|NaN|1|1.5",
-      // A "%%" takes a value too, which is then left over.
+      // Vitest quirk: "%%" consumes a value too, and prints it as a leftover argument.
       "100% a of b",
       "0 1 % a# <> %p",
       "1 2 % b# <> %p",
-      // The dot is of the path.
+      // "$a." is read as the path "a.", which is undefined.
       "undefined 1, [ 'x' ] undefined { a: 1, b: { c: [ 'x' ] } } undefined $",
       "x { y: 'z' } undefined $a",
     ]);
@@ -1118,7 +1117,7 @@ describe.concurrent("each and for", () => {
         }
       `,
     });
-    // As in Vitest, where test.each()() throws these.
+    // Vitest's test.each()() throws these too.
     const thrown = [
       "RangeError: Maximum call stack size exceeded.",
       "RangeError: Maximum call stack size exceeded.",
@@ -1330,7 +1329,7 @@ describe.concurrent("hooks", () => {
     });
   });
 
-  // A beforeAll hook has an entry after the afterAll hooks for what it returns. It must never show up as a test.
+  // A beforeAll's returned teardown gets its own entry after the afterAll hooks. It must never be reported as a test.
   describe("only tests are reported, whatever beforeAll returns", () => {
     const file = `
       import { test, describe, beforeAll, afterAll } from "vitest";
@@ -1767,7 +1766,7 @@ describe.concurrent("exports", () => {
 });
 
 describe.concurrent(`[test] globals = "vitest"`, () => {
-  // Neither an import nor the global \`vi\` tells where the globals of this file are from.
+  // This file has no imports, and using the global `vi` doesn't pick a flavor, so only the `globals` option can.
   const file = `
     afterEach(() => console.log("afterEach 1"));
     afterEach(() => console.log("afterEach 2"));
@@ -1886,7 +1885,7 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
   test("is part of the key of the transpiler cache", async () => {
     using cache = tempDir("vitest-flavor-cache", {});
     const env = { BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache) };
-    // Small files are not cached.
+    // The transpiler cache skips small files.
     const files = { "a.test.js": file + "// " + Buffer.alloc(8192, "-").toString() };
     const logs: string[][] = [];
     for (const args of [[], ["--globals=vitest"], [], ["--globals=vitest"]]) {
@@ -1916,7 +1915,7 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
   });
 });
 
-// A library takes a `jest` for Jest's fake timers, and then advances them itself while it waits.
+// Testing Library's waitFor() takes a global `jest` to mean Jest's fake timers and advances them itself while waiting.
 describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
   const typeofEach = `({ ${["jest", "xit", "xtest", "xdescribe", "vi", "expect", "afterEach", "test"].map(name => `${name}: typeof ${name}`)} })`;
   const libraries = {
@@ -2027,7 +2026,7 @@ describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
     });
 
   test.each([
-    // vitest shows a library "vi", "expect", "afterEach" and "test" only with \`globals: true\`.
+    // Vitest only exposes "vi", "expect", "afterEach" and "test" to a library with `globals: true`. Bun always does.
     [`import { test, vi, beforeEach, afterEach } from "vitest";`, []],
     [``, ["--globals=vitest"]],
   ])(`a library sees none, and leaves the clock alone: %s %j`, async (header, args) => {
@@ -2118,7 +2117,7 @@ describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
     });
   });
 
-  // What a module is loaded for first decides: it stays in the registry.
+  // A library keeps the flavor of whichever file loaded it first, because it stays in the module registry.
   const scripts = {
     ...libraries,
     "vitest.test.js": `
@@ -2140,7 +2139,7 @@ describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
   test.each([
     [["./vitest.test.js"], ["vitest undefined undefined"]],
     [["./bun.test.js"], ["bun:test object object"]],
-    // A preload script that imports from "vitest" is like a test file that does.
+    // A preload that imports from "vitest" counts like a test file that does.
     [["--preload=./of-vitest.js", "./vitest.test.js"], ["vitest undefined undefined"]],
     [["--preload=./of-vitest.js", "./bun.test.js"], ["bun:test undefined undefined"]],
     [["--preload=./of-bun.js", "./vitest.test.js"], ["vitest object object"]],
@@ -2152,7 +2151,7 @@ describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
       ["--preload=./of-bun-peek-esm.js", "--preload=./of-vitest-peek.js", "./bun.test.js"],
       ["bun:test undefined object"],
     ],
-    // One that does not says nothing about the test files, which are not known yet.
+    // A preload that imports neither loads libraries with the default flavor, before any test file is known.
     [["--preload=./of-neither.js", "./vitest.test.js"], ["vitest object object"]],
     [["--preload=./of-neither.js", "--globals=vitest", "./vitest.test.js"], ["vitest undefined undefined"]],
     [
@@ -2163,7 +2162,7 @@ describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
       ["./vitest.test.js", "./bun.test.js"],
       ["vitest undefined undefined", "bun:test undefined undefined"],
     ],
-    // Nothing stays from one file to the next.
+    // With --isolate or --parallel, each file gets a fresh module registry.
     [
       ["--isolate", "./bun.test.js", "./vitest.test.js"],
       ["bun:test object object", "vitest undefined undefined"],
@@ -2195,7 +2194,7 @@ describe.concurrent(`"vitest" has no jest, xit, xtest or xdescribe`, () => {
       BUN_RUNTIME_TRANSPILER_CACHE_PATH: String(cache),
       BUN_DEBUG_ENABLE_RESTORE_FROM_TRANSPILER_CACHE: "1",
     };
-    // Small files are not cached.
+    // The transpiler cache skips small files.
     const padding = "\n// " + Buffer.alloc(8192, "-").toString();
     const files = Object.fromEntries(
       Object.entries(scripts).map(([name, source]) => [name, name.endsWith(".js") ? source + padding : source]),
@@ -2480,7 +2479,7 @@ test.concurrent("test.fails passes whatever it is that fails", async () => {
     errors: [],
     exitCode: 0,
   });
-  // Jest's modifier keeps Jest's rule, whichever module `test` is from.
+  // test.failing is Jest's modifier, so a failing hook still fails the test, whichever module `test` comes from.
   for (const failing of [vitestFailing, bunFailing]) {
     expect({ results: failing.results, errors: failing.errors, exitCode: failing.exitCode }).toEqual({
       results: ["(fail) beforeEach > test", "(fail) afterEach > test", "(fail) hook timeout > test"],
@@ -2936,7 +2935,7 @@ describe.concurrent("test.extend()", () => {
       ],
       exitCode: 1,
     });
-    // Reported where the test was registered, also when the code there has been collected since.
+    // The error points at where the test was registered, even if that code has been collected since.
     expect(stderr).toContain("a.test.js:28:9");
   });
 
@@ -3065,7 +3064,7 @@ describe.concurrent("test.extend()", () => {
       );
       const a = ["a setup", "a one 1", "a two 2", "a teardown"];
       const b = ["b setup", "b one 1", "b failing setup", "b teardown"];
-      // --parallel prints what the files wrote to stderr, test by test: files that run at the same time take turns.
+      // --parallel forwards each file's output to stderr one test at a time, so concurrent files interleave.
       const log = (stdout + stderr).split("\n").filter(line => [...a, ...b].includes(line));
       const takeTurns = args.includes("--parallel=2");
       expect(takeTurns ? log.toSorted((x, y) => x.charCodeAt(0) - y.charCodeAt(0)) : log).toEqual([...a, ...b]);
@@ -3096,7 +3095,7 @@ describe.concurrent("test.extend()", () => {
     const a = ["shared setup", "a shared", "afterAll of a"];
 
     test.each([
-      // The hooks of a preload script run before the first file and after the last one.
+      // A preload's beforeAll and afterAll run once, before the first file and after the last.
       [
         "--no-isolate",
         [
@@ -3104,7 +3103,7 @@ describe.concurrent("test.extend()", () => {
           ["b", "shared setup", ...after],
         ],
       ],
-      // The preload script runs for each file.
+      // The preload runs again for each file.
       [
         "--isolate",
         [

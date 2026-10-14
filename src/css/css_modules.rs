@@ -432,13 +432,11 @@ pub(crate) fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &
     bun_base64::wyhash_url_safe(bump, args, at_start)
 }
 
-/// Whether the file at `path` is a CSS module.
 pub fn is_module_path(path: &[u8]) -> bool {
     const SUFFIX: &[u8] = b".module.css";
     path.len() > SUFFIX.len() && path.ends_with(SUFFIX)
 }
 
-/// The name that `local`, a class or id of the CSS module at `pretty_path`, is renamed to.
 pub fn scoped_name(scratch: &Bump, pretty_path: &[u8], local: &[u8]) -> Box<[u8]> {
     use std::io::Write as _;
     let path_hash = hash(
@@ -461,27 +459,21 @@ pub fn scoped_name(scratch: &Bump, pretty_path: &[u8], local: &[u8]) -> Box<[u8]
 /// One of the space-separated names in the string a CSS module exports for a local.
 #[derive(Clone, Copy)]
 pub enum ExportedName<'a> {
-    /// A local of the file `Ref::source_index`, exported as its scoped name.
     Local(Ref),
-    /// `composes: name from global`, exported as written.
     Global(&'a [u8]),
 }
 
-/// The files that `composes: name from "file"` can reach, by source index.
 pub trait ComposesGraph {
-    /// `None` when the file is not CSS.
     fn stylesheet(&self, source_index: u32) -> Option<&BundlerStyleSheet>;
     fn source(&self, source_index: u32) -> &Source;
     fn import_record(&self, source_index: u32, import_record_index: u32) -> &ImportRecord;
 }
 
-/// Follows `composes` to find what a CSS module exports for each of its locals.
 pub struct ComposesVisitor<'a> {
     graph: &'a dyn ComposesGraph,
     visited: ArrayHashMap<Ref, ()>,
     names: Vec<ExportedName<'a>>,
     stack_check: StackCheck,
-    /// A chain of `composes` was cut short for lack of stack.
     pub out_of_stack: bool,
 }
 
@@ -496,7 +488,7 @@ impl<'a> ComposesVisitor<'a> {
         }
     }
 
-    /// What `sheet`, the file `source_index`, exports for `local`: the classes it composes, then `local`.
+    /// Returns the classes `local` composes first, then `local` itself.
     pub fn exported_names(
         &mut self,
         sheet: &'a BundlerStyleSheet,
@@ -609,7 +601,6 @@ impl<'a> ComposesVisitor<'a> {
         }
     }
 
-    /// `compose` names `name`, which is `local` in `sheet`, the file `source_index`.
     fn visit_composed(
         &mut self,
         sheet: &'a BundlerStyleSheet,

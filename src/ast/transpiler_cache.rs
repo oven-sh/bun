@@ -16,15 +16,14 @@ use core::ptr::NonNull;
 pub struct RuntimeTranspilerCache {
     pub input_hash: Option<u64>,
     pub input_byte_length: Option<u64>,
-    /// The key of an output that is the same under `bun test` and outside of it.
+    /// Key for a file that transpiles the same with and without `bun test`.
     pub features_hash: Option<u64>,
-    /// The key of any other: `features_hash` and what `bun test` adds to the parser's features.
+    /// Key for a file with `uses_test_api`. Also hashes the parser features `bun test` sets.
     pub test_features_hash: Option<u64>,
-    /// The key of one of those that imports from "vitest".
+    /// Key for a file with `imports_vitest`.
     pub vitest_features_hash: Option<u64>,
-    /// Set by the parser. Which of them `put()` stores.
     pub uses_test_api: bool,
-    /// Set by the parser, and by `get()` from the key of what it found.
+    /// Set by the parser, or by `get()` when the entry it found has `vitest_features_hash`.
     pub imports_vitest: bool,
     pub exports_kind: ExportsKind,
     /// Set by `put()` / `get()` when a cache hit returns transpiled output.

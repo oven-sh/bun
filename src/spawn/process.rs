@@ -1066,7 +1066,7 @@ pub mod waiter_thread_posix {
         // those producer borrows (forbidden aliased-&mut). With `&self` on
         // both sides the only interior mutation goes through this cell.
         pub(crate) active: core::cell::UnsafeCell<Vec<*mut T>>,
-        /// How many are in `queue` or `active`. One leaves the count after its exit is posted.
+        /// Entries in `queue` plus `active`. Decremented only after the entry's exit is posted.
         pub(crate) watched: AtomicU32,
     }
 
@@ -1451,8 +1451,7 @@ pub mod waiter_thread_posix {
             bun_spawn_sys::waiter_thread_flag::get()
         }
 
-        /// Whether the exit of a child, of any thread's, is still to be posted. `false` is only good
-        /// for a caller that looks at its task queue afterwards.
+        /// True while any thread's child has an exit still to post. After `false`, the caller must still check its task queue.
         pub fn is_watching() -> bool {
             instance_ref().js_process.watched.load(Ordering::SeqCst) > 0
         }

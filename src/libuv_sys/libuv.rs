@@ -539,7 +539,7 @@ impl Loop {
         // SAFETY: self is a live loop.
         unsafe { uv_loop_alive(self) != 0 }
     }
-    /// Whether a handle that I/O, a child's exit or a file change fires is started, ref'd or not.
+    /// Unlike `uv_loop_alive`, also finds unref'd handles. Only looks at I/O, process and fs-watch handles.
     pub fn has_active_io_handles(&mut self) -> bool {
         let mut found = false;
         // SAFETY: self is a live loop; the walk is synchronous, so `found` outlives it.
@@ -560,7 +560,7 @@ impl Loop {
 }
 
 unsafe extern "C" fn find_active_io_handle_cb(handle: *mut uv_handle_t, found: *mut c_void) {
-    // SAFETY: libuv passes a live handle; `found` is the `bool` of `has_active_io_handles`.
+    // SAFETY: libuv passes a live handle; `found` points to the `bool` in `has_active_io_handles`.
     unsafe {
         if uv_is_active(handle) != 0
             && matches!(

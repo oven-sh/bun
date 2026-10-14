@@ -2108,7 +2108,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
 
     if let Some(seed_str) = args.option(b"--seed") {
-        // A --parallel worker always gets the seed, and --randomize apart from it.
+        // A --parallel worker always gets --seed, so for a worker it doesn't imply --randomize.
         ctx.test_options.randomize |= !ctx.test_options.test_worker;
         ctx.test_options.seed = match strings::parse_int::<u32>(seed_str, 10) {
             Ok(v) => Some(v),

@@ -167,7 +167,7 @@ extern "C" fn Bun__fetchBuiltinModule(
     }
 }
 
-/// Under `bun test`, "vitest" and "@jest/globals" name builtin modules however they are asked for.
+/// Under `bun test`, "vitest" and "@jest/globals" resolve to builtin modules.
 #[inline]
 pub fn alias_cfg() -> bun_resolve_builtins::Cfg {
     bun_resolve_builtins::Cfg {
@@ -194,8 +194,8 @@ pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSour
     Some((name, tag))
 }
 
-/// C++ entry point: whether `data[..len]` names a builtin module to `node:module`. As to `isBuiltin()`, what `bun test`
-/// serves in place of a package ("vitest", "@jest/globals"), and the key it serves "vitest" under, do not.
+/// C++ entry point: whether `data[..len]` names a builtin module.
+/// `bun test`'s stand-ins for packages ("vitest", "@jest/globals", "bun:test/vitest") don't count.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
@@ -216,8 +216,8 @@ unsafe extern "C" fn ModuleLoader__builtinAliasIndex(data: *const u8, len: usize
         .map_or(-1, i32::from)
 }
 
-/// C++ entry point: the loader of what a plugin supplies without naming one. As for a file: the `type` it is imported
-/// with, else its file extension in the VM's loader map. None for a `type` that loads what is at the path instead.
+/// C++ entry point: picks the loader when a plugin returns contents without one, from the import's `type` attribute or
+/// else the file extension. Returns `_none` for a `type` whose loader reads the path rather than the contents.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__getDefaultLoader(
     global: &JSGlobalObject,
@@ -254,20 +254,19 @@ extern "C" fn Bun__getDefaultLoader(
             }
         };
     match loader {
-        // (`to_api` makes it `json`.)
+        // `to_api` would turn it into `json`.
         Loader::Jsonc => api::Loader::jsonc,
         loader => loader.to_api(),
     }
 }
 
-/// C++ entry point: what `IsolatedModuleCache` knows the contents a plugin supplied, and their loader, by. Never 0.
+/// C++ entry point: `IsolatedModuleCache`'s key for plugin-supplied contents and their loader. Never 0.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__hashPluginContents(contents: &bun_core::EncodedSlice, loader: u8) -> u64 {
     let encoding = (u64::from(contents.is_16bit()) << 1) | u64::from(contents.is_utf8());
     bun_wyhash::hash_with_seed((u64::from(loader) << 2) | encoding, contents.byte_slice()) | 1
 }
 
-/// The namespace of `specifier` (`b""` if it has none) and the path after it.
 pub(crate) fn namespace_and_path(specifier: &[u8]) -> (&[u8], &[u8]) {
     let namespace = extract_namespace(specifier);
     if namespace.is_empty() {
@@ -277,16 +276,15 @@ pub(crate) fn namespace_and_path(specifier: &[u8]) -> (&[u8], &[u8]) {
     }
 }
 
-/// The namespace (`b""` for `file`) and path that `onLoad` is asked about for `key`, if it is asked.
 pub(crate) fn on_load_namespace_and_path(key: &[u8]) -> Option<(&[u8], &[u8])> {
     has_extension_or_namespace(key).then(|| namespace_and_path(key))
 }
 
-/// C++ entry point: the length of the namespace `onLoad` is asked about for `key` (0 for `file`), or -1 if it is not asked.
+/// C++ entry point: length of `key`'s `onLoad` namespace (0 for `file`), or -1 if no `onLoad` runs for it.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__onLoadNamespaceLength(key: &bun_core::String) -> i32 {
     match on_load_namespace_and_path(&key.to_utf8()) {
-        // The namespace of a plugin is ASCII, so its length in bytes is its length in `key`.
+        // Plugin namespaces are ASCII, so the UTF-8 byte length is also the length in `key`.
         Some((namespace, _)) if namespace.is_ascii() => {
             i32::try_from(namespace.len()).unwrap_or(-1)
         }

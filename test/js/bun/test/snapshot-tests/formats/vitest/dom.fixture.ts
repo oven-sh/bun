@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { describe, test, expect } from "vitest";
 
-// The least that pretty-format takes for DOM nodes.
+// The minimum shape that pretty-format's DOMElement plugin accepts as a DOM node.
 class Node {
   childNodes: Node[] = [];
   constructor(public nodeType: number) {}

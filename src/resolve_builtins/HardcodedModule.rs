@@ -826,7 +826,7 @@ const BUN_TEST_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     ),
 ];
 
-// The transpiler cache shares the output of every other file between `bun test` and `bun run`.
+// `is_test_module` must cover these, or a file importing one would share its transpiler cache entry with `bun run`.
 const _: () = {
     let mut i = 0;
     while i < BUN_TEST_EXTRA_ALIAS_KVS.len() {

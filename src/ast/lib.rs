@@ -1154,7 +1154,7 @@ impl BabyString {
     /// Locates `substring` inside `container` (the string later passed to
     /// [`BabyString::slice`]) and records its offset and length.
     pub fn r#in(container: &[u8], substring: &[u8]) -> BabyString {
-        // Not found: `import ""`, or a specifier that is not UTF-8 and was formatted lossily.
+        // Not found for `import ""`, or for a non-UTF-8 specifier that was formatted lossily.
         let Some(off) = bun_core::strings::index_of(container, substring) else {
             return BabyString::new(0, 0);
         };

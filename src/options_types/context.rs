@@ -415,7 +415,7 @@ pub enum HotReload {
     Watch,
 }
 
-/// The `[test]` options, also of `vi.setConfig()`, that undo something before each test, in the order vitest applies them.
+/// `[test]` and `vi.setConfig()` options, in the order Vitest applies them before each test.
 pub const RESETS_BEFORE_EACH_TEST: [&str; 5] = [
     "restoreMocks",
     "mockReset",
@@ -449,7 +449,6 @@ pub struct TestOptions {
     // responsible for freeing any previous value.
     pub test_filter_regex: Option<core::ptr::NonNull<()>>, // SAFETY: erased *mut bun_jsc::RegularExpression
     pub max_concurrency: u32,
-    /// As `RESETS_BEFORE_EACH_TEST`.
     pub resets_before_each_test: [Option<bool>; RESETS_BEFORE_EACH_TEST.len()],
     /// `bun test --isolate`: run each test file in a fresh global object on
     /// the same VM, force-closing leaked handles between files.
@@ -477,10 +476,8 @@ pub struct TestOptions {
     pub timings_files: Vec<Box<[u8]>>,
     /// `bun test --update-timings`: merge this run's measured per-file durations into `timings_file`.
     pub update_timings: bool,
-    /// `bun test --environment=<name>`, else `[test] environment`: what a test file
-    /// without an `@vitest-environment` / `@jest-environment` comment runs in.
+    /// `--environment` or `[test] environment`. A file's `@vitest-environment` / `@jest-environment` comment overrides it.
     pub environment: Option<TestEnvironment>,
-    /// `bun test --globals=<name>`, else `[test] globals`.
     pub globals: Option<TestGlobals>,
 
     pub reporters: Reporters,
@@ -519,10 +516,10 @@ impl TestEnvironment {
     }
 }
 
-/// The module that `test`, `expect` and the other globals of a file come from.
+/// The module a file's `test`, `expect` and other globals come from.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum TestGlobals {
-    /// "vitest" for a file that imports from "vitest", else "bun:test".
+    /// "bun:test", except in a file that imports "vitest".
     Bun,
     Vitest,
 }
@@ -549,17 +546,15 @@ pub struct Reporters {
     pub dots: bool,
     pub only_failures: bool,
     pub junit: bool,
-    /// `bun test --reporter-junit-suites=<name>`, else `[test.reporter] junitSuites`.
     pub junit_suites: Option<JunitSuites>,
 }
 
-/// What a `describe` block becomes in the JUnit report.
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
 pub enum JunitSuites {
-    /// A `<testsuite>` inside the file's `<testsuite>`.
+    /// A `describe` block is a `<testsuite>` inside the file's `<testsuite>`.
     #[default]
     Nested,
-    /// A prefix of the `name` of its `<testcase>`s.
+    /// A `describe` block is a prefix on its `<testcase>` names.
     Flat,
 }
 

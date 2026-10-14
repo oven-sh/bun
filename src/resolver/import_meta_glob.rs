@@ -11,12 +11,11 @@ bun_js_parser::link_impl_ImportMetaGlobHost! {
     }
 }
 
-/// A directory, and a pattern relative to it.
+/// (absolute directory, glob relative to it)
 type GlobInDir = (Vec<u8>, Vec<u8>);
 
 impl Resolver<'_> {
-    /// Where a pattern such as `@/pages/*.tsx` or `#pages/*.tsx` is, in the order that an import
-    /// path is looked up in.
+    /// Resolves a pattern like `@/pages/*.tsx` or `#pages/*.tsx`, in the same order as an import path.
     pub fn import_meta_glob_alias(
         &mut self,
         importer_dir: &[u8],
@@ -40,7 +39,7 @@ impl Resolver<'_> {
             .then(|| (tsconfig.base_url.to_vec(), glob.to_vec()))
     }
 
-    /// Only the first substitution is used, as in Vite.
+    /// Like Vite, only uses the first substitution.
     fn import_meta_glob_in_tsconfig_paths(
         &mut self,
         tsconfig: &TSConfigJSON,
@@ -81,8 +80,8 @@ impl Resolver<'_> {
         glob: &[u8],
     ) -> Option<GlobInDir> {
         let package_json = dir_info.package_json_for_module_type?;
-        // On Windows the target is joined with backslashes, which escape in a pattern. Those become
-        // slashes, and the pattern's own are kept out of their way meanwhile.
+        // On Windows the target is joined with `\`, which is an escape in a glob. Hide the glob's own
+        // escapes behind `ESCAPE` while resolving, so only the separators become `/`.
         const ESCAPE: u8 = 1;
         let swap = |bytes: &[u8], from: u8, to: u8| -> Vec<u8> {
             let swapped = bytes

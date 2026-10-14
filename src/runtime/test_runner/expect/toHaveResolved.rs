@@ -4,7 +4,6 @@ use super::mock;
 use super::throw;
 use super::{Expect, PostMatchGuard};
 
-/// One entry of `mock.settledResults`.
 pub(super) enum Settled {
     Fulfilled(JSValue),
     Rejected(JSValue),
@@ -34,7 +33,6 @@ impl Settled {
 }
 
 impl Expect {
-    /// [`Expect::mock_prologue`] for the matchers that read `mock.settledResults`.
     pub(super) fn settled_results_prologue<'a>(
         &'a self,
         global: &'a JSGlobalObject,

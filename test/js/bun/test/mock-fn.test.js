@@ -1264,7 +1264,6 @@ describe("spyOn", () => {
       expect(obj[213]).toBe(obj);
       expect(fn).toHaveBeenCalledTimes(2);
 
-      // Same as named keys: spying again gives the same spy, without reading the property.
       expect(spyOn(obj, 213)).toBe(fn);
       expect(fn).toHaveBeenCalledTimes(2);
 
@@ -1420,7 +1419,6 @@ describe("spyOn", () => {
       expect(fn.mock.calls).toEqual([[], ["x"], []]);
 
       fn.mockRestore();
-      // Same as a missing named key: it is missing again.
       expect(Object.getOwnPropertyDescriptor(obj, 169)).toBeUndefined();
       expect(obj[169]).toBeUndefined();
       expect(fn).not.toHaveBeenCalled();
@@ -1572,7 +1570,7 @@ describe("spyOn", () => {
       getter.mockRestore();
       expect(deleteProperty).toHaveBeenCalledTimes(1);
 
-      // Jest throws too, and then once more when it restores the spy that it could not install.
+      // Jest throws here too, then throws again when it restores the spy it couldn't install.
       if (!isBun) return;
       const frozen = new Proxy(Object.freeze({ method() {}, get x() { return 1; } }), {}); // prettier-ignore
       expect(() => spyOn(frozen, "method")).toThrow(TypeError);
@@ -1634,7 +1632,7 @@ describe("spyOn", () => {
       test.each(["method", "value", "declared", "declaredFunction", "toString", "parseInt", "missing"])(
         "that is as it was once a spy is restored: %s",
         key => {
-          // Vitest and Jest refuse what is not a function, and leave a builtin behind.
+          // Vitest and Jest refuse non-functions, and leave the builtin behind on the sandbox after restoring.
           if (!isBun && !["method", "declaredFunction", "toString"].includes(key)) return;
           const { sandbox, context, global } = makeContext(contextify);
           const descriptors = Object.getOwnPropertyDescriptors(sandbox);
@@ -2038,14 +2036,14 @@ describe("spyOn", () => {
         setter.mockRestore();
         expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual(original);
 
-        // the engine serves this one specially: it cannot become an accessor
+        // JSC special-cases a function's `prototype`, so it can't become an accessor.
         function Foo() {}
         expect(() => spyOn(Foo, "prototype", "get")).toThrow(
           "Cannot spy on the `prototype` property because it is not a function",
         );
       });
 
-      // Like a spy on a method, which replaces a read-only or non-configurable property too.
+      // Consistent with method spies, which also replace read-only and non-configurable properties.
       test("non-configurable, frozen and non-extensible targets", () => {
         const fixed = Object.defineProperty({}, "x", { get: () => 1 });
         const frozen = Object.freeze({ get x() { return 1; } }); // prettier-ignore
@@ -2087,7 +2085,7 @@ describe("spyOn", () => {
           );
           expect(Object.getOwnPropertyDescriptor(obj, key)).toEqual(original);
         }
-        // an accessor on the prototype can be shadowed
+        // A typed array's `length` is an accessor on the prototype, so it can be shadowed.
         const bytes = new Uint8Array(2);
         const length = spyOn(bytes, "length", "get").mockReturnValue(9);
         expect(bytes.length).toBe(9);
@@ -2295,7 +2293,7 @@ if (isBun) {
       expect(Object.getPrototypeOf(new Mock())).toBe(prototype);
     });
 
-    // Vitest throws "is not a constructor" for these; Jest, and Bun so far, call them.
+    // Vitest throws "is not a constructor" for these. Bun follows Jest and calls them, even through vi.fn.
     test("implementations that are not constructors are called on a new object", () => {
       const object = { a: 1 };
       for (const fn of [jest.fn, vi.fn]) {
@@ -3476,7 +3474,7 @@ if (isBun) {
   });
 }
 
-// What each column does was checked against Vitest 5.0 and Jest 30.
+// Each flavor's expected values were checked against Vitest 5.0 and Jest 30.
 if (isBun) {
   describe("mocks made through vi behave as Vitest's, the others as Jest's", () => {
     const flavors = [
@@ -3577,7 +3575,7 @@ if (isBun) {
       });
     });
 
-    // Every *AllMocks function acts on all mocks, on each in the way of the function that made it.
+    // Either API's *AllMocks() covers every mock, and each mock follows the flavor of the function that created it.
     const everyApi = [
       ["vi", vi],
       ["jest", jest],
@@ -3633,12 +3631,11 @@ if (isBun) {
 
           expect(obj.method).toBe(method);
           expect(Object.getOwnPropertyDescriptor(obj, "x")).toEqual(descriptor);
-          // mocks that are not spies are left as they are
           expect(withImplementation).toHaveBeenCalledTimes(1);
           expect(bare).toHaveBeenCalledTimes(1);
           expect(withImplementation()).toBe("later");
           expect(bare()).toBe(5);
-          // Vitest and Jest 30 leave the spies as they are too; Bun has always reset them
+          // Vitest and Jest 30 keep a restored spy's calls and implementation. Outside vi, Bun has always reset them.
           expect(spy).toHaveBeenCalledTimes(isVitest ? 1 : 0);
           expect(getter).toHaveBeenCalledTimes(isVitest ? 1 : 0);
           expect(setter).toHaveBeenCalledTimes(isVitest ? 1 : 0);
@@ -3925,7 +3922,7 @@ if (isBun) {
             class: Mocked.name,
             static: Mocked.fixed.name,
             "method of the prototype": Mocked.prototype.method.name,
-            // "Mock" in Vitest, unless the class is spied on
+            // Vitest names this one "Mock" unless the class is spied on.
             "method of an instance": new Mocked().method.name,
             "method of an instance of a spy": new (vi.mockObject(K, { spy: true }))().method.name,
             method: object.method.name,
@@ -4678,7 +4675,7 @@ if (isBun) {
         stderr: "inherit",
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      // `new` on a mock of `vi` constructs with the function that it has taken before the call is recorded.
+      // `new` on a vi.fn() mock picks its implementation before recording the call, so the mockThrow() comes too late.
       const seen = thrownByNew =>
         `configured,object,this,object,thrown: configured,${thrownByNew},configured,object,promise,object\n`;
       expect(stdout).toBe(seen("thrown: configured") + seen("object") + seen("thrown: configured"));

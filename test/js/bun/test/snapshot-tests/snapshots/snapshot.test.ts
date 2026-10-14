@@ -1257,8 +1257,8 @@ const headers = {
   vitest: "// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html\n",
 };
 
-// `formats/vitest` was written by Vitest 5.0.3 and `formats/jest` by Jest 30.5.2: the `.snap` files, and the inline
-// snapshots in the fixtures. To add a case, let that runner write it. Never update them with Bun.
+// Vitest 5.0.3 wrote formats/vitest and Jest 30.5.2 wrote formats/jest, both the .snap files and the inline snapshots.
+// To add a case, run it under that runner. Never update these with Bun.
 describe.concurrent("the fixtures and snapshot files that another runner wrote", () => {
   const timeout = isDebug ? 120_000 : 20_000;
   const tests = { vitest: 969, jest: 601 };
@@ -1304,7 +1304,7 @@ describe.concurrent("the fixtures and snapshot files that another runner wrote",
     "%s: --update-snapshots has nothing to change",
     async runner => {
       using dir = copyOf(runner);
-      // A test of "bun:test" updates an inline snapshot to what Bun prints.
+      // Jest's fixtures use Bun's globals, so --update-snapshots would rewrite their inline snapshots in Bun's format.
       if (runner === "jest") rmSync(join(String(dir), "inline.fixture.js"));
       const before = contentsOf(String(dir));
       const { stderr, exitCode, fail } = await run(String(dir), { CI: "true" }, "--update-snapshots");
@@ -1356,7 +1356,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
     readFileSync(join(String(dir), "__snapshots__", name + ".snap"), "utf8");
   const importing = (module: string | null) =>
     module ? `import { describe, test, expect, beforeEach } from ${JSON.stringify(module)};\n` : "";
-  // What tells the formats apart: how names and hints are joined, what prints a function, what a thrown error leaves.
+  // Each assertion prints differently per format (name and hint separators, functions, thrown errors).
   const body = `
     describe("outer", () => {
       test("inner", () => {
@@ -1708,7 +1708,7 @@ describe.concurrent("the first line of a snapshot file says whose format it has"
         describe.skip("skipped block", () => { test("inside", () => { expect("i").toMatchSnapshot(); }); });
       });
     `;
-    // `values` are in the order of Vitest's keys.
+    // values must already be in Vitest's key order. Only the jest branch sorts.
     const file = (format: "jest" | "vitest", values: Record<string, string>) => {
       let entries = Object.entries(values);
       if (format === "jest") {
@@ -2162,7 +2162,7 @@ describe.concurrent("expect.addSnapshotSerializer()", () => {
       });
       const { stderr, exitCode, pass } = await runTests(String(dir), { CI: "false" });
       expect({ pass, stderr: pass ? "" : stderr }).toEqual({ pass: 1, stderr: "" });
-      // Bun's own format puts line breaks around a Map or a Set that is inside of something.
+      // Bun's own format puts line breaks around a nested Map or Set.
       const [open, close, indent] = module === "vitest" ? ["", "", ""] : ["\n", "\n", "    "];
       expect(snap(dir)).toBe(
         header +
@@ -2365,7 +2365,7 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
   }
   const firstLine = `const firstLine = f => { try { f(); return "passes"; } catch (error) { return error.message.split("\\n")[0]; } };`;
 
-  // Written before Bun printed DOM nodes as markup, called getters and left out what is not enumerable.
+  // What Bun wrote before it printed DOM nodes as markup, called getters and skipped non-enumerable properties.
   const olderBun = `{
   "accessor": {
     "computed": [native code],
@@ -2836,7 +2836,7 @@ describe.concurrent("what script hands to the printer of snapshots", () => {
     timeout,
   );
 
-  // Nine stack overflows, about half a second each on a release build.
+  // Up to nine stack overflows per test, about half a second each on a release build.
   const timeoutOfCycles = 60_000;
   test(
     "a Proxy that answers that it is its own prototype is a RangeError as in Jest and Vitest, and like any object to Bun",
@@ -2942,7 +2942,7 @@ describe.concurrent("what script hands to the printer of snapshots", () => {
       });
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       const log = stdout.split("\n").filter(line => line && !line.startsWith("bun test "));
-      // How deep the stack goes before that much is printed depends on the build.
+      // Which limit is hit first, stack depth or printed size, depends on the build.
       const error = "RangeError: <Maximum call stack size exceeded. or The value is too large to print in a snapshot>";
       expect({
         log: log.map(line =>

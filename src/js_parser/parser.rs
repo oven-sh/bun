@@ -193,9 +193,9 @@ pub mod Runtime {
         pub inlining: bool,
 
         pub inject_jest_globals: bool,
-        /// Those are the exports of "vitest" in every file.
+        /// Inject the globals from "vitest" instead of "bun:test".
         pub vitest_globals: bool,
-        /// A bit for each of `Jest::GLOBALS` that script has put on `globalThis` itself.
+        /// Bitset indexed like `Jest::GLOBALS`, set for the ones a script put on `globalThis` itself.
         pub own_test_globals: u32,
 
         pub no_macros: bool,
@@ -383,7 +383,7 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // `inject_jest_globals` and `vitest_globals`: `hash_test_features_for_runtime_transpiler`
+                // `hash_test_features_for_runtime_transpiler` hashes `inject_jest_globals` and `vitest_globals`.
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.
@@ -409,7 +409,7 @@ pub mod Runtime {
             }
         }
 
-        /// What else is in the key of a file with `P::uses_test_api`.
+        /// Only part of the cache key for a file with `P::uses_test_api`.
         pub(crate) fn hash_test_features_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             hasher.update(&[
                 u8::from(self.inject_jest_globals),
@@ -1069,7 +1069,6 @@ pub struct ExprIn {
     /// The parent only reads, calls or assigns a property of this: `x.a`, `x[a]`, `const { a } = x`, not `delete x.a`.
     pub(crate) is_property_access_target: bool,
 
-    /// The parent is `Object.keys(x)`.
     pub(crate) is_object_keys_argument: bool,
 }
 
@@ -1608,13 +1607,12 @@ impl<'a> MacroState<'a> {
 }
 
 pub struct Jest {
-    /// The symbol of each of `Jest::GLOBALS` that the file has looked up and does not bind.
+    /// Indexed like `Jest::GLOBALS`. `Ref::NONE` unless the file uses the name without binding it.
     pub(crate) refs: [Ref; Jest::GLOBALS.len()],
 }
 
 impl Jest {
-    /// The exports of "bun:test" and "vitest" that a file can use without importing them, in the
-    /// order `_parse` emits them.
+    /// The order sets both the emitted import clause order and the `own_test_globals` bit index.
     pub const GLOBALS: &'static [&'static str] = &[
         "test",
         "it",
@@ -1647,12 +1645,10 @@ impl Jest {
         }
     }
 
-    /// Whether "vitest" lacks this one of `GLOBALS`.
     pub(crate) fn is_of_bun_only(global: &str) -> bool {
         matches!(global, "jest" | "xit" | "xtest" | "xdescribe")
     }
 
-    /// Whether "bun:test" lacks this one of `GLOBALS`.
     pub(crate) fn is_of_vitest_only(global: &str) -> bool {
         matches!(global, "suite" | "vitest" | "onTestFailed" | "assertType")
     }

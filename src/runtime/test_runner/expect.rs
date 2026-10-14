@@ -176,17 +176,16 @@ impl Flags {
     pub(crate) fn set_asymmetric_matcher_constructor_type(&mut self, t: AsymmetricMatcherConstructorType) {
         self.0 = (self.0 & !Self::AMCT_MASK) | ((t as u8) << Self::AMCT_SHIFT);
     }
-    /// `expect.poll()`, which excludes `.resolves` and `.rejects`.
+    /// `expect.poll()` can't be combined with `.resolves` / `.rejects`, so it reuses the spare promise bit pattern.
     #[inline]
     pub(crate) fn poll(self) -> bool {
         (self.0 & Self::PROMISE_MASK) == Self::PROMISE_MASK
     }
-    /// `expect.soft()`
     #[inline]
     pub(crate) fn soft(self) -> bool {
         (self.0 & Self::SOFT_MASK) != 0
     }
-    /// Whether a matcher only has to be called: at most `.not` modifies it.
+    /// No `.resolves`, `.rejects`, `poll` or `soft`, so `call_matcher` can take its fast path.
     #[inline]
     pub(crate) fn is_plain(self) -> bool {
         (self.0 & (Self::PROMISE_MASK | Self::SOFT_MASK)) == 0
@@ -471,7 +470,7 @@ impl Expect {
         )
     }
 
-    /// What `call_matcher` found `.resolves` / `.rejects` to be about. `None`: not a promise.
+    /// The promise `call_matcher_on_promise` stored in `resultValue`. `None` if the received value wasn't a promise.
     fn settled_promise(this_value: JSValue) -> Option<bun_jsc::AnyPromise> {
         super::expect::js::result_value_get_cached(this_value)?.as_any_promise()
     }
@@ -510,7 +509,7 @@ impl Expect {
         }
     }
 
-    /// The promise that settles as `await value` does, or `None` when `value` is not thenable.
+    /// A promise that settles the way `await value` would, or `None` if `value` isn't thenable.
     fn promise_to_await(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<bun_jsc::AnyPromise>> {
         if let Some(promise) = value.as_any_promise() {
             promise.set_handled(global_this.vm());
@@ -521,11 +520,10 @@ impl Expect {
         let adopted = bun_jsc::JSPromise::create(global_this);
         adopted.set_handled();
         adopted.resolve(global_this, value)?;
-        // `then` is called in a microtask, so only a value without one has fulfilled `adopted` by now.
+        // A thenable's `then` only runs in a microtask, so `adopted` is already fulfilled only if `value` isn't thenable.
         Ok((adopted.status() != js_promise::Status::Fulfilled).then_some(bun_jsc::AnyPromise::Normal(adopted)))
     }
 
-    /// The promise `expect(received).resolves` / `.rejects` is about: `received`, or what it returns.
     fn received_promise(global_this: &JSGlobalObject, received: JSValue) -> JsResult<Option<bun_jsc::AnyPromise>> {
         match Self::promise_to_await(global_this, received)? {
             None if received.is_callable() => {
@@ -537,7 +535,7 @@ impl Expect {
 
     /// Processes the async flags (resolves/rejects).
     /// If no flags, returns the original value
-    /// If either flag is set, returns what `promise`, which stands for `value` and has settled, settled with, or an error if the expectation failed (in which case if silent is false, also throws a js exception)
+    /// If either flag is set, returns the result of `promise` (the already settled promise for `value`), or an error if the expectation failed (in which case if silent is false, also throws a js exception)
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn process_promise(
         custom_label: &bun_core::String,
@@ -684,7 +682,6 @@ impl Expect {
         }
     }
 
-    /// Whether the test that is running, or the hook when it is of no test, was registered through "vitest".
     pub(crate) fn is_in_vitest_test(&self, buntest: &mut bun_test::BunTest) -> bool {
         let Some(parent) = self.parent.as_ref() else { return false };
         let test = parent.phase.sequence(buntest).and_then(|sequence| sequence.test_entry);
@@ -698,7 +695,7 @@ impl Expect {
         Self::call_in(global_this, callframe.arguments(), None)
     }
 
-    /// `state`: the test the call belongs to, if not the one that is running.
+    /// `state` is the test this `expect()` belongs to (a test context's bound `expect`). `None` means the running test.
     pub(crate) fn call_in(
         global_this: &JSGlobalObject,
         arguments: &[JSValue],
@@ -743,7 +740,6 @@ impl Expect {
         Ok(expect_js_value)
     }
 
-    /// `expect(...arguments)` with `flags` set, for a static function that `callframe` calls on `expect` or on the `expect` of a test context.
     fn call_with_flags(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -759,12 +755,10 @@ impl Expect {
         Ok(expect_js_value)
     }
 
-    /// `expect.soft(value, message?)`
     pub(crate) fn soft(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         Self::call_with_flags(global_this, callframe, callframe.arguments(), Flags::SOFT_MASK)
     }
 
-    /// `expect.poll(function, { interval, timeout, message }?)`
     pub(crate) fn poll(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let [function, options] = callframe.arguments_as_array::<2>();
         if !function.is_callable() {
@@ -819,7 +813,7 @@ impl Expect {
             // custom_label is user-supplied; emit verbatim.
             write!(message, "{}{args}", self.custom_label)
         };
-        // As in Jest, what a value throws while it is printed (a getter, a Proxy trap) is the error.
+        // If printing a value threw (a getter, a Proxy trap), propagate that error like Jest does.
         if rendered.is_err() && global_this.has_exception() {
             return Err(JsError::Thrown);
         }
@@ -909,11 +903,9 @@ impl Expect {
     }
 }
 
-/// What a snapshot matcher is given.
 #[derive(Copy, Clone)]
 pub(crate) enum Received {
     Value(JSValue),
-    /// `toThrowErrorMatching*Snapshot()`: what the function threw, or the promise was rejected with.
     Thrown(JSValue),
 }
 
@@ -985,7 +977,6 @@ impl Expect {
         ))
     }
 
-    /// What a snapshot of `received` holds in a file of `format`.
     fn value_to_snapshot(global_this: &JSGlobalObject, received: Received, format: SnapshotFormat) -> JsResult<JSValue> {
         let thrown = match received {
             Received::Value(value) => return Ok(value),
@@ -999,7 +990,7 @@ impl Expect {
         }
     }
 
-    /// jest-snapshot `_toThrowErrorMatchingSnapshot`
+    /// Mirrors `_toThrowErrorMatchingSnapshot` in jest-snapshot.
     #[cold]
     fn message_with_causes(global_this: &JSGlobalObject, thrown: JSValue) -> JsResult<JSValue> {
         if !thrown.is_object() {
@@ -1011,7 +1002,7 @@ impl Expect {
             return Ok(message);
         };
         let mut text = message.to_bun_string(global_this)?.to_owned_slice();
-        // Jest goes round a cycle until the message is too long for a string.
+        // Jest follows a `cause` cycle until the string overflows. Stop at the first repeat instead.
         let mut seen = [thrown; MAX_CAUSES + 1];
         let mut count = 1;
         while !seen[..count].contains(&cause) && count <= MAX_CAUSES {
@@ -1149,7 +1140,7 @@ impl Expect {
         let update = runner.snapshots.update_snapshots;
         let needs_write;
 
-        // An inline snapshot does not say who wrote it: the runner that the test is written for, as far as that tells.
+        // An inline snapshot has no file header naming its format, so go by the module the test was registered through.
         let is_vitest = this.bun_test().is_some_and(|buntest| this.is_in_vitest_test(buntest.get()));
         let format = if is_vitest { SnapshotFormat::Vitest } else { SnapshotFormat::Bun };
         let mut pretty_value: Vec<u8> = Vec::new();
@@ -1160,7 +1151,7 @@ impl Expect {
             match runner.snapshots.format_of(this).and_then(|format| runner.snapshots.add_count(this, format, b"")) {
                 Ok(_) => {}
                 Err(crate::Error::NoTest | crate::Error::SnapshotInConcurrentGroup | crate::Error::TestNotActive) => {}
-                // The matcher that needs the file says what is wrong with it.
+                // Inline snapshots don't need the snapshot file, so leave these errors to a matcher that does.
                 Err(crate::Error::FailedToOpenSnapshotFile | crate::Error::ParseError) => {}
                 Err(err) => return Err(this.throw_snapshot_error(global_this, &err, b"")),
             }
@@ -1181,7 +1172,7 @@ impl Expect {
                 start_indent = trim_res.start_indent.map(Box::<[u8]>::from);
                 end_indent = trim_res.end_indent.map(Box::<[u8]>::from);
             } else if Self::was_written_by_another(
-                // Jest and Vitest print a value alike.
+                // Jest and Vitest print a plain value identically, so trying one covers both.
                 match (received, is_vitest) {
                     (Received::Value(_), true) => &[],
                     (Received::Value(_), false) | (Received::Thrown(_), true) => &[SnapshotFormat::Jest],
@@ -1261,8 +1252,6 @@ impl Expect {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Whether `saved`, which is not what `received` prints as, is what an older Bun or the runner of one of `formats`
-    /// wrote for it. What printing throws here only says that it is not.
     #[cold]
     fn was_written_by_another(
         formats: &[SnapshotFormat],
@@ -1277,7 +1266,7 @@ impl Expect {
             let is_it = (|| {
                 let value = Self::value_to_snapshot(global_this, received, format.unwrap_or(SnapshotFormat::Bun))?;
                 let Some(format) = format else {
-                    // It put the matchers into the object itself, which what a getter returns or what is frozen did not keep.
+                    // Older Bun wrote the matchers into the object in place, which didn't stick for getters or frozen objects.
                     return Ok((property_matchers.is_some() && JestPrettyFormat::did_older_bun_print(global_this, with_matchers, saved)?)
                         || JestPrettyFormat::did_older_bun_print(global_this, value, saved)?);
                 };
@@ -1295,7 +1284,7 @@ impl Expect {
         Ok(false)
     }
 
-    /// `value` with the matchers of `property_matchers` as Bun's own format shows them, and the result of `print_snapshot`.
+    /// Returns `value` with `property_matchers` substituted in, and `print_snapshot`'s result.
     pub(crate) fn match_and_fmt_snapshot(
         &self,
         global_this: &JSGlobalObject,
@@ -1530,7 +1519,7 @@ impl Expect {
             while let Some((matcher_name, matcher_fn)) = iter.next()? {
 
                 if !matcher_fn.js_type().is_function() {
-                    // `import * as matchers from "a-commonjs-package"`
+                    // `import * as matchers` from a CommonJS package adds these two keys.
                     if matcher_name.eq_ascii(b"default") || matcher_name.eq_ascii(b"__esModule") {
                         continue;
                     }
@@ -1613,8 +1602,7 @@ impl Expect {
         global_this.throw_value(err)
     }
 
-    /// `call([received, ...rest])`, with the values where the collector sees them for as long as the call takes: on the
-    /// stack, or, when they are many, in a `MarkedArgumentBuffer` as well.
+    /// Runs `call(&[received, ...rest])` with the args visible to the GC, since a `Vec` alone wouldn't root them.
     #[inline]
     fn with_matcher_args<R>(
         received: JSValue,
@@ -1647,7 +1635,6 @@ impl Expect {
     /// Execute the custom matcher for the given args (the left value + the args passed to the matcher call).
     /// This function is called both for symmetric and asymmetric matching.
     /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
-    /// `who`: `Question::who`.
     pub(crate) fn execute_custom_matcher(
         global_this: &JSGlobalObject,
         custom_label: &bun_core::String,
@@ -1728,7 +1715,7 @@ impl Expect {
             bun_core::String::static_("No message was specified for this matcher.")
         };
 
-        // As in Jest and vitest, the message is all there is: most matchers start it with `this.utils.matcherHint()`.
+        // Like Jest and Vitest, don't prepend a signature. Matchers add their own with `this.utils.matcherHint()`.
         Err(if custom_label.is_empty() {
             global_this.throw(format_args!("{message_text}"))
         } else {
@@ -1743,7 +1730,6 @@ impl Expect {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
-        // try to retrieve the Expect instance
         let Some(expect_ptr) = Expect::from_js(call_frame.this()) else {
             // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
             return ExpectCustomAsymmetricMatcher::create(global_this, call_frame, Self::custom_matcher_fn(global_this, call_frame)?);
@@ -1753,12 +1739,9 @@ impl Expect {
         // `expect()` chain; aliased `&Expect` is sound, aliased `&mut Expect` is not.
         let expect = unsafe { &*expect_ptr };
 
-        // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
-        // so now execute the symmetric matching
         expect.call_matcher(global_this, call_frame, Self::custom_matcher)
     }
 
-    /// The user-provided matcher function (matcher_fn) of the custom matcher that `call_frame` calls.
     fn custom_matcher_fn(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let func: JSValue = call_frame.callee();
         let matcher_fn: JSValue = get_custom_matcher_fn(func, global_this).unwrap_or(JSValue::UNDEFINED);
@@ -1824,7 +1807,6 @@ impl Expect {
         Self::has_assertions_in(global_this, None)
     }
 
-    /// `state`: as for `call_in`.
     pub(crate) fn has_assertions_in(global_this: &JSGlobalObject, state: Option<bun_test::RefDataValue>) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
@@ -1849,7 +1831,6 @@ impl Expect {
         Self::assertions_in(global_this, call_frame, None)
     }
 
-    /// `state`: as for `call_in`.
     pub(crate) fn assertions_in(
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
@@ -2903,7 +2884,6 @@ impl ExpectCustomAsymmetricMatcher {
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct ExpectMatcherContext {
     pub(crate) flags: Flags,
-    /// `Expect::parent` of the `expect()` whose matcher is called.
     pub(crate) parent: Option<RefPtr<bun_test::RefData>>,
 }
 
@@ -2972,7 +2952,7 @@ impl ExpectMatcherContext {
     }
 }
 
-/// A host function that ignores `this`: as in Jest, a matcher may destructure it or pass it on.
+/// A host function that ignores `this`, so a matcher can destructure it or pass it around like in Jest.
 macro_rules! plain_host_fn {
     ($shim:ident, $function:path) => {
         bun_jsc::jsc_host_abi! {
@@ -2996,7 +2976,6 @@ plain_host_fn!(diff_shim, ExpectMatcherUtils::diff);
 
 const NO_VISUAL_DIFFERENCE: &[u8] = b"Compared values have no visual difference.";
 
-/// The colors of jest-matcher-utils: `DIM_COLOR`, `EXPECTED_COLOR` and `RECEIVED_COLOR`.
 #[derive(Clone, Copy)]
 enum HintColor {
     Dim,
@@ -3024,11 +3003,11 @@ impl HintColor {
     }
 }
 
-/// What the function of `toThrow()` reports instead of throwing it, as the listeners of a native emitter do: the first
-/// error counts as thrown. The others are reported as anywhere else.
+/// Catches errors that `toThrow()`'s function reports instead of throwing, e.g. from a native emitter's listener.
+/// The first one counts as thrown and the rest go to the outer handler.
 struct FirstReport {
     value: JSValue,
-    /// Not so while the rejections that the call left behind are looked at: those are dropped.
+    /// False while draining the rejections the call left behind, which are dropped.
     is_calling: bool,
     outer: bun_jsc::virtual_machine::UnhandledRejectionScope,
 }
@@ -3036,7 +3015,7 @@ struct FirstReport {
 impl FirstReport {
     fn take(vm: &mut VirtualMachine, global: &JSGlobalObject, value: JSValue) {
         let Some(this) = vm.on_unhandled_rejection_ctx else { return };
-        // SAFETY: `get_value_as_to_throw` points it at its local for as long as this is the handler.
+        // SAFETY: `get_value_as_to_throw` points the ctx at its local only while this is the handler.
         let this = unsafe { &mut *this.cast::<FirstReport>() };
         if !this.is_calling {
             return;
@@ -3054,16 +3033,15 @@ impl FirstReport {
 
 /// Reference: `MatcherUtils` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 ///
-/// The one cell of `expect` that each global roots, so it also holds what `expect` keeps per global.
+/// It's the only `expect` cell that each global roots, so `expect`'s per-global state lives here too.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 #[derive(Default)]
 pub(crate) struct ExpectMatcherUtils {
-    /// For each equality tester, whether the code of a test file registered it. The others, of preload scripts and of
-    /// modules that test files import, outlive the file: such a module is evaluated once for all the files that import it.
+    /// Per equality tester, whether the test file's own code registered it. Those don't carry over to the next file.
+    /// Testers from preloads and imported modules stay, because those modules are only evaluated once.
     pub(crate) testers_of_file: bun_jsc::JsCell<Vec<bool>>,
     /// `BunTestRoot::file_generation` of that test file.
     pub(crate) testers_file: Cell<u32>,
-    /// The same two for the snapshot serializers.
     pub(crate) serializers_of_file: bun_jsc::JsCell<Vec<bool>>,
     pub(crate) serializers_file: Cell<u32>,
 }
@@ -3105,7 +3083,7 @@ impl ExpectMatcherUtils {
         }
 
         if value.is_error() {
-            // As in Jest: a matcher's message is no place for the source frame and the stack.
+            // Like Jest, print `[Error: message]` without the source frame and stack.
             let _ = mutable_string.write_all(b"[");
             let _ = mutable_string.write_all(value.to_bun_string(global_this)?.to_utf8().slice());
             let _ = mutable_string.write_all(b"]");
@@ -3141,7 +3119,6 @@ impl ExpectMatcherUtils {
         Self::print_value(global_this, value, Some("<red>"))
     }
 
-    /// As `chalk.green(...text)`: the arguments as strings, with a space between them.
     fn color_text(global_this: &JSGlobalObject, callframe: &CallFrame, color: HintColor) -> JsResult<JSValue> {
         let mut text: Vec<u8> = Vec::new();
         for (i, argument) in callframe.arguments().iter().enumerate() {
@@ -3163,7 +3140,7 @@ impl ExpectMatcherUtils {
         Self::color_text(global_this, callframe, HintColor::Received)
     }
 
-    /// `getType` of @jest/get-type: how failure messages name the type of a value.
+    /// Mirrors `getType` in @jest/get-type.
     fn type_name(value: JSValue) -> &'static str {
         if value.is_undefined() {
             "undefined"
@@ -3194,7 +3171,6 @@ impl ExpectMatcherUtils {
         }
     }
 
-    /// `printWithType` of jest-matcher-utils.
     fn print_with_type(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let [name, value, print] = callframe.arguments_as_array::<3>();
         let name = name.to_bun_string(global_this)?;
@@ -3210,7 +3186,7 @@ impl ExpectMatcherUtils {
         bun_string_jsc::create_utf8_for_js(global_this, text.as_bytes())
     }
 
-    /// `diff` of jest-matcher-utils. `null` where a diff would say no more than the two values do.
+    /// Like `diff` in jest-matcher-utils, returns `null` when a diff would add nothing to printing the two values.
     fn diff(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let [expected, received] = callframe.arguments_as_array::<2>();
         if (expected.is_number() && received.is_number())
@@ -3240,7 +3216,6 @@ impl ExpectMatcherUtils {
         if expected_type != "string" {
             return Self::diff_text(global_this, &DiffFormatter::new(global_this, received, expected, false)?);
         }
-        // Two strings are text to compare line by line, not values to quote.
         let (expected, received) = (expected.to_bun_string(global_this)?, received.to_bun_string(global_this)?);
         let (expected, received) = (expected.to_utf8(), received.to_utf8());
         Self::diff_text(global_this, &DiffFormatter::from_strings(received.slice(), expected.slice(), false))
@@ -3255,7 +3230,6 @@ impl ExpectMatcherUtils {
         bun_string_jsc::create_utf8_for_js(global_this, format!("{formatter}").as_bytes())
     }
 
-    /// `label` through the color function that `option_name` of `matcherHint` gave, if any.
     fn paint_label(
         global_this: &JSGlobalObject,
         out: &mut Vec<u8>,
@@ -3276,7 +3250,6 @@ impl ExpectMatcherUtils {
         Ok(())
     }
 
-    /// `matcherHint` of jest-matcher-utils: the labels are text, not values.
     fn matcher_hint(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let argument = |i: usize| arguments.get(i).copied().filter(|value| !value.is_undefined());
@@ -3316,7 +3289,7 @@ impl ExpectMatcherUtils {
         let second_argument_color = option("secondArgumentColor")?;
 
         let mut hint: Vec<u8> = Vec::new();
-        // Adjacent dim text is painted in one piece.
+        // Like Jest, buffer adjacent dim text and paint it as one span.
         let mut dim: Vec<u8> = b"expect".to_vec();
         let paint_dim = |hint: &mut Vec<u8>, dim: &mut Vec<u8>, last: &[u8]| {
             dim.extend_from_slice(last);
@@ -3338,7 +3311,7 @@ impl ExpectMatcherUtils {
             hint.extend_from_slice(b"not");
         }
         if matcher_name.index_of_ascii_char(b'.').is_some() {
-            // The old format: the name brings its own periods, as in ".not.toBeFoo".
+            // Jest's old format, where the name includes its own dots, e.g. ".not.toBeFoo".
             dim.extend_from_slice(matcher_name.to_utf8().slice());
         } else {
             paint_dim(&mut hint, &mut dim, b".");

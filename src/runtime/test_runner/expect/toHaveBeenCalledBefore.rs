@@ -28,7 +28,6 @@ impl Order {
     }
 }
 
-/// `mock.invocationCallOrder[0]`.
 struct FirstInvocation(Option<f64>);
 
 impl FirstInvocation {

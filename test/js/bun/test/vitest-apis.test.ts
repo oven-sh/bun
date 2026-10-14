@@ -467,7 +467,7 @@ describe("modifiers", () => {
         const seed = seedOf(shuffled.stderr);
         expect(seed).toBeString();
         const again = await runTests(files, ["--seed=" + seed]);
-        // The coordinator of --parallel prints what its workers wrote to stderr.
+        // --parallel forwards its workers' output to stderr.
         const lines = linesOf(shuffled.stdout + shuffled.stderr);
         expect(startingWith(lines, "outer")).not.toEqual(numbered("outer"));
         expect(startingWith(lines, "outer")).toEqual(startingWith(linesOf(again.stdout), "outer"));
@@ -831,7 +831,7 @@ test("this.equals and the functions of this.utils do not need a receiver", () =>
 });
 
 test.concurrent("matchers of jest-extended, which detach this.equals and this.utils", async () => {
-  // One module per matcher: the whole package takes seconds to load in a debug build.
+  // Imports one module per matcher, because the whole package takes seconds to load in a debug build.
   const matcher = (name: string) =>
     `import { ${name} } from ${JSON.stringify(require.resolve(`jest-extended/dist/matchers/${name}.js`))};`;
   const { results, stdout, exitCode } = await runTests({
@@ -1491,7 +1491,6 @@ describe("toHaveBeenCalledBefore and toHaveBeenCalledAfter", () => {
     return mocks;
   }
 
-  // [calls in order, failIfNoFirstInvocation, a before b, b after a]
   test.each([
     ["ab", undefined, true, true],
     ["ba", undefined, false, false],
@@ -1582,7 +1581,6 @@ describe("toHaveBeenCalledBefore and toHaveBeenCalledAfter", () => {
 });
 
 describe("toHaveResolved and friends", () => {
-  /** Calls: resolves 1, rejects "no", resolves { two: 2 }, never settles. */
   async function mixed() {
     const outcomes = [
       () => Promise.resolve(1),
@@ -1848,6 +1846,6 @@ describe("toHaveResolved and friends", () => {
 });
 
 afterAll(() => {
-  // Nothing after this file may depend on what it put on the shared state object.
+  // expect.getState() returns a shared object, so remove the keys this file put on it.
   for (const key of ["vitestApisFirst", "vitestApisSecond", "vitestApisDirect", "7"]) delete expect.getState?.()[key];
 });

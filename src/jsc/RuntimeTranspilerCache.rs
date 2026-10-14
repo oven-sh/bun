@@ -64,17 +64,12 @@ bun_core::declare_scope!(cache, visible);
 /// `onResolve` rewrote (`namespace:path`). Older entries request the bare path, and
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
-/// Version 35: `bun test` hoists `vi.mock` / `jest.mock` / `vi.hoisted` above imports (#10428),
-/// and `inject_jest_globals` participates in the features hash.
-/// Version 36: `import.meta.glob()` is expanded (#6060). Older entries still have the call.
-/// Version 37: Declarations of primitive literals move with hoisted mocks, and an
-/// `import.meta.glob()` that cannot be expanded calls a function that throws.
-/// Version 38: `inject_jest_globals` participates in the features hash of a file that uses the
-/// API of `bun test`, and of no other.
-/// Version 39: A file uses that API if it looks up one of its globals at all, counted or not, or
-/// `bun test` hoists a statement of it.
-/// Version 40: `jest`, `xit`, `xtest` and `xdescribe` are no globals where the globals are those
-/// of "vitest", and a file that imports from "vitest" has a features hash of its own.
+/// Version 35: `bun test` hoists `vi.mock` / `jest.mock` / `vi.hoisted` above imports (#10428).
+/// Version 36: `import.meta.glob()` is expanded (#6060).
+/// Version 37: Primitive literal declarations are hoisted with mocks. An `import.meta.glob()` that can't be expanded throws.
+/// Version 38: `inject_jest_globals` participates in the features hash, but only for files that use the `bun test` API.
+/// Version 39: Looking up any `bun test` global, or having a statement hoisted, counts as using that API.
+/// Version 40: Vitest globals leave out `jest`, `xit`, `xtest`, `xdescribe`. Files importing "vitest" get their own features hash.
 const EXPECTED_VERSION: u32 = 40;
 
 /// Source files smaller than this are not written to / read from the on-disk

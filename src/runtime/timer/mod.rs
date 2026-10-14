@@ -308,7 +308,7 @@ impl TimerHeap {
         if r.is_null() { None } else { Some(r) }
     }
 
-    /// The first `ImmediateObject` (a faked `setImmediate`) to run.
+    /// Only a faked `setImmediate` puts an `ImmediateObject` in a heap.
     pub(crate) fn first_immediate(&self) -> Option<*mut EventLoopTimer> {
         let mut first: Option<*mut EventLoopTimer> = None;
         let mut stack = vec![self.0.root];
@@ -316,8 +316,7 @@ impl TimerHeap {
             if node.is_null() {
                 continue;
             }
-            // SAFETY: all reachable nodes were inserted via `insert()` and remain
-            // live for the heap's lifetime (intrusive invariant maintained by `All`).
+            // SAFETY: reachable nodes stay live while linked (intrusive invariant maintained by `All`).
             unsafe {
                 stack.push((*node).heap.child);
                 stack.push((*node).heap.next);
@@ -331,15 +330,13 @@ impl TimerHeap {
         first
     }
 
-    /// Whether a timer other than the runtime's own upkeep is armed.
     pub(crate) fn has_program_timer(&self) -> bool {
         let mut stack = vec![self.0.root];
         while let Some(node) = stack.pop() {
             if node.is_null() {
                 continue;
             }
-            // SAFETY: all reachable nodes were inserted via `insert()` and remain
-            // live for the heap's lifetime (intrusive invariant maintained by `All`).
+            // SAFETY: reachable nodes stay live while linked (intrusive invariant maintained by `All`).
             let node = unsafe { &*node };
             if !node.tag.is_housekeeping() {
                 return true;
@@ -697,7 +694,7 @@ impl All {
         }
 
         let fake = match tag {
-            // The function that created it chose its clock.
+            // A JS timer stays on the clock it was created on.
             EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
                 // SAFETY: as above.
                 flags.is_some_and(|flags| unsafe { flags.as_ref() }.fake())
@@ -1352,11 +1349,9 @@ pub(crate) enum TimeoutWarning {
     TimeoutNaNWarning,
 }
 
-/// The clock a `setTimeout`, `setInterval` or `setImmediate` timer is on for as long as it lives.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Clock {
     Real,
-    /// `jest.useFakeTimers()`'s.
     Fake,
 }
 

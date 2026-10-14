@@ -4,7 +4,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Every fixture pushes what happens, in order, to `globalThis.events` and prints it from a test.
+// Each fixture pushes what happens to `globalThis.events`, in order, and a final test prints it.
 const modules = {
   "mod.ts": `
     (globalThis.events ??= []).push("load mod");
@@ -45,12 +45,11 @@ async function runIn(cwd: string, args: string[], env: Record<string, string> = 
   return { stdout, stderr, exitCode };
 }
 
-/** The events of a fixture whose tests all pass. */
 async function events(files: Record<string, string>, args?: string[]) {
   const { stdout, stderr, exitCode } = await run(files, args);
   expect(stderr).toContain(" 0 fail");
   expect(exitCode).toBe(0);
-  // --parallel prints what its workers print to stderr.
+  // --parallel forwards its workers' output to stderr.
   return (stdout + stderr)
     .split("\n")
     .filter(line => line.startsWith("["))
@@ -81,7 +80,7 @@ describe.concurrent("hoisting", () => {
     ).toEqual([["load side", "mocked"]]);
   });
 
-  // Whether babel-jest hoists each.
+  // The boolean is whether babel-jest hoists the chain.
   test.each([
     [`jest.mock("./mod", () => ({ value: "mocked" })).mock("./other", () => ({ other: "mocked" }))`, true],
     [
@@ -114,7 +113,7 @@ describe.concurrent("hoisting", () => {
           ${print}
         `,
       }),
-      // A mock that is not hoisted replaces the exports of the modules, which were loaded.
+      // A mock that isn't hoisted still patches the exports of the already-loaded modules.
     ).toEqual([isHoisted ? ["mocked", "mocked"] : ["load mod", "load other", "mocked", "mocked"]]);
   });
 
@@ -512,7 +511,7 @@ describe.concurrent("imports that stay static", () => {
 });
 
 describe.concurrent("not hoisted", () => {
-  // The real module loads first, and `function read` keeps the import as it is written.
+  // The real module loads first, and read.toString() shows that the import binding wasn't rewritten.
   const unchanged = ["load mod", "load side", "real", "function read() { return captured; }"];
   const body = `
     function read() { return captured; }
@@ -676,7 +675,7 @@ describe.concurrent("vi.mock(import(path))", () => {
     },
   );
 
-  // Each of these opens a scope, and the parser visits scopes in the order it parsed them.
+  // Each of these opens a scope. Dropping it must not desync the visit pass, which walks scopes in parse order.
   test.each([
     `class {}`,
     `class { static {} }`,
@@ -882,7 +881,7 @@ describe.concurrent.each(["jest", "vi"])("a top-level variable in a factory of %
     `,
   });
 
-  // A declaration that only holds primitive literals moves with the mocks. babel-jest does that for the first two.
+  // A declaration of only primitive literals is hoisted with the mocks. babel-jest does that for the first two rows.
   test.each([
     [`const fake = "fake";`, `fake`, `value`, "fake"],
     [`let fake = "fake";`, `fake`, `value`, "fake"],

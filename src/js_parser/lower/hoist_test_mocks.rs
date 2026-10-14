@@ -1,5 +1,4 @@
-//! Under `bun test`, top-level `vi.mock()` / `jest.mock()` / `vi.hoisted()` statements run before
-//! the imports of their file, which become `await import()`.
+//! `bun test` hoists top-level `vi.mock()`, `jest.mock()` and `vi.hoisted()` above imports, which become `await import()`.
 
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::Data as ExprData;
@@ -28,7 +27,6 @@ impl MockApi {
 
 pub(crate) use bun_ast::import_record::is_test_module;
 
-/// When a top-level statement runs, in a file that hoists mocks.
 #[derive(Clone, Copy)]
 pub(crate) enum MockHoistOrder {
     BeforeHoisted,
@@ -37,7 +35,7 @@ pub(crate) enum MockHoistOrder {
     InPlace,
 }
 
-/// `(0, ns.fn)`: a call of a lowered import does not pass `ns` as `this`. Returns whether it is one.
+/// Rewrites a lowered import's callee to `(0, ns.fn)`, so the call doesn't pass `ns` as `this`.
 pub(crate) fn drop_namespace_of_lowered_callee(
     symbols: &[js_ast::Symbol],
     callee: &mut Expr,
@@ -46,7 +44,7 @@ pub(crate) fn drop_namespace_of_lowered_callee(
         return false;
     };
     let symbol = &symbols[import.ref_.inner_index() as usize];
-    // A name of another block of a TypeScript namespace has an alias too, and keeps its `this`.
+    // A TypeScript namespace member from another block also has a `namespace_alias`, but keeps its `this`.
     let is_lowered = import.was_originally_identifier()
         && symbol.kind == js_ast::symbol::Kind::Import
         && symbol.namespace_alias.is_some();
@@ -61,9 +59,7 @@ pub(crate) fn drop_namespace_of_lowered_callee(
 }
 
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
-    /// Whether `bun test` may transpile this file to something else than `bun run` does. Both find
-    /// the same answer, and nothing that either does to the file takes any of it back: a record
-    /// stays, and so does the symbol of a name that was looked up and that nothing binds.
+    /// Picks the transpiler cache key, so `bun test` and `bun run` have to compute the same answer.
     pub(crate) fn uses_test_api(&self) -> bool {
         self.has_hoisted_mock_stmt
             || self
@@ -89,7 +85,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             .any(|record| record.path.text == b"vitest")
     }
 
-    /// Whether what this file uses without importing it comes from "vitest".
     pub(crate) fn has_globals_of_vitest(&self) -> bool {
         self.options.features.vitest_globals || self.imports_vitest()
     }
@@ -108,7 +103,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         self.imported_mock_apis.get(&ref_).copied()
     }
 
-    /// What an identifier of a top-level statement is bound to, before the visit pass.
     fn unvisited_top_level_symbol(&self, name: Ref) -> Option<Ref> {
         self.module_scope()
             .members
@@ -116,7 +110,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             .map(|member| member.ref_)
     }
 
-    /// Before the visit pass no global has a symbol: a name of one that nothing binds is one.
+    /// Globals have no symbol before the visit pass, so an unbound identifier is matched by name.
     fn unvisited_top_level_mock_api(&self, name: Ref) -> Option<MockApi> {
         match self.unvisited_top_level_symbol(name) {
             Some(symbol) => self.mock_api(symbol),
@@ -124,8 +118,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
-    /// The `vi` and `mock` of `vi.mock(...)` or `await vi.mock(...)`, before the visit pass.
-    /// `jest.mock()` returns `jest`: of `jest.mock(...).unmock(...)`, the `jest` and `unmock`.
+    /// Returns (api, method). For a `jest.mock(...).unmock(...)` chain, that's the last method.
     fn unvisited_top_level_mock_call(&self, expr: Expr) -> Option<(MockApi, &'a [u8])> {
         let mut callee = match expr.data {
             ExprData::EAwait(awaited) => awaited.value,
@@ -143,7 +136,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 return None;
             }
             let is_chain = last_name.is_some();
-            // Like babel-jest: one call that is not hoisted keeps the whole chain in its place.
+            // Like babel-jest, one call that can't be hoisted keeps the whole chain in place.
             if is_chain && !matches!(dot.name.slice(), b"mock" | b"unmock") {
                 return None;
             }
@@ -180,7 +173,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
-    /// Evaluating it runs no code. Before the visit pass.
     fn is_unvisited_primitive_literal(&self, expr: Expr) -> bool {
         match expr.data {
             ExprData::EString(_)
@@ -203,8 +195,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
-    /// `const a = "a"`: like babel-jest, it moves with the mocks, whose factories can then read it.
-    /// Only an access that would have thrown can tell.
+    /// Like babel-jest, `const a = "a"` is hoisted with the mocks so their factories can read it.
     fn is_primitive_literal_declaration(&self, stmt: &Stmt) -> bool {
         let StmtData::SLocal(local) = stmt.data else {
             return false;
@@ -218,7 +209,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             })
     }
 
-    /// Runs before the visit pass. `None` when no statement is hoisted.
+    /// Must run before the visit pass.
     pub(crate) fn plan_mock_hoisting(&mut self, stmts: &[Stmt]) -> Option<&'a [MockHoistOrder]> {
         self.has_hoisted_mock_stmt = stmts.iter().any(|stmt| self.is_hoisted_mock_stmt(stmt));
         if !self.has_hoisted_mock_stmt || !self.options.features.inject_jest_globals {
@@ -252,10 +243,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         Some(order.into_bump_slice())
     }
 
-    /// The names of a lowered import become reads of its namespace. Any other import stays static.
+    /// Aliases a lowered import's names to its namespace, so `a` prints as `ns.a`.
     pub(crate) fn plan_import(&mut self, import: &S::Import, exported: &RefMap) -> MockHoistOrder {
         let record = &self.import_records.items()[import.import_record_index as usize];
-        // "bun" prints as `var`s that read `globalThis.Bun`.
+        // An import of "bun" prints as `var`s that read `globalThis.Bun`.
         if is_test_module(record.path.text) || record.path.text == b"bun" {
             return MockHoistOrder::BeforeHoisted;
         }
@@ -304,7 +295,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         MockHoistOrder::LoweredImport
     }
 
-    /// `ImportScanner` lowers an `S::Import` whose record is dynamic.
+    /// `ImportKind::Dynamic` on an `S::Import`'s record tells `ImportScanner` to lower it.
     pub(crate) fn append_hoisted_mocks(
         &mut self,
         before: &mut BumpVec<'a, js_ast::Part>,
@@ -324,7 +315,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         before.append(imports);
     }
 
-    /// `const ns = await import("a")`, after the unused names of `import` were removed.
     pub(crate) fn lower_import_to_dynamic(&mut self, import: &S::Import, loc: js_ast::Loc) -> Stmt {
         let record = &self.import_records.items()[import.import_record_index as usize];
         let (path, path_loc) = (record.path.text, record.range.loc);
@@ -378,9 +368,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         )
     }
 
-    /// `vi.mock(import("./a"))` means `vi.mock("./a")`. Returns whether it visited the first argument.
+    /// Rewrites `vi.mock(import("./a"))` to `vi.mock("./a")`. Returns true if it visited the first argument.
     pub(crate) fn visit_import_in_mock_path(&mut self, call: &mut E::Call) -> bool {
-        // Dead code is visited as outside of `bun test`.
         if self.is_control_flow_dead {
             return false;
         }
@@ -410,7 +399,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             return false;
         }
         self.visit_expr(&mut import.expr);
-        // The options go away: no `import()` or `require()` in them gets an import record.
+        // The options are dropped, so visit them as dead code to keep them from adding import records.
         let was_control_flow_dead = core::mem::replace(&mut self.is_control_flow_dead, true);
         self.visit_expr(&mut import.options);
         self.is_control_flow_dead = was_control_flow_dead;

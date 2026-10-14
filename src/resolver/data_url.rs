@@ -228,10 +228,10 @@ impl<'a> DataURL<'a> {
         url
     }
 
-    /// Vite's `svgToDataURL`. What is not UTF-8 is base64 here, and has U+FFFD there.
+    /// Vite's `svgToDataURL`, except that invalid UTF-8 is base64-encoded instead of replaced with U+FFFD.
     pub fn encode_svg_as_data_url(svg: &[u8]) -> Vec<u8> {
         const MIME_TYPE: &[u8] = b"image/svg+xml";
-        // `/"[^"']*'[^"]*"|'[^'"]*"[^']*'/`: a quote, the other one next, and the first one again anywhere behind it.
+        // Vite's `/"[^"']*'[^"]*"|'[^'"]*"[^']*'/`, i.e. a quote, then the other kind, then the first kind again.
         let has_nested_quotes = || {
             let mut quotes = svg.iter().filter(|c| matches!(c, b'"' | b'\''));
             let mut previous = quotes.next();

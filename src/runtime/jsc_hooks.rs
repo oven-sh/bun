@@ -101,7 +101,7 @@ pub(crate) struct RuntimeState {
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
-    /// The innermost matcher of `expect()` whose body is running.
+    /// Innermost entered `Pass`, borrowed from a caller's stack frame; `EnteredPass::drop` pops it.
     pub(crate) matcher_pass: Cell<*const crate::test_runner::expect::expect_deferred::Pass>,
     /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
     pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
@@ -1725,7 +1725,7 @@ unsafe fn cancel_timers(vm: *mut VirtualMachine, only: Option<bun_jsc::ContextId
         }
         return;
     }
-    // Fake-timer state lives in the per-thread `timer::All`, not in the realm whose script has now run for the last time.
+    // Fake-timer state lives in the per-thread `timer::All`, so it would outlive this global.
     // SAFETY: `state` is the live boxed per-thread `RuntimeState`; `vm` per fn
     // contract. `addr_of_mut!` does not materialize a `&mut RuntimeState`.
     unsafe {
@@ -3510,8 +3510,7 @@ fn maybe_watch_file(
     }
 }
 
-/// Register a file that was not opened for parsing with the watcher (if
-/// enabled, absolute, and not in `node_modules`).
+/// Like `maybe_watch_file`, for a file the transpiler didn't open itself.
 fn auto_watch_file(jsc_vm: *mut VirtualMachine, path_text: &[u8]) {
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
     if !unsafe { &*jsc_vm }.is_watcher_enabled() {
@@ -3521,8 +3520,7 @@ fn auto_watch_file(jsc_vm: *mut VirtualMachine, path_text: &[u8]) {
     {
         return;
     }
-    // kqueue watchers need a file descriptor to receive event
-    // notifications on it; inotify/win32 watch by path.
+    // kqueue watchers need a file descriptor to receive event notifications on it; inotify/win32 watch by path.
     let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
         let mut buf = bun_paths::path_buffer_pool::get();
         if path_text.len() >= buf.len() {
@@ -3537,14 +3535,12 @@ fn auto_watch_file(jsc_vm: *mut VirtualMachine, path_text: &[u8]) {
         bun_sys::Fd::INVALID
     };
     let hash = bun_watcher::Watcher::get_hash(path_text);
-    // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-    // set when `is_watcher_enabled()`; cast recovers the concrete
-    // type.
+    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
+    // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
     let added = watcher.add_file::<true>(input_fd, path_text, hash, bun_sys::Fd::INVALID, None);
     if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-        // Not adopted (already watched, or add failed); close the
-        // fd opened above.
+        // Not adopted (already watched, or add failed); close the fd opened above.
         if input_fd.is_valid() {
             use bun_sys::FdExt as _;
             input_fd.close();
@@ -3552,7 +3548,6 @@ fn auto_watch_file(jsc_vm: *mut VirtualMachine, path_text: &[u8]) {
     }
 }
 
-/// A file reached from a CSS module that was imported at runtime.
 struct CssModuleFile {
     source: bun_ast::Source,
     /// `None` when the file's loader is not CSS.
@@ -3590,7 +3585,7 @@ impl CssModuleFile {
         }
     }
 
-    /// Parses `contents` as the bundler parses the file at `path_text`, but skips what is invalid, as a browser does.
+    /// Parses like the bundler, but skips invalid CSS the way a browser does instead of failing the import.
     fn parse(
         jsc_vm: *mut VirtualMachine,
         global: &JSGlobalObject,
@@ -3602,7 +3597,7 @@ impl CssModuleFile {
     ) -> crate::Result<CssModuleFile> {
         let top_level_dir = Fs::FileSystem::get().top_level_dir;
         let mut path = Fs::Path::init(intern_transpile_path(path_text));
-        // The pretty path is made in path buffers: at most "../" per directory of `top_level_dir`, then `path_text`.
+        // The pretty path must fit a path buffer. Worst case is "../" per `top_level_dir` component plus `path_text`.
         if path_text.len() + 2 * top_level_dir.len() < bun_paths::MAX_PATH_BYTES {
             path = bun_bundler::generic_path_with_pretty_initialized(
                 &path,
@@ -3644,7 +3639,7 @@ impl CssModuleFile {
                 file.symbols = extra.symbols;
                 Ok(file)
             }
-            // With error recovery, the parser only fails for lack of stack.
+            // With `error_recovery` on, the parser only fails when it runs out of stack.
             Err(_) => Err(global.throw_stack_overflow().into()),
         }
     }
@@ -3667,7 +3662,6 @@ impl bun_css::css_modules::ComposesGraph for CssModuleGraph {
 }
 
 impl CssModuleGraph {
-    /// Parses `contents`, the CSS module at `path_text`, and every file it reaches through `composes: name from "file"`.
     fn load(
         &mut self,
         jsc_vm: *mut VirtualMachine,
@@ -3745,7 +3739,7 @@ impl CssModuleGraph {
         Ok(())
     }
 
-    /// Each local of the first file with the string the bundler exports for it, less what cannot be composed.
+    /// Pairs each local name in the first file with the space-separated class names it exports.
     fn exports(
         &self,
         global: &JSGlobalObject,
@@ -3790,8 +3784,7 @@ impl CssModuleGraph {
 
 bun_core::declare_scope!(CssModule, hidden);
 
-/// The object `Bun.build` makes the default export of the CSS module at `path_text`.
-/// `virtual_source`: what a plugin supplied in place of the file's contents.
+/// Builds the same object `Bun.build` emits as the CSS module's default export.
 #[cold]
 #[inline(never)]
 fn css_module_exports(
@@ -3802,7 +3795,7 @@ fn css_module_exports(
     log: &mut bun_ast::Log,
 ) -> crate::Result<JSValue> {
     let arena = bun_alloc::Arena::new();
-    // SAFETY: `arena` owns every file's bytes; only `graph` and `skipped` borrow from it and, declared later, drop first.
+    // SAFETY: only `graph` and `skipped` borrow from `arena`; they're declared after it, so they drop first.
     let bump: &'static bun_alloc::Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
     let mut graph = CssModuleGraph(Vec::new());
     let mut skipped = bun_ast::Log::init();
@@ -4376,8 +4369,6 @@ unsafe fn get_loader_and_virtual_source<'a>(
     })
 }
 
-/// The package.json of the package `path` is in.
-///
 /// # Safety
 /// `jsc_vm` is the live per-thread VM; the returned borrow lives as long as its resolver caches.
 unsafe fn package_json_of<'a>(
@@ -4396,7 +4387,6 @@ unsafe fn package_json_of<'a>(
     }
 }
 
-/// What the extension of `path`, else its package.json, says it is. `Unknown`: its contents decide.
 fn module_type_of(
     path: &Fs::Path<'_>,
     package_json: Option<&bun_resolver::package_json::PackageJSON>,

@@ -744,7 +744,7 @@ impl JSGlobalObject {
         Bun__hasPlugins(self)
     }
 
-    /// Whether an `onResolve` is registered in the `file` namespace, and whether one is in another.
+    /// Returns (an `onResolve` is registered in the `file` namespace, one is registered in another namespace).
     pub(crate) fn has_on_resolve(&self) -> (bool, bool) {
         let namespaces = Bun__onResolveNamespaces(self);
         (namespaces & 1 != 0, namespaces & 2 != 0)
@@ -1478,8 +1478,8 @@ extern "C" fn Zig__GlobalObject__resolve(
     }
 }
 
-/// `import.meta.resolve()` of a path or `file:` URL, which it does not look for on disk: what the
-/// answer of an `onResolve` resolves to. False when none answers, or with what it was asked about.
+/// `import.meta.resolve()` skips the resolver for a path or `file:` URL, so it runs `onResolve` plugins through this.
+/// Returns false when no plugin claims `specifier` or the plugin returns it unchanged.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__resolveWithOnResolve(
     res: &mut ErrorableString,
@@ -1489,7 +1489,7 @@ extern "C" fn Bun__resolveWithOnResolve(
     query: &mut BunString,
 ) -> bool {
     crate::mark_binding();
-    // None is asked by a callback, or a catch-all that calls it would call itself without end.
+    // Skip plugins when an `onResolve` callback is the caller, or a catch-all filter would recurse forever.
     if global.bun_vm().is_in_on_resolve.get() {
         return false;
     }

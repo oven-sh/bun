@@ -1,7 +1,6 @@
 // @ts-nocheck
 import { expect, test } from "vitest";
 
-// Small things that the other fixtures do not have.
 class Text {
   nodeType = 3;
   constructor(data) {
@@ -23,7 +22,7 @@ class HTMLDivElement {
   }
 }
 
-// The line breaks of all that is printed are made "\n" at the end, so a "\r" before one that the printer adds is lost.
+// Line endings are normalized to "\n" after printing, so a "\r" just before a newline the printer added is lost.
 test.each(["a\r", "a\r\n", "a\n\r", "\ra", "a\rb", "a\r\rb", "\r", "\r\n\r\n"])("carriage returns: %j", text => {
   expect(new Text(text)).toMatchSnapshot("text");
   expect(new Comment(text)).toMatchSnapshot("comment");

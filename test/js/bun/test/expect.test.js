@@ -160,7 +160,6 @@ describe("expect()", () => {
       await expect(thenable("reject", 4)).rejects.not.toBe(5);
       await expect(thenable("reject", new Error("thenable error"))).rejects.toThrow("thenable error");
 
-      // Different task
       await expect({
         then(/** @type {(value: string) => void} */ resolve) {
           setTimeout(() => resolve("later"), 0);
@@ -202,7 +201,7 @@ describe("expect()", () => {
       }
     });
 
-    // Jest hands its own callbacks to then(), so what `await` does around that call does not happen.
+    // Skipped on Jest, which calls then() directly instead of awaiting the thenable.
     test_skipIf(isJest)("adopts the thenable as await does", async () => {
       const error = new Error("thrown by then()");
       await expect({
@@ -248,7 +247,7 @@ describe("expect()", () => {
       expect({ a: { then: 1 } }).not.toEqual({ a: expect.resolvesTo.anything() });
     });
 
-    // Bun.$ and Bun.sql return such promises. In a child process, because no test timeout ends the wait for one that never starts.
+    // Like Bun.$ and Bun.sql. Runs in a child process because the test timeout can't end the wait if one never starts.
     test_skipIf(!isBun)("a Promise subclass that starts its work in then()", async () => {
       const { bunEnv, bunExe } = require("harness");
       const src = `
@@ -3745,7 +3744,7 @@ describe("expect()", () => {
       } catch (error) {
         message = Bun.stripANSI(error.message);
       }
-      // What has matched an asymmetric matcher is not part of the difference.
+      // Properties that matched an asymmetric matcher are left out of the diff.
       expect(message.split("\n").filter(line => /^[-+] /.test(line))).toEqual([
         '-   "point": {',
         '+   "point": Point {',

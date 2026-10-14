@@ -1615,10 +1615,9 @@ pub mod formatter {
         /// printed as a string. Set true in the error printer so that
         /// `ShellError` prints a more readable message.
         pub(crate) format_buffer_as_text: bool,
-        /// Set for `bun:test` matcher messages. True when it printed `value`, a DOM node or collection.
+        /// Set for `bun:test` matcher messages. Returns true if the value was a DOM node or collection and it printed it.
         pub dom_printer:
             Option<fn(&mut Formatter<'_>, &mut dyn bun_io::Write, JSValue) -> JsResult<bool>>,
-        /// Set for `bun:test` matcher messages. An own accessor prints as what its getter returns.
         pub call_own_getters: bool,
     }
 
@@ -3183,7 +3182,7 @@ pub mod formatter {
         if value.js_type() == jsc::JSType::GlobalProxy {
             let target = value.get_proxy_target();
             let name_str = target.get_class_name(global_this)?;
-            // Without a constructor to be found, it is the name of the native class.
+            // `get_class_name` falls back to the native class name when it finds no constructor. Don't print that.
             let is_label = !name_str.is_empty()
                 && !name_str.eq_ascii(b"Object")
                 && !target
@@ -5508,7 +5507,7 @@ pub mod formatter {
                     } else {
                         Tag::Function
                     };
-                    // It is among the visited as the object that it has been printed as so far.
+                    // Printing `value` as an object already put it in the visited map, so `print_as` would call it circular.
                     let was_in_map = self.map_node.is_some() && self.map.remove(&value).is_some();
                     let result = self.print_as::<C>(tag, writer_, value, js_type);
                     if was_in_map {

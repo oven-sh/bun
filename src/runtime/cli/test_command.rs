@@ -1739,7 +1739,7 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     // called from the JS thread once a VM exists.
     let options = &VirtualMachine::get().as_mut().transpiler.options;
 
-    // What Bun generates for `./worker.ts?worker` is not the user's code; what a plugin supplies for `./a.vue?x` is.
+    // Skip the wrapper modules Bun generates for these suffixes. Other queries (a plugin's `./a.vue?x`) are user code.
     if let Some(query) = strings::index_of_char_usize(slice, b'?') {
         use bun_bundler::options::ImportSuffix;
         let by_extension = options.loader(bun_path::extension(&slice[..query]));
@@ -1827,7 +1827,7 @@ impl TestCommand {
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
-        // Without --randomize, it is for `describe.shuffle`.
+        // `describe.shuffle` needs a seed even without --randomize.
         let seed: u32 = ctx
             .test_options
             .seed
@@ -2870,7 +2870,6 @@ impl TestCommand {
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 
-    /// A promise rejected with why the runner gave up waiting for `what`.
     fn never_settled(
         global: &jsc::JSGlobalObject,
         what: &str,
@@ -2888,10 +2887,6 @@ impl TestCommand {
         std::ptr::from_mut(rejected)
     }
 
-    /// The next load finds the modules as the preloads left them. A module that is still being loaded goes
-    /// once it has loaded, which is waited for: the next load would be given it, with the mocks it has imported.
-    /// One that can never finish loading goes as it is: the next file would wait for it, and be blamed.
-    /// A file that has mocked modules holds on to its own copies of all that imported them: it goes too.
     fn undo_module_mocks(
         vm: &VirtualMachine,
         global: &jsc::JSGlobalObject,
@@ -2909,16 +2904,19 @@ impl TestCommand {
         if !next_load_shares_global {
             return;
         }
+        // Wait for in-flight modules to load and be evicted, or the next file would get them with this file's mocks.
         let loaded = vm
             .event_loop_ref()
             .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasModulesToEvict(global));
         if loaded == Err(TopLevelWaitError::NothingLeft) {
+            // They can never finish loading. The next file would hang on them and take the blame.
             drop(bun_jsc::cpp::Bun__evictUnfinishedModules(global));
         }
+        // Also evict the test file: it holds its own copies of the mock's importers.
         JSMock__replaceModuleOfTestFile(global, &bun::String::from_bytes(file_path));
     }
 
-    /// In words, and what tells it from the runner's next step. `None`: several tests at once.
+    /// Returns a description for the error, and the step's identity so the caller can tell if the runner moved on.
     fn what_runner_waits_for(
         buntest: &bun_test::BunTest,
     ) -> (&'static str, Option<(*const (), i64)>) {
@@ -3074,7 +3072,7 @@ impl TestCommand {
                 };
                 let buntest = buntest_strong.get();
                 buntest.is_loading = false;
-                // None of its tests run. The hooks of a preload that are due with this file do.
+                // Skips this file's tests, but preload hooks due with this file still run.
                 buntest.collection.root_scope.failed |= failed_to_load;
 
                 // Automatically execute bun_test tests
@@ -3091,7 +3089,7 @@ impl TestCommand {
 
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
                 while buntest.phase != bun_test::Phase::Done {
-                    // `RunTestsTask` left them when it came up in an event loop beneath script.
+                    // `RunTestsTask` leaves results queued when it fires in an event loop nested under JS.
                     if buntest.result_queue.readable_length() > 0 {
                         bun_test::BunTest::run_next_tick(
                             &std::rc::Rc::downgrade(&buntest_strong),
@@ -3112,8 +3110,7 @@ impl TestCommand {
                         ));
                         vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
                         vm.event_loop_ref().tick();
-                        // The error ends a describe() or a test, not a hook or concurrent tests:
-                        // then what is left of the file never runs.
+                        // The error ends a describe() or a test. Anything else stays stuck, so abandon the file.
                         if waits_for.is_none()
                             || waits_for == Self::what_runner_waits_for(buntest).1
                         {
@@ -3187,7 +3184,7 @@ impl TestCommand {
                 crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
             }
             Self::undo_module_mocks(vm, global, file_path, next_load_shares_global);
-            // After them: what the script they run rejects is still this file's.
+            // Must run after the cleanup above, so rejections from JS it runs are reported in this file.
             let _ = vm.global().handle_rejected_promises();
 
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
@@ -3208,7 +3205,7 @@ impl TestCommand {
             } else {
                 repeat_index + 1
             };
-            // Here, an error it throws is still this file's.
+            // Tear down before `EnteredFile` drops, so an error it throws is reported in this file.
             if repeat_index == repeat_count {
                 environment.teardown(vm);
             }
@@ -3220,7 +3217,6 @@ impl TestCommand {
     }
 }
 
-/// `vm.log`
 struct PrintLogAfterFile(Option<core::ptr::NonNull<bun_ast::Log>>);
 
 impl Drop for PrintLogAfterFile {
@@ -3229,7 +3225,7 @@ impl Drop for PrintLogAfterFile {
         bun_ast::Stmt::data_store_reset();
 
         if let Some(log) = self.0 {
-            // SAFETY: the VM owns the Log, and outlives the run of a file.
+            // SAFETY: the VM owns the Log and outlives `TestCommand::run`.
             let log = unsafe { &mut *log.as_ptr() };
             if log.errors > 0 {
                 let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
@@ -3244,7 +3240,6 @@ impl Drop for PrintLogAfterFile {
     }
 }
 
-/// `test.only` holds for the file it is in.
 struct RestoreOnlyAfterFile {
     reporter: *mut CommandLineReporter,
     only: bool,
@@ -3257,7 +3252,6 @@ impl Drop for RestoreOnlyAfterFile {
     }
 }
 
-/// From `BunTestRoot::enter_file` to `exit_file`.
 struct EnteredFile<'a> {
     bun_test_root: *mut bun_test::BunTestRoot,
     global: &'a jsc::JSGlobalObject,
@@ -3266,7 +3260,7 @@ struct EnteredFile<'a> {
 
 impl Drop for EnteredFile<'_> {
     fn drop(&mut self) {
-        // SAFETY: it is `Jest::runner()`'s, which lives as long as the process.
+        // SAFETY: `bun_test_root` belongs to `Jest::runner()`, which lives as long as the process.
         unsafe { (*self.bun_test_root).exit_file() };
         // A mock.module() patch still pending must not hold up the next file.
         bun_jsc::cpp::JSMock__forgetPendingModulePatches(self.global);

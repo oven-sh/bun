@@ -199,13 +199,10 @@ impl Stopped {
     }
 }
 
-/// Why [`EventLoop::wait_at_top_level`] gave up.
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TopLevelWaitError {
-    /// See [`Stopped`].
     #[error("Stopped")]
     Stopped,
-    /// No work is queued, and no handle or timer is left to queue any.
     #[error(
         "it is waiting for something that can no longer happen: the event loop has nothing left to run"
     )]
@@ -1159,8 +1156,7 @@ impl EventLoop {
         Ok(())
     }
 
-    /// [`auto_tick`](Self::auto_tick) for a wait that goes on whether or not anything keeps the loop alive.
-    /// With nothing that does, `auto_tick` only polls, and such a wait spins until the next timer is due.
+    /// With nothing keeping the loop alive, `auto_tick` only polls, so a caller that keeps waiting would spin. This sleeps.
     pub fn auto_tick_asleep(&mut self) {
         if self.vm_ref().is_event_loop_alive_despite_errors() {
             return self.auto_tick();
@@ -1170,9 +1166,8 @@ impl EventLoop {
         self.unref_keep_alive();
     }
 
-    /// [`wait_for_promise`](Self::wait_for_promise) for a wait with no script beneath it, the only kind
-    /// that may decide that what it waits for will never happen: ticks until `is_done`, and gives up
-    /// once nothing is left that could run script again.
+    /// Ticks until `is_done`, and gives up once nothing is left that could run JS again.
+    /// Only valid with no JS on the stack: a suspended caller could still make `is_done` true.
     pub fn wait_at_top_level(
         &mut self,
         mut is_done: impl FnMut() -> bool,
@@ -1304,7 +1299,7 @@ impl EventLoop {
 
     /// Prefer `runCallbackWithResult` unless you really need to make sure that microtasks are drained.
     /// `context`: as for [`run_callback`](Self::run_callback).
-    /// `after_call` runs between the call and the microtasks.
+    /// `after_call` runs after `callback` returns and before microtasks drain.
     pub fn run_callback_with_result_and_forcefully_drain_microtasks(
         &mut self,
         context: crate::ContextId,
@@ -1315,7 +1310,7 @@ impl EventLoop {
         after_call: impl FnOnce(),
     ) -> JsResult<JSValue> {
         let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
-            // Not called is not "returned undefined".
+            // An exception is already pending and `callback` never ran, so don't pretend it returned undefined.
             return Err(crate::JsError::Thrown);
         };
         let result = callback.call(global_object, this_value, arguments);

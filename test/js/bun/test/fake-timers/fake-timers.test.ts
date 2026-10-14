@@ -31,12 +31,10 @@ const everyFunction = [
   "queueMicrotask",
   "requestAnimationFrame",
 ] as const;
-/** Resolves after `ms` of real time, whatever is faked. */
 const waitOnTheRealClock = (ms: number) => new Promise<void>(resolve => saved.setTimeout(resolve, ms));
-/** Resolves after a turn of the event loop, whatever is faked. */
 const oneLoopTurn = () => new Promise<void>(resolve => saved.setImmediate(resolve));
 
-/** What `call` throws. `expect(call).toThrow()` also takes an error that is only reported as uncaught during the call. */
+/** Unlike `expect(call).toThrow()`, this ignores an error that's only reported as uncaught during the call. */
 function thrownBy(call: () => unknown) {
   try {
     call();
@@ -52,7 +50,6 @@ async function run(cmd: string[], cwd?: string) {
     cwd,
     stdout: "pipe",
     stderr: "pipe",
-    // A child that hangs is killed rather than left behind.
     timeout: 30_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -1023,8 +1020,7 @@ describe("useFakeTimers with options", () => {
   });
 });
 
-// Which function object is called decides which clock a timer is on, as in
-// vitest and Jest: useFakeTimers() puts other functions on globalThis.
+// useFakeTimers() swaps the globals, as in Vitest and Jest, so a saved reference to the real setTimeout stays real.
 describe("the functions useFakeTimers() replaces", () => {
   test("are other function objects, and useRealTimers() puts the real ones back", () => {
     const names = ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] as const;
@@ -1032,7 +1028,6 @@ describe("the functions useFakeTimers() replaces", () => {
     const fakes = Object.fromEntries(names.map(name => [name, globalThis[name]]));
     expect(names.filter(name => fakes[name] === saved[name])).toEqual([]);
     expect(names.map(name => [typeof fakes[name], fakes[name].name])).toEqual(names.map(name => ["function", name]));
-    // setImmediate is only faked on request.
     expect(setImmediate).toBe(saved.setImmediate);
 
     vi.useFakeTimers();
@@ -1104,7 +1099,7 @@ describe("the functions useFakeTimers() replaces", () => {
     saved.clearInterval(handle(setInterval(() => fired.push("fake interval, real clear"), 1)));
     expect(vi.getTimerCount()).toBe(0);
     vi.advanceTimersByTime(10);
-    // Later than the two real timers would have fired.
+    // Long enough for the two real 1ms timers to fire if they weren't cleared.
     await waitOnTheRealClock(5);
     expect(fired).toEqual([]);
   });
@@ -1174,7 +1169,6 @@ describe("the functions useFakeTimers() replaces", () => {
     expect(results).toEqual(["immediate", "timeout"]);
   });
 
-  // A fake function belongs to the useFakeTimers() call that created it.
   test.each([
     ["useRealTimers()", () => vi.useRealTimers()],
     ["the next useFakeTimers()", () => vi.useFakeTimers({ toFake: [...everyFunction] })],
@@ -1250,7 +1244,6 @@ describe.concurrent("the end of a test file", () => {
       .filter(line => /^\((pass|fail)\)/.test(line))
       .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
 
-  /** Never calls useFakeTimers(). */
   const needsRealTimers = `
     import { expect, test, vi } from "bun:test";
     const atTheTop = { setTimeout, date: Date.now() };
@@ -1299,7 +1292,7 @@ describe.concurrent("the end of a test file", () => {
     });
   });
 
-  // As in vitest. What goes on after it would fail where no test is left to fail.
+  // Matches Vitest. If it settled, the code after the await would fail with no test left to report it.
   test.each([[[]], [["--isolate"]]])("leaves the promise of an …Async call in flight pending %j", async flags => {
     using dir = tempDir("fake-timers-file-end-in-flight", {
       "a.test.ts": `
@@ -1538,7 +1531,7 @@ describe("a global with a getter", () => {
 });
 
 describe("useFakeTimers({ toFake, doNotFake })", () => {
-  // These have no function object to replace: they are on the clock setTimeout is on.
+  // There's no global to swap for these, so they follow whichever clock setTimeout is on.
   const likeSetTimeout = ["AbortSignal.timeout", "Bun.sleep", "Bun.cron"];
   const everything = [
     "setTimeout",
@@ -1553,7 +1546,6 @@ describe("useFakeTimers({ toFake, doNotFake })", () => {
   ];
   const byDefault = ["setTimeout", "setInterval", "Date", "performance", "hrtime", ...likeSetTimeout];
 
-  /** The names in `everything` that are on the fake clock. */
   function whatIsFaked(): string[] {
     const schedulers: Record<string, () => unknown> = {
       setTimeout: () => setTimeout(() => {}, 1e6),
@@ -1567,7 +1559,7 @@ describe("useFakeTimers({ toFake, doNotFake })", () => {
     };
     const found: string[] = [];
     const realTimers: unknown[] = [];
-    // The timer of an AbortSignal that is collected is no longer counted, which would hide the one scheduled meanwhile.
+    // Keeps the AbortSignal alive. Once collected, its timer leaves getTimerCount() and masks the next one scheduled.
     const kept: unknown[] = [];
     for (const [name, schedule] of Object.entries(schedulers)) {
       const pending = vi.getTimerCount();
@@ -1713,8 +1705,7 @@ describe("useFakeTimers({ toFake, doNotFake })", () => {
   });
 });
 
-// A suite can want a performance.now() that stands still while everything that
-// waits (a DOM library's animation frames, a helper that polls) goes on for real.
+// For suites that freeze performance.now() but keep real timers for a DOM library's frames or polling helpers.
 describe('toFake: ["performance"] in a beforeEach', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ["performance"] });
@@ -1962,7 +1953,6 @@ describe("what a faked tick throws", () => {
     throw new Error("from a tick");
   };
 
-  /** What `drive` threw or rejected with, which of a tick behind the one that throws and of a timer at 7ms it ran, and where it left the clock. */
   async function outcome(drive: () => unknown, arrange: (queue: () => void) => void) {
     vi.useFakeTimers({ toFake: [...toFake] });
     const ran: string[] = [];
@@ -1980,7 +1970,7 @@ describe("what a faked tick throws", () => {
     return { thrown, ran, now: performance.now(), pending: vi.getTimerCount() };
   }
 
-  // In vitest too, where it does not hang: a tick that throws between two timers of advanceTimersByTime() is run again for ever.
+  // Matches Vitest, except that Vitest hangs when a tick throws between two timers of advanceTimersByTime().
   describe.each(Object.entries(drivers))("ends %s()", (_, drive) => {
     test("before the first timer", async () => {
       expect(await outcome(drive, queue => queue())).toEqual({
@@ -2058,7 +2048,7 @@ describe("what a faked tick throws", () => {
   });
 });
 
-// Each in a process of its own: what the loop limit does not stop does not return, and no timeout of a test ends it.
+// Each case gets its own process, because a test timeout can't end a sync loop that the loop limit fails to stop.
 describe("a faked tick that queues itself again", () => {
   const limit = "Aborting after running 100 timers, assuming an infinite loop!";
   const prelude = `
@@ -2078,7 +2068,6 @@ describe("a faked tick that queues itself again", () => {
       throw new Error("from a tick");
     };
   `;
-  /** What the fixture printed, a line of JSON each, or the line itself. */
   const printed = (stdout: string) =>
     stdout
       .replace(/^bun test .*\n/, "")
@@ -2261,7 +2250,7 @@ describe("as in @sinonjs/fake-timers", () => {
   });
 });
 
-// As in Vitest, what is undone after useRealTimers() puts back what it saw: the fake.
+// As in Vitest, a spy or stub that's undone after useRealTimers() puts back what it replaced, which is the fake.
 describe("a fake that comes back after useRealTimers()", () => {
   const ways = [
     ["jest.spyOn()", () => void jest.spyOn(globalThis, "setTimeout"), () => void jest.restoreAllMocks()],
@@ -2383,7 +2372,7 @@ describe("a faked requestAnimationFrame", () => {
     expect(["requestAnimationFrame" in globalThis, "cancelAnimationFrame" in globalThis]).toEqual([false, false]);
   });
 
-  // As in Jest and Vitest: the timers a DOM library runs its own frames on are not the test's to advance.
+  // As in Jest and Vitest. A DOM library's own requestAnimationFrame runs on timers the test can't advance.
   test.each([
     ["vi", vi],
     ["jest", jest],
@@ -2607,10 +2596,9 @@ describe.each([
   ["vi", vi],
   ["jest", jest],
 ] as const)("%s: the Async functions", (_, api) => {
-  // vitest resolves with `vi`, Jest with nothing.
+  // Vitest's Async functions resolve with `vi`, Jest's with undefined.
   const resolved = api === vi ? vi : undefined;
 
-  /** A chain of timeouts, each armed after an `await` in the callback of the one before. */
   function chain(at: number[], length: number, wait: () => Promise<unknown>) {
     const arm = () =>
       setTimeout(async () => {
@@ -2910,7 +2898,7 @@ describe("the clock that advances by itself", () => {
     ({ vi, jest })[name].useFakeTimers({ ...options, now: 0 });
     const firedAt = await new Promise<number>(resolve => setTimeout(() => resolve(Date.now()), 30));
     expect(firedAt).toBe(30);
-    // The clock moves in steps of the delta: a promise job runs when a step is complete.
+    // The clock moves a whole delta at a time, and promise jobs only run between steps.
     expect(Date.now() % delta).toBe(0);
     expect(Date.now()).toBeGreaterThanOrEqual(30);
   });
@@ -2923,7 +2911,7 @@ describe("the clock that advances by itself", () => {
     [{ advanceTimers: 0 }],
   ])("useFakeTimers(%j) does not advance", async options => {
     vi.useFakeTimers({ ...options, now: 0 });
-    // No event says that the clock has not moved: several times the delta of 1ms.
+    // There's no event for "the clock didn't move", so wait several times the 1ms delta.
     await waitOnTheRealClock(10);
     expect(Date.now()).toBe(0);
   });
@@ -2936,7 +2924,7 @@ describe("the clock that advances by itself", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true, advanceTimeDelta: 1 });
     await new Promise(resolve => setTimeout(resolve, 2));
     stop();
-    // No event says that the clock has not moved: several times the delta of 1ms.
+    // There's no event for "the clock didn't move", so wait several times the 1ms delta.
     await waitOnTheRealClock(10);
     expect(Date.now()).toBe(0);
   });

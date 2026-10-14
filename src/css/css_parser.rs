@@ -3790,7 +3790,7 @@ pub struct ParserInput<'a> {
     pub(crate) cached_token: Option<CachedToken>,
     pub(crate) nesting_depth: u32,
     stack_check: StackCheck,
-    /// A block was skipped for lack of stack, which neither backtracking nor error recovery may hide.
+    /// Sticky, so backtracking and error recovery can't hide a block that was skipped for lack of stack.
     out_of_stack: bool,
     /// Set once a nested block fails to parse and the end of input is reached
     /// without ever finding its closing token, i.e. the stylesheet is

@@ -1,4 +1,4 @@
-//! DOM nodes and collections, printed like pretty-format's `DOMElement` and `DOMCollection` plugins.
+//! Prints DOM nodes and collections like pretty-format's `DOMElement` and `DOMCollection` plugins.
 
 use core::cmp::Ordering;
 use core::ffi::c_void;
@@ -11,7 +11,7 @@ use bun_jsc::{
 
 use super::pretty_format;
 
-/// jest-matcher-utils `stringify`.
+/// Mirrors jest-matcher-utils' `stringify`.
 pub(crate) fn print_in_message(
     formatter: &mut console_object::Formatter<'_>,
     writer: &mut dyn bun_io::Write,
@@ -62,14 +62,13 @@ pub(crate) fn print_in_message(
     }
 }
 
-/// jest-snapshot `serialize`.
 pub(crate) fn print_in_snapshot(
     formatter: &mut pretty_format::Formatter<'_>,
     writer: &mut dyn bun_io::Write,
     value: JSValue,
 ) -> JsResult<bool> {
     let format = formatter.snapshot_format;
-    // What the test of a plugin of pretty-format throws is thrown.
+    // pretty-format lets an exception from a plugin's `test()` propagate. `is_dom` swallows it.
     if !if format.is_pretty_format() { classify(formatter.global_this, value)?.is_some() } else { is_dom(formatter.global_this, value)? } {
         return Ok(false);
     }
@@ -103,10 +102,9 @@ pub(crate) fn print_in_snapshot(
     Ok(true)
 }
 
-/// The formatter that met the DOM value. It prints what is not DOM.
+/// The calling formatter, which prints the non-DOM values nested in a DOM value.
 trait Host {
     fn print(&mut self, out: &mut Vec<u8>, value: JSValue, indent: u32, depth: u32) -> JsResult<()>;
-    /// With `printed` bytes in a buffer, `copied` of which are about to be moved to another.
     fn check_length(&mut self, _printed: usize, _copied: usize) -> JsResult<()> {
         Ok(())
     }
@@ -160,7 +158,7 @@ enum Dom {
     Record { name: String },
 }
 
-/// For the values a formatter meets: one whose properties throw prints as it did before.
+/// A value whose getters throw counts as non-DOM instead of failing the print.
 fn is_dom(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
     match classify(global, value) {
         Ok(dom) => Ok(dom.is_some()),
@@ -176,7 +174,7 @@ fn classify(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Dom>> {
     ) {
         return Ok(None);
     }
-    // `get` does not look at `Object.prototype`, so a plain object has none. An array has a native one.
+    // `get` skips `Object.prototype`, so a plain object returns here. An array gets the native `Array` constructor.
     let Some(constructor) = value.get(global, "constructor")? else {
         return Ok(None);
     };
@@ -211,7 +209,7 @@ fn classify(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Dom>> {
     if name.eq_ascii(b"NamedNodeMap") {
         return Ok(Some(Dom::NamedNodeMap { name }));
     }
-    // pretty-format has no plugin for a DOMTokenList, and prints it as the object it is.
+    // pretty-format has no DOMTokenList plugin and prints it as a plain object.
     if name.eq_ascii(b"DOMStringMap") || name.eq_ascii(b"DOMTokenList") {
         return Ok(Some(Dom::Record { name }));
     }
@@ -262,7 +260,7 @@ fn is_list_name(name: &[u8]) -> bool {
             .is_some_and(is_word)
 }
 
-/// The order of `Array.prototype.sort` without a comparator.
+/// Same order as `Array.prototype.sort()` with no comparator.
 fn compare_code_units(a: &String, b: &String) -> Ordering {
     let (a, b) = (a.to_encoded_slice(), b.to_encoded_slice());
     (0..a.len.min(b.len))
@@ -278,7 +276,6 @@ fn length_of(global: &JSGlobalObject, list: JSValue) -> JsResult<u32> {
     })
 }
 
-/// The items `Array.from(list)` has: what its iterator yields, or its indexes when it has none.
 fn for_each_item(
     global: &JSGlobalObject,
     list: JSValue,
@@ -332,22 +329,20 @@ struct Printer<'a> {
     global: &'a JSGlobalObject,
     host: &'a mut dyn Host,
     out: Vec<u8>,
-    /// pretty-format's `min` option: everything on one line.
+    /// pretty-format's `min` option.
     min: bool,
     /// See `pretty_format::Formatter::is_inline`.
     is_inline: bool,
-    /// A message has them; of a snapshot in the format of Jest or Vitest, the line breaks are normalized as a whole.
+    /// False only for Bun's own snapshot format. `print_snapshot` normalizes Jest and Vitest snapshots as a whole.
     keeps_carriage_returns: bool,
-    /// Vitest's `printShadowRoot` option.
     shadow_roots: bool,
     max_depth: u32,
     max_width: u32,
-    /// With this many bytes in `out`, it is too long to be used and the rest of it does not matter.
+    /// Stop printing once `out` has this many bytes: the caller will discard it and retry.
     give_up_at: usize,
 }
 
 impl Printer<'_> {
-    /// False, with nothing written, when `value` is not DOM.
     fn print_dom(&mut self, value: JSValue, indent: u32, depth: u32) -> JsResult<bool> {
         if indent > pretty_format::MAX_INDENT || !StackCheck::init().is_safe_to_recurse() {
             return Err(self.global.throw_stack_overflow());
@@ -391,7 +386,7 @@ impl Printer<'_> {
                 }
             }
             Dom::Record { name } => {
-                // Vitest's `min` leaves out the names that the plugin prints, and no others.
+                // Under `min`, Vitest only drops the names its DOMCollection plugin prints. DOMTokenList isn't one.
                 let keeps_name = self.is_inline && name.eq_ascii(b"DOMTokenList");
                 if self.open_collection(&name, b'{', depth, keeps_name) {
                     let properties = self.read_properties(value, indent + 1, depth + 1)?;
@@ -524,7 +519,6 @@ impl Printer<'_> {
         Ok(())
     }
 
-    /// False when the collection is too deep to list.
     fn open_collection(&mut self, name: &String, bracket: u8, depth: u32, keeps_name: bool) -> bool {
         let name = name.to_utf8();
         if depth >= self.max_depth {
@@ -594,7 +588,6 @@ impl Printer<'_> {
         }
     }
 
-    /// The `name` and `value` of each `Attr`.
     fn read_attributes(
         &mut self,
         attributes: JSValue,
@@ -621,7 +614,6 @@ impl Printer<'_> {
         Ok(entries)
     }
 
-    /// Own enumerable string-keyed properties, sorted by key unless `compareKeys` is null.
     fn read_properties(&mut self, object: JSValue, indent: u32, depth: u32) -> JsResult<Entries> {
         let mut entries = Entries::new();
         let Some(cell) = object.get_object() else {
@@ -654,7 +646,7 @@ impl Printer<'_> {
         Ok(Printed::Other(self.out.split_off(start)))
     }
 
-    /// `spacingOuter + indentation`
+    /// pretty-format's `spacingOuter + indentation`.
     fn line(&mut self, indent: u32) {
         if self.is_inline {
             self.out.push(b' ');
@@ -664,7 +656,7 @@ impl Printer<'_> {
         }
     }
 
-    /// `spacingInner + indentation`
+    /// pretty-format's `spacingInner + indentation`.
     fn item_line(&mut self, indent: u32) {
         if self.min {
             self.out.push(b' ');
@@ -693,7 +685,7 @@ impl Printer<'_> {
         self.write_replacing(text, if self.keeps_carriage_returns { b"<>" } else { b"<>\r" });
     }
 
-    /// `escapeString` is on in a message and off in a snapshot.
+    /// pretty-format's `escapeString` is on in a message (`min`) and off in a snapshot.
     fn write_quoted(&mut self, text: &String) {
         if self.is_inline {
             self.out.push(b'\'');
@@ -716,7 +708,7 @@ impl Printer<'_> {
                 b'>' => (b"&gt;", 1),
                 b'"' => (b"\\\"", 1),
                 b'\\' => (b"\\\\", 1),
-                // jest-snapshot `normalizeNewlines`
+                // CRLF and CR become LF, like jest-snapshot's `normalizeNewlines`.
                 _ => (
                     b"\n",
                     if rest.get(i + 1) == Some(&b'\n') {

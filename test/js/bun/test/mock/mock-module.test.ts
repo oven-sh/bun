@@ -543,7 +543,7 @@ test.concurrent("mock.module() of a module whose import() is still loading its d
   expect(exitCode).toBe(0);
 });
 
-// The fixtures assert. This checks that every test in them ran and passed.
+// The assertions are inside the fixtures. `pass` makes sure every test in them actually ran.
 async function expectFixturesToPass(files: Record<string, string>, pass: number, args: string[] = []) {
   using dir = tempDir("mock-module", files);
   await using proc = Bun.spawn({
@@ -622,7 +622,7 @@ describe.concurrent("the original of a mocked module", () => {
     await expectFixturesToPass(
       {
         ...modules,
-        // Imports the mock while the original loads, without being imported by the original.
+        // Imports the mocked module while its original is still loading, but isn't a dependency of the original.
         "other.ts": `import { value } from "./mod"; export const other = value;`,
         "both.ts": `export { captured } from "./side"; export { other } from "./other";`,
         "original.test.ts": `
@@ -1164,7 +1164,7 @@ test("jest.mock() and the like return jest, vi.doMock() something to dispose of"
     using patched = vi.doMock(a, async () => ({ a: "mocked-a" }));
     await patched;
     expect(ns.a).toBe("mocked-a");
-    // A later mock of the module is not this one's to remove.
+    // Disposing `patched` must not remove the later mock of the same module.
     using later = vi.doMock(a, () => ({ a: "mocked-later" }));
     patched[Symbol.dispose]();
     expect(ns.a).toBe("mocked-later");
@@ -1926,7 +1926,7 @@ describe.concurrent("an export the factory did not return", () => {
 });
 
 describe.concurrent("import cycles through a mocked module", () => {
-  // m0 imports m1, which imports m2, and so on; the last one imports m0, which is mocked.
+  // m0 imports m1, m1 imports m2, and so on. The last one imports m0, which is the mocked module.
   function cycleOf(length: number, only?: string[]) {
     const files: Record<string, string> = {
       "log.ts": `export const order = (globalThis.order ??= []);`,
@@ -1963,7 +1963,7 @@ describe.concurrent("import cycles through a mocked module", () => {
     const descending = (from: number, to: number) => Array.from({ length: from - to + 1 }, (_, i) => `m${from - i}`);
     const last = length - 1;
     const entries = {
-      // The original is evaluated before the module that imports the mock, then the factory is called.
+      // The original m0 evaluates first, then the factory runs, then the module that imports the mock.
       [`m${last}`]: (factory: string[]) => [...descending(last - 1, 0), ...factory, `m${last}`],
       "m0": (factory: string[]) => [...descending(last, 0), ...factory],
       "outside": (factory: string[]) => ["m0", ...factory, ...descending(last, 1), "outside"],
@@ -2349,7 +2349,7 @@ describe.concurrent("what a factory loads while it runs", () => {
           vi.mock("./a", async () => ({ a: "mocked-a", seenInTheFactory: (await import("./b")).seen() }));
           test("import()", () => expect({ ...a }).toEqual({ a: "mocked-a", seenInTheFactory: "real-a" }));
         `,
-        // The module the factory imports is what imported the mock.
+        // Here the factory imports the same module that imported the mock.
         "importer.test.ts": `
           import { expect, test, vi } from "bun:test";
           import { seen } from "./b";
@@ -2357,7 +2357,7 @@ describe.concurrent("what a factory loads while it runs", () => {
           vi.mock("./a", async () => ({ a: "mocked-a", seenInTheFactory: (await import("./b")).seen() }));
           test("import()", () => expect([{ ...a }, seen()]).toEqual([{ a: "mocked-a", seenInTheFactory: "real-a" }, "mocked-a"]));
         `,
-        // What vi.importActual("./c") does, written out.
+        // query.test.ts spells out what vi.importActual("./c") does.
         "c.ts": `import { seen } from "./d"; export const c = "real-c"; export const seenByD = () => seen();`,
         "d.ts": `import { c } from "./c"; export const seen = () => c;`,
         "query.test.ts": `
@@ -2369,7 +2369,7 @@ describe.concurrent("what a factory loads while it runs", () => {
             expect([d.seen(), c.c, c.seenByD()]).toEqual(["mocked-c", "mocked-c", "real-c"]);
           });
         `,
-        // By then the original is evaluated, and like the module that imports the mock it waits for the factory.
+        // When the factory imports "./d", the original is already evaluated and "./d" is waiting for this very factory.
         "given-the-original.test.ts": `
           import { expect, test, vi } from "bun:test";
           import { seen } from "./d";
@@ -2458,7 +2458,7 @@ describe.concurrent("what a factory loads while it runs", () => {
         test("every one of them", () => expect(seen()).toEqual(Array(12).fill("mocked-a")));
       `,
     };
-    // Each is fetched only once the one before it has been, so some are while the factory waits.
+    // Each chain module is fetched only after the previous one, so some are still in flight while the factory waits.
     for (let i = 0; i < 12; i++) {
       files[`chain${i}.ts`] =
         `import { a } from "./a";` +
@@ -2561,7 +2561,7 @@ describe.concurrent("the module mocks of a test file are undone when it ends", (
         "1.test.ts": loads([1, 1, 1]),
         "2.test.ts": loads([1, 1, 1]),
         "3.test.ts": mocks,
-        // Once more for the file with the mocks, and once more after it.
+        // importer.ts reloads once for the file with the mocks and once more after it.
         "4.test.ts": loads([1, 3, 1]),
         "5.test.ts": loads([1, 3, 1]),
       },
@@ -2629,7 +2629,7 @@ describe.concurrent("the module mocks of a test file are undone when it ends", (
         "mocked-by-hook.ts": `export const which = "real";`,
         "mocked-by-preload.ts": `export const which = "real";`,
         "patched-by-preload.ts": `export const which = "real";`,
-        // Loaded by the preload, before it mocks what this imports.
+        // The preload loads this before mocking "./patched-by-preload", which this imports.
         "configured.ts": `
           import { which } from "./patched-by-preload";
           import { dependency } from "./dependency";
@@ -3004,13 +3004,13 @@ test("two import()s at once of a mocked module do not keep the global object of 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--isolate"],
     cwd: String(dir),
-    // A compilation in flight is a root of the code that it compiles.
+    // An in-flight JIT compilation roots the code it's compiling, which would show up in the heap snapshot.
     env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // 9 and 8 when they are kept. The exports follow from the JSSourceCode.
+  // A leak shows up as 9 GlobalObjects and 8 ModuleMocks. A leaked JSSourceCode would keep the mock's exports alive.
   expect(JSON.parse(stdout.slice(stdout.indexOf("{")))).toEqual({
     GlobalObject: ["root(ProtectedValues) GlobalObject"],
     ModuleMock: [],
@@ -3021,7 +3021,6 @@ test("two import()s at once of a mocked module do not keep the global object of 
 });
 
 describe.concurrent("a module that is being loaded when it is to be evicted", () => {
-  // root imports a, which imports the mocked k, and b, which imports root.
   const graph = {
     "k.js": `export const x = "real";`,
     "a.js": `import { x } from "./k.js"; export const seen = x;`,
@@ -4930,7 +4929,7 @@ describe.concurrent("a test file mocks a module that a preload has loaded", () =
     mock: { mock: "mock.module", inTest: "mock.module", unmock: "", fromOriginal: "" },
   };
 
-  // dep.who, the names that dep.js exports, dep.who through user.js (which the file loads) and through helper.js (which the preload has loaded)
+  // user.js is loaded by the test file. helper.js was already loaded by the preload.
   type Row = [who: string, names: string, viaUser: string, viaHelper: string];
   type Rows = Partial<Record<"factory" | "none" | "automock" | "inTest" | "unmock" | "fromOriginal" | "async", Row>>;
 
@@ -4962,7 +4961,7 @@ describe.concurrent("a test file mocks a module that a preload has loaded", () =
         ${preloadMocks ? `${api.mock}("./dep.js", () => ({ who: "preload", other: "preload other" }));` : ""}
         globalThis.heldByPreload = viaHelper;
       `,
-      // The module that the preload has imported is the one that is mocked.
+      // Mocks helper.js itself, the module the preload imported.
       "x-helper.test.js": `
         ${bunTest}
         ${imports}
@@ -5007,7 +5006,7 @@ describe.concurrent("a test file mocks a module that a preload has loaded", () =
     ["in one process", []],
     ["under --isolate", ["--isolate"]],
   ])("%s", (_, isolate) => {
-    // The rows of Vitest 5.0.3, with the preload as a setup file.
+    // These rows match Vitest 5.0.3 with the preload as a setup file.
     test.each<[string, boolean, Rows]>([
       [
         "and mocked",

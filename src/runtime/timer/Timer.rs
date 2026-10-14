@@ -215,7 +215,6 @@ impl All {
         ))
     }
 
-    /// `clock`, here and below: `Fake` when the function that `jest.useFakeTimers()` installed is called.
     pub(crate) fn set_immediate(
         cx: &bun_jsc::JsThread<'_>,
         callback: JSValue,
@@ -628,7 +627,6 @@ pub(crate) fn fake_set_interval_export(
     )
 }
 
-/// A timeout for the start of the next frame, whose callback is given the `performance.now()` of that instant.
 // HOST_EXPORT(Bun__FakeTimers__requestAnimationFrame, c)
 pub(crate) fn fake_request_animation_frame_export(
     global: &JSGlobalObject,
@@ -688,7 +686,6 @@ pub(crate) fn fake_timers_run_step_export(global: &JSGlobalObject, id: u32) {
     }
 }
 
-/// `process.hrtime()`, in nanoseconds.
 // HOST_EXPORT(Bun__readHRTime, c)
 pub(crate) fn read_hrtime_export(vm: &VirtualMachine) -> u64 {
     // SAFETY: a VM that runs script has its `RuntimeState`; JS thread; field read only.

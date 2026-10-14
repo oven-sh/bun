@@ -85,7 +85,6 @@ describe.concurrent("a file that imports from a test module", () => {
     });
     const { stdout, stderr, exitCode } = await run(String(dir), ["test", name]);
     expect(stderr).toContain(" 1 pass");
-    // "vitest" has none of these four.
     const notOfVitest = {
       jest: header.includes("{ jest }") ? "object" : "undefined",
       xit: "undefined",

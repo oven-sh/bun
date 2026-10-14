@@ -1,8 +1,8 @@
 // @ts-nocheck
 import { describe, expect, it, test } from "vitest";
 
-// The key of a snapshot has the title of its test, so these are found only if the titles of the rows are Vitest's.
-// Each snapshot is a number of its own: none is found under the title of another.
+// Snapshot keys contain the test title, so these only pass if Bun formats each row's title the way Vitest does.
+// Each snapshot is a unique number, so one row can't match another row's entry.
 let count = 0;
 const snapshot = () => () => expect(++count).toMatchSnapshot();
 const each = (title, ...rows) => test.each(rows)(title, snapshot());

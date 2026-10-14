@@ -516,7 +516,7 @@ describe("MatcherContext", () => {
     expect()._toGiveItsUtils();
     const inAngles = text => `<${text}>`;
 
-    // What jest-matcher-utils 30.5.1 returns for the same arguments.
+    // Expected values measured on jest-matcher-utils 30.5.1.
     test.each([
       [["toX"], "expect(received).toX(expected)"],
       [[".toX"], "expect(received).toX(expected)"],
@@ -611,7 +611,7 @@ describe("MatcherContext", () => {
           new TypeError(`matcherHint: options.${option} must be a function`),
         );
       }
-      // As in Jest, a color that is not needed is not looked at.
+      // Like Jest, an unused color option isn't validated.
       expect(Bun.stripANSI(utils.matcherHint("toX", "", "", { receivedColor: 1, expectedColor: 1 }))).toBe(
         "expect.toX()",
       );
@@ -656,7 +656,7 @@ describe("MatcherContext", () => {
       ]);
     });
 
-    // What jest-matcher-utils 30.5.1 returns where there are no lines to show.
+    // Expected values measured on jest-matcher-utils 30.5.1.
     test.each([
       [[1, 1], null],
       [[1, 2], null],
@@ -694,7 +694,6 @@ describe("MatcherContext", () => {
           .split("\n")
           .filter(line => /^[-+]/.test(line));
       const counts = (expected, received) => [`- Expected  - ${expected}`, `+ Received  + ${received}`];
-      // Strings are text: no quotes, line by line.
       expect(marked("a\nb\nc", "a\nx\nc")).toEqual(["- b", "+ x", ...counts(1, 1)]);
       expect(marked({ a: 1, b: 2 }, { a: 1, b: 3 })).toEqual(['-   "b": 2,', '+   "b": 3,', ...counts(1, 1)]);
       expect(marked([1, 2, 3], [1, 3])).toEqual(["-   2,", ...counts(1, 0)]);
@@ -731,7 +730,7 @@ describe("MatcherContext", () => {
       expect(() => utils.diff({}, value)).toThrow(thrown);
     });
 
-    // What jest-matcher-utils 30.5.1 returns for the same arguments.
+    // Expected values measured on jest-matcher-utils 30.5.1.
     test.each([
       [undefined, "Received has value: <undefined>"],
       [null, "Received has value: <object>"],

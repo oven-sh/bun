@@ -137,7 +137,7 @@ pub struct Options<'a> {
 
     pub transform_only: bool,
 
-    /// Without it, `import.meta.glob()` is left as it is.
+    /// `None` leaves `import.meta.glob()` calls untouched.
     pub import_meta_glob: Option<crate::ImportMetaGlobHost>,
 
     /// Used for inlining the state of import.meta.main during visiting
@@ -1983,7 +1983,7 @@ impl<'a> Parser<'a> {
         if reject_import_statements {
             p.reject_eager_import_meta_globs();
         }
-        // Lowered or not, they come before the imports that the file has itself.
+        // Glob imports go before the file's own imports, whether or not they're lowered.
         let mut lowered_glob_imports = BumpVec::<js_ast::Part>::new_in(p.arena);
         for stmt in core::mem::replace(&mut p.import_meta_glob_imports, BumpVec::new_in(p.arena)) {
             let is_lowered = !hoisted_mocks.is_empty()
@@ -2116,7 +2116,7 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::EsmWithDynamicFallbackFromCjs;
         }
 
-        // Before the import of the globals is added, which only `bun test` does.
+        // Must run before the globals' import record is added below, because only `bun test` adds it.
         let uses_test_api = asks_uses_test_api && p.uses_test_api();
         let imports_vitest = uses_test_api && p.imports_vitest();
 
@@ -2126,7 +2126,7 @@ impl<'a> Parser<'a> {
                 break 'outer;
             }
 
-            // A file that imports from the test module used to get none: there, what is on `globalThis` stays.
+            // A file that imports a test module keeps any global that a script put on `globalThis` itself.
             let left_alone = if p
                 .import_records
                 .items()
@@ -2137,7 +2137,6 @@ impl<'a> Parser<'a> {
             } else {
                 0
             };
-            // A name the file binds itself shadows the global, whose symbol then has no uses.
             let mut used = bun_alloc::vec_from_iter_in(
                 Jest::GLOBALS
                     .iter()

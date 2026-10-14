@@ -1591,7 +1591,7 @@ impl<'a> Transpiler<'a> {
                         .as_mut()
                         .map(|m| &mut *core::ptr::from_mut(m));
                 }
-                // Only the runtime's module loader allows CommonJS. The rest only transform text.
+                // Only the runtime's module loader sets `allow_commonjs`. Other callers just transform text.
                 if this_parse.allow_commonjs {
                     // SAFETY: the resolver outlives the parse, which only calls it from this thread.
                     opts.import_meta_glob = Some(unsafe {

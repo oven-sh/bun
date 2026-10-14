@@ -1,6 +1,6 @@
-// __snapshots__/dom-nodes-jest.test.js.snap was written by Jest 30.5.2, which runs this file as it is:
+// Jest 30.5.2 wrote __snapshots__/dom-nodes-jest.test.js.snap by running this file unmodified:
 //   npx jest --rootDir test/js/bun/test/printing dom-nodes-jest
-// Bun has to agree with every byte of it. Never update it with Bun.
+// Bun must match it byte for byte. Never update it with Bun.
 const { JSDOM } = require("jsdom");
 const { Window } = require("happy-dom");
 
@@ -46,8 +46,7 @@ describe.each([
   window.customElements.define("x-named", class XNamed extends window.HTMLElement {});
   window.customElements.define("x-anonymous", class extends window.HTMLElement {});
 
-  // What `toMatchSnapshot()` stores, and what a matcher message, `this.utils.stringify()`,
-  // `printReceived()` and `printExpected()` say.
+  // utils.stringify() prints what matcher messages, printReceived() and printExpected() print.
   test.each([
     ["empty element", document.createElement("div")],
     ["one attribute", html(`<div id="a"></div>`)],
@@ -117,7 +116,7 @@ describe.each([
     expect(utils.stringify(value)).toMatchSnapshot();
   });
 
-  // A message prints these in the style of the runner.
+  // utils.stringify() isn't compared here because each runner prints the containers in its own style.
   test.each([
     ["in an object", { el: button, n: 1 }],
     ["in an array", [button, html(`<i></i>`), "s"]],

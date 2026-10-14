@@ -36,8 +36,7 @@ pub struct ResolvedSource {
     /// An ES module of the executable's pre-resolved module graph: it carries no `module_info`; the loader builds its
     /// record from the graph.
     pub is_prelinked_module: bool,
-    /// `source_code` holds what a macro returned or the files `import.meta.glob` matched: it is not what another load of
-    /// the file gives. Set by `ResolvedSource::printed`.
+    /// `source_code` also depends on macro results or `import.meta.glob` matches, so `IsolatedModuleCache` skips it.
     pub depends_on_more_than_source: bool,
 
     pub bytecode_cache: Bytecode,
@@ -48,7 +47,7 @@ pub struct ResolvedSource {
     pub origin_path: BunString,
 }
 
-/// What a `ResolvedSource` keeps of the AST that its `source_code` was printed from, read before the printer takes it.
+/// The AST fields a `ResolvedSource` needs, copied out before the printer consumes the AST.
 #[derive(Clone, Copy)]
 pub struct PrintedAst {
     pub is_commonjs_module: bool,
@@ -66,7 +65,7 @@ impl PrintedAst {
 }
 
 impl ResolvedSource {
-    /// What every `ResolvedSource` of a file that was transpiled just now is made from.
+    /// Build every freshly transpiled `ResolvedSource` with this, so `depends_on_more_than_source` can't be forgotten.
     pub fn printed(ast: PrintedAst, source_code: BunString) -> Self {
         Self {
             source_code,

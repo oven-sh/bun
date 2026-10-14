@@ -112,7 +112,6 @@ bitflags::bitflags! {
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;
 
-/// Whether a file that imports this path is transpiled differently under `bun test`.
 pub const fn is_test_module(path: &[u8]) -> bool {
     matches!(path, b"bun:test" | b"vitest" | b"@jest/globals")
 }

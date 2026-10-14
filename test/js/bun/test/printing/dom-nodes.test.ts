@@ -1,8 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// Nodes shaped like the ones of jsdom and happy-dom: what the markup is made of comes from getters on the
-// prototypes, and the node's own properties lead to everything else in the document.
+// Like jsdom and happy-dom, markup comes from prototype getters and own properties reach the whole document.
 const impl = Symbol("impl");
 
 class ArrayLike {
@@ -279,7 +278,7 @@ describe("matcher messages", () => {
     try {
       const filler = Buffer.alloc(100, "x").toString();
       const li = () => h("li", {}, h("a", {}, ...Array.from({ length: 100 }, () => h("span", {}, filler))));
-      // 1,021 elements, printed with 10, 5 and 2 levels.
+      // The tree has 1,021 elements and is printed three times, at depths 10, 5 and 2.
       expect(utils.stringify(h("ul", {}, ...Array.from({ length: 10 }, li)))).toBe(
         `<ul>${repeat("<li><a … /></li>", 10)}</ul>`,
       );
@@ -892,12 +891,12 @@ describe("equality", () => {
       }
     }
     const tagged = () => new Tagged({ nodeType: 1, tagName: "I", attributes: [], childNodes: [] });
-    // Another Object.prototype.toString(): different.
+    // Values with different Object.prototype.toString() tags are never equal.
     expect(tagged()).not.toEqual({ ownerDocument });
     expect({ ownerDocument }).not.toEqual(tagged());
     expect(tagged()).not.toEqual(h("i"));
     expect(new Proxy({ ownerDocument }, {})).not.toEqual(new Proxy(tagged(), {}));
-    // The same: by their properties.
+    // With the same tag, they're compared by their properties.
     expect(h("i")).toEqual<object>({ ownerDocument });
     expect({ ownerDocument }).toEqual(h("i"));
     expect(h("i")).not.toEqual({ ownerDocument: 1 });
@@ -995,7 +994,7 @@ describe("equality", () => {
   });
 });
 
-// Printed as objects, the nodes of a real document come to hundreds of megabytes, and to an abort where memory is limited.
+// Printed as objects, a real document's nodes take hundreds of megabytes and abort where memory is limited.
 test("assertions on nodes that hold a large object graph fail with a short message", async () => {
   using dir = tempDir("dom-nodes-graph", {
     "graph.test.js": `

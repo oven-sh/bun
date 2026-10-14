@@ -11,7 +11,6 @@ import { createContext, runInContext, runInNewContext } from "node:vm";
 const viteVariables = ["BASE_URL", "MODE", "DEV", "PROD", "SSR"] as const;
 const env: Record<PropertyKey, any> = import.meta.env;
 
-/** The environment of the spawned process without Vite's variables and NODE_ENV, whatever this process was started with. */
 const cleanEnv = {
   ...bunEnv,
   NODE_ENV: undefined,
@@ -28,7 +27,7 @@ async function run(cwd: string, args: string[], extraEnv: Record<string, string 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return {
-    // What the fixtures print, one JSON value per line. (--parallel prints what its workers print to stderr.)
+    // Includes stderr because --parallel prints its workers' output there.
     printed: (stdout + stderr)
       .split("\n")
       .filter(line => line.startsWith("@"))
@@ -40,14 +39,13 @@ async function run(cwd: string, args: string[], extraEnv: Record<string, string 
 
 const printVariables = `console.log("@" + JSON.stringify([import.meta.env.BASE_URL, import.meta.env.MODE, import.meta.env.DEV, import.meta.env.PROD, import.meta.env.SSR]));`;
 
-// A failed assertion prints what it received. These tests never hand the real environment to `expect()`:
-// where the whole object is looked at, `process.env` is a small object, which `import.meta.env` follows.
+// Never pass the real environment to expect(), because a failed assertion prints what it received.
+// Tests that compare the whole object replace process.env with a small one first.
 describe("import.meta.env in a test file", () => {
   const realEnv = process.env;
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    // Each of these tests is about the object that stands in for process.env.
     expect(env === realEnv).toBe(false);
     for (const name of viteVariables) {
       saved[name] = realEnv[name];
@@ -245,7 +243,6 @@ describe("import.meta.env in a test file", () => {
     });
 
     test("Bun.inspect and console.log", () => {
-      // As `ProcessEnv { ... }` for process.env.
       expect(Bun.inspect(env)).toBe("ImportMetaEnv " + Bun.inspect(whole));
       expect(Bun.inspect([env], { compact: true })).toBe(
         Bun.inspect([whole], { compact: true }).replace("{", "ImportMetaEnv {"),
@@ -328,8 +325,7 @@ describe("import.meta.env in a test file", () => {
       expect(messageOf(() => expect<unknown>({ nested: env }).toStrictEqual({}))).toContain('"GREETING": "hello"');
     });
 
-    // Native code that reads an object past its hooks sees an empty one here. Each of these is given `import.meta.env`
-    // and then an ordinary object with the same properties.
+    // The cell stores no properties, so native code that skips getOwnPropertySlot would see an empty object.
     describe("is to every API what an ordinary object with the same properties is", () => {
       const defaults = { DEV: false, BASE_URL: "/", MODE: "test", PROD: false, SSR: true };
       const unnamed = (printed: string) => printed.replaceAll("ImportMetaEnv ", "");
@@ -668,7 +664,7 @@ describe("import.meta.env in a test file", () => {
     }
   });
 
-  // There process.env is a Proxy, whose `set` trap does not look at the prototype chain.
+  // On Windows process.env is a Proxy whose set trap ignores the prototype chain.
   test.skipIf(isWindows)("as the prototype of process.env, a new variable is a RangeError", () => {
     Object.setPrototypeOf(realEnv, env);
     try {
@@ -710,10 +706,10 @@ describe("import.meta.env in a test file", () => {
     expect(Object.getPrototypeOf(child)).toBe(null);
   });
 
-  /** The names of the properties in the storage of the cell. */
+  // The property names stored on the cell itself, which must stay empty.
   const stored = () => /\{(.*?)\}/.exec(jscDescribe(env))![1];
 
-  // Native code that writes to an object past its hooks leaves here what no script can see or delete.
+  // A native write that skips the put hooks would store a property on the cell that no script can see or delete.
   describe("every write is a write to process.env", () => {
     const writes: Record<string, (object: any) => unknown> = {
       "an assignment": object => void (object.ADDED = "x"),
@@ -788,13 +784,12 @@ describe("import.meta.env in a test file", () => {
     });
   });
 
-  // `spyOn(import.meta.env, name)` is `spyOn(process.env, name)`.
   describe("spyOn", () => {
     const name = "IMPORT_META_ENV_TEST_SPIED";
     const environments = ["the real process.env", "a process.env that is an ordinary object"];
     const spy = (property: string, mode = "value") =>
       (spyOn as Function)(env, property, ...(mode === "value" ? [] : [mode]));
-    // On Windows `process.env` is a Proxy that takes an accessor from nobody, so it cannot be spied on either.
+    // On Windows process.env is a Proxy that rejects accessor descriptors, so spyOn throws.
     const refusal = "'process.env' does not accept an accessor(getter/setter) descriptor";
     const refuses = (environment: string) => isWindows && environment === environments[0];
 
@@ -837,7 +832,7 @@ describe("import.meta.env in a test file", () => {
         } else {
           const mode = spy("MODE");
           const dev = spy("DEV");
-          // What the spies stand for is what process.env has: nothing.
+          // The spies wrap process.env's values, and it has neither variable.
           expect([env.MODE, env.DEV]).toEqual([undefined, false]);
           mode.mockReturnValue("mocked");
           dev.mockReturnValue("yes");
@@ -962,7 +957,7 @@ describe("import.meta.env in a test file", () => {
       expect(Reflect.ownKeys(env)).toEqual([...all, ...viteVariables]);
     });
 
-    // What it is on Windows, where TZ is such a getter.
+    // Models Windows, where process.env is a Proxy and TZ is a getter like this one.
     test("a Proxy whose target has a getter that only answers the target", () => {
       const target = {
         get ONLY_THE_TARGET() {
@@ -1132,7 +1127,7 @@ describe.concurrent("import.meta.env", () => {
 
   test.each([[[]], [["--isolate"]]])("a spy that a file leaves on it is not the next file's %j", async flags => {
     using dir = tempDir("import-meta-env", {
-      // A copy, which can be spied on on Windows too.
+      // Copies process.env because the real one can't be spied on on Windows.
       "a.test.ts": `
         import { spyOn, test } from "bun:test";
         process.env = { ...process.env };
@@ -1356,7 +1351,7 @@ describe.concurrent("import.meta.env", () => {
     });
   });
 
-  // Windows' process.env has a toJSON and a Bun.inspect.custom of its own.
+  // Covers Windows, where process.env has its own toJSON and Bun.inspect.custom.
   test("the real environment is shown with Vite's variables", async () => {
     using dir = tempDir("import-meta-env", {
       "shown.test.ts": `

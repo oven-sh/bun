@@ -11,7 +11,7 @@ export class FakeTimers {
       vi.useRealTimers();
     }
     active = true;
-    // @sinonjs/fake-timers starts at 0 and fakes everything there is.
+    // Unlike vi.useFakeTimers(), @sinonjs/fake-timers defaults to now = 0 and fakes everything.
     vi.useFakeTimers({
       now: opts.now ?? 0,
       toFake: opts.toFake ?? [

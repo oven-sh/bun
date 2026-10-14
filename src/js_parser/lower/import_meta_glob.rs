@@ -1,5 +1,4 @@
-//! `import.meta.glob()` with Vite's semantics: the call becomes an object whose keys are the files
-//! that match and whose values are `() => import(file)`, or static imports with `eager`.
+//! Expands Vite's `import.meta.glob()` into `{ [file]: () => import(file) }`, or static imports with `eager`.
 
 use std::borrow::Cow;
 
@@ -17,25 +16,22 @@ use crate::lexer::T;
 use crate::p::P;
 use crate::parser::TransposeState;
 
-// `resolve_alias`, for a pattern that is not a path: a directory, and the pattern from there.
 bun_dispatch::link_interface! {
     pub ImportMetaGlobHost[Resolver] {
         fn resolve_alias(importer_dir: &[u8], glob: &[u8]) -> Option<(Vec<u8>, Vec<u8>)>;
     }
 }
 
-/// What a file does with `import.meta.glob`. The greatest one that applies.
+/// Variant order matters, because the parser keeps the `max` over every use in the file.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
 pub(crate) enum ImportMetaGlobUse {
     #[default]
     None,
-    /// It calls it, and no call could be replaced. Whether one can depends on more than the source.
+    /// Has calls, but none could be expanded, which can depend on more than the source (tsconfig, the file system).
     Called,
-    /// Each call that was replaced needs import statements, which a CommonJS module cannot have.
+    /// Every expanded call needs import statements, so a CommonJS module falls back to `Called`.
     ImportedEagerly,
-    /// A call was replaced by the files that match.
     Expanded,
-    /// It assigns to it, so it calls a function of its own.
     Assigned,
 }
 
@@ -43,38 +39,34 @@ pub(crate) enum ImportMetaGlobUse {
 struct Options<'a> {
     eager: bool,
     exhaustive: bool,
-    /// Empty for the namespace.
+    /// Empty means the whole namespace.
     import: &'a [u8],
     /// Empty, or starts with `?`.
     query: &'a [u8],
     base: &'a [u8],
 }
 
-/// A pattern, split before its first segment that is not a plain name.
+/// A pattern split at its first segment that has glob syntax.
 struct Pattern {
     negated: bool,
-    /// Absolute. Empty when `glob` applies to the whole path.
+    /// Absolute. Empty when `glob` matches against the whole path.
     dir: Vec<u8>,
     glob: Vec<u8>,
-    /// Every segment is a plain name, and `glob` is the last one.
+    /// No segment has glob syntax, and `glob` is the file name.
     is_name: bool,
 }
 
-/// What the parser makes an object of.
 struct Expansion<'a> {
     eager: bool,
-    /// Empty for the namespace.
     import: &'a [u8],
-    /// With the value of `type` in the import attributes.
     loader: Option<(js_ast::Loader, &'static [u8])>,
-    /// An import that fails is reported at the first pattern.
+    /// The first pattern's location, where a failed import is reported.
     path_loc: Loc,
-    /// Each key with its import path.
+    /// (key, import path)
     entries: Vec<(&'a [u8], &'a [u8])>,
 }
 
 impl Expansion<'_> {
-    /// The arguments of `import(path)`.
     fn import_call(&self, path: &[u8], loc: Loc) -> (Expr, TransposeState) {
         let mut state = TransposeState {
             loc,
@@ -95,7 +87,6 @@ fn is_node_modules(name: &[u8]) -> bool {
     name == b"node_modules"
 }
 
-/// `path` relative to `ancestor`, when it is `ancestor` or inside of it.
 fn path_below<'p>(ancestor: &[u8], path: &'p [u8]) -> Option<&'p [u8]> {
     let below = path.strip_prefix(ancestor)?;
     if below.is_empty()
@@ -109,7 +100,7 @@ fn path_below<'p>(ancestor: &[u8], path: &'p [u8]) -> Option<&'p [u8]> {
     bun_paths::is_sep_native(separator).then_some(below)
 }
 
-/// What Vite leaves as it is in the keys and values of `query`, except that `=` is for values only.
+/// Vite leaves these unescaped in `query` keys and values, plus `=` in values.
 const QUERY_PUNCTUATION: &[u8] = b";,?:@$-_.!~*'()|`^";
 
 fn append_query_component(out: &mut Vec<u8>, text: &[u8], is_key: bool) {
@@ -128,7 +119,6 @@ fn append_query_component(out: &mut Vec<u8>, text: &[u8], is_key: bool) {
     }
 }
 
-/// `None` when it is too long for a path.
 fn absolute_from(dir: &[u8], path: &[u8]) -> Option<Vec<u8>> {
     let mut buf = path_buffer_pool::get();
     resolve_path::join_abs_string_buf_checked::<platform::Auto>(dir, &mut buf[..], &[path])
@@ -142,12 +132,11 @@ fn with_posix_separators(path: &[u8]) -> Vec<u8> {
     path
 }
 
-/// With `/` on every platform, and `./` unless it starts with `../`. Both are absolute and
-/// normalized. `None` when it is too long for a path.
+/// `from` and `to` must be absolute and normalized.
 fn specifier_from(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
     let mut path = Vec::new();
     if cfg!(windows) {
-        // Each directory of `from`, at least two bytes of it, can become `../`.
+        // Each directory in `from` takes at least two bytes and can become `../`.
         let mut buf = vec![0u8; from.len() * 2 + to.len() + 8];
         let below =
             resolve_path::relative_platform_buf::<platform::Loose, true>(&mut buf, from, to);
@@ -156,7 +145,7 @@ fn specifier_from(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
         }
         path.extend_from_slice(below);
     } else {
-        // `resolve_path` takes a backslash for a separator on every platform. Here it is part of a name.
+        // `resolve_path` treats `\` as a separator on every platform, but here it's part of a file name.
         let len = bun_node_path::relative_buf_len::<u8>(from, to);
         let mut buffers = vec![0u8; 3 * len];
         let (buf, rest) = buffers.split_at_mut(len);
@@ -170,29 +159,25 @@ fn specifier_from(from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
     (path.len() < bun_paths::MAX_PATH_BYTES).then_some(path)
 }
 
-/// Whether `import(path)` would load another file than the one `path` names, or none.
 fn is_not_an_import_path(path: &[u8], is_bundling: bool) -> bool {
     !strings::is_valid_utf8(path)
         || (!cfg!(windows) && strings::contains_char(path, b'\\'))
-        // The runtime takes what follows for a query.
+        // The runtime parses everything after `?` as a query.
         || (!is_bundling && strings::contains_char(path, b'?'))
 }
 
-/// Why a call is not replaced.
 #[derive(Clone, Copy)]
 pub(crate) struct Invalid<'a> {
     loc: Loc,
     message: &'a [u8],
 }
 
-/// The arguments of a call, which are literals.
 pub(crate) struct Literals<'a> {
-    /// Each pattern, and where it is.
     globs: &'a [(&'a [u8], Loc)],
     options: Options<'a>,
 }
 
-/// `-1`, `+1` and `!0`, which is how a minifier writes `true`, as the literals they stand for.
+/// Folds `-1`, `+1` and `!0` (a minifier's `true`) into literals.
 fn literal(expr: Expr) -> Expr {
     let mut operators = Vec::new();
     let mut operand = expr;
@@ -224,8 +209,7 @@ fn literal(expr: Expr) -> Expr {
     }
 }
 
-/// Vite has no `@(a|b)`, `+(a|b)`, `?(a|b)`, `*(a|b)` or `!(a|b)`. The parenthesis becomes `[(]` and not `\(`,
-/// because on Windows the walker takes a backslash for a separator.
+/// Vite has no extglobs like `@(a|b)`. Escapes the `(` as `[(]`, since the walker treats `\` as a separator on Windows.
 fn without_extglobs(pattern: &[u8]) -> Cow<'_, [u8]> {
     if !strings::contains_char(pattern, b'(') {
         return Cow::Borrowed(pattern);
@@ -249,7 +233,6 @@ fn without_extglobs(pattern: &[u8]) -> Cow<'_, [u8]> {
 }
 
 impl Pattern {
-    /// `text` is relative to `dir`. `None` when it is too long for a path.
     fn new(negated: bool, dir: &[u8], text: &[u8]) -> Option<Pattern> {
         let text = &*without_extglobs(text);
         let mut buf = vec![0u8; text.len() + 1];
@@ -260,7 +243,7 @@ impl Pattern {
             |char| char == b'/',
         );
 
-        // On Windows the walker takes a backslash for a separator, so plain names are unescaped here.
+        // Unescape plain names here, because on Windows the walker treats `\` as a separator.
         let mut names = Vec::with_capacity(normalized.len());
         let mut rest = normalized;
         loop {
@@ -310,15 +293,13 @@ impl Pattern {
     }
 }
 
-/// The files that match, absolute, in the order of the keys. `importer` never matches.
-/// An error is a message for the user.
 fn find_files(
     patterns: &[Pattern],
     exhaustive: bool,
     importer: &[u8],
 ) -> Result<Vec<Vec<u8>>, String> {
     let mut files = Vec::<Vec<u8>>::new();
-    // "node_modules" is skipped below the directory that all the patterns share.
+    // Only skip "node_modules" below the directory all patterns share, which may itself be inside one.
     let mut shared_dir: Option<&[u8]> = None;
     for pattern in patterns.iter().filter(|pattern| !pattern.negated) {
         let mut shared = shared_dir.unwrap_or(&pattern.dir);
@@ -383,7 +364,7 @@ fn find_files(
     Ok(files)
 }
 
-/// Reads a call. Nothing here depends on how the file is parsed.
+/// Kept out of `P` so this code isn't monomorphized for every parser configuration.
 struct Arguments<'a, 'log> {
     log: &'log mut bun_ast::Log,
     source: &'a bun_ast::Source,
@@ -391,7 +372,6 @@ struct Arguments<'a, 'log> {
 }
 
 impl<'a> Arguments<'a, '_> {
-    /// Nobody who sees it can change a package.
     fn warn(&mut self, loc: Loc, message: core::fmt::Arguments<'_>) {
         if !self.source.path.is_node_module() {
             self.log.add_warning_fmt(Some(self.source), loc, message);
@@ -411,7 +391,6 @@ impl<'a> Arguments<'a, '_> {
         })
     }
 
-    /// `call` is not visited yet.
     fn read(&mut self, call: &E::Call, loc: Loc) -> Result<Literals<'a>, Invalid<'a>> {
         let args = call.args.slice();
         if args.is_empty() || args.len() > 2 {
@@ -470,7 +449,7 @@ impl<'a> Arguments<'a, '_> {
         host: ImportMetaGlobHost,
         is_bundling: bool,
     ) -> Result<Expansion<'a>, Invalid<'a>> {
-        // Vite's `?raw` and `?url` are loaders here, and the bundler resolves no path with a query.
+        // Vite's `?raw` and `?url` map to loaders, and the bundler can't resolve a path with a query.
         let loader = match options.query {
             b"?raw" => Some((js_ast::Loader::Text, b"text".as_slice())),
             b"?url" => Some((js_ast::Loader::File, b"file".as_slice())),
@@ -493,7 +472,7 @@ impl<'a> Arguments<'a, '_> {
         };
         expansion.path_loc = path_loc;
 
-        // `process.chdir()` overwrites it in place, on another thread, and ends it with a NUL.
+        // `process.chdir()` on another thread overwrites this in place and NUL-terminates it.
         let root = fs::FileSystem::instance().top_level_dir().to_vec();
         let root = &root[..strings::index_of_char_usize(&root, 0).unwrap_or(root.len())];
         let source = self.source;
@@ -625,7 +604,6 @@ impl<'a> Arguments<'a, '_> {
         Ok(expansion)
     }
 
-    /// The name, key and value of `name: value` in the options.
     fn option(
         &mut self,
         property: &G::Property,
@@ -822,7 +800,6 @@ impl<'a> Arguments<'a, '_> {
     }
 }
 
-/// `{ key: value }`
 fn object_of(key: &'static [u8], value: Expr) -> Expr {
     Expr::init(
         E::Object {
@@ -838,7 +815,6 @@ fn object_of(key: &'static [u8], value: Expr) -> Expr {
     )
 }
 
-/// `(...args) => { body }`, or `(...args) => value` when `body` returns `value`.
 fn arrow_of(arena: &Arena, args: &[js_ast::Ref], body: Stmt) -> Expr {
     let loc = body.loc;
     let args = arena.alloc_slice_fill_iter(args.iter().map(|&r#ref| G::Arg {
@@ -859,7 +835,6 @@ fn arrow_of(arena: &Arena, args: &[js_ast::Ref], body: Stmt) -> Expr {
     )
 }
 
-/// `(...args) => value`
 fn arrow(arena: &Arena, args: &[js_ast::Ref], value: Expr) -> Expr {
     arrow_of(
         arena,
@@ -868,7 +843,6 @@ fn arrow(arena: &Arena, args: &[js_ast::Ref], value: Expr) -> Expr {
     )
 }
 
-/// `() => { throw new TypeError(message) }`
 fn throwing_function(arena: &Arena, type_error: js_ast::Ref, message: &[u8], loc: Loc) -> Expr {
     let value = Expr::init(
         E::New {
@@ -890,7 +864,7 @@ fn is_import_meta_glob(expr: Expr) -> bool {
     )
 }
 
-/// `Object.keys(import.meta.glob(...))` imports nothing. After `call.target` is visited.
+/// Lets `Object.keys(import.meta.glob(...))` skip the imports. `call.target` must already be visited.
 pub(crate) fn is_object_keys_call(symbols: &[js_ast::Symbol], call: &E::Call) -> bool {
     let ExprData::EDot(dot) = call.target.data else {
         return false;
@@ -916,7 +890,6 @@ fn dot(target: Expr, name: &[u8]) -> Expr {
     )
 }
 
-/// `import.then(parameter => parameter.name)`
 fn then_export(arena: &Arena, import: Expr, parameter: js_ast::Ref, name: &[u8]) -> Expr {
     let namespace = Expr::init(E::Identifier::init(parameter), import.loc);
     Expr::init(
@@ -930,7 +903,6 @@ fn then_export(arena: &Arena, import: Expr, parameter: js_ast::Ref, name: &[u8])
 }
 
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
-    /// Then the source is not enough of a key to cache what it is transpiled to.
     pub(crate) fn depends_on_more_than_source(&self) -> bool {
         self.macro_call_count != 0
             || matches!(
@@ -941,7 +913,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             )
     }
 
-    /// In the parse pass, at the token after `import.meta.name`.
     #[cold]
     pub(crate) fn did_parse_import_meta_property(&mut self, name: &[u8]) {
         if name == b"glob"
@@ -957,7 +928,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
-    /// Before `call` is visited: afterwards `import.meta["glob"]()` looks the same.
+    /// Must run before `call` is visited, because afterwards `import.meta["glob"]()` looks the same.
     pub(crate) fn is_import_meta_glob_call(&self, call: &E::Call) -> bool {
         self.options.import_meta_glob.is_some()
             && self.import_meta_glob_use != ImportMetaGlobUse::Assigned
@@ -967,8 +938,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             && is_import_meta_glob(call.target)
     }
 
-    /// Before `call` is visited: afterwards what was inlined or folded looks like a literal, and
-    /// `bun run` and `bun build` do not inline and fold the same.
+    /// Must run before `call` is visited, since `bun run` and `bun build` fold and inline different things into literals.
     #[cold]
     pub(crate) fn read_import_meta_glob_call(
         &mut self,
@@ -997,8 +967,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         )
     }
 
-    /// `e` is an `import.meta.glob(...)` that was visited. One that cannot be replaced throws when
-    /// it is reached, as a call of what is not a function does.
+    /// `e` must already be visited. A call that can't be expanded throws a TypeError when it's reached.
     pub(crate) fn expand_import_meta_glob(
         &mut self,
         e: &mut Expr,
@@ -1009,7 +978,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         else {
             return;
         };
-        // A define can have replaced the target.
+        // A define may have replaced the target.
         if !is_import_meta_glob(call.target) {
             return;
         }
@@ -1068,8 +1037,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             },
             loc,
         );
-        // Whether the module is CommonJS is known after the visit pass, which takes an object
-        // literal apart where it is not used, and leaves a call as it is.
+        // CommonJS is only known after the visit pass, which takes an unused object literal apart but leaves a call alone.
         if has_imports
             && self.options.features.commonjs_at_runtime
             && self.esm_export_keyword.len == 0
@@ -1086,8 +1054,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
-    /// The module turns out to be CommonJS, which cannot have the import statements of
-    /// `{ eager: true }`: those calls throw when they are reached, like any that is not replaced.
     pub(crate) fn reject_eager_import_meta_globs(&mut self) {
         for stmt in self.import_meta_glob_imports.drain(..) {
             if let js_ast::StmtData::SImport(import) = stmt.data {
@@ -1113,8 +1079,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
     }
 
-    /// `import.meta.glob = () => { throw ... }` for a module whose calls were replaced, so that
-    /// `typeof import.meta.glob === "function"` agrees with them. Vite's module runner has one too.
+    /// `import.meta.glob = () => { throw ... }`, so `typeof import.meta.glob` is "function" as in Vite.
     pub(crate) fn import_meta_glob_definition(&mut self) -> Option<Stmt> {
         if self.options.bundle
             || !matches!(
@@ -1152,7 +1117,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let (specifier, state) = expansion.import_call(path, loc);
         let mut value = self.transpose_import(specifier, &state);
         if !expansion.import.is_empty() {
-            // The bundler drops the exports that no use of the `import()` observes.
+            // Record the export as used, or the bundler tree-shakes it out of the `import()`.
             if let ExprData::EImport(import) = value.data
                 && let Some(observed) = self
                     .import_items_for_namespace
@@ -1170,7 +1135,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         arrow(self.arena, &[], value)
     }
 
-    /// Queues `import * as value from path` or `import { name as value } from path`.
     fn import_meta_glob_static_import(
         &mut self,
         expansion: &Expansion<'a>,

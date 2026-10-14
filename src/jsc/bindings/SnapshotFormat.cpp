@@ -16,7 +16,7 @@ namespace Bun {
 JSString* objectPrototypeToStringOutOfLine(JSGlobalObject*, JSValue);
 }
 
-// `Kind` in pretty_format.rs
+// Must match `Kind` in pretty_format.rs.
 enum class SnapshotKind : uint8_t {
     Object,
     Arguments,
@@ -33,7 +33,7 @@ enum class SnapshotKind : uint8_t {
     Promise,
 };
 
-// One copy of what JSC would inline into each of the entries below.
+// Out of line so JSValue::get isn't inlined into every entry point below.
 static NEVER_INLINE JSValue getMember(JSGlobalObject* globalObject, JSValue value, PropertyName name)
 {
     return value.get(globalObject, name);
@@ -44,7 +44,7 @@ static NEVER_INLINE Identifier toKey(JSGlobalObject* globalObject, JSValue key)
     return key.toPropertyKey(globalObject);
 }
 
-// The index in `tags` of what `Object.prototype.toString.call(value)` returns, or their number.
+// Order matters: kindOf special-cases index 0 and isShortenedByWidth takes the first four.
 static constexpr std::pair<ASCIILiteral, SnapshotKind> tags[] = {
     { "[object Object]"_s, SnapshotKind::Object },
     { "[object Array]"_s, SnapshotKind::List },
@@ -94,7 +94,7 @@ extern "C" SnapshotKind SnapshotFormat__kindOf(JSGlobalObject* globalObject, Enc
     RETURN_IF_EXCEPTION(scope, SnapshotKind::Object);
     if (tag > 0 && tag < std::size(tags))
         return tags[tag].second;
-    // `object instanceof Error`. Where Jest and Vitest run, that is a RangeError when the traps of Proxies go on answering.
+    // `object instanceof Error`, with V8's RangeError when getPrototypeOf traps never end the chain.
     constexpr unsigned maxProxies = 1000;
     unsigned proxies = 0;
     for (JSObject* current = object.getObject(); current;) {
@@ -111,14 +111,13 @@ extern "C" SnapshotKind SnapshotFormat__kindOf(JSGlobalObject* globalObject, Enc
     return SnapshotKind::Object;
 }
 
-// Whether Vitest's `inspect()` shortens `value` by leaving out items: what `Object.prototype.toString` calls one of these.
+// Vitest's `inspect()` truncates Object, Array, Map and Set by dropping items.
 extern "C" bool SnapshotFormat__isShortenedByWidth(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
 {
     static_assert(tags[3].second == SnapshotKind::Set);
     return tagOf(globalObject, JSValue::decode(encodedValue)) <= 3;
 }
 
-// `Number(value)`
 extern "C" double SnapshotFormat__toNumber(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -136,12 +135,10 @@ static bool isStateOfMockFunction(JSGlobalObject* globalObject, JSObject* object
     return object->getPrototypeDirect() == global->mockModule.mockObjectStructure.getInitializedOnMainThread(global)->storedPrototype();
 }
 
-// After `maxWidth` properties, `each` is given no key and how many are left.
 extern "C" void SnapshotFormat__forEachProperty(JSGlobalObject* globalObject, EncodedJSValue encodedObject, bool isForVitest, bool isSorted, uint32_t maxWidth, void* context, bool (*each)(void* context, EncodedJSValue key, EncodedJSValue value))
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // As `Object.keys()` takes it.
     JSValue value = JSValue::decode(encodedObject);
     if (value.isUndefinedOrNull()) {
         throwTypeError(globalObject, scope, "Cannot convert undefined or null to object"_s);
@@ -155,7 +152,7 @@ extern "C" void SnapshotFormat__forEachProperty(JSGlobalObject* globalObject, En
     RETURN_IF_EXCEPTION(scope, );
 
     auto keys = properties.data()->propertyNameVector();
-    // What Bun has getters on the prototype for are properties of the object itself in Jest and Vitest.
+    // Own properties in Jest and Vitest, prototype getters in Bun.
     Identifier lastCall;
     if (isStateOfMockFunction(globalObject, object)) {
         lastCall = Identifier::fromString(vm, "lastCall"_s);
@@ -176,7 +173,7 @@ extern "C" void SnapshotFormat__forEachProperty(JSGlobalObject* globalObject, En
         }
         JSValue member = getMember(globalObject, object, key);
         RETURN_IF_EXCEPTION(scope, );
-        // Jest sets it at the first call.
+        // Jest only defines lastCall after the first call.
         if (key == lastCall && !isForVitest && member.isUndefined())
             continue;
         JSValue name = key.isSymbol() ? JSValue(Symbol::create(vm, static_cast<SymbolImpl&>(*key.impl()))) : JSValue(jsString(vm, key.string()));
@@ -187,7 +184,6 @@ extern "C" void SnapshotFormat__forEachProperty(JSGlobalObject* globalObject, En
     }
 }
 
-// `index in value`
 extern "C" bool SnapshotFormat__hasIndex(JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t index)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -201,7 +197,7 @@ extern "C" bool SnapshotFormat__hasIndex(JSGlobalObject* globalObject, EncodedJS
 
 static void throwCannotRead(JSGlobalObject*, ThrowScope&, JSValue, const String& name);
 
-// How many times `for (let i = 0; i < value.length; i++)` goes round.
+// Iteration count of `for (let i = 0; i < value.length; i++)`, so a fractional length rounds up.
 extern "C" uint32_t SnapshotFormat__lengthOf(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
 {
     auto& vm = getVM(globalObject);
@@ -217,7 +213,7 @@ extern "C" uint32_t SnapshotFormat__lengthOf(JSGlobalObject* globalObject, Encod
         length = length.toNumeric(globalObject);
         RETURN_IF_EXCEPTION(scope, 0);
         if (length.isBigInt()) {
-            // The loops go on to `length - 1`.
+            // pretty-format's loops compute `length - 1`, which throws for a BigInt.
             if (JSBigInt::toNumber(length).asNumber() > 0)
                 throwTypeError(globalObject, scope, "Cannot mix BigInt and other types, use explicit conversions"_s);
             return 0;
@@ -228,7 +224,6 @@ extern "C" uint32_t SnapshotFormat__lengthOf(JSGlobalObject* globalObject, Encod
                                                                                                             : 0;
 }
 
-// `Array.isArray(value)`
 extern "C" bool SnapshotFormat__isArray(JSGlobalObject* globalObject, EncodedJSValue encodedValue)
 {
     return isArray(globalObject, JSValue::decode(encodedValue));
@@ -239,7 +234,6 @@ static void throwCannotRead(JSGlobalObject* globalObject, ThrowScope& scope, JSV
     throwTypeError(globalObject, scope, makeString("Cannot read properties of "_s, value.isNull() ? "null"_s : "undefined"_s, " (reading '"_s, name, "')"_s));
 }
 
-// `value[name]`
 extern "C" EncodedJSValue SnapshotFormat__get(JSGlobalObject* globalObject, EncodedJSValue encodedValue, const Latin1Character* name, size_t length)
 {
     auto& vm = getVM(globalObject);
@@ -255,7 +249,6 @@ extern "C" EncodedJSValue SnapshotFormat__get(JSGlobalObject* globalObject, Enco
     return JSValue::encode(member);
 }
 
-// `value[index]`
 extern "C" EncodedJSValue SnapshotFormat__getIndex(JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t index)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -269,7 +262,6 @@ extern "C" EncodedJSValue SnapshotFormat__getIndex(JSGlobalObject* globalObject,
     return JSValue::encode(item);
 }
 
-// `value[key]`
 extern "C" EncodedJSValue SnapshotFormat__getByValue(JSGlobalObject* globalObject, EncodedJSValue encodedValue, EncodedJSValue encodedKey)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -285,7 +277,6 @@ extern "C" EncodedJSValue SnapshotFormat__getByValue(JSGlobalObject* globalObjec
     return JSValue::encode(member);
 }
 
-// `key in value`
 extern "C" bool SnapshotFormat__hasByValue(JSGlobalObject* globalObject, EncodedJSValue encodedValue, EncodedJSValue encodedKey)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -299,7 +290,6 @@ extern "C" bool SnapshotFormat__hasByValue(JSGlobalObject* globalObject, Encoded
     RELEASE_AND_RETURN(scope, object->hasProperty(globalObject, key));
 }
 
-// Defines `object[key]`, for an object that the printer has made.
 extern "C" void SnapshotFormat__define(JSGlobalObject* globalObject, EncodedJSValue encodedObject, EncodedJSValue encodedKey, EncodedJSValue encodedValue)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -312,7 +302,6 @@ extern "C" void SnapshotFormat__define(JSGlobalObject* globalObject, EncodedJSVa
     object->putDirectMayBeIndex(globalObject, key, JSValue::decode(encodedValue));
 }
 
-// `new RegExp(pattern)`, or `pattern` when it is not one.
 extern "C" EncodedJSValue SnapshotFormat__toRegExp(JSGlobalObject* globalObject, EncodedJSValue encodedPattern)
 {
     auto& vm = getVM(globalObject);
@@ -328,8 +317,6 @@ extern "C" EncodedJSValue SnapshotFormat__toRegExp(JSGlobalObject* globalObject,
     return JSValue::encode(RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
 }
 
-// The entries of a Map or the values of a Set. False, with nothing done, unless `method` is the `entries` or `values` it is born with.
-// After `maxWidth` of them, `each` is given nothing, once.
 extern "C" bool SnapshotFormat__forEachOfCollection(JSGlobalObject* globalObject, EncodedJSValue encodedCollection, EncodedJSValue encodedMethod, uint32_t maxWidth, void* context, bool (*each)(void* context, EncodedJSValue first, EncodedJSValue second))
 {
     auto& vm = getVM(globalObject);
@@ -365,7 +352,6 @@ extern "C" bool SnapshotFormat__forEachOfCollection(JSGlobalObject* globalObject
     return false;
 }
 
-// Whether `value` is among the first `length` items of an array that only the printer has.
 extern "C" bool SnapshotFormat__includes(EncodedJSValue encodedList, uint32_t length, EncodedJSValue encodedValue)
 {
     auto* list = dynamicDowncast<JSArray>(JSValue::decode(encodedList));

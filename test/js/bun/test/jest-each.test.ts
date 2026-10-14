@@ -60,7 +60,6 @@ describe("does not return zero", () => {
 });
 
 describe.concurrent("titles", () => {
-  /** Runs `test.each(<table>)(<title>, () => {})` for every `[title, table]` and returns the names of the tests. */
   async function titlesOf(cases: [title: string, table: string][], prelude = "") {
     using dir = tempDir("jest-each-titles", {
       "each.test.ts": [

@@ -19,7 +19,6 @@ unsafe extern "C" {
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
 }
 
-// NodeTimers.cpp
 unsafe extern "C" {
     safe fn Bun__FakeTimers__createOriginals(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__FakeTimers__setOriginal(
@@ -36,11 +35,10 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// What `toFake` and `doNotFake` name, as in @sinonjs/fake-timers.
 #[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 enum Api {
-    // Functions, which another function object replaces. `FakeTimerFunction` in NodeTimers.cpp has the same values.
+    // The functions' values must match `FakeTimerFunction` in NodeTimers.cpp.
     SetTimeout,
     ClearTimeout,
     SetInterval,
@@ -51,7 +49,6 @@ enum Api {
     QueueMicrotask,
     RequestAnimationFrame,
     CancelAnimationFrame,
-    // Clocks, which the same objects read.
     Date,
     Performance,
     Hrtime,
@@ -71,7 +68,7 @@ impl Api {
         Api::CancelAnimationFrame,
     ];
 
-    /// `None`: nothing to replace. `Intl` and `Temporal` follow `Date`; a DOM library's idle callbacks stay as they are.
+    /// Indexed by `Api as usize`. A `None` name is accepted but there's nothing to fake for it.
     const NAMES: [(&'static str, Option<Api>); 17] = [
         ("setTimeout", Some(Api::SetTimeout)),
         ("clearTimeout", Some(Api::ClearTimeout)),
@@ -108,7 +105,6 @@ impl Api {
 struct ApiSet(u16);
 
 impl ApiSet {
-    /// `setImmediate`, `process.nextTick` and `queueMicrotask` stay real unless `toFake` lists them.
     const DEFAULT: ApiSet = ApiSet(
         1 << Api::SetTimeout as u16
             | 1 << Api::ClearTimeout as u16
@@ -125,7 +121,6 @@ impl ApiSet {
         self.0 & (1 << api as u16) != 0
     }
 
-    /// `None`: an empty list.
     fn from_js(global: &JSGlobalObject, option: &str, value: JSValue) -> JsResult<Option<ApiSet>> {
         if !value.is_array() {
             return Err(global
@@ -160,16 +155,16 @@ impl ApiSet {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum TickMode {
     Manual,
-    /// Every turn of the event loop runs the next fake timer.
+    /// Each event loop turn runs the next fake timer.
     NextAsync,
-    /// Every so many real milliseconds the fake clock advances by as many.
+    /// Every N real ms, advance the fake clock by N ms.
     Interval(u32),
 }
 
 impl TickMode {
     const DEFAULT_INTERVAL_MS: u32 = 20;
 
-    /// 0 is the default, as in @sinonjs/fake-timers.
+    /// 0 means the default, like @sinonjs/fake-timers.
     fn interval_from_js(global: &JSGlobalObject, what: &str, value: JSValue) -> JsResult<TickMode> {
         if !value.is_number() {
             return Err(global
@@ -189,7 +184,6 @@ impl TickMode {
     }
 }
 
-/// Where vitest and Jest give the same function a different default or result.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Flavor {
     Vi,
@@ -244,7 +238,7 @@ impl Options {
         }
 
         if let Some(to_fake) = value.get(global, "toFake")?.filter(|v| !v.is_null()) {
-            // An empty list is no list, as in @sinonjs/fake-timers.
+            // `None` is an empty array, which @sinonjs/fake-timers treats like a missing `toFake`.
             if let Some(to_fake) = ApiSet::from_js(global, "toFake", to_fake)? {
                 options.faked = to_fake;
             }
@@ -304,7 +298,7 @@ impl Options {
                     u32::MAX
                 )));
             }
-            // 0 is the default, as in @sinonjs/fake-timers.
+            // 0 means the default, like @sinonjs/fake-timers.
             if limit as u32 != 0 {
                 options.loop_limit = limit as u32;
             }
@@ -320,22 +314,19 @@ struct Replaced {
     fake: Strong,
 }
 
-/// Where the originals go back.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Restore {
-    /// Also over what script has assigned since, as in @sinonjs/fake-timers.
     Always,
-    /// `vi.unstubAllGlobals()` ran first: where it took a fake away, `original` is what `vi.stubGlobal()` had put there.
+    /// Skips globals `vi.unstubAllGlobals()` already restored, where `original` is the stale `vi.stubGlobal()` value.
     WhereStillInstalled,
 }
 
-/// A call of the faked `process.nextTick()` or `queueMicrotask()`.
+/// A pending faked `process.nextTick()` or `queueMicrotask()` call.
 struct Tick {
     callback: Strong,
     arguments: Strong,
 }
 
-/// `firing` counts it for as long as it lives.
 struct Firing;
 
 impl Firing {
@@ -353,7 +344,7 @@ impl Drop for Firing {
     }
 }
 
-/// While it lives, getters of the globals may run, and `useFakeTimers()` and `useRealTimers()` throw.
+/// Reading a global can run a getter. `useFakeTimers()` and `useRealTimers()` throw if it re-enters them.
 struct ReadingGlobals;
 
 impl ReadingGlobals {
@@ -371,23 +362,20 @@ impl Drop for ReadingGlobals {
     }
 }
 
-/// What is left of a call of an `…Async` function. An event loop task runs at most one fake timer of it.
+/// Remaining work of an `…Async` call. Each event loop task runs at most one of its fake timers.
 enum Drive {
-    /// How much further the call moves the clock. `None`: as far as the last timer that is pending at the first step.
+    /// Time left to advance. `None` until the first step aims at the last pending timer.
     Tick(Option<Timespec>),
-    /// How many timers it has run.
+    /// Timers run so far.
     All(u32),
-    /// How many steps are left.
+    /// Steps left.
     Next(u32, NextStep),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum NextStep {
-    /// Run the next timer.
     First,
-    /// What it threw ends the call. Then as `SameInstant`.
     AfterFirst,
-    /// Run what else is due at the instant of that timer.
     SameInstant,
 }
 
@@ -396,9 +384,7 @@ struct AsyncDrive {
     drive: Drive,
     promise: JSPromiseStrong,
     result: Strong,
-    /// The first thing a callback threw.
     thrown: StrongOptional,
-    /// sinon's `duringTick`: a `Drive::Tick` has it from its first step to its last, a `Drive::Next` in `NextStep::SameInstant`.
     during_tick: bool,
 }
 
@@ -423,12 +409,10 @@ enum Step {
     Finished,
 }
 
-/// Ends what runs the fake timers at once: a call, the call of an `…Async` function, the clock's own advance.
 #[derive(Copy, Clone)]
 pub(crate) enum Stop {
-    /// What a faked `process.nextTick()` or `queueMicrotask()` callback threw, or the error of the loop limit.
+    /// Thrown by a faked `process.nextTick()` or `queueMicrotask()` callback, or the loop limit error.
     Ticks(JSValue),
-    /// The VM's own: its termination.
     Vm(JsError),
 }
 
@@ -440,36 +424,31 @@ impl From<JsError> for Stop {
 
 pub(crate) struct FakeTimers {
     active: bool,
-    /// Empty while not `active`.
+    /// Empty while inactive.
     faked: ApiSet,
-    /// A preload mocked what is mocked now: it is for every test file.
+    /// A preload script set up the current mock, so `on_test_file_end` keeps it.
     from_preload: bool,
-    /// Counts `activate` and `deactivate`. What is on the stack when it changes belongs to a clock that is gone.
+    /// Bumped by `activate` and `forget_installation`. If it changes mid-run, that run's clock is gone.
     installs: u32,
-    /// How many [`Firing`] are alive: sinon's `duringTick` of the functions that run timers before they return.
     firing: u32,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
     /// - peek/takeFirst (provided by TimerHeap)
     /// - peekLast (cannot be implemented efficiently with TimerHeap)
     /// - count (cannot be implemented efficiently with TimerHeap)
     pub(crate) timers: TimerHeap,
-    /// The fake clock: the time since `activate`.
     now: Timespec,
-    /// `Date.now()` on the fake clock, minus `now`, in milliseconds.
     date_now_offset: f64,
     loop_limit: u32,
     replaced: Vec<Replaced>,
-    /// A `WeakMap` of the realm: what each fake replaced, also one that is no longer installed. Empty before the first fake.
+    /// JS `WeakMap` from every fake ever created, installed or not, to the function it replaced.
     originals: StrongOptional,
-    /// A [`ReadingGlobals`] is alive.
     reading_globals: bool,
     ticks: VecDeque<Tick>,
     drives: Vec<AsyncDrive>,
     last_drive_id: u32,
     tick_mode: TickMode,
-    /// In the real heap while `tick_mode` is `Interval`.
+    /// Armed in the real heap while `tick_mode` is `Interval`.
     tick_timer: EventLoopTimer,
-    /// `TickMode::NextAsync`'s task is in the event loop's queue.
     auto_step_posted: bool,
 }
 
@@ -498,15 +477,15 @@ impl Default for FakeTimers {
     }
 }
 
-/// The id of `TickMode::NextAsync`'s task. No [`AsyncDrive`] has it.
+/// The `run_step` id reserved for `TickMode::NextAsync`. No [`AsyncDrive`] gets it.
 const AUTO_STEP: u32 = 0;
 
 /// `jest.setSystemTime` (C++ `JSMock__jsSetSystemTime`) writes
 /// `globalObject->overridenDateNow` directly; rebase `date_now_offset` here so
 /// the next `advanceTimersByTime` recomputes `Date.now` from the set time
 /// instead of the stale activation-time offset. `performance.now()` does not
-/// move, so `performance.timeOrigin` follows the rebased offset. Without fake
-/// timers, only who set the time is noted. A NaN `ms` is the "clear override" sentinel:
+/// move, so `performance.timeOrigin` follows the rebased offset. While fake
+/// timers are inactive it only records `from_preload`. A NaN `ms` is the "clear override" sentinel:
 /// `Date.now()` is real again until the next tick, so the mocked wall clock
 /// and `performance.timeOrigin` go back to real as well.
 #[unsafe(no_mangle)]
@@ -572,7 +551,7 @@ impl ClearedTimers {
     }
 }
 
-/// For [`FakeTimers::uninstall`] to finish with once the `FakeTimers` borrow has ended.
+/// [`FakeTimers::uninstall`] releases these after the `FakeTimers` borrow ends.
 #[must_use]
 struct Deactivated {
     cleared: ClearedTimers,
@@ -581,14 +560,14 @@ struct Deactivated {
 }
 
 impl FakeTimers {
-    /// How far apart the faked `requestAnimationFrame()` has its frames, as in @sinonjs/fake-timers.
+    /// Same `requestAnimationFrame()` frame length as @sinonjs/fake-timers.
     pub(crate) const FRAME_MS: u64 = 16;
 
     pub(crate) fn is_active(&self) -> bool {
         self.active
     }
 
-    /// Also the clock of `AbortSignal.timeout()`, `Bun.sleep()` and `Bun.cron()`, which have no function object to replace.
+    /// `AbortSignal.timeout()`, `Bun.sleep()` and `Bun.cron()` use this too, since they have no function to replace.
     pub(crate) fn set_timeout_clock(&self) -> Clock {
         if self.faked.contains(Api::SetTimeout) {
             Clock::Fake
@@ -597,14 +576,14 @@ impl FakeTimers {
         }
     }
 
-    /// A fake function is one only for the `useFakeTimers()` that created it.
+    /// Stale after the next `useFakeTimers()`: each call creates new fake functions.
     pub(crate) fn is_installed(&self, function: JSValue) -> bool {
         self.replaced
             .iter()
             .any(|replaced| replaced.fake.get() == function)
     }
 
-    /// The conversion of a timer function's arguments can run `useRealTimers()`.
+    /// Converting a timer function's arguments can run JS that calls `useRealTimers()`.
     pub(crate) fn clock_while_active(&self, clock: Clock) -> Clock {
         if self.active { clock } else { Clock::Real }
     }
@@ -633,7 +612,7 @@ impl FakeTimers {
 
     fn publish_clock(&self, global: &JSGlobalObject) {
         if self.faked.contains(Api::SetTimeout) {
-            // `Timespec::now(AllowMockedTime)` and `Bun.cron()`'s calendar.
+            // Read by `Timespec::now(AllowMockedTime)` and `Bun.cron()`'s calendar.
             bun_core::mock_time::set(self.now.ns() as i64);
             bun_core::mock_time::set_wall_ms(self.date_now());
         }
@@ -660,7 +639,7 @@ impl FakeTimers {
         vm.overridden_time_origin = None;
     }
 
-    /// The clock never goes back: a nested driver may have taken it past `to`.
+    /// Never moves the clock back, since a nested run may already have taken it past `to`.
     fn advance_clock_to(&mut self, global: &JSGlobalObject, to: Timespec) {
         if to.greater(&self.now) {
             self.now = to;
@@ -689,7 +668,6 @@ impl FakeTimers {
         }
     }
 
-    /// Leaves the heap, the globals and the pending promises alone.
     fn forget_installation(&mut self, global: &JSGlobalObject) {
         Self::hide_clock(global);
         self.active = false;
@@ -699,14 +677,14 @@ impl FakeTimers {
         self.tick_mode = TickMode::Manual;
         if self.tick_timer.state == EventLoopTimerState::ACTIVE {
             let timer: *mut EventLoopTimer = &raw mut self.tick_timer;
-            // SAFETY: single JS thread; what `All::remove` touches of `fake_timers` is only this node.
+            // SAFETY: single JS thread; this node is the only part of `fake_timers` that `All::remove` touches.
             unsafe { (*timer_all()).remove(timer) };
         }
     }
 
-    /// `global` has run script for the last time (`--isolate` swap, VM teardown). The heap is left to `cancel_all_timeout_objects`.
+    /// `global` won't run JS again (`--isolate` swap, VM teardown). `cancel_all_timeout_objects` drains the heap afterwards.
     pub(crate) fn forget_realm(&mut self, global: &JSGlobalObject) {
-        // The mocked time is the process's: a Worker that ends leaves alone what another thread mocks.
+        // `mock_time` is process-wide, so an exiting Worker must not clear another thread's mock.
         if self.active {
             self.forget_installation(global);
         }
@@ -769,7 +747,6 @@ impl FakeTimers {
         self.timers.peek().is_none() && self.ticks.is_empty()
     }
 
-    /// The faked `setImmediate` to run first. It is the next timer, unless it was queued while a timer of this instant ran.
     fn first_immediate(&self) -> Option<*mut EventLoopTimer> {
         let next = self.timers.peek()?;
         // SAFETY: `next` is the heap root; live while linked.
@@ -788,13 +765,13 @@ impl FakeTimers {
         self.timers.delete_min()
     }
 
-    /// Without fake timers it still ends `setSystemTime()`'s override. Settling what it returns runs script; `Restore::Always` runs none.
+    /// Runs no JS with `Restore::Always`, but settling the returned drives does.
     fn uninstall(global: &JSGlobalObject, restore: Restore) -> Vec<AsyncDrive> {
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         let mut deactivated = unsafe { (*timer_all()).fake_timers.deactivate(global) };
         deactivated.cleared.release(global.bun_vm_ptr());
         for replaced in &deactivated.replaced {
-            // What tells @testing-library/dom that the timers are fake. The function may come back: see `originals`.
+            // @testing-library/dom detects fake timers by `setTimeout.clock`, and a test can put this fake back later.
             if replaced.api == Api::SetTimeout
                 && let Err(err) = replaced.fake.get().delete_property(global, "clock")
             {
@@ -820,7 +797,7 @@ impl FakeTimers {
         deactivated.drives
     }
 
-    /// Script runs before anything changes, so what it throws leaves the timers as they were. Returns as `uninstall`.
+    /// Everything that can throw runs before any state changes. Returns drives to settle, like `uninstall`.
     fn install(
         global: &JSGlobalObject,
         options: &Options,
@@ -854,7 +831,7 @@ impl FakeTimers {
         originals
     }
 
-    /// A new fake for each function of `faked`, with what `uninstall(Restore::Always)` leaves in its place.
+    /// Each `original` is the value `uninstall(Restore::Always)` will leave on the global, never another fake.
     fn fakes(global: &JSGlobalObject, faked: ApiSet) -> JsResult<Vec<Replaced>> {
         let _reading = ReadingGlobals::begin();
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
@@ -877,7 +854,7 @@ impl FakeTimers {
                     original_of(originals, installed).unwrap_or(installed)
                 }
             };
-            // Only a DOM library has these two.
+            // Only a DOM library defines these two.
             if matches!(api, Api::RequestAnimationFrame | Api::CancelAnimationFrame)
                 && !original.is_callable()
             {
@@ -894,7 +871,7 @@ impl FakeTimers {
         Ok(fakes)
     }
 
-    /// Where something has put a fake back that is no longer installed, what that fake replaced goes back. Runs no script.
+    /// Swaps any stale fake that was put back on a global for its original. Runs no JS.
     fn take_off_stale_fakes(global: &JSGlobalObject) {
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
         let Some(originals) = (unsafe { (*timer_all()).fake_timers.originals.get() }) else {
@@ -913,7 +890,7 @@ impl FakeTimers {
         }
     }
 
-    // Below, a `JSValue` result is what the callback of a timer threw, or empty. A `JsError` is the VM's own: its termination.
+    // Below, a returned `JSValue` is the exception a timer callback threw, or empty. A `JsError` means the VM is terminating.
 
     fn fire(global: &JSGlobalObject, timer: *mut EventLoopTimer) -> JsResult<JSValue> {
         // SAFETY: `timer` was just popped from our heap; live until its callback completes.
@@ -936,7 +913,7 @@ impl FakeTimers {
                     vm,
                     &raw mut thrown,
                 ),
-                // An abort listener or a cron job that throws is reported where a real timer's drain would report it.
+                // An abort listener or cron job that throws is reported as uncaught, same as in the real drain.
                 _ => {
                     if let Err(err) = EventLoopTimer::fire(timer, &at, vm.cast()) {
                         bun_jsc::task::report_error_or_terminate(global, err)
@@ -951,7 +928,7 @@ impl FakeTimers {
         Ok(thrown)
     }
 
-    /// Runs the faked `process.nextTick()` and `queueMicrotask()` callbacks. What it has not run when it stops stays queued.
+    /// On `Err`, the callbacks it didn't get to stay queued.
     fn run_ticks(global: &JSGlobalObject) -> Result<(), Stop> {
         let all = timer_all();
         // SAFETY: per-thread `timer::All`; each borrow lasts one statement and none spans a callback.
@@ -978,7 +955,7 @@ impl FakeTimers {
         Ok(())
     }
 
-    /// sinon's `next()`. `None`: there was no timer to run.
+    /// sinon's `next()`.
     fn run_next(global: &JSGlobalObject) -> Result<Option<JSValue>, Stop> {
         Self::run_ticks(global)?;
         // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
@@ -993,14 +970,14 @@ impl FakeTimers {
         Ok(Some(thrown))
     }
 
-    /// sinon's `tick()`: a timer that throws does not stop it, and it gives back the first thing one threw.
+    /// sinon's `tick()`. Keeps going when a timer throws and returns the first exception.
     fn run_until(global: &JSGlobalObject, until: Timespec) -> Result<JSValue, Stop> {
         let all = timer_all();
         // SAFETY: per-thread `timer::All`; each borrow lasts one statement and none spans a callback.
         let installs = unsafe { (*all).fake_timers.installs };
         let _firing = Firing::begin();
         let mut first_thrown = JSValue::ZERO;
-        // `until` is a time on the clock this started on.
+        // `until` only means something on the clock this run started on.
         // SAFETY: as above.
         while unsafe { (*all).fake_timers.installs } == installs {
             Self::run_ticks(global)?;
@@ -1032,7 +1009,6 @@ impl FakeTimers {
         }
     }
 
-    /// sinon's `runAll()`.
     fn run_all(global: &JSGlobalObject) -> Result<JSValue, Stop> {
         // SAFETY: per-thread `timer::All`.
         let limit = unsafe { (*timer_all()).fake_timers.loop_limit };
@@ -1066,7 +1042,6 @@ impl FakeTimers {
         Ok(JSValue::ZERO)
     }
 
-    /// Legacy Jest's `runAllImmediates()`.
     fn run_all_immediates(global: &JSGlobalObject) -> JsResult<JSValue> {
         let all = timer_all();
         // SAFETY: per-thread `timer::All`; each borrow lasts one statement and none spans a callback.
@@ -1116,7 +1091,7 @@ impl FakeTimers {
         promise_value
     }
 
-    /// Keeps `thrown` for the promise of drive `id`. A drive that `useRealTimers()` has settled has nobody left to tell.
+    /// A missing drive was already settled by `useRealTimers()`, so `thrown` is reported as uncaught.
     fn drive_threw(global: &JSGlobalObject, id: u32, thrown: JSValue) {
         if thrown.is_empty() {
             return;
@@ -1137,7 +1112,7 @@ impl FakeTimers {
         }
     }
 
-    /// The first step of a `Drive::Tick(None)`, before it runs the ticks, as `run_only_pending`.
+    /// Must run before the drive's first `run_ticks`, to match `run_only_pending`.
     fn aim_at_last_timer(&mut self, id: u32) {
         let now = self.now;
         let to_last = self.timers.find_max().map_or(Timespec::EPOCH, |last| {
@@ -1149,7 +1124,7 @@ impl FakeTimers {
         }
     }
 
-    /// The timer a `Drive::Tick` runs next. `Some(None)`: there is none in its range, and the clock is at the end of it.
+    /// Returns `None` if the drive is gone, `Some(None)` once no timer is left in range and the clock is at its end.
     fn next_of_tick(
         &mut self,
         global: &JSGlobalObject,
@@ -1175,7 +1150,7 @@ impl FakeTimers {
         Some(Some(timer))
     }
 
-    /// One event loop task's worth of drive `id`. `None`: `useRealTimers()` settled it.
+    /// Returns `None` if `useRealTimers()` already settled the drive.
     fn step_drive(global: &JSGlobalObject, id: u32) -> Result<Option<Step>, Stop> {
         let all = timer_all();
         // SAFETY: per-thread `timer::All`; each borrow lasts one statement and none spans a callback.
@@ -1258,9 +1233,9 @@ impl FakeTimers {
         }
     }
 
-    /// The event loop task `Bun__FakeTimers__postStep` posts.
+    /// Runs as the event loop task that `Bun__FakeTimers__postStep` posts.
     pub(crate) fn run_step(global: &JSGlobalObject, id: u32) -> JsResult<()> {
-        // Posted by a test file whose realm `--isolate` has retired since.
+        // Posted by a test file whose global `--isolate` has since swapped out.
         if !core::ptr::eq(global, global.bun_vm().global()) {
             return Ok(());
         }
@@ -1271,7 +1246,7 @@ impl FakeTimers {
             Ok(step) => step,
             Err(Stop::Vm(err)) => return Err(err),
             Err(Stop::Ticks(thrown)) => {
-                // As in sinon, the call rejects with it, whatever a timer threw before.
+                // Like sinon, reject with this one even if a timer threw earlier.
                 // SAFETY: per-thread `timer::All`; the borrow ends at this statement.
                 if let Some(drive) = unsafe { (*timer_all()).fake_timers.drive_mut(id) } {
                     drive.thrown.deinit();
@@ -1349,7 +1324,7 @@ impl FakeTimers {
         let TickMode::Interval(delta) = mode else {
             return Ok(());
         };
-        // The promise jobs of the timers run once the clock has arrived, as after sinon's `tick()`.
+        // Holds back the microtask drain until the whole advance is done, like sinon's `tick()`.
         // SAFETY: the live event loop of the per-thread VM.
         let _entered =
             unsafe { bun_jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
@@ -1363,7 +1338,7 @@ impl FakeTimers {
         throw_what_it_threw(global, advanced)
     }
 
-    /// The ticks that have stopped the own advance of clock `installs` would stop its next one as well.
+    /// The ticks that stopped this automatic advance would stop the next one too.
     fn stop_advancing(installs: u32) {
         // SAFETY: per-thread `timer::All`.
         if unsafe { (*timer_all()).fake_timers.installs } == installs {
@@ -1371,7 +1346,6 @@ impl FakeTimers {
         }
     }
 
-    /// Something for `TickMode::NextAsync` to run may have come up.
     pub(crate) fn post_auto_step(&mut self) {
         if self.tick_mode == TickMode::NextAsync
             && !self.auto_step_posted
@@ -1431,7 +1405,6 @@ impl FakeTimers {
     }
 }
 
-/// `None`: `value` is not a fake.
 fn original_of(originals: JSValue, value: JSValue) -> Option<JSValue> {
     let original = Bun__FakeTimers__originalOf(originals, value);
     (!original.is_empty()).then_some(original)
@@ -1446,7 +1419,7 @@ fn plus(a: Timespec, b: Timespec) -> Timespec {
     }
 }
 
-/// The text of @sinonjs/fake-timers.
+/// Same message as @sinonjs/fake-timers.
 fn loop_limit_error(global: &JSGlobalObject, limit: u32) -> JsResult<JSValue> {
     let error = global.create_error_instance(format_args!(
         "Aborting after running {limit} timers, assuming an infinite loop!"
@@ -1480,7 +1453,7 @@ fn error_if_reading_globals(global: &JSGlobalObject) -> JsResult<()> {
     )))
 }
 
-/// `vi` or `jest`, for calls to chain. `frame.this()` itself is a scope object when the function is called by a bare name.
+/// `frame.this()` is a scope object, not `undefined`, when the function is called by a bare name.
 fn chainable_this(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
     bun_jsc::cpp::JSMock__strictThis(global, frame.this())
 }
@@ -1512,7 +1485,7 @@ fn use_fake_timers(
 ) -> JsResult<JSValue> {
     let options = Options::from_js(global, frame.argument(0), flavor)?;
     let date_now = options.now.unwrap_or_else(|| match flavor {
-        // What `Date.now()` says: `setSystemTime()`'s time, or that of the fake clock this one replaces.
+        // vitest starts from the current `Date.now()`, mocked or not (`setSystemTime()`, the previous fake clock).
         Flavor::Vi => bun_jsc::cpp::JSC__JSGlobalObject__jsDateNow(global),
         Flavor::Jest => JSMock__getCurrentUnixTimeMs(),
     });
@@ -1593,7 +1566,6 @@ fn advance(global: &JSGlobalObject, ms: f64) -> Result<JSValue, Stop> {
     FakeTimers::run_until(global, now.add_ms_float(ms))
 }
 
-/// The next test file shares `global`. No script is on the stack.
 pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
     // SAFETY: per-thread `timer::All`; field reads only.
     let (active, from_preload) = unsafe {
@@ -1605,7 +1577,7 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject) {
         // SAFETY: the live event loop of the per-thread VM.
         let _entered =
             unsafe { bun_jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
-        // The promises of its `…Async` calls stay pending, as all that is pending when a file ends.
+        // Dropping the drives leaves their `…Async` promises pending, like anything else still pending at file end.
         drop(FakeTimers::uninstall(global, Restore::WhereStillInstalled));
     }
     FakeTimers::take_off_stale_fakes(global);
@@ -1616,7 +1588,7 @@ pub(crate) fn is_active() -> bool {
     unsafe { (*timer_all()).fake_timers.is_active() }
 }
 
-/// No-op unless fake timers are active. `ms` must be finite and in `0..=u32::MAX`. Gives back what a timer threw, or empty.
+/// `ms` must be finite and in `0..=u32::MAX`. Returns the exception a timer threw, or empty.
 pub(crate) fn advance_by_ms(global: &JSGlobalObject, ms: f64) -> Result<JSValue, Stop> {
     if !is_active() {
         return Ok(JSValue::ZERO);
@@ -1659,7 +1631,7 @@ fn run_all_immediates(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     rethrow(global, frame, ran)
 }
 
-/// An `…Async` function is an `async` function in vitest and Jest: it rejects where its namesake throws.
+/// The `…Async` functions are `async` in vitest and Jest, so they reject where the sync ones throw.
 fn drive_async(
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -1853,7 +1825,6 @@ const FAKE_TIMERS_FNS: &[(&str, u32, JSHostFn)] = &[
     ("getRealSystemTime", 0, __jsc_host_get_real_system_time),
 ];
 
-/// (name, length, `vi`'s, `jest`'s)
 const FLAVORED_FAKE_TIMERS_FNS: &[(&str, u32, JSHostFn, JSHostFn)] = &[
     (
         "useFakeTimers",

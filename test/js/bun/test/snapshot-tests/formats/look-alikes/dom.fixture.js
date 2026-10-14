@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 
-// A look-alike of a DOM node whose members are not of the types that the DOM gives them is not printed as one:
-// it prints as the object that it is, where pretty-format throws. Written by Bun.
+// Bun prints a fake DOM node whose members have the wrong types as a plain object, where pretty-format throws.
+// So Bun wrote this fixture's snapshot file, not Vitest.
 class Captured {
   constructor(value) {
     this.value = value;

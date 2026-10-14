@@ -1,4 +1,4 @@
-// toMatchSnapshot(properties): what is printed is `deepMerge(received, properties)`, with its oddities.
+// toMatchSnapshot(properties) prints deepMerge(received, properties), and these cases pin down deepMerge's quirks.
 class Foo {
   constructor(members) {
     Object.assign(this, members);
@@ -138,7 +138,7 @@ for (const [name, make] of Object.entries(printed)) {
   });
 }
 
-// The copy of the object gets the members of the matcher, `$$typeof` among them, and is taken for a matcher.
+// deepMerge copies the matcher's members onto the object, $$typeof included, so the copy is printed as a matcher.
 test("a matcher for an object in an array cannot be printed", () => {
   expect(() =>
     expect({ items: [{ a: 1, b: 2 }] }).toMatchSnapshot({ items: [expect.objectContaining({ a: 1 })] }),

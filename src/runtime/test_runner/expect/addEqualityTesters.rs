@@ -5,7 +5,7 @@ use super::expect_matcher_utils_js as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils, Flags};
 
 impl Expect {
-    /// The testers that hold now, or what an [`EqualityTestersScope`] put in their place.
+    /// The first call in a new test file drops the testers that the previous file registered itself.
     pub(crate) fn equality_testers(global: &JSGlobalObject) -> JsResult<Option<JSValue>> {
         let utils_value = ExpectMatcherUtils::singleton(global);
         let Some(utils) = ExpectMatcherUtils::from_js(utils_value) else { return Ok(None) };
@@ -39,7 +39,6 @@ impl Expect {
         Ok(Some(kept))
     }
 
-    /// Whether the function that made the call in `frame` is in the test file that is running.
     pub(crate) fn is_called_by_test_file(global: &JSGlobalObject, frame: &CallFrame) -> bool {
         let Some(runner) = Jest::runner() else { return false };
         let Some(buntest) = runner.bun_test_root.clone_active_file() else { return false };
@@ -58,7 +57,7 @@ impl Expect {
         // SAFETY: `utils_value` is on the stack and owns the payload.
         let utils = unsafe { &*utils };
 
-        // A new array: script may hold the old one, as `customTesters`.
+        // Build a new array, because script may still hold the old one through `this.customTesters`.
         let all = JSValue::create_empty_array(global, 0)?;
         let mut count = 0;
         if let Some(registered) = Self::equality_testers(global)? {
@@ -80,7 +79,7 @@ impl Expect {
                     tester,
                 ));
             }
-            // A helper that every test file calls registers its tester once.
+            // A shared helper that every test file calls shouldn't register the same tester again.
             if !is_of_file {
                 for index in 0..registered {
                     if all.get_direct_index(global, index)? == tester
@@ -122,7 +121,7 @@ impl Expect {
         Ok(None)
     }
 
-    /// For C++ deep equality. 1: equal, 0: not equal or threw, -1: no tester has an opinion.
+    /// Called by C++ deep equality. Returns 1 for equal, 0 for not equal or threw, -1 if no tester decided.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Expect__runEqualityTesters(global: &JSGlobalObject, a: JSValue, b: JSValue) -> i8 {
         match Self::run_equality_testers(global, a, b) {
@@ -143,7 +142,7 @@ impl ExpectMatcherContext {
     }
 }
 
-/// Deep equality consults `testers` (`ZERO`: none) instead of the registered ones until this is dropped.
+/// Until dropped, deep equality uses `testers` (`ZERO` for none) instead of the registered ones.
 pub(crate) struct EqualityTestersScope<'a> {
     global: &'a JSGlobalObject,
     outer: JSValue,

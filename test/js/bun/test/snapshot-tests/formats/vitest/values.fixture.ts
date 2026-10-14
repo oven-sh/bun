@@ -46,7 +46,6 @@ function args(..._a: any[]) {
 }
 
 const cases: Record<string, () => unknown> = {
-  // primitives
   "undefined": () => undefined,
   "null": () => null,
   "true": () => true,
@@ -69,7 +68,6 @@ const cases: Record<string, () => unknown> = {
   "symbol with empty description": () => Symbol(""),
   "registered symbol": () => Symbol.for("reg"),
   "well-known symbol": () => Symbol.iterator,
-  // strings
   "empty string": () => "",
   "string": () => "hello",
   "string with double quotes": () => 'say "hi"',
@@ -102,7 +100,6 @@ const cases: Record<string, () => unknown> = {
   "Number object": () => new Number(5),
   "Boolean object": () => new Boolean(false),
   "BigInt object": () => Object(5n),
-  // arrays
   "empty array": () => [],
   "array": () => [1, "two", null, undefined, true],
   "nested arrays": () => [[1, [2, [3, [4]]]], []],
@@ -118,7 +115,6 @@ const cases: Record<string, () => unknown> = {
   "arguments": () => args(1, "b"),
   "empty arguments": () => args(),
   "long array": () => Array.from({ length: 120 }, (_, i) => i),
-  // objects
   "empty object": () => ({}),
   "object": () => ({ a: 1, b: "two", c: null, d: undefined, e: true }),
   "keys are sorted": () => ({ z: 1, a: 2, m: 3, B: 4, _u: 5, 10: 6, 9: 7, "1a": 8 }),
@@ -183,7 +179,6 @@ const cases: Record<string, () => unknown> = {
     for (let i = 0; i < 30; i++) o = { o };
     return o;
   },
-  // classes
   "class instance": () => new Point(),
   "empty class instance": () => new Empty(),
   "subclass instance": () => new Child(),
@@ -198,7 +193,6 @@ const cases: Record<string, () => unknown> = {
   "class": () => Point,
   "anonymous class": () => class {},
   "class in object": () => ({ Point, Empty }),
-  // functions
   "function": () => function foo() {},
   "anonymous function": () => function () {},
   "arrow": () => () => {},
@@ -210,7 +204,6 @@ const cases: Record<string, () => unknown> = {
   "native function": () => Math.max,
   "function with properties": () => Object.assign(function fp() {}, { a: 1 }),
   "functions in array": () => [function a() {}, () => {}, class C {}],
-  // collections
   "empty Map": () => new Map(),
   "Map": () =>
     new Map<any, any>([
@@ -240,7 +233,6 @@ const cases: Record<string, () => unknown> = {
     (function* g() {
       yield 1;
     })(),
-  // dates and regexps
   "Date": () => new Date("2020-01-02T03:04:05.678Z"),
   "epoch": () => new Date(0),
   "invalid Date": () => new Date(NaN),
@@ -253,7 +245,6 @@ const cases: Record<string, () => unknown> = {
   "RegExp with special chars": () => /^[a-z]+(foo|bar)?\s*$/m,
   "empty RegExp": () => new RegExp(""),
   "RegExp in object": () => ({ re: /x\d/y }),
-  // binary
   "ArrayBuffer": () => new Uint8Array([1, 2, 3]).buffer,
   "empty ArrayBuffer": () => new ArrayBuffer(0),
   "SharedArrayBuffer": () => new SharedArrayBuffer(2),
@@ -273,7 +264,6 @@ const cases: Record<string, () => unknown> = {
   "Float16Array": () => new (globalThis as any).Float16Array([1.5]),
   "Buffer": () => Buffer.from("hi"),
   "typed array in object": () => ({ bytes: new Uint8Array([9]) }),
-  // errors
   "Error": () => new Error("boom"),
   "Error without message": () => new Error(),
   "TypeError": () => new TypeError("bad type"),
@@ -292,7 +282,6 @@ const cases: Record<string, () => unknown> = {
   "error-like object": () => ({ name: "Error", message: "not really", stack: "s" }),
   "DOMException": () => new DOMException("dom", "AbortError"),
   "errors in array": () => [new Error("one"), new SyntaxError("two")],
-  // promises and others
   "resolved promise": () => Promise.resolve(1),
   "pending promise": () => new Promise(() => {}),
   "Proxy of an object": () => new Proxy({ a: 1 }, {}),
@@ -317,7 +306,6 @@ const cases: Record<string, () => unknown> = {
   "globalThis.Math": () => Math,
   "JSON": () => JSON,
   "module namespace like": () => ({ __esModule: true, default: 1 }),
-  // asymmetric matchers as values
   "expect.any": () => ({ a: expect.any(Number), b: expect.any(String), c: expect.any(Point) }),
   "expect.anything": () => [expect.anything()],
   "expect.stringContaining": () => expect.stringContaining("abc"),
@@ -338,7 +326,6 @@ const cases: Record<string, () => unknown> = {
       list: expect.arrayContaining([expect.any(String), expect.objectContaining({ a: expect.stringMatching(/x+/) })]),
     }),
   "empty containing": () => [expect.objectContaining({}), expect.arrayContaining([])],
-  // react-like
   "react element": () => ({
     $$typeof: Symbol.for("react.element"),
     type: "div",
@@ -360,7 +347,6 @@ const cases: Record<string, () => unknown> = {
     type: function Comp() {},
     props: { n: 1, f: () => {}, o: { a: 1 }, s: "str", b: true, u: undefined },
   }),
-  // mixed
   "mixed": () => ({
     list: [1, { a: [new Map([["k", new Set([new Date(0)])]])] }],
     re: /r/,

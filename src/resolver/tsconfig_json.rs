@@ -232,7 +232,6 @@ impl TSConfigJSON {
         !self.base_url.is_empty()
     }
 
-    /// What the values of "paths" are relative to.
     pub(crate) fn abs_base_url_for_paths(&self) -> &[u8] {
         // The explicit base URL should take precedence over the implicit base URL
         // if present. This matters when a tsconfig.json file overrides "baseUrl"
@@ -244,7 +243,6 @@ impl TSConfigJSON {
         }
     }
 
-    /// The key of "paths" with a `*` that `path` matches.
     pub(crate) fn match_paths_wildcard(&self, path: &[u8]) -> Option<PathsWildcardMatch<'_>> {
         let mut longest_match: Option<PathsWildcardMatch> = None;
 

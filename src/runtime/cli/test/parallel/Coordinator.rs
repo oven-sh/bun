@@ -36,8 +36,7 @@ pub(crate) struct Coordinator<'a> {
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
     pub(crate) argv: Box<[bun_spawn::CStrPtr]>,
-    /// One envp per worker slot — same base, with that slot's
-    /// `WORKER_ID_VARIABLES`.
+    /// One envp per worker slot — same base, with that slot's `WORKER_ID_VARIABLES`.
     pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub(crate) workers: &'a mut [Worker],

@@ -32,7 +32,7 @@ use bun_sourcemap_jsc::code_coverage;
 /// module load alone can exceed the production 5ms threshold.
 const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
-/// Each holds the 1-based index of the worker. (Vitest counts VITEST_WORKER_ID up with every file.)
+/// All set to the worker's 1-based index. Vitest instead increments VITEST_WORKER_ID for every file.
 const WORKER_ID_VARIABLES: [&[u8]; 4] = [
     b"JEST_WORKER_ID",
     b"BUN_TEST_WORKER_ID",
@@ -40,7 +40,7 @@ const WORKER_ID_VARIABLES: [&[u8]; 4] = [
     b"VITEST_WORKER_ID",
 ];
 
-/// Vitest sets its two without workers as well. JEST_WORKER_ID stays unset there: libraries take it for Jest.
+/// Vitest sets these even without workers. JEST_WORKER_ID stays unset because libraries use it to detect Jest.
 pub(crate) fn set_ids_without_workers(env: &mut bun_dotenv::Loader) {
     for name in [b"VITEST_POOL_ID".as_slice(), b"VITEST_WORKER_ID"] {
         let _ = env.map.put(name, b"1");

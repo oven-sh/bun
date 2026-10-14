@@ -60,7 +60,7 @@ pub struct App<const SSL: bool> {
 /// the call.
 macro_rules! uws_app_route_methods {
     ($($name:ident => $cfn:ident),* $(,)?) => {$(
-        // The C++ side is always_inline: without this every caller gets its own copy of the registration.
+        // The C++ side is always_inline, so without this every caller gets its own copy of the route registration.
         #[inline(never)]
         pub fn $name(
             &mut self,

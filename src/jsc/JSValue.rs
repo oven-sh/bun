@@ -2522,8 +2522,7 @@ impl JSValue {
         JSC__JSValue__forEachProperty(self, global, ctx, callback);
         scope.return_if_exception()
     }
-    /// [`for_each_property`](Self::for_each_property) for `bun:test`: an own accessor gives what its
-    /// getter returns, and itself when the getter throws.
+    /// Like `for_each_property`, but passes what an own getter returns, or the accessor itself if the getter throws.
     #[inline(always)]
     pub(crate) fn for_each_property_calling_own_getters(
         self,
@@ -2594,10 +2593,8 @@ impl JSValue {
         unsafe { crate::TopExceptionScope::destroy(scope) };
         result
     }
-    /// [`for_each_property_ordered`](Self::for_each_property_ordered) for `bun:test`: an accessor
-    /// gives what its getter returns, and itself when the getter throws. True when
-    /// [`for_each_property_ordered_with_non_enumerable`](Self::for_each_property_ordered_with_non_enumerable)
-    /// is sure to give the same.
+    /// Like `for_each_property_ordered`, but passes what a getter returns, or the accessor itself if the getter throws.
+    /// Returns true if `for_each_property_ordered_with_non_enumerable` is sure to visit the same properties.
     #[inline(always)]
     pub fn for_each_property_ordered_calling_getters(
         self,
@@ -2619,8 +2616,7 @@ impl JSValue {
             JSC__JSValue__forEachPropertyOrderedCallingGetters(self, global, ctx, callback);
         scope.return_if_exception().map(|()| is_same)
     }
-    /// [`for_each_property_ordered`](Self::for_each_property_ordered) as it was when `bun:test` printed
-    /// the own properties that are not enumerable too.
+    /// Also visits own non-enumerable properties, to reproduce what older versions of `bun:test` printed.
     #[inline(always)]
     pub fn for_each_property_ordered_with_non_enumerable(
         self,
@@ -2899,9 +2895,8 @@ impl JSValue {
         })
     }
     /// `JSValue.jestDeepMatch` — `expect(a).toMatchObject(b)` /
-    /// snapshot-property-matcher subset comparison. Also returns what a diff or
-    /// a snapshot shows for `self`: when the result is `replace_when`, a copy in
-    /// which the asymmetric matchers of `subset` stand for what they matched.
+    /// snapshot-property-matcher subset comparison. Also returns the value to print for `self`. If the result
+    /// equals `replace_when`, that's a copy with `subset`'s asymmetric matchers in place of what they matched.
     pub fn jest_deep_match(
         self,
         subset: JSValue,

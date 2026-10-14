@@ -1,5 +1,5 @@
-//! A matcher that needs a pending promise returns a promise of its own, and is called again once the former has settled.
-//! That call is a replay: what the body of the matcher asked user code for the first time, it is given again.
+//! A matcher that hits a pending promise returns its own promise and re-runs from the top once the pending one settles.
+//! The re-run replays the recorded results of earlier user-code calls (`Pass::once`) instead of calling user code again.
 
 use core::cell::Cell;
 use core::ffi::c_uint;
@@ -52,28 +52,26 @@ unsafe extern "C" {
     );
 }
 
-/// Who waits for a matcher call: the callback of a test or of a hook, for as long as the runner waits for it; of
-/// concurrent tests, when it is not known which, their group; outside of them, the test file.
+/// The test or hook a deferred matcher keeps from ending. Falls back to the concurrent group, then to the file.
 pub(crate) struct RunningEntry {
     buntest: BunTestPtrWeak,
-    /// `Execution`, without an entry for a group. Anything else: the file.
+    /// `Execution` with `entry_data: None` is a whole concurrent group. Any other variant is the file.
     entry: RefDataValue,
-    /// Where `Unclaimed::calls` has the call.
     unclaimed: Option<usize>,
 }
 
-/// The matcher calls of a test file that wait for a promise.
+/// A test file's deferred matcher calls.
 #[derive(Default)]
 pub(crate) struct Unclaimed {
-    /// `ExpectDeferred` cells. `None`: it no longer waits.
+    /// `ExpectDeferred` cells. Finished calls become `None` so `RunningEntry::unclaimed` indices stay valid.
     calls: Vec<Option<Strong>>,
-    /// A test or a hook has ended that some of `calls` were made by.
+    /// A test or hook ended with calls still pending, so `settle_ended` has to run.
     pub(crate) some_ended: bool,
-    /// What the promises of those reject with. It unwinds what awaits them, and is not reported.
+    /// Abandoned calls reject with this to unwind their awaiters. `is_ended_error` lets the runner drop it unreported.
     ended_error: Option<Strong>,
-    /// How many of them the file waits for.
+    /// Pending calls held by the file itself.
     of_file: u32,
-    /// When the file, whose tests have run, stops waiting. `EPOCH`: never.
+    /// When the file stops waiting after its tests have run. `EPOCH` means never.
     deadline: Option<Timespec>,
 }
 
@@ -111,7 +109,6 @@ impl Unclaimed {
 }
 
 impl RunningEntry {
-    /// The one that waits for the matchers of `expect`. `None` outside of `bun test`, and once the test file has ended.
     fn of(expect: &Expect) -> Option<RunningEntry> {
         let parent = expect.parent.as_ref()?;
         let buntest = parent.bun_test()?;
@@ -138,7 +135,6 @@ impl RunningEntry {
         Some(running)
     }
 
-    /// `None` once the entry has ended.
     fn sequence(&self, buntest: &BunTestPtr) -> Option<NonNull<ExecutionSequence>> {
         let buntest = buntest.get();
         if buntest.phase != Phase::Execution {
@@ -152,7 +148,6 @@ impl RunningEntry {
         )
     }
 
-    /// Its count of the matchers it waits for. `None` once it has ended.
     fn pending_matchers(&self, buntest: &BunTestPtr) -> Option<NonNull<u32>> {
         match self.entry {
             RefDataValue::Execution {
@@ -188,7 +183,7 @@ impl RunningEntry {
             .is_some_and(|buntest| self.pending_matchers(&buntest).is_some())
     }
 
-    /// Whether the time limit of the entry has passed, which the runner only sees once no microtask is left.
+    /// Checks the clock directly, because the runner only notices a timeout after the microtask queue drains.
     fn has_timed_out(&self) -> bool {
         let Some(buntest) = self.buntest.upgrade() else {
             return false;
@@ -205,7 +200,6 @@ impl RunningEntry {
         })
     }
 
-    /// It does not end before `release()`, or before it has waited for `deferred` as long as it can.
     fn hold(mut self, global: &JSGlobalObject, deferred: JSValue) -> Self {
         let Some(buntest) = self.buntest.upgrade() else {
             return self;
@@ -218,7 +212,7 @@ impl RunningEntry {
         self
     }
 
-    /// `failure`: what the matcher threw, when nothing else reports it.
+    /// `failure` is the matcher's error when nothing handles its promise, so it has to be reported here.
     fn release(self, global: &JSGlobalObject, failure: Option<JSValue>) {
         let Some(buntest) = self.buntest.upgrade() else {
             return;
@@ -246,12 +240,12 @@ impl RunningEntry {
             Some(sequence) => {
                 // SAFETY: as in `pending_matchers`.
                 let sequence = unsafe { &mut *sequence.as_ptr() };
-                // Taken: the entry ends once, however many of its matchers run before the runner's next step.
+                // take(), so the entry ends only once even if several matchers release before the runner's next step.
                 ((none_left || sequence.maybe_skip)
                     && core::mem::take(&mut sequence.callback_done))
                 .then_some(self.entry)
             }
-            // While the file is collected, nothing waits yet.
+            // During collection the runner isn't waiting on these yet, so there's nothing to wake.
             None => (none_left && buntest.phase == Phase::Execution).then_some(RefDataValue::Start),
         };
         if let Some(next) = next {
@@ -261,58 +255,49 @@ impl RunningEntry {
     }
 }
 
-/// What the body of a matcher asks user code for.
+/// Identifies one call into user code, so a replay can check that a recorded answer belongs to the same call.
 #[derive(Copy, Clone)]
 pub(crate) struct Question {
     pub(crate) asked: Asked,
-    /// Who is asked, where a matcher may ask several: a function, or an `ExpectCustomAsymmetricMatcher`. Else undefined.
+    /// The callee (a function or an `ExpectCustomAsymmetricMatcher`) when one matcher can call several, else undefined.
     pub(crate) who: JSValue,
-    /// What about.
+    /// The value the call is about, e.g. the received value or the function to call.
     pub(crate) what: JSValue,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Asked {
-    /// What a custom matcher returns.
     Matcher,
-    /// The promise that settles as a value of `expect.resolvesTo` / `expect.rejectsTo` does.
     Promise,
-    /// What the function of `toThrow()` returns or throws.
     Call,
-    /// The items of an iterable.
     Items,
-    /// The promise of `expect.poll()`.
     Poll,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Role {
-    /// Of the call that runs the body of a matcher.
     Matcher,
-    /// Around the call that runs a matcher again.
     Replaying,
-    /// Of a function that returns to user code what it finds, so that it cannot wait for a promise.
+    /// Wraps a function that returns its result to user code synchronously, so nothing under it may defer.
     Barrier,
 }
 
-/// One run of the body of a matcher. It lives on the stack of the call that runs the body, where the collector sees its values.
+/// One run of a matcher body. Must stay on the stack, where the GC's conservative scan keeps its JSValues alive.
 pub(crate) struct Pass {
     outer: Cell<*const Pass>,
     role: Role,
-    /// How many answers the body has come by. `Role::Replaying`: how many of those in the journal.
+    /// Number of `once()` calls so far. For `Role::Replaying`, how many were answered from the journal.
     cursor: Cell<u32>,
-    /// Four bits for each of `recent`: `Asked`, and whether it was thrown.
+    /// Four bits per `recent` entry: `Asked << 1 | threw`.
     recent_kinds: Cell<u32>,
-    /// `Role::Matcher`: an array of the answers so far, `STRIDE` elements each: as in `recent_kinds`, `Question::who`,
-    /// `Question::what`, and the answer. Empty until the matcher has to wait or `recent` is full: most matchers never
-    /// wait. `Role::Replaying`: the `ExpectDeferred`.
-    /// Its elements are defined and read as own properties: nothing that script puts on a prototype sees or changes them.
+    /// For `Role::Matcher`, a flat array of `[kind, who, what, answer]` records, empty until the matcher has to wait or
+    /// `recent` fills up. For `Role::Replaying`, the `ExpectDeferred`.
+    /// Only accessed as own properties, so script can't observe or change it through `Array.prototype`.
     journal: Cell<JSValue>,
-    /// `Question::who`, `Question::what` and the answer, so far, while there is no `journal`.
+    /// `[who, what, answer]` per `once()` call, until `journal` exists.
     recent: [[Cell<JSValue>; 3]; Pass::RECENT],
 }
 
-/// Until it is dropped, its `Pass` is the one that [`Pass::once`] records for.
 pub(crate) struct EnteredPass<'a>(&'a Pass);
 
 impl Drop for EnteredPass<'_> {
@@ -353,7 +338,7 @@ impl Pass {
 
     #[inline]
     fn innermost<'a>() -> &'a Cell<*const Pass> {
-        // SAFETY: a thread that runs script has its `RuntimeState`, which outlives the script.
+        // SAFETY: every JS thread has a `RuntimeState` that outlives the script it runs.
         unsafe { &(*crate::jsc_hooks::runtime_state()).matcher_pass }
     }
 
@@ -363,28 +348,25 @@ impl Pass {
         EnteredPass(self)
     }
 
-    /// The pass of the matcher whose body is running. `None`: what is running cannot wait.
+    /// `None` if no matcher body is running or a barrier is in between, so the caller can't defer.
     #[inline]
     fn current<'a>() -> Option<&'a Pass> {
-        // SAFETY: an `EnteredPass` borrows what `innermost()` points to, on a frame below this one.
+        // SAFETY: a live `EnteredPass` in a caller's frame borrows whatever `innermost()` points to.
         unsafe { Self::innermost().get().as_ref() }.filter(|pass| pass.role == Role::Matcher)
     }
 
-    /// The frame around this pass, if it runs a matcher again.
     #[inline]
     fn replaying_frame(&self) -> Option<&Pass> {
         // SAFETY: as in `current`.
         unsafe { self.outer.get().as_ref() }.filter(|outer| outer.role == Role::Replaying)
     }
 
-    /// The `ExpectDeferred` whose matcher this pass runs again.
     #[inline]
     fn replayed(&self) -> Option<JSValue> {
         self.replaying_frame().map(|frame| frame.journal.get())
     }
 
-    /// What `ask()`, which runs user code, returns or throws. It is called once per call of a matcher, however often
-    /// the body of the matcher runs.
+    /// Runs `ask()` (user code) on the first pass and records what it returned or threw. Replays get the recording.
     #[inline(never)]
     pub(crate) fn once(
         global: &JSGlobalObject,
@@ -394,7 +376,7 @@ impl Pass {
         Self::once_inline(global, question, ask)
     }
 
-    /// `once()`, for where it counts: a custom matcher.
+    /// `once()` for the one hot caller, custom matchers.
     #[inline(always)]
     pub(crate) fn once_inline(
         global: &JSGlobalObject,
@@ -450,7 +432,6 @@ impl Pass {
         }
     }
 
-    /// `journal`, which `recorded` of `recent` go into if it does not exist yet.
     #[cold]
     fn journal(&self, global: &JSGlobalObject, recorded: u32) -> JsResult<JSValue> {
         if self.journal.get().is_empty() {
@@ -480,7 +461,6 @@ impl Pass {
         ))
     }
 
-    /// `once()` of a matcher that runs again, or that has asked for more than `recent` holds.
     #[cold]
     #[inline(never)]
     fn once_in_journal(
@@ -494,7 +474,6 @@ impl Pass {
         let index = at * Self::STRIDE;
         if u64::from(index) < journal.get_length(global)? {
             let kind = journal.get_direct_index(global, index)?;
-            // An answer is for who was asked about what, not for whoever asks at the same point.
             if !kind.is_int32()
                 || kind.to_int32() >> 1 != question.asked as i32
                 || journal.get_direct_index(global, index + 1)? != question.who
@@ -520,7 +499,6 @@ impl Pass {
         Self::return_or_throw(global, threw, value)
     }
 
-    /// `once()`, of a promise: it has settled when it is returned. `None`: `ask()` returned something else.
     pub(crate) fn settled(
         global: &JSGlobalObject,
         question: Question,
@@ -535,8 +513,8 @@ impl Pass {
         Ok(Some(promise))
     }
 
-    /// Makes the matcher whose body is running return a promise, and run again once `promise`, which `once()` returned,
-    /// has settled.
+    /// Throws an `ExpectDeferred`, which makes the running matcher return a promise and re-run once `promise` settles.
+    /// `promise` must come from `once()`, so the re-run sees the same one.
     #[cold]
     pub(crate) fn wait_for(global: &JSGlobalObject, promise: AnyPromise) -> JsError {
         let Some(pass) = Self::current() else {
@@ -557,13 +535,11 @@ impl Pass {
     }
 }
 
-/// A matcher call that waits for a promise. Thrown, by [`Pass::wait_for`], to the call it will stand for.
+/// A matcher call waiting on a promise. [`Pass::wait_for`] throws it and `Expect::matcher_threw` catches it.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct ExpectDeferred {
     held: JsCell<Option<RunningEntry>>,
-    /// How often the matcher has run again.
     replays: Cell<u32>,
-    /// Its promise has been rejected without the matcher having run to its end.
     is_abandoned: Cell<bool>,
 }
 
@@ -572,7 +548,7 @@ pub(crate) mod js {
 }
 
 impl ExpectDeferred {
-    /// Each replay waits for one more promise than the one before.
+    /// Each replay gets one promise further, so this caps how many promises a single matcher call can wait for.
     const MAX_REPLAYS: u32 = 2_000;
 
     fn waiting(global: &JSGlobalObject) -> JSValue {
@@ -584,12 +560,11 @@ impl ExpectDeferred {
         .to_js(global)
     }
 
-    /// A cell that keeps the code of the stack frames of here and now alive. An Error does not: a collection turns its stack into text.
+    /// Captures the stack as a `JSC::Exception`, which keeps its frames alive. GC can flatten an Error's frames to text.
     pub(crate) fn capture_call_site(global: &JSGlobalObject) -> JSValue {
         ExpectDeferred__captureCallSite(global)
     }
 
-    /// Where the matcher in `frame`, which is running again, was called from.
     pub(crate) fn call_site(global: &JSGlobalObject, frame: &CallFrame) -> Option<CallerSrcLoc> {
         let deferred = Pass::current()?.replayed()?;
         if js::expect_get_cached(deferred) != Some(frame.this()) {
@@ -610,7 +585,7 @@ impl ExpectDeferred {
         Some(location)
     }
 
-    /// Takes over the call in `frame`, which met the pending promise that `thrown` waits for. Returns the promise of that call.
+    /// Schedules the matcher call in `frame` to re-run once `thrown`'s awaited promise settles. Returns the call's promise.
     fn defer(
         thrown: JSValue,
         expect: &Expect,
@@ -670,7 +645,7 @@ impl ExpectDeferred {
                 let buntest = held.buntest.upgrade();
                 return this.abandon(global, deferred, buntest.as_ref());
             }
-            // The runner is about to end what waits for the matcher: see `settle_ended`.
+            // The runner is about to time the entry out, and `settle_ended` will then abandon this call.
             if held.has_timed_out() {
                 return Ok(());
             }
@@ -698,7 +673,7 @@ impl ExpectDeferred {
             {
                 result
             } else {
-                // It ended before it came to where it had waited.
+                // The replay finished without reaching the point where it had waited.
                 global.clear_exception();
                 Err(Pass::took_another_path(global))
             }
@@ -746,8 +721,7 @@ impl ExpectDeferred {
         }
     }
 
-    /// `holder`, a group of concurrent tests or the file, has waited for as long as it can: the calls that it still
-    /// waits for and that nothing else does are errors.
+    /// Abandons the calls still held by the group (or by the file, if `group_index` is `None`) and reports the unhandled ones.
     fn give_up(
         buntest: &BunTestPtr,
         global: &JSGlobalObject,
@@ -797,7 +771,7 @@ impl ExpectDeferred {
         }
     }
 
-    /// The matcher will not run. What awaits its promise goes on, to its `finally` blocks.
+    /// Rejects the promise without re-running the matcher, so awaiters still unwind through their `finally` blocks.
     fn abandon(
         &self,
         global: &JSGlobalObject,
@@ -819,7 +793,6 @@ impl ExpectDeferred {
         JSPromise::opaque_mut(promise).reject_as_handled(global, error)
     }
 
-    /// Abandons the calls of the tests and hooks that have ended.
     pub(crate) fn settle_ended(buntest: &BunTestPtr, global: &JSGlobalObject) -> JsResult<()> {
         let mut index = 0;
         while let Some(call) = buntest.get().unclaimed.calls.get(index) {
@@ -840,7 +813,6 @@ impl ExpectDeferred {
         Ok(())
     }
 
-    /// The tests of a group of concurrent tests have ended, the last one that could at its time limit.
     pub(crate) fn group_timed_out(
         buntest: &BunTestPtr,
         global: &JSGlobalObject,
@@ -856,7 +828,7 @@ impl ExpectDeferred {
         );
     }
 
-    /// The tests of a file have run: it ends once the matcher calls that it waits for have run, too.
+    /// After a file's tests have run, keeps the file open until the calls it holds finish or time out.
     pub(crate) fn step_file_end(
         buntest: &BunTestPtr,
         global: &JSGlobalObject,
@@ -894,7 +866,7 @@ impl ExpectDeferred {
     }
 }
 
-/// A function that no stack trace shows.
+/// Hidden from stack traces.
 fn private_function(global: &JSGlobalObject, function: JSHostFn) -> JSValue {
     JSFunction::create(
         global,
@@ -914,7 +886,6 @@ fn on_settled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::UNDEFINED)
 }
 
-/// One attempt of `expect.poll(function)`: `check(await function())`.
 #[bun_jsc::host_fn]
 fn poll_once(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [function, check] = frame.arguments_as_array::<2>();
@@ -925,7 +896,6 @@ fn poll_once(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     }
 }
 
-/// `call()`, which calls a matcher on `expect`, for `expect(value)`.
 #[bun_jsc::host_fn]
 fn check_polled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [expect, call, value] = frame.arguments_as_array::<3>();
@@ -933,7 +903,7 @@ fn check_polled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
     call.call(global, JSValue::UNDEFINED, &[])
 }
 
-/// Each would call the function it polls, or write a snapshot at every attempt.
+/// Vitest rejects these too. A throw from the polled function is just retried, and a new snapshot passes on the first try.
 const NOT_POLLED: [&[u8]; 6] = [
     b"toThrow",
     b"toThrowError",
@@ -944,7 +914,7 @@ const NOT_POLLED: [&[u8]; 6] = [
 ];
 
 impl Expect {
-    /// Every matcher is called through here.
+    /// Every matcher runs through here. Built-ins get here via `protoFnCaller` in jest.classes.ts.
     #[inline]
     pub(crate) fn call_matcher(
         &self,
@@ -1005,7 +975,7 @@ impl Expect {
         }
     }
 
-    /// `expect.soft()`: what the matcher threw fails the test, which goes on. It stays thrown when no test is known to have called the matcher.
+    /// For `expect.soft()`. Fails the test with the thrown error but lets it continue. Stays thrown if the test isn't known.
     fn fail_softly(&self, global: &JSGlobalObject, pass: &Pass) -> JsResult<JSValue> {
         let Some(test) = RunningEntry::of(self) else {
             return Err(JsError::Thrown);
@@ -1037,7 +1007,6 @@ impl Expect {
         })
     }
 
-    /// `expect.poll()`: the matcher in `frame` is called on what the function returns, time and again, until it passes.
     fn poll_matcher(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.increment_expect_call_counter();
         let question = Question {
@@ -1074,7 +1043,7 @@ impl Expect {
         let times = expect_js::result_value_get_cached(frame.this()).unwrap_or(JSValue::UNDEFINED);
         let [interval_ms, timeout_ms] = [times.get_index(global, 0)?, times.get_index(global, 1)?];
 
-        // The attempts are not counted: the call in `frame` is.
+        // `parent: None` keeps the attempts out of the assertion count. Only the call in `frame` counts.
         let expect = Expect {
             flags: Cell::new(Flags(self.flags.get().0 & Flags::NOT_MASK)),
             parent: None,
@@ -1105,7 +1074,6 @@ impl Expect {
         )
     }
 
-    /// `.resolves` / `.rejects`: the matcher is called once the promise has settled, and returns a promise.
     fn call_matcher_on_promise(
         &self,
         global: &JSGlobalObject,
@@ -1151,12 +1119,12 @@ impl Expect {
         if thrown.is_empty() {
             return Err(JsError::Thrown);
         }
-        // It counts when it runs again.
+        // The replay counts this call again.
         self.add_to_expect_call_counter(-1);
         ExpectDeferred::defer(thrown, self, global, frame)
     }
 
-    /// What a deferred matcher is called on: nothing else can change its flags.
+    /// The deferred matcher's own Expect, so later chaining can't change its flags.
     fn private_copy(&self, global: &JSGlobalObject, this_value: JSValue) -> JSValue {
         let copy = Expect {
             flags: Cell::new(self.flags.get()),

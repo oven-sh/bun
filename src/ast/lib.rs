@@ -840,15 +840,13 @@ impl Location {
                 None => {
                     let mut lo = offset.saturating_sub(EXCERPT_BEFORE).max(data.line_start);
                     let mut hi = offset + EXCERPT_AFTER;
-                    while lo > data.line_start
-                        && !bun_core::strings::is_utf8_char_boundary(contents[lo])
-                    {
+                    // A character boundary is at most 3 bytes away in well-formed UTF-8.
+                    let lo_limit = lo.saturating_sub(3).max(data.line_start);
+                    let hi_limit = (hi + 3).min(contents.len());
+                    while lo > lo_limit && !bun_core::strings::is_utf8_char_boundary(contents[lo]) {
                         lo -= 1;
                     }
-                    // The line ends after `hi`, on a character boundary: the walk stays on it.
-                    while hi < contents.len()
-                        && !bun_core::strings::is_utf8_char_boundary(contents[hi])
-                    {
+                    while hi < hi_limit && !bun_core::strings::is_utf8_char_boundary(contents[hi]) {
                         hi += 1;
                     }
                     &contents[lo..hi]
@@ -3614,14 +3612,18 @@ mod line_column_tracker_tests {
             line_text(&line(78, "\u{1F600}yyyyyyyyyy\nz".as_bytes()), 0),
             line(78, "\u{1F600}".as_bytes())
         );
-        assert_eq!(
-            line_text(&line(78, b"\x80\x80\x80\x80\x80\x80yy\nz"), 0),
-            line(78, b"\x80\x80\x80\x80\x80\x80")
-        );
 
         // The cut before the error moves down to the start of a character.
         let accents = [&"\u{00E9}".repeat(25).into_bytes()[..], &x(130)[..]].concat();
         assert_eq!(line_text(&accents, 81), accents[40..161]);
+
+        // A cut moves 3 bytes at most, in bytes that start no character.
+        assert_eq!(
+            line_text(&line(78, b"\x80\x80\x80\x80\x80\x80yy\nz"), 0),
+            line(78, b"\x80\x80\x80\x80\x80")
+        );
+        let run = [&x(10)[..], &[0x80; 60], &x(130)[..]].concat();
+        assert_eq!(line_text(&run, 100), run[57..180]);
 
         // A line that is not the first one starts after its line break.
         let second = [&b"ab\n"[..], &x(200)[..]].concat();

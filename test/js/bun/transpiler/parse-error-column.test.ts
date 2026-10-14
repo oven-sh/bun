@@ -236,10 +236,11 @@ test("lineText is the line of the error, or 40 bytes before it and 80 after it w
 });
 
 // A line that no one has read: `{"a":1,]`, then NUL bytes that nothing wrote,
-// so each page of them costs its first reader a minor page fault. The line is
-// 8192 pages of 4 KiB, or 2048 of 16 KiB. Windows does not count these faults.
+// so each page of them costs its first reader a minor page fault. The spawned
+// process counts the faults of one read of such a line. A call must take less
+// than an eighth of that, or less than 256 on a host where a read of the line
+// takes that few (huge pages). Windows does not count these faults.
 const LONG_LINE = 32 * 1024 * 1024;
-const FEW_PAGES = 1024;
 
 test.concurrent("an error at the start of a long line does not read the rest of the line", async () => {
   await using proc = Bun.spawn({
@@ -247,25 +248,30 @@ test.concurrent("an error at the start of a long line does not read the rest of 
       bunExe(),
       "-e",
       `
+        const faults = run => {
+          const before = process.resourceUsage().minorPageFault;
+          run();
+          return process.resourceUsage().minorPageFault - before;
+        };
+        // Every line stays referenced, so that none is made of the pages of an earlier one.
+        const lines = [];
+        const untouched = () => lines[lines.push(new Uint8Array(${LONG_LINE})) - 1];
+        const whole = untouched();
+        const few = Math.max(256, faults(() => whole.indexOf(1)) / 8);
+
         const transpiler = new Bun.Transpiler();
         const results = {};
-        // The lines stay referenced, so that none is made of the pages of an earlier one.
-        const lines = [];
         for (const loader of ["json", "jsonc", "json5", "yaml"]) {
-          const line = new Uint8Array(${LONG_LINE});
-          line.set(Buffer.from('{"a":1,]'));
-          lines.push(line);
+          const source = untouched();
+          source.set(Buffer.from('{"a":1,]'));
           // Page in the parser and the logger, so that the count is for the line.
           try { transpiler.transformSync("{]", loader); } catch {}
-          const before = process.resourceUsage().minorPageFault;
-          try {
-            transpiler.transformSync(line, loader);
-            results[loader] = "no error";
-          } catch (e) {
-            const faults = process.resourceUsage().minorPageFault - before;
-            const { line, column, lineText } = e.position;
-            results[loader] = { line, column, lineText, ${isWindows ? "" : `readsLittle: faults < ${FEW_PAGES}`} };
-          }
+          let position;
+          const taken = faults(() => {
+            try { transpiler.transformSync(source, loader); } catch (e) { position = e.position; }
+          });
+          const { line, column, lineText } = position;
+          results[loader] = { line, column, lineText, ${isWindows ? "" : "readsLittle: taken < few"} };
         }
         console.log(JSON.stringify(results, null, 2));
       `,

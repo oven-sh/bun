@@ -79,6 +79,8 @@ pub(crate) struct RuntimeState {
     pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
     /// Synthetic `bun:main` wrapper source.
     pub(crate) entry_point: ServerEntryPoint,
+    /// The string of it that the engine was given. Kept, so that nothing else gets its address: `Bun__isEmbeddedModule`.
+    pub(crate) entry_point_source_code: bun_core::String,
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
     /// the Rust `Transpiler<'a>` threads `&'a Arena`). Owned here so
     /// `deinit_runtime_state` reclaims it on Worker teardown — previously
@@ -348,6 +350,7 @@ unsafe fn init_runtime_state(
         ssl_ctx_cache: Default::default(),
         global_dns_data: core::cell::OnceCell::new(),
         entry_point: ServerEntryPoint::default(),
+        entry_point_source_code: bun_core::String::EMPTY,
         // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
@@ -3580,9 +3583,12 @@ fn get_hardcoded_module(
             if !ep.generated {
                 return None;
             }
+            let source_code = bun_core::String::clone_utf8(&ep.contents);
+            // SAFETY: as above, and `ep` borrows another field.
+            unsafe { (*state).entry_point_source_code = source_code.clone() };
             use bun_jsc::resolved_source::Tag;
             Some(ResolvedSource {
-                source_code: bun_core::String::clone_utf8(&ep.contents),
+                source_code,
                 source_url: specifier.clone(),
                 tag: Tag::Esm,
                 ..ResolvedSource::default()

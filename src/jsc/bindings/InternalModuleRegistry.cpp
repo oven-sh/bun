@@ -118,12 +118,8 @@ static bool hasSameAddress(std::span<const uint8_t> a, std::span<const uint8_t> 
     return a.data() == b.data() && a.size() == b.size();
 }
 
-bool isEmbeddedCode(const WTF::String& sourceURL, std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset)
+bool isEmbeddedCode(std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset)
 {
-    // Bun generates it at startup, with the entry point's path in it.
-    if (sourceURL == "bun:main"_s)
-        return bytecode.empty();
-
     if (hasSameAddress(source, asByteSpan(WebCore::builtinsSource())))
         return bytecode.empty();
 

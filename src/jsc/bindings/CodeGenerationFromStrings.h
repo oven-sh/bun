@@ -64,7 +64,7 @@ inline JSC::JSObject* createCodeGenerationFromStringsError(JSC::JSGlobalObject* 
     } while (false)
 
 // The JSC::Config::isEmbeddedCode callback. Answers by address: a copy of embedded code is not embedded.
-bool isEmbeddedCode(const WTF::String& sourceURL, std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset);
+bool isEmbeddedCode(std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset);
 
 inline bool isDataOrBlobURL(const WTF::String& specifier)
 {

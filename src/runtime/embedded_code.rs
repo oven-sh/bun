@@ -2,7 +2,7 @@
 
 use crate::jsc_hooks::{
     SQLITE_MODULE_SOURCE, SQLITE_MODULE_SOURCE_HOT, SQLITE_MODULE_SOURCE_STANDALONE,
-    WASI_RUNNER_SOURCE,
+    WASI_RUNNER_SOURCE, runtime_state,
 };
 
 /// The modules whose source is a `static` in Bun.
@@ -44,8 +44,18 @@ pub(crate) extern "C" fn Bun__isEmbeddedModule(
                 core::ptr::slice_from_raw_parts(bytecode, bytecode_len),
             ) && file.bytecode_entry_offset as usize == bytecode_entry_offset);
     }
-    bytecode_len == 0
-        && static_module_sources()
+    if bytecode_len != 0 {
+        return false;
+    }
+    let state = runtime_state();
+    // SAFETY: this thread's `RuntimeState`, which only this thread writes.
+    let is_bun_main = !state.is_null()
+        && core::ptr::eq(
+            unsafe { (*state).entry_point_source_code.byte_slice() },
+            source,
+        );
+    is_bun_main
+        || static_module_sources()
             .iter()
             .any(|&known| core::ptr::eq(known, source))
 }

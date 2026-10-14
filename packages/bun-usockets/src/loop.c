@@ -489,6 +489,19 @@ static void us_internal_socket_close_after_rejected_send(struct us_socket_t *s) 
     us_internal_socket_close_raw(s, reports ? s->rejected_send_code : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
 }
 
+/* A socket whose write side is shut down got an event. If us_socket_reject_sends ended that write
+ * side, it left writable armed, and a writable event is the cue to close. Not inlined: only this
+ * poll type pays for the test, and the arm below stays as it is for a socket that can write. */
+__attribute__((noinline))
+static int us_internal_socket_rejected_send_event(struct us_poll_t *p, int error, int events) {
+    struct us_socket_t *s = us_internal_socket_follow_adopted((struct us_socket_t *) p);
+    if (LIKELY(!us_internal_socket_rejected_send_ended(s)) || !(events & LIBUS_SOCKET_WRITABLE) || error) {
+        return 0;
+    }
+    us_internal_socket_close_after_rejected_send(s);
+    return 1;
+}
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -605,13 +618,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             }
         break;
     }
-    case POLL_TYPE_SOCKET_SHUT_DOWN: {
-            /* us_socket_reject_sends ended the writes and left writable armed: this is its event. */
-            struct us_socket_t *ended = us_internal_socket_follow_adopted((struct us_socket_t *) p);
-            if (UNLIKELY(us_internal_socket_rejected_send_ended(ended)) && (events & LIBUS_SOCKET_WRITABLE) && !error) {
-                us_internal_socket_close_after_rejected_send(ended);
-                break;
-            }
+    case POLL_TYPE_SOCKET_SHUT_DOWN:
+        if (us_internal_socket_rejected_send_event(p, error, events)) {
+            break;
         }
         __attribute__((fallthrough));
     case POLL_TYPE_SOCKET: {

@@ -732,52 +732,98 @@ describe("Headers", () => {
         seen.push(iterator.next());
         expect(seen).toEqual(["a", "c", "h", "x", "y", "a=1", "b=2", { value: undefined, done: true }]);
       });
-      // The server takes Content-Length out of the headers it was given. The iterator treats that like delete().
-      test.each([
-        [
-          "before it is reached is skipped",
-          1,
-          [
-            ["accept", "a"],
-            ["host", "h"],
-            ["vary", "v"],
-            ["x-custom", "x"],
-          ],
-        ],
-        [
-          "after it was reached moves the position",
-          2,
-          [
-            ["accept", "a"],
-            ["content-length", "2"],
-            ["vary", "v"],
-            ["x-custom", "x"],
-          ],
-        ],
-      ])("a name the server removes as it writes the response %s", async (_, steps, expected) => {
-        const seen: unknown[] = [];
-        let iterator: ReturnType<Headers["entries"]> | undefined;
-        using server = Bun.serve({
-          port: 0,
-          fetch() {
-            const response = new Response("ok", {
-              headers: [
-                ["Accept", "a"],
-                ["Content-Length", "2"],
-                ["Host", "h"],
-                ["Vary", "v"],
-                ["X-Custom", "x"],
-              ],
-            });
-            iterator = response.headers.entries();
-            for (let i = 0; i < steps; i++) seen.push(iterator.next().value);
-            return response;
-          },
+      // Script did not ask for these, so unlike delete() they leave the iterator on the name it stood on.
+      describe("a name that native code removes", () => {
+        const names = ["accept", "content-length", "content-type", "host", "x-custom"];
+        const response = () =>
+          new Response("ok", {
+            headers: { "Accept": "a", "Content-Length": "2", "Content-Type": "t/t", "Host": "h", "X-Custom": "x" },
+          });
+        function take(iterator: Iterator<string>, steps: number) {
+          const seen: string[] = [];
+          for (let i = 0; i < steps; i++) seen.push(iterator.next().value);
+          return seen;
+        }
+        // Content-Length is only seen by an iterator that got to it before it went away. Nothing else is lost.
+        const expected = (steps: number) => (steps >= 2 ? names : names.filter(name => name !== "content-length"));
+
+        test.each([0, 1, 2, 3, 4, 5])("as the server writes the response, after %d steps", async steps => {
+          let iterator: Iterator<string> & Iterable<string>;
+          let seen: string[] = [];
+          using server = Bun.serve({
+            port: 0,
+            fetch() {
+              const res = response();
+              iterator = res.headers.keys();
+              seen = take(iterator, steps);
+              return res;
+            },
+          });
+          expect(await (await fetch(server.url)).text()).toBe("ok");
+          expect([...seen, ...iterator!]).toEqual(expected(steps));
         });
-        const response = await fetch(server.url);
-        expect(await response.text()).toBe("ok");
-        for (const entry of iterator!) seen.push(entry);
-        expect(seen).toEqual(expected);
+
+        test.each([0, 1, 2, 3, 4, 5])("as a static route takes the response, after %d steps", steps => {
+          const res = response();
+          const iterator = res.headers.keys();
+          const seen = take(iterator, steps);
+          using server = Bun.serve({ port: 0, routes: { "/": res }, fetch: () => new Response() });
+          expect([...seen, ...iterator]).toEqual(expected(steps));
+        });
+
+        test("as server.upgrade() takes the headers", async () => {
+          let seen: string[] = [];
+          using server = Bun.serve({
+            port: 0,
+            fetch(req, server) {
+              const headers = new Headers({
+                "Age": "0",
+                "Sec-WebSocket-Extensions": "",
+                "Sec-WebSocket-Protocol": "a",
+                "Server-Timing": "t",
+                "X-Custom": "x",
+              });
+              const iterator = headers.keys();
+              seen = take(iterator, 3);
+              server.upgrade(req, { headers });
+              seen.push(...iterator);
+            },
+            websocket: {
+              open: ws => ws.close(),
+              message() {},
+            },
+          });
+          const { promise, resolve } = Promise.withResolvers();
+          const ws = new WebSocket(server.url.href.replace("http", "ws"), ["a"]);
+          ws.onclose = ws.onerror = resolve;
+          await promise;
+          expect(seen).toEqual([
+            "age",
+            "sec-websocket-extensions",
+            "sec-websocket-protocol",
+            "server-timing",
+            "x-custom",
+          ]);
+        });
+
+        test("and a change by script after that", async () => {
+          let res: Response;
+          let iterator: Iterator<string> & Iterable<string>;
+          let seen: string[] = [];
+          using server = Bun.serve({
+            port: 0,
+            fetch() {
+              res = response();
+              iterator = res.headers.keys();
+              seen = take(iterator, 2);
+              return res;
+            },
+          });
+          expect(await (await fetch(server.url)).text()).toBe("ok");
+          res!.headers.set("X-Later", "l");
+          // The index is kept, as after any change by script: one name fewer before it, so "content-type" is passed over.
+          expect([...seen, ...iterator!]).toEqual(["accept", "content-length", "host", "x-custom", "x-later"]);
+        });
       });
       test("forEach sees what its callback changes", () => {
         const headers = start();

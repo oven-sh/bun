@@ -337,6 +337,18 @@ static const std::array<uint8_t, numHTTPHeaderNames>& lowercaseHeaderNameRanks()
 void FetchHeaders::Iterator::collectEntries()
 {
     auto& map = m_headers->internalHeaders();
+
+    // Script did not ask for what fastRemove() took out, so that leaves the iterator on the name it stood on.
+    uint16_t nativeRemovals = m_headers->m_nativeRemovals - m_nativeRemovals;
+    if (nativeRemovals && nativeRemovals == m_headers->m_headers.updateCounter() - m_updateCounter) {
+        // The old entries point at what may be gone by now. Their names are still good.
+        for (auto& passed : m_entries.span().first(std::min(m_currentIndex, m_entries.size()))) {
+            if (passed.name && !map.contains(*passed.name))
+                --m_currentIndex;
+        }
+    }
+    m_nativeRemovals = m_headers->m_nativeRemovals;
+
     m_entries.shrink(0);
     m_entries.reserveCapacity(map.size());
     m_lowercasedKeys.shrink(0);

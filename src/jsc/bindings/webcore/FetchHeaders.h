@@ -44,7 +44,7 @@ class FetchHeaders : public RefCounted<FetchHeaders> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(FetchHeaders, FetchHeaders);
 
 public:
-    enum class Guard {
+    enum class Guard : uint8_t {
         None,
         Immutable,
         Request,
@@ -82,7 +82,11 @@ public:
 
     String fastGet(HTTPHeaderName name) const { return internalHeaders().get(name); }
     bool fastHas(HTTPHeaderName name) const { return internalHeaders().contains(name); }
-    bool fastRemove(HTTPHeaderName name) { return m_headers.willChange().remove(name); }
+    bool fastRemove(HTTPHeaderName name)
+    {
+        ++m_nativeRemovals;
+        return m_headers.willChange().remove(name);
+    }
 
     const Vector<String, 0>& getSetCookieHeaders() const { return internalHeaders().getSetCookieHeaders(); }
 
@@ -110,6 +114,7 @@ public:
         Vector<Entry> m_entries;
         Vector<String> m_lowercasedKeys;
         uint64_t m_updateCounter { 0 };
+        uint16_t m_nativeRemovals { 0 };
         bool m_lowerCaseKeys { true };
     };
     Iterator createIterator(bool lowerCaseKeys = true)
@@ -154,6 +159,8 @@ private:
     };
 
     Guard m_guard;
+    // How often fastRemove() ran. An iterator compares it with the counter to tell that nothing else changed the map.
+    uint16_t m_nativeRemovals { 0 };
     CountedHeaderMap m_headers;
 };
 

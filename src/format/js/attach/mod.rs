@@ -233,15 +233,13 @@ fn break_ties<'a>(
 }
 
 /// Whether an ignore comment that trails `owner` ignores it in the oxfmt flavor. For Prettier every comment of a node counts.
-/// For oxfmt the comment has to come right after the node, with nothing but separators between them. And it has to end its
-/// line, or be the last thing in what the node is in.
+/// For oxfmt the comment has to come right after the node, with nothing but separators between them, and end its line.
 ///
 /// ```js
 /// a  +  b; // prettier-ignore            is copied
-/// f(a  +  b /* prettier-ignore */);      `a  +  b` is copied
+/// f(a  +  b /* prettier-ignore */);      is formatted: the comment does not end its line
 /// (a  +  b) // prettier-ignore           is formatted: a `)` is between the two
 ///   .c;
-/// (a  +  b /* prettier-ignore */ + c);   is formatted
 /// ```
 fn trailing_ignore_comment_counts_for_oxfmt<'a>(
     cx: &AttachContext<'a, '_>,
@@ -259,14 +257,8 @@ fn trailing_ignore_comment_counts_for_oxfmt<'a>(
         _ => cx.file.without_semicolon(cx.span_of(owner)).end as usize,
     };
     let between = (text.get(owner_end..comment.prev_token_end() as usize)).unwrap_or_default();
-    let is_at_end_of_line_of_owner = text_position == TextPosition::EndOfLine
-        && (between.iter()).all(|byte| matches!(byte, b' ' | b'\t' | b'=' | b':' | b',' | b';'));
-    let is_last_in_enclosing_node = matches!(
-        text.get(comment.next_token_start() as usize),
-        None | Some(b'}' | b']' | b')')
-    ) && (between.iter())
-        .all(|byte| byte.is_ascii_whitespace() || matches!(byte, b',' | b';'));
-    is_at_end_of_line_of_owner || is_last_in_enclosing_node
+    text_position == TextPosition::EndOfLine
+        && (between.iter()).all(|byte| matches!(byte, b' ' | b'\t' | b'=' | b':' | b',' | b';'))
 }
 
 /// `cast_parens`: see [`super::comments::cast_parens`].

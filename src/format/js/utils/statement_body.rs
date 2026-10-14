@@ -43,6 +43,23 @@ impl<'a> FormatStatementBody<'a> {
 
 impl<'a> Format<'a> for FormatStatementBody<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
+        if !f.is_quiet() {
+            return self.fmt_with_comments(f);
+        }
+        let body = self.body;
+        match body.kind() {
+            StmtKind::Empty => write!(f, body),
+            StmtKind::Block(_) => write!(f, [space(), body]),
+            _ if self.force_space => write!(f, [space(), body]),
+            _ => write!(f, soft_line_indent_or_space(&body)),
+        }
+    }
+}
+
+impl<'a> FormatStatementBody<'a> {
+    /// Not inlined: `if (a) if (b) ..` is nested, and what this needs of the stack would be taken at each level.
+    #[inline(never)]
+    fn fmt_with_comments(&self, f: &mut Formatter<'a>) {
         let body = self.body;
         let content = format_with(|f| {
             if f.is_quiet() || self.trailing_comments == TrailingComments::All {

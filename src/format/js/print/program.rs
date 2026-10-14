@@ -231,6 +231,7 @@ pub(crate) fn semicolon_is_before_cast_comment_of_ignored_statement(f: &Formatte
 }
 
 /// `"use strict";`
+#[inline(never)]
 pub(crate) fn write_directive<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     let StmtKind::Expr(expression) = statement.kind() else {
         return;

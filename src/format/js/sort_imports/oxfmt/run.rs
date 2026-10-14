@@ -63,7 +63,8 @@ impl<'a> Written<'a> {
             source: f.file().slice(source),
             has_comment_for_default: false,
         };
-        if f.comments().has_comment_before(source.start) {
+        let before_source = Span::new(statement.span().start, source.start);
+        if f.comments().has_comment_in_span(before_source) {
             let keyword_end = statement.span().start + "import".len() as u32;
             // Without a `from`, everything is after it.
             let mut is_after_from = import.is_side_effect();

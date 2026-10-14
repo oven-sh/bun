@@ -21,6 +21,7 @@ fn body_of_for_loop_is_written_like_its_head(f: &Formatter<'_>) -> bool {
 }
 
 /// `const a = 1, b = 2;`
+#[inline(never)]
 pub(crate) fn write_variable_declaration<'a>(
     statement: Stmt<'a>,
     declarations: List<'a, VarDecl<'a>>,

@@ -54,6 +54,7 @@ pub(crate) fn format_import_and_export_source_with_clause<'a>(
     write_with_clause(with_clause, f);
 }
 
+#[inline(never)]
 pub(crate) fn write_import_declaration<'a>(
     statement: Stmt<'a>,
     import: Import<'a>,

@@ -18,6 +18,7 @@ use crate::{format_args, write};
 
 /// `;`, which is only written where a statement has to be: Prettier's
 /// `isMeaningfulEmptyStatement`.
+#[inline(never)]
 pub(crate) fn write_empty_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     if matches!(
         statement.ast_parent(),
@@ -182,6 +183,7 @@ fn semicolon_of_only_statement_in_html<'a>(
     })
 }
 
+#[inline(never)]
 pub(crate) fn write_expression_statement<'a>(
     statement: Stmt<'a>,
     expression: Expr<'a>,
@@ -323,6 +325,7 @@ pub(crate) fn write_while_statement<'a>(
     write_while_or_with_statement("while", test, body, f);
 }
 
+#[inline(never)]
 pub(crate) fn write_with_statement<'a>(
     _statement: Stmt<'a>,
     object: Expr<'a>,
@@ -622,18 +625,40 @@ pub(crate) fn write_if_statement<'a>(
         return;
     };
 
-    let is_consequent_block = matches!(consequent.kind(), StmtKind::Block(_));
     let is_else_if = matches!(alternate.kind(), StmtKind::If { .. });
     let format_alternate = FormatStatementBody::new(alternate).with_forced_space(is_else_if);
+    let is_after_comments_that_stay =
+        write_up_to_else(statement, consequent, moves_trailing_comments, f);
+    write!(
+        f,
+        [
+            "else",
+            is_after_comments_that_stay.then_some(line_suffix_boundary()),
+            group(&format_alternate)
+        ]
+    );
+}
+
+/// What is between the consequent and the `else`. Returns whether the comments there stay where they are.
+///
+/// Not inlined: `if (a) {} else if (b) {} else ..` is nested, and what this needs of the stack would be taken at each level.
+#[inline(never)]
+fn write_up_to_else<'a>(
+    statement: Stmt<'a>,
+    consequent: Stmt<'a>,
+    moves_trailing_comments: bool,
+    f: &mut Formatter<'a>,
+) -> bool {
+    let is_consequent_block = matches!(consequent.kind(), StmtKind::Block(_));
     // The comments between the consequent and the `else`.
     let node = AstNodes::IfStatement(statement);
     let comments = match f.is_quiet() {
         true => CommentList::empty(),
         false => f.comments().of_node(node).dangling,
     };
-    if comments_stay {
+    if !f.is_quiet() && comments_stay_between_head_and_body(f) {
         let trailing = match moves_trailing_comments {
-            true => f.comments().of_node(consequent_node).trailing,
+            true => f.comments().of_node(consequent.as_ast_nodes()).trailing,
             false => CommentList::empty(),
         };
         let needs_separator = write_comments_before_keyword(trailing, comments, f);
@@ -642,10 +667,7 @@ pub(crate) fn write_if_statement<'a>(
             (true, true) => write!(f, space()),
             (true, false) => write!(f, hard_line_break()),
         }
-        return write!(
-            f,
-            ["else", line_suffix_boundary(), group(&format_alternate)]
-        );
+        return true;
     }
 
     if !is_consequent_block {
@@ -668,7 +690,7 @@ pub(crate) fn write_if_statement<'a>(
     } else if is_consequent_block {
         write!(f, space());
     }
-    write!(f, ["else", group(&format_alternate)]);
+    false
 }
 
 fn write_jump<'a>(keyword: &'static str, statement: Stmt<'a>, f: &mut Formatter<'a>) {
@@ -679,14 +701,17 @@ fn write_jump<'a>(keyword: &'static str, statement: Stmt<'a>, f: &mut Formatter<
     write!(f, OptionalSemicolon);
 }
 
+#[inline(never)]
 pub(crate) fn write_continue_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     write_jump("continue", statement, f);
 }
 
+#[inline(never)]
 pub(crate) fn write_break_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     write_jump("break", statement, f);
 }
 
+#[inline(never)]
 pub(crate) fn write_labeled_statement<'a>(
     statement: Stmt<'a>,
     body: Stmt<'a>,

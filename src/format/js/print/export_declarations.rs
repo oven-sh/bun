@@ -151,6 +151,7 @@ pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Format
 }
 
 /// `export default e`
+#[inline(never)]
 pub(crate) fn write_export_default_expression<'a>(
     _statement: Stmt<'a>,
     expression: Expr<'a>,
@@ -165,6 +166,7 @@ fn is_declared(statement: Stmt<'_>) -> bool {
 }
 
 /// `export * from "a"`, `export * as a from "a"`
+#[inline(never)]
 pub(crate) fn write_export_all_declaration<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     let StmtKind::ExportStar {
         alias, type_only, ..
@@ -197,6 +199,7 @@ pub(crate) fn write_export_all_declaration<'a>(statement: Stmt<'a>, f: &mut Form
 }
 
 /// `export { a, b as c }`, `export { a } from "a"`
+#[inline(never)]
 pub(crate) fn write_export_named_declaration<'a>(
     statement: Stmt<'a>,
     export: Export<'a>,

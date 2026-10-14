@@ -1470,10 +1470,11 @@ impl<'a> Rules<'_, 'a, '_> {
         if comment.prev_token_end() == keyword.end {
             return self.following_node.map(Attachment::leading);
         }
+        if comment.prev_token_end() <= last_decorator.end || keyword.start < comment.span().end {
+            return None;
+        }
         let parent = node.parent();
         let is_after_export = last_decorator.end <= parent.span().start
-            && last_decorator.end < comment.prev_token_end()
-            && comment.span().end <= keyword.start
             && matches!(
                 parent,
                 N::ExportNamedDeclaration(_) | N::ExportDefaultDeclaration(_)

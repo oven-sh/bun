@@ -4042,6 +4042,7 @@ try {
       ["ts", "class A {\n", "@a // c\n", "b;\n}"],
       ["ts", "class A {\nb(", "@a // c\n", "c) {}\n}"],
       ["js", "x = ", "@a // c\n", "class {};"],
+      ["js", "", "@a // c\n", "class A {}"],
       ["js", "f()", "(/* c */)", ";"],
       ["js", "f()", " /* c */ ()", ";"],
       ["js", "a[0]", "(/* c */)", ".b();"],
@@ -4065,8 +4066,8 @@ try {
         );
       const odd = await run(index => texts[index]);
       const plain = await run(() => ordinary.repeat(length / ordinary.length));
-      // 2.3 on Linux and 5 on Windows when all is well. 10 and more with one shape that takes quadratic time.
-      expect(slowdown(odd, plain)).toBeLessThan(8);
+      // 2.3 to 3 on Linux and 8.3 on Windows when all is well. One shape that takes quadratic time adds 9 or more.
+      expect(slowdown(odd, plain)).toBeLessThan(isWindows ? 16 : 8);
     }
   }, 120_000);
 

@@ -3,6 +3,7 @@ use crate::prelude::*;
 use crate::write;
 
 /// `{ .. }`
+#[inline(never)]
 pub(crate) fn write_block_statement<'a>(
     statement: Stmt<'a>,
     body: List<'a, Stmt<'a>>,

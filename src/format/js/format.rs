@@ -809,9 +809,14 @@ fn format_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     if !f.context_mut().has_stack_left() {
         return;
     }
-    if f.is_quiet() {
-        return write_statement(statement, f);
+    match f.is_quiet() {
+        true => write_statement(statement, f),
+        false => format_statement_with_comments(statement, f),
     }
+}
+
+#[inline(never)]
+fn format_statement_with_comments<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     // The `AstNodes` of a function or a class declaration is made of the function or the class, not of the statement.
     let is_made_of_statement = !matches!(statement.tag(), StmtTag::Fn | StmtTag::Class);
     if is_made_of_statement && !f.comments().is_owner(Node::Stmt(statement)) {

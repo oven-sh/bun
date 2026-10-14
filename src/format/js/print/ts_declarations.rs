@@ -584,6 +584,7 @@ fn require_with_comment_breaks(f: &Formatter<'_>) -> bool {
 }
 
 /// `import a = require("a")`, `import a = b.c`
+#[inline(never)]
 pub(crate) fn write_ts_import_equals_declaration<'a>(
     statement: Stmt<'a>,
     import: ImportEquals<'a>,
@@ -632,11 +633,13 @@ pub(crate) fn write_ts_import_equals_declaration<'a>(
 }
 
 /// `export = a`
+#[inline(never)]
 pub(crate) fn write_ts_export_assignment<'a>(expression: Expr<'a>, f: &mut Formatter<'a>) {
     write!(f, ["export = ", expression, OptionalSemicolon]);
 }
 
 /// `export as namespace a`
+#[inline(never)]
 pub(crate) fn write_ts_namespace_export_declaration<'a>(
     statement: Stmt<'a>,
     f: &mut Formatter<'a>,

@@ -754,8 +754,7 @@ pub(crate) fn scan_imports_and_exports(
             let wrap = flag.wrap;
             let export_kind = col_ref!(exports_kind)[id];
             let source: &Source = &col_ref!(input_files)[id];
-            // An HTML file's `<script src>` records print as bare wrapper calls
-            // (`call_wrapped_html_scripts`); nothing reads the namespace.
+            // A page calls the wrappers of its scripts bare (`call_wrapped_html_scripts`): no `__toESM`.
             let is_html = col_ref!(loaders)[id] == Loader::Html;
             // The dev server format loads a script through its module record, not a wrapper.
             if is_html && output_format != Format::InternalBakeDev {

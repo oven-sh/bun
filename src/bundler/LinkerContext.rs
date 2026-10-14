@@ -994,9 +994,9 @@ impl<'a> LinkerContext<'a> {
                 // live (so the JS-chunk visitor follows every embedded import record).
                 // `mark_file_live_for_tree_shaking` short-circuits for HTML and never
                 // walks its parts, so seed the bit here to preserve the old
-                // `Part::is_live = true` initializer. `call_wrapped_html_scripts` can
-                // have made several parts of it: each one holds import records.
+                // `Part::is_live = true` initializer.
                 if loaders.get(i).is_some_and(|l| *l == Loader::Html) {
+                    // `call_wrapped_html_scripts` can split part 1: every piece holds import records.
                     for (part_index, part) in parts.iter().enumerate().skip(1) {
                         if part_index == 1 || !part.import_record_indices.is_empty() {
                             bits.set(part_index);
@@ -2371,12 +2371,7 @@ impl<'a> LinkerContext<'a> {
         Ok(true)
     }
 
-    /// A page runs a `<script src>` where the tag is. The HTML loader puts every
-    /// import record of the page in part 1, which has no statement, so a script
-    /// that the linker wrapped would not run: nothing calls `require_foo` or
-    /// `init_foo`. Gives the part those calls. A part prints after all the files
-    /// that it imports, so it ends at each call that another record follows, and
-    /// the records after the call go to a new part.
+    /// Makes an HTML file call `require_foo()` / `init_foo()` for each wrapped `<script src>`, where the tag is.
     pub(crate) fn call_wrapped_html_scripts(
         &mut self,
         source_index: u32,
@@ -2434,6 +2429,7 @@ impl<'a> LinkerContext<'a> {
                 call = Expr::allocate(arena, E::Await { value: call }, Loc::EMPTY);
             }
             calls.push(Stmt::allocate_expr(arena, call));
+            // A part prints after every file that it imports: end it here, ahead of the later records.
             if splits && i + 1 < indices.len() {
                 groups.push((i + 1, to_stmts(&calls)));
                 calls.clear();

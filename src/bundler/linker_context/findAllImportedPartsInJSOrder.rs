@@ -634,8 +634,7 @@ fn for_each_edge(
 
     let parts = c.graph.ast.items_parts()[source_index as usize].as_slice();
     if c.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html {
-        // Every record of an HTML file counts. A part ends at each wrapper call that the page
-        // makes (`call_wrapped_html_scripts`): the files of the later records go after that call.
+        // Every record counts, under its part: `call_wrapped_html_scripts` ends a part at each call.
         for (part_index, part) in parts.iter().enumerate() {
             for &record_id in part.import_record_indices.slice() {
                 let record: &ImportRecord = &records[record_id as usize];

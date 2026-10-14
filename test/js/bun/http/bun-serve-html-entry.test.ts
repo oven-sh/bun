@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { htmlPagesOf } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
 import { join, relative } from "node:path";
 
@@ -854,6 +854,19 @@ test.concurrent.skipIf(isWindows)("bun './pages/*.html' beside a page named *.ht
   expect(result).toEqual({ pages: ["pages/*.html", "pages/a.html", "pages/b.html"], error: undefined, exitCode: 0 });
 });
 
+// The working directory and the path of the page each take more than half of the longest path that Linux has.
+const deep = Array.from({ length: 10 }, () => Buffer.alloc(200, "d").toString()).join("/");
+
+test.concurrent.skipIf(!isLinux)("bun ./index.html under {a,b} in a deep directory", async () => {
+  using root = tempDir("html-entry-deep", {
+    "print-pages.js": printPages,
+    [`${deep}/{a,b}/index.html`]: page("index"),
+    [`${deep}/a/index.html`]: page("not served"),
+  });
+  const result = await pagesServed(String(root), `${deep}/{a,b}`, [], ["./index.html"]);
+  expect(result).toEqual({ pages: [`${deep}/{a,b}/index.html`], error: undefined, exitCode: 0 });
+});
+
 test("which pages an argument names", () => {
   using root = tempDir("html-entry-ärguments", {
     "index.html": "",
@@ -864,6 +877,7 @@ test("which pages an argument names", () => {
     "a/index.html": "",
     "a/other.html": "",
     ...(isWindows ? {} : { "pages/*.html": "", "pages/a.html": "" }),
+    ...(isLinux ? { [`${deep}/{a,b}/index.html`]: "", [`${deep}/a/index.html`]: "" } : {}),
   });
   const pagesOf = (arg: string) =>
     htmlPagesOf(arg, String(root))
@@ -897,5 +911,9 @@ test("which pages an argument names", () => {
   });
   // A pattern that matches its own text finds the page with that name, and the others.
   if (!isWindows) expect(pagesOf("./pages/*.html")).toEqual(["./pages/*.html", "./pages/a.html"]);
+  if (isLinux) {
+    const cwd = join(String(root), deep);
+    expect(htmlPagesOf(join(cwd, "{a,b}", "index.html"), cwd)).toBeUndefined();
+  }
   expect(() => pagesOf(join(String(root), "missing", "*.html"))).toThrow(expect.objectContaining({ code: "ENOENT" }));
 });

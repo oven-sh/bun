@@ -791,10 +791,12 @@ fn what_to_check(
 fn pages_of(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
     use crate::cli::html_pages::{self, Pages};
     let mut pages = match html_pages::pages_of(cwd, page) {
-        Ok(Ok(Pages::Named)) => vec![page.to_vec()],
-        Ok(Ok(Pages::Matched(pages))) => pages.keys().iter().map(|it| it.to_vec()).collect(),
-        // src/js/internal/html.ts reports it, when it asks for the pages to serve them.
-        Ok(Err(_)) | Err(_) => Vec::new(),
+        Ok(Pages::Named) => vec![page.to_vec()],
+        // src/js/internal/html.ts reports the error, when it asks for the pages to serve them.
+        Ok(Pages::Matched { pages, error: _ }) => {
+            pages.keys().iter().map(|it| it.to_vec()).collect()
+        }
+        Err(_) => Vec::new(),
     };
     pages.retain(|page| {
         let page =

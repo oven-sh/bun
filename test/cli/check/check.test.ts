@@ -16726,6 +16726,28 @@ describe.concurrent("--check", () => {
     expect({ reported, exitCode }).toEqual({ reported: checked, exitCode: 1 });
   });
 
+  // An error ends the search for pages early. The pages that were found before it are checked.
+  // The superuser can read every directory.
+  test.skipIf(isWindows || process.getuid?.() === 0)(
+    "bun --check './**/*.html' with a directory that cannot be read",
+    async () => {
+      using dir = project({
+        "index.html": `<!doctype html>\n<script type="module" src="./index.ts"></script>\n`,
+        "index.ts": `export const index: number = "1";\n`,
+        "locked/other.html": "",
+      });
+      const locked = join(String(dir), "locked");
+      chmodSync(locked, 0o000);
+      try {
+        const { stderr, exitCode } = await run(String(dir), ["--check", "./**/*.html"]);
+        expect(stderr).toContain("index.ts(1,14): error TS2322");
+        expect(exitCode).toBe(1);
+      } finally {
+        chmodSync(locked, 0o755);
+      }
+    },
+  );
+
   // A directory is the tsconfig.json in it, as for `tsc -p`.
   test.each([
     ["tsconfig.build.json", "tsconfig.build.json", "."],

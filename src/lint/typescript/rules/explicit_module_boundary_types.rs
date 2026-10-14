@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdSet;
 use bun_lint::utils::oxlint::{member_key_name, property_key_name};
 use bun_lint::utils::ts_scope::{
     ReturnTypeOptions, ancestor_has_return_type, check_function_expression_return_type,
@@ -123,7 +124,7 @@ struct Checker<'a, 'c> {
     /// Upstream's `alreadyVisited`.
     visited: FxHashSet<Node<'a>>,
     /// The variables whose declarations and values have been checked, which are all in `visited`.
-    followed: FxHashSet<Symbol<'a>>,
+    followed: IdSet<Symbol<'a>>,
     /// The expressions that are still to be checked.
     pending: Vec<Expr<'a>>,
     /// Upstream's `checkedFunctions`.
@@ -380,7 +381,7 @@ enum Step<'a> {
     Statements(List<'a, Stmt<'a>>),
     ForgetTarget,
     InSetter(bool),
-    Overloaded(FxHashSet<Member<'a>>),
+    Overloaded(IdSet<Member<'a>>),
     /// `place`: where it lacks a return type, unless it returns a function.
     LeaveFunction {
         place: Option<Span>,
@@ -405,7 +406,7 @@ struct OxlintChecker<'a, 'c> {
     around: Vec<bool>,
     in_setter: bool,
     /// With `allowOverloadFunctions`, the methods of the class around that have overload signatures.
-    overloaded: FxHashSet<Member<'a>>,
+    overloaded: IdSet<Member<'a>>,
 }
 
 /// oxlint's `get_typed_inner_expression`
@@ -436,7 +437,7 @@ fn function_has_overload_signatures<'a>(func: Func<'a>) -> bool {
 }
 
 /// oxlint's `collect_overloaded_methods`
-fn overloaded_methods(class: Class<'_>) -> FxHashSet<Member<'_>> {
+fn overloaded_methods(class: Class<'_>) -> IdSet<Member<'_>> {
     let methods = || {
         class.members().iter().filter_map(|member| {
             let is_method = matches!(
@@ -760,7 +761,7 @@ impl<'a> OxlintChecker<'a, '_> {
                     .extend(block.body_statements().map(Step::Statements));
             }
             (MemberKind::Method | MemberKind::Getter | MemberKind::Constructor, Some(func))
-                if !member.is_constructor() && !self.overloaded.contains(&member) =>
+                if !member.is_constructor() && !self.overloaded.contains(member) =>
             {
                 self.visit_all(member.decorators());
                 self.visit_all(member.computed_key());
@@ -952,7 +953,7 @@ impl Rule for ExplicitModuleBoundaryTypes {
                 target: None,
                 around: Vec::new(),
                 in_setter: false,
-                overloaded: FxHashSet::default(),
+                overloaded: IdSet::default(),
             };
             return exports
                 .into_iter()
@@ -964,7 +965,7 @@ impl Rule for ExplicitModuleBoundaryTypes {
             rule: self,
             cx,
             visited: FxHashSet::default(),
-            followed: FxHashSet::default(),
+            followed: IdSet::default(),
             pending: Vec::new(),
             checked: Vec::new(),
             returns_known_until: 0,

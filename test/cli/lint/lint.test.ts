@@ -4569,11 +4569,11 @@ maybe(() => { return f; });
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
-      // Each project is a program of its own. In four runs: one takes seconds in a debug build.
-      test.serial.each([0, 1, 2, 3])(
+      // Each project is a program of its own. In twelve runs: one takes seconds in a debug build.
+      test.serial.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])(
         "the rules that need types report what tsgolint's report: part %d",
         async part => {
-          const some = projects.filter(it => it.typed).filter((_, index) => index % 4 === part);
+          const some = projects.filter(it => it.typed).filter((_, index) => index % 12 === part);
           const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
           const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
           for (const { name, config, files: texts } of some) {
@@ -4940,6 +4940,94 @@ maybe(() => { return f; });
         },
         isDebug || isASAN ? 120_000 : 30_000,
       );
+
+      // tsgolint's fix writes code that does not parse, or that does something else. `bun lint` makes the same report and
+      // leaves the code, or writes the code that does the same.
+      test("a fix of tsgolint that changes what the code does is not copied", async () => {
+        const shapes: [rule: string, file: string, text: string, fixed?: string, options?: object][] = [
+          // One match where `match` gave all of them.
+          ["prefer-regexp-exec", "a.ts", "declare const s: string;\nexport const a = s.match(new RegExp(/x/g));\n"],
+          [
+            "prefer-regexp-exec",
+            "a.ts",
+            "declare const s: string;\nexport const a = s.match(new RegExp(/x/g, undefined));\n",
+          ],
+          // `p` is `/b+/` there, and tsgolint writes `s.includes('abc')`.
+          [
+            "prefer-includes",
+            "a.ts",
+            "declare const s: string;\nlet p = /abc/;\np = /b+/;\nexport const a = p.test(s);\n",
+          ],
+          [
+            "prefer-string-starts-ends-with",
+            "a.ts",
+            "declare const s: string;\nlet p = /^a/;\np = /b/;\nexport const a = p.test(s);\n",
+          ],
+          // `<Icons["default"] />` does not parse.
+          [
+            "dot-notation",
+            "a.tsx",
+            "declare const Icons: { default: () => null };\nexport const a = <Icons.default />;\n",
+            undefined,
+            { allowKeywords: false },
+          ],
+          // An `await` in a parameter does not parse.
+          [
+            "no-misused-spread",
+            "a.ts",
+            "declare const p: Promise<{ a: 1 }>;\nexport async function f(o = { ...p }) {\n  return o;\n}\n",
+          ],
+        ];
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        shapes.forEach(([rule, file, text, , options], index) => {
+          const it = {
+            rule: `typescript/${rule}`,
+            file,
+            text,
+            typed: true,
+            options,
+            compilerOptions: { jsx: "preserve" },
+          };
+          for (const [path, text] of Object.entries(filesOf(it))) files[`${index}/${path}`] = text;
+        });
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        const reported = shapes.map((_, index) =>
+          JSON.parse(raw)
+            .diagnostics.filter((it: { filename: string }) => it.filename.startsWith(`${index}/`))
+            .map((it: { code: string }) => it.code),
+        );
+        expect(reported).toEqual(shapes.map(([rule]) => [`typescript(${rule})`]));
+        const reads = shapes.map(([, file], index) => `${index}/${file}`);
+        const result = await lint(files, ["--fix-dangerously", "--type-aware"], { reads });
+        expect(result.files).toEqual(
+          Object.fromEntries(shapes.map(([, file, text, fixed], index) => [`${index}/${file}`, fixed ?? text])),
+        );
+      });
+
+      test("what is left after the fixes is reported once, where it was", async () => {
+        const tsconfig = JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } });
+        const { files, raw } = await lint(
+          {
+            ".oxlintrc.json": JSON.stringify({
+              plugins: ["typescript"],
+              categories: { correctness: "off" },
+              rules: { "no-var": "error", "no-debugger": "error", "typescript/await-thenable": "error" },
+            }),
+            "tsconfig.json": tsconfig,
+            // `var` becomes `const` twice: a name that is declared twice, which is not said about the text that is written.
+            "a.ts": "var a = 1; debugger;\nvar a = 2;\nexport async function f() {\n  await a;\n}\n",
+          },
+          ["--fix", "--type-aware", "-f", "json"],
+          { reads: ["a.ts"] },
+        );
+        expect(files).toEqual({
+          "a.ts": "const a = 1; debugger;\nconst a = 2;\nexport async function f() {\n  await a;\n}\n",
+        });
+        const places = JSON.parse(raw).diagnostics.map(
+          (it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`,
+        );
+        expect(places.sort()).toEqual(["a.ts:1:12 eslint(no-debugger)", "a.ts:4:9 typescript(await-thenable)"]);
+      });
 
       test("the options that oxlint accepts are accepted", async () => {
         // A configuration that is refused ends the run. options.json is what oxlint 1.87.0 accepts. Each of the configurations has

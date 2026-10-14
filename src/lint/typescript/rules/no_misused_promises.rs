@@ -104,20 +104,46 @@ fn is_in_test<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
     known.find(Node::Expr(node), decide).unwrap_or(false)
 }
 
-/// Whether the type of `node` can have a `then`. The syntax tells that of a primitive value.
-fn can_be_thenable(node: Expr) -> bool {
-    match node.kind() {
-        ExprKind::True
-        | ExprKind::False
-        | ExprKind::Null
-        | ExprKind::Number(_)
-        | ExprKind::BigInt(_)
-        | ExprKind::String(_)
-        | ExprKind::Template(_)
-        | ExprKind::Unary { .. } => false,
-        ExprKind::Binary { op, .. } => op == BinOp::Comma || is_logical_operator(op),
-        _ => true,
-    }
+/// Whether the primitive values of each sort have a `then`: that of `Boolean`, `Number`, `BigInt`
+/// and `String`, which a program can add to. `None`: not asked yet.
+#[derive(Default)]
+struct ThenablePrimitives([Cell<Option<bool>>; 4]);
+
+/// Whether the type of `node` can have a `then`. All primitive values of a sort have the same.
+fn can_be_thenable(node: Expr, known: &ThenablePrimitives) -> bool {
+    let sort = match node.kind() {
+        ExprKind::Null | ExprKind::Unary { op: UnOp::Void, .. } => return false,
+        ExprKind::True | ExprKind::False | ExprKind::Unary { op: UnOp::Not | UnOp::Delete, .. } => 0,
+        ExprKind::Number(_) => 1,
+        ExprKind::BigInt(_) => 2,
+        ExprKind::String(_) | ExprKind::Template(_) | ExprKind::Unary { op: UnOp::Typeof, .. } => 3,
+        // A number, a bigint or a string. tsgolint asks for the type of these as of any test.
+        ExprKind::Unary { .. } => return node.file().language().is_oxlint,
+        ExprKind::Binary { op, .. } => match op {
+            BinOp::Lt
+            | BinOp::Le
+            | BinOp::Gt
+            | BinOp::Ge
+            | BinOp::EqEq
+            | BinOp::NotEq
+            | BinOp::EqEqEq
+            | BinOp::NotEqEq
+            | BinOp::In
+            | BinOp::Instanceof => 0,
+            BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma => return true,
+            _ => return node.file().language().is_oxlint,
+        },
+        _ => return true,
+    };
+    let Some(known) = known.0.get(sort) else {
+        return true;
+    };
+    known.get().unwrap_or_else(|| {
+        let ty = node.ts_node().get_type_at_location().get_apparent_type();
+        let has_then = ty.get_property(b"then").is_some();
+        known.set(Some(has_then));
+        has_then
+    })
 }
 
 /// Whether the literals of each sort have call signatures: those of `Boolean`, `Number`, `BigInt`,
@@ -154,10 +180,15 @@ pub struct State<'a> {
     /// Whether what has been passed on the way up from an operand is in a test.
     tests: AncestorMemo<'a, bool>,
     callable_literals: CallableLiterals,
+    thenable_primitives: ThenablePrimitives,
 }
 
 /// Whether an annotated type is maybe a function type, as far as the syntax tells.
-fn is_possibly_function_type(node: TypeNode) -> bool {
+fn is_possibly_function_type(node: TypeNode, is_oxlint: bool) -> bool {
+    // For tsgolint a type in parentheses is a `ParenthesizedType`, which is none of these.
+    if is_oxlint && node.is_parenthesized() {
+        return false;
+    }
     match node.kind() {
         TypeKind::Cond { .. }
         | TypeKind::Fn(_)
@@ -504,7 +535,7 @@ impl NoMisusedPromises {
 
     /// Checks an operand that is not a logical expression itself.
     fn check_conditional_operand<'a>(&self, node: Expr<'a>, cx: &Cx<'a, Self>) {
-        if !can_be_thenable(node) {
+        if !can_be_thenable(node, &cx.state.thenable_primitives) {
             return;
         }
         let ts_node = node.ts_node();
@@ -535,7 +566,12 @@ impl NoMisusedPromises {
             StmtKind::If { test, .. }
             | StmtKind::While { test, .. }
             | StmtKind::DoWhile { test, .. }
-            | StmtKind::For { test: Some(test), .. } => self.check_test(test, cx),
+            | StmtKind::For { test: Some(test), .. } => {
+                // tsgolint does not check a test that is an assignment, unless it is in parentheses.
+                if !(cx.language().is_oxlint && test.tag() == ExprTag::Assign && !test.is_parenthesized()) {
+                    self.check_test(test, cx);
+                }
+            }
             _ => {}
         }
     }
@@ -554,7 +590,7 @@ impl NoMisusedPromises {
             return;
         };
         if matches!(left.kind(), ExprKind::Binary { op, .. } if is_logical_operator(op))
-            || !can_be_thenable(left)
+            || !can_be_thenable(left, &cx.state.thenable_primitives)
             || is_in_test(node, &mut cx.state.tests)
         {
             return;
@@ -570,13 +606,21 @@ impl NoMisusedPromises {
         let Some(callback) = call.args().first().filter(|&callback| can_be_function(callback, known)) else {
             return;
         };
-        if !is_array_method_call_with_predicate(node) || !returns_thenable(callback.ts_node()) {
+        let is_oxlint = cx.language().is_oxlint;
+        // For tsgolint `(a.filter)` is a `ParenthesizedExpression`, and the callee no access expression.
+        if (is_oxlint && call.callee().is_parenthesized())
+            || !is_array_method_call_with_predicate(node)
+            || !returns_thenable(callback.ts_node())
+        {
             return;
         }
         // Upstream listens for every `MemberExpression` directly in a call: the callee, and the
-        // arguments that are one.
-        let is_member_expression =
-            |it: &Expr| matches!(it.tag(), ExprTag::Dot | ExprTag::Index) && !it.is_chain_root();
+        // arguments that are one. tsgolint has one where ESLint has a `ChainExpression`, and none
+        // in parentheses.
+        let is_member_expression = |it: &Expr| {
+            matches!(it.tag(), ExprTag::Dot | ExprTag::Index)
+                && if is_oxlint { !it.is_parenthesized() } else { !it.is_chain_root() }
+        };
         for _ in 0..=call.args().iter().filter(is_member_expression).count() {
             cx.report(place(callback), PREDICATE)
                 .labels_with(|labels| tsgolint_labels_of_value(labels, callback, None));
@@ -622,8 +666,13 @@ impl NoMisusedPromises {
         let ExprKind::Assign { target, value, .. } = node.kind() else {
             return;
         };
-        // A default in a destructuring assignment is an `AssignmentPattern`.
-        if !can_be_function(value, &cx.state.callable_literals) || node.is_assignment_target() {
+        // A default in a destructuring assignment is an `AssignmentPattern`. For tsgolint it is a
+        // `BinaryExpression` like any assignment, but not in `{ a = b }`.
+        let is_pattern = match cx.language().is_oxlint {
+            true => matches!(node.parent(), Node::Prop(property) if property.kind() == PropKind::Shorthand),
+            false => node.is_assignment_target(),
+        };
+        if is_pattern || !can_be_function(value, &cx.state.callable_literals) {
             return;
         }
         let left = target.ts_node();
@@ -639,7 +688,9 @@ impl NoMisusedPromises {
         let Some(init) = node.init() else {
             return;
         };
-        let (annotation, is_using) = (node.ty(), node.var_kind() == VarKind::Using);
+        // tsgolint has nothing about `using`.
+        let is_oxlint = cx.language().is_oxlint;
+        let (annotation, is_using) = (node.ty(), !is_oxlint && node.var_kind() == VarKind::Using);
         if annotation.is_none() && !is_using {
             return;
         }
@@ -667,11 +718,14 @@ impl NoMisusedPromises {
         }
         let name = node.pat().ts_node();
         let variable_type = name.get_type_at_location();
-        if has_dispose_method(name, variable_type, is_void_returning_function_type) && disposes_asynchronously() {
+        if !is_oxlint
+            && has_dispose_method(name, variable_type, is_void_returning_function_type)
+            && disposes_asynchronously()
+        {
             cx.report(place(init), VOID_RETURN_VARIABLE)
                 .labels_with(|labels| tsgolint_labels_of_value(labels, init, None));
         }
-        if is_possibly_function_type(annotation)
+        if is_possibly_function_type(annotation, is_oxlint)
             && can_be_function(init, &cx.state.callable_literals)
             && is_void_returning_function_type(initializer, variable_type)
             && returns_thenable(initializer)
@@ -742,8 +796,18 @@ impl NoMisusedPromises {
         let Some(obj_type) = obj.contextual_type() else {
             return;
         };
-        let name_text = cx.slice(key.span(cx.file()));
-        let Some(property_symbol) = union_constituents(obj_type).iter().find_map(|t| t.get_property(name_text)) else {
+        // tsgolint asks the contextual type itself, by the name without its quotes: a union has only
+        // what all of its constituents have.
+        let is_oxlint = cx.language().is_oxlint;
+        let name_text = match key.name() {
+            Some(name) if is_oxlint => name.bytes(),
+            _ => cx.slice(key.span(cx.file())),
+        };
+        let property_symbol = match is_oxlint {
+            true => obj_type.get_property(name_text),
+            false => union_constituents(obj_type).iter().find_map(|t| t.get_property(name_text)),
+        };
+        let Some(property_symbol) = property_symbol else {
             return;
         };
         let name = NameOf(node).ts_node();
@@ -784,9 +848,8 @@ impl NoMisusedPromises {
         let Some(function_node) = Node::Stmt(node).enclosing_function() else {
             return;
         };
-        // To tsgolint a type in parentheses is none of them.
-        let is_in_parentheses = |it: TypeNode| cx.language().is_oxlint && it.outer_span() != it.span();
-        if (function_node.return_type()).is_some_and(|it| !is_possibly_function_type(it) || is_in_parentheses(it)) {
+        let is_oxlint = cx.language().is_oxlint;
+        if function_node.return_type().is_some_and(|it| !is_possibly_function_type(it, is_oxlint)) {
             return;
         }
         let expression = argument.ts_node();
@@ -836,7 +899,12 @@ impl NoMisusedPromises {
             if member.is_static() || !returns_thenable(node_member) {
                 continue;
             }
-            let member_name = cx.slice(key.span(cx.file()));
+            // tsgolint takes the name without its quotes, and skips a computed one.
+            let member_name = match (cx.language().is_oxlint, key.name()) {
+                (false, _) => cx.slice(key.span(cx.file())),
+                (true, Some(name)) if !key.is_computed() => name.bytes(),
+                (true, _) => continue,
+            };
             for heritage_type in heritage_types.get_or_insert_with(|| get_heritage_types(ts_node)).iter() {
                 let Some(heritage_member) = heritage_type.get_member_if_exists(member_name) else {
                     continue;
@@ -877,8 +945,8 @@ impl NoMisusedPromises {
         };
         match parent.kind() {
             ExprKind::Call(_) | ExprKind::New(_) => {}
-            // In an `ArrayPattern` it is a `RestElement`.
-            ExprKind::Array(_) if !parent.is_assignment_target() => {}
+            // In an `ArrayPattern` it is a `RestElement`, which is a `SpreadElement` for tsgolint.
+            ExprKind::Array(_) if cx.language().is_oxlint || !parent.is_assignment_target() => {}
             _ => return,
         }
         Self::check_spread_argument(argument, cx);
@@ -893,7 +961,7 @@ impl NoMisusedPromises {
                 // In an `ObjectPattern` it is a `RestElement`.
                 if self.checks_spreads
                     && let (Some(argument), Node::Expr(parent)) = (node.value(), node.parent())
-                    && !parent.is_assignment_target()
+                    && (cx.language().is_oxlint || !parent.is_assignment_target())
                 {
                     Self::check_spread_argument(argument, cx);
                 }

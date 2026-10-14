@@ -29,11 +29,19 @@ impl RequireArraySortCompare {
             return;
         }
         let callee = call.callee();
-        let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = callee.kind() else {
+        let is_oxlint = cx.language().is_oxlint;
+        let Some(obj) = callee.object() else {
             return;
         };
-        // `(a?.sort)()` calls a `ChainExpression`.
-        if callee.is_chain_root() || !is_static_member_access_of_value(callee, &["sort", "toSorted"]) {
+        // `(a?.sort)()` calls a `ChainExpression`, and for tsgolint `(a.sort)()` a `ParenthesizedExpression`.
+        let is_sort = match is_oxlint {
+            true => {
+                !callee.is_parenthesized()
+                    && matches!(callee.file().type_checker().get_accessed_property_name(callee), Some(b"sort" | b"toSorted"))
+            }
+            false => !callee.is_chain_root() && is_static_member_access_of_value(callee, &["sort", "toSorted"]),
+        };
+        if !is_sort {
             return;
         }
         if self.ignore_string_arrays && is_string_array_node(obj) {

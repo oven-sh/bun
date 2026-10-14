@@ -22,16 +22,26 @@ fn is_global_candidate(object: Expr) -> bool {
     object.as_ident().is_some_and(|name| name.is_any(&GLOBAL_CANDIDATES))
 }
 
-fn get_callee_name(node: Expr<'_>) -> Option<Name<'_>> {
+/// tsgolint has a `ParenthesizedExpression` here, which is no identifier, access, call or literal.
+fn is_parenthesized_expression(node: Expr, is_oxlint: bool) -> bool {
+    is_oxlint && node.is_parenthesized()
+}
+
+fn get_callee_name(node: Expr<'_>, is_oxlint: bool) -> Option<Name<'_>> {
     match node.kind() {
+        _ if is_parenthesized_expression(node, is_oxlint) => None,
         ExprKind::Ident(name) => Some(name),
         // A `ChainExpression` for ESLint.
         _ if node.is_chain_root() => None,
+        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if is_parenthesized_expression(obj, is_oxlint) => None,
         ExprKind::Dot { obj, name, .. } if is_global_candidate(obj) && !name.bytes().starts_with(b"#") => {
             Some(name.name())
         }
         ExprKind::Index { obj, index, .. } if is_global_candidate(obj) => match index.kind() {
-            ExprKind::Ident(name) | ExprKind::String(name) => Some(name),
+            _ if is_parenthesized_expression(index, is_oxlint) => None,
+            ExprKind::String(name) => Some(name),
+            // tsgolint names a computed member only by a string literal.
+            ExprKind::Ident(name) if !is_oxlint => Some(name),
             _ => None,
         },
         _ => None,
@@ -46,18 +56,20 @@ fn is_function_type(node: Expr) -> bool {
         || !ty.get_call_signatures().is_empty()
 }
 
-fn is_bind(node: Expr) -> bool {
+// tsgolint has no `ChainExpression` and looks at an identifier or the name of a `PropertyAccessExpression` only.
+fn is_bind(node: Expr, is_oxlint: bool) -> bool {
     match node.kind() {
+        _ if is_parenthesized_expression(node, is_oxlint) => false,
         ExprKind::Ident(name) => name.is("bind"),
-        _ if node.is_chain_root() => false,
-        ExprKind::Dot { name, .. } => name.name().is("bind"),
-        ExprKind::Index { index, .. } => is_bind(index),
+        ExprKind::Dot { name, .. } if is_oxlint || !node.is_chain_root() => name.name().is("bind"),
+        ExprKind::Index { index, .. } if !is_oxlint && !node.is_chain_root() => is_bind(index, is_oxlint),
         _ => false,
     }
 }
 
-fn is_function(node: Expr) -> bool {
+fn is_function(node: Expr, is_oxlint: bool) -> bool {
     match node.kind() {
+        _ if is_parenthesized_expression(node, is_oxlint) => is_function_type(node),
         ExprKind::Fn(_) => true,
         ExprKind::String(_)
         | ExprKind::Number(_)
@@ -67,7 +79,9 @@ fn is_function(node: Expr) -> bool {
         | ExprKind::Null
         | ExprKind::Regex(_)
         | ExprKind::Template(_) => false,
-        ExprKind::Call(call) if !node.is_chain_root() => is_bind(call.callee()) || is_function_type(node),
+        ExprKind::Call(call) if is_oxlint || !node.is_chain_root() => {
+            is_bind(call.callee(), is_oxlint) || is_function_type(node)
+        }
         _ => is_function_type(node),
     }
 }
@@ -96,7 +110,8 @@ impl Rule for NoImpliedEval {
         let (ExprKind::Call(call) | ExprKind::New(call)) = node.kind() else {
             return;
         };
-        let Some(callee_name) = get_callee_name(call.callee()) else {
+        let is_oxlint = cx.language().is_oxlint;
+        let Some(callee_name) = get_callee_name(call.callee(), is_oxlint) else {
             return;
         };
         if callee_name.is(FUNCTION_CONSTRUCTOR) {
@@ -111,12 +126,27 @@ impl Rule for NoImpliedEval {
         let Some(handler) = call.args().first() else {
             return;
         };
-        if callee_name.is_any(&EVAL_LIKE_FUNCTIONS)
-            && !is_function(handler)
-            && *cx
-                .state
-                .entry((Node::Expr(node).scope(), callee_name))
-                .or_insert_with(|| is_reference_to_global_function(callee_name, node))
+        if !callee_name.is_any(&EVAL_LIKE_FUNCTIONS) || is_function(handler, is_oxlint) {
+            return;
+        }
+        if is_oxlint {
+            // tsgolint asks the checker for the symbol of the callee: one declared in this file is not the global.
+            let is_declared_in_file = call
+                .callee()
+                .ts_symbol()
+                .is_some_and(|symbol| symbol.declarations().any(|declaration| declaration.is_in_linted_file()));
+            if !is_declared_in_file {
+                match handler.is_parenthesized() {
+                    true => cx.report(handler.outer_span(), NO_IMPLIED_EVAL_ERROR),
+                    false => cx.report(handler, NO_IMPLIED_EVAL_ERROR),
+                };
+            }
+            return;
+        }
+        if *cx
+            .state
+            .entry((Node::Expr(node).scope(), callee_name))
+            .or_insert_with(|| is_reference_to_global_function(callee_name, node))
         {
             cx.report(handler, NO_IMPLIED_EVAL_ERROR);
         }

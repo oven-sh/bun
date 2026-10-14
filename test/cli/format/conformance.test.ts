@@ -67,3 +67,77 @@ test.skipIf(!hasRunner).concurrent.each([
   },
   5 * 60_000,
 );
+
+// `own/comment-owners.txt` has the node that Prettier attaches each comment of our own inputs to. `own/comment-owners.ts` writes it.
+test.skipIf(!hasRunner)("comments are attached to the nodes that Prettier attaches them to", async () => {
+  type Owner = { placement: string; type: string; start: number; end: number; rest: string };
+  const parse = (fields: string[]): [number, Owner] => {
+    const [commentStart, , placement, type, start, end, ...rest] = fields;
+    return [Number(commentStart), { placement, type, start: Number(start), end: Number(end), rest: rest.join(" ") }];
+  };
+  const expected = new Map<string, Map<number, Owner>>();
+  for (const line of (await Bun.file(join(import.meta.dir, "own/comment-owners.txt")).text()).split("\n")) {
+    if (/^\d/.test(line)) [...expected.values()].at(-1)!.set(...parse(line.split(" ")));
+    else if (line) expected.set(line, new Map());
+  }
+
+  const inputs = new Map<string, Buffer>();
+  for (const name of expected.keys()) {
+    inputs.set(name, Buffer.from(await Bun.file(join(import.meta.dir, "own/cases", `${name}.input`)).bytes()));
+  }
+  using dir = tempDir("comment-owners", Object.fromEntries(inputs));
+  await using proc = spawn({
+    cmd: [bunExe(), "fmt", "--debug-comments", "owners", ...inputs.keys()],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  expect(await proc.exited).toBe(0);
+
+  // `bun fmt` gives a name no width, and a statement its `;`.
+  const isSameOwner = (theirs: Owner, ours: Owner, text: Buffer) => {
+    if (theirs.placement !== ours.placement || theirs.start !== ours.start || theirs.rest !== ours.rest) return false;
+    if (theirs.end === ours.end || ours.type === "Name") return true;
+    const between = text.subarray(theirs.end, ours.end).toString();
+    return between.replace(/\/\*.*?\*\/|\/\/[^\n]*/gs, "").trim() === ";";
+  };
+  const describe = (owner?: Owner) => (owner ? `${owner.placement} ${owner.type} ${owner.start}` : "none");
+  const differences: string[] = [];
+  for (const [name, comments] of expected) {
+    const printed = await Bun.file(join(String(dir), "owners", `${name}.txt`)).text();
+    const lines = printed.split("\n").filter(line => line.startsWith("C "));
+    const ours = new Map(lines.map(line => parse(line.split(" ").slice(1))));
+    for (const [start, owner] of comments) {
+      if (!ours.has(start) || !isSameOwner(owner, ours.get(start)!, inputs.get(name)!)) {
+        differences.push(`${name}:${start} Prettier: ${describe(owner)}, bun: ${describe(ours.get(start))}`);
+      }
+    }
+  }
+  expect(differences).toEqual(knownDifferences);
+});
+
+// What is printed for these inputs is what Prettier prints all the same.
+const knownDifferences = [
+  // Prettier turns `a && (b && c)` into `(a && b) && c` before it attaches comments.
+  "comments/before-the-parentheses-of-a-nested-chain.js:33 Prettier: T LogicalExpression 6, bun: T BinaryExpression 25",
+  "comments/before-the-parentheses-of-a-nested-chain.js:50 Prettier: T BinaryExpression 42, bun: T LogicalExpression 25",
+  "comments/before-the-parentheses-of-a-nested-chain.js:83 Prettier: T Identifier 81, bun: T LogicalExpression 76",
+  "comments/before-the-parentheses-of-a-nested-chain.js:114 Prettier: T Identifier 112, bun: T LogicalExpression 107",
+  "comments/before-the-parentheses-of-a-nested-chain.js:139 Prettier: T Identifier 137, bun: T LogicalExpression 132",
+  // The `1` of the type `-1` is no node here.
+  "comments/behind-a-negative-number-that-is-a-type.ts:71 Prettier: L Literal 79, bun: D TSLiteralType 69",
+  // A pattern with a default ends before the `)` around the default here.
+  "comments/on-its-own-line-in-a-pattern-with-a-default.js:196 Prettier: L AssignmentPattern 173, bun: L IdentifierReference 219",
+  "comments/prettier-ignore-in-the-parentheses-of-a-default.js:13 Prettier: T Identifier 11, bun: T AssignmentPattern 6",
+  "comments/prettier-ignore-in-the-parentheses-of-a-default.js:66 Prettier: T BinaryExpression 56, bun: T AssignmentPattern 51",
+  "comments/prettier-ignore-in-the-parentheses-of-a-default.js:122 Prettier: T BinaryExpression 112, bun: L BindingProperty 104",
+  // An `Identifier` includes its type annotation in ESTree.
+  "ignore/comment-that-trails-on-its-own-line.ts:432 Prettier: T Identifier 418, bun: T TSTypeAnnotation 419",
+  // A literal in the brackets of a computed key is no node here.
+  "objects/computed-key-that-is-short.js:11 Prettier: T NumericLiteral 9, bun: L StringLiteral 57",
+  "objects/computed-key-that-is-short.js:474 Prettier: L NumericLiteral 482, bun: L StringLiteral 486",
+  "objects/computed-key-that-is-short.js:672 Prettier: T StringLiteral 668, bun: L StringLiteral 700",
+  // The `K` of `[K in A]` is no node here.
+  "types/line-comment-behind-in-before-a-union.ts:24 Prettier: T Identifier 19, bun: L TSUnionType 35",
+];

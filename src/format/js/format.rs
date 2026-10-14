@@ -149,7 +149,7 @@ fn format_node_with_comments<'a>(
     let skip_trailing = f.context_mut().take_skip_trailing_comments();
     let owned = f.comments().of_node(node);
     if owned.is_ignored {
-        return format_ignored_node(node, owned, skip_trailing, f, |f| {
+        return format_ignored_node(node, &owned, skip_trailing, f, |f| {
             write_ignored_node(node, f)
         });
     }
@@ -173,7 +173,7 @@ fn format_node_with_comments<'a>(
 #[cold]
 fn format_ignored_node<'a>(
     node: AstNodes<'a>,
-    owned: OwnedComments<'a>,
+    owned: &OwnedComments<'a>,
     skip_trailing: bool,
     f: &mut Formatter<'a>,
     write_source_text: impl FnOnce(&mut Formatter<'a>),
@@ -201,7 +201,7 @@ pub(crate) fn format_node_without_comments<'a>(
         return write(f);
     }
     let owned = f.comments().of_node(node);
-    format_ignored_node(node, owned, false, f, |f| write_ignored_node(node, f));
+    format_ignored_node(node, &owned, false, f, |f| write_ignored_node(node, f));
 }
 
 /// Writes a name or a key, which is a token here and a node for Prettier, with the comments it owns.
@@ -383,7 +383,7 @@ impl<'a> FormatExpr<'a> {
         let skip_trailing = f.context_mut().take_skip_trailing_comments();
         let owned = f.comments().of_node(node);
         if owned.is_ignored {
-            return format_ignored_node(node, owned, skip_trailing, f, |f| {
+            return format_ignored_node(node, &owned, skip_trailing, f, |f| {
                 write_suppressed_expression(expr, is_chain_expression, f)
             });
         }

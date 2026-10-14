@@ -836,7 +836,8 @@ impl<'a> Rules<'_, 'a, '_> {
         let last = (comment.id() + 1..count)
             .take_while(is_between_same_tokens)
             .last();
-        first.unwrap_or(comment.id())..last.unwrap_or(comment.id()) + 1
+        let id = comment.id();
+        first.unwrap_or(id)..last.unwrap_or(id) + 1
     }
 
     /// The first of the comments `ids` that is the last thing on its line, if it is on the line of the token before them.

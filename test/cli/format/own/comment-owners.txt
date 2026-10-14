@@ -1,0 +1,757 @@
+arrows/comments-before-the-parenthesis-that-ends-the-body.js
+121 137 T LogicalExpression 49 116 -
+142 154 T LogicalExpression 49 116 -
+194 198 T LogicalExpression 183 191 -
+228 232 T LogicalExpression 217 225 -
+258 265 T BinaryExpression 252 257 -
+arrows/sequence-behind-comments.js
+18 28 L SequenceExpression 34 41 -
+71 81 L SequenceExpression 87 94 -
+124 142 L SequenceExpression 146 149 -
+166 173 L Identifier 174 175 -
+198 205 L SequenceExpression 207 211 -
+216 223 L Identifier 224 225 -
+244 251 L Identifier 252 253 -
+calls/embedded-template-after-a-long-left-side.js
+72 85 L TemplateLiteral 86 119 -
+casts/after-something-that-is-not-formatted.js
+0 18 L VariableDeclaration 19 54 -
+29 50 L ParenthesizedExpression 51 54 -
+66 87 L ParenthesizedExpression 88 91 -
+98 116 L ParenthesizedExpression 136 145 -
+119 135 L ParenthesizedExpression 136 145 -
+149 165 L ParenthesizedExpression 166 169 -
+182 198 L ParenthesizedExpression 199 221 -
+casts/argument-of-return-that-breaks.js
+28 49 L ParenthesizedExpression 50 146 -
+178 198 L ParenthesizedExpression 199 295 -
+327 348 L ParenthesizedExpression 349 364 -
+casts/as-an-argument.js
+20 36 L ParenthesizedExpression 37 85 -
+97 113 L ParenthesizedExpression 114 126 -
+141 157 L ParenthesizedExpression 158 190 -
+201 217 L ParenthesizedExpression 218 234 -
+350 383 L MemberExpression 384 433 -
+casts/binary-expression-in-a-cast-that-breaks.js
+19 44 L ParenthesizedExpression 45 129 -
+157 208 L ParenthesizedExpression 213 298 -
+327 352 L ParenthesizedExpression 353 433 -
+439 464 L ParenthesizedExpression 465 545 -
+552 577 L ParenthesizedExpression 578 658 -
+casts/block-comment-in-the-parentheses-of-a-cast-that-is-assigned.js
+11 33 L ParenthesizedExpression 34 92 -
+38 60 L ArrowFunctionExpression 63 90 -
+105 127 L ParenthesizedExpression 128 168 -
+132 136 L ArrowFunctionExpression 139 166 -
+181 203 L ParenthesizedExpression 204 247 -
+208 215 L ArrowFunctionExpression 218 245 -
+260 282 L ParenthesizedExpression 283 317 -
+287 309 L Identifier 312 315 -
+324 346 L ParenthesizedExpression 347 392 -
+351 373 L FunctionExpression 376 390 -
+405 427 L ParenthesizedExpression 428 454 -
+432 446 L Identifier 449 452 -
+467 489 L ParenthesizedExpression 490 510 -
+491 505 L Identifier 506 509 -
+casts/conditional-in-a-branch-of-a-conditional.js
+58 79 L ParenthesizedExpression 80 241 -
+129 154 L MemberExpression 155 166 -
+179 220 L MemberExpression 221 233 -
+291 312 L ParenthesizedExpression 313 474 -
+362 387 L MemberExpression 388 399 -
+412 453 L MemberExpression 454 466 -
+casts/in-a-chain-of-operators.js
+9 25 L ParenthesizedExpression 26 34 -
+40 56 L BinaryExpression 57 68 -
+78 94 L ParenthesizedExpression 95 102 -
+108 124 L LogicalExpression 125 138 -
+149 165 L ParenthesizedExpression 166 174 -
+194 210 L ParenthesizedExpression 211 321 -
+casts/member-of-a-cast-in-a-cast.js
+62 102 L ParenthesizedExpression 103 206 -
+111 140 L MemberExpression 141 200 -
+142 164 L ParenthesizedExpression 165 180 -
+229 269 L ParenthesizedExpression 270 384 -
+278 307 L MemberExpression 308 378 -
+309 331 L ParenthesizedExpression 332 347 -
+casts/member-of-a-name-in-the-parentheses-of-a-cast.js
+19 91 L LogicalExpression 91 257 -
+111 156 L OptionalMemberExpression 157 257 -
+158 234 L MemberExpression 234 244 -
+269 285 L MemberExpression 286 380 -
+287 364 L OptionalMemberExpression 365 374 -
+casts/object-in-a-cast-behind-a-logical-operator.js
+29 45 L ParenthesizedExpression 46 117 -
+142 158 L ParenthesizedExpression 159 247 -
+268 284 L ParenthesizedExpression 285 356 -
+374 390 L ParenthesizedExpression 391 395 -
+casts/right-side-of-for-of.js
+20 42 L ParenthesizedExpression 43 81 -
+47 70 L ParenthesizedExpression 71 79 -
+107 129 L ParenthesizedExpression 130 238 -
+134 158 L ParenthesizedExpression 159 236 -
+271 291 L ParenthesizedExpression 292 328 -
+296 317 L ParenthesizedExpression 318 326 -
+casts/type-comment-without-parentheses-in-typescript.tsx
+39 65 L TSNonNullExpression 66 109 -
+127 153 L CallExpression 155 202 -
+221 247 L CallExpression 248 296 -
+casts/type-comment-without-parentheses.js
+39 65 L CallExpression 66 109 -
+127 153 L ParenthesizedExpression 154 203 -
+221 247 L CallExpression 248 296 -
+classes/comment-before-the-semicolon-of-a-private-property.js
+22 35 T ClassProperty 12 36 -
+50 63 T NumericLiteral 48 49 -
+81 88 T NumericLiteral 79 80 -
+95 102 T PrivateName 92 94 -
+115 122 T MemberExpression 111 114 -
+133 137 T NumericLiteral 131 132 -
+151 158 T ClassPrivateProperty 144 150 -
+169 176 T NumericLiteral 167 168 -
+classes/comment-before-the-semicolon-of-a-private-property.ts
+22 35 T PropertyDefinition 12 36 -
+50 63 T PropertyDefinition 39 64 -
+81 88 T PropertyDefinition 67 89 -
+95 102 T PropertyDefinition 92 103 -
+115 122 T PropertyDefinition 106 123 -
+133 137 T Literal 131 132 -
+151 158 T PropertyDefinition 144 150 -
+169 176 T PropertyDefinition 161 178 -
+classes/static-block-of-empty-statements.js
+64 74 D StaticBlock 45 84 -
+comments/after-the-dot-of-a-member.js
+9 18 L MemberExpression 4 28 -
+41 53 L MemberExpression 4 63 -
+comments/around-the-operator-of-a-binary-expression.js
+8 14 L Identifier 28 29 -
+19 25 T Identifier 4 5 -
+39 48 L Identifier 66 67 -
+54 63 T Identifier 35 36 -
+77 84 L Identifier 85 86 -
+87 91 T BinaryExpression 73 86 -
+105 113 T Identifier 103 104 -
+116 120 T Identifier 103 104 -
+134 140 L Identifier 164 165 -
+145 161 L Identifier 164 165 -
+180 186 L Identifier 201 202 -
+192 198 T LogicalExpression 171 177 -
+comments/at-the-end-of-the-line-in-a-link-of-a-chain.js
+3 7 T Identifier 0 1 -
+22 29 T Identifier 19 20 -
+49 56 T CallExpression 41 47 -
+79 83 T CallExpression 68 77 -
+93 100 T Identifier 90 91 -
+121 125 L MemberExpression 118 128 -
+151 155 T CallExpression 143 149 -
+179 186 T CallExpression 170 176 -
+210 214 L OptionalMemberExpression 200 217 -
+comments/before-a-member-at-the-start-of-a-condition.js
+6 10 L MemberExpression 4 13 -
+29 33 L MemberExpression 27 36 -
+54 58 L MemberExpression 52 61 -
+comments/before-a-member-at-the-start-of-what-a-chain-starts-with.ts
+2 6 L MemberExpression 0 9 -
+30 37 L MemberExpression 26 40 -
+59 66 L MemberExpression 57 69 -
+98 102 L MemberExpression 90 105 -
+122 126 L MemberExpression 113 129 -
+146 150 L MemberExpression 144 153 -
+163 167 L CallExpression 170 178 -
+192 196 L MemberExpression 199 203 -
+comments/before-a-private-name-in-a-chain.js
+36 40 L PrivateName 48 50 -
+84 91 L MemberExpression 92 96 -
+comments/before-and-behind-the-parenthesis-of-a-call-in-a-chain.js
+6 13 T NumericLiteral 4 5 -
+15 22 T CallExpression 0 14 -
+41 48 T NumericLiteral 39 40 -
+50 54 L MemberExpression 35 57 -
+73 77 T NumericLiteral 71 72 -
+80 84 T CallExpression 67 79 -
+157 167 T ObjectExpression 133 156 -
+comments/before-the-dot-after-a-comment-with-a-dot.js
+28 42 T CallExpression 11 28 -
+65 94 T CallExpression 11 65 -
+99 131 L MemberExpression 11 161 -
+136 148 L MemberExpression 11 161 -
+comments/before-the-last-link-of-a-chain-that-is-called-with-a-template.ts
+125 201 L MemberExpression 12 210 -
+299 307 L MemberExpression 288 312 -
+comments/before-the-parentheses-of-a-nested-chain.js
+15 20 T BinaryExpression 6 14 -
+33 38 T LogicalExpression 6 32 -
+50 55 T BinaryExpression 42 49 -
+83 88 T Identifier 81 82 -
+114 119 T Identifier 112 113 -
+139 143 T Identifier 137 138 -
+comments/behind-a-negative-number-that-is-a-type.ts
+15 22 T TSAsExpression 5 14 -
+45 52 T TSAsExpression 34 44 -
+71 78 L Literal 79 80 -
+81 88 T TSAsExpression 64 80 -
+comments/behind-an-optional-chain-in-parentheses.js
+7 14 T OptionalMemberExpression 1 5 -
+38 45 T OptionalMemberExpression 33 37 -
+70 74 T OptionalMemberExpression 64 68 -
+102 109 T OptionalCallExpression 93 100 -
+123 130 T OptionalMemberExpression 118 122 -
+143 150 T OptionalMemberExpression 137 141 -
+177 184 T OptionalCallExpression 168 175 -
+205 212 T OptionalMemberExpression 199 203 -
+comments/behind-an-optional-chain-in-parentheses.ts
+7 14 T MemberExpression 1 5 -
+38 45 T MemberExpression 33 37 -
+70 74 T MemberExpression 64 68 -
+102 109 T CallExpression 93 100 -
+123 130 T MemberExpression 118 122 -
+143 150 T MemberExpression 137 141 -
+177 184 T CallExpression 168 175 -
+205 212 T MemberExpression 199 203 -
+233 237 T CallExpression 218 232 -
+comments/between-key-and-value.tsx
+15 25 L Literal 30 37 -
+50 60 L JSXElement 65 77 -
+92 102 L CallExpression 107 111 -
+comments/block-comment-before-an-object-type.ts
+41 79 L TSTypeLiteral 80 107 -
+128 145 L TSTypeLiteral 146 154 -
+comments/block-comment-behind-the-semicolon-of-a-member.ts
+27 35 T TSPropertySignature 16 26 -
+48 56 T TSStringKeyword 41 47 -
+71 79 T TSPropertySignature 60 70 -
+93 98 T TSPropertySignature 82 92 -
+112 120 T TSMethodSignature 101 111 -
+134 142 L TSPropertySignature 143 153 -
+166 174 T TSPropertySignature 156 165 -
+201 209 T TSPropertySignature 190 200 -
+249 257 T PropertyDefinition 238 248 -
+267 275 T PropertyDefinition 260 266 -
+289 297 T MethodDefinition 278 288 -
+comments/block-comment-on-its-own-line-between-numbers.js
+18 30 L NumericLiteral 33 34 -
+43 59 L NumericLiteral 62 63 -
+78 85 L NumericLiteral 86 87 -
+109 116 T NumericLiteral 106 107 -
+138 142 L NumericLiteral 145 146 -
+comments/comment-before-a-computed-member-of-a-chain.ts
+109 160 L ConditionalExpression 164 205 -
+374 384 L MemberExpression 275 392 -
+comments/comment-before-a-semicolon-on-a-later-line.js
+32 108 T IfStatement 17 31 -
+154 230 T IfStatement 137 153 -
+233 237 L ExpressionStatement 241 246 -
+282 286 T IfStatement 266 281 -
+391 429 T ReturnStatement 322 390 -
+467 471 T IfStatement 455 466 -
+498 502 T WhileStatement 483 497 -
+526 533 T IfStatement 514 525 -
+565 569 T IfStatement 545 564 -
+610 614 T IfStatement 596 609 -
+648 652 T IfStatement 630 647 -
+682 686 T ExpressionStatement 678 681 -
+726 730 T ReturnStatement 719 725 -
+733 740 T ReturnStatement 719 725 -
+770 774 T ReturnStatement 761 769 -
+777 784 T ReturnStatement 761 769 -
+812 816 T ReturnStatement 805 811 -
+819 826 L ExpressionStatement 830 831 -
+859 866 T ReturnStatement 852 858 -
+869 873 T ReturnStatement 852 858 -
+911 915 T IfStatement 897 910 -
+918 925 T IfStatement 897 910 -
+comments/comment-before-an-optional-chain-behind-a-unary-operator.js
+9 14 L OptionalMemberExpression 17 24 -
+33 38 L OptionalCallExpression 41 47 -
+53 61 L OptionalMemberExpression 62 66 -
+76 84 T OptionalMemberExpression 71 75 -
+98 103 L OptionalMemberExpression 106 112 -
+121 126 L MemberExpression 129 132 -
+comments/comment-before-an-optional-chain-behind-a-unary-operator.ts
+9 14 L MemberExpression 17 24 -
+33 38 L CallExpression 41 47 -
+53 61 L MemberExpression 62 66 -
+76 84 T MemberExpression 71 75 -
+98 103 L MemberExpression 106 112 -
+121 126 L MemberExpression 129 132 -
+comments/comment-before-the-only-type-argument.ts
+26 53 L TSTypeLiteral 56 79 -
+104 114 L TSTypeReference 117 121 -
+127 137 L Identifier 140 145 -
+164 174 T TSTypeReference 157 161 -
+189 202 L TSTypeReference 203 207 -
+comments/comment-before-the-operand-of-a-unary-operator.ts
+9 16 L TSAsExpression 20 39 -
+50 57 L TSAsExpression 58 64 -
+69 76 L LogicalExpression 78 84 -
+93 97 L LogicalExpression 101 107 -
+120 127 L SequenceExpression 129 133 -
+139 146 L BinaryExpression 148 153 -
+163 170 L TSSatisfiesExpression 172 185 -
+191 198 L ConditionalExpression 200 209 -
+215 222 L AssignmentExpression 224 229 -
+235 242 L ArrowFunctionExpression 244 252 -
+258 265 L Identifier 267 273 -
+comments/comment-behind-an-empty-statement-behind-a-block-with-a-comment.js
+29 39 T VariableDeclaration 17 26 -
+44 55 T FunctionDeclaration 0 41 -
+70 74 T ExpressionStatement 66 67 -
+78 83 T BlockStatement 62 76 -
+106 110 D BlockStatement 102 112 -
+114 119 T FunctionDeclaration 89 112 -
+125 130 L Identifier 133 134 -
+139 144 T ExpressionStatement 120 136 -
+comments/comment-behind-an-empty-statement-that-starts-its-line.js
+38 68 T VariableDeclaration 0 35 -
+110 140 T VariableDeclaration 69 107 -
+157 187 T VariableDeclaration 142 153 -
+226 230 T ExpressionStatement 218 221 -
+242 246 T ExpressionStatement 233 236 -
+256 260 T ExpressionStatement 249 252 -
+comments/comment-behind-the-dot-of-a-chain.js
+41 77 L MemberExpression 10 84 -
+130 140 L MemberExpression 10 147 -
+comments/comment-behind-the-operator-before-a-chain-in-parentheses.js
+62 67 T Identifier 7 58 -
+115 120 T LogicalExpression 7 111 -
+253 258 T Identifier 198 249 -
+391 396 T Identifier 336 387 -
+529 537 T Identifier 474 525 -
+comments/comment-behind-the-parenthesis-of-new.ts
+7 11 L Identifier 14 15 -
+56 60 L TemplateLiteral 65 137 -
+157 161 L Identifier 164 165 -
+176 183 L Identifier 186 187 -
+200 204 L Identifier 207 208 -
+219 223 L ArrowFunctionExpression 226 234 -
+248 252 T TSTypeParameterInstantiation 243 246 -
+263 267 L Identifier 270 271 -
+282 286 D NewExpression 275 288 -
+comments/comment-between-the-key-of-a-method-and-its-parenthesis.js
+10 15 L ObjectMethod 16 187 -
+18 97 L Identifier 99 122 -
+180 185 T ExpressionStatement 175 178 -
+189 194 L ObjectMethod 195 211 -
+197 204 L Identifier 206 207 -
+217 224 T NumericLiteral 215 216 -
+239 243 L Identifier 247 248 -
+comments/comment-between-the-name-of-a-variable-and-its-type.ts
+7 11 L TSTypeAnnotation 12 15 -
+42 49 L TSTypeAnnotation 49 52 -
+66 70 L TSTypeAnnotation 71 74 -
+comments/comment-on-its-own-line-before-a-semicolon-on-the-next.ts
+17 22 L VariableDeclaration 28 39 -
+58 63 L VariableDeclaration 67 78 -
+85 90 L ExpressionStatement 95 98 -
+110 115 T VariableDeclaration 100 109 -
+comments/comment-on-its-own-line-between-the-links-of-a-chain.js
+30 50 L MemberExpression 6 61 -
+76 80 L MemberExpression 68 85 -
+comments/comments-around-the-parenthesis-behind-a-computed-callee.ts
+7 15 L Identifier 17 18 -
+28 36 L Identifier 37 38 -
+48 56 L Identifier 67 68 -
+58 66 L Identifier 67 68 -
+79 84 L Identifier 95 96 -
+87 92 L Identifier 95 96 -
+111 116 L Identifier 119 120 -
+136 141 T TSTypeParameterInstantiation 131 134 -
+160 166 L Identifier 169 170 -
+183 189 L FunctionExpression 192 206 -
+221 227 L Identifier 230 231 -
+comments/comments-around-the-semicolon-of-an-export-on-a-later-line.js
+20 24 T ExportNamedDeclaration 0 19 -
+25 29 L ExportNamedDeclaration 39 51 -
+31 38 T ExportNamedDeclaration 0 19 -
+comments/empty-line-behind-the-brace-of-an-import-or-export.ts
+11 21 L ExportSpecifier 23 29 -
+33 47 T ExportSpecifier 23 29 -
+68 72 L ImportSpecifier 74 75 -
+103 107 L Property 109 110 -
+129 133 L Identifier 135 136 -
+146 150 L Identifier 152 153 -
+202 209 L ExportSpecifier 210 211 -
+218 222 T ExportSpecifier 215 216 -
+225 229 T ExportSpecifier 215 216 -
+comments/empty-lines-before-the-block-comments-of-a-file-without-statements.js
+3 10 L Program 0 19 -
+11 18 D Program 0 19 -
+comments/empty-lines-before-the-comments-of-a-file-without-statements.ts
+2 6 L Program 0 13 -
+8 12 D Program 0 13 -
+comments/in-the-parentheses-around-a-link-of-a-chain.js
+1 14 L Identifier 15 16 -
+35 48 L MemberExpression 49 52 -
+69 82 L CallExpression 83 89 -
+103 116 L MemberExpression 117 125 -
+137 150 L CallExpression 151 162 -
+171 184 L MemberExpression 185 198 -
+205 212 L MemberExpression 213 216 -
+223 227 L MemberExpression 228 231 -
+238 245 L MemberExpression 246 249 -
+261 268 L MemberExpression 269 273 -
+290 297 L MemberExpression 298 304 -
+316 323 L MemberExpression 324 329 -
+341 348 L MemberExpression 349 359 -
+371 378 L CallExpression 379 395 -
+380 387 L MemberExpression 388 391 -
+408 415 L MemberExpression 416 419 -
+438 445 L MemberExpression 446 449 -
+comments/line-comment-after-an-empty-statement.js
+5 13 T ExpressionStatement 0 3 -
+15 24 T ExpressionStatement 0 3 -
+32 40 T ExpressionStatement 27 30 -
+43 52 T ExpressionStatement 27 30 -
+55 63 T ExpressionStatement 27 30 -
+comments/line-comment-before-jsx-at-the-end-of-a-chain.jsx
+60 91 L JSXElement 98 126 -
+173 181 L JSXFragment 204 239 -
+188 197 L JSXFragment 204 239 -
+281 306 T LogicalExpression 252 275 -
+comments/line-comment-behind-the-object-of-a-member.js
+6 9 T Identifier 4 5 -
+22 25 T Identifier 20 21 -
+39 46 T Identifier 37 38 -
+61 64 T MemberExpression 57 60 -
+81 84 T CallExpression 77 80 -
+98 101 T Identifier 96 97 -
+115 118 T Identifier 113 114 -
+comments/line-comment-behind-the-parenthesis-of-parameters.ts
+79 103 T TSTypeParameterDeclaration 21 77 -
+179 183 T Identifier 172 177 -
+286 310 T TSTypeParameterDeclaration 235 284 -
+344 348 L Identifier 351 364 -
+417 449 T TSTypeParameterDeclaration 392 415 -
+476 480 L Identifier 483 493 -
+comments/nothing-but-comments-and-a-semicolon.js
+0 4 D Program 0 22 -
+6 13 D Program 0 22 -
+15 19 D Program 0 22 -
+comments/on-its-own-line-before-a-name-in-parentheses.js
+2 6 L MemberExpression 0 11 -
+18 25 L MemberExpression 16 37 -
+54 58 L MemberExpression 52 64 -
+76 80 L OptionalMemberExpression 74 86 -
+98 102 L MemberExpression 96 107 -
+111 115 L ThisExpression 116 120 -
+comments/on-its-own-line-in-a-pattern-with-a-default.js
+19 23 L AssignmentPattern 13 27 -
+51 55 L AssignmentPattern 45 59 -
+77 81 L AssignmentPattern 71 85 -
+101 105 L AssignmentPattern 95 109 -
+140 147 L AssignmentPattern 134 151 -
+177 193 L Identifier 219 220 -
+196 218 L AssignmentPattern 173 220 -
+243 247 L AssignmentPattern 239 253 -
+comments/only-comments-in-the-value-of-a-jsx-attribute.tsx
+32 42 D ObjectExpression 24 48 -
+86 99 D ObjectExpression 84 101 -
+139 149 D ArrayExpression 131 155 -
+198 208 D CallExpression 189 214 -
+261 271 D NewExpression 248 277 -
+318 328 D ObjectExpression 310 334 -
+378 388 L Property 395 399 -
+454 464 D BlockStatement 446 470 -
+comments/prettier-ignore-and-a-comment-that-is-moved-out-of-what-is-ignored.js
+6 11 L MemberExpression 4 14 -
+18 36 T MemberExpression 4 14 -
+43 61 L ExpressionStatement 62 72 -
+64 69 L MemberExpression 62 72 -
+86 107 L AssignmentPattern 108 119 -
+110 115 L AssignmentPattern 108 119 -
+133 151 L ObjectProperty 154 169 -
+158 163 L AssignmentPattern 154 169 -
+186 204 L ObjectProperty 207 222 -
+213 218 L ObjectProperty 207 222 -
+233 241 L OptionalMemberExpression 231 245 -
+249 267 T OptionalMemberExpression 231 245 -
+comments/prettier-ignore-at-the-end-of-a-right-side-in-parentheses.js
+27 48 T LogicalExpression 16 26 -
+comments/prettier-ignore-before-a-declaration-that-is-the-body-of-a-loop.js
+9 30 L VariableDeclaration 31 42 -
+65 86 L VariableDeclaration 87 98 -
+123 141 L VariableDeclaration 144 155 -
+comments/prettier-ignore-before-a-right-side-with-a-comment-in-it.js
+17 38 L MemberExpression 39 51 -
+41 48 L MemberExpression 39 51 -
+comments/prettier-ignore-before-the-parameter-of-a-catch.js
+14 35 L Identifier 36 37 -
+61 79 L ObjectPattern 82 92 -
+comments/prettier-ignore-behind-an-object-and-behind-what-is-called.js
+23 41 T BinaryExpression 12 21 -
+74 92 T BinaryExpression 63 72 -
+126 144 T BinaryExpression 115 124 -
+182 200 T BinaryExpression 171 180 -
+235 253 T ArrowFunctionExpression 223 233 -
+291 309 T FunctionExpression 273 289 -
+comments/prettier-ignore-behind-an-object-and-behind-what-is-called.ts
+22 40 T TSAsExpression 12 20 -
+comments/prettier-ignore-behind-an-operand-of-a-conditional.js
+21 39 T SequenceExpression 16 20 -
+74 92 T AssignmentExpression 64 73 -
+123 141 T SequenceExpression 113 122 -
+comments/prettier-ignore-behind-an-operand-of-a-conditional.ts
+43 61 T TSConditionalType 21 42 -
+comments/prettier-ignore-behind-what-a-chain-starts-with.js
+23 41 T BinaryExpression 12 21 -
+81 102 T BinaryExpression 70 79 -
+142 160 T BinaryExpression 131 140 -
+246 264 T AwaitExpression 235 244 -
+307 325 T ConditionalExpression 292 305 -
+360 378 T SequenceExpression 349 358 -
+408 426 T OptionalMemberExpression 402 406 -
+449 467 T ObjectExpression 437 447 -
+507 525 T FunctionExpression 491 505 -
+571 589 T CallExpression 549 570 -
+617 635 T Identifier 613 616 -
+666 684 T BinaryExpression 655 664 -
+comments/prettier-ignore-behind-what-a-chain-starts-with.ts
+33 51 T TSAsExpression 12 31 -
+93 111 T TSAsExpression 83 91 -
+152 170 T TSSatisfiesExpression 135 150 -
+203 221 T TSTypeAssertion 194 201 -
+comments/prettier-ignore-behind-what-gets-parentheses.ts
+15 33 T TSAsExpression 4 14 -
+comments/prettier-ignore-behind-what-starts-a-statement.js
+4 22 T ObjectExpression 1 3 -
+45 63 T FunctionExpression 30 44 -
+84 102 T ObjectExpression 81 83 -
+119 137 T ClassExpression 110 118 -
+comments/prettier-ignore-between-the-sides-of-a-binary-expression.js
+38 56 T CallExpression 13 34 -
+103 121 T CallExpression 78 99 -
+168 186 T CallExpression 143 164 -
+232 250 T CallExpression 208 229 -
+296 314 T CallExpression 272 293 -
+360 378 T CallExpression 336 357 -
+424 442 T CallExpression 400 421 -
+488 506 T CallExpression 464 485 -
+553 571 T CallExpression 528 549 -
+617 635 T CallExpression 593 614 -
+682 700 T CallExpression 658 679 -
+747 765 T CallExpression 723 744 -
+813 831 T CallExpression 788 809 -
+879 897 T CallExpression 854 875 -
+946 964 T CallExpression 920 941 -
+1011 1029 T CallExpression 987 1008 -
+1076 1094 T CallExpression 1052 1073 -
+1142 1160 T CallExpression 1117 1138 -
+1208 1226 T CallExpression 1183 1204 -
+1274 1292 T CallExpression 1249 1270 -
+1340 1358 T CallExpression 1315 1336 -
+1407 1425 T CallExpression 1381 1402 -
+1474 1492 T CallExpression 1448 1469 -
+1548 1566 T CallExpression 1515 1536 -
+1614 1632 T CallExpression 1589 1610 -
+1680 1701 T CallExpression 1655 1676 -
+1737 1755 T BinaryExpression 1724 1733 -
+1803 1821 T CallExpression 1778 1799 -
+1849 1867 T LogicalExpression 1778 1845 -
+1915 1921 T CallExpression 1890 1911 -
+1971 1989 L CallExpression 1992 2013 -
+2048 2066 T CallExpression 2023 2044 -
+2114 2135 T CallExpression 2092 2113 -
+2179 2200 T CallExpression 2157 2178 -
+2246 2267 L CallExpression 2268 2289 -
+2329 2350 L CallExpression 2352 2373 -
+2414 2435 L CallExpression 2444 2465 -
+2436 2443 L CallExpression 2444 2465 -
+2505 2512 L CallExpression 2535 2556 -
+2513 2534 L CallExpression 2535 2556 -
+2593 2614 T CallExpression 2571 2592 -
+2615 2622 T CallExpression 2571 2592 -
+2687 2708 T CallExpression 2662 2683 -
+2709 2713 T CallExpression 2662 2683 -
+2781 2788 L CallExpression 2810 2831 -
+2789 2807 L CallExpression 2810 2831 -
+2875 2882 L CallExpression 2907 2928 -
+2883 2904 L CallExpression 2907 2928 -
+comments/prettier-ignore-between-the-sides-of-a-binary-expression.ts
+27 45 T TSAsExpression 14 22 -
+comments/prettier-ignore-in-a-super-class.js
+20 38 L MemberExpression 18 41 -
+65 83 L OptionalMemberExpression 63 89 -
+114 132 T Identifier 112 113 -
+comments/prettier-ignore-in-the-parentheses-of-a-default.js
+13 34 T Identifier 11 12 -
+66 87 T BinaryExpression 56 65 -
+122 140 T BinaryExpression 112 121 -
+comments/prettier-ignore-in-the-parentheses-of-a-type-cast.js
+0 16 L ExpressionStatement 17 56 -
+29 50 T LogicalExpression 18 28 -
+59 75 L ExpressionStatement 76 109 -
+86 107 T ObjectExpression 77 85 -
+112 128 L ExpressionStatement 129 172 -
+146 167 T FunctionExpression 130 145 -
+189 210 L ParenthesizedExpression 228 236 -
+211 227 L ParenthesizedExpression 228 236 -
+comments/prettier-ignore-on-its-own-line-before-a-link-of-a-chain.js
+25 43 L MemberExpression 11 50 -
+95 113 L MemberExpression 71 120 -
+148 154 T BinaryExpression 137 146 -
+comments/two-in-member-accesses-and-calls.js
+2 6 L MemberExpression 0 9 -
+10 14 L MemberExpression 0 17 -
+26 33 T CallExpression 19 25 -
+36 40 L NumericLiteral 41 42 -
+47 54 T Identifier 45 46 -
+57 61 L NumericLiteral 62 63 -
+72 79 T Identifier 70 71 -
+83 87 L MemberExpression 66 90 -
+100 107 T Identifier 98 99 -
+110 114 L NumericLiteral 115 116 -
+comments/type-comment-behind-the-key-of-a-property.js
+19 92 L CallExpression 95 125 -
+145 177 L Identifier 202 210 -
+180 202 L Identifier 202 210 -
+221 234 L ObjectProperty 214 242 -
+comments/type-comment-behind-the-operator-of-a-conditional.js
+19 35 L CallExpression 38 45 -
+50 54 L Identifier 57 66 -
+78 94 L Identifier 95 96 -
+110 126 L Identifier 127 128 -
+131 147 L Identifier 148 149 -
+comments/type-comment-that-is-no-cast.js
+28 55 L CallExpression 58 77 -
+120 153 L ArrowFunctionExpression 154 182 -
+185 218 L ArrowFunctionExpression 219 247 -
+comments/white-space-that-is-not-ascii-at-the-ends-of-lines.js
+0 6 L ExpressionStatement 7 8 -
+10 17 L ExpressionStatement 18 19 -
+21 26 L ExpressionStatement 27 28 -
+30 56 L ExpressionStatement 57 58 -
+60 72 L ExpressionStatement 73 74 -
+76 84 L ExpressionStatement 85 86 -
+88 98 L ExpressionStatement 99 100 -
+comments/white-space-that-is-not-ascii.js
+41 46 T ReturnStatement 29 37 -
+55 59 T ExpressionStatement 49 52 -
+67 74 L Identifier 77 78 -
+90 94 T Identifier 85 86 -
+comments/with-the-letters-of-else-before-an-else.js
+14 21 T ExpressionStatement 9 12 -
+22 29 D IfStatement 0 45 -
+62 74 T ExpressionStatement 57 60 -
+75 82 D IfStatement 48 91 -
+108 118 T ExpressionStatement 103 106 -
+119 126 D IfStatement 94 135 -
+152 163 T ExpressionStatement 147 150 -
+164 174 D IfStatement 138 190 -
+206 213 T ExpressionStatement 201 204 -
+214 221 D IfStatement 192 230 -
+247 254 T ExpressionStatement 242 245 -
+260 267 L ExpressionStatement 270 273 -
+294 301 D IfStatement 276 318 -
+302 309 D IfStatement 276 318 -
+decorators/ignored-export.ts
+0 18 L ExportNamedDeclaration 19 58 -
+60 78 L ExportDefaultDeclaration 79 128 -
+137 155 L Property 158 169 -
+html/template-dollar-before-interpolation.ts
+0 85 L ClassDeclaration 86 246 -
+html/template-front-matter.js
+4 14 L TemplateLiteral 15 82 -
+html/template-json-in-script.js
+31 41 L TemplateLiteral 42 189 -
+html/template-nested-in-script.js
+10 20 L TemplateLiteral 21 136 -
+html/template-one-word-text.js
+0 98 L ExpressionStatement 99 183 -
+html/template-placeholder-in-string.ts
+0 115 L ClassDeclaration 116 284 -
+ignore/comment-that-trails-on-its-own-line.ts
+33 51 T ExpressionStatement 17 29 -
+74 92 T Property 62 70 -
+114 132 T CallExpression 104 110 -
+153 171 T CallExpression 143 149 -
+198 216 T MethodDefinition 187 195 -
+235 245 L TSPropertySignature 248 257 -
+258 276 T TSPropertySignature 248 257 -
+291 309 T TSPropertySignature 279 288 -
+335 353 T ObjectExpression 324 334 -
+380 398 T PropertyDefinition 369 379 -
+432 450 T Identifier 418 429 -
+479 497 T ExpressionStatement 465 477 -
+ignore/embedded-template-that-is-the-only-argument.js
+5 23 L TaggedTemplateExpression 26 51 -
+61 65 L TaggedTemplateExpression 68 93 -
+100 121 L TaggedTemplateExpression 122 147 -
+155 173 L TaggedTemplateExpression 176 202 -
+ignore/ignore-comment-before-an-expression-in-jsx.tsx
+25 46 D JSXEmptyExpression 25 46 -
+114 135 D JSXEmptyExpression 114 135 -
+160 181 D JSXEmptyExpression 160 181 -
+224 245 D JSXEmptyExpression 224 245 -
+ignore/jsx-in-parentheses-that-is-assigned.tsx
+56 74 L JSXFragment 81 149 -
+182 200 L JSXElement 207 220 -
+ignore/semicolon-behind-the-comment.js
+10 28 T ExpressionStatement 0 9 -
+50 71 T ExpressionStatement 40 49 -
+91 109 T ExpressionStatement 83 90 -
+114 132 L ExportNamedDeclaration 133 155 -
+ignore/text-over-several-lines-breaks-nothing.ts
+9 30 L TSUnionType 31 51 -
+62 83 L TSUnionType 86 99 -
+109 130 L ArrayExpression 131 140 -
+154 175 L ArrayExpression 176 185 -
+ignore/the-comment-of-each-tool.tsx
+0 15 L VariableDeclaration 16 33 -
+35 53 L VariableDeclaration 54 71 -
+87 102 L Property 105 111 -
+115 136 L Property 139 145 -
+175 193 D JSXEmptyExpression 175 193 -
+ignore/type-that-needs-parentheses.ts
+16 37 L TSIntersectionType 39 60 -
+74 95 L TSConstructorType 96 108 -
+jsdoc/comments-that-follow-each-other-directly.js
+14 168 L ClassMethod 173 193 -
+197 376 L FunctionDeclaration 377 393 -
+no-semicolons/comment-before-the-semicolon-of-the-statement-before.js
+33 43 L ExpressionStatement 45 68 -
+75 85 L ExpressionStatement 87 94 -
+100 110 L ExpressionStatement 113 120 -
+objects/computed-key-that-is-short.js
+11 54 T NumericLiteral 9 10 -
+474 481 L NumericLiteral 482 483 -
+574 599 T Identifier 571 573 -
+672 697 T StringLiteral 668 671 -
+objects/number-in-quotes-in-a-file-with-the-flow-pragma.js
+0 8 L ExpressionStatement 9 27 -
+operator-at-the-start/comment-before-the-operator.js
+19 23 L CallExpression 26 71 -
+77 81 L Identifier 84 88 -
+statements/empty-line-after-the-last-directive-of-a-function.js
+98 102 T Directive 81 93 -
+138 142 T Directive 122 134 -
+176 180 T Directive 162 174 -
+336 340 T Directive 320 332 -
+statements/empty-line-before-a-semicolon-that-starts-a-statement.js
+60 64 L ExpressionStatement 67 74 -
+81 85 L ExpressionStatement 87 94 -
+statements/file-with-a-directive-and-comments-without-empty-lines.js
+14 18 T Directive 0 12 -
+19 23 T Directive 0 12 -
+statements/file-with-a-directive-and-comments.js
+15 22 T Directive 0 12 -
+24 28 T Directive 0 12 -
+types/comment-between-object-types-of-an-intersection.ts
+25 42 L TSTypeLiteral 45 60 -
+65 82 L TSTypeLiteral 85 100 -
+122 129 L TSTypeLiteral 130 138 -
+165 169 L TSPropertySignature 172 177 -
+types/line-comment-behind-in-before-a-union.ts
+24 28 T Identifier 19 20 -
+210 214 T Identifier 205 206 -
+types/type-assertion-next-to-an-operator.ts
+48 55 L BinaryExpression 56 69 -
+types/type-with-only-a-comment-beside-a-pattern-that-breaks.ts
+23 27 T Property 21 22 -
+35 42 D TSTypeLiteral 31 44 -
+72 76 T Property 70 71 -
+82 89 D TSTypeLiteral 80 91 -
+119 126 T Property 117 118 -
+134 141 D TSTypeLiteral 130 143 -
+273 280 D TSTypeLiteral 269 282 -
+310 314 T Property 308 309 -
+357 364 D TSTypeLiteral 353 366 -

@@ -49,7 +49,7 @@ fn write_space_before_body<'a>(body: AstNodes<'a>, f: &mut Formatter<'a>) {
 /// The name or the type parameters of an interface, with the comments `owned` by it. Prettier's `printClass` indents the
 /// trailing comments.
 fn write_part_of_interface_head<'a>(
-    owned: OwnedComments<'a>,
+    owned: &OwnedComments<'a>,
     part: &impl Format<'a>,
     f: &mut Formatter<'a>,
 ) {
@@ -106,7 +106,7 @@ pub(crate) fn write_ts_interface_declaration<'a>(
         });
 
     let format_name_and_type_parameters = format_with(|f| {
-        write_part_of_interface_head(name_comments, &source_text(name), f);
+        write_part_of_interface_head(&name_comments, &source_text(name), f);
         if type_params.angle_brackets_span().is_some() {
             let options = FormatTSTypeParametersOptions {
                 group_id: None,
@@ -117,7 +117,7 @@ pub(crate) fn write_ts_interface_declaration<'a>(
                     .with_options(options)
                     .write_without_comments(f)
             });
-            write_part_of_interface_head(type_parameters_comments, &type_parameters, f);
+            write_part_of_interface_head(&type_parameters_comments, &type_parameters, f);
         }
     });
 

@@ -27,7 +27,7 @@ fn has_line_break<'a>(string: Expr<'a>, f: &Formatter<'a>) -> bool {
 }
 
 /// Prettier's `hasComment(node)`.
-fn has_comments(comments: OwnedComments<'_>) -> bool {
+fn has_comments(comments: &OwnedComments<'_>) -> bool {
     !comments.leading.is_empty() || !comments.trailing.is_empty() || !comments.dangling.is_empty()
 }
 
@@ -40,12 +40,12 @@ impl<'a> FormatOpeningElement<'a> {
         if !f.is_quiet() {
             let type_arguments = AstNodes::TSTypeParameterInstantiation(Node::Expr(self.expr));
             name_has_comments = (self.jsx.tag())
-                .is_some_and(|name| has_comments(comments.of_node(name.as_ast_nodes())))
-                || has_comments(comments.of_node(type_arguments));
+                .is_some_and(|name| has_comments(&comments.of_node(name.as_ast_nodes())))
+                || has_comments(&comments.of_node(type_arguments));
             if let Some(last) = attributes.last() {
                 let comments = comments.of_node(last.as_ast_nodes());
                 last_attribute_has_trailing_comments = !comments.trailing.is_empty();
-                only_attribute_has_comments = has_comments(comments);
+                only_attribute_has_comments = has_comments(&comments);
             }
         }
 

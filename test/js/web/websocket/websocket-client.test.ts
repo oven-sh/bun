@@ -647,6 +647,39 @@ describe.concurrent("WebSocket AsyncLocalStorage context", () => {
     }
   });
 
+  it("a socket made inside a Bun.ModuleGraph runs in its store and its graph, and leaves neither behind", async () => {
+    using server = startServer();
+    const graph = new Bun.ModuleGraph();
+    // Made where there is no store: it finds whatever is current at the top of the event loop.
+    const atEventLoop: unknown[] = [];
+    const timer = setInterval(() => atEventLoop.push([als.getStore(), Bun.ModuleGraph.current]), 1);
+    try {
+      const seen: Record<string, unknown> = {};
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const ws = graph.run(() => als.run("constructor", () => new WebSocket(`ws://127.0.0.1:${server.port}`)));
+      const record = (event: string) => (seen[event] = [als.getStore(), Bun.ModuleGraph.current === graph]);
+      ws.onerror = e => reject((e as ErrorEvent).error);
+      ws.onopen = () => record("open");
+      ws.addEventListener("pong", () => {
+        record("pong");
+        ws.send("done");
+      });
+      ws.onclose = () => {
+        record("close");
+        resolve();
+      };
+      await promise;
+      expect(seen).toEqual({ open: ["constructor", true], pong: ["constructor", true], close: ["constructor", true] });
+
+      const ticks = atEventLoop.length;
+      while (atEventLoop.length < ticks + 2) await new Promise(resolve => setImmediate(resolve));
+      expect(atEventLoop.filter(([store, current]: any) => store !== undefined || current !== undefined)).toEqual([]);
+    } finally {
+      clearInterval(timer);
+      graph.dispose();
+    }
+  });
+
   it("the WebSocket keeps the context alive", async () => {
     using server = startServer();
     const seen: Record<string, unknown> = {};

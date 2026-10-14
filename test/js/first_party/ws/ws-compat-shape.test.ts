@@ -357,7 +357,9 @@ describe.each(implementations)("ws, shape ($name)", ({ ws: implementation, built
       conn.close(1000);
       conn.end();
       // On the built-in close() resumes a client, so that the closing handshake can end.
-      if (!builtin) {
+      if (builtin) {
+        expect(ws.isPaused).toBe(false);
+      } else {
         // A CLOSING socket cannot send a marker: another connection goes there and back.
         await using other = await openClient(implementation);
         expect(await other.conn.roundTrip()).toEqual([]);

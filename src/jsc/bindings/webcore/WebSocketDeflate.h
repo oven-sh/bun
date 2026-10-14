@@ -16,10 +16,9 @@ typedef struct {
     // Bytes of one message after reassembly and inflation. 0 = no limit.
     size_t max_payload_length;
     bool auto_pong;
-    // Text frames arrive through WebSocket__didReceiveBytes with opcode 1.
-    bool text_as_bytes;
-    // WebSocket__didDrain is called.
-    bool notify_drain;
+    // The `ws` module owns this socket: text frames arrive through WebSocket__didReceiveBytes with opcode 1,
+    // WebSocket__didDrain is called, and the owner times the closing handshake.
+    bool ws_mode;
     bool skip_utf8_validation;
     bool is_server;
 } WebSocketConnectedOptions;

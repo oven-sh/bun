@@ -32,7 +32,7 @@ namespace uWS {
 
 inline constexpr std::string_view ERR_WEBSOCKET_TIMEOUT("WebSocket timed out from inactivity");
 
-/* What a wsPackage context reports. serverFailures in src/js/thirdparty/ws.js has the same order. */
+/* What a wsPackage context reports. serverFailures in src/js/thirdparty/ws.ts has the same order. */
 enum class WebSocketFailureKind : int {
     ExpectedMask = 1,
     UnexpectedRsv1,

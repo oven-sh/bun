@@ -406,11 +406,11 @@ describe.each(implementations)("ws server, transports ($name)", ({ ws: implement
       "a Close frame in the packet of the request",
       early({ bytes: frame(OP.close, closePayload(1000)), events: ["close 1000 Buffer() rs=3"], sent: ["close 1000"] }),
     );
-    test.todoIf(builtin)(
+    test(
       "a message in the packet of the request, handleUpgrade() in a later task",
       early({ bytes: frame(OP.text, "early"), defer: true, events: earlyAndLater }),
     );
-    test.todoIf(builtin)(
+    test(
       "a message after the request, handleUpgrade() in a later task",
       early({ bytes: frame(OP.text, "early"), late: true, defer: true, events: earlyAndLater }),
     );

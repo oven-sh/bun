@@ -80,11 +80,15 @@ pub(crate) fn get_bun_server_open_count(
 
 /// uWS `CompressOptions` that zlib can be set up with: a compressor (`window << 4 | memLevel`) in the low byte
 /// and a decompressor (its window) in bits 8-11, or 1 in either place for the one the event loop shares.
+/// Bit 12 (`COMPRESSOR_NO_CONTEXT_TAKEOVER`) goes with a compressor of its own.
 fn is_compress_options(options: i32) -> bool {
     let (compressor, decompressor) = (options & 0xFF, (options >> 8) & 0xF);
-    options & !0xFFF == 0
-        && (compressor == 1
-            || ((9..=15).contains(&(compressor >> 4)) && (1..=9).contains(&(compressor & 0xF))))
+    options & !0x1FFF == 0
+        && (if compressor == 1 {
+            options & 0x1000 == 0
+        } else {
+            (9..=15).contains(&(compressor >> 4)) && (1..=9).contains(&(compressor & 0xF))
+        })
         && (decompressor == 1 || (8..=15).contains(&decompressor))
 }
 

@@ -99,14 +99,14 @@ struct PerMessageDeflateOffer {
 };
 
 /* Takes what we (the server) wants, returns what we got. A window of 0 is the shared (no context takeover) stream. */
-static inline std::tuple<bool, int, int, std::string_view> negotiateCompression(bool wantCompression, int wantedCompressionWindow, int wantedInflationWindow, std::string_view offers) {
+static inline std::tuple<bool, int, int, std::string> negotiateCompression(bool wantCompression, int wantedCompressionWindow, int wantedInflationWindow, std::string_view offers) {
 
     /* If we don't want compression then we are done here */
     if (!wantCompression) {
         return {false, 0, 0, ""};
     }
 
-    static thread_local std::string response;
+    std::string response;
     int compressionWindow = 0;
     int inflationWindow = 0;
 
@@ -154,7 +154,7 @@ static inline std::tuple<bool, int, int, std::string_view> negotiateCompression(
         return {false, 0, 0, ""};
     }
 
-    return {true, compressionWindow, inflationWindow, response};
+    return {true, compressionWindow, inflationWindow, std::move(response)};
 }
 
 }

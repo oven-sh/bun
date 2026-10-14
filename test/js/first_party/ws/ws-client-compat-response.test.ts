@@ -1,7 +1,7 @@
 // What a `ws` client reads out of the server's answer beyond its head: the body of a response that is not a 101, and
 // what the answer to a `perMessageDeflate` offer with parameters means for the frames it sends. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { tls as harnessTls } from "harness";
+import { tls as harnessTls, isWindows } from "harness";
 import crypto from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import zlib from "node:zlib";
@@ -81,6 +81,39 @@ describe.each(implementations)("ws client, the server's answer ($name)", ({ ws: 
         const written = writeInPieces(conn, ["part 1, ", "part 2"]).then(() => conn.end());
         const [body] = await Promise.all([readAll(response), written]);
         expect(body).toBe("part 1, part 2");
+        expect(client.events).toEqual([]);
+      });
+
+      test("while nobody reads it, it waits in the server", async () => {
+        const { client, response, conn } = await unexpected("HTTP/1.1 503 Service Unavailable\r\n\r\n", secure);
+        await using _ = client;
+        const piece = Buffer.alloc(65536, "abcdefgh");
+        // More than the kernel keeps for one connection. Winsock keeps all of it on loopback.
+        const limit = 1024 * piece.length;
+        let sent = 0;
+        let stop = false;
+        const written = (async () => {
+          while (!stop && sent < limit) {
+            await new Promise<void>(resolve => conn.socket.write(piece, () => resolve()));
+            sent += piece.length;
+          }
+          conn.end();
+        })();
+        // The server is stuck once it got nowhere while the event loop polled its sockets this often. To stop
+        // sooner only tests less.
+        for (let last = -1, idle = 0; idle < 50 && sent < limit; idle++) {
+          await new Promise<void>(resolve => setImmediate(resolve));
+          if (sent !== last) idle = 0;
+          last = sent;
+        }
+        if (!isWindows) expect(sent).toBeLessThan(limit);
+        // The high water mark and what one read of the socket brought.
+        expect(response.readableLength).toBeLessThan(2 * 1024 * 1024);
+
+        stop = true;
+        const [body] = await Promise.all([readAll(response), written]);
+        expect(body.length).toBe(sent);
+        expect(body === Buffer.alloc(sent, "abcdefgh").toString()).toBe(true);
         expect(client.events).toEqual([]);
       });
     });

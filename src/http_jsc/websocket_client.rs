@@ -73,10 +73,10 @@ pub struct ConnectedOptions {
     /// Bytes of one message after reassembly and inflation. 0 = no limit.
     pub max_payload_length: usize,
     pub auto_pong: bool,
-    /// Text messages are validated and handed over as UTF-8 bytes.
-    pub text_as_bytes: bool,
-    pub notify_drain: bool,
-    /// With `text_as_bytes`: text messages and close reasons are taken as they come.
+    /// The `ws` module owns the socket. Text messages are validated and handed over as UTF-8
+    /// bytes, it hears of a drained send queue, and it times the closing handshakes it starts.
+    pub ws_mode: bool,
+    /// With `ws_mode`: text messages and close reasons are taken as they come.
     pub skip_utf8_validation: bool,
     /// The server's end of a connection: it expects masked frames and sends unmasked ones.
     pub is_server: bool,
@@ -334,6 +334,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         let over_stream = matches!(self.io(), Io::Stream);
         match outcome {
             Outcome::Clean => {
+                // `terminate()` does not reach what is left.
+                if self.options.ws_mode {
+                    self.arm_close_timeout();
+                }
                 // Our side has nothing more to send; the server closes the connection (RFC 6455 §7.1.1).
                 // TLS and a tunnel leave the FIN to it too.
                 if !SSL && self.tunnel().is_none() {
@@ -372,7 +376,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
         log!("fail ({})", <&'static str>::from(code));
         if let Some(close_code) = code.close_code() {
-            self.send_close(&close_code.to_be_bytes());
+            self.send_close(&close_code.to_be_bytes(), false);
         }
         self.finish(Outcome::Failed(code, detail));
     }
@@ -489,7 +493,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         };
 
         match kind {
-            Opcode::Text if self.options.text_as_bytes => {
+            Opcode::Text if self.options.ws_mode => {
                 if !self.options.skip_utf8_validation && !strings::is_valid_utf8(data) {
                     self.fail(ErrorCode::InvalidUtf8);
                     return;
@@ -1057,7 +1061,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if let Some(ws) = self.cpp_websocket() {
             ws.did_start_closing_handshake();
         }
-        self.send_close(payload);
+        self.send_close(payload, false);
         self.finish_if_closed_cleanly();
         Step::Terminated
     }
@@ -1224,8 +1228,9 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     /// Our half of the closing handshake. `payload` is the status code and the
     /// reason, or empty. The frame goes behind what is unsent, and the rest of
-    /// the handshake has `close_timeout_seconds` from now.
-    fn send_close(&self, payload: &[u8]) {
+    /// the handshake has `close_timeout_seconds` from now. `asked_by_owner`: `close()`
+    /// was called, for which `ws` has started a timer of its own that ends in `terminate()`.
+    fn send_close(&self, payload: &[u8], asked_by_owner: bool) {
         if !self.can_send() {
             return;
         }
@@ -1233,13 +1238,18 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.close_sent.set(true);
         // Only a read sees the peer's Close frame and its FIN.
         self.resume();
+        if !(asked_by_owner && self.options.ws_mode) {
+            self.arm_close_timeout();
+        }
+        self.send_control_frame(Opcode::Close, payload);
+    }
+
+    fn arm_close_timeout(&self) {
         match self.io() {
             Io::Socket => self.tcp.get().set_timeout(close_timeout_seconds()),
             Io::Tunnel(tunnel) => tunnel.set_timeout(close_timeout_seconds()),
-            // Its owner has a timer of its own.
             Io::Stream => {}
         }
-        self.send_control_frame(Opcode::Close, payload);
     }
 
     fn send_control_frame(&self, opcode: Opcode, payload: &[u8]) {
@@ -1277,7 +1287,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if self.has_backpressure() {
             return;
         }
-        if self.options.notify_drain {
+        if self.options.ws_mode {
             if let Some(ws) = self.cpp_websocket() {
                 ws.did_drain();
             }
@@ -1294,7 +1304,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.flush_send_queue();
     }
 
-    /// Only `send_close` arms a timeout.
+    /// Only `arm_close_timeout` arms one.
     pub fn handle_timeout(&self, socket: Socket<SSL>) {
         self.finish(Outcome::Unclean);
         socket.close_now();
@@ -1471,7 +1481,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 .and_then(|str| encode_close_reason(str, reason_bytes))
                 .unwrap_or(0);
         }
-        this.send_close(&payload[..payload_len]);
+        this.send_close(&payload[..payload_len], true);
     }
 
     /// Allocate a client with `ref_count == 1` (the I/O-layer ref, released by

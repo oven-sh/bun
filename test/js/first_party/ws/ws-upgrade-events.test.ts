@@ -2,6 +2,7 @@
 // response other than 101 does to a socket nobody gave an 'unexpected-response' listener. See ws-raw-peer.ts.
 // The request that comes with 'unexpected-response' is in ws-client-compat-request.test.ts.
 import { describe, expect, test } from "bun:test";
+import { isWindows } from "harness";
 import type { IncomingMessage } from "node:http";
 import {
   acceptKey,
@@ -9,6 +10,7 @@ import {
   dial,
   event,
   implementations,
+  openClient,
   show,
   showError,
   type PeerOptions,
@@ -189,6 +191,28 @@ describe.each(implementations)("ws client, 'upgrade' and 'unexpected-response' (
         const conn = await client.peer.connection();
         conn.write("no way");
         expect(await readAll(response)).toBe("no way");
+      });
+
+      // Winsock takes all of it on loopback, so nothing ever waits there.
+      test.skipIf(isWindows)("that nobody reads stays with the server: its writes stall", async () => {
+        await using client = await dial(implementation, {}, { respond: () => "HTTP/1.1 403 Forbidden\r\n\r\n" });
+        const [, response] = (await event(client.ws, "unexpected-response")) as [unknown, IncomingMessage];
+        const conn = await client.peer.connection();
+        await using control = await openClient(implementation);
+        const chunk = Buffer.alloc(100_000, "a");
+        let sent = 0;
+        // Until the kernel's buffers are full: bytes stay in the server's own queue for a whole round trip.
+        do {
+          conn.write(chunk);
+          sent += chunk.length;
+          await control.conn.roundTrip();
+        } while (conn.socket.writableLength === 0 && sent < 1000 * chunk.length);
+        expect(conn.socket.writableLength).toBeGreaterThan(0);
+
+        conn.end();
+        let received = 0;
+        for await (const data of response) received += data.length;
+        expect(received).toBe(sent);
       });
     });
 

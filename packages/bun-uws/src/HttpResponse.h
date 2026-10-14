@@ -366,7 +366,8 @@ public:
 
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
      * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use.
-     * Returns nullptr, with nothing written and userData untouched, for a closed or shut down socket. */
+     * Returns nullptr, with userData untouched, for a closed or shut down socket: nothing is written to it,
+     * unless it was the write of a 101 too long for the cork buffer that ended it. */
     template <typename UserData>
     us_socket_t *upgrade(UserData&& userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
             std::string_view secWebSocketExtensions,
@@ -472,6 +473,11 @@ private:
     template <typename UserData>
     us_socket_t *adoptWebSocket(UserData&& userData, bool perMessageDeflate, CompressOptions compressOptions,
             WebSocketContext<SSL, true, UserData> *webSocketContext) {
+
+        /* A send that TLS rejects ends the socket. It stays an HTTP socket, which the next writable event closes. */
+        if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
+            return nullptr;
+        }
 
         WebSocketContextData<SSL, UserData> *webSocketContextData = webSocketContext->getExt();
 

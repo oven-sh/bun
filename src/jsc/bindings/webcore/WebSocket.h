@@ -111,7 +111,7 @@ struct WebSocketOptions {
     JSC::JSValue checkServerIdentity;
     // The Sec-WebSocket-Extensions request header: a permessage-deflate offer. Null: no header.
     String extensions { "permessage-deflate; client_max_window_bits"_s };
-    WebSocketConnectedOptions connected { 128 * 1024 * 1024, true, false, false, false, false };
+    WebSocketConnectedOptions connected { 128 * 1024 * 1024, true, false, false, false };
 };
 
 // A connection whose handshake is done and whose bytes travel over a stream that lives in JS. For the `ws` module.
@@ -119,7 +119,7 @@ struct WebSocketStreamOptions {
     String url;
     String protocol;
     String extensions;
-    WebSocketConnectedOptions connected { 128 * 1024 * 1024, true, true, false, false, false };
+    WebSocketConnectedOptions connected { 128 * 1024 * 1024, true, true, false, false };
     std::optional<PerMessageDeflateParams> deflate;
 };
 
@@ -186,7 +186,8 @@ public:
     void terminate();
     // Receive-side flow control (non-standard; mirrors Bun.Socket). pause()
     // stops kernel reads so TCP backpressure reaches the peer; frames already
-    // decoded still dispatch. Before OPEN it latches and applies on connect.
+    // decoded still dispatch. Before OPEN it latches and applies on connect,
+    // and holds back the body of a response that is not a 101.
     bool pause();
     bool resume();
     bool isPaused() const { return m_paused && (m_state == CONNECTING || m_state == OPEN); }
@@ -245,9 +246,10 @@ public:
         FfiSlice value;
     };
     void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body);
-    // The `ws` module gets the decoded body of a response that is not a 101: handlers.body(chunk), then handlers.body(null).
+    // Made by the `ws` module: nothing is dispatched as an Event, the wrapper's handler table is called.
+    bool isWsMode() const { return m_connectedOptions.ws_mode; }
+    // It gets the decoded body of a response that is not a 101: handlers.body(chunk), then handlers.body(null).
     // That response is the outcome, so neither handlers.error nor handlers.close follows.
-    bool readsResponseBody() const { return isWsMode(); }
     void didReceiveResponseBody(std::span<const uint8_t> chunk, bool ended);
 
     // C++-only callback mode. When set, didConnect/didReceiveMessage/
@@ -340,8 +342,6 @@ private:
     void reportFailure(const Failure&);
     void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
 
-    // Made by the `ws` module: nothing is dispatched as an Event, the wrapper's handler table is called.
-    bool isWsMode() const { return m_connectedOptions.text_as_bytes; }
     // handlers[name].call(owner, ...arguments). What it throws is reported as an uncaught exception.
     void callHandler(const JSC::Identifier& name, const JSC::ArgList&);
     void callHandlerWithBuffer(const JSC::Identifier& name, std::span<const uint8_t>, JSC::JSValue secondArgument = {});

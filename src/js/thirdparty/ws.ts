@@ -51,6 +51,7 @@ const kListener = Symbol("kListener");
 const kNative = Symbol("kNative");
 const kNativeOptions = Symbol("kNativeOptions");
 const kOptions = Symbol("kOptions");
+const kRequest = Symbol("kRequest");
 const kResponse = Symbol("kResponse");
 const kStatusCode = Symbol("status-code");
 const kTransport = Symbol("kTransport");
@@ -83,10 +84,14 @@ type Dictionary<T> = { [key: string]: T };
 
 // node/http.ts has these two as `any`.
 type HttpModule = Omit<typeof import("../node/http").default, "IncomingMessage" | "STATUS_CODES"> & {
-  IncomingMessage: new (socket: null) => IncomingMessage & { _addHeaderLines(headers: string[], n: number): void };
+  IncomingMessage: new (socket: null) => HandshakeResponse;
   STATUS_CODES: { [code: number]: string };
 };
 type IncomingMessage = import("node:http").IncomingMessage;
+interface HandshakeResponse extends IncomingMessage {
+  _addHeaderLines(headers: string[], n: number): void;
+  [kRequest]?: ClientRequest;
+}
 type HeaderValue = import("node:http").OutgoingHttpHeader;
 type HttpHeaders = import("node:http").OutgoingHttpHeaders;
 type HttpAgent = import("node:http").Agent;
@@ -801,10 +806,12 @@ class PerMessageDeflate {
     const params = this.params!;
     const deflateBits = Math.max(params.server_max_window_bits || 15, 9);
     const inflateBits = (params.client_max_window_bits as number) || 15;
-    return (
-      (params.server_no_context_takeover ? 1 : (deflateBits << 4) | (deflateBits - 7)) |
-      (params.client_no_context_takeover ? 1 << 8 : inflateBits << 8)
-    );
+    // 1 is the stream that the event loop shares: no context takeover, a window of 15 bits.
+    // 1 << 12 is uWS::COMPRESSOR_NO_CONTEXT_TAKEOVER.
+    const dedicated = (deflateBits << 4) | (deflateBits - 7);
+    const compressor = !params.server_no_context_takeover ? dedicated : deflateBits < 15 ? dedicated | (1 << 12) : 1;
+
+    return compressor | (params.client_no_context_takeover ? 1 << 8 : inflateBits << 8);
   }
 }
 
@@ -1142,7 +1149,9 @@ class WebSocket extends EventEmitter {
     const perMessageDeflate = this._extensions[extensionName];
     const maxPayload = Math.max(options.maxPayload | 0, 0);
 
-    if (options[kResponse]) {
+    // The native server socket takes over what the connection receives from now on. Frames that node:http has
+    // read already, ahead of a `handleUpgrade()` that came late, are in `head` and in the buffer of `socket`.
+    if (options[kResponse] && head.length === 0 && socket.readableLength === 0) {
       const native = upgradeWebSocket(
         options[kResponse],
         this,
@@ -1242,6 +1251,11 @@ class WebSocket extends EventEmitter {
           throw new TypeError("Second argument must be a string or a Uint8Array");
         }
         data = toBuffer(data).toString();
+
+        // What is not UTF-8 became U+FFFD, which takes three bytes.
+        if (Buffer.byteLength(data) > 123) {
+          throw new RangeError("The message must not be greater than 123 bytes");
+        }
       }
     }
 
@@ -1249,6 +1263,9 @@ class WebSocket extends EventEmitter {
     this._closeFrameSent = true;
     this._readyState = CLOSING;
     setCloseTimer(this);
+
+    // The native client reads on to find the peer's Close frame.
+    if (this[kTransport] === DIALLED) this._paused = false;
 
     // 1005 is the native spelling of a Close frame with no body.
     if (this[kTransport] === UPGRADED) this[kNative]!.close(code === undefined ? 1005 : code, data);
@@ -1581,7 +1598,7 @@ const receiverErrors = {
 } as const;
 type ReceiverErrorCode = Exclude<keyof typeof receiverErrors, "__proto__">;
 
-// The order of uWS::WebSocketFailure.
+// The order of uWS::WebSocketFailureKind.
 const serverFailures: (ReceiverErrorCode | undefined)[] = [
   undefined,
   "WS_ERR_EXPECTED_MASK",
@@ -1668,7 +1685,7 @@ const serverHandlers: ServerHandlers = {
     if (nativeBufferedAmount(this) === 0) runCallbacks(this);
   },
   // `code` is the status code of the peer's Close frame (1005 without one in it), which the native side has
-  // answered; 1006 when the connection ended with no Close frame; the negated uWS::WebSocketFailure, with its
+  // answered; 1006 when the connection ended with no Close frame; the negated uWS::WebSocketFailureKind, with its
   // detail in `reason`, when the native side failed the connection.
   close(code, reason) {
     if (code < 0) receiverOnError(this, createReceiverError(serverFailures[-code]!, reason.toString()));
@@ -1698,9 +1715,13 @@ const clientHandlers: ClientHandlers = {
       // with a real response.
       clearTimeout(this[kHandshakeTimer]);
 
-      req.res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders);
+      const res = (req.res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders));
 
-      if (!this.emit("unexpected-response", req, req.res)) {
+      res[kRequest] = req;
+      res._read = responseRead;
+      res.once("close", responseOnClose);
+
+      if (!this.emit("unexpected-response", req, res)) {
         abortHandshake(this, req, `Unexpected server response: ${statusCode}`);
       }
       return;
@@ -1720,7 +1741,10 @@ const clientHandlers: ClientHandlers = {
   },
   // The body of a response that is no 101, then `null`.
   body(chunk) {
-    (this._req as ClientRequest | null)?.res?.push(chunk);
+    const req = this._req as ClientRequest | null;
+    const res = req?.res;
+
+    if (res && !res.push(chunk) && chunk !== null) req[kNative]?.pause();
   },
   open() {
     clearTimeout(this[kHandshakeTimer]);
@@ -1930,7 +1954,17 @@ function connectError(native: NativeClient, error: NativeError): Error {
   return err;
 }
 
-function makeHandshakeResponse(statusCode: number, statusMessage: string, rawHeaders: string[]): IncomingMessage {
+// `_read()` and `'close'` of a response whose body the native client reads.
+function responseRead(this: HandshakeResponse, n: number): void {
+  lazyHttp().IncomingMessage.prototype._read.$call(this, n);
+  this[kRequest]![kNative]?.resume();
+}
+
+function responseOnClose(this: HandshakeResponse): void {
+  if (!this.readableEnded) this[kRequest]!.destroy();
+}
+
+function makeHandshakeResponse(statusCode: number, statusMessage: string, rawHeaders: string[]): HandshakeResponse {
   const res = new (lazyHttp().IncomingMessage)(null);
   res._addHeaderLines(rawHeaders, rawHeaders.length);
   res.statusCode = statusCode;
@@ -2122,7 +2156,7 @@ class ClientRequest extends EventEmitter {
   declare method: string;
   declare path: string | undefined;
   declare protocol: string;
-  declare res: IncomingMessage | null;
+  declare res: HandshakeResponse | null;
   declare reusedSocket: boolean;
   declare socket: null;
   declare [kAborted]: boolean;
@@ -2263,10 +2297,7 @@ class ClientRequest extends EventEmitter {
     // response has nothing to report but `err`.
     if (!err && this.res === null) err = connResetException();
 
-    if (err && !this[kAborted] && websocket._req === this && websocket.readyState === CONNECTING) {
-      websocket._req = null;
-      process.nextTick(emitErrorAndClose, websocket, err);
-    }
+    if (err) process.nextTick(requestOnDestroyed, this, err);
 
     process.nextTick(emitRequestClose, this);
     return this;
@@ -2277,6 +2308,15 @@ function connResetException(): ConnectError {
   const err: ConnectError = new Error("socket hang up");
   err.code = "ECONNRESET";
   return err;
+}
+
+function requestOnDestroyed(req: ClientRequest, err: Error): void {
+  const websocket = req[kWebSocket];
+
+  if (websocket._req !== req || req[kAborted]) return;
+
+  websocket._req = null;
+  emitErrorAndClose(websocket, err);
 }
 
 function emitSocket(req: ClientRequest, native: NativeClient): void {
@@ -2559,6 +2599,7 @@ function initAsClient(
     !proxy &&
     (opts.createConnection ||
       opts.lookup ||
+      protocolVersion !== 13 ||
       opts.family ||
       opts.localAddress ||
       opts.localPort ||

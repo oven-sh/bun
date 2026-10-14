@@ -219,11 +219,13 @@ test("basic + websocket + upgrade + all handlers", {
 });
 
 test("websocket without handlers", {
+  port: 0,
   fetch: () => new Response("Regular HTTP response"),
   websocket: {},
 });
 
 test("websocket with only options", {
+  port: 0,
   fetch: () => new Response("Regular HTTP response"),
   websocket: {
     idleTimeout: 0,

@@ -14,6 +14,8 @@ import {
   openClient,
   type RawSocket,
   response101,
+  runScript,
+  scriptTimeout,
   show,
   showError,
   watch,
@@ -34,7 +36,7 @@ const requestLines = (conn: RawSocket) =>
 const accepted = (headers: string[]) => (conn: RawSocket) => response101(conn, headers);
 const changed = (replace: Record<string, string | null>) => (conn: RawSocket) => response101(conn, [], replace);
 
-describe.each(implementations)("ws client, opening ($name)", ({ ws: implementation, builtin }) => {
+describe.each(implementations)("ws client, opening ($name)", ({ ws: implementation, builtin, specifier }) => {
   const { WebSocket } = implementation;
 
   // A socket made by hand, terminated at the end of the block.
@@ -240,6 +242,24 @@ describe.each(implementations)("ws client, opening ($name)", ({ ws: implementati
       await using client = await openClient(implementation, { protocols }, { headers: ["Sec-WebSocket-Protocol: b"] });
       expect(client.conn.header("sec-websocket-protocol")).toBe(offer);
       expect(client.ws.protocol).toBe("b");
+      expect(client.events).toEqual(opening);
+    });
+
+    test("protocols that differ only in case are two protocols", async () => {
+      const headers = ["Sec-WebSocket-Protocol: foo"];
+      await using client = await openClient(implementation, { protocols: ["Foo", "foo"] }, { headers });
+      expect(client.conn.header("sec-websocket-protocol")).toBe("Foo,foo");
+      expect(client.ws.protocol).toBe("foo");
+    });
+
+    test("protocolVersion: 8 is sent, and `origin` goes into Sec-WebSocket-Origin", async () => {
+      await using client = await openClient(implementation, { protocolVersion: 8, origin: "https://example.com:8000" });
+      const { conn } = client;
+      expect(["sec-websocket-version", "sec-websocket-origin", "origin"].map(name => conn.header(name))).toEqual([
+        "8",
+        "https://example.com:8000",
+        undefined,
+      ]);
       expect(client.events).toEqual(opening);
     });
 
@@ -461,6 +481,33 @@ describe.each(implementations)("ws client, opening ($name)", ({ ws: implementati
       await client.closed;
       expect(client.events).toEqual(['error Error "Opening handshake has timed out" rs=2', lost]);
     });
+
+    // The global WebSocket gives up on a handshake by itself. It is the clock here: made after the `ws` socket, so
+    // its time is up later.
+    test.concurrent(
+      "without handshakeTimeout the client waits, longer than the global WebSocket does",
+      async () => {
+        await using peer = await createPeer({ respond: () => null });
+        const script = `
+          const ws = new WebSocket(process.env.PEER_URL + "/ws");
+          ws.on("error", error => console.log("error", showError(error)));
+          ws.on("open", () => {
+            console.log("open");
+            ws.terminate();
+          });
+          const clock = new globalThis.WebSocket(process.env.PEER_URL + "/clock");
+          clock.onclose = () => console.log("the global WebSocket gave up, readyState", ws.readyState);
+        `;
+        const child = runScript({ specifier }, script, { PEER_URL: peer.url, BUN_CONFIG_WS_HANDSHAKE_TIMEOUT: "1" });
+        const connections = [await peer.connection(), await peer.connection()];
+        const conn = connections.find(connection => connection.headLines[0].startsWith("GET /ws "))!;
+        const clock = connections.find(connection => connection !== conn)!;
+        await clock.ended;
+        conn.write(response101(conn));
+        expect((await child).lines).toEqual(["the global WebSocket gave up, readyState 0", "open"]);
+      },
+      scriptTimeout,
+    );
 
     describe("every kind of listener gets the same error, then 'close' 1006", () => {
       // No Content-Length: the body ends with the connection.

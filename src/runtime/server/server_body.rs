@@ -1883,8 +1883,7 @@ where
     /// re-registers routes on the uws app(s). Ownership of moved-in fields
     /// transfers to `self.config`; the caller's `new_config` is left in a
     /// valid-but-emptied state and its `Drop` frees whatever was *not* taken.
-    /// Any `Some(ws)` is adopted unconditionally — `Handler::from_js` already
-    /// rejected configs with no non-error callback.
+    /// Any `Some(ws)` is adopted unconditionally, as on the initial serve.
     pub(crate) fn on_reload_from_zig(
         &mut self,
         new_config: &mut ServerConfig,
@@ -1950,9 +1949,6 @@ where
         }
 
         if let Some(mut ws) = new_config.websocket.take() {
-            // `Handler::from_js` already rejected configs with no non-error
-            // callback, so any `Some(ws)` is adoptable — match initial-serve
-            // and adopt unconditionally.
             ws.handler
                 .flags
                 .set(super::web_socket_server_context::HandlerFlags::SSL, SSL);

@@ -558,6 +558,7 @@ ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
     const BunString* extensions,
     BunString* connectErrorCode);
 ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
+ZIG_DECL void Bun__WebSocketHTTPClient__setPaused(WebSocketHTTPClient* arg0, bool paused);
 #endif
 
 #ifdef __cplusplus
@@ -576,6 +577,7 @@ ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(
     const BunString* extensions,
     BunString* connectErrorCode);
 ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0);
+ZIG_DECL void Bun__WebSocketHTTPSClient__setPaused(WebSocketHTTPSClient* arg0, bool paused);
 
 // Parse TLS options from JavaScript object using SSLConfig.fromJS
 ZIG_DECL void* Bun__WebSocket__parseSSLConfig(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue tlsValue);

@@ -57,7 +57,11 @@ namespace uWS {
         DEDICATED_COMPRESSOR_128KB = 14 << 4 | 7,
         DEDICATED_COMPRESSOR_256KB = 15 << 4 | 8,
         /* Same as 256kb */
-        DEDICATED_COMPRESSOR = 15 << 4 | 8
+        DEDICATED_COMPRESSOR = 15 << 4 | 8,
+
+        /* With a dedicated compressor: it is reset after every message (server_no_context_takeover with
+         * a window that the shared compressor, which always uses 32kb, does not have) */
+        COMPRESSOR_NO_CONTEXT_TAKEOVER = 1 << 12
     };
 }
 
@@ -95,8 +99,9 @@ struct ZlibContext {
 
 struct DeflationStream {
     z_stream deflationStream = {};
+    const bool noContextTakeover;
 
-    DeflationStream(CompressOptions compressOptions) {
+    DeflationStream(CompressOptions compressOptions) : noContextTakeover(compressOptions & COMPRESSOR_NO_CONTEXT_TAKEOVER) {
 
         /* Sliding inflator should be about 44kb by default, less than compressor */
 
@@ -108,8 +113,8 @@ struct DeflationStream {
         deflateInit2(&deflationStream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, windowBits, memLevel, Z_DEFAULT_STRATEGY);
     }
 
-    /* Deflate and optionally reset. You must not deflate an empty string. */
-    std::string_view deflate(ZlibContext *zlibContext, std::string_view raw, bool reset) {
+    /* You must not deflate an empty string. */
+    std::string_view deflate(ZlibContext *zlibContext, std::string_view raw) {
         /* Odd place to clear this one, fix */
         zlibContext->dynamicDeflationBuffer.clear();
 
@@ -134,7 +139,7 @@ struct DeflationStream {
         } while (true);
 
         /* This must not change avail_out */
-        if (reset) {
+        if (noContextTakeover) {
             deflateReset(&deflationStream);
         }
 
@@ -167,8 +172,7 @@ struct InflationStream {
     z_stream inflationStream = {};
 
     InflationStream(CompressOptions compressOptions) {
-        /* Inflation windowBits are the top 8 bits of the 16 bit compressOptions */
-        inflateInit2(&inflationStream, -(compressOptions >> 8));
+        inflateInit2(&inflationStream, -((compressOptions & _DECOMPRESSOR_MASK) >> 8));
     }
 
     ~InflationStream() {

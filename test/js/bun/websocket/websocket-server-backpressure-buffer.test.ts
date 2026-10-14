@@ -451,17 +451,15 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
 
     it("ws.close() inside drain() once the buffer is empty", async () => {
       const opened = Promise.withResolvers<ServerWebSocket>();
-      // Over TLS drain() also runs once right after the upgrade.
-      let accepted = 0;
       const { server, closed } = serve({
         open: opened.resolve,
         drain(ws) {
-          if (accepted > 0 && ws.getBufferedAmount() === 0) ws.close(1000, "bye");
+          if (ws.getBufferedAmount() === 0) ws.close(1000, "bye");
         },
       });
       await using _server = server;
       const { sock, initial } = await pausedClient(server.port!, secure);
-      accepted = fillPastLimit(await opened.promise);
+      const accepted = fillPastLimit(await opened.promise);
 
       expect({ ...(await readToEnd(sock, initial)), closeEvent: await closed }).toEqual(
         delivered(accepted, 1000, "bye"),
@@ -480,5 +478,59 @@ describe.concurrent.each(["ws", "wss"] as const)("%s: close()", scheme => {
 
       expect({ ...(await readToEnd(sock, initial)), closeEvent: await closed }).toEqual(delivered(0, 4001, "peer"));
     });
+  });
+});
+
+// The socket polls for writable after the upgrade (TLS), after pause() and after resume().
+describe.concurrent.each(["ws", "wss"] as const)("%s: drain()", scheme => {
+  it("only follows backpressure", async () => {
+    let drains = 0;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      ...(scheme === "wss" ? { tls: cert } : {}),
+      fetch(req, s) {
+        if (s.upgrade(req)) return;
+        return new Response("no", { status: 500 });
+      },
+      websocket: {
+        message(ws, message) {
+          if (message === "pause") {
+            ws.pause();
+            setImmediate(() => ws.resume());
+          }
+          ws.send(message);
+        },
+        drain() {
+          drains++;
+        },
+      },
+    });
+
+    const client = new WebSocket(`${scheme}://127.0.0.1:${server.port}`, { tls: { rejectUnauthorized: false } });
+    const echo = (message: string) => {
+      const { promise, resolve, reject } = Promise.withResolvers<string>();
+      client.onmessage = event => resolve(event.data);
+      client.onclose = event => reject(new Error(`closed: ${event.code}`));
+      client.send(message);
+      return promise;
+    };
+    try {
+      await new Promise((resolve, reject) => {
+        client.onopen = resolve;
+        client.onerror = reject;
+      });
+      // Each answer takes the server through its event loop at least once more.
+      expect([await echo("first"), await echo("pause"), await echo("resumed"), await echo("last")]).toEqual([
+        "first",
+        "pause",
+        "resumed",
+        "last",
+      ]);
+      expect(drains).toBe(0);
+    } finally {
+      client.onclose = null;
+      client.terminate();
+    }
   });
 });

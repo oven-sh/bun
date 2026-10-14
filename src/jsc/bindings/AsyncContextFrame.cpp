@@ -68,24 +68,28 @@ JSValue AsyncContextFrame::withGraphContextIfNeeded(JSGlobalObject* globalObject
     return AsyncContextFrame::create(JSC::getVM(globalObject), zigGlobalObject->AsyncContextFrameStructure(), callback, graphFrame);
 }
 
+static void makeCurrent(JSGlobalObject* globalObject, JSValue asyncContext)
+{
+    globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, asyncContext);
+    // A ModuleGraphContextScope inside this one notes what it goes back to. So must this one, or that stays noted.
+    if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
+        Bun::noteEnteredFromEventLoop(zigGlobalObject, asyncContext);
+}
+
 AsyncContextScope::AsyncContextScope(JSGlobalObject* globalObject, JSValue snapshot)
-    : m_vm(globalObject->vm())
 {
     if (!snapshot || snapshot.isUndefinedOrNull())
         return;
-    auto* asyncContextData = globalObject->m_asyncContextData.get();
-    JSValue current = asyncContextData->getInternalField(0);
-    m_asyncContextData = asyncContextData;
-    m_previous = current;
-    if (snapshot == current)
-        return;
-    asyncContextData->putInternalField(m_vm, 0, snapshot);
+    m_globalObject = globalObject;
+    m_previous = globalObject->m_asyncContextData.get()->getInternalField(0);
+    if (snapshot != m_previous)
+        makeCurrent(globalObject, snapshot);
 }
 
 AsyncContextScope::~AsyncContextScope()
 {
-    if (m_asyncContextData)
-        m_asyncContextData->putInternalField(m_vm, 0, m_previous);
+    if (m_globalObject)
+        makeCurrent(m_globalObject, m_previous);
 }
 
 template<typename Visitor>

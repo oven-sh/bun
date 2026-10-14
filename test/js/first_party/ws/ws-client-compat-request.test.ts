@@ -497,6 +497,23 @@ describe.each(implementations)("ws client, the handshake request ($name)", ({ ws
         expect(client.events).toEqual(events);
       },
     );
+
+    test.each([
+      { call: "terminate()", act: ws => ws.terminate() },
+      { call: "close()", act: ws => ws.close() },
+    ] as { call: string; act(ws: InstanceType<typeof WebSocket>): void }[])(
+      "ws._req.destroy(), then $call at once: the error is the one of $call",
+      async ({ act }) => {
+        await using client = await dial(implementation, {}, { respond: () => null });
+        const { ws } = client;
+        await client.peer.connection();
+        (ws as any)._req.destroy();
+        expect(attempt(() => act(ws))).toBe("undefined");
+        expect(ws.readyState).toBe(WebSocket.CLOSING);
+        await client.closed;
+        expect(client.events).toEqual(closedBeforeOpen);
+      },
+    );
   });
 
   describe("the request of 'unexpected-response'", () => {

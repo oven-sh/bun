@@ -427,6 +427,10 @@ describe("Sec-WebSocket-Extensions in the 101", () => {
     "permessage-deflate; client_max_window_bits=1_0",
     "permessage-deflate; client_max_window_bits=+9",
     "permessage-deflate; client_max_window_bits=9a",
+    // The characters after "9" in ASCII.
+    "permessage-deflate; server_max_window_bits=:",
+    "permessage-deflate; server_max_window_bits==",
+    "permessage-deflate; client_max_window_bits=?",
     "permessage-deflate; client_no_context_takeover=1",
     "permessage-deflate; server_no_context_takeover; server_no_context_takeover",
     "permessage-deflate; client_max_window_bits=10; client_max_window_bits=10",

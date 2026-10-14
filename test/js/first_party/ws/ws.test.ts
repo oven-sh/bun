@@ -1457,10 +1457,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       wss.close();
     });
 
-    // https://github.com/oven-sh/bun/issues/43149: a handleUpgrade() in a later
-    // task hands the connection to the native WebSocket without the bytes that
-    // node:http received before it (head, or data of the socket).
-    it.todo("are delivered when handleUpgrade() runs in a later task", async () => {
+    it("are delivered when handleUpgrade() runs in a later task", async () => {
       const wss = new WebSocketServer({ noServer: true });
       const messages = messagesOf(wss);
 
@@ -1471,7 +1468,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       expect(await sendLater(upgrade, messages)).toEqual(["early", "later"]);
     });
 
-    it.todo("are delivered when verifyClient answers in a later task", async () => {
+    it("are delivered when verifyClient answers in a later task", async () => {
       const server = createServer();
       const wss = new WebSocketServer({
         server,
@@ -1485,7 +1482,7 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
       wss.close();
     });
 
-    it.todo("are delivered when they arrive in a read of their own before handleUpgrade()", async () => {
+    it("are delivered when they arrive in a read of their own before handleUpgrade()", async () => {
       const wss = new WebSocketServer({ noServer: true });
       const messages = messagesOf(wss);
 

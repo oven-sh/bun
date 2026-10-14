@@ -602,4 +602,15 @@ describe.each(implementations)("ws server, closing ($name)", ({ ws: implementati
     server.ws.close(1000, Buffer.from([0xff]));
     expect(await server.client.next()).toBe("close 1000 0xff");
   });
+
+  // Each of the 100 bytes becomes U+FFFD, which is three.
+  test.skipIf(!builtin)("a reason that is too long once it is UTF-8 throws, and the socket stays open", async () => {
+    await using server = await openServer(implementation);
+    const { ws, client } = server;
+    expect(attempt(() => ws.close(1000, Buffer.alloc(100, 0xff)))).toBe(reasonTooLong);
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    expect(await client.roundTrip()).toEqual([]);
+    ws.close(1000, "bye");
+    expect(await client.next()).toBe('close 1000 "bye"');
+  });
 });

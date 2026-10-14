@@ -490,14 +490,18 @@ __attribute__((minsize)) ExceptionOr<void> WebSocket::connect(const String& url,
     //
     // Here, we throw SyntaxError if the given protocols do not meet the latter criteria. This behavior does not
     // comply with WebSocket API specification, but it seems to be the only reasonable way to handle this conflict.
-    for (auto& protocol : protocols) {
-        if (!isValidProtocolString(protocol))
-            return Exception { SyntaxError, makeString("Wrong protocol for WebSocket '"_s, encodeProtocolString(protocol), "'"_s) };
-    }
-    HashSet<String, ASCIICaseInsensitiveHash> visited;
-    for (auto& protocol : protocols) {
-        if (!visited.add(protocol).isNewEntry)
-            return Exception { SyntaxError, makeString("WebSocket protocols contain duplicates: '"_s, encodeProtocolString(protocol), "'"_s) };
+    //
+    // The `ws` module has applied npm ws's rules by now: the same tokens, duplicates compared with regard to case.
+    if (!isWsMode()) {
+        for (auto& protocol : protocols) {
+            if (!isValidProtocolString(protocol))
+                return Exception { SyntaxError, makeString("Wrong protocol for WebSocket '"_s, encodeProtocolString(protocol), "'"_s) };
+        }
+        HashSet<String, ASCIICaseInsensitiveHash> visited;
+        for (auto& protocol : protocols) {
+            if (!visited.add(protocol).isNewEntry)
+                return Exception { SyntaxError, makeString("WebSocket protocols contain duplicates: '"_s, encodeProtocolString(protocol), "'"_s) };
+        }
     }
 
     String protocolString;
@@ -840,6 +844,12 @@ bool WebSocket::applyPauseToConnectedClient()
             ? Bun__WebSocketClientTLS__pause(m_connectedWebSocket.clientSSL)
             : Bun__WebSocketClientTLS__resume(m_connectedWebSocket.clientSSL);
     case ConnectedWebSocketKind::None:
+        if (m_upgradeClient) {
+            if (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS)
+                Bun__WebSocketHTTPSClient__setPaused(m_upgradeClient, m_paused);
+            else
+                Bun__WebSocketHTTPClient__setPaused(m_upgradeClient, m_paused);
+        }
         return m_state == CONNECTING;
     }
     return false;
@@ -1509,9 +1519,9 @@ extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSo
     webSocket->didReceiveHandshakeResponse(statusCode, statusMessage.span(), std::span(headers.ptr, headers.len), body.span());
 }
 
-extern "C" bool WebSocket__readsResponseBody(WebCore::WebSocket* webSocket)
+extern "C" bool WebSocket__isWsMode(WebCore::WebSocket* webSocket)
 {
-    return webSocket->readsResponseBody();
+    return webSocket->isWsMode();
 }
 
 extern "C" void WebSocket__didReceiveResponseBody(WebCore::WebSocket* webSocket, WebCore::WebSocket::FfiSlice chunk, bool ended)

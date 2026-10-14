@@ -1528,7 +1528,7 @@ impl WsPackageSocket {
     }
 
     /// `code`: the peer's (1005 for an empty Close frame), 1006 when the connection ended without one,
-    /// or a negated `uWS::WebSocketFailure` with its detail in `message`.
+    /// or a negated `uWS::WebSocketFailureKind` with its detail in `message`.
     fn on_close(&self, code: i32, message: &[u8]) -> JsResult<()> {
         let socket = &self.0;
         let handler = socket.handler();

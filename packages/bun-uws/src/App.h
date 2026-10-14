@@ -537,7 +537,7 @@ private:
             if (!loopData->zlibContext) {
                 loopData->zlibContext = new ZlibContext;
                 loopData->inflationStream = new InflationStream(CompressOptions::DEDICATED_DECOMPRESSOR);
-                loopData->deflationStream = new DeflationStream(CompressOptions::DEDICATED_COMPRESSOR);
+                loopData->deflationStream = new DeflationStream(CompressOptions(CompressOptions::DEDICATED_COMPRESSOR | CompressOptions::COMPRESSOR_NO_CONTEXT_TAKEOVER));
             }
         }
 
@@ -570,7 +570,7 @@ public:
             }
         }
 
-        /* Node has none of these, and ws.js has its own close timer */
+        /* Node has none of these, and ws.ts has its own close timer */
         behavior.wsPackage = true;
         behavior.idleTimeout = 0;
         behavior.sendPingsAutomatically = false;

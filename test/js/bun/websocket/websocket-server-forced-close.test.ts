@@ -330,6 +330,8 @@ describe.concurrent.each([
         proc.stderr.text(),
         proc.exited,
       ]);
+      // A build that tears the VM down at exit (ASAN, to find leaks) also stops the server, which says goodbye.
+      if (frames.at(-1) === 'CLOSE 1001 "Server closed"') frames.pop();
       expect({ results, frames, stderr }).toEqual({
         results: "[4,4,4,4]",
         frames: ["sent", "bye0", "bye1", "bye2"],
@@ -340,6 +342,60 @@ describe.concurrent.each([
       client.socket.destroy();
     }
   });
+});
+
+// uws batches the 101 in a 128 KB buffer. Headers that fill it make server.upgrade() write in the middle of the
+// 101, and over TLS a write that the kernel rejects ends the socket: it cannot become a WebSocket any more.
+// The sizes go over the edge of the buffer in steps smaller than what uws itself adds to the 101.
+test.concurrent("a client that resets a TLS connection while server.upgrade() writes a long 101", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const tls = require("node:tls");
+
+        let client;
+        let last = 10700;
+        const results = new Set();
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          tls: { cert: process.env.TLS_CERT, key: process.env.TLS_KEY },
+          fetch(req, server) {
+            client.resetAndDestroy();
+            const headers = {};
+            for (let i = 0; i < 8; i++) headers["x-long-" + i] = Buffer.alloc(15000, "a").toString();
+            headers["x-long-8"] = Buffer.alloc(last, "a").toString();
+            results.add(server.upgrade(req, { headers }));
+          },
+          websocket: { message() {} },
+        });
+
+        function next() {
+          if ((last += 50) > 11000) {
+            console.log(JSON.stringify([...results].sort()));
+            return server.stop(true);
+          }
+          client = tls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false });
+          client.on("error", () => {});
+          client.on("close", next);
+          client.write(
+            "GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n" +
+              "Sec-WebSocket-Version: 13\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n\\r\\n",
+          );
+        }
+        next();
+      `,
+    ],
+    env: { ...bunEnv, TLS_CERT: tls.cert, TLS_KEY: tls.key },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // true while the whole 101 fits the buffer, false once a write came before the socket was adopted.
+  expect({ stdout, stderr }).toEqual({ stdout: "[false,true]\n", stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
 // uws runs timeouts on a 4 second tick. With idleTimeout: 8 (the smallest) it pings after one idle

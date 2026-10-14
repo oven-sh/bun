@@ -1,6 +1,8 @@
 // send(), ping() and pong() of a `ws` server socket, against a raw TCP client. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
+import { randomBytes } from "node:crypto";
+import { constants, inflateRawSync } from "node:zlib";
 import type { WebSocket as Socket } from "ws";
 import {
   attempt,
@@ -414,6 +416,48 @@ describe.each(implementations)("ws server, sending ($name)", ({ ws: implementati
       expect(ran.lines).toEqual([`last ${notOpen("3 (CLOSED)")}`]);
       expect(ws.bufferedAmount).toBe(1);
     });
+  });
+
+  // The second half of the message repeats the first, 3000 bytes back. A compressor with a larger window than it
+  // promised refers to that, and an inflater of the promised size fails with "invalid distance too far back".
+  describe("permessage-deflate: a peer can inflate with the window the 101 promised", () => {
+    test.each([
+      { serverNoContextTakeover: true, serverMaxWindowBits: 10 },
+      { serverNoContextTakeover: true, serverMaxWindowBits: 9 },
+      { serverNoContextTakeover: true, serverMaxWindowBits: 15 },
+      { serverNoContextTakeover: false, serverMaxWindowBits: 10 },
+    ])(
+      "serverNoContextTakeover: $serverNoContextTakeover, serverMaxWindowBits: $serverMaxWindowBits",
+      async perMessageDeflate => {
+        const { serverNoContextTakeover, serverMaxWindowBits: windowBits } = perMessageDeflate;
+        await using server = await openServer(
+          implementation,
+          { perMessageDeflate },
+          { headers: { "Sec-WebSocket-Extensions": "permessage-deflate" } },
+        );
+        const { ws, client } = server;
+        expect(client.header("sec-websocket-extensions")).toBe(
+          `permessage-deflate${serverNoContextTakeover ? "; server_no_context_takeover" : ""}; server_max_window_bits=${windowBits}`,
+        );
+
+        const noise = randomBytes(3000);
+        const message = Buffer.concat([noise, noise]);
+        let stream = Buffer.alloc(0);
+        let inflated = 0;
+        for (let i = 0; i < 3; i++) {
+          ws.send(message);
+          const frame = (await client.nextFrame())!;
+          expect(showFrame(frame)).toBe(`binary ${frame.length} bytes rsv1`);
+          // Without context takeover each message stands alone, else it continues the stream of those before it.
+          if (serverNoContextTakeover) [stream, inflated] = [Buffer.alloc(0), 0];
+          stream = Buffer.concat([stream, frame.payload, Buffer.from([0x00, 0x00, 0xff, 0xff])]);
+          // Small chunks of output, so that zlib has to look back through its window.
+          const all = inflateRawSync(stream, { windowBits, chunkSize: 64, finishFlush: constants.Z_SYNC_FLUSH });
+          expect(all.subarray(inflated).equals(message)).toBe(true);
+          inflated = all.length;
+        }
+      },
+    );
   });
 
   test("after terminate() the callbacks get their errors in the order of the calls", async () => {

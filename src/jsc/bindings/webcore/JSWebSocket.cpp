@@ -71,6 +71,7 @@
 #include "ObjectBindings.h"
 #include "ErrorCode.h"
 #include "blob.h"
+#include "ModuleGraph.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 
 namespace WebCore {
@@ -277,12 +278,11 @@ static JSC::EncodedJSValue wrapNewWebSocket(JSGlobalObject* lexicalGlobalObject,
     auto* wrapper = uncheckedDowncast<JSWebSocket>(asObject(jsValue));
     if (checkServerIdentity)
         wrapper->wrapped().setCheckServerIdentity(vm, wrapper, checkServerIdentity);
-    // Not inside a Bun.ModuleGraph: its frame would keep alive the graph whose collection closes this socket.
-    if (!context.isForModuleGraph()) {
-        JSValue asyncContext = context.jsGlobalObject()->m_asyncContextData.get()->getInternalField(0);
-        if (!asyncContext.isUndefined())
-            wrapper->wrapped().setAsyncContext(vm, wrapper, asyncContext);
-    }
+    // The frame of a Bun.ModuleGraph would keep alive the graph whose collection closes this socket.
+    auto* contextGlobalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
+    JSValue asyncContext = Bun::asyncContextWithoutModuleGraphs(contextGlobalObject, contextGlobalObject->m_asyncContextData.get()->getInternalField(0));
+    if (!asyncContext.isUndefined())
+        wrapper->wrapped().setAsyncContext(vm, wrapper, asyncContext);
     if (owner) {
         wrapper->m_owner.set(vm, wrapper, owner);
         wrapper->m_handlers.set(vm, wrapper, handlers);
@@ -944,8 +944,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCreateWebSocketForWs, (JSGlobalObject * lexicalGlobal
     RETURN_IF_EXCEPTION(throwScope, {});
 
     WebSocketOptions options;
-    options.connected.text_as_bytes = true;
-    options.connected.notify_drain = true;
+    options.connected.ws_mode = true;
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     if (auto* object = argument1.value().getObject()) {
         convertOptions(lexicalGlobalObject, object, options);

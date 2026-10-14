@@ -39,6 +39,8 @@ private:
     /* Ahead of isShuttingDown only in a wsPackage context, which waits for the peer's close frame */
     bool closeFrameSent = false;
     bool hasTimedOut = false;
+    /* send() returned BACKPRESSURE, and the drain handler has not run with nothing buffered since */
+    bool drainOwed = false;
     
     enum CompressionStatus : char {
         DISABLED,

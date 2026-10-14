@@ -363,9 +363,53 @@ static JSObject* createModuleGraphFrame(Zig::GlobalObject* globalObject, JSModul
     return frame;
 }
 
+JSValue asyncContextWithoutModuleGraphs(Zig::GlobalObject* globalObject, JSValue asyncContext)
+{
+    if (!globalObject->hasModuleGraphs())
+        return asyncContext;
+
+    VM& vm = globalObject->vm();
+    auto& names = WebCore::builtinNames(vm);
+    auto entersOrLeavesGraph = [&](JSObject* frame) {
+        JSValue storage = frame->getDirect(vm, names.storagePublicName());
+        return storage && (storage == globalObject || dynamicDowncast<JSModuleGraph>(storage));
+    };
+
+    // Alive through `asyncContext`. The frames below the deepest one that is dropped are shared, those above are copied.
+    Vector<JSObject*, 16> frames;
+    size_t dropped = 0;
+    for (JSObject* frame = asyncContext.getObject(); frame;) {
+        frames.append(frame);
+        if (entersOrLeavesGraph(frame))
+            dropped = frames.size();
+        JSValue previous = frame->getDirect(vm, names.prevPublicName());
+        frame = previous ? previous.getObject() : nullptr;
+    }
+    if (!dropped)
+        return asyncContext;
+
+    auto field = [&](JSObject* frame, const Identifier& name) {
+        JSValue value = frame->getDirect(vm, name);
+        return value ? value : jsUndefined();
+    };
+    JSValue result = field(frames[dropped - 1], names.prevPublicName());
+    for (size_t i = dropped - 1; i--;) {
+        JSObject* frame = frames[i];
+        if (entersOrLeavesGraph(frame))
+            continue;
+        JSObject* copy = constructEmptyObject(vm, globalObject->moduleGraphFrameStructure());
+        copy->putDirectOffset(vm, FrameStorage, field(frame, names.storagePublicName()));
+        copy->putDirectOffset(vm, FrameValue, field(frame, vm.propertyNames->value));
+        copy->putDirectOffset(vm, FramePrev, result);
+        copy->putDirectOffset(vm, FrameMasked, field(frame, names.maskedPublicName()));
+        result = copy;
+    }
+    return result;
+}
+
 // With no script on the stack, a microtask checkpoint resets the async context
 // (GlobalObject::drainMicrotasks): inside a scope native code entered, to what it entered.
-static void noteEnteredFromEventLoop(Zig::GlobalObject* globalObject, JSValue asyncContext)
+void noteEnteredFromEventLoop(Zig::GlobalObject* globalObject, JSValue asyncContext)
 {
     VM& vm = globalObject->vm();
     if (vm.entryScope || !globalObject->m_moduleGraphs)

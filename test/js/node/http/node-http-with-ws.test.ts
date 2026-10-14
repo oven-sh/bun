@@ -1132,3 +1132,60 @@ describe.concurrent("the request stream when ws upgrades before the declared bod
     });
   });
 });
+
+// A handshake over 16 KB is written at once instead of being batched with the first frames. Over TLS a write
+// that the kernel rejects ends the socket, which then cannot become a WebSocket any more.
+test.concurrent("a client that resets a TLS connection while a long handshake is written", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const https = require("node:https");
+        const net = require("node:net");
+        const tls = require("node:tls");
+        const { WebSocket, WebSocketServer } = require("ws");
+
+        let resetting;
+        const server = https.createServer({ cert: process.env.TLS_CERT, key: process.env.TLS_KEY });
+        const wss = new WebSocketServer({ server });
+        wss.on("headers", headers => {
+          if (!resetting) return;
+          resetting.resetAndDestroy();
+          resetting = undefined;
+          headers.push("X-Long: " + Buffer.alloc(20000, "a"));
+        });
+        wss.on("connection", ws => {
+          ws.on("error", () => {});
+          ws.on("message", message => ws.send("echo:" + message));
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const { port } = server.address();
+          resetting = net.connect({ port, host: "127.0.0.1" });
+          const client = tls.connect({ socket: resetting, rejectUnauthorized: false });
+          client.on("error", () => {});
+          resetting.on("error", () => {});
+          resetting.on("close", () => {
+            const ws = new WebSocket("wss://127.0.0.1:" + port, { rejectUnauthorized: false });
+            ws.on("open", () => ws.send("still serving"));
+            ws.on("message", message => {
+              console.log(String(message));
+              ws.terminate();
+              server.close();
+            });
+          });
+          client.write(
+            "GET / HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\n" +
+              "Sec-WebSocket-Version: 13\\r\\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n\\r\\n",
+          );
+        });
+      `,
+    ],
+    env: { ...bunEnv, TLS_CERT: options.cert, TLS_KEY: options.key },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "echo:still serving\n", stderr: "" });
+  expect(exitCode).toBe(0);
+});

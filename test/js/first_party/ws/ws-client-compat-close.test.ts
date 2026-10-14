@@ -4,11 +4,14 @@ import {
   attempt,
   closedPort,
   closePayload,
+  createPeer,
   dial,
   event,
   implementations,
   OP,
   openClient,
+  runScript,
+  scriptTimeout,
   show,
   showFrame,
   watch,
@@ -27,7 +30,7 @@ const a = (count: number) => Buffer.alloc(count, "a").toString();
 const calls = <Row extends { args: unknown[] }>(rows: Row[]) =>
   rows.map(row => ({ call: `close(${row.args.map(show).join(", ")})`, ...row }));
 
-describe.each(implementations)("ws client, closing ($name)", ({ ws: implementation, builtin }) => {
+describe.each(implementations)("ws client, closing ($name)", ({ ws: implementation, builtin, specifier }) => {
   const { WebSocket } = implementation;
 
   describe("close(code, reason) on an open socket", () => {
@@ -453,4 +456,45 @@ describe.each(implementations)("ws client, closing ($name)", ({ ws: implementati
     client.ws.close(1000, Buffer.from([0xff]));
     expect(await client.conn.next()).toBe("close 1000 0xff");
   });
+
+  // Each of the 100 bytes becomes U+FFFD, which is three.
+  test.skipIf(!builtin)("a reason that is too long once it is UTF-8 throws, and the socket stays open", async () => {
+    await using client = await openClient(implementation);
+    const { ws, conn } = client;
+    expect(attempt(() => ws.close(1000, Buffer.alloc(100, 0xff)))).toBe(reasonTooLong);
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    expect(await conn.roundTrip()).toEqual([]);
+    ws.close(1000, "bye");
+    expect(await conn.next()).toBe('close 1000 "bye"');
+  });
+
+  // The global WebSocket gives up on a closing handshake by itself. It is the clock here: it closes after the `ws`
+  // socket, so its time is up later.
+  test.concurrent(
+    "'close' waits for the peer as long as `closeTimeout` says, longer than the global WebSocket does",
+    async () => {
+      await using peer = await createPeer();
+      const script = `
+        const ws = new WebSocket(process.env.PEER_URL + "/ws");
+        ws.on("close", (code, reason) => console.log("close", code, show(reason)));
+        ws.on("open", () => {
+          ws.close(1000);
+          const clock = new globalThis.WebSocket(process.env.PEER_URL + "/clock");
+          clock.onopen = () => clock.close(1000);
+          clock.onclose = event => console.log("the global WebSocket gave up", event.code, "readyState", ws.readyState);
+        });
+      `;
+      const child = runScript({ specifier }, script, { PEER_URL: peer.url, BUN_CONFIG_WS_CLOSE_TIMEOUT: "1" });
+      const conn = await peer.connection();
+      const clock = await peer.connection();
+      await clock.ended;
+      conn.close(1000, "late");
+      conn.end();
+      expect((await child).lines).toEqual([
+        "the global WebSocket gave up 1006 readyState 2",
+        'close 1000 Buffer("late")',
+      ]);
+    },
+    scriptTimeout,
+  );
 });

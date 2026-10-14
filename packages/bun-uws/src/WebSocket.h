@@ -208,6 +208,7 @@ private:
                  * We also cannot uncork normally since it will re-write the already buffered
                  * up backpressure again. */
                 Super::uncorkWithoutSending();
+                webSocketData->drainOwed = true;
                 return BACKPRESSURE;
             }
         } else {
@@ -226,11 +227,8 @@ private:
                     && (webSocketContextData->compression & CompressOptions::_COMPRESSOR_MASK) != 0) {
                     LoopData *loopData = Super::getLoopData();
                     /* Compress using either shared or dedicated deflationStream */
-                    if (webSocketData->deflationStream) {
-                        message = webSocketData->deflationStream->deflate(loopData->zlibContext, message, false);
-                    } else {
-                        message = loopData->deflationStream->deflate(loopData->zlibContext, message, true);
-                    }
+                    DeflationStream *deflationStream = webSocketData->deflationStream ? webSocketData->deflationStream : loopData->deflationStream;
+                    message = deflationStream->deflate(loopData->zlibContext, message);
                 } else {
                     compress = false;
                 }
@@ -247,12 +245,14 @@ private:
                 auto[written, failed] = Super::write(nullptr, 0);
                 if (failed) {
                     /* Return false for failure, skipping to reset the timeout below */
+                    webSocketData->drainOwed = true;
                     return BACKPRESSURE;
                 }
             } else if (sendBufferAttribute == SendBufferAttribute::NEEDS_UNCORK) {
                 /* Uncork if we came here uncorked */
                 auto [written, failed] = Super::uncork();
                 if (failed) {
+                    webSocketData->drainOwed = true;
                     return BACKPRESSURE;
                 }
             }

@@ -5,10 +5,6 @@
 #include <JavaScriptCore/CallData.h>
 #include <wtf/Noncopyable.h>
 
-namespace JSC {
-class InternalFieldTuple;
-}
-
 class AsyncContextFrame : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -67,7 +63,6 @@ public:
     ~AsyncContextScope();
 
 private:
-    JSC::VM& m_vm;
-    JSC::InternalFieldTuple* m_asyncContextData { nullptr };
+    JSC::JSGlobalObject* m_globalObject { nullptr };
     JSC::JSValue m_previous;
 };

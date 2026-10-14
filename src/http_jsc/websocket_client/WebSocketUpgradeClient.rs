@@ -192,7 +192,9 @@ pub struct HTTPClient<const SSL: bool> {
     to_send_len: Cell<usize>,
     /// What was read since the last request went out and is not consumed yet.
     body: JsCell<Vec<u8>>,
-    /// Set while the `ws` module reads the body of a response that is not a 101.
+    /// Made by the `ws` module: it times the handshake, and reads the body of a response that is not a 101.
+    ws_mode: bool,
+    /// Set while that body is read.
     response_body: Cell<Option<ResponseBody>>,
     /// SNI and verified name: `tls.serverName`, else the dialed host. Empty when unset.
     hostname: JsCell<ZBox>,
@@ -443,6 +445,7 @@ where
             input_body_buf: JsCell::new(input_body_buf),
             to_send_len: Cell::new(0),
             body: JsCell::new(Vec::new()),
+            ws_mode: websocket.is_ws_mode(),
             response_body: Cell::new(None),
             hostname: JsCell::new(ZBox::default()),
             context: context.id(),
@@ -488,7 +491,7 @@ where
                 }
             }
 
-            socket.set_timeout(handshake_timeout_seconds());
+            socket.set_timeout(this.handshake_timeout());
             this.state.set(State::Reading);
             return Some(Self::connected(client, websocket));
         }
@@ -523,7 +526,7 @@ where
             }
         }
 
-        sock.set_timeout(handshake_timeout_seconds());
+        sock.set_timeout(this.handshake_timeout());
         this.state.set(State::Reading);
         Some(Self::connected(client, websocket))
     }
@@ -536,6 +539,15 @@ where
             .set(Some((BackRef::new(websocket), client.clone())));
         this.socket_ref.set(Some(client));
         this.as_ptr()
+    }
+
+    /// None for `ws`: `handshakeTimeout` is a timer of its own, and without it `ws` waits as long as TCP does.
+    fn handshake_timeout(&self) -> core::ffi::c_uint {
+        if self.ws_mode {
+            0
+        } else {
+            handshake_timeout_seconds()
+        }
     }
 
     /// C++'s back-reference, while it still holds one.
@@ -782,7 +794,7 @@ where
         // `us_internal_socket_after_open` zeroes the socket timeout when the
         // SEMI_SOCKET opens, so the value `connect()` armed only covered the
         // TCP connect. Re-arm so an accept-but-never-answer peer times out.
-        socket.set_timeout(handshake_timeout_seconds());
+        socket.set_timeout(this.handshake_timeout());
 
         debug_assert!(!this.input_body_buf.get().is_empty());
         debug_assert!(this.to_send_len.get() == 0);
@@ -955,7 +967,7 @@ where
         if let Some(ws) = this.cpp_websocket() {
             let vm = bun_jsc::virtual_machine::VirtualMachine::get();
             let is_101 = response.status_code == 101;
-            let reads_body = !is_101 && ws.reads_response_body();
+            let reads_body = !is_101 && this.ws_mode;
             if reads_body {
                 this.response_body.set(Some(ResponseBody::of(&response)));
                 this.body.set(rest.to_vec());
@@ -987,11 +999,31 @@ where
         chunk.extend_from_slice(data);
         let ended = body.decode(&mut chunk);
         this.response_body.set(Some(body));
+        // `ws` has no timer for the body: the next piece has this long, whether the peer or the reader waits.
+        this.tcp.get().set_timeout(handshake_timeout_seconds());
         if !chunk.is_empty() {
             ws.did_receive_response_body(&chunk, false);
         }
         if ended {
             Self::terminate(this, ErrorCode::Ended);
+        }
+    }
+
+    /// `pause()` / `resume()` while CONNECTING hold back the body of a response that is not a 101, never
+    /// the handshake. What one read brought is still delivered.
+    ///
+    /// Takes `ThisPtr<Self>` because a resume that the kernel refuses closes the socket; see `cancel`.
+    pub(crate) fn set_paused(this: ThisPtr<Self>, paused: bool) {
+        if this.response_body.get().is_none() {
+            return;
+        }
+        let _guard = RefPtr::from_this(this);
+        let tcp = this.tcp.get();
+        if paused {
+            tcp.pause_stream();
+        } else {
+            tcp.set_timeout(handshake_timeout_seconds());
+            tcp.resume_stream();
         }
     }
 
@@ -1758,7 +1790,7 @@ fn window_bits(value: &[u8]) -> Option<u8> {
         .and_then(|v| v.strip_suffix(b"\""))
         .unwrap_or(value);
     let bits = match *digits {
-        [d] => d.wrapping_sub(b'0'),
+        [d @ b'0'..=b'9'] => d - b'0',
         [b'1', d @ b'0'..=b'9'] => 10 + (d - b'0'),
         _ => return None,
     };
@@ -1937,6 +1969,14 @@ pub fn bun__websockethttpclient__cancel(
     HttpUpgradeClient::cancel(this);
 }
 
+// HOST_EXPORT(Bun__WebSocketHTTPClient__setPaused, c)
+pub fn bun__websockethttpclient__set_paused(
+    this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>,
+    paused: bool,
+) {
+    HttpUpgradeClient::set_paused(this, paused);
+}
+
 // HOST_EXPORT(Bun__WebSocketHTTPClient__memoryCost, c)
 pub fn bun__websockethttpclient__memorycost(
     this: &crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient,
@@ -1996,6 +2036,14 @@ pub fn bun__websockethttpsclient__cancel(
     this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
 ) {
     HttpsUpgradeClient::cancel(this);
+}
+
+// HOST_EXPORT(Bun__WebSocketHTTPSClient__setPaused, c)
+pub fn bun__websockethttpsclient__set_paused(
+    this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
+    paused: bool,
+) {
+    HttpsUpgradeClient::set_paused(this, paused);
 }
 
 // HOST_EXPORT(Bun__WebSocketHTTPSClient__memoryCost, c)

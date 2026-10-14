@@ -100,7 +100,7 @@ unsafe extern "C" {
         headers: FfiSlice<'_, RawHeader<'_>>,
         body: FfiSlice<'_>,
     );
-    safe fn WebSocket__readsResponseBody(websocket_context: &CppWebSocket) -> bool;
+    safe fn WebSocket__isWsMode(websocket_context: &CppWebSocket) -> bool;
     safe fn WebSocket__didReceiveResponseBody(
         websocket_context: &CppWebSocket,
         chunk: FfiSlice<'_>,
@@ -198,13 +198,13 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    /// Whether a response that is not a 101 is read to its end (the `ws` module) or fails the
-    /// connection at its head. A field read on the C++ side: no JS runs.
-    pub(crate) fn reads_response_body(&self) -> bool {
-        WebSocket__readsResponseBody(self)
+    /// Made by the `ws` module. A field read on the C++ side: no JS runs.
+    pub(crate) fn is_ws_mode(&self) -> bool {
+        WebSocket__isWsMode(self)
     }
 
-    /// A decoded piece of that body, if not empty. After `ended` C++ has let go of the upgrade client.
+    /// A decoded piece of the body of a response that is not a 101, if not empty. After `ended` C++ has
+    /// let go of the upgrade client.
     pub(crate) fn did_receive_response_body(&self, chunk: &[u8], ended: bool) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();

@@ -117,7 +117,7 @@ if (!isCI) {
   test.each(
     [["syntax", 1000], ["structure", 1000], ["encoding", 500], !isDebug ? ["memory", 100] : []].filter(
       xs => xs.length > 0,
-    ),
+    ) as [string, number][],
   )(
     "CSS Parser Invalid Input Fuzzing - %s (%d iterations)",
     async (strategy, iterations) => {

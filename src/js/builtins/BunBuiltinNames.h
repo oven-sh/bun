@@ -79,6 +79,7 @@ using namespace JSC;
     macro(esmNamespaceForCjs) \
     macro(esmRegistryDelete) \
     macro(esmRegistryEvaluatedKeys) \
+    macro(esmRegistryHasEvaluated) \
     macro(evaluateCommonJSModule) \
     macro(evictIsolationSourceProviderCache) \
     macro(expires) \
@@ -120,12 +121,15 @@ using namespace JSC;
     macro(makeDOMException) \
     macro(makeErrorWithCode) \
     macro(makeGetterTypeError) \
+    macro(masked) \
     macro(maxAge) \
+    macro(maxHeaderPairs) \
     macro(metafileJson) \
     macro(method) \
     macro(min) \
     macro(mockedFunction) \
     macro(mode) \
+    macro(moduleGraph) \
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
@@ -143,6 +147,7 @@ using namespace JSC;
     macro(peekPromiseStatus) \
     macro(pokePromiseAsHandled) \
     macro(port) \
+    macro(prev) \
     macro(preventAbort) \
     macro(preventCancel) \
     macro(preventClose) \
@@ -173,6 +178,7 @@ using namespace JSC;
     macro(statusCode) \
     macro(statusMessage) \
     macro(statusText) \
+    macro(storage) \
     macro(stream) \
     macro(syscall) \
     macro(text) \

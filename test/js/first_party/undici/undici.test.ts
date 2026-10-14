@@ -12,7 +12,7 @@ describe("undici", () => {
 
   beforeAll(() => {
     serverCtl = createServer();
-    port = serverCtl.port;
+    port = serverCtl.port!;
     host = `${serverCtl.hostname}:${port}`;
     hostUrl = `http://${host}`;
   });
@@ -39,6 +39,133 @@ describe("undici", () => {
       } catch (e) {
         expect((e as Error).message).toBe("unusable");
       }
+    });
+
+    describe("body stream when a body method took the response", () => {
+      // Starts `body` with `start` and resolves with what it emits until "close".
+      function eventsUntilClose(body: Readable, start: () => void) {
+        const events: unknown[] = [];
+        const { promise, resolve } = Promise.withResolvers<unknown[]>();
+        body.on("end", () => events.push("end"));
+        body.on("error", error => events.push(error));
+        body.on("close", () => {
+          events.push("close");
+          resolve(events);
+        });
+        start();
+        return promise;
+      }
+
+      // Serves "first ", then "second" once `secondChunk` resolves.
+      function serveTwoChunks(secondChunk: Promise<void>) {
+        return Bun.serve({
+          port: 0,
+          fetch() {
+            return new Response(
+              new ReadableStream({
+                async start(controller) {
+                  controller.enqueue(new TextEncoder().encode("first "));
+                  await secondChunk;
+                  controller.enqueue(new TextEncoder().encode("second"));
+                  controller.close();
+                },
+              }),
+            );
+          },
+        });
+      }
+
+      const bodyActions = [
+        ["resume", ["end", "close"]],
+        ["destroy", ["close"]],
+      ] as const;
+
+      // A body method reads the web stream under `body` and keeps it locked. Nothing is left
+      // for the node stream, so it ends, as the already-read body of undici does.
+      it.each(["arrayBuffer", "blob", "formData", "json", "text"] as const)(
+        "ends without an error after %s() consumed it",
+        async method => {
+          await using server = Bun.serve({
+            port: 0,
+            fetch(req) {
+              if (new URL(req.url).pathname === "/formData") {
+                return new Response("a=1", { headers: { "content-type": "application/x-www-form-urlencoded" } });
+              }
+              return Response.json({ a: 1 });
+            },
+          });
+          const url = new URL(method, server.url).href;
+
+          for (const [action, expected] of bodyActions) {
+            const { body } = await request(url);
+            await body[method]();
+            expect(await eventsUntilClose(body, () => body[action]())).toEqual([...expected]);
+          }
+          {
+            const { body } = await request(url);
+            await body[method]();
+            expect(await Array.fromAsync(body)).toEqual([]);
+          }
+        },
+      );
+
+      it.each(bodyActions)("%s() leaves a body method that is still reading alone", async (action, expected) => {
+        const secondChunk = Promise.withResolvers<void>();
+        await using server = serveTwoChunks(secondChunk.promise);
+
+        const { body } = await request(server.url.href);
+        const text = body.text();
+        const events = await eventsUntilClose(body, () => body[action]());
+        secondChunk.resolve();
+        expect({ events, text: await text }).toEqual({ events: [...expected], text: "first second" });
+      });
+
+      // A body method that rejects still took the stream.
+      it.each(bodyActions)("%s() after an aborted text() does not emit an error", async (action, expected) => {
+        const secondChunk = Promise.withResolvers<void>();
+        await using server = serveTwoChunks(secondChunk.promise);
+        const controller = new AbortController();
+
+        const { body } = await request(server.url.href, { signal: controller.signal });
+        const text = body.text().then(
+          () => "resolved",
+          error => error.name,
+        );
+        controller.abort();
+        const outcome = await text;
+        const events = await eventsUntilClose(body, () => body[action]());
+        secondChunk.resolve();
+        expect({ outcome, events }).toEqual({ outcome: "AbortError", events: [...expected] });
+      });
+
+      it.each(bodyActions)(
+        "%s() after formData() rejected the content type does not emit an error",
+        async (action, expected) => {
+          await using server = Bun.serve({ port: 0, fetch: () => Response.json({ a: 1 }) });
+
+          const { body } = await request(server.url.href);
+          const outcome = await body.formData().then(
+            () => "resolved",
+            error => error.name,
+          );
+          const events = await eventsUntilClose(body, () => body[action]());
+          expect({ outcome, events }).toEqual({ outcome: "TypeError", events: [...expected] });
+        },
+      );
+
+      // The lock that the node stream takes itself must not end it.
+      it("delivers every chunk of a streamed response", async () => {
+        const secondChunk = Promise.withResolvers<void>();
+        await using server = serveTwoChunks(secondChunk.promise);
+
+        const { body } = await request(server.url.href);
+        const chunks: string[] = [];
+        for await (const chunk of body) {
+          chunks.push(chunk.toString());
+          secondChunk.resolve();
+        }
+        expect(chunks.join("")).toBe("first second");
+      });
     });
 
     it("should make a POST request when provided a body and POST method", async () => {
@@ -131,7 +258,7 @@ describe("undici", () => {
     // and this one is empty.
     it.each([
       ["a 204", "/status/204", 204, {}],
-      ["the response to a HEAD request", "/head", 200, { method: "HEAD" }],
+      ["the response to a HEAD request", "/head", 200, { method: "HEAD" as const }],
     ])("%s has no body", async (_, path, expectedStatus, init) => {
       const response = await undiciFetch(`${hostUrl}${path}`, init);
       expect({ status: response.status, body: response.body }).toEqual({ status: expectedStatus, body: null });

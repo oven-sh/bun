@@ -1,0 +1,33 @@
+------------------
+{ printWidth: 40 }
+------------------
+<div>
+  @if (test) {
+    text<undefined@let foo =
+      "Hello" + ", World";
+    text
+  }
+</div>
+&#35;<undefined@let a = 1;
+
+------------------
+{ printWidth: 80 }
+------------------
+<div>
+  @if (test) {
+    text<undefined@let foo = "Hello" + ", World"; text
+  }
+</div>
+&#35;<undefined@let a = 1;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+<div>
+  @if (test) {
+    text<undefined@let foo = "Hello" + ", World"; text
+  }
+</div>
+&#35;<undefined@let a = 1;
+
+===================== End =====================

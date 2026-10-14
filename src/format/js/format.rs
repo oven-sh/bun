@@ -1282,7 +1282,11 @@ fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &
 fn comment_sticks_to_what_is_before_type_annotation(ty: TypeNode<'_>, f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
         && match ty.parent() {
-            Node::Param(param) => !matches!(param.as_ast_nodes(), AstNodes::FormalParameter(_)),
+            // The `a` of `[a: string]: T` is a parameter in the tree.
+            Node::Param(param) => {
+                !matches!(param.as_ast_nodes(), AstNodes::FormalParameter(_))
+                    || (param.func()).is_some_and(|func| func.kind() == FnKind::IndexSignature)
+            }
             Node::Func(func) => !matches!(func.kind(), FnKind::Decl | FnKind::Expr),
             _ => true,
         }

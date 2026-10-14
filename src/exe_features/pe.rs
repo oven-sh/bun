@@ -163,7 +163,8 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
         parts.push((s, start..s.address + s.size.max(start - s.address), rest));
     }
 
-    let size_of_headers = (first_header + parts.len() * SECTION)
+    // With the one that is left for the application.
+    let size_of_headers = (first_header + (parts.len() + 1) * SECTION)
         .next_multiple_of(file_alignment)
         .max(u32_at(file, optional + 60)? as usize);
     let mut out = slice(file, 0, first_header)?.to_vec();

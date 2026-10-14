@@ -390,7 +390,7 @@ describe("verifyClient", () => {
       certs: [clientCert],
       transportParams: { maxIdleTimeout: 5 },
       ...closesWithItsFinished,
-    });
+    } as SessionOptions);
     client.opened.catch(() => {});
     client.closed.catch(() => {});
     const stream = await client.createBidirectionalStream({ body: new TextEncoder().encode("early body") });
@@ -517,11 +517,11 @@ describe("a malformed first request stream", () => {
       servername: "localhost",
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: 5 },
-    });
+    } as SessionOptions);
     const answered = Promise.withResolvers<string>();
     const stream = await client.createBidirectionalStream({
       headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
-      onheaders: (headers: Record<string, string>) => answered.resolve(headers[":status"]),
+      onheaders: (headers: Record<string, any>) => answered.resolve(headers[":status"]),
     });
     stream.closed.catch(() => {});
     const status = await answered.promise;
@@ -657,7 +657,7 @@ describe("a session's application", () => {
       const client = await connect(server.address!, {
         ...connectOptions,
         ...first,
-        onsessionticket: ticket.resolve,
+        onsessionticket: ticket.resolve as (ticket: object) => void,
         onerror() {},
       });
       await ticket.promise;
@@ -716,7 +716,7 @@ describe("a header callback on a raw-QUIC stream", () => {
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: 5 },
       onerror() {},
-    });
+    } as SessionOptions);
     client.closed.catch(() => {});
     const stream = await client.createBidirectionalStream({ body: new TextEncoder().encode("hi") });
     stream.closed.catch(() => {});

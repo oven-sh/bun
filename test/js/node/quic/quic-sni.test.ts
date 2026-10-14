@@ -121,15 +121,15 @@ test("session.certificate is the identity the servername selected once the conne
       session.onhandshake = info =>
         reported.resolve({
           servername: info.servername,
-          certificate: session.certificate?.subject.match(/CN=([^\s,]+)/)?.[1],
+          certificate: (session.certificate as X509Certificate | undefined)?.subject.match(/CN=([^\s,]+)/)?.[1],
           // A getter that only a live connection answers.
-          remoteTransportParams: session.remoteTransportParams,
+          remoteTransportParams: (session as any).remoteTransportParams,
         });
     },
     { sni: { "*": identity1, "agent2.example": identity2 }, alpn: ["quic-test"] },
   );
 
-  const client = await connect(server.address, {
+  const client = await connect(server.address!, {
     alpn: "quic-test",
     servername: "agent2.example",
     verifyPeer: "manual",
@@ -138,7 +138,7 @@ test("session.certificate is the identity the servername selected once the conne
       if (line.startsWith("CLIENT_TRAFFIC_SECRET_0")) this.destroy();
     },
     onerror() {},
-  });
+  } as SessionOptions);
   client.opened.catch(() => {});
   client.closed.catch(() => {});
 

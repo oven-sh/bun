@@ -1416,6 +1416,190 @@ describe("Transactions", () => {
     // Both updates of every second transaction are kept.
     expect(outcomes.map(({ balance }) => balance)).toEqual(outcomes.map((_, hops) => 500 + 2 * (hops + 1)));
   });
+
+  // SQLite rolls the whole transaction back inside a statement that fails with one of these, or on a full database.
+  describe("a transaction that SQLite rolled back by itself", () => {
+    const primaryKey = "SQLITE_CONSTRAINT_PRIMARYKEY";
+    const conflicts = [
+      {
+        name: "ON CONFLICT ROLLBACK",
+        k: "id INTEGER PRIMARY KEY ON CONFLICT ROLLBACK",
+        conflict: "INSERT INTO k VALUES (1)",
+        code: primaryKey,
+      },
+      {
+        name: "INSERT OR ROLLBACK",
+        k: "id INTEGER PRIMARY KEY",
+        conflict: "INSERT OR ROLLBACK INTO k VALUES (1)",
+        code: primaryKey,
+      },
+      {
+        name: "UPDATE OR ROLLBACK",
+        k: "id INTEGER PRIMARY KEY",
+        conflict: "UPDATE OR ROLLBACK k SET id = 1 WHERE id = 2",
+        code: primaryKey,
+      },
+      {
+        name: "RAISE(ROLLBACK)",
+        k: "id INTEGER PRIMARY KEY",
+        conflict: "INSERT INTO k VALUES (3)",
+        code: "SQLITE_CONSTRAINT_TRIGGER",
+      },
+    ];
+
+    async function open(k = "id INTEGER PRIMARY KEY") {
+      const db = new SQL("sqlite://:memory:");
+      await db.unsafe(`CREATE TABLE k (${k})`);
+      await db`INSERT INTO k VALUES (1), (2)`;
+      await db`CREATE TRIGGER three BEFORE INSERT ON k WHEN new.id = 3 BEGIN SELECT RAISE(ROLLBACK, 'no three'); END`;
+      await db`CREATE TABLE t (v TEXT)`;
+      await db`INSERT INTO t VALUES ('seed')`;
+      return db;
+    }
+    const settle = (promise: Promise<unknown>) =>
+      promise.then(
+        () => "fulfilled",
+        e => e.code ?? e.message,
+      );
+    // What the table holds, and whether the connection takes a new transaction.
+    async function after(db: SQL) {
+      const rows = await db`SELECT v FROM t ORDER BY rowid`;
+      return { rows: rows.map(row => row.v), next: await settle(db.begin(async () => {})) };
+    }
+    const clean = { rows: ["seed"], next: "fulfilled" };
+
+    describe.each(conflicts)("$name", ({ k, conflict, code }) => {
+      test("begin() rejects with the error of the statement", async () => {
+        await using db = await open(k);
+        const begin = await settle(
+          db.begin(async tx => {
+            await tx`INSERT INTO t VALUES ('first')`;
+            await tx.unsafe(conflict);
+          }),
+        );
+        expect({ begin, ...(await after(db)) }).toEqual({ begin: code, ...clean });
+      });
+
+      test("the queries of an array after the conflict do not run", async () => {
+        await using db = await open(k);
+        const begin = await settle(
+          db.begin(tx => [
+            tx`INSERT INTO t VALUES ('first')`,
+            tx.unsafe(conflict),
+            tx`INSERT INTO t VALUES ('second')`,
+          ]),
+        );
+        expect({ begin, ...(await after(db)) }).toEqual({ begin: code, ...clean });
+      });
+
+      test("a savepoint rejects with the error of the statement", async () => {
+        await using db = await open(k);
+        let savepoint: string | undefined;
+        const begin = await settle(
+          db.begin(async tx => {
+            await tx`INSERT INTO t VALUES ('first')`;
+            savepoint = await settle(tx.savepoint(sp => sp.unsafe(conflict)));
+            throw new Error("the callback gives up");
+          }),
+        );
+        expect({ savepoint, begin, ...(await after(db)) }).toEqual({
+          savepoint: code,
+          begin: "the callback gives up",
+          ...clean,
+        });
+      });
+    });
+
+    // SQLite also rolls back when the database is full. No statement here is caught.
+    describe.each([
+      {
+        form: "awaited one by one",
+        move: async (tx, inserts) => {
+          for (const insert of inserts) await insert();
+          await tx`DELETE FROM live`;
+        },
+      },
+      { form: "an array", move: (tx, inserts) => [...inserts.map(insert => insert()), tx`DELETE FROM live`] },
+      {
+        form: "Promise.all",
+        move: (tx, inserts) => Promise.all([...inserts.map(insert => insert()), tx`DELETE FROM live`]),
+      },
+    ])("a full database, statements $form", ({ move }) => {
+      test("begin() rejects with SQLITE_FULL and no row is lost", async () => {
+        await using db = new SQL("sqlite://:memory:");
+        await db`CREATE TABLE live (id INTEGER PRIMARY KEY, payload TEXT)`;
+        await db`CREATE TABLE archive (id INTEGER PRIMARY KEY, payload TEXT)`;
+        const payload = Buffer.alloc(3000, "x").toString();
+        for (let id = 1; id <= 40; id++) await db`INSERT INTO live VALUES (${id}, ${payload})`;
+        const [{ page_count }] = await db`PRAGMA page_count`;
+        await db.unsafe(`PRAGMA max_page_count = ${page_count + 6}`);
+
+        const begin = await settle(
+          db.begin(tx =>
+            move(
+              tx,
+              Array.from({ length: 40 }, (_, i) => () => tx`INSERT INTO archive VALUES (${i + 1}, ${payload})`),
+            ),
+          ),
+        );
+        const [{ live }] = await db`SELECT count(*) AS live FROM live`;
+        const [{ archive }] = await db`SELECT count(*) AS archive FROM archive`;
+        expect({ begin, live, archive }).toEqual({ begin: "SQLITE_FULL", live: 40, archive: 0 });
+      });
+    });
+
+    test("tx.close() after the rollback sends no ROLLBACK", async () => {
+      await using db = await open();
+      let close: string | undefined;
+      await settle(
+        db.begin(async tx => {
+          await tx`INSERT OR ROLLBACK INTO k VALUES (1)`.catch(() => {});
+          close = await settle(tx.close());
+        }),
+      );
+      expect({ close, ...(await after(db)) }).toEqual({ close: "fulfilled", ...clean });
+    });
+
+    test("a conflict of a statement on the instance stops what begin() started", async () => {
+      await using db = await open();
+      const begin = await settle(
+        db.begin(async tx => {
+          await tx`INSERT INTO t VALUES ('first')`;
+          await Promise.all([db`INSERT OR ROLLBACK INTO k VALUES (1)`, tx`INSERT INTO t VALUES ('second')`]);
+        }),
+      );
+      expect({ begin, ...(await after(db)) }).toEqual({ begin: primaryKey, ...clean });
+    });
+
+    test("a transaction that the callback opens by hand after the rollback is rolled back", async () => {
+      await using db = await open();
+      const begin = await settle(
+        db.begin(async tx => {
+          await tx`INSERT OR ROLLBACK INTO k VALUES (1)`.catch(() => {});
+          await db.unsafe("BEGIN");
+          await tx`INSERT INTO t VALUES ('in the transaction opened by hand')`;
+          throw new Error("the callback gives up");
+        }),
+      );
+      expect({ begin, ...(await after(db)) }).toEqual({ begin: "the callback gives up", ...clean });
+    });
+
+    test("a constraint error that ends only its statement leaves the transaction open", async () => {
+      await using db = await open();
+      const begin = await settle(
+        db.begin(async tx => {
+          await tx`INSERT INTO t VALUES ('first')`;
+          await tx`INSERT INTO k VALUES (1)`.catch(() => {});
+          await tx`INSERT INTO t VALUES ('second')`;
+        }),
+      );
+      expect({ begin, ...(await after(db)) }).toEqual({
+        begin: "fulfilled",
+        rows: ["seed", "first", "second"],
+        next: "fulfilled",
+      });
+    });
+  });
 });
 
 describe("SQLite-specific features", () => {

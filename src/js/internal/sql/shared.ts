@@ -2261,6 +2261,12 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
   /// For a database that keeps the transaction open when COMMIT fails. Called in the `handle.run()` where it failed.
   rollbackFailedCommit?(connection: Connection): void;
+  /// For a database that ends a transaction inside a failing statement: the `queries` of the begin() that has it.
+  openTransaction?: Set<QueryType<any, any>> | null;
+  /// Called in the `handle.run()` where a statement failed. Cancels what that begin() started if its transaction ended.
+  noteFailedStatement?(connection: Connection): void;
+  /// Whether a ROLLBACK has a transaction to end.
+  isInTransaction?(connection: Connection): boolean;
   attachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;
   detachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;
 

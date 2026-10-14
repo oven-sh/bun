@@ -355,6 +355,10 @@ export default {
   Query,
   SQLQueryFlags,
   SQLQueryResultMode,
+  // then(), execute() and run() start a query. Its handler runs one microtask later.
+  isStarted(query: Query<any, any>) {
+    return (query[_queryStatus] & SQLQueryStatus.executed) !== 0;
+  },
 
   symbols: {
     _handle,

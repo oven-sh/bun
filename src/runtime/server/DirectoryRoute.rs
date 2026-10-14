@@ -247,6 +247,7 @@ impl DirectoryRoute {
             file_type: FileType::File,
             pollable: false,
             offset: body_offset,
+            positional: false,
             length: Some(body_len),
             idle_timeout: server.config().idle_timeout,
             owner: StreamOwner::DirectoryRoute(guard.into_route()),

@@ -106,6 +106,13 @@ pub(crate) struct StartOptions {
     pub pollable: bool,
     /// Byte offset into the file to begin reading from.
     pub offset: u64,
+    /// Read at `offset` even when it is 0, not at the position of `fd`. Set
+    /// for a regular file on a descriptor the server did not open: its
+    /// position is the caller's and can be anywhere. POSIX reads with
+    /// `pread(2)`, which never touches the position. On Windows libuv saves
+    /// the position, reads, and restores it, so the position is only left
+    /// alone while nothing else uses the descriptor at the same time.
+    pub positional: bool,
     /// Maximum bytes to send; `None` reads to EOF. For regular files this
     /// should be `stat.size - offset` (after Range/slice clamping).
     pub length: Option<u64>,
@@ -242,7 +249,7 @@ impl FileResponseStream {
         // SAFETY: `start()`/`start_file_offset()` re-enter this object through
         // the parent pointer (`loop_`/`event_loop`), so no cell borrow spans them.
         let reader = this_ref.reader_mut();
-        let start_result = if opts.offset > 0 {
+        let start_result = if opts.positional || opts.offset > 0 {
             reader.start_file_offset(opts.fd, opts.pollable, opts.offset as usize)
         } else {
             reader.start(opts.fd, opts.pollable)

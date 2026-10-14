@@ -231,6 +231,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
             auto fromString = from.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
+                if (!isRequireDotResolve)
+                    resolvedString = Bun::keyOfImportByPackage(globalObject, resolvedString.value(), fromString);
                 if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]]
                     return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, resolvedString.value(), fromString, false)));
                 if (moduleString == resolvedString.value())
@@ -344,7 +346,17 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         return {};
     }
 
-    if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]] {
+    if (!isRequireDotResolve && globalObject->onLoadPlugins.hasVirtualModules()) [[unlikely]] {
+        String key = asString(JSC::JSValue::decode(result))->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto fromString = from.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        String given = Bun::keyOfImportByPackage(globalObject, key, fromString);
+        if (!globalObject->onLoadPlugins.runningModuleMocks.isEmpty())
+            given = Bun::keyOfImportWhileModuleMocksRun(globalObject, given, fromString, false);
+        if (given != key)
+            return JSC::JSValue::encode(jsString(vm, given));
+    } else if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]] {
         auto key = asString(JSC::JSValue::decode(result))->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto fromString = from.toWTFString(globalObject);

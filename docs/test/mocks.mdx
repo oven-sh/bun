@@ -438,7 +438,27 @@ test("getter", () => {
 });
 ```
 
+You can also write to the mocked module, whether you got it from `import * as`, `import()` or `vi.importMock()`. The write changes the object the factory returned, so every importer sees it.
+
+```ts
+const flags = await vi.importMock("./flags");
+flags.enabled = true;
+```
+
+A mock made by a `--preload` script is shared by every test file, so a write to it is still there in the next file. With `--isolate`, each file gets a fresh one.
+
 If a module imports a name the factory didn't return, the module still loads. With `vi.mock()` and `vi.doMock()`, using that name throws an error that says which export is missing from which mock, as in Vitest. With `mock.module()`, `jest.mock()` and `jest.doMock()`, the name is `undefined`. A name that reaches the module through another module's `export * from` or `export { name } from` is `undefined` instead, as in Vitest.
+
+### Mocking a Package
+
+`vi.mock()` and `vi.doMock()` mock a package for your own code only, as in Vitest. A module inside `node_modules` that imports the package gets the real one. `jest.mock()` and `mock.module()` mock it for every importer, as in Jest.
+
+```ts
+vi.mock("dep", () => ({ default: fake })); // a library that requires "dep" still gets the real "dep"
+jest.mock("dep", () => fake); // the library gets the fake too
+```
+
+A mocked builtin such as `node:fs` is mocked for every importer with all of them.
 
 ### Mocking Without a Factory
 
@@ -471,6 +491,8 @@ test("automock", () => {
 | `vi.resetModules`, `jest.resetModules`                     | Re-evaluates each module on its next `import()` or `require()` |
 
 Mocked modules stay mocked after `resetModules()`. After `jest.resetModules()`, the next import also calls the factory again. Existing imports keep their values.
+
+As in Vitest, `vi.resetModules()` leaves packages in `node_modules` loaded, so a module imported again still shares its copy of `react` with the rest of the test. As in Jest, `jest.resetModules()` loads them again too.
 
 `mock.restore()` doesn't remove module mocks.
 
@@ -752,8 +774,8 @@ test("lazy import", async () => {
 ### Differences from Vitest
 
 - Mocking a module that's already imported updates it in place. Its existing exports change, exports that only the mock has aren't added, and getters are read once.
-- Every module that imports the mocked module gets the mock. In Vitest, a module that's first loaded while the factory runs gets the original and keeps it.
-- A factory that uses `importOriginal` is called after the original module is evaluated, not before.
+- Every module outside `node_modules` that imports the mocked module gets the mock. In Vitest, a module that's first loaded while the factory runs gets the original and keeps it.
+- A factory that uses `importOriginal` is called after the original module is evaluated, not before. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
 

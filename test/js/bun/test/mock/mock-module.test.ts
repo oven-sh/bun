@@ -962,6 +962,255 @@ describe.concurrent("a module mocked without a factory", () => {
     );
   });
 
+  const written = {
+    "dep.js": `export const useDep = () => "real";`,
+    "importer.js": `import { useDep } from "./dep.js"; export const call = () => useDep();`,
+  };
+
+  test("writing to a mocked module changes what its importers read", async () => {
+    await expectFixturesToPass(
+      {
+        ...written,
+        "write.test.js": `
+          import { expect, test, vi } from "vitest";
+          const made = vi.hoisted(() => ({}));
+          vi.mock("./dep.js", () => (made.exports = { useDep: () => "mocked" }));
+          import { call } from "./importer.js";
+          import * as namespace from "./dep.js";
+
+          test.each([
+            ["vi.importMock()", () => vi.importMock("./dep.js")],
+            ["import()", () => import("./dep.js")],
+            ["import * as", () => namespace],
+          ])("through %s", async (_, load) => {
+            const mocked = await load();
+            expect(call()).toBe("mocked");
+            mocked.useDep = () => "assigned";
+            expect(call()).toBe("assigned");
+            expect(made.exports.useDep()).toBe("assigned");
+            Object.assign(mocked, { useDep: () => "Object.assign" });
+            expect(call()).toBe("Object.assign");
+            Object.defineProperty(mocked, "useDep", { value: () => "defined", writable: true, enumerable: true, configurable: true });
+            expect(call()).toBe("defined");
+            mocked.added = 1;
+            expect("added" in namespace).toBe(true);
+            expect(namespace.added).toBe(1);
+            expect(Object.keys(namespace)).toEqual(["useDep", "added"]);
+            expect(delete mocked.added).toBe(true);
+            expect("added" in namespace).toBe(false);
+            expect(delete mocked.useDep).toBe(true);
+            expect(call).toThrow('No "useDep" export is defined on the');
+            mocked.useDep = () => "mocked";
+          });
+        `,
+      },
+      3,
+    );
+  });
+
+  test("a write with another receiver leaves the mock alone", async () => {
+    await expectFixturesToPass(
+      {
+        ...written,
+        "receiver.test.js": `
+          import { expect, test, vi } from "vitest";
+          vi.mock("./dep.js", () => ({ useDep: () => "mocked" }));
+          import { call } from "./importer.js";
+          import * as namespace from "./dep.js";
+
+          test("an object that inherits from the namespace object", () => {
+            const derived = Object.create(namespace);
+            derived.useDep = () => "derived";
+            derived.added = 1;
+            expect(Object.keys(derived)).toEqual(["useDep", "added"]);
+            expect(call()).toBe("mocked");
+            expect("added" in namespace).toBe(false);
+          });
+
+          test("Reflect.set()", () => {
+            const other = {};
+            expect(Reflect.set(namespace, "useDep", () => "other", other)).toBe(true);
+            expect(other.useDep()).toBe("other");
+            expect(Reflect.set(namespace, "useDep", () => "primitive", 1)).toBe(false);
+            expect(call()).toBe("mocked");
+            expect(Reflect.set(namespace, "useDep", () => "itself", namespace)).toBe(true);
+            expect(call()).toBe("itself");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  test("writes and deletes aren't cached by the JIT", async () => {
+    await expectFixturesToPass(
+      {
+        ...written,
+        "hot.test.js": `
+          import { expect, test, vi } from "vitest";
+          vi.mock("./dep.js", () => ({ useDep: () => "mocked" }));
+          import * as namespace from "./dep.js";
+          const remove = object => delete object.added;
+          const write = (object, value) => { object.added = value; };
+
+          test("in a hot loop", () => {
+            for (let i = 0; i < 10_000; i++) remove(namespace);
+            let wrong = 0;
+            for (let i = 0; i < 10_000; i++) {
+              write(namespace, i);
+              if (namespace.added !== i) wrong++;
+              remove(namespace);
+              if ("added" in namespace) wrong++;
+            }
+            expect(wrong).toBe(0);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test.each([[[]], [["--isolate"]]])("writing to a module that a preload mocked %j", async args => {
+    await expectFixturesToPass(
+      {
+        ...written,
+        "setup.js": `
+          import { vi } from "vitest";
+          vi.mock("./dep.js", () => ({ useDep: vi.fn(() => "from the preload") }));
+        `,
+        "write.test.js": `
+          import { expect, test, vi } from "vitest";
+          import { call } from "./importer.js";
+          test("importers read the new function", async () => {
+            expect(call()).toBe("from the preload");
+            (await vi.importMock("./dep.js")).useDep = () => "new";
+            expect(call()).toBe("new");
+          });
+        `,
+      },
+      1,
+      ["--preload", "./setup.js", ...args],
+    );
+  });
+
+  test("the namespace object of a module that isn't mocked stays read-only", async () => {
+    await expectFixturesToPass(
+      {
+        ...written,
+        "barrel.js": `export * from "./dep.js";`,
+        "read-only.test.js": `
+          import { expect, test, vi } from "vitest";
+          vi.mock("./dep.js", () => ({ useDep: () => "mocked" }));
+          import * as importer from "./importer.js";
+          import * as barrel from "./barrel.js";
+          test.each([["importer", importer, "call"], ["barrel", barrel, "useDep"]])("%s", (_, namespace, name) => {
+            expect(() => { namespace[name] = 1; }).toThrow(TypeError);
+            expect(() => { namespace.added = 1; }).toThrow(TypeError);
+            expect(() => delete namespace[name]).toThrow(TypeError);
+            expect(() => Object.defineProperty(namespace, name, { value: 1 })).toThrow(TypeError);
+            expect(namespace[name]()).toBe("mocked");
+          });
+        `,
+      },
+      2,
+    );
+  });
+
+  describe("a mocked package that another package imports", () => {
+    const packages = {
+      "node_modules/dep/package.json": `{ "name": "dep", "main": "index.js" }`,
+      "node_modules/dep/index.js": `module.exports = { who: () => "real", extra: 1 };`,
+      "node_modules/cjs-lib/package.json": `{ "name": "cjs-lib", "main": "index.js" }`,
+      "node_modules/cjs-lib/index.js": `const dep = require("dep"); module.exports = { who: () => dep.who(), extra: dep.extra };`,
+      "node_modules/esm-lib/package.json": `{ "name": "esm-lib", "type": "module", "main": "index.js" }`,
+      "node_modules/esm-lib/index.js": `import dep from "dep"; export const who = () => dep.who(); export const extra = dep.extra;`,
+      "own.js": `import dep from "dep"; export const who = () => dep.who();`,
+    };
+    const file = (api: string, mock: string, factory: string, inPackages: string) => `
+      import { expect, test, ${api} } from "${api === "vi" ? "vitest" : "bun:test"}";
+      ${mock}("dep", ${factory});
+      import dep from "dep";
+      import * as own from "./own.js";
+      import cjsLib from "cjs-lib";
+      import * as esmLib from "esm-lib";
+      test("packages get ${inPackages}", () => {
+        expect([dep.who(), own.who()]).toEqual(["mock", "mock"]);
+        expect([cjsLib.who(), esmLib.who()]).toEqual(["${inPackages}", "${inPackages}"]);
+        expect([cjsLib.extra, esmLib.extra]).toEqual(${inPackages === "real" ? "[1, 1]" : "[undefined, undefined]"});
+      });
+    `;
+
+    test.each([[[]], [["--isolate"]]])("vi.mock() leaves it real for them, as in Vitest %j", async args => {
+      await expectFixturesToPass(
+        {
+          ...packages,
+          "sync.test.js": file("vi", "vi.mock", `() => ({ default: { who: () => "mock" } })`, "real"),
+          "async.test.js": file("vi", "vi.mock", `async () => ({ default: { who: () => "mock" } })`, "real"),
+        },
+        2,
+        args,
+      );
+    });
+
+    test("jest.mock() and mock.module() mock it for them too, as in Jest", async () => {
+      await expectFixturesToPass(
+        {
+          ...packages,
+          "jest.test.js": file(
+            "jest",
+            "jest.mock",
+            `() => ({ default: { who: () => "mock" }, who: () => "mock" })`,
+            "mock",
+          ),
+          "mock.test.js": `
+            import { expect, mock, test } from "bun:test";
+            test("packages get mock", async () => {
+              mock.module("dep", () => ({ default: { who: () => "mock" }, who: () => "mock" }));
+              const [{ default: cjsLib }, esmLib] = await Promise.all([import("cjs-lib"), import("esm-lib")]);
+              expect([cjsLib.who(), esmLib.who()]).toEqual(["mock", "mock"]);
+            });
+          `,
+        },
+        2,
+        ["--isolate"],
+      );
+    });
+  });
+
+  test("only vi.importActual() of the mocked module itself loads the original", async () => {
+    const original = `globalThis.loads = (globalThis.loads ?? 0) + 1; export const useOriginal = () => "real";`;
+    const run = (factory: string, loads: number) => `
+      import { expect, test, vi } from "vitest";
+      vi.mock("./original.js", ${factory});
+      import { useOriginal } from "./original.js";
+      test("loads the original ${loads} times", () => {
+        expect(useOriginal()).toBe("made");
+        expect(globalThis.loads ?? 0).toBe(${loads});
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        "original.js": original,
+        "helper.js": `export const make = () => ({ useOriginal: () => "made" });`,
+        "importer.js": `import "./original.js"; export const make = () => ({ useOriginal: () => "made" });`,
+        "another.test.js": run(`async () => (await vi.importActual("./helper.js")).make()`, 0),
+        "builtin.test.js": run(`async () => ((await vi.importActual("node:path")), { useOriginal: () => "made" })`, 0),
+        "importer.test.js": run(`async () => (await vi.importActual("./importer.js")).make()`, 1),
+        "itself.test.js": run(
+          `async () => ({ ...(await vi.importActual("./original.js")), useOriginal: () => "made" })`,
+          1,
+        ),
+        "spelled.test.js": run(
+          `async () => ({ ...(await vi.importActual("./sub/../original.js")), useOriginal: () => "made" })`,
+          1,
+        ),
+        "sub/keep.js": "",
+      },
+      5,
+      ["--isolate"],
+    );
+  });
+
   test("vi.importMock, jest.requireMock and jest.createMockFromModule do not mock the module", async () => {
     await expectFixturesToPass(
       {
@@ -1173,6 +1422,40 @@ test("jest.mock() and friends return jest, and vi.doMock() returns a disposable"
 });
 
 describe.concurrent("resetModules", () => {
+  test.each([[[]], [["--isolate"]]])("vi.resetModules() keeps packages, jest.resetModules() doesn't %j", async args => {
+    const counted = (name: string) => `globalThis.${name} = (globalThis.${name} ?? 0) + 1;`;
+    await expectFixturesToPass(
+      {
+        "node_modules/esm-pkg/package.json": `{ "name": "esm-pkg", "type": "module", "main": "index.js" }`,
+        "node_modules/esm-pkg/index.js": `${counted("esm")} export default {};`,
+        "node_modules/cjs-pkg/package.json": `{ "name": "cjs-pkg", "main": "index.js" }`,
+        "node_modules/cjs-pkg/index.js": `${counted("cjs")} module.exports = {};`,
+        "own.js": `${counted("own")} export { default as esm } from "esm-pkg"; export { default as cjs } from "cjs-pkg";`,
+        "reset.test.js": `
+          import { expect, jest, test, vi } from "bun:test";
+          import * as first from "./own.js";
+
+          test("resetModules", async () => {
+            vi.resetModules();
+            const second = await import("./own.js");
+            expect(second).not.toBe(first);
+            expect([second.esm === first.esm, second.cjs === first.cjs]).toEqual([true, true]);
+            expect((await import("esm-pkg")).default).toBe(first.esm);
+            expect(require("cjs-pkg")).toBe(first.cjs);
+            expect([globalThis.own, globalThis.esm, globalThis.cjs]).toEqual([2, 1, 1]);
+
+            jest.resetModules();
+            const third = await import("./own.js");
+            expect([third.esm === first.esm, third.cjs === first.cjs]).toEqual([false, false]);
+            expect([globalThis.own, globalThis.esm, globalThis.cjs]).toEqual([3, 2, 2]);
+          });
+        `,
+      },
+      1,
+      args,
+    );
+  });
+
   test("the next import or require() evaluates a module again", async () => {
     await expectFixturesToPass(
       {
@@ -1197,6 +1480,8 @@ describe.concurrent("resetModules", () => {
 
             const cjs = require("cjs-pkg");
             vi.resetModules();
+            expect(require("cjs-pkg")).toBe(cjs);
+            jest.resetModules();
             expect(require("cjs-pkg")).not.toBe(cjs);
 
             expect((await import("node:fs")).default).toBe(require("fs"));
@@ -1760,7 +2045,7 @@ describe.concurrent("a factory that returns a module namespace object", () => {
     );
   });
 
-  test("an object inheriting from the mocked module's namespace throws RangeError on read", async () => {
+  test("an object inheriting from the mocked module's namespace throws RangeError on read and on assignment", async () => {
     await expectFixturesToPass(
       {
         ...files,
@@ -1772,8 +2057,13 @@ describe.concurrent("a factory that returns a module namespace object", () => {
             mock.module("./a", () => Object.create(ns));
             expect(() => ns.a).toThrow(RangeError);
             expect(() => "a" in ns).toThrow(RangeError);
-            expect(() => delete ns.a).toThrow(RangeError);
+            expect(() => { ns.a = 1; }).toThrow(RangeError);
+            expect(() => Reflect.set(ns, "a", 1)).toThrow(RangeError);
+            expect(() => Object.assign(ns, { a: 1 })).toThrow(RangeError);
+            expect(delete ns.a).toBe(true);
             expect(Object.keys(ns)).toEqual([]);
+            Object.defineProperty(ns, "a", { value: 2, writable: true, enumerable: true, configurable: true });
+            expect(ns.a).toBe(2);
           });
         `,
       },

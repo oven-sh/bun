@@ -418,7 +418,7 @@ enum class ModuleMockFunction : uint8_t {
 class JSModuleMock final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::OverridesGetOwnPropertyNames | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | JSC::GetOwnPropertySlotIsImpureForPropertyAbsence;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::OverridesGetOwnPropertyNames | JSC::OverridesPut | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | JSC::GetOwnPropertySlotIsImpureForPropertyAbsence;
 
     enum class State : uint8_t {
         NotCalled,
@@ -461,6 +461,11 @@ public:
     static bool getOwnPropertySlot(JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSC::JSGlobalObject*, unsigned, JSC::PropertySlot&);
     static void getOwnPropertyNames(JSObject*, JSC::JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
+    static bool put(JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSValue, JSC::PutPropertySlot&);
+    static bool putByIndex(JSCell*, JSC::JSGlobalObject*, unsigned, JSValue, bool shouldThrow);
+    static bool deleteProperty(JSCell*, JSC::JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
+    static bool deletePropertyByIndex(JSCell*, JSC::JSGlobalObject*, unsigned);
+    static bool defineOwnProperty(JSObject*, JSC::JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
 
     // Returns null once settled, otherwise a promise for that. `dependency` is the namespace of dependencyKeyOfModuleMock(), if it's loaded.
     JSC::JSPromise* run(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency = nullptr);
@@ -1606,6 +1611,42 @@ void JSModuleMock::getOwnPropertyNames(JSObject* object, JSC::JSGlobalObject* gl
         exports->methodTable()->getOwnPropertyNames(exports, globalObject, names, mode);
 }
 
+// As in Vitest, writing to a mocked module's namespace object changes the object the factory returned, which importers read.
+bool JSModuleMock::put(JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSValue value, JSC::PutPropertySlot& slot)
+{
+    JSObject* exports = uncheckedDowncast<JSModuleMock>(cell)->exports.get();
+    if (!exports)
+        return false;
+    JSC::PutPropertySlot exportsSlot(exports, slot.isStrictMode());
+    return exports->methodTable()->put(exports, globalObject, propertyName, value, exportsSlot);
+}
+
+bool JSModuleMock::putByIndex(JSCell* cell, JSC::JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    JSObject* exports = uncheckedDowncast<JSModuleMock>(cell)->exports.get();
+    return exports && exports->methodTable()->putByIndex(exports, globalObject, index, value, shouldThrow);
+}
+
+bool JSModuleMock::deleteProperty(JSCell* cell, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, JSC::DeletePropertySlot&)
+{
+    JSObject* exports = uncheckedDowncast<JSModuleMock>(cell)->exports.get();
+    // Not the caller's slot: `exports` would mark it cacheable for this object's structure, which never changes.
+    JSC::DeletePropertySlot exportsSlot;
+    return !exports || exports->methodTable()->deleteProperty(exports, globalObject, propertyName, exportsSlot);
+}
+
+bool JSModuleMock::deletePropertyByIndex(JSCell* cell, JSC::JSGlobalObject* globalObject, unsigned index)
+{
+    JSObject* exports = uncheckedDowncast<JSModuleMock>(cell)->exports.get();
+    return !exports || exports->methodTable()->deletePropertyByIndex(exports, globalObject, index);
+}
+
+bool JSModuleMock::defineOwnProperty(JSObject* object, JSC::JSGlobalObject* globalObject, JSC::PropertyName propertyName, const JSC::PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    JSObject* exports = uncheckedDowncast<JSModuleMock>(object)->exports.get();
+    return exports && exports->methodTable()->defineOwnProperty(exports, globalObject, propertyName, descriptor, shouldThrow);
+}
+
 static void overrideLoadedModuleExports(Zig::GlobalObject* globalObject, JSModuleMock* mock, const LoadedModule& loaded)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1716,6 +1757,11 @@ static void addRequirer(Zig::GlobalObject* globalObject, ModuleImporters& import
     addImporter(importersOf, importerKey, importedKey);
 }
 
+static bool isInNodeModules(const String& path)
+{
+    return path.contains(makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP));
+}
+
 struct ModulesToEvict {
     Vector<String> modules;
     // Patched in place: these stay registered, but their exports changed, so their importers go.
@@ -1724,6 +1770,8 @@ struct ModulesToEvict {
     // Mocked modules whose factory was abandoned, so their pending fetch never settles.
     Vector<String> abandonedModules;
     bool all { false };
+    // With `all`: modules in node_modules stay, as in Vitest, which doesn't load packages through the registry it resets.
+    bool exceptPackages { false };
     bool onlyImportersFromEarlierTestFiles { false };
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
     bool isEndOfTestFile { false };
@@ -1812,7 +1860,8 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Modul
             evict.abandonedModules.append(key);
         // It may have failed because of a mock, and JSC forgets a failed module's requests, so it's never found as an importer.
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
-        if (evict.all || entry->status() >= JSC::ModuleRegistryEntry::Status::FetchFailed || (cyclic && cyclic->evaluationError()))
+        bool isEvictedWithAll = evict.all && !(evict.exceptPackages && isInNodeModules(key));
+        if (isEvictedWithAll || entry->status() >= JSC::ModuleRegistryEntry::Status::FetchFailed || (cyclic && cyclic->evaluationError()))
             keys.append(key);
         if (!record || evict.all)
             continue;
@@ -1851,7 +1900,7 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Modul
             RETURN_IF_EXCEPTION(scope, );
             // A native addon can only be loaded once per process.
             size_t query = path.find('?');
-            if (!(query == notFound ? StringView(path) : StringView(path).left(query)).endsWith(".node"_s))
+            if (!(query == notFound ? StringView(path) : StringView(path).left(query)).endsWith(".node"_s) && !(evict.exceptPackages && isInNodeModules(path)))
                 keys.append(path);
             continue;
         }
@@ -1920,7 +1969,7 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Modul
         if (isTestFileRunning && entry && entry->record() && entry->status() < JSC::ModuleRegistryEntry::Status::FetchFailed && !plugins.testFileOfModule.get(key))
             plugins.evictedPreloadModules.add(key, JSC::Strong<JSC::JSCell> { vm, entry->record() });
     };
-    bool clearsRegistry = evict.all && loading.isEmpty();
+    bool clearsRegistry = evict.all && !evict.exceptPackages && loading.isEmpty();
     if (clearsRegistry) {
         for (auto& displaced : plugins.displacedPreloadModuleMocks)
             giveLoadedModuleBackToPreloadModuleMock(globalObject, uncheckedDowncast<JSModuleMock>(displaced.get())->specifier->tryGetValue().data);
@@ -2193,7 +2242,7 @@ static JSC::JSString* findManualModuleMock(Zig::GlobalObject* globalObject, cons
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     String candidate;
-    if (isAbsolutePath(specifier) && !specifier.contains(makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP))) {
+    if (isAbsolutePath(specifier) && !isInNodeModules(specifier)) {
         size_t separator = specifier.reverseFind(PLATFORM_SEP);
         candidate = makeString(StringView(specifier).left(separator + 1), "__mocks__"_s, PLATFORM_SEP, StringView(specifier).substring(separator + 1));
     } else if (!written.startsWith('.') && !isAbsolutePath(written)) {
@@ -2211,8 +2260,12 @@ static JSC::JSString* findManualModuleMock(Zig::GlobalObject* globalObject, cons
     return resolved.isString() ? asString(resolved) : nullptr;
 }
 
-static bool mentionsOriginalModule(StringView source)
+// `source` is the factory of the mock of `specifier`. importActual() of another module doesn't count.
+static bool mentionsOriginalModule(Zig::GlobalObject* globalObject, JSC::CallFrame* callframe, StringView source, const String& specifier)
 {
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     if (source.contains("importOriginal"_s))
         return true;
     for (auto name : { "importActual"_s, "requireActual"_s }) {
@@ -2221,7 +2274,16 @@ static bool mentionsOriginalModule(StringView source)
             if (i + 2 >= source.length() || source[i] != '(' || source[i + 1] != '"')
                 return true;
             size_t end = source.find('"', i + 2);
-            if (end == notFound || !Bun::isBuiltinModule(source.substring(i + 2, end - i - 2).toString()))
+            if (end == notFound)
+                return true;
+            String other = source.substring(i + 2, end - i - 2).toString();
+            if (Bun::isBuiltinModule(other))
+                continue;
+            JSC::JSString* otherString = jsString(vm, other);
+            bool exists = false;
+            resolveModuleMockSpecifier(globalObject, callframe, otherString, other, exists);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (other == specifier)
                 return true;
         }
     }
@@ -2318,7 +2380,8 @@ static JSC::EncodedJSValue mockModule(JSC::JSGlobalObject* lexicalGlobalObject, 
             mock->importsOriginal = true;
         else if (factoryFunction && !factoryFunction->isHostFunction()) {
             auto* executable = factoryFunction->jsExecutable();
-            mock->importsOriginal = executable->parameterCount() || mentionsOriginalModule(executable->source().view());
+            mock->importsOriginal = executable->parameterCount() || mentionsOriginalModule(globalObject, callframe, executable->source().view(), specifier);
+            RETURN_IF_EXCEPTION(scope, {});
         }
     }
 
@@ -2603,7 +2666,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateMockFromModule, (JSC::JSGlobalObject * 
     return requireMockModule(globalObject, callframe, "createMockFromModule(module)"_s, true);
 }
 
-// Jest calls every mock's factory again after resetModules(). Vitest keeps the exports.
+// Jest calls every mock's factory again after resetModules(), and loads packages again. Vitest keeps the exports and the packages.
 static JSC::EncodedJSValue resetModules(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, bool callFactoriesAgain)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -2612,6 +2675,7 @@ static JSC::EncodedJSValue resetModules(JSC::JSGlobalObject* lexicalGlobalObject
 
     ModulesToEvict evict;
     evict.all = true;
+    evict.exceptPackages = !callFactoriesAgain;
     evictModulesAndTheirImporters(globalObject, WTF::move(evict));
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -3625,6 +3689,17 @@ bool moduleMockImportsByKey(Zig::GlobalObject* globalObject, const String& key)
     if (!mock)
         mock = dynamicDowncast<Zig::JSModuleMock>(globalObject->onLoadPlugins.moduleMocksBeingLoaded.get(key).get());
     return mock && mock->importsOriginal;
+}
+
+// Vitest loads packages outside the module graph it mocks, so a module in node_modules gets the original of what vi.mock() mocked.
+// Jest's mocks reach packages too.
+String keyOfImportByPackage(Zig::GlobalObject* globalObject, const String& key, const String& importer)
+{
+    if (!Zig::isInNodeModules(importer) || Zig::isBuiltinModuleKey(key))
+        return key;
+    auto* mock = Zig::registeredModuleMock(globalObject, key);
+    bool isOfVitest = mock && (mock->function == Zig::ModuleMockFunction::ViMock || mock->function == Zig::ModuleMockFunction::ViDoMock);
+    return isOfVitest ? Zig::originalModuleKey(key) : key;
 }
 
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)

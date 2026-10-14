@@ -5,6 +5,7 @@ import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import path from "node:path";
 import { connect as tlsConnect } from "node:tls";
 
 // Node's net.Server#close callback (and the 'close' event) only fires once
@@ -1015,234 +1016,50 @@ test("no 'close' is emitted on a re-listened server when an earlier connection e
 // server.close(cb) waits for the last connection. Node counts a connection down when its socket is destroyed and
 // queues the server's 'close' from there (Socket.prototype._destroy), so nothing the program does with the socket's
 // events can hold the server's 'close' back: https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L912-L918
-// In each row the program does something to the last connection. No step waits for a timer: a step follows an
-// event or a round trip. Each expected line is what Node v26.3.0 prints for the same script. An array is that
-// line in any order: Node emits a socket's 'close' in a later turn of the loop than its 'error' and than a
-// settled promise, Bun in the same one, so only Node puts the server's 'close' in between.
-function lastConnectionFixture(protocol: "http" | "https", row: string) {
-  return `
-    const http = require("node:http"), https = require("node:https"), net = require("node:net"), tls = require("node:tls");
-    const events = [];
-    process.on("uncaughtException", err => events.push("uncaught " + err.message));
-    process.on("exit", () => console.log(events.join(", ")));
-    const boom = () => {
-      throw new Error("boom");
-    };
-    const secure = ${protocol === "https"};
-    const server = secure ? https.createServer(${JSON.stringify(tlsCert)}) : http.createServer();
-    server.on("close", () => events.push("server close"));
-    const close = () => server.close(() => events.push("close callback"));
-    const get = "GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n";
-    const upgrade = "GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: Upgrade\\r\\nUpgrade: x\\r\\n\\r\\n";
-    const switching = "HTTP/1.1 101 Switching Protocols\\r\\nConnection: Upgrade\\r\\nUpgrade: x\\r\\n\\r\\n";
-    server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address();
-      const open = request => {
-        const socket = secure
-          ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => socket.write(request))
-          : net.connect(port, "127.0.0.1", () => socket.write(request));
-        socket.on("error", () => {});
-        return socket;
-      };
-      ${row}
-    });`;
-}
-
-// The response is destroyed one round trip after close(), from outside the parse of its connection.
-const responseCloseThrows = `
-  server.on("request", (req, res) => {
-    res.on("close", () => {
-      events.push("response close");
-      boom();
-    });
-    close();
-    res.write("x");
-    client.once("data", () => res.destroy());
-  });
-  const client = open(get);`;
-
-const destroyWithError = `
-  server.on("clientError", () => events.push("clientError"));
-  server.on("request", (req, res) => {
-    close();
-    res.write("x");
-    client.once("data", () => res.destroy(new Error("destroyed")));
-  });
-  const client = open(get);`;
-
-test.concurrent.each([
-  [
-    "a response 'close' listener throws",
-    "http",
-    responseCloseThrows,
-    "server close, close callback, response close, uncaught boom",
-  ],
-  [
-    "a response 'close' listener throws (https)",
-    "https",
-    responseCloseThrows,
-    "server close, close callback, response close, uncaught boom",
-  ],
-  [
-    "a socket 'close' listener throws",
-    "http",
-    `server.on("request", (req, res) => {
-       req.socket.on("close", boom);
-       close();
-       res.write("x");
-       client.once("data", () => res.destroy());
-     });
-     const client = open(get);`,
-    "server close, close callback, uncaught boom",
-  ],
-  [
-    "the 'close' listener of an upgraded socket throws",
-    "http",
-    `server.on("upgrade", (req, socket) => {
-       socket.on("close", boom);
-       close();
-       socket.write(switching);
-       client.once("data", () => socket.destroy());
-     });
-     const client = open(upgrade);`,
-    "server close, close callback, uncaught boom",
-  ],
-  [
-    "the 'close' listener of a socket that sent part of a request head throws",
-    "http",
-    `server.once("connection", socket => socket.on("close", boom));
-     server.on("request", (req, res) => res.end("ok"));
-     const partial = open("G");
-     partial.on("connect", () => {
-       // The byte was written first, so the server has read it when it answers this.
-       const barrier = open("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
-       barrier.resume();
-       barrier.on("close", () => {
-         close();
-         partial.destroy();
-       });
-     });`,
-    ["server close", "close callback", "uncaught boom"],
-  ],
-  [
-    "server[Symbol.asyncDispose]() waits and a socket 'close' listener throws",
-    "http",
-    `server.on("upgrade", (req, socket) => {
-       socket.on("close", boom);
-       server[Symbol.asyncDispose]().then(() => events.push("disposed"));
-       socket.write(switching);
-       client.once("data", () => socket.destroy());
-     });
-     const client = open(upgrade);`,
-    ["server close", "disposed", "uncaught boom"],
-  ],
-  [
-    "an 'aborted' listener removes the socket's 'close' listeners",
-    "http",
-    `server.on("request", (req, res) => {
-       req.on("error", () => {});
-       req.on("aborted", () => req.socket.removeAllListeners("close"));
-       close();
-       res.write("x");
-       client.once("data", () => res.destroy());
-     });
-     const client = open(get);`,
-    "server close, close callback",
-  ],
-  [
-    "the program's socket.emit swallows 'close'",
-    "http",
-    `server.on("upgrade", (req, socket) => {
-       const emit = socket.emit;
-       socket.emit = function (name) {
-         if (name === "close") return false;
-         return emit.apply(this, arguments);
-       };
-       close();
-       socket.write(switching);
-       client.once("data", () => socket.destroy());
-     });
-     const client = open(upgrade);`,
-    "server close, close callback",
-  ],
-  [
-    "the 'error' listener of a socket destroyed with an error throws",
-    "http",
-    `server.on("upgrade", (req, socket) => {
-       socket.on("error", boom);
-       close();
-       socket.write(switching);
-       client.once("data", () => socket.destroy(new Error("destroyed")));
-     });
-     const client = open(upgrade);`,
-    "uncaught boom, server close, close callback",
-  ],
-  [
-    "a tunnel that is idle after the peer's FIN is destroyed",
-    "http",
-    `server.on("upgrade", (req, socket) => {
-       socket.on("end", () => {
-         close();
-         socket.write(switching);
-         client.once("data", () => socket.destroy());
-       });
-       socket.resume();
-       client.end();
-     });
-     const client = open(upgrade);`,
-    "server close, close callback",
-  ],
-  [
-    "a socket 'readable' listener throws at the peer's FIN",
-    "http",
-    `server.on("request", (req, res) => {
-       const socket = req.socket;
-       socket.on("readable", () => {
-         if (socket.read() === null) boom();
-       });
-       close();
-       res.end("ok");
-       client.once("data", () => client.end());
-       client.on("close", () => server.getConnections((err, count) => events.push("connections " + count)));
-     });
-     const client = open(get);`,
-    "uncaught boom, server close, close callback, connections 0",
-  ],
-  [
-    "the tunnel socket was re-emitted on a second server",
-    "http",
-    `const other = http.createServer();
-     server.on("upgrade", (req, socket) => {
-       socket.on("error", () => {});
-       socket.write(switching);
-       other.emit("connection", socket);
-       close();
-       client.once("data", () => socket.destroy());
-       client.on("close", () => server.getConnections((err, count) => events.push("connections " + count)));
-     });
-     const client = open(upgrade);`,
-    "server close, close callback, connections 0",
-  ],
-  // Node emits the socket's 'error' before the server's 'close' on http, and after it on https.
-  ["the response is destroyed with an error", "http", destroyWithError, "clientError, server close, close callback"],
-  [
-    "the response is destroyed with an error (https)",
-    "https",
-    destroyWithError,
-    "server close, close callback, clientError",
-  ],
-] as const)("server.close(cb) calls back when %s", async (_name, protocol, row, expected) => {
+// These are the lines that Node v26.3.0 prints for the fixture.
+test("server.close(cb) calls back, whatever the program does to the events of the last connection", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", lastConnectionFixture(protocol, row)],
+    cmd: [bunExe(), path.join(import.meta.dir, "node-http-server-close-last-connection-fixture.js")],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (typeof expected === "string") {
-    expect({ stdout, stderr }).toEqual({ stdout: expected + "\n", stderr: "" });
-  } else {
-    expect({ events: stdout.trim().split(", ").sort(), stderr }).toEqual({ events: [...expected].sort(), stderr: "" });
-  }
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "a response 'close' listener throws": ["server close", "close callback", "response close", "uncaught boom"],
+    "a response 'close' listener throws (https)": ["server close", "close callback", "response close", "uncaught boom"],
+    "a socket 'close' listener throws": ["server close", "close callback", "uncaught boom"],
+    "the 'close' listener of an upgraded socket throws": ["server close", "close callback", "uncaught boom"],
+    // Sorted by the fixture.
+    "the 'close' listener of a socket that sent one byte throws": ["close callback", "server close", "uncaught boom"],
+    "server[Symbol.asyncDispose]() waits and a socket 'close' listener throws": [
+      "disposed",
+      "server close",
+      "uncaught boom",
+    ],
+    "an 'aborted' listener removes the socket's 'close' listeners": ["server close", "close callback"],
+    "the program's socket.emit swallows 'close'": ["server close", "close callback"],
+    "the 'error' listener of a socket destroyed with an error throws": [
+      "uncaught boom",
+      "server close",
+      "close callback",
+    ],
+    "a tunnel that is idle after the peer's FIN is destroyed": ["server close", "close callback"],
+    "a socket 'readable' listener throws at the peer's FIN": [
+      "uncaught boom",
+      "server close",
+      "close callback",
+      "connections 0",
+    ],
+    "the tunnel socket was emitted as a 'connection' of a second server": [
+      "server close",
+      "close callback",
+      "connections 0",
+    ],
+    "the response is destroyed with an error": ["clientError", "server close", "close callback"],
+    "the response is destroyed with an error (https)": ["server close", "close callback", "clientError"],
+  });
   expect(exitCode).toBe(0);
-});
+  // One debug build process for all rows: it loads node:http and node:https, which takes seconds there.
+}, 30_000);

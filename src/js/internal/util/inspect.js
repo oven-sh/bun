@@ -1699,8 +1699,6 @@ function identicalSequenceRange(a, b) {
   return { len: 0, offset: 0 };
 }
 
-// Returns undefined when the error has no text: its stack, name or message is a getter that
-// throws, or a value that cannot be a string.
 function getStackString(error) {
   let stack;
   try {
@@ -1710,7 +1708,9 @@ function getStackString(error) {
   }
   try {
     return stack ? String(stack) : ErrorPrototypeToString(error);
-  } catch {}
+  } catch {
+    // The stack, name or message cannot be a string: the callers get undefined.
+  }
 }
 
 function getStackFrames(ctx, err, stack) {

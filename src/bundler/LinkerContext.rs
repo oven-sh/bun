@@ -2389,19 +2389,9 @@ impl<'a> LinkerContext<'a> {
             return Ok(());
         };
         let indices = part.import_record_indices.slice();
-        // A wrapped file prints whole, inside its wrapper.
-        let splits = flags[source_index as usize].wrap == WrapKind::None;
 
-        let to_stmts = |calls: &[Stmt]| {
-            if calls.is_empty() {
-                bun_ast::StoreSlice::EMPTY
-            } else {
-                bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(calls))
-            }
-        };
-        // Per part: where its records end in `indices`, and its statements.
-        let mut groups: Vec<(usize, bun_ast::StoreSlice<Stmt>)> = Vec::new();
-        let mut calls: Vec<Stmt> = Vec::new();
+        // Where each part ends in `indices`, and the call that it makes there.
+        let mut ends: Vec<(usize, bun_ast::StoreSlice<Stmt>)> = Vec::new();
         for (i, &record_index) in indices.iter().enumerate() {
             let record = &records[record_index as usize];
             if !record
@@ -2428,23 +2418,20 @@ impl<'a> LinkerContext<'a> {
             if flags[other].wrap == WrapKind::Esm && flags[other].is_async_or_has_async_dependency {
                 call = Expr::allocate(arena, E::Await { value: call }, Loc::EMPTY);
             }
-            calls.push(Stmt::allocate_expr(arena, call));
-            // A part prints after every file that it imports: end it here, ahead of the later records.
-            if splits && i + 1 < indices.len() {
-                groups.push((i + 1, to_stmts(&calls)));
-                calls.clear();
-            }
+            // A part prints after every file that it imports: end it at the call, ahead of the later records.
+            let stmts = arena.alloc_slice_copy(&[Stmt::allocate_expr(arena, call)]);
+            ends.push((i + 1, bun_ast::StoreSlice::new_mut(stmts)));
         }
-        if groups.is_empty() && calls.is_empty() {
+        let Some(&(first_end, first_stmts)) = ends.first() else {
             return Ok(());
+        };
+        if ends.last().is_some_and(|&(end, _)| end < indices.len()) {
+            ends.push((indices.len(), bun_ast::StoreSlice::EMPTY));
         }
-        groups.push((indices.len(), to_stmts(&calls)));
 
-        let mut groups = groups.into_iter();
-        let (first_end, first_stmts) = groups.next().expect("infallible: pushed above");
         let mut begin = first_end;
-        let mut new_parts: Vec<Part> = Vec::with_capacity(groups.len());
-        for (end, stmts) in groups {
+        let mut new_parts: Vec<Part> = Vec::with_capacity(ends.len() - 1);
+        for &(end, stmts) in &ends[1..] {
             new_parts.push(Part {
                 stmts,
                 import_record_indices: bun_alloc::AstAlloc::vec_from_slice(&indices[begin..end]),

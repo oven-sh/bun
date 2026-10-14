@@ -72,6 +72,67 @@ pub(crate) fn url_is_under_registry(url: &[u8], registry: &[u8]) -> bool {
         && (url.len() == registry.len() || url[registry.len()] == b'/')
 }
 
+/// Decides which npm tarball URLs the writer replaces with `""`. The parser
+/// rebuilds `""` with `ExtractTarball::build_url` against the *reader's*
+/// registry for the package (see the `registry_str.is_empty()` branch in
+/// `parse_into_binary_lockfile`), so a URL may only be dropped when that
+/// rebuild gives back the same tarball on the machine that wrote it:
+///
+/// - a URL under the default registry (the rule before registries were
+///   normalized at all; kept so existing lockfiles do not change)
+/// - a URL that is byte-for-byte the canonical tarball URL under the
+///   writer's top-level `registry=`. A registry that serves tarballs off a
+///   different path (GitHub Packages, Artifactory) is kept verbatim since
+///   `build_url` cannot reproduce it. Userinfo is stripped from the registry
+///   before the comparison so `user:pass@` never reaches `bun.lock`.
+///
+/// A package whose name has a `@scope:registry=` entry keeps its URL
+/// verbatim. Its `""` would be rebuilt against whatever registry the reader
+/// has for that scope, and a reader without the entry would fetch a private
+/// package from the public registry.
+struct NpmUrlWriter<'a> {
+    options: &'a PackageManagerOptions,
+    registry: Vec<u8>,
+    scratch: Vec<u8>,
+}
+
+impl<'a> NpmUrlWriter<'a> {
+    fn new(options: &'a PackageManagerOptions) -> Self {
+        Self {
+            options,
+            registry: crate::yarn_berry::registry_without_auth(options.scope.url.href()),
+            scratch: Vec::new(),
+        }
+    }
+
+    /// `true` when the writer serializes `url` as `""`.
+    fn writes_empty(
+        &mut self,
+        url: &[u8],
+        name: &[u8],
+        version: Semver::Version,
+        buf: &[u8],
+    ) -> bool {
+        if url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
+            return true;
+        }
+        if !url_is_under_registry(url, &self.registry)
+            || self.options.named_scope_for_package_name(name).is_some()
+        {
+            return false;
+        }
+        self.scratch.clear();
+        let printed = ExtractTarball::build_url_with_printer(
+            &self.registry,
+            &strings::StringOrTinyString::init(name),
+            version,
+            buf,
+            |args| std::io::Write::write_fmt(&mut self.scratch, args),
+        );
+        printed.is_ok() && self.scratch == url
+    }
+}
+
 // A single `lockfile.string_buf()` held for the whole parser would lock out
 // every other `lockfile.*` access (the `string_buf()` method borrows the whole
 // receiver). Construct a fresh `Buf` at each append site so the disjoint
@@ -217,14 +278,17 @@ impl Stringifier {
     /// A walk-clean lockfile with scoped rules is stamped v3 whatever version was
     /// loaded. Without scoped rules a lockfile keeps its loaded v1/v2, and a fresh
     /// or v3-loaded one is walked down to v2, or to v1 on a v2-invariant violation
-    /// (off-registry npm tarball without a supported integrity, unsafe git
-    /// `.bun-tag`); that decision must not depend on the writer's `~/.npmrc`.
+    /// (npm tarball without a supported integrity that is not written as `""`,
+    /// unsafe git `.bun-tag`). The `""` decision is `NpmUrlWriter::writes_empty`,
+    /// shared with the writer: the walk asks what the writer emits, and `""`
+    /// loads on any reader, so the stamped version stays config-independent
+    /// even though the writer's `registry=` decides which URLs become `""`.
     ///
     /// Walks the package tree the same way the writer does — only packages that
     /// are actually serialized are considered, not every entry in the in-memory
     /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
     /// there that never reach the written `packages` object).
-    fn version_to_write(lockfile: &BinaryLockfile) -> Version {
+    fn version_to_write(lockfile: &BinaryLockfile, npm_url: &mut NpmUrlWriter<'_>) -> Version {
         let loaded = lockfile.text_lockfile_version;
         let has_scoped = lockfile.overrides.has_scoped();
         if !has_scoped && !loaded.at_least(Version::V3) {
@@ -240,6 +304,7 @@ impl Stringifier {
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
         let pkgs = lockfile.packages.slice();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
+        let pkg_names: &[String] = pkgs.items_name();
         let pkg_metas: &[Meta] = pkgs.items_meta();
 
         let mut iter = tree::Iterator::<'_, { tree::IteratorPathStyle::PkgPath }>::from_slices(
@@ -262,21 +327,20 @@ impl Stringifier {
                         if pkg_metas[i].integrity.tag.is_supported() {
                             continue;
                         }
-                        // No supported integrity: only v2-clean if the tarball
-                        // URL is under the *default* registry, the one case the
-                        // writer normalizes to `""` (see the npm URL
+                        // No supported integrity: only v2-clean if the writer
+                        // serializes the tarball URL as `""` (see the npm URL
                         // serialization in `save_from_binary`). An empty
                         // URL never sets the parser's `npm_url_needs_integrity`,
-                        // so that round-trips for any reader. A URL under a
-                        // configured-but-not-default scope is written verbatim,
-                        // and the parser's integrity check is evaluated against
-                        // the *reader's* scope config, so it is not
-                        // config-independent: a writer with a private `@scope`
-                        // registry could stamp v2 on a lockfile a teammate
-                        // without that scope then fails to parse. Stay at v1 for
-                        // those so the file keeps loading everywhere.
-                        let url = res.npm().url.slice(buf);
-                        if !url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
+                        // so that round-trips for any reader. Any other URL is
+                        // written verbatim, and the parser's integrity check is
+                        // evaluated against the *reader's* scope config, so it
+                        // is not config-independent: a writer with a private
+                        // `@scope` registry could stamp v2 on a lockfile a
+                        // teammate without that scope then fails to parse. Stay
+                        // at v1 for those so the file keeps loading everywhere.
+                        let npm = res.npm();
+                        let url = npm.url.slice(buf);
+                        if !npm_url.writes_empty(url, pkg_names[i].slice(buf), npm.version, buf) {
                             return Version::V1;
                         }
                     }
@@ -317,6 +381,7 @@ impl Stringifier {
         let pkg_bins = pkgs.items_bin();
 
         let mut temp_buf: Vec<u8> = Vec::new();
+        let mut npm_url = NpmUrlWriter::new(options);
 
         // Written out in iteration order, which the hash and the reserved capacity decide.
         let mut found_trusted_dependencies: HashMap<u64, String, WrittenOrderContext> =
@@ -376,7 +441,7 @@ impl Stringifier {
         writer.write_all(b"{\n")?;
         Self::inc_indent(writer, indent)?;
         {
-            let lockfile_version = Self::version_to_write(lockfile);
+            let lockfile_version = Self::version_to_write(lockfile, &mut npm_url);
             writeln!(writer, "\"lockfileVersion\": {},", lockfile_version as u32)?;
             Self::write_indent(writer, *indent)?;
 
@@ -776,7 +841,7 @@ impl Stringifier {
                     // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
 
                     // first index is resolution for each type of package
-                    // npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
+                    // npm         -> [ "name@version", registry ("" when it is the configured one), INFO, integrity]
                     // symlink     -> [ "name@link:path", INFO ]
                     // folder      -> [ "name@file:path", INFO ]
                     // workspace   -> [ "name@workspace:path" ] // workspace is only path
@@ -933,19 +998,22 @@ impl Stringifier {
                                 res.npm().version.fmt(buf),
                             )?;
 
-                            // only write the registry if it's not the default. empty string means default registry
+                            // Empty string means the registry the reader has configured.
                             // SAFETY: `tag == Npm` in this match arm.
                             // `String::slice` ties the return to `&self` as well as `buf`, so
                             // bind the union read to a local instead of slicing a temporary.
-                            let url = res.npm().url;
+                            let npm = res.npm();
+                            let url = npm.url;
                             let url_slice = url.slice(buf);
                             write!(
                                 writer,
                                 "\"{}\", ",
                                 bun_core::fmt::format_json_string_utf8(
-                                    if url_is_under_registry(
+                                    if npm_url.writes_empty(
                                         url_slice,
-                                        Npm::Registry::DEFAULT_URL.as_bytes(),
+                                        pkg_name.slice(buf),
+                                        npm.version,
+                                        buf,
                                     ) {
                                         b"" as &[u8]
                                     } else {

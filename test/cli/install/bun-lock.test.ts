@@ -932,6 +932,139 @@ it("escapes double quotes in npm registry tarball URLs when saving bun.lock", as
   expect(await exited).toBe(0);
 });
 
+// The parser rebuilds an empty registry entry from the reader's configured registry,
+// so a tarball URL that is the canonical one under the writer's top-level registry is
+// written as "". A mirror used locally then does not end up in the committed lockfile.
+describe.concurrent("registry-independent npm entries in bun.lock", () => {
+  const lockfileEntry = (lockfile: string, name: string) => {
+    const match = lockfile.match(new RegExp(`"${name}": (\\[.*\\]),\\n`));
+    return match ? JSON.parse(match[1]) : undefined;
+  };
+
+  it("writes \"\" for a tarball URL under the configured registry and reads it back", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(packageJson, JSON.stringify({ name: "mirror-registry", dependencies: { "no-deps": "1.0.0" } }));
+
+    let { exited, stdout, stderr } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    let [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfileEntry(lockfile, "no-deps")).toEqual([
+      "no-deps@1.0.0",
+      "",
+      {},
+      "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+    ]);
+    expect(lockfile).not.toContain(registry.registryUrl());
+
+    // A fresh checkout resolves "" against its own registry and installs from it.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+    ({ exited, stdout, stderr } = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    }));
+    [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+
+    // A later save does not put the registry back.
+    ({ exited, stdout, stderr } = spawn({
+      cmd: [bunExe(), "add", "a-dep@1.0.1"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    }));
+    [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(await exited).toBe(0);
+    const resaved = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfileEntry(resaved, "no-deps")?.[1]).toBe("");
+    expect(lockfileEntry(resaved, "a-dep")?.[1]).toBe("");
+    expect(resaved).not.toContain(registry.registryUrl());
+  });
+
+  it("keeps the tarball URL of a package with a @scope registry", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "/")}"\nregistry = "${registry.registryUrl()}"\n[install.scopes]\nscoped = { url = "${registry.registryUrl()}" }\n`,
+    );
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "scoped-registry",
+        dependencies: { "no-deps": "1.0.0", "@scoped/has-bin-entry": "1.0.0" },
+      }),
+    );
+
+    const { exited, stdout, stderr } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfileEntry(lockfile, "no-deps")?.[1]).toBe("");
+    // The reader may not have this scope configured. "" would send it to the
+    // public registry, so the URL stays.
+    expect(lockfileEntry(lockfile, "@scoped/has-bin-entry")?.[1]).toBe(
+      `${registry.registryUrl()}@scoped/has-bin-entry/-/has-bin-entry-1.0.0.tgz`,
+    );
+  });
+
+  it("never writes the credentials of the registry URL", async () => {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    const url = new URL(registry.registryUrl());
+    url.username = "user";
+    url.password = "pass";
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "/")}"\nregistry = "${url.href}"\n`,
+    );
+    await write(packageJson, JSON.stringify({ name: "auth-registry", dependencies: { "no-deps": "1.0.0" } }));
+
+    const { exited, stdout, stderr } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfileEntry(lockfile, "no-deps")?.[1]).toBe("");
+    expect(lockfile).not.toContain("user:pass");
+  });
+});
+
 // --frozen-lockfile compares the tree built from bun.lock with the tree a clean install
 // builds, so an entry nothing depends on (the clean drops it) must not change the
 // outcome, wherever it sits in the file. The comparison used to skip the loaded side's

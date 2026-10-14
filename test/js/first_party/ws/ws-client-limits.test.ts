@@ -354,9 +354,15 @@ describe.concurrent("maxPayload", () => {
     expect(events).toEqual(["open", { message: limit }, tooBig, abnormal]);
   });
 
+  // The text is the one of JavaScriptCore for `10n | 0`. V8 words it differently.
   it("a BigInt throws and nothing connects", async () => {
     using server = await startRawServer(() => {});
-    expect(() => new WebSocket(server.url, { maxPayload: 10n } as unknown as ClientOptions)).toThrow(TypeError);
+    expect(() => new WebSocket(server.url, { maxPayload: 10n } as unknown as ClientOptions)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        message: "Invalid mix of BigInt and other type in bitwise 'or' operation.",
+      }),
+    );
     // The only connection the server gets is this one.
     const ws = new WebSocket(server.url, { maxPayload: 10 });
     const opened = await openedOr(ws);

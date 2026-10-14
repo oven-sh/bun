@@ -797,6 +797,33 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
+        // A rule gives way to the rule of typescript-eslint that does the same with types, where that one runs: the two would
+        // report the same thing twice, and fix it twice.
+        if file.types.is_some() {
+            let meta_at = |index: usize, it: &Enabled<S>| match is_plain {
+                true => (prepared.order.get(it.place as usize))
+                    .and_then(|slot| config.rules.get(slot.at as usize))
+                    .map(|rule| rule.entry.meta),
+                false => running.get(index).map(|it| it.entry.meta),
+            };
+            let on = enabled
+                .iter()
+                .enumerate()
+                .filter(|(_, it)| it.severity != Severity::Off);
+            let metas: Vec<(usize, &'static Meta)> = on
+                .filter_map(|(index, it)| Some((index, meta_at(index, it)?)))
+                .collect();
+            let typed = metas
+                .iter()
+                .filter(|it| it.1.requires_types && it.1.plugin == crate::rule::Plugin::TypeScript);
+            let typed: Vec<&'static Meta> = typed.map(|it| it.1).collect();
+            for &(index, meta) in metas.iter().filter(|_| !typed.is_empty()) {
+                if self.registry.gives_way_to_one_of(meta, &typed) {
+                    enabled[index].severity = Severity::Off;
+                    rules_to_ignore.push(RuleId::Known(meta));
+                }
+            }
+        }
         let wants_places = options.wants_places || wants_fixes || has_directives;
         let of_js = problems.len() - before_js;
         for (it, reported) in problems.iter_mut().skip(before_js).zip(1..) {

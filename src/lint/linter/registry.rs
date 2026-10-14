@@ -450,6 +450,21 @@ impl Registry {
         Some((base, extension))
     }
 
+    /// Whether `meta` is a rule without types whose check one of `typed`, rules of typescript-eslint that need types, makes
+    /// too: the core rule that it extends, or unicorn's rule of the same name.
+    pub fn gives_way_to_one_of(&self, meta: &Meta, typed: &[&'static Meta]) -> bool {
+        if meta.requires_types {
+            return false;
+        }
+        match meta.plugin {
+            Plugin::Eslint => self.pair_of(meta).is_some_and(|(_, extension)| {
+                typed.iter().any(|it| std::ptr::eq(*it, extension.meta))
+            }),
+            Plugin::Unicorn => typed.iter().any(|it| it.name == meta.name),
+            _ => false,
+        }
+    }
+
     /// Returns the names of `meta`'s rule. If [`Registry::find_by_any_name`] prefers another version of the rule, returns
     /// that version's names.
     pub fn names_of(&self, meta: &Meta) -> Names {

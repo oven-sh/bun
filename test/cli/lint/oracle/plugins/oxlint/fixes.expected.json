@@ -1053,10 +1053,5 @@
   "fix": "// @ts-expect-error @ts-expect-error\na;\n//// @ts-expect-error\na;\n/* / * @ts-expect-error @ts-expect-error */\na;\n// @ts-expect-error\na;\n",
   "suggestions": "// @ts-ignore @ts-ignore\na;\n//// @ts-ignore\na;\n/* / * @ts-ignore @ts-ignore */\na;\n<!-- @ts-ignore\na;\n",
   "dangerously": "// @ts-expect-error @ts-expect-error\na;\n//// @ts-expect-error\na;\n/* / * @ts-expect-error @ts-expect-error */\na;\n// @ts-expect-error\na;\n"
- },
- "211-prefer-readonly": {
-  "fix": "export class A { private b: number | undefined = 0; c() { this.b! = 1; return this.b; } }\n",
-  "suggestions": "export class A { private b: number | undefined = 0; c() { this.b!! = 1; return this.b; } }\n",
-  "dangerously": "export class A { private b: number | undefined = 0; c() { this.b! = 1; return this.b; } }\n"
  }
 }

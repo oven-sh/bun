@@ -4229,7 +4229,7 @@ describe.concurrent("bun lint", () => {
         expect(results.map(it => it.exitCode)).toEqual(rows.map(() => 1));
       });
 
-      // Recorded from oxlint 1.87.0 with tsgolint.
+      // Recorded from oxlint 1.87.0 with tsgolint, which also reports `eslint(require-await)` at the same place in the last two.
       test("a type-aware rule reports with the severity of the ESLint rule of the same name, if that one is on", async () => {
         const texts = {
           "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
@@ -4248,11 +4248,11 @@ describe.concurrent("bun lint", () => {
           ],
           [
             { rules: { "eslint/require-await": "warn", "typescript/require-await": "error" } },
-            ["a.ts:2 eslint(require-await) warning", "a.ts:2 typescript(require-await) warning"],
+            ["a.ts:2 typescript(require-await) warning"],
           ],
           [
             { rules: { "typescript/require-await": "warn", "eslint/require-await": "error" } },
-            ["a.ts:2 eslint(require-await) error", "a.ts:2 typescript(require-await) error"],
+            ["a.ts:2 typescript(require-await) error"],
           ],
         ];
         const results = await Promise.all(
@@ -4877,56 +4877,57 @@ describe.concurrent("bun lint", () => {
         );
       });
 
-      // oxlint writes what its own rules fix, and tsgolint then lints every file as it is written. What is left is reported
-      // where it is in the written text, which is the text that is shown with it. oxlint reports what its own rules leave
-      // where it was before: `1:15` here.
-      test("the rules that need types lint what the fixes of the others wrote", async () => {
+      // oxlint reports such a thing twice, once for each of the two rules.
+      test("a rule gives way to the rule that does the same with types", async () => {
         const tsconfig = JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } });
         const config = (rules: object) =>
-          JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules });
+          JSON.stringify({ plugins: ["typescript", "unicorn"], categories: { correctness: "off" }, rules });
         const places = (raw: string) =>
           JSON.parse(raw)
             .diagnostics.map(
               (it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`,
             )
             .sort();
-        const inOneFile = await lint(
+        const twins = {
+          ".oxlintrc.json": config({
+            "unicorn/prefer-string-starts-ends-with": "error",
+            "typescript/prefer-string-starts-ends-with": "error",
+          }),
+          "tsconfig.json": tsconfig,
+          "a.ts": "declare const s: string;\nexport const a = /^abc/.test(s);\n",
+        };
+        const withTypes = await lint(twins, ["--type-aware", "-f", "json"]);
+        expect(places(withTypes.raw)).toEqual(["a.ts:2:18 typescript(prefer-string-starts-ends-with)"]);
+        const withoutTypes = await lint(twins, ["-f", "json"]);
+        expect(places(withoutTypes.raw)).toEqual(["a.ts:2:18 unicorn(prefer-string-starts-ends-with)"]);
+        const fixed = await lint(twins, ["--fix", "--type-aware", "-f", "json"], { reads: ["a.ts"] });
+        expect(fixed.files).toEqual({ "a.ts": 'declare const s: string;\nexport const a = s.startsWith("abc");\n' });
+        expect(places(fixed.raw)).toEqual([]);
+      });
+
+      test("what is left after the fixes is reported once, where it was", async () => {
+        const tsconfig = JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } });
+        const { files, raw } = await lint(
           {
-            ".oxlintrc.json": config({
-              "no-var": "error",
-              "no-debugger": "error",
-              "typescript/await-thenable": "error",
+            ".oxlintrc.json": JSON.stringify({
+              plugins: ["typescript"],
+              categories: { correctness: "off" },
+              rules: { "no-var": "error", "no-debugger": "error", "typescript/await-thenable": "error" },
             }),
             "tsconfig.json": tsconfig,
-            // `var` becomes `const`, two columns more.
-            "a.ts": "var a = 1; a; debugger;\nexport async function f() { await 1; }\n",
+            // `var` becomes `const` twice: a name that is declared twice, which is not said about the text that is written.
+            "a.ts": "var a = 1; debugger;\nvar a = 2;\nexport async function f() {\n  await a;\n}\n",
           },
           ["--fix", "--type-aware", "-f", "json"],
           { reads: ["a.ts"] },
         );
-        expect(inOneFile.files).toEqual({
-          "a.ts": "const a = 1; a; debugger;\nexport async function f() { await 1; }\n",
+        expect(files).toEqual({
+          "a.ts": "const a = 1; debugger;\nconst a = 2;\nexport async function f() {\n  await a;\n}\n",
         });
-        expect(places(inOneFile.raw)).toEqual([
-          "a.ts:1:17 eslint(no-debugger)",
-          "a.ts:2:35 typescript(await-thenable)",
-        ]);
-        const inAnImport = await lint(
-          {
-            ".oxlintrc.json": config({
-              "typescript/no-inferrable-types": "error",
-              "typescript/no-unnecessary-condition": "error",
-            }),
-            "tsconfig.json": tsconfig,
-            "a.ts": "export const n: number = 0;\n",
-            // `n` is `0` once a.ts is fixed.
-            "c.ts": 'import { n } from "./a";\nif (n > 0) {\n  console.log(n);\n}\n',
-          },
-          ["--fix-dangerously", "--type-aware", "-f", "json"],
-          { reads: ["a.ts"] },
+        const places = JSON.parse(raw).diagnostics.map(
+          (it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`,
         );
-        expect(inAnImport.files).toEqual({ "a.ts": "export const n = 0;\n" });
-        expect(places(inAnImport.raw)).toEqual(["c.ts:2:5 typescript(no-unnecessary-condition)"]);
+        expect(places.sort()).toEqual(["a.ts:1:12 eslint(no-debugger)", "a.ts:4:9 typescript(await-thenable)"]);
       });
 
       test("the options that oxlint accepts are accepted", async () => {

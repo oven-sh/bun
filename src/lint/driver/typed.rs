@@ -653,13 +653,6 @@ struct Fixing {
     is_over: bool,
     /// The rules whose fixes the last pass applied, then `is_fixed` and `fixes` as they were before that pass.
     last_pass: Option<(Vec<RuleId>, bool, usize)>,
-    /// With oxlint: `current` has the fixes of oxlint's own rules, and tsgolint's are next.
-    is_after_own_fixes: bool,
-}
-
-/// Whether tsgolint has the rule of the message.
-fn is_of_tsgolint(message: &LintMessage) -> bool {
-    matches!(&message.rule_id, Some(RuleId::Known(meta) | RuleId::Named(meta, _)) if meta.requires_types)
 }
 
 /// Lints `files` with types. `None` for a file that has to be linted without.
@@ -682,17 +675,6 @@ pub(crate) fn lint(
             .zip(files)
             .filter_map(|(state, file)| Some((from_native(file.path), state.current.clone()?)));
         let linted = check_and_lint(context, environment, files, &pending, changed.collect());
-        // tsgolint lints every file after oxlint has written what its own rules fix in any of them.
-        let has_own_fix =
-            |it: &LintMessage| it.fix.is_some() && !is_of_tsgolint(it) && context.should_fix(it);
-        let is_before_own_fixes = pending.iter().zip(&linted).any(|(&index, linted)| {
-            let (file, state) = (&files[index], &states[index]);
-            file.config.language.is_oxlint
-                && !state.is_after_own_fixes
-                && !state.is_over
-                && context.fixes_file(file.path)
-                && matches!(linted, Some((result, Some(_))) if result.messages.iter().any(has_own_fix))
-        });
         let mut next = Vec::new();
         for (index, linted) in pending.iter().copied().zip(linted) {
             let (file, state) = (&files[index], &mut states[index]);
@@ -737,19 +719,9 @@ pub(crate) fn lint(
                 result.fixes = if is_fixed { fixes } else { 0 };
                 done[index] = Some(result);
             };
-            let is_oxlint = file.config.language.is_oxlint;
-            let waits_for_own_fixes =
-                is_oxlint && is_before_own_fixes && !state.is_after_own_fixes && !state.is_over;
             let has_fixes = context.fixes_file(file.path)
                 && !state.is_over
                 && result.messages.iter().any(|it| it.fix.is_some());
-            if waits_for_own_fixes
-                && !(has_fixes && text.is_some() && result.messages.iter().any(has_own_fix))
-            {
-                state.is_after_own_fixes = true;
-                next.push(index);
-                continue;
-            }
             let (true, Some(text)) = (has_fixes, &text) else {
                 let text = state.current.take().or(text);
                 finish(result, text, (state.is_fixed, state.fixes));
@@ -760,29 +732,20 @@ pub(crate) fn lint(
                 crate::lint::order_fixes_as_oxlint(&mut result.messages);
             }
             let was_refused = result.messages.iter().any(|it| it.is_fatal);
-            // oxlint applies the fixes of its own rules and writes the file, and tsgolint lints what is written.
-            let fixes_of_tsgolint =
-                is_oxlint && (state.is_after_own_fixes || !result.messages.iter().any(has_own_fix));
             let fixed = apply_fixes(text, std::mem::take(&mut result.messages), &|message| {
                 context.should_fix(message)
-                    && (!is_oxlint || is_of_tsgolint(message) == fixes_of_tsgolint)
             });
             result.messages = fixed.remaining;
             if file.config.language.is_oxlint {
                 // They are by place now.
                 bun_lint::utils::sort::sort_by_key(&mut result.messages, |it| it.reported);
             }
-            if !fixed.is_fixed && waits_for_own_fixes {
-                state.is_after_own_fixes = true;
-                next.push(index);
-                continue;
-            }
             if !fixed.is_fixed {
                 let text = state.current.take().or(Some(fixed.output));
                 finish(result, text, (state.is_fixed, state.fixes));
                 continue;
             }
-            // oxlint fixes once, and so does tsgolint after it.
+            // oxlint fixes once.
             if file.config.language.is_oxlint {
                 // A file that oxc refuses keeps what tsgolint fixes in it.
                 if !was_refused
@@ -790,35 +753,15 @@ pub(crate) fn lint(
                     && context.parses(file.path, text, file.config)
                 {
                     context.note_broken_fixes(file.path, fixed.applied);
-                    // What oxlint's own rules fixed is written before tsgolint lints.
-                    let (is_fixed, fixes) = (state.is_fixed, state.fixes);
                     *state = Fixing {
-                        current: if is_fixed {
-                            Some(text.clone())
-                        } else {
-                            file.text.clone()
-                        },
-                        is_fixed,
-                        fixes: if is_fixed { fixes } else { 0 },
+                        current: file.text.clone(),
                         is_over: true,
                         ..Fixing::default()
                     };
                     next.push(index);
                     continue;
                 }
-                if !fixes_of_tsgolint {
-                    state.current = Some(fixed.output);
-                    state.is_fixed = true;
-                    state.fixes += fixed.count;
-                    state.is_after_own_fixes = true;
-                    next.push(index);
-                    continue;
-                }
-                finish(
-                    result,
-                    Some(text.clone()),
-                    (true, state.fixes + fixed.count),
-                );
+                finish(result, Some(text.clone()), (true, fixed.count));
                 if let Some(done) = &mut done[index] {
                     done.fixed_text = Some(fixed.output);
                 }

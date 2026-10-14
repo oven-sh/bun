@@ -50,4 +50,21 @@ bench("ECDH-P384 - computeSecret", () => {
   return alice.computeSecret(bobKey);
 });
 
+// crypto.diffieHellman() with X25519: two KeyObjects, then the same keys as PEM key data
+const x25519Alice = crypto.generateKeyPairSync("x25519");
+const x25519Bob = crypto.generateKeyPairSync("x25519");
+const x25519KeyObjects = { privateKey: x25519Alice.privateKey, publicKey: x25519Bob.publicKey };
+const x25519Pem = {
+  privateKey: x25519Alice.privateKey.export({ type: "pkcs8", format: "pem" }),
+  publicKey: x25519Bob.publicKey.export({ type: "spki", format: "pem" }),
+};
+
+bench("diffieHellman X25519 - KeyObjects", () => {
+  return crypto.diffieHellman(x25519KeyObjects);
+});
+
+bench("diffieHellman X25519 - PEM key data", () => {
+  return crypto.diffieHellman(x25519Pem);
+});
+
 await run();

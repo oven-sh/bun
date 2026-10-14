@@ -67,7 +67,8 @@ std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer);
 // For output encoding
 void parsePublicKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PublicKeyEncodingConfig&);
 void parsePrivateKeyEncoding(JSGlobalObject*, ThrowScope&, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig&);
-void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::StringView objName, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig& config);
+// With `passphraseOwner`, the passphrase is returned as the buffer that holds it and `config.passphrase` stays empty.
+void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, std::optional<bool> isPublic, WTF::StringView objName, ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig& config, JSC::JSArrayBufferView** passphraseOwner = nullptr);
 
 // Modified version of ByteSource from node
 //

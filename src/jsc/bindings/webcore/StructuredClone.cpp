@@ -29,6 +29,7 @@
 
 #include "JSDOMBinding.h"
 #include "JSDOMExceptionHandling.h"
+#include <JavaScriptCore/GCMemoryOperations.h>
 #include <JavaScriptCore/JSArrayInlines.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/ObjectConstructorInlines.h>
@@ -56,7 +57,7 @@ public:
             return value;
         JSCell* cell = value.asCell();
         if (cell->isString())
-            return value;
+            return kindOf(value) == Kind::Leaf ? value : JSValue();
         if (!cell->isObject())
             return {};
         JSObject* object = asObject(cell);
@@ -76,11 +77,49 @@ public:
     }
 
 private:
+    enum class Kind : uint8_t {
+        NotPlain,
+        Leaf,
+        Object,
+    };
+
+    // A slice of another string would keep that string alive through the clone, where the serializer makes a copy of it.
+    ALWAYS_INLINE static Kind kindOf(JSValue value)
+    {
+        if (!value || !value.isCell())
+            return Kind::Leaf;
+        JSCell* cell = value.asCell();
+        if (cell->isString()) {
+            JSString* string = asString(cell);
+            if (string->isSubstring())
+                return Kind::NotPlain;
+            StringImpl* impl = string->tryGetValueImpl();
+            return impl && impl->isSubString() ? Kind::NotPlain : Kind::Leaf;
+        }
+        return cell->type() == FinalObjectType || cell->type() == ArrayType ? Kind::Object : Kind::NotPlain;
+    }
+
     JSValue cloneObject(JSObject* object)
     {
         Structure* structure = object->structure();
         if (!structure->canPerformFastPropertyEnumerationCommon() || !structure->hasInlineStorage())
             return {};
+        // Looked at before anything is allocated: an object that holds a Date costs this look, and not a copy to throw away.
+        PropertyOffset maxOffset = structure->maxOffset();
+        PropertyOffset inlineEnd = structure->inlineSize();
+        bool holdsObjects = false;
+        for (PropertyOffset offset = 0; offset < inlineEnd; ++offset) {
+            Kind kind = kindOf(object->getDirect(offset));
+            if (kind == Kind::NotPlain)
+                return {};
+            holdsObjects |= kind == Kind::Object;
+        }
+        for (PropertyOffset offset = firstOutOfLineOffset; offset <= maxOffset; ++offset) {
+            Kind kind = kindOf(object->getDirect(offset));
+            if (kind == Kind::NotPlain)
+                return {};
+            holdsObjects |= kind == Kind::Object;
+        }
         // Succeeds only when every own property is a plain data property with a string key and the prototype is this global's Object.prototype.
         JSObject* clone = tryCreateObjectViaCloning(m_vm, m_globalObject, object);
         if (!clone) {
@@ -90,9 +129,9 @@ private:
             clone = constructEmptyObject(m_globalObject);
         }
         remember(object, clone);
+        if (!holdsObjects)
+            return clone;
 
-        PropertyOffset maxOffset = structure->maxOffset();
-        PropertyOffset inlineEnd = structure->inlineSize();
         for (PropertyOffset offset = 0; offset < inlineEnd; ++offset) {
             if (!cloneProperty(object, clone, offset))
                 return {};
@@ -127,6 +166,16 @@ private:
         if (shape != UndecidedShape && shape != Int32Shape && shape != DoubleShape && shape != ContiguousShape)
             return {};
         unsigned length = array->length();
+        bool holdsObjects = false;
+        if (shape == ContiguousShape) {
+            auto* elements = array->butterfly()->contiguous().data();
+            for (unsigned i = 0; i < length; ++i) {
+                Kind kind = kindOf(elements[i].get());
+                if (kind == Kind::NotPlain)
+                    return {};
+                holdsObjects |= kind == Kind::Object;
+            }
+        }
 
         Structure* cloneStructure = m_globalObject->arrayStructureForIndexingTypeDuringAllocation(IsArray | shape);
         if (hasAnyArrayStorage(cloneStructure->indexingType())) [[unlikely]]
@@ -138,22 +187,25 @@ private:
 
         if (shape == UndecidedShape)
             return clone;
-        if (shape == Int32Shape || shape == DoubleShape) {
+        if (shape != ContiguousShape) {
             static_assert(sizeof(double) == sizeof(JSValue));
             memcpy(static_cast<void*>(clone->butterfly()->contiguous().data()), static_cast<const void*>(array->butterfly()->contiguous().data()), length * sizeof(JSValue));
             return clone;
         }
+        gcSafeMemcpy(clone->butterfly()->contiguous().data(), array->butterfly()->contiguous().data(), length * sizeof(JSValue));
+        m_vm.writeBarrier(clone);
+        if (!holdsObjects)
+            return clone;
 
+        // As in an object, each slot already holds what the source holds, and only an object in it is replaced.
         for (unsigned i = 0; i < length; ++i) {
             JSValue value = array->butterfly()->contiguous().at(array, i).get();
-            if (!value)
+            if (!value || !value.isCell() || value.asCell()->isString())
                 continue;
-            if (value.isCell() && !value.asCell()->isString()) {
-                value = this->clone(value);
-                if (!value)
-                    return {};
-            }
-            clone->butterfly()->contiguous().at(clone, i).set(m_vm, clone, value);
+            JSValue cloned = this->clone(value);
+            if (!cloned)
+                return {};
+            clone->butterfly()->contiguous().at(clone, i).set(m_vm, clone, cloned);
         }
         return clone;
     }

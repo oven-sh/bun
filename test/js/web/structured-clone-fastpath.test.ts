@@ -1007,7 +1007,22 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
       sealed: Object.seal({ a: { b: 1 } }),
       closed: Object.preventExtensions({ a: { b: 1 } }),
     },
-    "a non-enumerable property": [Object.defineProperty({ a: 1 }, "hidden", { value: { x: 1 }, enumerable: false })],
+    // Writable and configurable, so that being non-enumerable is all that sets it apart.
+    "a non-enumerable property": [
+      Object.defineProperty({ a: 1 }, "hidden", {
+        value: { x: 1 },
+        writable: true,
+        enumerable: false,
+        configurable: true,
+      }),
+    ],
+    // A slice shares the string it was taken from, read or not: the clone gets a string of its own.
+    "slices of a string": (() => {
+      const source = Buffer.alloc(4096, "abc").toString();
+      const read = source.slice(100, 300);
+      read.charCodeAt(0);
+      return { unread: source.slice(10, 200), read, list: [source.slice(7, 90)], whole: source };
+    })(),
     "a read-only property": [
       Object.defineProperty({ a: 1 }, "fixed", {
         value: { x: 1 },
@@ -1174,6 +1189,39 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
       stdout: JSON.stringify({ serializationAllocates: true, copyAllocatesLess: true }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A slice keeps the string it was taken from alive. Serialization copies a string, so a clone never did.
+  test("a clone of a slice of a string does not keep the string alive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { heapStats } = require("bun:jsc");
+         function clones() {
+           const source = Buffer.alloc(32 << 20, "x").toString("latin1");
+           const read = source.slice(100, 4000);
+           read.charCodeAt(0);
+           return structuredClone({ unread: source.slice(10, 4000), read, list: [source.slice(5, 4000)] });
+         }
+         const clone = clones();
+         await new Promise(resolve => setImmediate(resolve));
+         Bun.gc(true);
+         console.log(JSON.stringify({
+           lengths: [clone.unread.length, clone.read.length, clone.list[0].length],
+           keepsTheSource: heapStats().extraMemorySize > 16 << 20,
+         }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ lengths: [3990, 3900, 3995], keepsTheSource: false }),
       stderr: "",
       exitCode: 0,
     });

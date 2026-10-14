@@ -1056,6 +1056,15 @@ ignore/before-the-body-of-a-function.ts
 233 254 L BlockStatement 255 263 -
 284 305 L BlockStatement 306 314 -
 324 342 L ExpressionStatement 347 351 -
+ignore/before-the-colon-of-a-signature.ts
+18 39 T Identifier 16 17 -
+56 77 T Identifier 53 54 -
+95 113 L TSTypeReference 118 125 -
+133 154 L TSTypeAnnotation 155 164 -
+196 217 T Identifier 194 195 -
+246 267 L TSTypeAnnotation 268 277 -
+302 312 L TSTypeReference 317 324 -
+341 354 L TSTypeOperator 359 372 -
 ignore/before-the-parameters-of-a-function.ts
 11 32 T Identifier 9 10 -
 55 73 L Identifier 76 77 -

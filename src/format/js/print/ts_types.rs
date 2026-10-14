@@ -376,19 +376,30 @@ pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
                 return write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
             };
             write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
-            // `a?/* comment */ : B` for oxfmt. For Prettier the type annotation has no comments.
-            if !f.is_quiet() {
-                write!(f, leading_comments(AstNodes::TSTypeAnnotation(ty)));
+            let write_type_annotation = |f: &mut Formatter<'a>| {
+                write!(f, [":", space()]);
+                // `a: // comment ⏎ B` stays as it is for oxfmt. The comment dangles from the signature.
+                if !f.is_quiet()
+                    && !union_writes_comments_behind_colon(without_lone_operator(ty), f)
+                {
+                    let comments_behind_colon = f.comments().of_node(node).dangling;
+                    write!(f, FormatLeadingComments::Comments(comments_behind_colon));
+                }
+                write!(f, ty);
+            };
+            match type_annotation_of_signature_has_comments(f) {
+                true => format_node(AstNodes::TSTypeAnnotation(ty), f, write_type_annotation),
+                false => write_type_annotation(f),
             }
-            write!(f, [":", space()]);
-            // `a: // comment ⏎ B` stays as it is for oxfmt. The comment dangles from the signature.
-            if !f.is_quiet() && !union_writes_comments_behind_colon(without_lone_operator(ty), f) {
-                let comments_behind_colon = f.comments().of_node(node).dangling;
-                write!(f, FormatLeadingComments::Comments(comments_behind_colon));
-            }
-            write!(f, ty);
         }
     }
+}
+
+/// `interface A { b? /* comment */ : C }` is `b?/* comment */ : C` for oxfmt, and `b /* prettier-ignore */ : C<  D >` keeps its
+/// `: C<  D >`. For Prettier the `: C` of a signature is not a node that has comments: one before the `:` on a line of its own
+/// leads `C`, so nothing may be entered between the signature and `C`.
+fn type_annotation_of_signature_has_comments(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// `A extends B ? C : D`

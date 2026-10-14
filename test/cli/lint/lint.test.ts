@@ -36,6 +36,8 @@ import whatOxlintFixes from "./oracle/plugins/oxlint/fixes.expected.json";
 import whatOxlintMarks from "./oracle/plugins/oxlint/labels.json";
 import { filesOf as filesOfMessages, helpsOf, entries as messages, messagesOf } from "./oracle/plugins/oxlint/messages";
 import optionsOfOxlint from "./oracle/plugins/oxlint/options.json";
+import parenthesesExpected from "./oracle/plugins/oxlint/parentheses.expected.json";
+import parentheses from "./oracle/plugins/oxlint/parentheses.json";
 import { labelsOf, projects } from "./oracle/plugins/oxlint/projects";
 
 afterAll(endChildren);
@@ -4589,6 +4591,24 @@ maybe(() => { return f; });
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
+      // parentheses.json has code in parentheses that aren't needed, for the type-aware rules that used to treat it
+      // differently from the same code without them. parentheses.expected.json is what `bun lint` reports for it.
+      test.serial(
+        "type-aware rules see through redundant parentheses",
+        async () => {
+          const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
+          const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+          for (const { name, config, files: texts } of parentheses) {
+            files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
+            files[`${name}/tsconfig.json`] = JSON.stringify({ compilerOptions });
+            for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
+          }
+          const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+          expect(foundExactly(raw, Object.keys(parenthesesExpected))).toEqual(parenthesesExpected);
+        },
+        isDebug || isASAN ? 120_000 : 30_000,
+      );
+
       // messages.json has what oxlint 1.87.0 with tsgolint 7.0.2003 says.
       test("the rules that oxlint shares with ESLint and typescript-eslint say what oxlint's say", async () => {
         const { raw } = await lint(filesOfMessages(messages), ["-f", "json", "--type-aware"]);
@@ -5032,12 +5052,6 @@ maybe(() => { return f; });
           ],
           ["no-implied-eval", 'setTimeout("alert(1)", 1);\n', '(setTimeout)("alert(1)", 1);\n', 1],
           [
-            "no-floating-promises",
-            "declare const p: Promise<number>;\np.then(() => 1);\n",
-            "declare const p: Promise<number>;\n(p.then)(() => 1);\n",
-            1,
-          ],
-          [
             "await-thenable",
             "export async function f() {\n  await Promise.all([1, 2]);\n}\n",
             "export async function f() {\n  await Promise.all(([1, 2]));\n}\n",
@@ -5064,6 +5078,18 @@ maybe(() => { return f; });
         );
         expect(pairs.map((_, index) => reported(`${index}-plain`))).toEqual(expected);
         expect(pairs.map((_, index) => reported(`${index}-parenthesized`))).toEqual(expected);
+      });
+
+      test("unbound-method knows RegExp.escape and the other newer built-ins that are bound", async () => {
+        const it = {
+          rule: "typescript/unbound-method",
+          file: "a.ts",
+          text: "export const all = [RegExp.escape, Atomics.pause, Math.f16round, Intl.DurationFormat];\n",
+          typed: true,
+          compilerOptions: { lib: ["esnext"] },
+        };
+        const { raw } = await lint(filesOf(it), ["-f", "json", "--type-aware"]);
+        expect(JSON.parse(raw).diagnostics.map((it: { code: string }) => it.code)).toEqual([]);
       });
 
       test("what is left after the fixes is reported once, where it was", async () => {

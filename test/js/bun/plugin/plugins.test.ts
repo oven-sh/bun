@@ -414,9 +414,7 @@ describe("onLoad contents accepts BufferSource", () => {
     const previous = setSyntheticAllocationLimitForTesting(limit);
     try {
       expect(await import(`buffer-source:too-large-import-${kind}`).then(() => "loaded", error)).toEqual(outOfMemory);
-      expect(() => require(`buffer-source:too-large-require-${kind}`)).toThrow(
-        expect.objectContaining(outOfMemory),
-      );
+      expect(() => require(`buffer-source:too-large-require-${kind}`)).toThrow(expect.objectContaining(outOfMemory));
       // The onLoad of this namespace returns a promise that is pending.
       globalThis.asyncOnLoad = globalThis.bufferSourceContents;
       expect(await import(`async:too-large-${kind}`).then(() => "loaded", error)).toEqual(outOfMemory);
@@ -502,7 +500,6 @@ describe.concurrent("onLoad contents in a buffer", () => {
         exitCode: 0,
       });
     });
-
   }
 
   it("string: stays alive while the transpiler reads it", async () => {

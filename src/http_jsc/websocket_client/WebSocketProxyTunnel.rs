@@ -97,6 +97,13 @@ impl UpgradeClientRef {
         );
     }
 
+    pub fn handshake_timed_out(self) {
+        self.dispatch(
+            HttpUpgradeClient::handle_handshake_timeout,
+            HttpsUpgradeClient::handle_handshake_timeout,
+        );
+    }
+
     fn tunnel_server_identity(
         self,
         ssl: &mut bun_boringssl::c::SSL,

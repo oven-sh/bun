@@ -364,5 +364,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_COMMAND", Error],
   ["ERR_REDIS_SERVER_ERROR", Error, "RedisError"],
   ["ERR_FFI_CC_DISABLED", Error],
+  ["WS_ERR_UNSUPPORTED_MESSAGE_LENGTH", RangeError],
 ];
 export default errors;

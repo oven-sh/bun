@@ -29,14 +29,16 @@ use bun_collections::StringSet;
 use bun_core::ZBox;
 use bun_core::fmt::HostFormatter;
 use bun_core::strings;
-use bun_core::{String as BunString, Utf8Bytes};
+use bun_core::{String as BunString, Timespec, TimespecMockMode, Utf8Bytes};
+use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
+use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
 use bun_picohttp as picohttp;
 use bun_ptr::{BackRef, JsCell, RefPtr, ThisPtr};
 
-use super::websocket_proxy_tunnel::IntoUpgradeClientRef;
+use super::websocket_proxy_tunnel::{IntoUpgradeClientRef, UpgradeClientRef};
 use bun_uws::{self as uws, SocketHandler, SocketKind};
 
 use super::cpp_websocket::{CppWebSocket, TlsHandshake, TlsPeer};
@@ -66,6 +68,61 @@ fn handshake_timeout_seconds() -> core::ffi::c_uint {
             .get()
             .unwrap_or(120),
     )
+}
+
+/// `handshakeTimeout` of the `ws` package: an idle timer in milliseconds, which the socket timeout cannot express.
+pub struct HandshakeTimer {
+    event_loop_timer: EventLoopTimer,
+    interval_ms: u32,
+    client: UpgradeClientRef,
+}
+
+bun_event_loop::impl_timer_owner!(HandshakeTimer; from_timer_ptr => event_loop_timer);
+
+impl HandshakeTimer {
+    fn create(client: UpgradeClientRef, interval_ms: u32) -> ptr::NonNull<Self> {
+        bun_core::heap::alloc_nn(Self {
+            event_loop_timer: EventLoopTimer::init_paused(TimerTag::WebSocketHandshakeTimeout),
+            interval_ms,
+            client,
+        })
+    }
+
+    /// Count the interval from now.
+    fn restart(this: ptr::NonNull<Self>) {
+        let this = this.as_ptr();
+        let vm = VirtualMachine::get_mut_ptr();
+        // SAFETY: the client that owns `this` is live, and this is the JS thread that owns the timer heap.
+        unsafe {
+            let timer = &raw mut (*this).event_loop_timer;
+            if (*timer).state == TimerState::ACTIVE {
+                VirtualMachine::timer_remove(vm, timer);
+            }
+            (*timer).next = Timespec::ms_from_now(
+                TimespecMockMode::ForceRealTime,
+                i64::from((*this).interval_ms),
+            );
+            VirtualMachine::timer_insert(vm, timer);
+        }
+    }
+
+    fn destroy(this: ptr::NonNull<Self>) {
+        let this = this.as_ptr();
+        // SAFETY: as in `restart`, and the client gave up its only pointer to `this`.
+        unsafe {
+            let timer = &raw mut (*this).event_loop_timer;
+            if (*timer).state == TimerState::ACTIVE {
+                VirtualMachine::timer_remove(VirtualMachine::get_mut_ptr(), timer);
+            }
+            bun_core::heap::destroy(this);
+        }
+    }
+
+    /// The heap popped this timer. The client this returns frees it in `handshake_timed_out`.
+    pub fn fired(&mut self) -> UpgradeClientRef {
+        self.event_loop_timer.state = TimerState::FIRED;
+        self.client
+    }
 }
 
 /// `uws.NewSocketHandler(ssl)`
@@ -150,6 +207,9 @@ pub struct HTTPClient<const SSL: bool> {
     /// with a `Sec-WebSocket-Extensions` header anyway, `processResponse`
     /// fails the handshake per RFC 6455 §9.1 — matching upstream `ws`.
     offered_permessage_deflate: bool,
+
+    /// Set by `set_handshake_timeout`. It replaces the socket timeout of `handshake_timeout_seconds()`.
+    handshake_timer: Cell<Option<ptr::NonNull<HandshakeTimer>>>,
 }
 
 // Handler set referenced by the dispatch table (kind = `.ws_client_upgrade[_tls]`).
@@ -400,6 +460,7 @@ where
             expected_accept: request_result.expected_accept,
             offered_permessage_deflate: offer_permessage_deflate,
             subprotocols: JsCell::new(subprotocols),
+            handshake_timer: Cell::new(None),
         });
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client.as_ptr());
         let this = client.this_ptr();
@@ -498,6 +559,34 @@ where
         self.socket_ref.set(None);
     }
 
+    /// Fail the upgrade after `ms` without socket activity, as a socket timeout of node does.
+    pub(crate) fn set_handshake_timeout(this: ThisPtr<Self>, ms: u32) {
+        if ms == 0 || this.cpp_websocket().is_none() {
+            return;
+        }
+        this.cancel_handshake_timer();
+        let timer = HandshakeTimer::create(Self::upgrade_client_ref(this), ms);
+        this.handshake_timer.set(Some(timer));
+        this.tcp.get().set_timeout(0);
+        HandshakeTimer::restart(timer);
+    }
+
+    fn restart_handshake_timer(&self) {
+        if let Some(timer) = self.handshake_timer.get() {
+            HandshakeTimer::restart(timer);
+        }
+    }
+
+    /// Takes `ThisPtr<Self>` because the close may free `this`; see `fail`.
+    pub(crate) fn handle_handshake_timeout(this: ThisPtr<Self>) {
+        log!("onHandshakeTimeout");
+        this.cancel_handshake_timer();
+        let tcp = this.tcp.get();
+        Self::dispatch_abrupt_close(this, ErrorCode::Timeout);
+        // Not the close of `fail`: that one waits for the close_notify of a TLS peer, and this peer let the handshake time out.
+        tcp.close_now();
+    }
+
     /// Write the unsent suffix of `input_body_buf` via `write` (which returns
     /// bytes written, or `None` on failure) without a cell borrow spanning the
     /// possibly re-entrant write. On failure the client is terminated — which
@@ -548,6 +637,7 @@ where
     pub(crate) fn fail(this: ThisPtr<Self>, code: ErrorCode) {
         log!("onFail: {}", <&'static str>::from(code));
         bun_jsc::mark_binding!();
+        this.cancel_handshake_timer();
         // Copy `tcp` out before dispatch so nothing touches `*this` after the
         // FFI call (which may reenter and pop our tag).
         let tcp = this.tcp.get();
@@ -600,6 +690,7 @@ where
             success,
             ssl_error.error_no
         );
+        this.restart_handshake_timer();
 
         let handshake_success = success == 1;
 
@@ -689,7 +780,10 @@ where
         // `us_internal_socket_after_open` zeroes the socket timeout when the
         // SEMI_SOCKET opens, so the value `connect()` armed only covered the
         // TCP connect. Re-arm so an accept-but-never-answer peer times out.
-        socket.set_timeout(handshake_timeout_seconds());
+        match this.handshake_timer.get() {
+            Some(timer) => HandshakeTimer::restart(timer),
+            None => socket.set_timeout(handshake_timeout_seconds()),
+        }
 
         debug_assert!(!this.input_body_buf.get().is_empty());
         debug_assert!(this.to_send_len.get() == 0);
@@ -801,6 +895,7 @@ where
 
         // Handle proxy handshake response
         if this.state.get() == State::ProxyHandshake {
+            this.restart_handshake_timer();
             Self::handle_proxy_response(this, socket, data);
             return;
         }
@@ -809,10 +904,12 @@ where
         {
             let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
             if let Some(tunnel) = tunnel {
+                // TLS records restart no handshake timer, as on a direct wss:// socket. What the tunnel decrypts does.
                 WebSocketProxyTunnel::receive(tunnel, data);
                 return;
             }
         }
+        this.restart_handshake_timer();
 
         let full = match this.buffer_and_parse_head(data) {
             HeadParse::Done { full, .. } => full,
@@ -1028,6 +1125,7 @@ where
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
     pub(crate) fn on_proxy_tls_handshake_complete(this: ThisPtr<Self>) {
         log!("onProxyTLSHandshakeComplete");
+        this.restart_handshake_timer();
 
         // Take the WebSocket upgrade request from proxy state (transfers
         // ownership) along with the tunnel to send it through.
@@ -1068,6 +1166,7 @@ where
     pub(crate) fn handle_decrypted_data(this: ThisPtr<Self>, data: &[u8]) {
         log!("handleDecryptedData: {} bytes", data.len());
         let _guard = RefPtr::from_this(this);
+        this.restart_handshake_timer();
 
         // Process as if it came directly from the socket.
         let full = match this.buffer_and_parse_head(data) {
@@ -1352,6 +1451,7 @@ where
             let has_ws = this.cpp_websocket().is_some();
             if !tcp.is_closed() && has_ws {
                 tcp.set_timeout(0);
+                this.cancel_handshake_timer();
                 log!("onDidConnect (tunnel mode)");
 
                 // Release the ref that paired with C++'s m_upgradeClient: C++
@@ -1466,6 +1566,7 @@ where
         // `handle_close`, dropping the socket's ref while this frame still
         // reads `*this`.
         let _guard = RefPtr::from_this(this);
+        this.restart_handshake_timer();
 
         // Forward to proxy tunnel if active
         let tunnel = this.proxy.get().as_ref().and_then(|p| p.get_tunnel());
@@ -1532,7 +1633,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
         self.to_send_len.set(0);
     }
 
+    fn cancel_handshake_timer(&self) {
+        if let Some(timer) = self.handshake_timer.take() {
+            HandshakeTimer::destroy(timer);
+        }
+    }
+
     pub(crate) fn clear_data(&self) {
+        self.cancel_handshake_timer();
         self.poll_ref
             .with_mut(|p| p.unref(VirtualMachineRef::get().loop_ctx()));
 
@@ -1970,6 +2078,14 @@ pub fn bun__websockethttpclient__memorycost(
     this.memory_cost()
 }
 
+// HOST_EXPORT(Bun__WebSocketHTTPClient__setHandshakeTimeout, c)
+pub fn bun__websockethttpclient__set_handshake_timeout(
+    this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpUpgradeClient>,
+    ms: u32,
+) {
+    HttpUpgradeClient::set_handshake_timeout(this, ms);
+}
+
 // HOST_EXPORT(Bun__WebSocketHTTPSClient__connect, c)
 #[allow(clippy::too_many_arguments)]
 pub fn bun__websockethttpsclient__connect(
@@ -2027,6 +2143,14 @@ pub fn bun__websockethttpsclient__memorycost(
     this: &crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient,
 ) -> usize {
     this.memory_cost()
+}
+
+// HOST_EXPORT(Bun__WebSocketHTTPSClient__setHandshakeTimeout, c)
+pub fn bun__websockethttpsclient__set_handshake_timeout(
+    this: ThisPtr<crate::websocket_client::websocket_upgrade_client::HttpsUpgradeClient>,
+    ms: u32,
+) {
+    HttpsUpgradeClient::set_handshake_timeout(this, ms);
 }
 
 pub type NewHttpUpgradeClient<const SSL: bool> = HTTPClient<SSL>;

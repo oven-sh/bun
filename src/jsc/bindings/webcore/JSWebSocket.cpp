@@ -1114,4 +1114,20 @@ JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject)
     return WebCore::JSWebSocket::getConstructor(globalObject->vm(), globalObject);
 }
 
+// (socket, maxPayload, handshakeTimeout): the `ws` module calls it right after `new WebSocket()`.
+JSC_DEFINE_HOST_FUNCTION(jsWebSocketSetClientLimits, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* socket = dynamicDowncast<JSWebSocket>(callFrame->argument(0));
+    if (!socket) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    uint32_t maxReceiveMessageLength = callFrame->argument(1).toUInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    uint32_t handshakeTimeoutMs = callFrame->argument(2).toUInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    socket->wrapped().setClientLimits(maxReceiveMessageLength, handshakeTimeoutMs);
+    return JSValue::encode(jsUndefined());
+}
+
 }

@@ -556,6 +556,7 @@ ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(
     const BunString* unixSocketPath,
     bool offerPerMessageDeflate);
 ZIG_DECL size_t Bun__WebSocketHTTPClient__memoryCost(WebSocketHTTPClient* arg0);
+ZIG_DECL void Bun__WebSocketHTTPClient__setHandshakeTimeout(WebSocketHTTPClient* arg0, uint32_t ms);
 #endif
 
 #ifdef __cplusplus
@@ -573,6 +574,7 @@ ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(
     const BunString* unixSocketPath,
     bool offerPerMessageDeflate);
 ZIG_DECL size_t Bun__WebSocketHTTPSClient__memoryCost(WebSocketHTTPSClient* arg0);
+ZIG_DECL void Bun__WebSocketHTTPSClient__setHandshakeTimeout(WebSocketHTTPSClient* arg0, uint32_t ms);
 
 // Parse TLS options from JavaScript object using SSLConfig.fromJS
 ZIG_DECL void* Bun__WebSocket__parseSSLConfig(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue tlsValue);

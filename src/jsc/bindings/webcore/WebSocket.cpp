@@ -56,6 +56,7 @@
 
 #include "JSBuffer.h"
 #include "BunClientData.h"
+#include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "WebSocketDeflate.h"
 
@@ -1452,6 +1453,62 @@ void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::
     }
 }
 
+// The events the `ws` package has for a limit it set: 'error' while CLOSING, then CLOSED and a close with 1006 and no reason.
+void WebSocket::didExceedClientLimit(ClientLimit limit)
+{
+    if (m_state == CLOSED)
+        return;
+    m_state = CLOSING;
+    if (!scriptExecutionContext()) {
+        m_state = CLOSED;
+        return;
+    }
+    queueTaskKeepingObjectAlive(*this, TaskSource::WebSocket, [limit](WebSocket& ws) {
+        if (ws.m_state == CLOSED)
+            return;
+        auto* globalObject = ws.scriptExecutionContext()->jsGlobalObject();
+        auto& vm = JSC::getVM(globalObject);
+        ErrorEvent::Init eventInit = {};
+        JSC::JSObject* error = nullptr;
+        switch (limit) {
+        case ClientLimit::MaxReceiveMessageLength:
+            eventInit.message = "Max payload size exceeded"_s;
+            error = Bun::createError(globalObject, Bun::ErrorCode::WS_ERR_UNSUPPORTED_MESSAGE_LENGTH, eventInit.message);
+            break;
+        case ClientLimit::HandshakeTimeout:
+            eventInit.message = "Opening handshake has timed out"_s;
+            error = JSC::createError(globalObject, eventInit.message);
+            break;
+        }
+        error->putDirect(vm, WebCore::builtinNames(vm).wsPackageErrorPrivateName(), JSC::jsBoolean(true));
+        eventInit.error = error;
+        ws.dispatchEvent(ErrorEvent::create(eventNames().errorEvent, WTF::move(eventInit), EventIsTrusted::Yes));
+        auto dispatchClose = [](WebSocket& ws) {
+            if (ws.m_state == CLOSED)
+                return;
+            ws.m_state = CLOSED;
+            ws.dispatchEvent(CloseEvent::create(false, 1006, emptyString()));
+        };
+        // As in the `ws` package: 'close' in the same turn for a handshake that timed out, and in a later turn for a message over the limit.
+        if (limit == ClientLimit::HandshakeTimeout)
+            dispatchClose(ws);
+        else
+            queueTaskKeepingObjectAlive(ws, TaskSource::WebSocket, WTF::move(dispatchClose));
+    });
+}
+
+void WebSocket::setClientLimits(uint32_t maxReceiveMessageLength, uint32_t handshakeTimeoutMs)
+{
+    m_maxReceiveMessageLength = maxReceiveMessageLength;
+    if (!handshakeTimeoutMs || !m_upgradeClient)
+        return;
+    m_hasHandshakeTimeout = true;
+    if (m_connectionType == ConnectionType::TLS || m_connectionType == ConnectionType::ProxyTLS)
+        Bun__WebSocketHTTPSClient__setHandshakeTimeout(m_upgradeClient, handshakeTimeoutMs);
+    else
+        Bun__WebSocketHTTPClient__setHandshakeTimeout(m_upgradeClient, handshakeTimeoutMs);
+}
+
 void WebSocket::didStartClosingHandshake()
 {
     // LOG(Network, "WebSocket %p didStartClosingHandshake()", this);
@@ -1600,7 +1657,10 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         // Opening-handshake timeout: per WHATWG "fail the WebSocket connection"
         // fire error + close(1006). didReceiveClose gates the error event on
         // wasConnecting, so a (currently unreachable) post-open timeout only closes.
-        didReceiveClose(CleanStatus::NotClean, 1006, "Timeout"_s, true);
+        if (m_hasHandshakeTimeout && m_state == CONNECTING)
+            didExceedClientLimit(ClientLimit::HandshakeTimeout);
+        else
+            didReceiveClose(CleanStatus::NotClean, 1006, "Timeout"_s, true);
         break;
     }
     case Bun::WebSocketErrorCode::closed: {
@@ -1663,7 +1723,10 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         break;
     }
     case Bun::WebSocketErrorCode::message_too_big: {
-        didReceiveClose(CleanStatus::NotClean, 1009, "Message too big"_s);
+        if (m_maxReceiveMessageLength)
+            didExceedClientLimit(ClientLimit::MaxReceiveMessageLength);
+        else
+            didReceiveClose(CleanStatus::NotClean, 1009, "Message too big"_s);
         break;
     }
     case Bun::WebSocketErrorCode::invalid_compressed_data: {
@@ -1797,6 +1860,11 @@ extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, WebCor
 extern "C" bool WebSocket__rejectUnauthorized(WebCore::WebSocket* webSocket)
 {
     return webSocket->rejectUnauthorized();
+}
+
+extern "C" uint32_t WebSocket__maxReceiveMessageLength(WebCore::WebSocket* webSocket)
+{
+    return webSocket->maxReceiveMessageLength();
 }
 
 extern "C" bool WebSocket__isProxyTLS(WebCore::WebSocket* webSocket)

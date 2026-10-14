@@ -31,6 +31,7 @@ function sendAfterClose(state, cb) {
 }
 
 const ObjectHasOwn = Object.hasOwn;
+const MathCeil = Math.ceil;
 
 /**
  * Extracts connection and proxy options from an agent object.
@@ -114,8 +115,15 @@ function controlPayload(binaryType, data) {
   return binaryType === "arraybuffer" ? Buffer.from(data) : data;
 }
 
+// The limit npm ws has for a `maxPayload` option: `maxPayload | 0` when that is above 0, else 0 for no limit.
+function normalizeMaxPayload(maxPayload) {
+  maxPayload |= 0;
+  return maxPayload > 0 ? maxPayload : 0;
+}
+
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
+let setClientLimits;
 
 /**
  * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
@@ -169,6 +177,8 @@ class BunWebSocket extends EventEmitter {
     // any `perMessageDeflate` that's present and falsy suppresses the extension
     // offer; omitted or truthy keeps the default.
     let disableDeflate = false;
+    // [maxPayload, handshakeTimeout] for the native client, when the caller set one.
+    let limits;
     // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
     if ($isObject(options)) {
       headers = options?.headers;
@@ -197,6 +207,17 @@ class BunWebSocket extends EventEmitter {
         // The agent wins: https://github.com/nodejs/node/blob/v26.3.0/lib/_http_agent.js#L305
         tlsOptions = require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...ownOptions, ...connectOpts });
       }
+
+      let maxPayload = 0;
+      const limit = ownOptions.maxPayload;
+      // No limit in npm ws is the largest one the native client takes. `undefined` keeps the default.
+      if (limit !== undefined) maxPayload = normalizeMaxPayload(limit) || 0x7fffffff;
+      let handshakeTimeout = 0;
+      const timeout = ownOptions.handshakeTimeout;
+      if (timeout !== undefined) {
+        handshakeTimeout = MathCeil(require("internal/timers").getTimerDuration(timeout, "timeout"));
+      }
+      if (maxPayload !== 0 || handshakeTimeout !== 0) limits = [maxPayload, handshakeTimeout];
     }
 
     const finishRequest = options?.finishRequest;
@@ -236,7 +257,7 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
+            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate, limits);
           }
         },
         write() {},
@@ -265,15 +286,15 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
+        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate, limits);
       }
       return;
     }
 
-    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
+    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate, limits);
   }
 
-  #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate) {
+  #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate, limits) {
     // The native WebSocket keeps permessage-deflate enabled by default;
     // forward `perMessageDeflate: false` only when the caller asked to disable.
     let wsOptions;
@@ -289,6 +310,10 @@ class BunWebSocket extends EventEmitter {
     }
     let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
+    if (limits !== undefined) {
+      setClientLimits ??= $newCppFunction("JSWebSocket.cpp", "jsWebSocketSetClientLimits", 3);
+      setClientLimits(ws, limits[0], limits[1]);
+    }
 
     return ws;
   }
@@ -416,7 +441,9 @@ class BunWebSocket extends EventEmitter {
           "error",
           err => {
             if (this.#unexpectedResponseEmitted) return;
-            this.emit("error", err);
+            // A limit the constructor set fails with the Error npm ws emits, not with an ErrorEvent.
+            const error = err.error;
+            this.emit("error", error?.$wsPackageError ? error : err);
           },
           once,
         );

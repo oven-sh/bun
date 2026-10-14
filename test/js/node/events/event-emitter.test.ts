@@ -799,6 +799,26 @@ describe("EventEmitter error handling", () => {
   });
 });
 
+test("removeAllListeners(undefined) is not removeAllListeners()", () => {
+  const listeners = (emitter: EventEmitter) => emitter.eventNames().map(name => [name, emitter.listenerCount(name)]);
+  for (const watched of [false, true]) {
+    const removed: unknown[] = [];
+    const make = () => {
+      const emitter = new EventEmitter();
+      emitter.on("a", () => {});
+      emitter.on("undefined", () => {});
+      emitter.on("b", () => {});
+      if (watched) emitter.on("removeListener", name => void removed.push(name));
+      return emitter;
+    };
+    const rest = watched ? [["removeListener", 1]] : [];
+    expect(listeners(make().removeAllListeners(undefined))).toEqual([["a", 1], ["b", 1], ...rest]);
+    expect(listeners(make().removeAllListeners("a"))).toEqual([["undefined", 1], ["b", 1], ...rest]);
+    expect(listeners(make().removeAllListeners())).toEqual([]);
+    expect(removed).toEqual(watched ? [undefined, "a", "a", "undefined", "b"] : []);
+  }
+});
+
 test.concurrent("emit('error') hands its arguments over without Array.prototype[Symbol.iterator]", async () => {
   const src = `
     const { EventEmitter } = require("events");

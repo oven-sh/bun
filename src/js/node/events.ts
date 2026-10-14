@@ -517,7 +517,7 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
 
   // Not listening for removeListener, no need to emit
   if (events.removeListener === undefined) {
-    if (arguments.length === 0) {
+    if ($argumentCount() === 0) {
       this._events = Object.create(null);
       this._eventsCount = 0;
     } else if (events[type] !== undefined) {
@@ -529,7 +529,7 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
   }
 
   // Emit removeListener for all listeners on all events
-  if (arguments.length === 0) {
+  if ($argumentCount() === 0) {
     for (const key of ReflectOwnKeys(events)) {
       if (key === "removeListener") continue;
       this.removeAllListeners(key);

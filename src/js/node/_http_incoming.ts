@@ -75,23 +75,22 @@ function IncomingMessage(socket) {
 
   if (socket === kHandle) {
     // Native server fast-path: (kHandle, url, method, headers, rawHeaders, handle, hasBody, socket)
-    this.url = arguments[1];
-    this.method = arguments[2];
-    // arguments[3] carries no headers object and arguments[4] no rawHeaders
-    // on the native fast path anymore: the raw header bytes stay captured on
-    // the native handle and req.rawHeaders / req.headers are materialized by
-    // their accessors only when user code reads them.
-    this[kHeaderSource] = arguments[5];
-    this[kHandle] = arguments[5];
-    this[noBodySymbol] = !arguments[6];
-    this.socket = arguments[7];
+    const handle = $argument(5);
+    const connection = $argument(7);
+    this.url = $argument(1);
+    this.method = $argument(2);
+    // $argument(3) and $argument(4) are unused: the handle keeps the header bytes, which the rawHeaders / headers accessors build from when read.
+    this[kHeaderSource] = handle;
+    this[kHandle] = handle;
+    this[noBodySymbol] = !$argument(6);
+    this.socket = connection;
     // Node.js exposes the connection as req.client as well (it predates
     // req.socket and some code still reaches for it).
-    this.client = arguments[7];
+    this.client = connection;
     this.upgrade = null;
     // Like Node's IncomingMessage: the readable side inherits the connection
     // socket's highWaterMark (which carries createServer({ highWaterMark })).
-    Readable.$call(this, arguments[7] ? { highWaterMark: arguments[7].readableHighWaterMark } : undefined);
+    Readable.$call(this, connection ? { highWaterMark: connection.readableHighWaterMark } : undefined);
   } else {
     // Node.js-style construction from a net.Socket (used by the HTTP client
     // and anything driving the llhttp parser through node:_http_common).

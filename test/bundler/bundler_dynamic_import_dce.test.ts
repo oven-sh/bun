@@ -5520,8 +5520,12 @@ describe("bundler", () => {
         // A read that does not bind keeps a statement only if it runs with it.
         class Later { static now = ns.now; later() { return unbound.later; } }
         const table = { now: ns.table, later: () => unbound.later };
+        // A pattern over a namespace that a bound read names runs no getter.
+        const { h } = ns.inner;
       `,
+      "/inner.js": `export const h = "DROPPED";`,
       "/x.js": /* js */ `
+        export * as inner from "./inner.js";
         export const kept = "kept";
         export const read = "DROPPED";
         export const voided = "DROPPED";

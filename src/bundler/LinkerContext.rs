@@ -4503,6 +4503,22 @@ impl<'a> LinkerContext<'a> {
             // A named import that holds a namespace (`export * as`) prints as
             // an import identifier.
             bun_ast::ExprData::EImportIdentifier(identifier) => identifier.ref_,
+            // So does a read off a `require()` / `import()` local that is
+            // bound (`bind_namespace_local_read`).
+            bun_ast::ExprData::EDot(dot) if dot.is_import_property_use => {
+                let bun_ast::ExprData::EIdentifier(local) = dot.target.data else {
+                    return false;
+                };
+                let Some(item) = self
+                    .graph
+                    .import_member_bindings
+                    .get(&local.ref_)
+                    .and_then(|names| names.get(dot.name.slice()))
+                else {
+                    return false;
+                };
+                *item
+            }
             bun_ast::ExprData::ERequireString(require) => {
                 return require.unwrapped_id.get().is_some();
             }

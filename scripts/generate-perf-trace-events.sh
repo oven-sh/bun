@@ -100,12 +100,6 @@ RS_OUT=src/perf/generated_perf_trace_events.rs
     echo "        }"
     echo "    }"
     echo "}"
-    echo
-    echo "impl From<PerfEvent> for &'static str {"
-    echo "    fn from(e: PerfEvent) -> &'static str {"
-    echo "        e.as_cstr().to_str().unwrap()"
-    echo "    }"
-    echo "}"
 } > "$RS_OUT"
 rustfmt "$RS_OUT" 2>/dev/null || true
 echo "Generated $RS_OUT"

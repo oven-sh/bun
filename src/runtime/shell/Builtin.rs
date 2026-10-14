@@ -607,10 +607,7 @@ impl Builtin {
                             #[cfg(windows)]
                             {
                                 use bun_sys::FdExt as _;
-                                match f.make_lib_uv_owned_for_syscall(
-                                    bun_sys::Tag::open,
-                                    bun_sys::ErrorCase::CloseOnFail,
-                                ) {
+                                match f.make_lib_uv_owned_for_syscall(bun_sys::Tag::open) {
                                     Err(e) => {
                                         let sys = e.to_shell_system_error();
                                         return Some(Self::cmd_write_failing_error(

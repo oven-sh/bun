@@ -361,14 +361,24 @@ impl<'a> FormatExpr<'a> {
         let (expr, span) = (self.expr, self.expr.span());
 
         // ESTree's `Expression`, as opposed to the `ChainElement` in a `ChainExpression`.
-        if !self.is_in_chain_expression
-            && f.comments().has_trailing_suppression_comment(span.end)
+        let binary = match node.parent() {
+            AstNodes::LogicalExpression(it) | AstNodes::BinaryExpression(it) => Some(it),
+            _ => None,
+        };
+        let is_suppressed = match binary.map(|it| (it.span().end, it.kind())) {
             // The comment trails `a && b` of `a && b // prettier-ignore ⏎ && c`, which Prettier writes
             // without looking at its comments.
-            && !matches!(node.parent(), AstNodes::LogicalExpression(it) | AstNodes::BinaryExpression(it) if it.span().end == span.end)
-        {
-            format_leading_comments(span).fmt(f);
-            write_suppressed_expression(expr, is_chain_expression, f);
+            Some((end, _)) if end == span.end => false,
+            // `a && // prettier-ignore ⏎ b`
+            Some((_, ExprKind::Binary { right, .. })) if right != expr => {
+                f.comments().has_trailing_suppression_comment(span.end)
+                    || (f.comments())
+                        .has_suppression_comment_trailing_left_operand(span.end, right.span().start)
+            }
+            _ => f.comments().has_trailing_suppression_comment(span.end),
+        };
+        if !self.is_in_chain_expression && is_suppressed {
+            self.fmt_as_it_is(span, f);
             return write_trailing_comments_of(node, f);
         }
 
@@ -482,22 +492,38 @@ fn write_suppressed_expression<'a>(
     });
 }
 
+impl<'a> FormatExpr<'a> {
+    /// Whether it is ESTree's `ChainExpression`.
+    #[inline]
+    fn is_chain_expression(&self) -> bool {
+        !self.is_in_chain_expression
+            && matches!(
+                self.expr.tag(),
+                ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull
+            )
+            && self.expr.is_chain_root()
+    }
+}
+
 impl<'a> Format<'a> for FormatExpr<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         if !f.context_mut().has_stack_left() {
             return;
         }
-        let is_chain_expression = !self.is_in_chain_expression
-            && matches!(
-                self.expr.tag(),
-                ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull
-            )
-            && self.expr.is_chain_root();
+        let is_chain_expression = self.is_chain_expression();
         match f.is_quiet() {
             true => self.write_in_parentheses(is_chain_expression, f),
             false => self.fmt_with_comments(is_chain_expression, f),
         }
+    }
+
+    fn fmt_as_it_is(&self, span: Span, f: &mut Formatter<'a>) {
+        if print::function::write_called_function_with_comments(self.expr, self.options, f) {
+            return;
+        }
+        format_leading_comments(span).fmt(f);
+        write_suppressed_expression(self.expr, self.is_chain_expression(), f);
     }
 }
 
@@ -512,6 +538,10 @@ impl<'a> Format<'a> for Expr<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         format_expression(*self, f);
+    }
+
+    fn fmt_as_it_is(&self, span: Span, f: &mut Formatter<'a>) {
+        FormatExpr::with_options(*self, ExprOptions::None).fmt_as_it_is(span, f);
     }
 }
 
@@ -891,6 +921,13 @@ fn format_declaration_with_comments<'a>(
     });
 }
 
+fn is_in_head_of_for(declaration: Stmt<'_>) -> bool {
+    matches!(
+        declaration.ast_parent(),
+        AstNodes::ForStatement(_) | AstNodes::ForInStatement(_) | AstNodes::ForOfStatement(_)
+    )
+}
+
 /// Prettier's `printIgnored` for a statement. `span`: of the statement, without its `;`, which is
 /// written as the options say.
 fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatter<'a>) {
@@ -904,6 +941,8 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
         {
             span.end < statement.span().end
         }
+        // Prettier adds one in the head of a `for` too: `for (/* prettier-ignore */ const a; of b)`.
+        StmtKind::Var(_) if is_in_head_of_for(statement) => false,
         StmtKind::Break(_) | StmtKind::Continue(_) | StmtKind::Debugger | StmtKind::Var(_) => true,
         _ => span.end < statement.span().end,
     };

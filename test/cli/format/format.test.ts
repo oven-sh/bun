@@ -864,6 +864,211 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  /** Formats the texts in one run. Without a third entry, what is expected is the text itself. */
+  async function expectFormatted(rows: [extension: string, text: string, expected?: string][]) {
+    const names = rows.map(([extension], index) => `${index}.${extension}`);
+    const texts = rows.map(([, text], index) => [names[index], text]);
+    const result = await format(Object.fromEntries(texts), [], { reads: names });
+    const expected = rows.map(([, text, expected], index) => [names[index], expected ?? text]);
+    expect(result.files).toEqual(Object.fromEntries(expected));
+    expect(result.exitCode).toBe(0);
+  }
+
+  // What is expected is what Prettier 3.9.9 prints.
+  describe("a `prettier-ignore` comment that trails an expression", () => {
+    test("behind what a member chain starts with", async () => {
+      await expectFormatted([
+        [
+          "js",
+          "const x = (a   +   b) // prettier-ignore\n  .foo( 1,2 );\n",
+          "const x = (a   +   b) // prettier-ignore\n  .foo(1, 2);\n",
+        ],
+        [
+          "js",
+          "const x = (a   +   b) /* prettier-ignore */\n  .foo( 1,2 );\n",
+          "const x = (a   +   b) /* prettier-ignore */\n  .foo(1, 2);\n",
+        ],
+        [
+          "js",
+          "const x = (a   +   b) // prettier-ignore\n  .foo( 1,2 ).bar( 3,4 ).baz( 5,6 );\n",
+          "const x = (a   +   b) // prettier-ignore\n  .foo(1, 2)\n  .bar(3, 4)\n  .baz(5, 6);\n",
+        ],
+        ["js", "async function f() {\n  const x = (await   y) // prettier-ignore\n    .foo();\n}\n"],
+        ["js", "const x = (a   ?   b : c) // prettier-ignore\n  .foo();\n"],
+        ["js", "const x = (a   ,   b) // prettier-ignore\n  .foo();\n"],
+        ["js", "const x = (a?.b) // prettier-ignore\n  .c();\n"],
+        ["js", "({ a:   1 }) // prettier-ignore\n  .foo();\n"],
+        [
+          "js",
+          "const x = (function () {}) // prettier-ignore\n  .call();\n",
+          "const x = function () {} // prettier-ignore\n  .call();\n",
+        ],
+        ["js", "const x = foo({ a: 1,   b: 2 }) // prettier-ignore\n  .bar();\n"],
+        [
+          "js",
+          "const x = foo // prettier-ignore\n  .bar( 3,4 );\n",
+          "const x = foo // prettier-ignore\n  .bar(3, 4);\n",
+        ],
+        [
+          "js",
+          "f((a   +   b) // prettier-ignore\n  .foo( 1,2 ));\n",
+          "f(\n  (a   +   b) // prettier-ignore\n    .foo(1, 2),\n);\n",
+        ],
+        ["ts", "const x = ([[1,   2]] as const) // prettier-ignore\n  .map((a) => a);\n"],
+        ["ts", "const x = (y   as T) // prettier-ignore\n  .foo();\n"],
+        ["ts", "const x = (y   satisfies T) // prettier-ignore\n  .foo();\n"],
+        ["ts", "const x = (<T>   y) // prettier-ignore\n  .foo();\n"],
+      ]);
+    });
+
+    test("behind the object of a member access, and behind what is called", async () => {
+      await expectFormatted([
+        [
+          "js",
+          "const x = (a   +   b) // prettier-ignore\n  .foo;\n",
+          "const x =\n  (a   +   b) // prettier-ignore\n  .foo;\n",
+        ],
+        [
+          "js",
+          "const x = (a   +   b) // prettier-ignore\n  [ 0 ];\n",
+          "const x =\n  (a   +   b) // prettier-ignore\n  [0];\n",
+        ],
+        [
+          "js",
+          "const x = (a   +   b) // prettier-ignore\n  ( 1 );\n",
+          "const x =\n  (a   +   b) // prettier-ignore\n  (1);\n",
+        ],
+        [
+          "js",
+          "const x = new (a   +   b) // prettier-ignore\n  ( 1 );\n",
+          "const x =\n  new (a   +   b) // prettier-ignore\n  (1);\n",
+        ],
+        [
+          "js",
+          "const x = (()   => {}) // prettier-ignore\n  ();\n",
+          "const x = (\n  ()   => {} // prettier-ignore\n)();\n",
+        ],
+        [
+          "js",
+          "const x = (function   () {}) // prettier-ignore\n  ();\n",
+          "const x = (\n  function   () {} // prettier-ignore\n)();\n",
+        ],
+        [
+          "ts",
+          "const x = (y   as T) // prettier-ignore\n  ( 1 );\n",
+          "const x =\n  (y   as T) // prettier-ignore\n  (1);\n",
+        ],
+      ]);
+    });
+
+    test("on a line of its own it leads the next link, and nothing is as it was written", async () => {
+      await expectFormatted([
+        [
+          "js",
+          "const x = (a   +   b)\n  // prettier-ignore\n  .foo( 1,2 );\n",
+          "const x = (a + b)\n  // prettier-ignore\n  .foo(1, 2);\n",
+        ],
+        [
+          "js",
+          "const x = foo({ a: 1,   b: 2 })\n  // prettier-ignore\n  .bar();\n",
+          "const x = foo({ a: 1, b: 2 })\n  // prettier-ignore\n  .bar();\n",
+        ],
+        ["js", "const x = (a   +   b) // foo\n  .foo( 1,2 );\n", "const x = (a + b) // foo\n  .foo(1, 2);\n"],
+      ]);
+    });
+
+    test("between the two sides of a binary expression", async () => {
+      await expectFormatted([
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) && // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) || // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) ?? // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) + // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) - // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) * // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) / // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) % // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) ** // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) | // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) & // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) ^ // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) << // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) >> // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) >>> // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) < // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) > // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) <= // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) >= // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) == // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) != // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) === // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) !== // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) instanceof // prettier-ignore\n  bar;\n"],
+        ["js", "const x =\n  foo({ a: 1,   b: 2 }) in // prettier-ignore\n  bar;\n"],
+        [
+          "js",
+          "const x =\n  foo({ a: 1,   b: 2 }) && /* prettier-ignore */\n  bar;\n",
+          "const x = foo({ a: 1,   b: 2 }) /* prettier-ignore */ && bar;\n",
+        ],
+        ["js", "const x =\n  a   +   b && // prettier-ignore\n  bar;\n"],
+        [
+          "js",
+          "const x =\n  foo({ a: 1,   b: 2 }) && // prettier-ignore\n  bar({ a: 1,   b: 2 }) && // prettier-ignore\n  baz;\n",
+          "const x =\n  foo({ a: 1,   b: 2 }) && // prettier-ignore\n  bar({ a: 1, b: 2 }) && // prettier-ignore\n  baz;\n",
+        ],
+        [
+          "js",
+          "const x =\n  foo({ a: 1,   b: 2 }) && // foo\n  bar;\n",
+          "const x =\n  foo({ a: 1, b: 2 }) && // foo\n  bar;\n",
+        ],
+        [
+          "js",
+          "const x =\n  foo({ a: 1,   b: 2 }) &&\n  // prettier-ignore\n  bar({ a: 1,   b: 2 });\n",
+          "const x =\n  foo({ a: 1, b: 2 }) &&\n  // prettier-ignore\n  bar({ a: 1,   b: 2 });\n",
+        ],
+        [
+          "js",
+          "const x = a && (b   ||   c /* prettier-ignore */);\n",
+          "const x = a && (b   ||   c) /* prettier-ignore */;\n",
+        ],
+        ["js", "if (\n  foo({ a: 1,   b: 2 }) && // prettier-ignore\n  bar\n) {\n}\n"],
+        ["ts", "const x =\n  (y   as T) && // prettier-ignore\n  z;\n"],
+        ["js", "const x = foo({ a: 1,   b: 2 }) /* prettier-ignore */ && bar;\n"],
+        ["js", "const x = foo({ a: 1,   b: 2 }) /* prettier-ignore */ + bar;\n"],
+        [
+          "js",
+          "const x = foo({ a: 1,   b: 2 }) && /* prettier-ignore */ bar({ a: 1,   b: 2 });\n",
+          "const x = foo({ a: 1, b: 2 }) && /* prettier-ignore */ bar({ a: 1,   b: 2 });\n",
+        ],
+        [
+          "js",
+          "const x = foo({ a: 1,   b: 2 }) && /* prettier-ignore */ (bar({ a: 1,   b: 2 }));\n",
+          "const x = foo({ a: 1, b: 2 }) && /* prettier-ignore */ bar({ a: 1,   b: 2 });\n",
+        ],
+      ]);
+    });
+
+    // Prettier adds a `;`: `for (/* prettier-ignore */ const  a; of b) {}`.
+    test("a declaration in the head of a `for` gets no `;`", async () => {
+      await expectFormatted([
+        ["js", "for (/* prettier-ignore */ const  a of b) {\n}\n"],
+        ["js", "for (/* prettier-ignore */ const  a in b) {\n}\n"],
+      ]);
+    });
+  });
+
+  // What is expected is what Prettier 3.9.9 prints.
+  test("a comment with the letters of `else` in it is not the `else`", async () => {
+    await expectFormatted([
+      ["js", "if (a)\n  b(); // else\n// note\nelse if (c) d();\n"],
+      ["js", "if (a)\n  b(); // elsewhere\n// note\nelse d();\n"],
+      ["js", "if (a)\n  b(); /* else */\n// note\nelse d();\n", "if (a) b(); /* else */\n// note\nelse d();\n"],
+      ["js", "if (a)\n  b(); // x else y\n/* note */\nelse {\n  d();\n}\n"],
+      ["js", "if (a)\n  b(); // note\n// else\nelse d();\n"],
+      ["js", "if (a)\n  b(); // else\nelse // else\n  d();\n", "if (a)\n  b(); // else\nelse\n  // else\n  d();\n"],
+      ["js", "if (a) {\n  b();\n} // else\n// note\nelse d();\n"],
+    ]);
+  });
+
   test("Handlebars", async () => {
     const result = await format({ "a.hbs": '<div   class="a  b">{{foo   bar}}</div>\n', "b.handlebars": "{{a}}" }, [], {
       reads: ["a.hbs", "b.handlebars"],

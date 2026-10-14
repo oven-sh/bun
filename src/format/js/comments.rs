@@ -1614,12 +1614,31 @@ impl<'a> Comments<'a> {
         self.has_suppression_comments && self.find_trailing_suppression_comment(pos)
     }
 
+    /// Whether a `prettier-ignore` comment between the two sides of `a && b` trails `a`, which ends at `left_end`. Prettier's
+    /// `attachComments`: one that starts its line leads `b`, one that ends its line trails `a`, and so does any other
+    /// unless only blanks and `(` are between it and `b`.
+    pub(crate) fn has_suppression_comment_trailing_left_operand(
+        &self,
+        left_end: u32,
+        right_start: u32,
+    ) -> bool {
+        self.has_suppression_comments
+            && (self.comments_in(Span::new(left_end, right_start)).iter()).any(|it| {
+                self.is_suppression_comment(it)
+                    && !it.preceded_by_newline()
+                    && (it.is_line()
+                        || it.followed_by_newline()
+                        || !(self.source_text)
+                            .all_bytes(Span::new(it.span.end, right_start), |b| {
+                                b.is_ascii_whitespace() || b == b'('
+                            }))
+            })
+    }
+
     fn find_trailing_suppression_comment(&self, pos: u32) -> bool {
-        if self
-            .end_of_line_comments_after(pos)
-            .iter()
-            .any(|comment| self.is_suppression_comment(comment))
-        {
+        // One that leads the next link of a chain has been moved here too.
+        let is_one = |it: &Comment| self.is_suppression_comment(it) && it.flags & LEADS_LINK == 0;
+        if self.end_of_line_comments_after(pos).iter().any(is_one) {
             return true;
         }
         let (mut reached, mut is_suppressed) = (pos, false);
@@ -1631,7 +1650,7 @@ impl<'a> Comments<'a> {
             if !is_adjacent {
                 break;
             }
-            is_suppressed |= self.is_suppression_comment(comment);
+            is_suppressed |= is_one(comment);
             reached = comment.end();
         }
         is_suppressed
@@ -1747,5 +1766,12 @@ impl<'a> Comments<'a> {
     /// Marks the comments that end at or before `pos` as printed.
     pub(crate) fn skip_comments_before(&mut self, pos: u32) {
         self.printed_count += self.comments_before(pos).len();
+    }
+
+    /// The same for the source text up to `pos`, which is written as it is. The text of a comment that has been moved to
+    /// `pos` is behind that.
+    pub(crate) fn skip_comments_in_text_before(&mut self, pos: u32) {
+        let in_text = self.comments_before_iter(pos);
+        self.printed_count += in_text.take_while(|it| it.span.end <= pos).count();
     }
 }

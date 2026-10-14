@@ -203,7 +203,10 @@ pub(crate) fn write_called_function_with_comments<'a>(
     };
     let has_comments = f.comments().has_comment_before(span.start) || count_trailing(f) > 0;
     if has_comments {
-        let is_suppressed = f.comments().is_suppressed(span.start);
+        let trailing = f.comments().comments_in(Span::after(span, end));
+        let is_suppressed = f.comments().is_suppressed(span.start)
+            || (trailing.iter().take(count_trailing(f)))
+                .any(|it| f.comments().is_suppression_comment(it));
         let content = format_with(|f| {
             write!(f, format_leading_comments(span));
             match is_suppressed {

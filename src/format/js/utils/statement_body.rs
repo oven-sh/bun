@@ -156,7 +156,7 @@ impl<'a> Format<'a> for FormatBodyAndItsComments<'a> {
         if comments_stay_between_head_and_body(f) {
             return;
         }
-        let comments = comments_before_else(body, alternate, f);
+        let comments = comments_before_else(alternate, f);
         let count = comments
             .iter()
             .take_while(|comment| {
@@ -173,23 +173,14 @@ impl<'a> Format<'a> for FormatBodyAndItsComments<'a> {
     }
 }
 
-/// The comments that are not printed yet between `consequent` and the `else` after it.
-pub(crate) fn comments_before_else<'a>(
-    consequent: Stmt<'a>,
-    alternate: Stmt<'a>,
-    f: &Formatter<'a>,
-) -> &'a [Comment] {
+/// The comments that are not printed yet before the `else` that `alternate` follows.
+pub(crate) fn comments_before_else<'a>(alternate: Stmt<'a>, f: &Formatter<'a>) -> &'a [Comment] {
     let comments = f.comments().comments_before(alternate.span().start);
-    let mut position = consequent.span().end;
-    let count = comments
-        .iter()
-        .take_while(|comment| {
-            let gap = f
-                .source_text()
-                .text_for(&Span::before(position, comment.span));
-            position = comment.span.end;
-            !bun_core::strings::contains(gap, b"else")
-        })
-        .count();
+    if comments.is_empty() {
+        return comments;
+    }
+    let end_of_else = f.file().end_of_token_before(alternate.span().start);
+    let before = comments.iter().take_while(|it| it.span.start < end_of_else);
+    let count = before.count();
     comments.get(..count).unwrap_or_default()
 }

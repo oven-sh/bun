@@ -782,7 +782,7 @@ pub(crate) fn write_if_statement<'a>(
     let is_consequent_block = matches!(consequent.kind(), StmtKind::Block(_));
     let is_else_if = matches!(alternate.kind(), StmtKind::If { .. });
     if !f.is_quiet() && comments_stay_between_head_and_body(f) {
-        if write_comments_between_blocks(comments_before_else(consequent, alternate, f), f) {
+        if write_comments_between_blocks(comments_before_else(alternate, f), f) {
             match is_consequent_block {
                 true => write!(f, space()),
                 false => write!(f, hard_line_break()),
@@ -796,7 +796,7 @@ pub(crate) fn write_if_statement<'a>(
     }
     let comments = match f.is_quiet() {
         true => &[][..],
-        false => comments_before_else(consequent, alternate, f),
+        false => comments_before_else(alternate, f),
     };
     if let (Some(first), Some(last)) = (comments.first(), comments.last()) {
         match f.lines_before(first.span) {

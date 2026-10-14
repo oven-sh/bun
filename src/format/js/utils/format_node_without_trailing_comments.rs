@@ -1,4 +1,3 @@
-use super::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 
 /// Writes a node and leaves the comments after it to the caller.
@@ -11,9 +10,7 @@ impl<'a, T: Format<'a> + Spanned> Format<'a> for FormatNodeWithoutTrailingCommen
         }
         let span = self.0.span();
         if f.comments().has_trailing_suppression_comment(span.end) {
-            format_leading_comments(span).fmt(f);
-            FormatSuppressedNode(span).fmt(f);
-            return;
+            return self.0.fmt_as_it_is(span, f);
         }
         // The comments after the node are hidden while it is written.
         let previous_limit = f.comments_mut().limit_comments_up_to(span.end);

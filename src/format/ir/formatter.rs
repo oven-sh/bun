@@ -9,6 +9,8 @@ use super::width::OddBlocks;
 use crate::js::comments::Comments;
 use crate::js::context::JsFormatContext;
 use crate::js::source_text::SourceText;
+use crate::js::trivia::format_leading_comments;
+use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::options::{Flavor, FormatOptions};
 use bun_lint::ast::File;
 use bun_lint::span::Span;
@@ -20,6 +22,12 @@ use std::num::NonZeroU32;
 /// Something that can be written as [`FormatElement`]s.
 pub(crate) trait Format<'a> {
     fn fmt(&self, f: &mut Formatter<'a>);
+
+    /// Writes the source text of this, which is at `span`, for `// prettier-ignore`, and the comments before it.
+    fn fmt_as_it_is(&self, span: Span, f: &mut Formatter<'a>) {
+        format_leading_comments(span).fmt(f);
+        FormatSuppressedNode(span).fmt(f);
+    }
 
     /// The text, if this is a keyword or a punctuator and nothing else.
     #[inline(always)]
@@ -44,6 +52,10 @@ impl<'a, T: ?Sized + Format<'a>> Format<'a> for &T {
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'a>) {
         Format::fmt(&**self, f);
+    }
+
+    fn fmt_as_it_is(&self, span: Span, f: &mut Formatter<'a>) {
+        Format::fmt_as_it_is(&**self, span, f);
     }
 
     #[inline(always)]

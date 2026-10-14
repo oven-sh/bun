@@ -174,12 +174,12 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSClipboardItemDOMConstr
         items.append({ WTF::move(normalized), entry.value.releaseNonNull() });
     }
 
+    auto* structure = structureForNewTarget<ClipboardItem>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = ClipboardItem::create(WTF::move(items), options);
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    auto jsValue = toJSNewlyCreated<IDLInterface<ClipboardItem>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<ClipboardItem>(lexicalGlobalObject, callFrame, asObject(jsValue));
+    auto jsValue = toJSNewlyCreated<IDLInterface<ClipboardItem>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }

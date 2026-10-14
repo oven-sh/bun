@@ -104,15 +104,15 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSClipboardEventDOMConst
         if (!clipboardData.isUndefinedOrNull()) [[unlikely]]
             return throwVMTypeError(lexicalGlobalObject, throwScope, "ClipboardEventInit.clipboardData must be null: DataTransfer is not supported"_s);
     }
+    auto* structure = structureForNewTarget<ClipboardEvent>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto object = ClipboardEvent::create(WTF::move(type), WTF::move(eventInitDict));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
-    auto jsValue = toJSNewlyCreated<IDLInterface<ClipboardEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
+    auto jsValue = toJSNewlyCreated<IDLInterface<ClipboardEvent>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, structure, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
-    setSubclassStructureIfNeeded<ClipboardEvent>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSClipboardEventDOMConstructorConstruct, JSClipboardEventDOMConstructor::construct);

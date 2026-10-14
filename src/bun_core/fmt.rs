@@ -332,7 +332,7 @@ impl Display for RedactedSourceFormatter<'_> {
     }
 }
 
-pub(crate) fn redacted_source(str: &[u8]) -> RedactedSourceFormatter<'_> {
+pub fn redacted_source(str: &[u8]) -> RedactedSourceFormatter<'_> {
     RedactedSourceFormatter { text: str }
 }
 

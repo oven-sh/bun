@@ -293,7 +293,7 @@ impl<'a> Rules<'_, 'a, '_> {
         if comment.has_newline_before() || !self.prev_token_ends_with(b';') {
             return None;
         }
-        let empty_statements = Span::new(self.cx.span_of(preceding_node).end, comment.span().start);
+        let empty_statements = self.cx.span_of(preceding_node).between(comment.span());
         let text = self
             .cx
             .file

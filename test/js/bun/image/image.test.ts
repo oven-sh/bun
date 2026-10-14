@@ -230,6 +230,12 @@ describe("Bun.Image", () => {
       expect((await fromS3.png().bytes())[0]).toBe(0x89);
       expect(await client.file("src.png").image().metadata()).toEqual({ width: 4, height: 3, format: "png" });
 
+      // A setter called while the download is in flight is for a later terminal.
+      const resized = client.file("src.png").image().resize(2, 2).png();
+      const pending = resized.bytes();
+      resized.resize(1, 1);
+      expect(await new Bun.Image(await pending).metadata()).toEqual({ width: 2, height: 2, format: "png" });
+
       // Download failure rejects the terminal with the S3 error.
       expect(
         await new Bun.Image(client.file("missing.png")).metadata().then(

@@ -2558,7 +2558,16 @@ describe("several writes to a handed-off socket in one task", () => {
   });
 
   // The client is a thread that reads at two points only: once the writes are made, while their task still runs, and after that task.
-  test.concurrent("the first one is sent in the call, the others in one piece after the task", async () => {
+  test.concurrent.each([
+    ["the first one is sent in the call, the others in one piece after the task", ""],
+    // The names of these signals are unknown on Windows.
+    ...(isWindows
+      ? []
+      : [
+          ["a signal to itself that is ignored by default leaves the others for the end of the task", "SIGWINCH"],
+          ["a signal to itself that is set to be ignored leaves the others for the end of the task", "SIGPIPE"],
+        ]),
+  ])("%s", async (_, signal) => {
     using dir = tempDir("node-http-upgrade-write-batch", {
       "server.js": `
         const http = require("node:http");
@@ -2569,6 +2578,7 @@ describe("several writes to a handed-off socket in one task", () => {
         server.on("upgrade", (req, socket) => {
           socket.write("<first>");
           for (let i = 0; i < 40; i++) socket.write("<piece " + i + ">");
+          ${signal && `process.kill(process.pid, "${signal}");`}
           Atomics.store(state, WRITTEN, 1);
           Atomics.notify(state, WRITTEN);
           Atomics.wait(state, READ, 0);

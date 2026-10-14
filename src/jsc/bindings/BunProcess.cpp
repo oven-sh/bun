@@ -4814,6 +4814,21 @@ static bool selfSentSignalEndsProcess(int pid, int ownPid, int signal)
 #endif
 }
 
+// Whether the signal does nothing to the process: it is set to be ignored, or left at a default action that ignores it.
+static bool signalIsIgnored(int signal)
+{
+#if OS(WINDOWS)
+    return false;
+#else
+    struct sigaction current;
+    if (sigaction(signal, nullptr, &current) || (current.sa_flags & SA_SIGINFO))
+        return false;
+    if (current.sa_handler == SIG_IGN)
+        return true;
+    return current.sa_handler == SIG_DFL && (signal == SIGCHLD || signal == SIGCONT || signal == SIGURG || signal == SIGWINCH);
+#endif
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
@@ -4840,9 +4855,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     if (signal > 0 && (pid == 0 || pid == -1 || pid == ownPid || pid == -ownPid)
         && !(Bun__isMainThreadVM() && signalToContextIdsMap && signalToContextIdsMap->contains(signal))) {
         Bun__writeProfilesBeforeSelfKill(selfSentSignalEndsProcess(pid, ownPid, signal));
-        // Whatever selfSentSignalEndsProcess() says: it is false for many signals that end or stop the process (SIGUSR1, SIGSTOP, ...).
-        Bun__runDeferredTasksBeforeProcessEnds();
-        RETURN_IF_EXCEPTION(scope, {});
+        // Not selfSentSignalEndsProcess(): it is false for many signals that end or stop the process (SIGUSR1, SIGSTOP, ...).
+        if (!signalIsIgnored(signal)) {
+            Bun__runDeferredTasksBeforeProcessEnds();
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
 
 #if !OS(WINDOWS)

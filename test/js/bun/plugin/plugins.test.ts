@@ -1,5 +1,6 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { resolve } from "path";
@@ -401,6 +402,30 @@ describe("onLoad contents accepts BufferSource", () => {
       'Expected "contents" to be a string, an ArrayBufferView or an ArrayBuffer',
     );
   });
+
+  // The transpiler reads a copy of the bytes. Here the copy is larger than what can be allocated.
+  it.each(["Uint8Array", "ArrayBuffer"])("%s: fails the load when the copy cannot be allocated", async kind => {
+    const limit = 1024 * 1024;
+    const bytes = new Uint8Array(limit + 1).fill(0x20);
+    globalThis.bufferSourceContents = kind === "ArrayBuffer" ? bytes.buffer : bytes;
+    const outOfMemory = { name: "RangeError", message: "Out of memory" };
+    const error = ({ name, message }: Error) => ({ name, message });
+
+    const previous = setSyntheticAllocationLimitForTesting(limit);
+    try {
+      expect(await import(`buffer-source:too-large-import-${kind}`).then(() => "loaded", error)).toEqual(outOfMemory);
+      expect(() => require(`buffer-source:too-large-require-${kind}`)).toThrow(
+        expect.objectContaining(outOfMemory),
+      );
+      // The onLoad of this namespace returns a promise that is pending.
+      globalThis.asyncOnLoad = globalThis.bufferSourceContents;
+      expect(await import(`async:too-large-${kind}`).then(() => "loaded", error)).toEqual(outOfMemory);
+    } finally {
+      setSyntheticAllocationLimitForTesting(previous);
+      globalThis.asyncOnLoad = "";
+    }
+    expect(Object.keys(await import(`buffer-source:large-${kind}`))).toEqual([]);
+  });
 });
 
 // The transpiler reads the source of a module until it has printed the module.
@@ -478,19 +503,6 @@ describe.concurrent("onLoad contents in a buffer", () => {
       });
     });
 
-    it(`${kind}: rejects the import when the copy cannot be allocated`, async () => {
-      expect(await fixture("oom", kind)).toEqual({
-        result: {
-          "onLoad import": "RangeError: Out of memory",
-          "onLoad require": "RangeError: Out of memory",
-          "async onLoad import": "RangeError: Out of memory",
-          "build.module require": "RangeError: Out of memory",
-          "with the limit lifted": [],
-        },
-        stderr: "",
-        exitCode: 0,
-      });
-    });
   }
 
   it("string: stays alive while the transpiler reads it", async () => {

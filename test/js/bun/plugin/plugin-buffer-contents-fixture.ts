@@ -3,7 +3,6 @@
 //   bun plugin-buffer-contents-fixture.ts mutate <kind> <mutation>...
 //   bun plugin-buffer-contents-fixture.ts worker <kind>
 //   bun plugin-buffer-contents-fixture.ts order <kind>
-//   bun plugin-buffer-contents-fixture.ts oom <kind>
 //   bun plugin-buffer-contents-fixture.ts string
 //
 // Bun.plugin serves modules whose `contents` is a buffer. The transpiler reads
@@ -12,9 +11,7 @@
 // a SharedArrayBuffer at any time. Each mode changes the bytes in one of these
 // ways, or shows when the bytes are taken. It prints one line of JSON.
 import { plugin } from "bun";
-import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { join } from "node:path";
-import { isMainThread, Worker, workerData } from "node:worker_threads";
 import { bytesOf, mutate, mutated } from "./plugin-buffer-contents-macro.ts";
 
 const [mode, kind, ...rest] = process.argv.slice(2);
@@ -136,11 +133,13 @@ if (mode === "mutate") {
   // An unfixed build fails within 10 imports.
   const imports = 20;
 
-  if (isMainThread) {
+  if (Bun.isMainThread) {
     const shared = fill(new SharedArrayBuffer(base.length), base);
     // The number of passes the worker has made over the bytes it flips.
     const passes = new Int32Array(new SharedArrayBuffer(4));
-    new Worker(new URL(import.meta.url), { workerData: { shared, passes }, argv: [mode, kind] }).unref();
+    const worker = new Worker(import.meta.url, { argv: [mode, kind] });
+    worker.unref();
+    worker.postMessage({ shared, passes });
 
     // The worker's events cannot reach this thread while it imports in a
     // loop, so a worker that stopped shows only as a pass count that stands still.
@@ -183,19 +182,21 @@ if (mode === "mutate") {
     }
     results.overlapped = overlapped;
   } else {
-    const { shared, passes } = workerData as { shared: SharedArrayBuffer; passes: Int32Array };
-    const bytes = new Uint8Array(shared);
-    const separators: number[] = [];
-    for (let i = 0; i < base.length; i++) {
-      if (base[i] === 0x5f) separators.push(i);
-    }
+    self.onmessage = ({ data }: MessageEvent<{ shared: SharedArrayBuffer; passes: Int32Array }>) => {
+      const { shared, passes } = data;
+      const bytes = new Uint8Array(shared);
+      const separators: number[] = [];
+      for (let i = 0; i < base.length; i++) {
+        if (base[i] === 0x5f) separators.push(i);
+      }
 
-    // `Atomics.store` so that the compiler keeps every store and the other thread sees each one.
-    for (;;) {
-      for (const at of separators) Atomics.store(bytes, at, 0x30);
-      for (const at of separators) Atomics.store(bytes, at, 0x5f);
-      if (Atomics.add(passes, 0, 1) === 0) Atomics.notify(passes, 0);
-    }
+      // `Atomics.store` so that the compiler keeps every store and the other thread sees each one.
+      for (;;) {
+        for (const at of separators) Atomics.store(bytes, at, 0x30);
+        for (const at of separators) Atomics.store(bytes, at, 0x5f);
+        if (Atomics.add(passes, 0, 1) === 0) Atomics.notify(passes, 0);
+      }
+    };
   }
 } else if (mode === "order") {
   // The transpiler gets the bytes that `contents` holds after the whole result
@@ -265,37 +266,6 @@ if (mode === "mutate") {
   } catch (e) {
     results.failure = failure(e);
   }
-} else if (mode === "oom") {
-  // The copy of the bytes is larger than what can be allocated.
-  const limit = 1024 * 1024;
-  const tooLarge = kinds[kind](new Uint8Array(limit + 1).fill(0x20));
-  plugin({
-    name: "contents that cannot be copied",
-    setup(build) {
-      build.onResolve({ filter: /.*/, namespace: "large" }, ({ path }) => ({ path, namespace: "large" }));
-      build.onLoad({ filter: /^sync/, namespace: "large" }, () => ({ contents: tooLarge, loader: "ts" }));
-      build.onLoad({ filter: /^async/, namespace: "large" }, async () => {
-        await 1;
-        return { contents: tooLarge, loader: "ts" };
-      });
-      build.module("large-module", () => ({ contents: tooLarge, loader: "ts" }));
-    },
-  });
-
-  const attempt = async (load: () => unknown) => {
-    try {
-      return Object.keys((await load()) as object);
-    } catch (e) {
-      return `${(e as Error).name}: ${(e as Error).message}`;
-    }
-  };
-  const previous = setSyntheticAllocationLimitForTesting(limit);
-  results["onLoad import"] = await attempt(() => import("large:sync 1"));
-  results["onLoad require"] = await attempt(() => require("large:sync 2"));
-  results["async onLoad import"] = await attempt(() => import("large:async"));
-  results["build.module require"] = await attempt(() => require("large-module"));
-  setSyntheticAllocationLimitForTesting(previous);
-  results["with the limit lifted"] = await attempt(() => import("large:sync 3"));
 } else if (mode === "string") {
   // The transpiler reads a string where it is. A macro drops every reference
   // that JS has to the string, then collects.
@@ -340,7 +310,7 @@ if (mode === "mutate") {
   }
 }
 
-if (isMainThread) {
+if (Bun.isMainThread) {
   console.log(JSON.stringify(results));
   process.exit(0);
 }

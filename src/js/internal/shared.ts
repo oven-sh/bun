@@ -179,6 +179,18 @@ function guardCallback(callback) {
   };
 }
 
+const ErrorConstructor = Error;
+const ErrorIsError = Error.isError;
+const FunctionPrototypeSymbolHasInstance = Function.prototype[Symbol.hasInstance];
+
+// Node's internal isError: a native error of any realm, or an object that inherits from Error.prototype.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util.js#L99-L104
+// Error.isError is the native half. It differs from isNativeError only for ResolveMessage and
+// BuildMessage, and both inherit from Error.prototype.
+function isError(e: unknown): e is Error {
+  return ErrorIsError(e) || FunctionPrototypeSymbolHasInstance.$call(ErrorConstructor, e);
+}
+
 const nodeModulesRE = /[\\/]node_modules[\\/]/;
 const ErrorCaptureStackTrace = Error.captureStackTrace;
 function returnStackFrames(_err: unknown, frames: unknown[]) {
@@ -435,6 +447,7 @@ export default {
   once,
   getLazy,
   guardCallback,
+  isError,
   isInsideNodeModules,
   resistStopPropagation,
 

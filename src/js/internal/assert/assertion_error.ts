@@ -1,6 +1,7 @@
 "use strict";
 
 const { SafeSet } = require("internal/primordials");
+const { isError } = require("internal/shared");
 const { inspect } = require("internal/util/inspect");
 const colors = require("internal/util/colors");
 const { validateObject } = require("internal/validators");
@@ -55,7 +56,7 @@ function copyError(source) {
   if (ObjectPrototypeHasOwnProperty.$call(source, "cause")) {
     let { cause } = source;
 
-    if (Error.isError(cause)) {
+    if (isError(cause)) {
       cause = copyError(cause);
     }
 

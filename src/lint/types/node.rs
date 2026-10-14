@@ -150,24 +150,6 @@ impl<'a> TsNode<'a> {
         self.file.query(|q| q.node_source_text(self.raw))
     }
 
-    /// `node.getFullText()`: from `node.pos`, the end of the token before, so with the white space and the
-    /// comments between. Empty where [`TsNode::span`] is. In another file than the linted one the limits of
-    /// [`skip_trivia_back`](crate::tokens::skip_trivia_back) apply.
-    pub fn get_full_text(self) -> &'a [u8] {
-        let span = self.span();
-        if span.end <= span.start {
-            return b"";
-        }
-        if self.is_in_linted_file() {
-            let pos = self.file.token_before(span).map_or(0, |token| token.end());
-            return self.file.slice(Span::new(pos, span.end));
-        }
-        let text = self.get_source_file().node().get_source_text();
-        let pos = crate::tokens::skip_trivia_back(text, span.start);
-        text.get(pos as usize..span.end as usize)
-            .unwrap_or_default()
-    }
-
     /// The flags that the HIR has for the node, which besides the modifiers tell of tokens.
     fn hir_flags(self) -> ast::Flags {
         self.file.query(|q| q.node_hir_flags(self.raw))

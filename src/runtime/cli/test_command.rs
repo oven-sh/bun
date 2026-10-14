@@ -1283,6 +1283,28 @@ impl CommandLineReporter {
         }
     }
 
+    /// An error outside of any test fails the run, so structured reporters get it as a failed test case of its file.
+    pub(crate) fn record_unhandled_error(&mut self, file_id: jest::FileId, failure: TestFailure) {
+        let Some(runner) = jest::Jest::runner() else {
+            return;
+        };
+        let report = TestCaseReport {
+            file: junit_file_name(runner.files.items_source()[file_id as usize].path.text),
+            scopes: Vec::new(),
+            name: b"(unhandled error)",
+            status: bun_test::Execution::Result::Fail,
+            assertions: 0,
+            elapsed_ns: 0,
+            line_number: 0,
+            failure: Some(failure),
+        };
+        if let Some(idx) = self.worker_ipc_file_idx {
+            ParallelRunner::worker_emit_test_done(idx, b"", Some(&report));
+        } else if let Some(junit) = self.reporters.junit.as_mut() {
+            junit.record_test_case(&report).expect("oom");
+        }
+    }
+
     #[inline]
     pub(crate) fn summary(&mut self) -> &mut Summary {
         &mut self.jest.summary

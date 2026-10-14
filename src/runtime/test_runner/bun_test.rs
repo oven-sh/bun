@@ -1493,20 +1493,20 @@ impl BunTest {
             return; // the exception should not be visible (eg m_terminationException)
         };
 
+        let mut unhandled_failure: Option<crate::cli::test_command::TestFailure> = None;
         let failure_ctx: *mut core::ffi::c_void = 'ctx: {
-            if handle_status != HandleUncaughtExceptionResult::ShowHandledError {
-                break 'ctx core::ptr::null_mut();
-            }
             let Some(reporter) = self.reporter else {
                 break 'ctx core::ptr::null_mut();
             };
             // SAFETY: `BunTest.reporter` carries write provenance from `enter_file`'s
             // `&mut`; single-threaded test runner, no other borrow live here.
             let reporter = unsafe { &mut *reporter.as_ptr() };
-            if reporter.jest.test_options.reporters.junit {
+            if !reporter.jest.test_options.reporters.junit {
+                core::ptr::null_mut()
+            } else if handle_status == HandleUncaughtExceptionResult::ShowHandledError {
                 core::ptr::from_mut(&mut reporter.test_failure).cast()
             } else {
-                core::ptr::null_mut()
+                core::ptr::from_mut(&mut unhandled_failure).cast()
             }
         };
 
@@ -1538,6 +1538,10 @@ impl BunTest {
         if !failure_ctx.is_null() {
             vm.on_print_error_zig_exception = None;
             vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
+        }
+        if let (Some(failure), Some(reporter)) = (unhandled_failure, self.reporter) {
+            // SAFETY: as above.
+            unsafe { &mut *reporter.as_ptr() }.record_unhandled_error(self.file_id, failure);
         }
 
         if matches!(

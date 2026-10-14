@@ -555,6 +555,56 @@ describe("junit reporter", () => {
     expect(exitCode).toBe(1);
   });
 
+  it.each([
+    [
+      "a preload throws",
+      ["--preload", "./setup.js"],
+      `import { test } from "bun:test";\ntest("never runs", () => {});`,
+      { type: "TypeError", message: "the preload broke <&>", at: "setup.js:1" },
+    ],
+    [
+      "a test file throws while it loads",
+      [],
+      `import { test } from "bun:test";\nthrow new RangeError("the file broke");\ntest("never registered", () => {});`,
+      { type: "RangeError", message: "the file broke", at: "broken.test.js:2" },
+    ],
+    [
+      "a describe callback throws",
+      [],
+      `import { describe } from "bun:test";\ndescribe("group", () => {\n  throw new Error("describe broke");\n});`,
+      { type: "Error", message: "describe broke", at: "broken.test.js:3" },
+    ],
+  ])("reports a failed test case when %s", async (_, args, source, { type, message, at }) => {
+    await using tmpDir = tempDir("junit-unhandled", {
+      "package.json": "{}",
+      "setup.js": `throw new TypeError("the preload broke <&>");`,
+      "broken.test.js": source,
+    });
+    const report = async extra => {
+      const junitPath = join(tmpDir, `junit${extra.join("")}.xml`);
+      await using proc = spawn(
+        [bunExe(), "test", ...args, ...extra, "--reporter=junit", "--reporter-outfile", junitPath],
+        { cwd: tmpDir, env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" }, stdout: "pipe", stderr: "pipe" },
+      );
+      const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { xml: filterJunitXmlOutput(await file(junitPath).text()), exitCode };
+    };
+    const [serial, parallel] = await Promise.all([report([]), report(["--parallel=2"])]);
+
+    const result = await new Promise((resolve, reject) => {
+      xml2js.parseString(serial.xml, { strict: true }, (err, r) => (err ? reject(err) : resolve(r)));
+    });
+    expect(result.testsuites.$).toMatchObject({ tests: "1", failures: "1" });
+    const [suite] = result.testsuites.testsuite;
+    expect(suite.$).toMatchObject({ name: "broken.test.js", tests: "1", failures: "1" });
+    expect(suite.testcase).toHaveLength(1);
+    expect(suite.testcase[0].$).toMatchObject({ name: "(unhandled error)", file: "broken.test.js" });
+    expect(suite.testcase[0].failure[0].$).toEqual({ type, message });
+    expect(suite.testcase[0].failure[0]._).toContain(at);
+    expect(parallel.xml).toBe(serial.xml);
+    expect([serial.exitCode, parallel.exitCode]).toEqual([1, 1]);
+  });
+
   it("prints a stack frame whose source is not a file path as-is in <failure>", async () => {
     // Longer than a path buffer on every platform (98302 bytes on Windows).
     const padding = 100_000;

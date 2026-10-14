@@ -64,6 +64,8 @@ bun test --reporter=junit --reporter-outfile=./junit.xml
 
 Console output is unchanged; Bun writes the JUnit XML report to the specified path at the end of the test run.
 
+An error outside of any test, such as a test file or a preload script that throws while it loads, is reported as a failed `<testcase>` named `(unhandled error)` in that file's `<testsuite>`.
+
 #### Configuring via bunfig.toml
 
 You can also configure the JUnit reporter in `bunfig.toml`:

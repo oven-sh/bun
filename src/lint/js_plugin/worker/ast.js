@@ -1,6 +1,6 @@
 // ------------- the syntax tree -------------
 //
-// `native.listen` makes the nodes of a file from the arrays that `ast.rs` describes: src/jsc/bindings/LintNodes.cpp. They are laid out
+// `native.listen` makes the nodes of a file from the arrays that `ast.rs` describes: src/lint_command/LintNodes.cpp. They are laid out
 // as the parser of the real tool lays them out: see `layouts.rs`. What is here is the deprecated properties of typescript-estree.
 
 // The nodes of the file, by their number. Empty: nobody has asked for them yet.

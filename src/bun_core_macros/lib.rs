@@ -720,8 +720,11 @@ fn numbers_of(
 /// What the function behind `door` is called by the linker. A door and a function that do not agree on the features do not
 /// find each other.
 fn symbol_behind(features: &[u32], door: &syn::Ident) -> String {
-    let features: Vec<String> = features.iter().map(u32::to_string).collect();
-    format!("bun_feature_{}_{door}", features.join("_"))
+    let names: Vec<&str> = (features
+        .iter()
+        .map(|number| feature::NAMES[*number as usize - 1]))
+    .collect();
+    format!("bun_feature_{}_{door}", names.join("_"))
 }
 
 /// A function that goes to `real`, which `bun build --compile` can have go to `absent`.

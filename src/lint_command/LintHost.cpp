@@ -192,9 +192,10 @@ void addLintHostFunctions(JSGlobalObject* globalObject, JSObject* native)
     addLintTokenFunctions(globalObject, native);
 }
 
-JSObject* createLintHost(VM& vm, JSGlobalObject* globalObject)
-{
-    return LintHost::create(vm, globalObject);
-}
-
 } // namespace Bun
+
+// Behind the door `Bun__Lint__createHost` of src/runtime/features.rs.
+extern "C" JSC::JSObject* bun_feature_lint_fmt_Bun__Lint__createHost(JSC::JSGlobalObject* globalObject)
+{
+    return Bun::LintHost::create(globalObject->vm(), globalObject);
+}

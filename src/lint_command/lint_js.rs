@@ -13,15 +13,15 @@
 //! its own JavaScript, which can need Bun's pool, on which nothing of `bun lint` runs.
 //!
 //! The program is `bun_lint::js_plugin::program()`: the body of a function that is given the native functions of
-//! src/jsc/bindings/Lint*.cpp, and returns the function that [`ThreadVm::call`] calls. These functions ask with [`Bun__Lint__ask`].
+//! Lint*.cpp, and returns the function that [`ThreadVm::call`] calls. These functions ask with [`Bun__Lint__ask`].
 
 use core::cell::{Cell, RefCell};
 use core::ptr::NonNull;
 
-use bun_core::{feature, strings};
+use bun_core::strings;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, Strong, virtual_machine::VirtualMachine};
 use bun_lint_driver::js_plugin::{Demand, Engine, HEAVY, Serve, Vm, Work, program};
-use bun_runtime::features::{self, LintSpan};
+use bun_runtime::features;
 use bun_threading::{Condition, Guarded};
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -80,9 +80,9 @@ unsafe extern "C" {
         filename_len: usize,
         exception: *mut JSValue,
     ) -> JSValue;
-    /// src/jsc/bindings/LintNodes.cpp
+    /// src/lint_command/LintNodes.cpp
     safe fn Bun__Lint__nodeFunctions(global: &JSGlobalObject) -> JSValue;
-    /// src/jsc/bindings/LintHost.cpp. Drops every span that native code has kept.
+    /// src/lint_command/LintHost.cpp. Drops every span that native code has kept.
     safe fn Bun__Lint__endFile(global: &JSGlobalObject);
 }
 
@@ -99,6 +99,13 @@ fn message_of(global: &JSGlobalObject, error: JSValue) -> Vec<u8> {
             b"An exception was thrown.".to_vec()
         }
     }
+}
+
+/// Bytes that stay the same, and in the same place, until the call that is running is over.
+#[repr(C)]
+struct LintSpan {
+    ptr: *const u8,
+    len: usize,
 }
 
 fn span_of(bytes: &[u8]) -> LintSpan {
@@ -140,11 +147,11 @@ fn ask_and_keep(kind: u32, details: &[u8]) -> Option<LintSpan> {
     Some(span)
 }
 
-/// Answers what the program asks, for src/jsc/bindings/LintHost.h, without a copy. `details` are bytes, so a kind can take numbers
+/// Answers what the program asks, for src/lint_command/LintHost.h, without a copy. `details` are bytes, so a kind can take numbers
 /// as they are. Every answer is kept until the call is over, so this is for tables, not for one small question per node.
 /// Null: no file is being linted.
-#[feature::behind(features::Bun__Lint__ask, lint, fmt)]
-extern "C" fn ask(
+#[unsafe(no_mangle)]
+extern "C" fn Bun__Lint__ask(
     _global: &JSGlobalObject,
     kind: u32,
     details: *const u8,

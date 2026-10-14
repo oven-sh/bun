@@ -3,13 +3,15 @@
  *
  * Which crates are a feature's is read off the crate graph. Bun is `bun_runtime` and what it depends on. A crate with
  * `[package.metadata.bun] feature = "lint"` is where a feature starts, and what it depends on and Bun does not is the
- * feature's too. Those crates are compiled with feature-pass.cpp.
+ * feature's too. The C and C++ in the directory of such a crate is the crate's. All of it is compiled with
+ * feature-pass.cpp.
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import type { Config } from "../config.ts";
 import { BuildError } from "../error.ts";
+import { writeIfChanged } from "../fs.ts";
 import type { Ninja } from "../ninja.ts";
 import { quote } from "../shell.ts";
 import type { RustUnit } from "./units.ts";
@@ -30,6 +32,10 @@ export function registerFeaturePassRule(n: Ninja, cfg: Config): void {
   n.rule("feature_pass", {
     command: `${q(cfg.hostCxx)} -std=c++17 -O2 -fPIC -shared -fno-rtti -fno-exceptions -I${q(llvmHeaders(cfg))} $in -o $out`,
     description: "host-plugin $out",
+  });
+  n.rule("check_features", {
+    command: `${cfg.jsRuntime} ${q(resolve(cfg.cwd, "scripts", "build", "check-features.ts"))} $nm $manifest $out`,
+    description: "check that nothing names what a feature can take with it",
   });
 }
 
@@ -103,4 +109,51 @@ export function featureFlags(
     ],
     env: pass !== undefined ? { BUN_FEATURES: numbersOf(cfg, crate, features) } : {},
   };
+}
+
+/** A crate that is a feature's: where it is, what the link takes of it, and the features that need it, "2,3". */
+export interface FeatureCrate {
+  directory: string;
+  rlib: string;
+  features: string;
+}
+
+export function featureCrates(cfg: Config, neededBy: Map<RustUnit, string[]>): FeatureCrate[] {
+  return [...neededBy].map(([unit, features]) => ({
+    directory: dirname(unit.pkg.manifest_path),
+    rlib: unit.output,
+    features: numbersOf(cfg, unit.crateName, features),
+  }));
+}
+
+/** The features that need `source`, a C or C++ file: those of the crate whose directory it is in. */
+export function featuresOfSource(crates: FeatureCrate[], source: string): string | undefined {
+  return crates.find(crate => source.startsWith(crate.directory + sep))?.features;
+}
+
+/** What clang is given for a file that `features` need, and what it then reads beside the file. */
+export function clangFeatureFlags(cfg: Config, features: string | undefined): { flags: string[]; inputs: string[] } {
+  const pass = featurePass(cfg);
+  if (features === undefined || pass === undefined) return { flags: [], inputs: [] };
+  const plugin = cfg.windows ? ["-Xclang", `-fpass-plugin=${pass}`] : [`-fpass-plugin=${pass}`];
+  return {
+    flags: ["-Xclang", "-load", "-Xclang", pass, ...plugin, "-mllvm", `-bun-features=${features}`],
+    inputs: [pass],
+  };
+}
+
+/** Returns the stamp of check-features.ts over `inputs`, what the link takes, each with the features that need it. */
+export function emitFeatureCheck(n: Ninja, cfg: Config, inputs: Map<string, string | undefined>): string[] {
+  if (featurePass(cfg) === undefined || cfg.nm === undefined) return [];
+  const manifest = join(cfg.buildDir, "features-checked.manifest");
+  writeIfChanged(manifest, [...inputs].map(([path, features]) => `${features ?? "-"} ${path}\n`).join(""));
+  const stamp = join(cfg.buildDir, "features-checked");
+  n.build({
+    outputs: [stamp],
+    rule: "check_features",
+    inputs: [...inputs.keys()],
+    implicitInputs: [manifest, resolve(cfg.cwd, "scripts", "build", "check-features.ts")],
+    vars: { nm: quote(cfg.nm, false), manifest: quote(manifest, false) },
+  });
+  return [stamp];
 }

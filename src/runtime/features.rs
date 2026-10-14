@@ -3,7 +3,7 @@
 use bun_bundler::options::TypeChecked;
 use bun_core::{Global, Output, ZStr, feature};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue};
+use bun_jsc::{JSGlobalObject, JSObject, JSValue};
 use bun_options_types::context::ContextData;
 
 pub use crate::cli::arguments::disallow_code_generation_from_strings_as_compiled;
@@ -142,26 +142,11 @@ pub fn print_flags_of_lint(all: bool) {}
 #[feature::door(lint, fmt)]
 pub fn read_program_of_script(ctx: &mut ContextData) {}
 
-/// Bytes that stay the same, and in the same place, until the call that is running is over.
-#[repr(C)]
-pub struct LintSpan {
-    pub ptr: *const u8,
-    pub len: usize,
-}
-
-/// src/jsc/bindings/LintHost.h
+/// `m_lintHost` of ZigGlobalObject. src/lint_command/LintHost.cpp is behind it.
 #[feature::door(lint, fmt)]
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Lint__ask(
-    global: &JSGlobalObject,
-    kind: u32,
-    details: *const u8,
-    details_len: usize,
-) -> LintSpan {
-    LintSpan {
-        ptr: core::ptr::null(),
-        len: 0,
-    }
+pub extern "C" fn Bun__Lint__createHost(global: &JSGlobalObject) -> *mut JSObject {
+    core::ptr::null_mut()
 }
 
 // ───────────────────────────────────────────────────────────────────────────

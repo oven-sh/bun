@@ -1,4 +1,4 @@
-//! Reads the reports that src/jsc/bindings/LintReport.cpp writes.
+//! Reads the reports that src/lint_command/LintReport.cpp writes.
 //!
 //! All numbers are little-endian. A number that a rule gave is an `f64`, and NaN if it gave something else. A string is its length
 //! in bytes as a `u32`, then UTF-8, in which an unpaired surrogate has three bytes.

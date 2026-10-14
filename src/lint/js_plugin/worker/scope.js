@@ -1,7 +1,7 @@
 // ------------- scopes -------------
 //
 // ESLint's `sourceCode.scopeManager`. `scopes.rs` sends the final answer as arrays of numbers, and `native.scopes`
-// (src/jsc/bindings/LintScopes.cpp) builds all the objects of a file in one call. What is here are the classes of `eslint-scope` and
+// (src/lint_command/LintScopes.cpp) builds all the objects of a file in one call. What is here are the classes of `eslint-scope` and
 // of `@typescript-eslint/scope-manager` with their public methods.
 
 // What is known about the scopes of the file. `null`: nobody has asked for them yet.
@@ -173,7 +173,7 @@ const eslintScopeLayout = once(() => {
 // ------------- `@typescript-eslint/scope-manager` -------------
 
 // The `set` of the global scope. The libraries of TypeScript can define thousands of variables, and most files ask for a few names.
-// So it is empty until something goes through it or writes to it, and then it has all of them: src/jsc/bindings/LintScopes.cpp.
+// So it is empty until something goes through it or writes to it, and then it has all of them: src/lint_command/LintScopes.cpp.
 class GlobalSet extends Map {
   get(name) {
     const found = super.get(name);

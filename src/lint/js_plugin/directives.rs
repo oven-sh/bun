@@ -8,7 +8,7 @@ use crate::ast::File;
 use crate::linter::Label;
 use bun_core::strings::Utf16OffsetTable;
 
-/// src/jsc/bindings/LintSourceCode.cpp has the same numbers.
+/// src/lint_command/LintSourceCode.cpp has the same numbers.
 fn number_of(label: Label) -> u32 {
     match label {
         Label::Enable => 1,

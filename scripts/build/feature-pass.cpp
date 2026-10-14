@@ -4,7 +4,9 @@
 // An LLVM pass, as a plugin, because that is what every compiler bun is built with has in common:
 //
 //   BUN_FEATURES=2,3 rustc -Zllvm-plugins=<this>
-//   BUN_FEATURES=2,3 clang -fpass-plugin=<this>
+//   clang -Xclang -load -Xclang <this> -fpass-plugin=<this> -mllvm -bun-features=2,3
+//
+// rustc reads its options before it loads a plugin. ccache knows nothing of the environment.
 //
 // The numbers are the features that need the compilation unit. The whole unit is theirs: nothing that stays depends on it, so
 // nothing that stays can refer to what it alone defines.
@@ -20,6 +22,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Plugins/PassPlugin.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/TargetParser/Triple.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
 #include <cstdlib>
@@ -28,7 +31,10 @@ using namespace llvm;
 
 namespace {
 
-using Moved = SmallPtrSet<const GlobalObject*, 32>;
+cl::opt<std::string> featuresOption("bun-features", cl::desc("The features that need this compilation unit"));
+
+// What goes with the features. Not all of it is where it can be left out.
+using Owned = SmallPtrSet<const GlobalObject*, 32>;
 
 // What the linker may replace by the copy of another unit is not this unit's alone: a C++ template, an inline function.
 bool isThisUnitsAlone(const GlobalObject& global)
@@ -37,18 +43,18 @@ bool isThisUnitsAlone(const GlobalObject& global)
         && !global.hasLinkOnceLinkage() && !global.hasSection();
 }
 
-bool isUsedOnlyBy(const Moved& moved, const Value& value, SmallPtrSetImpl<const Value*>& seen)
+bool isUsedOnlyBy(const Owned& owned, const Value& value, SmallPtrSetImpl<const Value*>& seen)
 {
     for (const User* user : value.users()) {
         if (!seen.insert(user).second)
             continue;
         if (auto* instruction = dyn_cast<Instruction>(user)) {
-            if (!moved.count(instruction->getFunction()))
+            if (!owned.count(instruction->getFunction()))
                 return false;
         } else if (auto* global = dyn_cast<GlobalObject>(user)) {
-            if (!moved.count(global))
+            if (!owned.count(global))
                 return false;
-        } else if (!isa<Constant>(user) || !isUsedOnlyBy(moved, *user, seen)) {
+        } else if (!isa<Constant>(user) || !isUsedOnlyBy(owned, *user, seen)) {
             return false;
         }
     }
@@ -136,31 +142,35 @@ struct FeaturePass : PassInfoMixin<FeaturePass> {
                 runBeforeMain.insert(cast<ConstantStruct>(entry)->getOperand(1)->stripPointerCasts());
         }
 
-        Moved moved;
+        Owned owned;
         bool hasCode = false, hasConstants = false;
         for (Function& function : module) {
             if (isThisUnitsAlone(function) && !runBeforeMain.count(&function)) {
                 function.setSection(code);
-                moved.insert(&function);
+                owned.insert(&function);
                 hasCode = true;
             }
         }
-        // Constants that hold no address: the loader has nothing to do to those. One without a name may also be used by what
-        // did not move, and one may be used by another.
+        // One without a name may also be used by what stays, and one may be used by another. A constant that holds an address
+        // stays where the loader has something to do to it, which is where code can be loaded anywhere. What only it
+        // points to goes all the same.
+        bool isLoadedAnywhere = isMachO || isCOFF || module.getPICLevel() != PICLevel::NotPIC;
         for (bool changed = true; changed;) {
             changed = false;
             for (GlobalVariable& variable : module.globals()) {
-                if (moved.count(&variable) || !isThisUnitsAlone(variable) || !variable.isConstant()
-                    || variable.isThreadLocal() || variable.getInitializer()->needsRelocation())
+                if (owned.count(&variable) || !isThisUnitsAlone(variable) || !variable.isConstant() || variable.isThreadLocal())
                     continue;
                 SmallPtrSet<const Value*, 16> seen;
-                if (variable.hasLocalLinkage() && !isUsedOnlyBy(moved, variable, seen))
+                if (variable.hasLocalLinkage() && !isUsedOnlyBy(owned, variable, seen))
+                    continue;
+                owned.insert(&variable);
+                changed = true;
+                if (variable.getInitializer()->needsRelocation() && isLoadedAnywhere)
                     continue;
                 variable.setSection(constants);
                 // Else ELF has it in a section of the same name that the linker takes apart to merge what is equal.
                 variable.setUnnamedAddr(GlobalValue::UnnamedAddr::None);
-                moved.insert(&variable);
-                changed = hasConstants = true;
+                hasConstants = true;
             }
         }
 
@@ -206,9 +216,9 @@ struct FeaturePass : PassInfoMixin<FeaturePass> {
 extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo()
 {
     return { LLVM_PLUGIN_API_VERSION, "bun-feature", "1", [](PassBuilder& builder) {
-                const char* features = std::getenv("BUN_FEATURES");
+                const char* features = featuresOption.empty() ? std::getenv("BUN_FEATURES") : featuresOption.c_str();
                 if (!features)
-                    report_fatal_error("BUN_FEATURES is not set");
+                    report_fatal_error("neither -bun-features nor BUN_FEATURES is set");
                 builder.registerPipelineStartEPCallback(
                     [](ModulePassManager& passes, OptimizationLevel) { passes.addPass(NoConstructors()); });
                 builder.registerOptimizerLastEPCallback(

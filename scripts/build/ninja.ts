@@ -56,6 +56,7 @@ const ruleVars = {
   // rust/emit.ts
   rust_build_script: ["manifest", "crate"],
   feature_pass: [],
+  check_features: ["nm", "manifest"],
   rust_plan: ["planinput", "plan"],
   rust_rustc: ["manifest", "crate", "what"],
   // shims.ts

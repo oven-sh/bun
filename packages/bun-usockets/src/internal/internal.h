@@ -385,6 +385,12 @@ struct us_socket_t {
    * us_socket_write_check_error). Reset by any send that makes progress.
    * Lives in the pad-to-pointer gap before `group`, so it costs nothing. */
   unsigned char unclassified_send_failures;
+  /* us_socket_reject_sends. 0: none. 1: a send was rejected, and a close for it reports
+   * rejected_send_code. 2: the same, and the close is clean. 3 and 4: 1 and 2 after the write
+   * side was ended for it. Next to the counter so that one store clears both, in the same gap. */
+  unsigned char rejected_send;
+  /* The code of the first rejected send, in LIBUS_ERR numbering (a WSA code needs 16 bits). */
+  unsigned short rejected_send_code;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach
@@ -397,11 +403,23 @@ struct us_socket_t {
 
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
+_Static_assert(__builtin_offsetof(struct us_socket_t, group) == 32, "the fields before us_socket_t.group outgrew its alignment gap");
+_Static_assert(sizeof(struct us_socket_t) == 80, "us_socket_t grew");
 #endif
 
 /* Whether a raw write can send: the fd is open and no FIN went out. */
 static inline int us_internal_socket_can_raw_write(struct us_socket_t *s) {
   return !s->flags.is_closed && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN;
+}
+
+/* us_socket_reject_sends ended the write side: the loop closes the socket after its read. */
+static inline int us_internal_socket_rejected_send_ended(struct us_socket_t *s) {
+  return s->rejected_send > 2;
+}
+
+/* The owner of a rejected send asked for a clean close: it hears no error of the loop's either. */
+static inline int us_internal_socket_rejected_send_is_quiet(struct us_socket_t *s) {
+  return s->rejected_send && !(s->rejected_send & 1);
 }
 
 /* us_socket_adopt relocates a socket whose ext grows and retires the old block

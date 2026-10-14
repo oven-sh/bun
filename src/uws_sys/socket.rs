@@ -344,19 +344,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         )
     }
 
-    /// Close reporting the error that ended the connection (see
-    /// [`us_socket_t::close_with_error_code`]). Only a connected socket carries
-    /// a code: the other kinds own their own failure delivery.
-    pub fn close_with_error_code(&self, code: c_int) {
-        on_socket!(self.socket;
-            connected s => s.close_with_error_code(code),
-            connecting c => c.close(),
-            detached => {},
-            duplex d => d.close(),
-            pipe p => p.close(),
-        )
-    }
-
     /// Closes with a FIN before it returns; TLS sends close_notify but does not wait for the peer's, which `CloseCode::Normal` does.
     pub fn close_now(&self) {
         match self.socket {
@@ -428,10 +415,11 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     /// Vectored raw write: one writev on real sockets; sequential raw writes on
     /// transports without an fd (duplex/pipe). Plain-TCP callers only — raw
-    /// writes bypass TLS framing.
-    pub fn raw_writev(&self, iov: &[crate::UsIoVec]) -> i32 {
+    /// writes bypass TLS framing. The second element is the fatal code of a
+    /// rejected writev, as for [`Self::write_check_error`].
+    pub fn raw_writev_check_error(&self, iov: &[crate::UsIoVec]) -> (i32, i32) {
         on_socket!(self.socket;
-            connected s => s.raw_writev(iov),
+            connected s => s.raw_writev_check_error(iov),
             duplex d => {
                 let mut total: i32 = 0;
                 for v in iov {
@@ -441,7 +429,7 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
                     if w > 0 { total += w; }
                     if w < slice.len() as i32 { break; }
                 }
-                total
+                (total, 0)
             },
             pipe p => {
                 let mut total: i32 = 0;
@@ -452,10 +440,18 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
                     if w > 0 { total += w; }
                     if w < slice.len() as i32 { break; }
                 }
-                total
+                (total, 0)
             },
-            else => 0,
+            else => (0, 0),
         )
+    }
+
+    /// See `us_socket_t::reject_sends`. Only a connected socket keeps the
+    /// record: the other kinds own their own failure delivery.
+    pub fn reject_sends(&self, code: c_int, quiet: bool) {
+        if let InternalSocket::Connected(s) = self.socket {
+            sock(s).reject_sends(code, quiet);
+        }
     }
 
     /// Bypass TLS — raw bytes to the fd even on a TLS socket.

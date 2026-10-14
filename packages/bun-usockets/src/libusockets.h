@@ -664,6 +664,9 @@ struct us_iovec_t {
  * partial-write poll handling, one writev for all chunks (sequential sends
  * on platforms without writev). Returns total bytes written. */
 int us_socket_raw_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
+/* us_socket_raw_writev for a caller that fails the write: a writev that no retry can save stores
+ * its code in *fatal_write_error, which the caller sets to 0 first. See us_socket_write_check_error. */
+int us_socket_raw_writev_check_error(us_socket_r s, const struct us_iovec_t *iov, int count, int *fatal_write_error) nonnull_fn_decl;
 /* Vectored us_socket_write: through TLS if `s->ssl` is set, with the records of all chunks in one write. */
 int us_socket_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
 
@@ -673,6 +676,13 @@ int us_socket_raw_write(us_socket_r s, const char *data, int length);
  * write instead of retrying forever. A TLS socket reports the failed send of
  * its ciphertext, or EPROTO for a failed SSL_write, once its handshake was reported. */
 int us_socket_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
+/* The owner of a plain TCP socket tells it that us_socket_write_check_error or
+ * us_socket_raw_writev_check_error reported a fatal code. Nothing closes under the writer: the
+ * next writable event lets the owner retry. A send that makes progress ends the rejection. A
+ * retry that is rejected too ends the write side, and the loop then closes the socket once it
+ * has read what the peer sent: clean after input, else with `code` (the first call's, if above
+ * 2 and not `quiet`). No-op for a TLS socket, whose engine does the same on its own. */
+void us_socket_reject_sends(us_socket_r s, int code, int quiet) nonnull_fn_decl;
 
 void us_socket_timeout(us_socket_r s, unsigned int seconds) nonnull_fn_decl;
 void us_socket_long_timeout(us_socket_r s, unsigned int minutes) nonnull_fn_decl;

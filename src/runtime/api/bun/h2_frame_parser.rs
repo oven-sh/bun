@@ -1146,11 +1146,6 @@ pub(crate) struct H2FrameParser {
     has_nonnative_backpressure: Cell<bool>,
     /// True while flush() has bytes out in an onWrite dispatch to a JS-backed socket.
     js_socket_flushing: Cell<bool>,
-    /// A native write returned a terminal result (socket closed, shut down, or the kernel
-    /// rejected the send). Latched once; the deferred tick closes the transport.
-    transport_write_fatal: Cell<bool>,
-    /// The errno behind `transport_write_fatal`: the code the deferred tick closes with.
-    transport_write_errno: Cell<i32>,
     /// An outbound header block the HPACK encoder could not emit. Latched once; the deferred
     /// tick reports it, because it is detected inside a user submit call.
     pending_header_compression_error: Cell<bool>,
@@ -2996,100 +2991,24 @@ impl H2FrameParser {
         self.deref();
     }
 
-    /// A `write_maybe_corked` in `generic_write`/`generic_flush` returned a fatal
-    /// errno (< -1: the kernel rejected the send - peer gone). No retry can succeed,
-    /// and when the failure is only visible on the write side (a peer reset the read
-    /// path has not observed yet - routine on Windows, where the RST completes the
-    /// send first), nothing else ever closes the socket: the parser would re-buffer
-    /// and wait forever for a drain (observed as the http2 flood tests hanging on the
-    /// Windows CI agents). -1 (socket closed/shut down/not writable yet) is NOT
-    /// latched: those are routine during setup and teardown and the close path that
-    /// produced them owns the lifecycle. Latch the fatal and let the deferred tick
-    /// close the transport - the failing write can be deep inside frame emission, so
-    /// the close must not run under the caller's stack.
-    /// Errno classification lives in `us_socket_write_check_error` (socket.c):
-    /// would-block/transient errnos re-arm writable and are never reported
-    /// here, known peer-gone errnos are reported immediately, and every other
-    /// errno gets a bounded retry window through the same rearm machinery
-    /// before it is reported (this is what keeps macOS's racy EPROTOTYPE from
-    /// killing healthy sessions). So any `result < -1` that reaches this
-    /// function is a send failure the socket layer has already decided cannot
-    /// succeed - re-buffering it would wait forever for a writable event that
-    /// the socket layer deliberately stopped polling for (observed as an h2
-    /// session that never writes again and never errors). Windows fatal codes
-    /// arrive as raw negated WSA values and mean the same thing.
+    /// A native write returned the negated code of a send that no retry can save (`< -1`;
+    /// -1 is a socket that is closed, shut down or not writable yet, whose close is on its way).
     fn is_transport_fatal_write_result(result: i32) -> bool {
         result < -1
     }
 
-    /// `result` is the negated errno. Keep it: the session has no other source
-    /// for the failure, and a clean close ends the request with no 'error'.
+    /// Nothing here closes the transport: a close before the loop's next read drops what the
+    /// peer sent first. The socket keeps the rejection, and the loop closes it after that read.
+    /// A client hears the errno when nothing was read. A server closes quietly, as Node's does:
+    /// an unheard stream 'error' would end the process.
     fn note_transport_write_fatal(&self, result: i32) {
-        if !self.transport_write_fatal.get() {
-            self.transport_write_fatal.set(true);
-            self.transport_write_errno.set(-result);
-            self.register_auto_flush();
+        if let BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) = self.native_socket.get() {
+            socket.get().reject_sends(-result, !self.is_server.get());
         }
-    }
-
-    /// Runs from the deferred tick (never under a write): closes the native socket so the
-    /// normal socket-close teardown runs (native callback detach, JS 'close', session
-    /// destroy) - the same path a peer disconnect takes. Closes WITHOUT detaching: a
-    /// close_and_detach here severed the JS wrapper before on_close could dispatch, so
-    /// the session saw neither 'error' nor 'close' and callers waiting on the failure
-    /// hung (grpc-js against a refused server). Not-yet-established sockets are left
-    /// alone entirely - the connect-error path owns their failure delivery.
-    fn close_transport_after_fatal_write(&self) {
-        // Only a client reports the errno: it has a request to fail. A server closes
-        // quietly, as Node's does: an unheard stream 'error' would end the process.
-        let errno = if self.is_server.get() {
-            0
-        } else {
-            self.transport_write_errno.get()
-        };
-        match self.native_socket.get() {
-            BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
-                Self::close_socket_for_dead_transport::<true>(socket.get(), errno);
-            }
-            BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => {
-                Self::close_socket_for_dead_transport::<false>(socket.get(), errno);
-            }
-            BunSocket::None => {}
-        }
-    }
-
-    fn close_socket_for_dead_transport<const SSL: bool>(
-        socket: &crate::socket::NewSocket<SSL>,
-        errno: i32,
-    ) {
-        if !socket.socket.get().is_established() {
-            return;
-        }
-        socket.close_after_fatal_send(errno);
     }
 
     pub(crate) fn on_auto_flush(&self) -> bool {
         let _keepalive = self.keepalive();
-        if self.transport_write_fatal.get() {
-            // Returning `false` makes DeferredTaskQueue::run remove the entry
-            // itself, so only the registration's flag and ref are released here
-            // - never a re-entrant map mutation from inside run(). The flag is
-            // cleared before the close so the teardown paths the close re-enters
-            // (detach -> unregister_auto_flush) see an unregistered flusher and
-            // early-return instead of removing a map entry run() still owns.
-            self.auto_flusher.get().registered.set(false);
-            self.deref();
-            // An empty write buffer here means a later write in the same flush()
-            // cycle already drained the bytes the failing send left behind (racy
-            // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered.
-            if self.has_backpressure() {
-                self.close_transport_after_fatal_write();
-            } else {
-                self.transport_write_fatal.set(false);
-                self.transport_write_errno.set(0);
-            }
-            return false;
-        }
         if self.pending_header_compression_error.get() {
             // Keep the pending latch set across dispatch+flush: re-entrant detach() ->
             // uncork()/unregister_auto_flush() must early-return at the guard instead of
@@ -3194,6 +3113,9 @@ impl H2FrameParser {
                         return 0usize;
                     }
                     let w = socket.get().write_vectored_raw(iov);
+                    if Self::is_transport_fatal_write_result(w) {
+                        self.note_transport_write_fatal(w);
+                    }
                     if w < 0 { 0 } else { w as usize }
                 }),
             _ => {
@@ -7557,8 +7479,6 @@ impl H2FrameParser {
             hpack: JsCell::new(None),
             has_nonnative_backpressure: Cell::new(false),
             js_socket_flushing: Cell::new(false),
-            transport_write_fatal: Cell::new(false),
-            transport_write_errno: Cell::new(0),
             pending_header_compression_error: Cell::new(false),
             frames_sent_legacy: Cell::new(0),
             engine_frames_received: Cell::new(0),

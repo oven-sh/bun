@@ -6707,71 +6707,98 @@ it("originSet is undefined on a destroyed TLS session that never read it", async
   }
 });
 
-describe.concurrent("a client session reports a peer reset that one of its writes sees first", () => {
-  // A failed send() is the only report of the reset: the transport goes away before the read
-  // side is polled again. bun closed it as a clean EOF: the request ended with no 'error' and
-  // no 'response', and with nothing but the socket holding the loop the process exited
-  // before any event.
+describe.concurrent("a peer reset that one of the session's own writes sees first", () => {
+  // The kernel rejects the write, and on linux that send() consumes the socket's error: a read
+  // after it returns what the peer sent before the reset and then a clean EOF. So the rejected
+  // send is the only report of the reset. bun closed the transport right after it, before the
+  // read: the request ended with no 'error', what the peer had sent was dropped, and with only
+  // the socket holding the loop the process exited before any event.
   //
-  // Node reports a reset only when its read side sees it. It drops the status of a failed
-  // write (node_http2.cc, see the note in ClearOutgoing), and on linux the failed send() consumes
-  // the socket error, so the read that follows is a clean EOF. Which side sees the reset
-  // first depends on where the request is made. Node defers a write made from a timer until
-  // after the next poll, so its read reports ECONNRESET. It writes at once from inside a read
-  // callback, which is where it emits 'remoteSettings', so there it reports a clean close
-  // (rstCode 8, no 'error'). bun writes at once everywhere and reports the reset in each
-  // case: the request failed, and the client has to hear that.
+  // Nothing closes before the loop has read now. With nothing to read, the session and its
+  // requests report the errno of the send, which is what Node's read reports when it is first
+  // (Node drops the status of a failed write, see ClearOutgoing in node_http2.cc). With frames
+  // of the peer to read, they are delivered and the close is clean, as in Node.
   //
-  // The client records what its session and its one request report and prints that when
-  // the process exits on its own. It holds nothing but the socket, so each case also checks
-  // that the events arrive before the process exits.
-  const clientPrelude = `
+  // Each client records its events and prints them when the process exits on its own. It holds
+  // nothing but the socket, so each case also checks that the events arrive before the exit.
+  const clientPrelude = (connectOptions = "") => `
     const http2 = require("node:http2");
     const fs = require("node:fs");
-    const state = { streamError: null, sessionError: null, rstCode: null, sawResponse: false };
-    const session = http2.connect("http://127.0.0.1:" + process.env.H2_PEER_PORT);
-    session.on("error", err => (state.sessionError = err.code));
-    let req;
-    function request() {
-      req = session.request({ ":path": "/" });
-      req.on("response", () => (state.sawResponse = true));
-      req.on("error", err => (state.streamError = err.code));
-      req.on("close", () => (state.rstCode = req.rstCode));
+    const events = [];
+    const session = http2.connect("http://127.0.0.1:" + process.env.H2_PEER_PORT${connectOptions});
+    session.on("error", err => events.push("session error " + err.code));
+    session.on("close", () => events.push("session close"));
+    session.on("goaway", code => events.push("goaway " + code));
+    function track(req, name = "request") {
+      req.on("response", headers => events.push(name + " response " + headers[":status"]));
+      req.on("error", err => events.push(name + " error " + err.code));
+      req.on("close", () => events.push(name + " close " + req.rstCode));
       req.resume();
-      req.end();
+      return req;
     }
-    function busyThenRequest() {
-      // Block the loop so the peer's RST is never polled: this process must observe nothing
-      // until it writes. The marker tells the parent to reset, and the parent sends the byte
-      // only after it has reset, so the RST is always here before the request is written.
+    // After both SETTINGS events the peer has nothing more to send, so nothing is queued
+    // ahead of its reset. Both are read-driven, like every event of a session.
+    function settled(fn) {
+      let left = 2;
+      const step = () => --left === 0 && fn();
+      session.once("remoteSettings", step);
+      session.once("localSettings", step);
+    }
+    // Block the loop so that what the peer does next is never polled: this process must see
+    // nothing until it writes. The marker tells the parent to act, and the parent sends the
+    // byte only when it is done, so the reset is always here before the write.
+    function whileThePeerLeaves() {
       fs.writeSync(1, "busy\\n");
-      if (fs.readSync(0, Buffer.alloc(1)) !== 1) throw new Error("stdin closed before the reset");
-      request();
+      if (fs.readSync(0, Buffer.alloc(1)) !== 1) throw new Error("stdin closed before the peer left");
     }
-    process.on("exit", () => {
-      const destroyed = { sessionDestroyed: session.destroyed, streamDestroyed: !!req && req.destroyed };
-      fs.writeSync(1, JSON.stringify({ ...state, ...destroyed }) + "\\n");
-    });
+    process.on("exit", () => fs.writeSync(1, JSON.stringify(events) + "\\n"));
   `;
-  const reported = {
-    streamError: "ECONNRESET",
-    sessionError: "ECONNRESET",
-    rstCode: http2.constants.NGHTTP2_INTERNAL_ERROR,
-    sawResponse: false,
-    sessionDestroyed: true,
-    streamDestroyed: true,
+  const frame = (type, flags, stream = 0, payload = Buffer.alloc(0)) => {
+    const header = Buffer.alloc(9);
+    header.writeUIntBE(payload.length, 0, 3);
+    header[3] = type;
+    header[4] = flags;
+    header.writeUInt32BE(stream, 5);
+    return Buffer.concat([header, payload]);
   };
-  const frame = (type, flags) => Buffer.from([0, 0, 0, type, flags, 0, 0, 0, 0]);
+  // HEADERS with END_STREAM | END_HEADERS on stream 1: ":status 200" from the static table.
+  const RESPONSE = frame(1, 0x5, 1, Buffer.from([0x88]));
+  // Last stream 0, NO_ERROR.
+  const GOAWAY = frame(7, 0, 0, Buffer.alloc(8));
 
-  async function runClient(fixture, onPeer, onStdout) {
+  // The peer speaks enough HTTP/2 for one client: its SETTINGS and the ACK of the client's
+  // (`silent`: nothing at all). When the client says that it is busy, the peer waits for
+  // `until` (a frame of the client's that it has to have read), writes `answer`, and leaves.
+  async function runClient(scenario, options = {}) {
+    const { answer, until, silent, connectOptions, leave = socket => socket.resetAndDestroy() } = options;
+    const connection = Promise.withResolvers();
+    const seen = { headers: Promise.withResolvers() };
     const server = net.createServer(socket => {
       socket.on("error", () => {});
-      onPeer(socket);
+      connection.resolve(socket);
+      if (silent) return silent(socket);
+      socket.write(frame(4, 0));
+      let input = Buffer.alloc(0);
+      let preface = 24;
+      socket.on("data", chunk => {
+        input = Buffer.concat([input, chunk]);
+        if (preface) {
+          if (input.length < preface) return;
+          input = input.subarray(preface);
+          preface = 0;
+        }
+        while (input.length >= 9 && input.length >= 9 + input.readUIntBE(0, 3)) {
+          const [type, flags] = [input[3], input[4]];
+          input = input.subarray(9 + input.readUIntBE(0, 3));
+          if (type === 4 && !(flags & 1)) socket.write(frame(4, 1));
+          if (type === 1) seen.headers.resolve();
+        }
+      });
     });
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     try {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", clientPrelude + fixture],
+        cmd: [bunExe(), "-e", clientPrelude(connectOptions) + scenario],
         env: { ...bunEnv, H2_PEER_PORT: String(server.address().port) },
         stdin: "pipe",
         stdout: "pipe",
@@ -6780,54 +6807,198 @@ describe.concurrent("a client session reports a peer reset that one of its write
       // Drain stderr while stdout is scanned, so a child that logs a lot cannot block on it.
       const stderrText = proc.stderr.text();
       let stdout = "";
+      let left = false;
       for await (const chunk of proc.stdout) {
         stdout += Buffer.from(chunk).toString();
-        onStdout?.(stdout, proc);
+        if (!left && stdout.includes("busy\n")) {
+          left = true;
+          const socket = await connection.promise;
+          if (until) await seen[until].promise;
+          if (answer) await new Promise(resolve => socket.write(answer, resolve));
+          const closed = new Promise(resolve => socket.once("close", resolve));
+          leave(socket);
+          await closed;
+          proc.stdin.write("x");
+          proc.stdin.flush();
+        }
       }
       const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
       expect(stderr).toBe("");
       const lines = stdout.trim().split("\n");
-      expect(JSON.parse(lines[lines.length - 1])).toEqual(reported);
+      const events = JSON.parse(lines[lines.length - 1]);
+      // Node's order for every emitter: its 'error' comes before its 'close'.
+      for (const error of events.filter(event => event.includes(" error "))) {
+        const close = events.findIndex(event => event.startsWith(error.split(" ")[0] + " close"));
+        expect({ error, beforeItsClose: events.indexOf(error) < close }).toEqual({ error, beforeItsClose: true });
+      }
       expect(exitCode).toBe(0);
+      return events.toSorted();
     } finally {
       server.close();
     }
   }
 
-  // The HEADERS write of the next request() is the first operation to see the RST.
-  it.each([
-    // Node reports ECONNRESET here too. The timer is not a wait: it moves the request out
-    // of the read callback that emits 'remoteSettings'.
-    ["a timer", `session.on("remoteSettings", () => setTimeout(busyThenRequest, 0));`],
-    // Node reports a clean close here. This is the one ordering where bun says more.
-    ["inside the 'remoteSettings' event", `session.on("remoteSettings", () => busyThenRequest());`],
-  ])("on an idle session whose loop was busy while the reset arrived, request made from %s", async (_, fixture) => {
-    let peer = null;
-    let reset = false;
-    await runClient(
-      fixture,
-      socket => {
-        peer = socket;
-        socket.write(frame(4, 0)); // empty SETTINGS
-        socket.once("data", () => socket.write(frame(4, 1))); // ACK the client's SETTINGS
-      },
-      (stdout, proc) => {
-        if (!reset && stdout.includes("busy\n")) {
-          reset = true;
-          peer.resetAndDestroy();
-          proc.stdin.write("x");
-          proc.stdin.flush();
-        }
-      },
-    );
-    expect(reset).toBe(true);
+  const RESET = ["request close 2", "request error ECONNRESET", "session close", "session error ECONNRESET"];
+  const post = size => `track(session.request({ ":method": "POST" })).end(Buffer.alloc(${size}, "a"));`;
+  // The timers are not a wait: they move the write out of the read callback that emits the
+  // event. The HEADERS of an open stream leave in the flush of the turn that opens it, ahead
+  // of the timer.
+  const newRequest = size => `settled(() => setTimeout(() => { whileThePeerLeaves(); ${post(size)} }, 0));`;
+  const openStream = (size, options = "") => `settled(() => {
+    const req = track(session.request({ ":method": "POST" }${options}));
+    req.on("wantTrailers", () => req.sendTrailers({ "x-trailer": "1" }));
+    setTimeout(() => { whileThePeerLeaves(); req.end(Buffer.alloc(${size}, "a")); }, 0);
+  });`;
+  // Each size takes another write path: 100 bytes fit the 16 KiB cork buffer, 16360 overflow
+  // it behind the HEADERS, 16375 are above one DATA frame and leave in a writev, and 70000
+  // are above the stream's window as well.
+  const sizes = [0, 100, 16360, 16375, 70000];
+
+  it.each(sizes)("a new request with a body of %i bytes", async size => {
+    expect(await runClient(newRequest(size))).toEqual(RESET);
   });
 
-  it("on the first request of a connection that the peer resets at the preface", async () => {
-    // The connect flush sends the preface and then the queued request's HEADERS. The peer
-    // resets as soon as the first bytes arrive, so the RST can land between the two sends.
-    // Whichever side sees it first, the request and the session report it, as in Node.
-    await runClient(`request();`, socket => socket.once("data", () => socket.resetAndDestroy()));
+  it.each(sizes)("a body of %i bytes on a stream that is already open", async size => {
+    expect(await runClient(openStream(size), { until: "headers" })).toEqual(RESET);
+  });
+
+  it("a request made inside a read-driven event", async () => {
+    // Node writes at once there as well, drops the status of that write and reports a clean
+    // close. This is the one ordering where bun says more: the request failed, and the
+    // client has to hear that.
+    expect(await runClient(`settled(() => { whileThePeerLeaves(); ${post(0)} });`)).toEqual(RESET);
+  });
+
+  it.each([
+    ["ping()", `session.ping(err => events.push("ping " + err?.code));`, ["ping ERR_HTTP2_PING_CANCEL"]],
+    ["settings()", `session.settings({ enablePush: false });`, []],
+    ["goaway()", `session.goaway();`, []],
+    ["setLocalWindowSize()", `session.setLocalWindowSize(1 << 20);`, []],
+    [
+      "two request() calls in one turn",
+      `track(session.request(), "a").end(); track(session.request(), "b").end();`,
+      ["a close 2", "a error ECONNRESET", "b close 2", "b error ECONNRESET"],
+    ],
+  ])("%s as the first write", async (_, write, more) => {
+    const events = await runClient(`settled(() => setTimeout(() => { whileThePeerLeaves(); ${write} }, 0));`);
+    expect(events).toEqual([...more, "session close", "session error ECONNRESET"].toSorted());
+  });
+
+  it("sendTrailers() as the first write", async () => {
+    expect(await runClient(openStream(0, `, { waitForTrailers: true }`), { until: "headers" })).toEqual(RESET);
+  });
+
+  // 100 bytes fit the cork buffer, where the close used to come before the read. 20000 bytes
+  // leave in a writev, where bun has always read first: that row guards what must not change.
+  it.each([100, 20000])("a response that is queued ahead of the reset is heard (body of %i bytes)", async size => {
+    const events = await runClient(openStream(size), { until: "headers", answer: RESPONSE });
+    expect(events).toEqual(["request close 0", "request response 200", "session close"]);
+  });
+
+  it.each([100, 20000])("a GOAWAY that is queued ahead of the reset is heard (body of %i bytes)", async size => {
+    // The GOAWAY names no stream, so it refuses the request: the client hears that the peer
+    // did not process it.
+    const events = await runClient(newRequest(size), { answer: GOAWAY });
+    expect(events).toEqual(["goaway 0", "request close 7", "request error ERR_HTTP2_GOAWAY_SESSION", "session close"]);
+  });
+
+  it.each([0, 20000])(
+    "the first request of a connection that the peer resets at the preface (%i bytes)",
+    async size => {
+      // The connect flush sends the preface and then the queued request. The peer resets as
+      // soon as the first bytes arrive, so the RST can land between the two sends. Whichever
+      // side sees it first, the request and the session report it, as in Node.
+      const silent = socket => socket.once("data", () => socket.resetAndDestroy());
+      expect(await runClient(post(size), { silent })).toEqual(RESET);
+    },
+  );
+
+  it("a peer that closes before it resets ends the session without an error", async () => {
+    // The peer's FIN is first, and its RST answers the preface. The kernel rejects the next
+    // send with EPIPE, which names no cause, and a read of that socket is a clean EOF: Node
+    // reports a clean close. The client blocks in the first 'connect' listener of its socket,
+    // ahead of the session's own, so the FIN is always there before the preface is sent.
+    const events = await runClient(post(0), {
+      silent: () => {},
+      leave: socket => socket.destroy(),
+      connectOptions: `, {
+        createConnection() {
+          const socket = require("node:net").connect(process.env.H2_PEER_PORT, "127.0.0.1");
+          socket.once("connect", whileThePeerLeaves);
+          return socket;
+        },
+      }`,
+    });
+    expect(events).toEqual(["request close 8", "session close"]);
+  });
+
+  // 0 bytes leave in a send, 20000 in a writev.
+  it.each([0, 20000])("a server whose response of %i bytes meets the reset closes quietly", async size => {
+    // A client that vanishes is routine for a server, and it has nobody to report it to: Node's
+    // server sessions close without an 'error'. This server attaches no 'error' listener, so
+    // an error on its session or its stream would end the process.
+    const fixture = `
+      const http2 = require("node:http2");
+      const fs = require("node:fs");
+      const events = [];
+      const server = http2.createServer();
+      server.on("session", session => session.on("close", () => events.push("session close")));
+      server.on("stream", stream => {
+        stream.on("close", () => events.push("stream close " + stream.rstCode));
+        server.close();
+        fs.writeSync(1, "busy\\n");
+        if (fs.readSync(0, Buffer.alloc(1)) !== 1) throw new Error("stdin closed before the reset");
+        stream.respond({ ":status": 200 });
+        stream.end(Buffer.alloc(${size}, "b"));
+      });
+      server.listen(0, "127.0.0.1", () => fs.writeSync(1, "port " + server.address().port + "\\n"));
+      process.on("exit", () => fs.writeSync(1, JSON.stringify(events) + "\\n"));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // ":method POST", ":scheme http" and ":path /" from the static table, then a literal ":authority".
+    const request = Buffer.concat([Buffer.from([0x83, 0x86, 0x84, 0x41, 0x09]), Buffer.from("localhost")]);
+    const stderrText = proc.stderr.text();
+    let stdout = "";
+    let socket = null;
+    let left = false;
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      const port = /port (\d+)\n/.exec(stdout);
+      if (port && !socket) {
+        // A complete POST: preface, SETTINGS, HEADERS, and one DATA frame with END_STREAM.
+        socket = net.connect(Number(port[1]), "127.0.0.1", () =>
+          socket.write(
+            Buffer.concat([
+              Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1"),
+              frame(4, 0),
+              frame(1, 0x4, 1, request),
+              frame(0, 0x1, 1, Buffer.from("body")),
+            ]),
+          ),
+        );
+        socket.on("error", () => {});
+        socket.resume();
+      }
+      if (!left && stdout.includes("busy\n")) {
+        left = true;
+        const closed = new Promise(resolve => socket.once("close", resolve));
+        socket.resetAndDestroy();
+        await closed;
+        proc.stdin.write("x");
+        proc.stdin.flush();
+      }
+    }
+    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+    expect(stderr).toBe("");
+    const lines = stdout.trim().split("\n");
+    expect(JSON.parse(lines[lines.length - 1])).toEqual(["stream close 0", "session close"]);
+    expect(exitCode).toBe(0);
   });
 });
 

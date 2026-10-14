@@ -54,13 +54,12 @@ fn js_loop_ctx() -> bun_io::EventLoopCtx {
     bun_io::posix_event_loop::get_vm_ctx(bun_io::posix_event_loop::AllocatorType::Js)
 }
 
-/// The error behind a close that the event loop initiated, or that
-/// `close_after_fatal_send` made for a failed send: the `recv()` failure,
-/// `SO_ERROR` or send errno the socket was closed with (`> 2`, see
-/// `on_close`). uSockets reports it in the platform's own numbering: an errno
-/// on POSIX, a WSA code (`WSAECONNRESET` = 10054) on Windows. `sys::Error`
-/// stores `SystemErrno` discriminants, so the WSA code has to be mapped first
-/// or the error reaches JS with no `code` at all.
+/// The error behind a close that the event loop initiated: the `recv()`
+/// failure, `SO_ERROR` or rejected send that uSockets closed the socket with
+/// (`> 2`, see `on_close`). uSockets reports it in the platform's own
+/// numbering: an errno on POSIX, a WSA code (`WSAECONNRESET` = 10054) on
+/// Windows. `sys::Error` stores `SystemErrno` discriminants, so the WSA code
+/// has to be mapped first or the error reaches JS with no `code` at all.
 fn read_error_from_close_code(code: c_int) -> sys::Error {
     #[cfg(not(windows))]
     {
@@ -91,9 +90,9 @@ pub(crate) extern "C" fn Bun__socketReadErrorFromCloseCode(
     <sys::Error as jsc::SysErrorJsc>::to_js(&read_error_from_close_code(code), global)
 }
 
-/// The close code for a send errno, or 0 for a plain close. Only an errno that
-/// a read of the socket would also return is reported: the peer-gone set of
-/// `us_socket_write_check_error` without `EPIPE`, which names no cause.
+/// The close code for a rejected send, or 0 for a clean close. Only an errno
+/// that a read of the socket would also return is reported: the peer-gone set
+/// of `us_socket_write_check_error` without `EPIPE`, which names no cause.
 fn dead_transport_close_code(errno: c_int) -> c_int {
     use sys::SystemErrno as E;
     #[cfg(not(windows))]
@@ -965,29 +964,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         called
     }
 
-    /// A `send()` the kernel rejected outright takes the connection down. Close
-    /// with that errno, in the numbering uSockets' loop closes a failed `recv()`
-    /// with: `on_close` reports a code above the `CloseCode` range as the error
-    /// that ended the connection. A plain close would reach JS as a clean EOF.
-    /// Unlike the loop, this does not first read what is queued ahead of the error.
-    pub(crate) fn close_after_fatal_send(&self, errno: c_int) {
-        let socket = self.socket.get();
-        // The BSDs fail every send on a disconnected socket with EPIPE and keep the cause
-        // as the socket error. linux sends EPIPE when the peer's FIN came first: an EOF.
-        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        let code = if errno == sys::SystemErrno::EPIPE as c_int && !socket.is_closed() {
-            socket.get_error()
-        } else {
-            dead_transport_close_code(errno)
-        };
-        #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-        let code = dead_transport_close_code(errno);
-        // 0, 1 and 2 collide with `CloseCode`, which `on_close` filters out.
-        if code > 2 {
-            socket.close_with_error_code(code);
-        } else {
-            socket.close(uws::CloseCode::Normal);
-        }
+    /// The kernel rejected a send of this socket's owner with `errno`. Nothing
+    /// closes under the writer: uSockets keeps the record, and its loop closes
+    /// the socket after it has read what the peer sent. With `report` and
+    /// nothing read, `on_close` gets the code of `dead_transport_close_code`.
+    pub(crate) fn reject_sends(&self, errno: c_int, report: bool) {
+        self.socket
+            .get()
+            .reject_sends(dead_transport_close_code(errno), !report);
     }
 
     /// Takes `ThisPtr<Self>`, not `&mut self`: `callback.call(...)` re-enters
@@ -1057,7 +1041,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             handlers.call_error_handler(this_value, &[this_value, err_value])?;
             // The error handler can destroy the socket itself; only close a
             // still-attached socket. Close without detaching so on_close runs
-            // and JS observes 'close' (mirrors h2's dead-transport close).
+            // and JS observes 'close'.
             if !this.socket.get().is_detached() {
                 this.socket.get().close(uws::CloseCode::Normal);
             }
@@ -2337,10 +2321,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         // CloseCode enum (0=clean, 1=failure/RST, 2=fast-shutdown); when the
         // close was driven by a recv() failure or a poll error (loop.c's
         // EPOLLERR/EV_ERROR branch, which reports SO_ERROR) it's the actual
-        // error code. `close_after_fatal_send` passes one too: the errno of a
-        // failed send that a read would also return. No producer can
-        // yield EPERM(1)/ENOENT(2): recv never returns them and the others
-        // clamp them away. So values >2 are read errors and 0/1/2 are
+        // error code. So is the code of a send that `reject_sends` recorded,
+        // when the loop read nothing after it. No producer can yield
+        // EPERM(1)/ENOENT(2): recv never returns them and the others clamp
+        // them away. So values >2 are read errors and 0/1/2 are
         // self-initiated closes that must not surface as a JS read error
         // (matching Node's onStreamRead, which only sees errors that came
         // from uv_read_cb).
@@ -2706,7 +2690,8 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Vectored raw write for plain-TCP sockets: all chunks reach the fd in one
     /// writev. Callers guarantee this socket has no TLS layer (raw writes bypass
-    /// SSL framing). Updates bytes_written like the scalar path.
+    /// SSL framing). Updates bytes_written like the scalar path, and like it
+    /// returns the negative errno of a writev the kernel rejected.
     pub(crate) fn write_vectored_raw(&self, iov: &[bun_uws_sys::UsIoVec]) -> i32 {
         let socket = self.socket.get();
         if socket.is_shutdown() || socket.is_closed() {
@@ -2715,7 +2700,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         if SSL && self.flags.get().contains(Flags::REJECTED) {
             return -1;
         }
-        let res = socket.raw_writev(iov);
+        let (res, fatal_errno) = socket.raw_writev_check_error(iov);
+        if fatal_errno != 0 {
+            return -fatal_errno;
+        }
         let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
         self.bytes_written
             .set(self.bytes_written.get() + uwrote as u64);

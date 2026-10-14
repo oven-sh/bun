@@ -443,6 +443,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
+    s->rejected_send = 0;
     s->read_eof = 0;
     s->hangup_closes_unsent = 0;
     s->connect_state = NULL;
@@ -594,12 +595,32 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
         if (fatal_write_error) *fatal_write_error = fatal_send_error;
         return 0;
     }
+    /* A send that makes progress ends a rejection as well: the transport recovered. */
     s->unclassified_send_failures = 0;
+    s->rejected_send = 0;
     if (written != length) {
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
     return written;
+}
+
+void us_socket_reject_sends(struct us_socket_t *s, int code, int quiet) {
+    if (s->ssl || !us_socket_is_established(s) || !us_internal_socket_can_raw_write(s)) {
+        return;
+    }
+    if (!s->rejected_send) {
+        /* Only the first rejected send has the cause: linux answers the next one with EPIPE. */
+        s->rejected_send = quiet ? 2 : 1;
+        s->rejected_send_code = (unsigned short) code;
+    } else if (!s->flags.last_write_failed) {
+        /* The loop has started a writable dispatch since (it clears the flag there) and the retry
+         * was rejected too. The write side ends here; the close is the loop's, after its read. */
+        us_internal_socket_raw_shutdown(s);
+        s->rejected_send += 2;
+    }
+    s->flags.last_write_failed = 1;
+    us_internal_rearm_writable(s);
 }
 
 int us_socket_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
@@ -609,7 +630,7 @@ int us_socket_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int co
     return us_socket_raw_writev(s, iov, count);
 }
 
-int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
+static inline __attribute__((always_inline)) int us_internal_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count, int *fatal_write_error) {
     if (!us_internal_socket_can_raw_write(s)) {
         return 0;
     }
@@ -619,11 +640,22 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
 
     ssize_t written = bsd_writev(us_poll_fd(&s->p), iov, count);
     if (written != (ssize_t)total) {
+        if (written < 0 && fatal_write_error && (*fatal_write_error = us_internal_classify_failed_send(s))) {
+            return 0;
+        }
         s->flags.last_write_failed = 1;
         us_internal_rearm_writable(s);
     }
 
     return written < 0 ? 0 : (int)written;
+}
+
+int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, int count) {
+    return us_internal_socket_raw_writev(s, iov, count, NULL);
+}
+
+int us_socket_raw_writev_check_error(struct us_socket_t *s, const struct us_iovec_t *iov, int count, int *fatal_write_error) {
+    return us_internal_socket_raw_writev(s, iov, count, fatal_write_error);
 }
 
 int us_internal_socket_raw_write(struct us_socket_t *s, const char *data, int length, int *fatal_send_error) {

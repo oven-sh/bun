@@ -93,18 +93,6 @@ impl us_socket_t {
         );
         unsafe {
             // SAFETY: self is a live us_socket_t
-            let _ = c::us_socket_close(self, code as c_int, ptr::null_mut());
-        }
-    }
-
-    /// Close with the error that ended the connection instead of a
-    /// [`CloseCode`]: an errno on POSIX, a WSA code on Windows, the numbering
-    /// the loop closes a failed `recv()` with. The close callback reports any
-    /// code above the enum's range as that error.
-    pub fn close_with_error_code(&mut self, code: c_int) {
-        bun_core::scoped_log!(uws, "us_socket_close({:p}, errno {})", self, code);
-        unsafe {
-            // SAFETY: self is a live us_socket_t
             let _ = c::us_socket_close(self, code, ptr::null_mut());
         }
     }
@@ -426,18 +414,37 @@ impl us_socket_t {
     /// Vectored raw write — all chunks reach the fd in one writev (sequential
     /// sends on platforms without it). Same closed/shutdown gating and
     /// partial-write poll handling as `raw_write`. Plain-TCP only by contract:
-    /// raw writes bypass TLS framing.
-    pub(crate) fn raw_writev(&mut self, iov: &[UsIoVec]) -> i32 {
+    /// raw writes bypass TLS framing. The second element is the fatal code of
+    /// a rejected writev, as for [`Self::write_check_error`].
+    pub(crate) fn raw_writev_check_error(&mut self, iov: &[UsIoVec]) -> (i32, i32) {
         bun_core::scoped_log!(uws, "us_socket_raw_writev({:p}, {})", self, iov.len());
+        let mut fatal: i32 = 0;
         // SAFETY: iov entries reference memory owned by the caller for the
         // duration of this call; the C side only reads them synchronously.
-        unsafe {
-            c::us_socket_raw_writev(
+        // `fatal` outlives the call as the out-parameter.
+        let written = unsafe {
+            c::us_socket_raw_writev_check_error(
                 self,
                 iov.as_ptr(),
                 i32::try_from(iov.len()).expect("int cast"),
+                &raw mut fatal,
             )
-        }
+        };
+        (written, fatal)
+    }
+
+    /// The owner's send was rejected with the fatal `code` of
+    /// [`Self::write_check_error`] or [`Self::raw_writev_check_error`]. The
+    /// loop closes the socket after its read, unless a retry makes progress.
+    pub(crate) fn reject_sends(&mut self, code: c_int, quiet: bool) {
+        bun_core::scoped_log!(
+            uws,
+            "us_socket_reject_sends({:p}, {}, {})",
+            self,
+            code,
+            quiet
+        );
+        c::us_socket_reject_sends(self, code, c_int::from(quiet));
     }
 
     /// Bypass TLS — raw bytes to the fd even if `is_tls()`.
@@ -564,21 +571,22 @@ mod c {
             payload: *const u8,
             len2: usize,
         ) -> i32;
-        pub(super) fn us_socket_raw_writev(
+        pub(super) fn us_socket_raw_writev_check_error(
             s: *mut us_socket_t,
             iov: *const super::UsIoVec,
             count: i32,
+            fatal_write_error: *mut i32,
         ) -> i32;
+        pub(super) safe fn us_socket_reject_sends(s: &mut us_socket_t, code: c_int, quiet: c_int);
         pub(super) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32)
         -> i32;
         pub(super) safe fn us_socket_flush(s: &mut us_socket_t);
 
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
-        /// `code`: a [`CloseCode`], or the error that ended the connection.
         pub(super) fn us_socket_close(
             s: *mut us_socket_t,
-            code: c_int,
+            code: CloseCode,
             reason: *mut c_void,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_close_now(s: &mut us_socket_t) -> *mut us_socket_t;

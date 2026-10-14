@@ -446,11 +446,11 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
     H2_TIMEOUT_MS,
   );
 
-  // A fatal-classified errno (EPIPE) latches transport_write_fatal, but the
-  // same flush() cycle retries the buffered bytes (_generic_flush after the
+  // A fatal-classified errno (EPIPE) marks the socket's sends as rejected, but
+  // the same flush() cycle retries the buffered bytes (_generic_flush after the
   // failed uncork write) and can drain them - kernels return racy one-off
-  // send errnos on healthy sockets (macOS EPROTOTYPE->EPIPE class). The
-  // deferred close must re-verify instead of killing the recovered session.
+  // send errnos on healthy sockets (macOS EPROTOTYPE->EPIPE class). A send that
+  // makes progress must end the rejection instead of killing the recovered session.
   test.concurrent(
     "one-off fatal errno (EPIPE) whose bytes drain in the same flush cycle leaves the session alive",
     () =>
@@ -493,9 +493,9 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
           const acked = frameSeen("t6a#0");
           rawSocket!.write(Buffer.concat([Buffer.from([0, 0, 8, 6, 0, 0, 0, 0, 0]), Buffer.alloc(8, 5)]));
           await acked;
-          // The ACK reached the server, so the transport recovered. The
-          // stale-latch deferred close runs from the deferred task queue, once
-          // per loop iteration; give it several iterations to (wrongly) fire.
+          // The ACK reached the server, so the transport recovered. A stale
+          // rejection would close the socket from the loop's next writable
+          // dispatch; give it several iterations to (wrongly) fire.
           for (let i = 0; i < 10; i++) await new Promise(r => setImmediate(r));
           expect(events).toEqual([]);
           // Second round-trip proves the session stayed fully alive.
@@ -534,7 +534,7 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
         // The session wrote its SETTINGS before 'connect' armed the rule, so that
         // is the only frame on the wire. The stream is cancelled (RST_STREAM
         // code 8) and the session destroyed without an 'error' event: the
-        // deferred close of a dead transport takes the same path as a peer
+        // loop's close of a dead transport takes the same path as a peer
         // disconnect.
         expect({ frames: h.frames, events: h.events, destroyed: h.client.destroyed }).toEqual({
           frames: ["t4#0"],

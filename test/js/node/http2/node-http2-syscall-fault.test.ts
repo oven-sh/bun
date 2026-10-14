@@ -276,119 +276,182 @@ describe.skipIf(skip)("node:http2 seeded short-I/O fuzz", () => {
 });
 
 describe.concurrent.skipIf(skip)("node:http2 transport write errors", () => {
-  // A send() the kernel rejects is the only report that the peer is gone: the
-  // transport closes before the read side is polled again. A client session and
-  // its request have to report it, and the process must not exit before they do
-  // when the socket is its only handle (the client below starts no timer).
+  // A send() the kernel rejects for good is the only report that the transport is dead. The
+  // session must not close it before the loop has read: what the peer sent before is still
+  // queued. With nothing to read, a client session and its request report the errno, and the
+  // process must not exit before they do when the socket is its only handle (the clients
+  // below start no timer to wait).
   //
-  // Node reports a reset only from its read side (it drops the status of a failed
-  // write, see the note in node_http2.cc ClearOutgoing). So bun reports a send errno
-  // only when a read of the socket would return it too. ECONNRESET, ECONNABORTED and
-  // ETIMEDOUT keep their identity. Any other send errno keeps the plain close
-  // ("sustained errno" in socket-syscall-fault.test.ts).
+  // Node reports a dead transport only from its read side (it drops the status of a failed
+  // write, see ClearOutgoing in node_http2.cc). So bun reports a send errno only when a read
+  // of the socket would return it too: ECONNRESET, ECONNABORTED and ETIMEDOUT keep their
+  // identity, and any other errno is a clean close ("sustained errno" in
+  // socket-syscall-fault.test.ts).
   //
-  // phase "request": the failing send is a later request() on an idle session.
-  // phase "connect": it is inside the connect flush, which sends the preface
-  // (the first send) and then the queued request's HEADERS (the second).
-  //
-  // The client runs in a subprocess: the fault rules are process-global, so the raw
-  // peer has to live in a process that is not faulted.
-  const fixture = `
+  // Each client runs in a subprocess: the fault rules are process-global, so the raw peer
+  // has to live in a process that is not faulted.
+  const clientPrelude = `
     const { socketFaultInjection: fault } = require("bun:internal-for-testing");
     const http2 = require("node:http2");
+    const fs = require("node:fs");
     const { errno: errnos } = require("node:os").constants;
-    const state = { streamError: null, sessionError: null, rstCode: null };
-    const failSends = after =>
-      fault.set({ syscall: "send", action: "errno", errno: errnos[process.env.H2_FAULT_ERRNO], after, repeat: -1 });
+    const events = [];
+    const reject = (syscall, errno, after = 0) =>
+      fault.set({ syscall, action: "errno", errno: errnos[errno], after, repeat: -1 });
     const session = http2.connect("http://127.0.0.1:" + process.env.H2_PEER_PORT);
-    session.on("error", err => (state.sessionError = err.code));
-    let req;
-    function request() {
-      req = session.request({ ":path": "/" });
-      req.on("error", err => (state.streamError = err.code));
-      req.on("close", () => (state.rstCode = req.rstCode));
+    session.on("error", err => events.push("session error " + err.code));
+    session.on("close", () => events.push("session close"));
+    session.on("goaway", code => events.push("goaway " + code));
+    function request(size = 0) {
+      const req = session.request({ ":method": "POST" });
+      req.on("error", err => events.push("request error " + err.code));
+      req.on("close", () => events.push("request close " + req.rstCode));
       req.resume();
-      req.end();
+      req.end(Buffer.alloc(size, "a"));
     }
-    if (process.env.H2_FAULT_PHASE === "connect") {
-      failSends(1);
-      request();
-    } else {
-      // Not from inside the read callback that emits 'remoteSettings': a plain close made
-      // under a read ends as EBADF (https://github.com/oven-sh/bun/pull/42485).
-      session.on("remoteSettings", () =>
-        setTimeout(() => {
-          failSends(0);
-          request();
-        }, 0),
-      );
+    // After both SETTINGS events the peer has nothing more to send, so nothing is queued.
+    function settled(fn) {
+      let left = 2;
+      const step = () => --left === 0 && fn();
+      session.once("remoteSettings", step);
+      session.once("localSettings", step);
     }
-    process.on("exit", () => {
-      const destroyed = { sessionDestroyed: session.destroyed, streamDestroyed: !!req && req.destroyed };
-      console.log(JSON.stringify({ ...state, ...destroyed }));
-    });
+    process.on("exit", () => console.log(JSON.stringify(events)));
   `;
-  async function runClient(errno: string, phase: string) {
-    const frame = (type: number, flags: number) => Buffer.from([0, 0, 0, type, flags, 0, 0, 0, 0]);
+  const frame = (type: number, flags: number, streamId = 0, payload = Buffer.alloc(0)) => {
+    const header = Buffer.alloc(9);
+    header.writeUIntBE(payload.length, 0, 3);
+    header[3] = type;
+    header[4] = flags;
+    header.writeUInt32BE(streamId, 5);
+    return Buffer.concat([header, payload]);
+  };
+
+  // The peer stays connected and says nothing after its SETTINGS and the ACK of the client's
+  // (`silent`: nothing at all). When the client prints "ready", the peer writes `answer` and
+  // tells the client so.
+  async function runClient(scenario: string, { silent = false, answer }: { silent?: boolean; answer?: Buffer } = {}) {
+    const connection = Promise.withResolvers<net.Socket>();
     const server = net.createServer(socket => {
       socket.on("error", () => {});
-      socket.write(frame(4, 0)); // empty SETTINGS
-      socket.once("data", () => socket.write(frame(4, 1))); // ACK the client's SETTINGS
+      connection.resolve(socket);
+      if (silent) return;
+      socket.write(frame(4, 0));
+      socket.once("data", () => socket.write(frame(4, 1)));
     });
     await new Promise<void>(resolve => server.listen(0, "127.0.0.1", () => resolve()));
     try {
       const port = (server.address() as import("node:net").AddressInfo).port;
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", fixture],
-        env: { ...bunEnv, H2_PEER_PORT: String(port), H2_FAULT_ERRNO: errno, H2_FAULT_PHASE: phase },
+        cmd: [bunExe(), "-e", clientPrelude + scenario],
+        env: { ...bunEnv, H2_PEER_PORT: String(port) },
+        stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Drain stderr while stdout is scanned, so a child that logs a lot cannot block on it.
+      const stderrText = proc.stderr.text();
+      let stdout = "";
+      let answered = false;
+      for await (const chunk of proc.stdout) {
+        stdout += Buffer.from(chunk).toString();
+        if (answer && !answered && stdout.includes("ready\n")) {
+          answered = true;
+          const socket = await connection.promise;
+          await new Promise<void>(resolve => socket.write(answer, () => resolve()));
+          proc.stdin.write("x");
+          proc.stdin.flush();
+        }
+      }
+      const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
+      (await connection.promise).destroy();
       expect(stderr).toBe("");
-      return { state: JSON.parse(stdout.trim()), exitCode };
+      const lines = stdout.trim().split("\n");
+      const events: string[] = JSON.parse(lines[lines.length - 1]);
+      expect(exitCode).toBe(0);
+      return events.toSorted();
     } finally {
       server.close();
     }
   }
 
-  const cases = [
-    { errno: "ECONNRESET", phase: "request", reported: "ECONNRESET" },
-    { errno: "ECONNABORTED", phase: "request", reported: "ECONNABORTED" },
-    { errno: "ETIMEDOUT", phase: "request", reported: "ETIMEDOUT" },
-    { errno: "ECONNRESET", phase: "connect", reported: "ECONNRESET" },
+  const reported = (errno: string) => [
+    "request close " + http2.constants.NGHTTP2_INTERNAL_ERROR,
+    "request error " + errno,
+    "session close",
+    "session error " + errno,
   ];
-  test.each(cases)(
-    "send → $errno during the $phase flush is reported as $reported",
-    async ({ errno, phase, reported }) => {
-      const { state, exitCode } = await runClient(errno, phase);
-      expect(state).toEqual({
-        streamError: reported,
-        sessionError: reported,
-        rstCode: http2.constants.NGHTTP2_INTERNAL_ERROR,
-        sessionDestroyed: true,
-        streamDestroyed: true,
-      });
-      expect(exitCode).toBe(0);
-    },
-  );
+  // The timer moves the request out of the read callback that emits the SETTINGS events.
+  const fromATimer = (write: string) => `settled(() => setTimeout(() => { ${write} }, 0));`;
 
-  test("send → EPIPE stays a plain close", async () => {
-    // EPIPE names no cause. linux returns it when the peer sent its FIN first and then
-    // reset our data: a read of that socket is a clean EOF, which is what Node reports.
-    // The BSDs return it for every disconnected socket and keep the cause as the socket
-    // error, which this socket does not have. Whether a plain close is delivered before
-    // the process exits is not part of this change, so only the absence of an 'error'
-    // is checked.
-    const { state, exitCode } = await runClient("EPIPE", "request");
-    expect({ streamError: state.streamError, sessionError: state.sessionError }).toEqual({
-      streamError: null,
-      sessionError: null,
-    });
-    expect(exitCode).toBe(0);
+  test.each(["ECONNRESET", "ECONNABORTED", "ETIMEDOUT"])("send → %s is reported with its own code", async errno => {
+    expect(await runClient(fromATimer(`reject("send", "${errno}"); request();`))).toEqual(reported(errno));
   });
 
-  test("a server session whose response write fails closes quietly", async () => {
+  test("send → EPIPE is a clean close", async () => {
+    // EPIPE names no cause. linux returns it when the peer sent its FIN first and then reset
+    // our data: a read of that socket is a clean EOF, which is what Node reports.
+    const events = await runClient(fromATimer(`reject("send", "EPIPE"); request();`));
+    expect(events).toEqual(["request close " + http2.constants.NGHTTP2_CANCEL, "session close"]);
+  });
+
+  test("send → ECONNRESET for a request made inside a read-driven event", async () => {
+    // A close made under the loop's read of this socket ended as a bogus 'write EBADF'.
+    const events = await runClient(`settled(() => { reject("send", "ECONNRESET"); request(); });`);
+    expect(events).toEqual(reported("ECONNRESET"));
+  });
+
+  test("send → ECONNRESET inside the connect flush", async () => {
+    // The connect flush sends the preface (the first send) and then the queued request.
+    const events = await runClient(`reject("send", "ECONNRESET", 1); request();`, { silent: true });
+    expect(events).toEqual(reported("ECONNRESET"));
+  });
+
+  test("send → ECONNRESET for a body that overflows the cork buffer", async () => {
+    // The write that fills the 16 KiB cork buffer is rejected while the session still corks.
+    const events = await runClient(fromATimer(`reject("send", "ECONNRESET"); request(16360);`));
+    expect(events).toEqual(reported("ECONNRESET"));
+  });
+
+  test("writev → ECONNRESET keeps its code when the next send gets EPIPE", async () => {
+    // A body above one DATA frame leaves in a writev. Only that first rejected write has the
+    // cause: linux answers every later send on the socket with EPIPE.
+    const events = await runClient(
+      fromATimer(`reject("writev", "ECONNRESET"); reject("send", "EPIPE"); request(20000);`),
+    );
+    expect(events).toEqual(reported("ECONNRESET"));
+  });
+
+  test("a GOAWAY that is queued when the send is rejected is heard", async () => {
+    // The peer is alive and silent, so no reset ever reaches the read side. The loop reads
+    // what is queued and then closes, and the GOAWAY refuses the request it did not process.
+    const GOAWAY = frame(7, 0, 0, Buffer.alloc(8));
+    const events = await runClient(
+      fromATimer(`
+        fs.writeSync(1, "ready\\n");
+        if (fs.readSync(0, Buffer.alloc(1)) !== 1) throw new Error("stdin closed before the GOAWAY");
+        reject("send", "ECONNRESET");
+        request();
+      `),
+      { answer: GOAWAY },
+    );
+    expect(events).toEqual([
+      "goaway 0",
+      "request close " + http2.constants.NGHTTP2_REFUSED_STREAM,
+      "request error ERR_HTTP2_GOAWAY_SESSION",
+      "session close",
+    ]);
+  });
+
+  test.each([
+    ["send", 0, `fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1 });`],
+    [
+      "writev",
+      20000,
+      `fault.set({ syscall: "writev", action: "errno", errno: "ECONNRESET", repeat: -1 });
+       fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1 });`,
+    ],
+  ])("a server session whose response %s is rejected closes quietly", async (_, size, rejectWrites) => {
     // A client that vanishes is routine for a server, and it has nobody to report it to.
     // Node's server sessions close without an 'error', and an 'error' on a stream with no
     // listener would end the process. This server attaches no 'error' listener at all.
@@ -406,9 +469,9 @@ describe.concurrent.skipIf(skip)("node:http2 transport write errors", () => {
       server.on("stream", stream => {
         events.push("stream");
         stream.on("close", () => events.push("stream.close(rstCode=" + stream.rstCode + ")"));
-        fault.set({ syscall: "send", action: "errno", errno: "ECONNRESET", repeat: -1 });
+        ${rejectWrites}
         stream.respond({ ":status": 200 });
-        stream.end();
+        stream.end(Buffer.alloc(${size}, "b"));
       });
       process.on("uncaughtException", err => {
         events.push("uncaught:" + err.code);
@@ -424,15 +487,6 @@ describe.concurrent.skipIf(skip)("node:http2 transport write errors", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    // A raw client: preface, SETTINGS, and one GET with END_STREAM. It sends nothing more.
-    const frame = (type: number, flags: number, streamId: number, payload = Buffer.alloc(0)) => {
-      const header = Buffer.alloc(9);
-      header.writeUIntBE(payload.length, 0, 3);
-      header[3] = type;
-      header[4] = flags;
-      header.writeUInt32BE(streamId, 5);
-      return Buffer.concat([header, payload]);
-    };
     // :method GET, :scheme http and :path / from the static table, then a literal :authority.
     const requestBlock = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01, 0x09]), Buffer.from("localhost")]);
     // Drain stderr while stdout is scanned, so a child that logs a lot cannot block on it.
@@ -443,11 +497,12 @@ describe.concurrent.skipIf(skip)("node:http2 transport write errors", () => {
       stdout += Buffer.from(chunk).toString();
       const port = /port=(\d+)/.exec(stdout);
       if (port && !socket) {
+        // A raw client: preface, SETTINGS, and one GET with END_STREAM. It sends nothing more.
         socket = net.connect(Number(port[1]), "127.0.0.1", () => {
           socket!.write(
             Buffer.concat([
               Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1"),
-              frame(4, 0, 0),
+              frame(4, 0),
               frame(1, 0x4 | 0x1, 1, requestBlock),
             ]),
           );

@@ -475,6 +475,20 @@ void us_internal_loop_post(struct us_loop_t *loop) {
 #define us_ioctl ioctl
 #endif
 
+/* us_socket_reject_sends ended the write side of `s`, so this close is the loop's. What the peer
+ * sent before it went away is read first, and the end of that read closes clean: the owner has
+ * its answer. With nothing to read, the rejected send is the only report of the failure. */
+__attribute__((cold, noinline))
+static void us_internal_socket_close_after_rejected_send(struct us_socket_t *s) {
+    /* A paused owner reads nothing, and a dead transport has no later to flow into. */
+    if (!s->flags.is_paused && us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA) {
+        us_internal_dispatch_ready_poll(&s->p, 0, LIBUS_POLL_EOF, LIBUS_SOCKET_READABLE);
+        return;
+    }
+    const int reports = (s->rejected_send & 1) && s->rejected_send_code > 2;
+    us_internal_socket_close_raw(s, reports ? s->rejected_send_code : LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+}
+
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, int events) {
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK: {
@@ -554,6 +568,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.adopted = 0;
                         s->flags.last_write_failed = 0;
                         s->unclassified_send_failures = 0;
+                        s->rejected_send = 0;
                         s->read_eof = 0;
                         s->hangup_closes_unsent = 0;
 
@@ -590,7 +605,15 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             }
         break;
     }
-    case POLL_TYPE_SOCKET_SHUT_DOWN:
+    case POLL_TYPE_SOCKET_SHUT_DOWN: {
+            /* us_socket_reject_sends ended the writes and left writable armed: this is its event. */
+            struct us_socket_t *ended = us_internal_socket_follow_adopted((struct us_socket_t *) p);
+            if (UNLIKELY(us_internal_socket_rejected_send_ended(ended)) && (events & LIBUS_SOCKET_WRITABLE) && !error) {
+                us_internal_socket_close_after_rejected_send(ended);
+                break;
+            }
+        }
+        __attribute__((fallthrough));
     case POLL_TYPE_SOCKET: {
             /* We should only use s, no p after this point */
             struct us_socket_t *s = (struct us_socket_t *) p;
@@ -623,7 +646,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
 
                 /* If we have no failed write or if we shut down, then stop polling for more writable */
-                if (!s->flags.last_write_failed || us_socket_is_shut_down(s)) {
+                if (!s->flags.last_write_failed) {
+                    us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+                } else if (us_socket_is_shut_down(s)) {
+                    if (UNLIKELY(us_internal_socket_rejected_send_ended(s))) {
+                        /* The handler's retry was rejected as well, and that ended the writes. */
+                        us_internal_socket_close_after_rejected_send(s);
+                        return;
+                    }
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
                 } else {
                     #ifdef LIBUS_USE_KQUEUE
@@ -863,7 +893,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                          * surface as `tlsClientError` → uncaught in node:http2.
                          * main called us_socket_close(ssl=0, …) at every loop
                          * close site for exactly this reason. */
-                        s = us_internal_socket_close_raw(s, LIBUS_ERR, NULL);
+                        s = us_internal_socket_close_raw(s, UNLIKELY(us_internal_socket_rejected_send_is_quiet(s)) ? LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN : LIBUS_ERR, NULL);
                         return;
                     }
 
@@ -982,7 +1012,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * (see us_internal_libuv_peer_reset_probe), so it is taken
                  * there, and the CRT's ECONNRESET reached JS as ESHUTDOWN. */
                 int socket_error = us_socket_get_error(s);
-                s = us_internal_socket_close_raw(s, socket_error > 2 ? socket_error : LIBUS_ECONNRESET, NULL);
+                socket_error = socket_error > 2 ? socket_error : LIBUS_ECONNRESET;
+                s = us_internal_socket_close_raw(s, UNLIKELY(us_internal_socket_rejected_send_is_quiet(s)) ? LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN : socket_error, NULL);
                 return;
             }
             break;

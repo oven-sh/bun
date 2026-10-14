@@ -5028,14 +5028,13 @@ maybe(() => { return f; });
             "typescript/prefer-string-starts-ends-with": "error",
           }),
           "tsconfig.json": tsconfig,
-          // The rule with types says nothing about an `any`.
           "a.ts":
             "declare const s: string;\nexport const a = /^abc/.test(s);\ndeclare const t: any;\nexport const b = /^abc/.test(t);\n",
         };
         const withTypes = await lint(twins, ["--type-aware", "-f", "json"]);
         expect(places(withTypes.raw)).toEqual([
           "a.ts:2:18 typescript(prefer-string-starts-ends-with)",
-          "a.ts:4:18 unicorn(prefer-string-starts-ends-with)",
+          "a.ts:4:18 typescript(prefer-string-starts-ends-with)",
         ]);
         const withoutTypes = await lint(twins, ["-f", "json"]);
         expect(places(withoutTypes.raw)).toEqual([

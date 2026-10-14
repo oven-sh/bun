@@ -802,10 +802,11 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
-        // A rule gives way to the rule of typescript-eslint that makes the same check with types, where that one runs. The
-        // places among `enabled` of the rules that still run and give way where both report, and of those with types.
+        // With oxlint, a rule gives way to the rule of typescript-eslint that makes the same check with types, where that one
+        // runs: oxlint reports such a thing twice. ESLint does too, and there both are reported. The places among `enabled`
+        // of the rules that still run and give way where both report, and of those with types.
         let (mut giving_way, mut typed_at): (Vec<u16>, Vec<u16>) = (Vec::new(), Vec::new());
-        if file.types.is_some() {
+        if file.types.is_some() && file.language().is_oxlint {
             let meta_at = |index: usize, it: &Enabled<S>| match is_plain {
                 true => (prepared.order.get(it.place as usize))
                     .and_then(|slot| config.rules.get(slot.at as usize))

@@ -1222,7 +1222,7 @@ impl<'a> AstNodes<'a> {
             }
             N::Class(class) => match class.owner() {
                 // `estree_span` looks at every decorator for an `export`.
-                Node::Stmt(statement) if !statement.is_exported() => statement.span(),
+                Node::Stmt(statement) if !class.flags().contains(Flags::EXPORT) => statement.span(),
                 _ => class.estree_span(),
             },
             N::ClassBody(class) => class.body_span(),

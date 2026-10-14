@@ -295,7 +295,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn finish_statement(&mut self, id: StmtId, kind: &StmtKind, start: u32, end: u32) {
         if COMMENTS && start <= self.lx.max_relevant_node_start {
-            self.update_pending_comments_for_statement(id, *kind, start, end);
+            self.update_pending_comments_for_statement(id, kind, start, end);
         }
     }
 
@@ -380,10 +380,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn update_pending_comments_for_statement(
         &mut self,
         id: StmtId,
-        kind: StmtKind,
+        // Not by value: the copy would be on the stack of `Parser::statement`, at each level of what is nested.
+        kind: &StmtKind,
         start: u32,
         end: u32,
     ) {
+        let kind = *kind;
         // Prettier never attaches a comment to a stray `;` in a list of statements.
         if !self.options.attach_comments || matches!(kind, StmtKind::Empty) {
             return;

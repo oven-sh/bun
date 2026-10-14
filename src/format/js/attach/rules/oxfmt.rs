@@ -15,62 +15,16 @@ use crate::js::utils::expression::ExpressionLeftSide;
 use crate::js::utils::operators::BinOpExt;
 use bun_lint::ast::{BinOp, ExprTag, FnKind, assign_op_text};
 
-/// One step of [`Rules::is_followed_by_operand`]: the parent of `e`, if `e` is the last part of it, or else the answer.
-fn parent_that_ends_with(e: Expr<'_>) -> Result<Expr<'_>, bool> {
-    let (is_last_operand, parent) = match e.parent() {
-        Node::Expr(parent) => {
-            let is_last_operand = match parent.kind() {
-                ExprKind::Jsx(jsx) => return Err(jsx.children().last() != Some(e)),
-                ExprKind::Index { index, .. } => index == e,
-                ExprKind::Call(call) | ExprKind::New(call) => match call.args().last() {
-                    Some(last) => last == e,
-                    None => call.type_args().is_empty(),
-                },
-                ExprKind::Binary { right, .. } => right == e,
-                ExprKind::Assign { value, .. } => value == e,
-                ExprKind::Cond { no, .. } => no == e,
-                ExprKind::Array(elements) => elements.last() == Some(e),
-                ExprKind::NonNull(_)
-                | ExprKind::Spread(_)
-                | ExprKind::Await(_)
-                | ExprKind::Unary { .. } => true,
-                ExprKind::As { .. } => parent.is_angle_bracket_assertion(),
-                ExprKind::Dot { .. } | ExprKind::TaggedTemplate(_) | ExprKind::Satisfies { .. } => {
-                    false
-                }
-                _ => return Err(false),
-            };
-            (is_last_operand, parent)
-        }
-        Node::Prop(property) => {
-            let Node::Expr(object) = property.parent() else {
-                return Err(false);
-            };
-            if let ExprKind::Jsx(jsx) = object.kind() {
-                return Err(jsx.attrs().last() != Some(property));
-            }
-            let is_last_property =
-                (object.as_object()).is_some_and(|properties| properties.last() == Some(property));
-            (property.value() == Some(e) && is_last_property, object)
-        }
-        Node::VarDecl(declarator) => {
-            return Err(matches!(declarator.parent(), Node::Stmt(statement)
-                if statement.as_var().is_some_and(|all| all.last() != Some(declarator))));
-        }
-        _ => return Err(false),
-    };
-    match is_last_operand {
-        true => Ok(parent),
-        false => Err(true),
-    }
-}
-
 /// One step of [`Rules::has_following_node`]: the parent of `node`, if what follows that follows `node`, or else the answer.
 fn parent_with_same_following_node(node: Node<'_>) -> Result<Node<'_>, bool> {
     let parent = node.parent();
     let is_in_list = match (parent, node) {
         (Node::Expr(parent), _) if matches!(parent.kind(), ExprKind::Dot { .. }) => {
             return Err(true);
+        }
+        // Not the name in the closing tag.
+        (Node::Expr(parent), Node::Expr(child)) if let ExprKind::Jsx(jsx) = parent.kind() => {
+            return Err(jsx.children().last() != Some(child));
         }
         (Node::Func(func), Node::Type(_)) if func.has_body() => return Err(true),
         (Node::Func(func), Node::Param(this)) if func.this_param() == Some(this) => {
@@ -1607,15 +1561,8 @@ impl<'a> Rules<'_, 'a, '_> {
             true if self.comments_stay_after_callee(call.callee()) => return None,
             true => self.cx.owner_of_expr(call.callee()),
         };
-        self.is_followed_by_operand(e)
+        self.has_following_node(Node::Expr(e))
             .then(|| Attachment::trailing(before_parenthesis))
-    }
-
-    /// Whether another part of the statement that `e` is in comes after `e`: the `b` of `e.b`, `e + b`, `a(e, b)`, `a(!e, b)`,
-    /// `{ a: e, b }` or `let a = e, b`. In JSX only the next attribute of the tag or the next child of the element counts: the `b`
-    /// of `<a {...e} b />` and `<a>{e}b</a>`, not that of `[<a c={e} />, b]`.
-    fn is_followed_by_operand(&self, e: Expr<'a>) -> bool {
-        (self.cx.is_followed_by_operand).find(e, parent_that_ends_with)
     }
 
     fn comments_stay_after_callee(&self, callee: Expr<'a>) -> bool {

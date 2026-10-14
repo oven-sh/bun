@@ -45,7 +45,6 @@ pub(super) struct AttachContext<'a, 'c> {
     /// An expression, and what a chain of member accesses and calls that ends with it starts with. All comments between two
     /// tokens ask about the same expression.
     pub(super) last_start_of_chain: Cell<Option<(Expr<'a>, Owner<'a>)>>,
-    pub(super) is_followed_by_operand: AnswerForAncestors,
     pub(super) is_name_of_type_query_or_jsx_element: AnswerForAncestors,
     pub(super) is_link_of_member_chain: AnswerForAncestors,
     pub(super) has_following_node: AnswerForAncestors,
@@ -413,7 +412,6 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             last_comments_between_tokens: Cell::default(),
             last_search_for_bracket: Cell::default(),
             last_start_of_chain: Cell::default(),
-            is_followed_by_operand: AnswerForAncestors::default(),
             is_name_of_type_query_or_jsx_element: AnswerForAncestors::default(),
             is_link_of_member_chain: AnswerForAncestors::default(),
             has_following_node: AnswerForAncestors::default(),

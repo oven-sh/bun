@@ -145,6 +145,8 @@ const files = {
       regexp: () => /(\\d)/.exec("a2")[1],
       webAssembly: () => typeof WebAssembly === "undefined" ? "not in this build" : WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])),
       importComputedSpecifier: async () => Object.keys(await import("./emp" + "ty.mjs")).length,
+      importBlobOfFile: async () => Object.keys(await import(URL.createObjectURL(Bun.file(here("./empty.mjs"))))).length,
+      importDataOfJSON: async () => (await import("data:application/json,2", { with: { type: "json" } })).default,
       requireBuiltin: () => typeof require("node:fs").readFileSync,
     };
     const workers = {
@@ -246,6 +248,8 @@ const notScriptFromAString = {
   // A build of Bun configured with webAssembly off has no WebAssembly global.
   webAssembly: typeof WebAssembly === "undefined" ? "not in this build" : true,
   importComputedSpecifier: 0,
+  importBlobOfFile: 0,
+  importDataOfJSON: 2,
   requireBuiltin: "function",
 };
 // What a Worker evaluates, and the process.execArgv it sees.

@@ -181,8 +181,19 @@ impl FileCopier {
             }
             #[cfg(not(windows))]
             {
-                if entry.kind != EntryKind::File {
-                    continue;
+                match entry.kind {
+                    EntryKind::File => {}
+                    EntryKind::SymLink => {
+                        crate::package_install::copy_symlink(
+                            entry.dir,
+                            entry.basename,
+                            entry.path,
+                            dest_dir.fd(),
+                            entry.path,
+                        )?;
+                        continue;
+                    }
+                    _ => continue,
                 }
 
                 let src = match bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0) {
@@ -192,7 +203,22 @@ impl FileCopier {
                     }
                 };
 
-                let dest = match dest_dir.create_file_z(entry.path, Default::default()) {
+                // O_NOFOLLOW: a stale symlink from an earlier install is replaced, not written through.
+                let create = || {
+                    let flags = bun_sys::O::CREAT
+                        | bun_sys::O::WRONLY
+                        | bun_sys::O::CLOEXEC
+                        | bun_sys::O::NOFOLLOW;
+                    match bun_sys::openat(dest_dir.fd(), entry.path, flags, 0o666) {
+                        Err(err) if err.get_errno() == E::ELOOP => {
+                            let _ = bun_sys::unlinkat(dest_dir.fd(), entry.path);
+                            bun_sys::openat(dest_dir.fd(), entry.path, flags, 0o666)
+                        }
+                        result => result,
+                    }
+                    .map(bun_sys::File::from_fd)
+                };
+                let dest = match create() {
                     Ok(f) => f,
                     Err(_) => 'dest: {
                         if let Some(entry_dirname) =
@@ -204,7 +230,7 @@ impl FileCopier {
                             );
                         }
 
-                        match dest_dir.create_file_z(entry.path, Default::default()) {
+                        match create() {
                             Ok(f) => break 'dest f,
                             Err(err) => {
                                 bun_core::pretty_errorln!(

@@ -1147,7 +1147,7 @@ const syntheticLimitEnv = (bytes: number) => ({
   BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(bytes),
 });
 
-it("throws ERR_STRING_TOO_LONG for an origin or assetPrefix over the string limit", async () => {
+it.concurrent("throws ERR_STRING_TOO_LONG for an origin or assetPrefix over the string limit", async () => {
   using dir = tempDir("fsr-string-limit", { "index.tsx": "export default 1;" });
   const code = /* js */ `
     const dir = process.argv[1];
@@ -1194,7 +1194,7 @@ it("throws ERR_STRING_TOO_LONG for an origin or assetPrefix over the string limi
   });
 });
 
-it("throws ERR_STRING_TOO_LONG for a directory path over the string limit", async () => {
+it.concurrent("throws ERR_STRING_TOO_LONG for a directory path over the string limit", async () => {
   using dir = tempDir("fsr-dir-limit", { "index.tsx": "export default 1;" });
   // The router interns the resolved absolute path, which is longer than this
   // limit. `dir: "."` keeps the argument itself short.
@@ -1221,7 +1221,7 @@ it("throws ERR_STRING_TOO_LONG for a directory path over the string limit", asyn
   });
 });
 
-it("checks the string limit only for an origin that is not interned yet, before it copies the origin", async () => {
+it.concurrent("checks the string limit only for an origin that is not interned yet, before it copies it", async () => {
   using dir = tempDir("fsr-intern-hit", { "index.tsx": "export default 1;" });
   // The length check belongs to the intern itself: on the miss path, ahead of
   // its copy of the bytes. A router that repeats an origin interned under the

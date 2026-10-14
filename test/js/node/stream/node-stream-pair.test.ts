@@ -666,7 +666,7 @@ if (typeof Bun !== "undefined") {
   describe("Only in Bun", () => {
     // Node has the duck type only. Bun keeps the class check in front of it, so that a
     // TransformStream stage costs no getter call.
-    test("a TransformStream counts by its class: its readable and writable are not read", () => {
+    test("a TransformStream counts by its class: its readable and writable are not read", async () => {
       class Guarded extends TransformStream {
         get readable(): ReadableStream {
           throw new Error("readable was read");
@@ -675,10 +675,8 @@ if (typeof Bun !== "undefined") {
           throw new Error("writable was read");
         }
       }
-      // addAbortSignal() classifies the stream and does not use its sides.
-      assert.throws(() => addAbortSignal(new AbortController().signal, new Guarded()), {
-        code: "ERR_INVALID_ARG_TYPE",
-      });
+      // promises.pipeline() classifies its last argument. Then the stage before it is not readable.
+      await assert.rejects(pipelineP(source(), sink().stream, new Guarded()), { code: "ERR_INVALID_ARG_TYPE" });
     });
 
     // Node adds its abort listener first, and then eos() rejects the stream. A later abort runs the

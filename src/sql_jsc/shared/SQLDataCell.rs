@@ -145,7 +145,6 @@ pub struct Raw {
     pub(crate) len: u64,
 }
 
-/// Element type of a `PackedArray` cell. C++ (SQLClient.cpp) switches on it.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum PackedArrayElem {
@@ -153,14 +152,12 @@ pub enum PackedArrayElem {
     Float4 = 1,
 }
 
-/// A one-dimensional binary array with no NULL element, still in the wire
-/// buffer: `len` elements, each a 4-byte length prefix and a 4-byte
-/// big-endian value. C++ builds the JS array straight from these bytes.
+/// A 1-D binary array with no NULL, still in the wire buffer: `len` elements of
+/// a 4-byte length prefix and a 4-byte big-endian value.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct PackedArray {
-    // LIFETIMES.tsv: BORROW_PARAM → &'a [u8] of `len * 8` bytes inside the
-    // DataRow. Thin pointer for the `#[repr(C)]` union; never freed.
+    // LIFETIMES.tsv: BORROW_PARAM → &'a [u8] of `len * 8` bytes in the DataRow. Never freed.
     pub(crate) ptr: *const u8,
     pub(crate) len: u32,
     pub(crate) elem: PackedArrayElem,

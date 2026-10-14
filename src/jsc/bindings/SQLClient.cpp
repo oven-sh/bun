@@ -65,8 +65,7 @@ enum class PackedArrayElem : uint8_t {
     Float4 = 1,
 };
 
-// A 1-D binary int4[]/float4[] with no NULL, still in the wire buffer: `length`
-// elements of a 4-byte length prefix and a 4-byte big-endian value.
+// A 1-D binary int4[]/float4[] with no NULL, still in the wire buffer.
 typedef struct PackedArrayDataCell {
     const uint8_t* data;
     uint32_t length;
@@ -244,8 +243,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             return static_cast<double>(std::bit_cast<float>(readBits(i)));
         };
 
-        // A double array cannot hold NaN (it is the hole value), so a float4[]
-        // with a NaN element is built as a contiguous array.
+        // A double array cannot hold NaN (the hole value).
         IndexingType indexingType = ArrayWithInt32;
         if (isFloat) {
             indexingType = ArrayWithDouble;
@@ -257,7 +255,6 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             }
         }
 
-        // The values are numbers, never cells, so no write barrier is needed.
         JSC::JSArray* array = nullptr;
         {
             JSC::ObjectInitializationScope initializationScope(vm);

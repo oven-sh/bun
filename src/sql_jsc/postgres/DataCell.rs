@@ -622,8 +622,7 @@ fn parse_array(
     Ok(make_array_cell(scopeguard::ScopeGuard::into_inner(array)))
 }
 
-/// Hands an owned `Vec<SQLDataCell>` to C++ as a `Tag::Array` cell. `deinit`
-/// rebuilds the Vec from `ptr`/`cap` to free it (`free_value = 1`).
+/// Hands an owned `Vec<SQLDataCell>` to C++ as a `Tag::Array` cell.
 fn make_array_cell(cells: Vec<SQLDataCell>) -> SQLDataCell {
     if cells.is_empty() {
         return SQLDataCell {
@@ -648,10 +647,7 @@ fn make_array_cell(cells: Vec<SQLDataCell>) -> SQLDataCell {
     }
 }
 
-/// Element types of the binary `int4[]` / `float4[]` decoders. `PACKED` names
-/// the element for a `PackedArray` cell. `into_cell` builds the cell a
-/// NULL-bearing or multi-dimensional array holds per element, matching what
-/// `parse_array` makes for the same column in text format.
+/// Element types of the binary `int4[]` / `float4[]` decoders.
 trait BinaryArrayElem: Copy {
     const PACKED: PackedArrayElem;
     fn from_wire(bytes: [u8; 4]) -> Self;
@@ -678,8 +674,7 @@ impl BinaryArrayElem for f32 {
     }
 }
 
-/// Reads one element of a binary array at `*cursor`: a 4-byte length (`-1` for
-/// NULL) followed by the payload. Advances `cursor` past it.
+/// One element at `*cursor`: a 4-byte length (`-1` for NULL) and the payload.
 fn decode_binary_array_elem<Elem: BinaryArrayElem>(
     bytes: &[u8],
     cursor: &mut usize,
@@ -716,9 +711,7 @@ fn decode_binary_array_elem<Elem: BinaryArrayElem>(
     Ok(value.into_cell())
 }
 
-/// Decodes one dimension of a binary array: `dims[0]` items, each a nested
-/// array for the remaining `dims` or an element when `dims` has one entry.
-/// Elements are stored in row-major order, so a single `cursor` walks them.
+/// One dimension: `dims[0]` nested arrays, or elements when `dims` has one entry.
 fn decode_binary_array_level<Elem: BinaryArrayElem>(
     bytes: &[u8],
     dims: &[usize],
@@ -742,20 +735,14 @@ fn decode_binary_array_level<Elem: BinaryArrayElem>(
     Ok(make_array_cell(scopeguard::ScopeGuard::into_inner(cells)))
 }
 
-/// Binary `int4[]` / `float4[]` with NULL elements or more than one dimension.
-/// A typed array can hold neither, so this decodes into the same plain
-/// `Tag::Array` shape the text path produces: `null` per NULL element and a
-/// nested array per dimension. `ndim` is the header's dimension count.
-///
-/// Wire layout (`array_send`): ndim(4) flags(4) elemtype(4), then per dimension
-/// size(4) lbound(4), then every element as len(4) + payload.
-/// https://github.com/postgres/postgres/blob/master/src/backend/utils/adt/arrayfuncs.c#L1549-L1645
+/// Binary array with NULL elements or more than one dimension, as a `Tag::Array`
+/// tree like the text path makes. Wire layout (`array_send`): ndim(4) flags(4)
+/// elemtype(4), per dimension size(4) lbound(4), per element len(4) + payload.
 fn decode_binary_array_cells<Elem: BinaryArrayElem>(
     bytes: &[u8],
     ndim: u32,
 ) -> Result<SQLDataCell> {
-    // Every count below comes from the server. Bound each one against the
-    // bytes that actually arrived before it drives an allocation or a loop.
+    // Every count is server-controlled: bound it against `bytes` before it sizes anything.
     let ndim = ndim as usize;
     if ndim > MAX_ARRAY_NESTING_DEPTH {
         return Err(AnyPostgresError::InvalidBinaryData);
@@ -783,9 +770,6 @@ fn decode_binary_array_cells<Elem: BinaryArrayElem>(
             .checked_mul(dim_len)
             .ok_or(AnyPostgresError::InvalidBinaryData)?;
     }
-    // Postgres sends an empty array as ndim = 0, so a zero dimension never
-    // comes from a real server. Decode it as empty rather than let the other
-    // dimensions size an allocation.
     if total == 0 {
         return Ok(make_array_cell(Vec::new()));
     }
@@ -798,13 +782,8 @@ fn decode_binary_array_cells<Elem: BinaryArrayElem>(
     decode_binary_array_level::<Elem>(bytes, &dims, &mut cursor)
 }
 
-/// Binary `int4[]` / `float4[]`. A one-dimensional value with no NULL stays
-/// in the wire buffer as a `PackedArray` cell and C++ builds the JS array from
-/// it. Every other shape goes through `decode_binary_array_cells`. Both read
-/// as a plain JS array, like the text path.
-///
-/// The 1-D header is 20 bytes: ndim(4) flags(4) elemtype(4) len(4) lbound(4).
-/// Each element follows as a 4-byte length prefix and a 4-byte value.
+/// Binary `int4[]` / `float4[]`. A 1-D value with no NULL stays in the wire
+/// buffer as a `PackedArray` cell. Every other shape is decoded per element.
 fn from_bytes_binary_array<Elem: BinaryArrayElem>(bytes: &[u8]) -> Result<SQLDataCell> {
     if bytes.len() < 12 {
         return Err(AnyPostgresError::InvalidBinaryData);

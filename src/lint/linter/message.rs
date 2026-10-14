@@ -189,6 +189,8 @@ pub struct LintMessage {
     pub end: Option<(u32, u32)>,
     /// The file is not linted because of it.
     pub is_fatal: bool,
+    /// [`Report::claims`](crate::context::Report::claims). See [`LintMessage::hide_claimed`].
+    pub claim: Option<crate::context::Claim>,
     pub fix: Option<Fix>,
     pub suggestions: Vec<Suggestion>,
     pub suppressions: Vec<Suppression>,
@@ -208,6 +210,47 @@ pub struct LintMessage {
 }
 
 impl LintMessage {
+    /// Takes out of `messages` what a rule without types reports about a node that the rule with types of its
+    /// [pair](crate::rule_set::Pairs) reports too. What it would change goes to that report. Whether anything was taken out.
+    ///
+    /// It is the last step: `messages` are those that are shown, after the comments and the files that suppress, and after the
+    /// fixes. Up to here there are two reports, and all of that works as it does for two.
+    pub fn hide_claimed(messages: &mut Vec<LintMessage>) -> bool {
+        let claims = messages
+            .iter()
+            .zip(0..)
+            .filter_map(|(it, at)| Some((it.claim?, at)));
+        let mut with_types: Vec<(crate::context::Claim, usize)> =
+            claims.filter(|it| it.0.with_types).collect();
+        if with_types.is_empty() {
+            return false;
+        }
+        with_types.sort_unstable();
+        let mut is_hidden = vec![false; messages.len()];
+        for from in 0..messages.len() {
+            let Some(claim) = messages[from].claim.filter(|it| !it.with_types) else {
+                continue;
+            };
+            let Ok(found) = with_types.binary_search_by_key(&claim.with_types(), |it| it.0) else {
+                continue;
+            };
+            is_hidden[from] = true;
+            let fix = messages[from].fix.take();
+            let suggestions = std::mem::take(&mut messages[from].suggestions);
+            let shown = &mut messages[with_types[found].1];
+            shown.fix = shown.fix.take().or(fix);
+            for suggestion in suggestions {
+                if !shown.suggestions.iter().any(|it| it.fix == suggestion.fix) {
+                    shown.suggestions.push(suggestion);
+                }
+            }
+        }
+        let mut is_hidden = is_hidden.into_iter();
+        let before = messages.len();
+        messages.retain(|_| is_hidden.next() == Some(false));
+        messages.len() != before
+    }
+
     /// oxlint's `help`. Empty: there is none.
     pub fn help(&self) -> &str {
         self.text(Part::Help, |it| &it.help)
@@ -264,6 +307,7 @@ impl Default for LintMessage {
             column: 0,
             end: None,
             is_fatal: false,
+            claim: None,
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),
@@ -317,6 +361,7 @@ impl<'a> Locator<'a> {
             column,
             end: Some(self.position(span.end)),
             is_fatal: false,
+            claim: None,
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),

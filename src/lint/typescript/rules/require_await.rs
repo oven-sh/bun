@@ -166,6 +166,7 @@ impl Rule for RequireAwait {
                 false => get_function_head_loc(func),
             };
             cx.report(place, MISSING_AWAIT)
+                .claims(func)
                 .data("name", upper_case_first(&name).into_owned())
                 .suggest_change_of_behavior(REMOVE_ASYNC, &[], |fixer| remove_async(fixer, func));
         }

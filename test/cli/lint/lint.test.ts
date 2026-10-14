@@ -4773,10 +4773,93 @@ maybe(() => { return f; });
           `);
         });
 
-        test("the rule with types suggests what the hidden report of no-throw-literal does", async () => {
+        test("what a hidden report would change is changed", async () => {
+          const includes = ["unicorn/prefer-includes", "typescript/prefer-includes"];
+          const destructuring = ["prefer-destructuring", "typescript/prefer-destructuring"];
+          const rows: [rules: string[], flag: string, code: string][] = [
+            [throw_, "--fix-suggestions", 'throw "a";\n'],
+            [includes, "--fix-suggestions", 'declare const a: string[];\nexport const b = a.indexOf("b") !== -1;\n'],
+            [destructuring, "--fix", 'declare const o: { a: number };\nexport const a = o["a"];\n'],
+            // The comment is for the report that has the suggestion.
+            [throw_, "--fix-suggestions", '// oxlint-disable-next-line no-throw-literal\nthrow "a";\n'],
+          ];
+          const fixed = await Promise.all(
+            rows.map(async ([rules, flag, code]) => {
+              const project = { ".oxlintrc.json": on(rules), "tsconfig.json": tsconfig, "a.ts": code };
+              return (await lint(project, ["--type-aware", flag, "a.ts"], { reads: ["a.ts"] })).files["a.ts"];
+            }),
+          );
+          expect(fixed).toMatchInlineSnapshot(`
+            [
+              
+            "throw new Error("a");
+            "
+            ,
+              
+            "declare const a: string[];
+            export const b = a.includes("b");
+            "
+            ,
+              
+            "declare const o: { a: number };
+            export const {a} = o;
+            "
+            ,
+              
+            "// oxlint-disable-next-line no-throw-literal
+            throw "a";
+            "
+            ,
+            ]
+          `);
+        });
+
+        test("a report that a file of suppressions hides hides no other", async () => {
           const project = { ".oxlintrc.json": on(throw_), "tsconfig.json": tsconfig, "a.ts": 'throw "a";\n' };
-          const { files } = await lint(project, ["--type-aware", "--fix-suggestions", "a.ts"], { reads: ["a.ts"] });
-          expect(files["a.ts"]).toBe('throw new Error("a");\n');
+          const suppress = (rule: string) => lint(project, ["--type-aware", "-f", "json", "--suppress-rule", rule]);
+          const [typed, untyped] = await Promise.all([
+            suppress("typescript/only-throw-error"),
+            suppress("no-throw-literal"),
+          ]);
+          expect([places(typed.raw), places(untyped.raw)]).toMatchInlineSnapshot(`
+            [
+              [
+                "a.ts:1 eslint(no-throw-literal) error",
+              ],
+              [
+                "a.ts:1 typescript(only-throw-error) error",
+              ],
+            ]
+          `);
+        });
+
+        test("dot-notation and consistent-return have no version without types", async () => {
+          const code =
+            'declare const o: { a: number };\nexport const a = o["a"];\nexport function f(x: boolean) {\n  if (x) return 1;\n  return;\n}\n';
+          const names = ["dot-notation", "consistent-return"];
+          const rows: [string, string][] = [
+            [on(names), code],
+            [on([...names, ...names.map(it => `typescript/${it}`)]), code],
+          ];
+          const [withTypes, without] = await Promise.all([lintRows(rows, ["--type-aware"]), lintRows(rows, [])]);
+          expect({ withTypes, without }).toMatchInlineSnapshot(`
+            {
+              "withTypes": [
+                [
+                  "a.ts:2 typescript(dot-notation) error",
+                  "a.ts:5 typescript(consistent-return) error",
+                ],
+                [
+                  "a.ts:2 typescript(dot-notation) error",
+                  "a.ts:5 typescript(consistent-return) error",
+                ],
+              ],
+              "without": [
+                [],
+                [],
+              ],
+            }
+          `);
         });
       });
 

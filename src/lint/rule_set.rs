@@ -13,12 +13,6 @@ use crate::runner::Starts;
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct RuleBits(pub [u64; RuleBits::WORDS]);
 
-impl Default for RuleBits {
-    fn default() -> Self {
-        RuleBits::EMPTY
-    }
-}
-
 impl RuleBits {
     /// [`rule_sets!`](crate::rule_sets) sees to it that the rules fit.
     pub const WORDS: usize = 24;

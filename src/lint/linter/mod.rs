@@ -77,7 +77,7 @@ pub use syntax::{
 };
 
 use crate::ast::File;
-use crate::context::{Claim, Diagnostic, Severity};
+use crate::context::{Diagnostic, Severity};
 use crate::js_plugin;
 use crate::options::{Json, Options};
 use crate::oxlint_order::Ran as InOxlint;
@@ -949,14 +949,6 @@ impl<S: RuleSet> Linter<S> {
             }
         }
         let places = wants_places.then_some(&locator);
-        // Without comments that disable, all that is reported is shown.
-        let claims = diagnostics
-            .iter()
-            .filter_map(|it| it.details.as_deref()?.claim);
-        let shown: Vec<Claim> = match has_directives {
-            true => Vec::new(),
-            false => sorted(claims.filter(|it| it.with_types)),
-        };
         // What becomes of what the last rule and `messageId` change that change something.
         let mut changes = (None, config::OxlintChanges::default());
         for (at, step) in order.into_iter().zip(1..) {
@@ -967,9 +959,6 @@ impl<S: RuleSet> Linter<S> {
                 continue;
             };
             let claim = diagnostic.details.as_deref().and_then(|it| it.claim);
-            if claim.is_some_and(|it| is_hidden(it, &shown)) {
-                continue;
-            }
             let changes_something = diagnostic.fix.is_some() || !diagnostic.suggestions.is_empty();
             let follows_oxlint = changes_something && file.language().is_oxlint;
             let key = Some((diagnostic.rule, diagnostic.message_id));
@@ -1113,13 +1102,6 @@ impl<S: RuleSet> Linter<S> {
                         comments.iter().filter(is_directive).filter(is_understood),
                         messages,
                     );
-                    let is_shown = |it: &&LintMessage| it.suppressions.is_empty();
-                    let claims = messages.iter().filter(is_shown).filter_map(|it| it.claim);
-                    let shown = sorted(claims.filter(|it| it.with_types));
-                    messages.retain(|it| {
-                        !it.suppressions.is_empty()
-                            || !it.claim.is_some_and(|it| is_hidden(it, &shown))
-                    });
                     LintMessage::sort(messages);
                 } else {
                     disable::apply_disable_directives(
@@ -1188,17 +1170,6 @@ fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
         };
         message.suggestions.insert(0, suggestion);
     }
-}
-
-fn sorted(claims: impl Iterator<Item = Claim>) -> Vec<Claim> {
-    let mut claims: Vec<Claim> = claims.collect();
-    claims.sort_unstable();
-    claims
-}
-
-/// [`Report::unless_claimed`](crate::context::Report::unless_claimed). `shown`: the claims of the reports that are shown, sorted.
-fn is_hidden(claim: Claim, shown: &[Claim]) -> bool {
-    !claim.with_types && shown.binary_search(&claim.with_types()).is_ok()
 }
 
 /// Takes out of `diagnostic` what is on the heap. `locator`: `None` if nothing reads where it is.

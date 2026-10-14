@@ -205,13 +205,6 @@ impl<'a, R: Rule> Cx<'a, R> {
         self.base.file
     }
 
-    /// For a rule with types: the rule without types of its [pair](crate::rule_set::Pairs) is at work on the file too, and what
-    /// that one reports is hidden where this one [claims](Report::claims) the node.
-    pub fn stands_in(&self) -> bool {
-        let paired = self.base.file.sink.paired.borrow();
-        paired.iter().any(|it| it.0 == self.base.rule && it.2)
-    }
-
     /// Reports `message` at a node, a token, a comment or a [`Span`].
     ///
     /// What is returned adds to the report, which is made when it goes out of scope:
@@ -438,7 +431,8 @@ impl<'a> Report<'a> {
     }
 
     /// For a rule with types that has a [pair](crate::rule_set::Pairs): the problem is in `node`. While this report is shown, what
-    /// the rule without types reports [about `node`](Report::unless_claimed) is not. Both name the same node.
+    /// the rule without types reports [about `node`](Report::unless_claimed) is not. Both name the same node. See
+    /// [`LintMessage::hide_claimed`](crate::linter::LintMessage::hide_claimed).
     pub fn claims(self, node: impl Spanned) -> Self {
         self.claim(true, node.span())
     }

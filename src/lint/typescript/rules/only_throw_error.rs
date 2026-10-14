@@ -5,7 +5,6 @@ use bun_lint::types::utils::{
     TypeOrValueSpecifier, is_error_like, is_type_any_type, is_type_unknown_type, parse_catch_call,
     parse_then_call, parse_type_or_value_specifiers, type_matches_some_specifier,
 };
-use bun_lint::utils::oxlint::wrap_in_new_error;
 
 /// Disallow throwing non-`Error` values as exceptions.
 pub struct OnlyThrowError {
@@ -129,15 +128,6 @@ fn is_rethrown_error_tsgolint(node: Expr) -> bool {
     }
 }
 
-/// Where it hides the report of `no-throw-literal`, it suggests what that one does. With an `.oxlintrc.json` the fix of that rule
-/// is a suggestion.
-fn report<'a>(at: impl Spanned, message: Message, node: Expr<'a>, cx: &Cx<'a, OnlyThrowError>) {
-    let report = cx.report(at, message).claims(node);
-    if cx.stands_in() {
-        report.suggest(message, |fixer| wrap_in_new_error(fixer, node));
-    }
-}
-
 impl OnlyThrowError {
     fn check_throw_argument<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::Throw(node) = statement.kind() else {
@@ -154,7 +144,7 @@ impl OnlyThrowError {
         if ty.has_flags(TypeFlags::UNDEFINED) {
             // tsgolint points at the statement.
             let place = if is_oxlint { statement.span() } else { node.span() };
-            report(place, UNDEF, node, cx);
+            cx.report(place, UNDEF).claims(node);
             return;
         }
         if self.allow_throwing_any && is_type_any_type(ty) {
@@ -172,9 +162,9 @@ impl OnlyThrowError {
         }
         if is_oxlint {
             // tsgolint reports the `ParenthesizedExpression`.
-            report(node.outer_span(), OBJECT, node, cx);
+            cx.report(node.outer_span(), OBJECT).claims(node);
         } else {
-            report(node, OBJECT, node, cx);
+            cx.report(node, OBJECT);
         }
     }
 }

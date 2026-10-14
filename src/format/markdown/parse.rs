@@ -191,7 +191,7 @@ const SPAN_BYTES: &[u8] = b"$[{@:.";
 
 /// What has been looked for in a text, so that it is not looked for again from every marker. Places are addresses.
 #[derive(Copy, Clone, Default)]
-struct SpanMemo {
+pub(super) struct SpanMemo {
     /// `SpanStart::serial` of the text.
     serial: u32,
     /// What is from the first place to the second could be the name of an address, and is not.
@@ -263,7 +263,7 @@ fn atext_start(start: &SpanStart<'_>, end: usize) -> usize {
 
 /// The span that a byte of `SPAN_BYTES` is in, in the text of a paragraph, a heading or a cell.
 /// `can_start_with_check`: see `Builder::can_start_with_check`.
-fn span_at(
+pub(super) fn span_at(
     start: &SpanStart<'_>,
     syntax: Syntax,
     can_start_with_check: bool,

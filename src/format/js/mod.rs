@@ -11,6 +11,7 @@ pub(crate) mod jsdoc;
 pub(crate) mod parentheses;
 pub(crate) mod print;
 pub(crate) mod siblings;
+pub(crate) mod skim;
 pub(crate) mod sort_imports;
 pub(crate) mod source_text;
 pub(crate) mod trivia;

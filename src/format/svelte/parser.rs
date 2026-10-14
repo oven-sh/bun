@@ -250,7 +250,7 @@ fn is_valid_element_name(name: &[u8]) -> bool {
 }
 
 /// `regex_valid_component_name`
-fn is_valid_component_name(name: &[u8]) -> bool {
+pub(super) fn is_valid_component_name(name: &[u8]) -> bool {
     // `[$\u200c\u200d\p{ID_Continue}]`
     let is_part = |c: u32| bun_core::lexer::is_type_script_identifier_part(c as i32);
     let Some(first) = code_points(name).next() else {
@@ -321,6 +321,33 @@ fn directive_kind(name: &[u8]) -> Option<std::result::Result<DirectiveKind, ()>>
         b"transition" => DirectiveKind::Transition(true, true),
         _ => return None,
     }))
+}
+
+/// How many bytes of `rest` are the name of a tag, or of an attribute. `IS_TOLERANT`, for the highlighter: it ends at a `<`
+/// and at a `{` too, which are in no name that is valid.
+#[inline]
+pub(super) fn tag_name_len<const IS_TOLERANT: bool>(rest: &[u8], is_attribute: bool) -> usize {
+    let mut len = 0;
+    while len < rest.len() {
+        let byte = rest[len];
+        if matches!(byte, b'/' | b'>')
+            || (is_attribute && matches!(byte, b'"' | b'\'' | b'='))
+            || (IS_TOLERANT && matches!(byte, b'<' | b'{'))
+            || strings::js_whitespace_len(&rest[len..]) > 0
+        {
+            break;
+        }
+        len += 1;
+    }
+    len
+}
+
+/// `regex_invalid_unquoted_attribute_value`: `/(\/>|[\s"'=<>`])/y`
+#[inline]
+pub(super) fn ends_unquoted_value(rest: &[u8]) -> bool {
+    rest.starts_with(b"/>")
+        || matches!(rest, [b'"' | b'\'' | b'=' | b'<' | b'>' | b'`', ..])
+        || strings::js_whitespace_len(rest) > 0
 }
 
 /// When a sequence of texts and expressions ends.
@@ -709,17 +736,7 @@ impl<'a> Parser<'a, '_> {
             return fail(Message::UnexpectedEnd, self.len);
         }
         let rest = self.rest();
-        let mut len = 0;
-        while len < rest.len() {
-            let byte = rest[len];
-            if matches!(byte, b'/' | b'>')
-                || (is_attribute && matches!(byte, b'"' | b'\'' | b'='))
-                || strings::js_whitespace_len(&rest[len..]) > 0
-            {
-                break;
-            }
-            len += 1;
-        }
+        let len = tag_name_len::<false>(rest, is_attribute);
         self.index += len;
         Ok(&rest[..len])
     }
@@ -1218,13 +1235,7 @@ impl<'a> Parser<'a, '_> {
     fn is_done(&self, done: Done) -> bool {
         match done {
             Done::Quote(quote) => self.rest().first() == Some(&quote),
-            // `/(\/>|[\s"'=<>`])/y`
-            Done::Unquoted => {
-                let rest = self.rest();
-                rest.starts_with(b"/>")
-                    || matches!(rest, [b'"' | b'\'' | b'=' | b'<' | b'>' | b'`', ..])
-                    || strings::js_whitespace_len(rest) > 0
-            }
+            Done::Unquoted => ends_unquoted_value(self.rest()),
             Done::Textarea => self.closing_textarea_tag_len().is_some(),
         }
     }

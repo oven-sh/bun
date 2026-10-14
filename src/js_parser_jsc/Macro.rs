@@ -115,7 +115,7 @@ impl MacroContext {
             log.add_range_error(
                 Some(source),
                 import_range,
-                b"Macros cannot be used with --disallow-code-generation-from-strings=strict in a standalone executable: a macro is not embedded in the executable",
+                b"Macros cannot be used with --disallow-code-generation-from-strings=strict in a compiled executable: a macro is not embedded in the executable",
             );
             return Err(crate::Error::MacroFailed);
         }

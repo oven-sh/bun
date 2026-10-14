@@ -722,11 +722,8 @@ impl File {
     }
 
     /// JavaScript this executable runs, so stored as the string body the engine reads in place (`is_stored_as_string`).
-    pub fn is_javascript_module(&self) -> bool {
-        self.loader.is_javascript_like()
-            && self.side != FileSide::Client
-            && self.encoding != Encoding::Binary
-            && !self.contents.is_empty()
+    fn is_javascript_module(&self) -> bool {
+        self.loader.is_javascript_like() && self.side != FileSide::Client
     }
 
     /// An `Encoding::Utf16` body as code units.

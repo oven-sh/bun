@@ -584,7 +584,7 @@ const fn page_size(e_machine: u16) -> u64 {
 pub const BUN_SECTION_ALIGNMENT: u64 = page_size(if cfg!(target_arch = "aarch64") {
     EM_AARCH64
 } else {
-    0
+    EM_X86_64
 });
 
 struct BunSectionInfo {
@@ -763,6 +763,7 @@ const SHF_ALLOC: u64 = 0x2;
 const SHF_TLS: u64 = 0x400;
 
 const EM_PPC64: u16 = 21;
+const EM_X86_64: u16 = 62;
 const EM_AARCH64: u16 = 183;
 
 #[repr(C)]

@@ -561,7 +561,7 @@ describe.concurrent.skipIf(!builtStrict)("a build with =strict as a constant", (
 describe.concurrent("=strict in a compiled executable", () => {
   const refusedNotEmbedded = (url?: string) =>
     url
-      ? `EvalError: Refused to run ${url} because it is not embedded in the executable`
+      ? `EvalError: Refused to run "${url}" because it is not embedded in the executable`
       : "EvalError: Refused to run code that is not embedded in the executable";
   // It is inside #if ASSERT_ENABLED.
   const hasEvaluateForTesting = evaluateForTesting !== undefined;
@@ -596,24 +596,32 @@ describe.concurrent("=strict in a compiled executable", () => {
       });
 
       const routes = {
-        pluginJSON: () => {
+        pluginOnLoadJSON: () => {
           Bun.plugin({ name: "json", setup(build) {
-            build.onLoad({ filter: /\\.plugin-json$/ }, () => ({ contents: recordRun("pluginJSON"), loader: "json" }));
+            build.onLoad({ filter: /\\.plugin-json$/ }, () => ({ contents: recordRun("pluginOnLoadJSON"), loader: "json" }));
           } });
           return import(write("x.plugin-json", ""));
         },
         macroExportName: () => new Bun.Transpiler({ loader: "ts" }).transformSync(
           'import { "a\\']; (globalThis.ran ??= []).push(/macroExportName/.source); //" as macro } from "bun" with { type: "macro" }; export default macro();'),
+        macroInBuild: async () => {
+          write("macro.ts", "export function macro() { " + recordRun("macroInBuild") + " }");
+          const entry = write("uses-macro.ts", 'import { macro } from "./macro.ts" with { type: "macro" }; export default macro();');
+          return (await Bun.build({ entrypoints: [entry], throw: false })).logs.map(log => log.message);
+        },
         importWritten: () => import(write("imported.mjs")),
         requireWritten: () => require(write("required.cjs")),
         importEmpty: () => import(write("empty.mjs", "")),
-        workerWritten: () => workerOutcome(write("worker.mjs", 'postMessage("worker.mjs")')),
+        importText: () => import(write("text.txt")),
+        importMarkdown: () => import(write("markdown.md")),
+        importWithTypeText: () => import(write("typed-text.bin"), { with: { type: "text" } }),
+        workerFromWrittenFile: () => workerOutcome(write("worker.mjs", 'postMessage("worker.mjs")')),
         bytecodeFile: () => require(dir + "/bytecode/with-bytecode.js"),
         sameSourceWithoutBytecode: () => require(write("same-source.js", fs.readFileSync(dir + "/bytecode/with-bytecode.js", "utf8"))),
         compileCache: () => { Module.enableCompileCache(dir + "/compile-cache"); return require(dir + "/compile-cached.cjs"); },
         transpilerCache: () => import(dir + "/transpiler-cached.ts"),
-        dataModule: () => import(["data:text/javascript", recordRun("dataModule")].join(",")),
-        blobModule: () => import(URL.createObjectURL(new Blob([recordRun("blobModule")], { type: "text/javascript" }))),
+        importData: () => import(["data:text/javascript", recordRun("importData")].join(",")),
+        importBlob: () => import(URL.createObjectURL(new Blob([recordRun("importBlob")], { type: "text/javascript" }))),
         embeddedAsset: () => import(asset),
         devServer: () => Bun.serve({ port: 0, app: { root: dir, framework: {
           fileSystemRouterTypes: [{ root: "pages", style: "nextjs-pages", serverEntryPoint: dir + "/framework-server.ts", clientEntryPoint: dir + "/framework-client.ts" }],
@@ -678,6 +686,10 @@ describe.concurrent("=strict in a compiled executable", () => {
         },
         dataFilesAtRunTime: async () => [
           (await import(await write("data.json", '{"a":1}'))).default,
+          (await import(await write("data.jsonc", '{"a":1} // comment'))).default,
+          (await import(await write("data.json5", "{a:1}"))).default,
+          (await import(await write("data.yaml", "a: 1"))).default,
+          (await import(await write("data.xml", "<a>1</a>"))).default,
           require(await write("data.toml", "a = 1")),
         ],
         databaseAtRunTime: async () => {
@@ -734,7 +746,7 @@ describe.concurrent("=strict in a compiled executable", () => {
     spawn([join(cwd, exe), ...args], cwd, env);
 
   test("refuses code that is not embedded", async () => {
-    using dir = tempDir("strict-compiled-refuses", compiledFiles);
+    using dir = tempDir("disallow-code-generation-compiled-refuses", compiledFiles);
     const cwd = String(dir);
     const transpilerCache = { BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(cwd, "transpiler-cache") };
     // What a run of Bun that may run these files leaves behind for the next one.
@@ -759,21 +771,26 @@ describe.concurrent("=strict in a compiled executable", () => {
     }).toEqual({ bytecode: ["with-bytecode.js", "with-bytecode.js.jsc"], compileCache: true, transpilerCache: true });
 
     const refusedFile = (name: string) => refusedNotEmbedded(join(cwd, name));
+    const refusedMacro = `Macros cannot be used with ${strict} in a compiled executable: a macro is not embedded in the executable`;
     const expected = {
       results: {
-        pluginJSON: refusedFile("x.plugin-json"),
-        macroExportName: `BuildMessage: Macros cannot be used with ${strict} in a standalone executable: a macro is not embedded in the executable`,
+        pluginOnLoadJSON: refusedFile("x.plugin-json"),
+        macroExportName: "BuildMessage: " + refusedMacro,
+        macroInBuild: [refusedMacro],
         importWritten: refusedFile("imported.mjs"),
         requireWritten: refusedFile("required.cjs"),
         importEmpty: refusedFile("empty.mjs"),
-        workerWritten: refusedFile("worker.mjs"),
+        importText: refusedFile("text.txt"),
+        importMarkdown: refusedFile("markdown.md"),
+        importWithTypeText: refusedFile("typed-text.bin"),
+        workerFromWrittenFile: refusedFile("worker.mjs"),
         bytecodeFile: refusedFile(join("bytecode", "with-bytecode.js")),
         sameSourceWithoutBytecode: refusedFile("same-source.js"),
         compileCache: refusedFile("compile-cached.cjs"),
         transpilerCache: refusedFile("transpiler-cached.ts"),
-        dataModule: refused,
-        blobModule: refused,
-        embeddedAsset: expect.stringMatching(/^EvalError: Refused to run .*asset-.*\.txt because it is not embedded/),
+        importData: refused,
+        importBlob: refused,
+        embeddedAsset: expect.stringMatching(/^EvalError: Refused to run ".*asset-.*\.txt" because it is not embedded/),
         devServer: refusedNotEmbedded("bake://server-runtime.js"),
         // The resolver follows the link, to a name that no file has, so this one does not get as far as the engine.
         ...(isLinux && { memfd: expect.stringMatching(/^BuildMessage: ENOENT reading "\/memfd:/) }),
@@ -795,20 +812,30 @@ describe.concurrent("=strict in a compiled executable", () => {
       expect(JSON.parse(stdout)).toEqual(expected);
       expect(exitCode).toBe(0);
     }
+    expect(await runCompiled(cwd, [cwd], { BUN_OPTIONS: "--preload=" + join(cwd, "imported.mjs") })).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining(refusedFile("imported.mjs")),
+      exitCode: 1,
+    });
   });
 
   test.each([
-    { modules: "ES modules", buildArgs: [] },
-    { modules: "ES modules with bytecode", buildArgs: ["--bytecode"] },
-    { modules: "CommonJS", buildArgs: ["--format=cjs"] },
-    { modules: "CommonJS with bytecode", buildArgs: ["--format=cjs", "--bytecode"] },
-  ])("runs embedded code: $modules", async ({ buildArgs }) => {
-    using dir = tempDir("strict-compiled-runs", compiledFiles);
+    { modules: "ES modules", buildArgs: [], bytecode: false },
+    { modules: "ES modules with bytecode", buildArgs: ["--bytecode"], bytecode: true },
+    { modules: "CommonJS", buildArgs: ["--format=cjs"], bytecode: false },
+    { modules: "CommonJS with bytecode", buildArgs: ["--format=cjs", "--bytecode"], bytecode: true },
+  ])("runs embedded code: $modules", async ({ buildArgs, bytecode }) => {
+    using dir = tempDir("disallow-code-generation-compiled-runs", compiledFiles);
     const cwd = String(dir);
     await compile(cwd, ["./allowed-routes.ts", "./worker.ts", "./utf16.ts"], buildArgs, strict);
-    const { stdout, stderr, exitCode } = await runCompiled(cwd, [cwd]);
+    // Refused bytecode is a cache miss, which falls back to the source and shows nowhere else.
+    const { stdout, stderr, exitCode } = await runCompiled(
+      cwd,
+      [cwd],
+      bytecode ? { BUN_JSC_verboseDiskCache: "1" } : {},
+    );
     expect({ stderr, ...JSON.parse(stdout) }).toEqual({
-      stderr: "",
+      stderr: bytecode ? expect.stringContaining("Cache hit") : "",
       results: {
         functionFirstCalledLate: [40, 42],
         classWithoutConstructor: 1,
@@ -818,7 +845,7 @@ describe.concurrent("=strict in a compiled executable", () => {
         embeddedUTF16: "utf16",
         worker: 8,
         hotLoop: true,
-        dataFilesAtRunTime: [{ a: 1 }, { a: 1 }],
+        dataFilesAtRunTime: [{ a: 1 }, { a: 1 }, { a: 1 }, { a: 1 }, { a: "1" }, { a: 1 }],
         databaseAtRunTime: { n: 0 },
       },
       unhandled: [],
@@ -826,8 +853,9 @@ describe.concurrent("=strict in a compiled executable", () => {
     expect(exitCode).toBe(0);
   });
 
+  // It reads /proc/self/maps.
   test.skipIf(!isLinux)("the executable's modules are mapped read-only", async () => {
-    using dir = tempDir("strict-compiled-read-only", {
+    using dir = tempDir("disallow-code-generation-compiled-read-only", {
       "entry.ts": `
         const mappings = require("node:fs").readFileSync("/proc/self/maps", "utf8").split("\\n").filter(line => line.endsWith(process.execPath));
         console.log(mappings.at(-1).split(" ")[1]);

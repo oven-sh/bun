@@ -436,6 +436,12 @@ extern "C" void JSC__disallowNonEmbeddedCode()
     JSC::Options::disallowNonEmbeddedCode() = true;
 }
 
+// Not through the accessor, which asserts that the options are final: `bun build` asks for a macro before JSC is initialized.
+extern "C" bool JSC__isNonEmbeddedCodeDisallowed()
+{
+    return g_jscConfig.options.disallowNonEmbeddedCode;
+}
+
 extern "C" void* Bun__getVM();
 
 extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);
@@ -3545,9 +3551,11 @@ extern "C" bool Bun__VM__resolveEntryPointSpecifier(void* bunVM, const BunString
 // bun:main is the same text whatever the entry point is: it imports a specifier that stands for the entry point's path.
 static JSValue resolveEntryPointSpecifier(Zig::GlobalObject* globalObject, JSValue key, JSValue referrer)
 {
+    static constexpr ASCIILiteral bunMain = "bun:main"_s;
     if (!referrer || !referrer.isString() || !key.isString())
         return key;
-    if (WTF::String referrerString = uncheckedDowncast<JSString>(referrer)->tryGetValue(); referrerString != "bun:main"_s)
+    auto* referrerString = uncheckedDowncast<JSString>(referrer);
+    if (referrerString->length() != bunMain.length() || WTF::String(referrerString->tryGetValue()) != bunMain)
         return key;
     WTF::String specifierString = uncheckedDowncast<JSString>(key)->tryGetValue();
     BunString specifier = Bun::toString(specifierString);

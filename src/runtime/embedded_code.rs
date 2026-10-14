@@ -7,7 +7,7 @@ use crate::jsc_hooks::{
     WASI_RUNNER_SOURCE,
 };
 
-/// The modules whose source is a `static` in Bun. All ASCII.
+/// The modules whose source is a `static` in Bun.
 fn static_module_sources() -> [&'static [u8]; 6] {
     [
         BUN_MAIN_SOURCE,
@@ -26,7 +26,6 @@ pub(crate) fn static_source_code(source: &'static [u8]) -> bun_core::String {
             .iter()
             .any(|&known| core::ptr::eq(known, source))
     );
-    debug_assert!(source.is_ascii());
     bun_core::String::create_static_external(source, true)
 }
 

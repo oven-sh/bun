@@ -129,14 +129,8 @@ bool isEmbeddedCode(std::span<const uint8_t> source, std::span<const uint8_t> by
 
     for (uint32_t id = 0; id < bun_internal_modules_header.moduleCount; id++) {
         const auto& m = internalModuleRecord(id);
-        if (!hasSameAddress(source, internalModulesData.subspan(m.codeOffset, m.codeLength)))
-            continue;
-        if (bytecode.empty())
-            return true;
-        const uint8_t* cachedBytes = nullptr;
-        size_t cachedSize = 0;
-        uint32_t cachedEntryOffset = 0;
-        return Bun__standaloneInternalModuleBytecode(nullptr, id, &cachedBytes, &cachedSize, &cachedEntryOffset) && hasSameAddress(bytecode, { cachedBytes, cachedSize }) && cachedEntryOffset == bytecodeEntryOffset;
+        if (hasSameAddress(source, internalModulesData.subspan(m.codeOffset, m.codeLength)))
+            return bytecode.empty();
     }
     return false;
 }

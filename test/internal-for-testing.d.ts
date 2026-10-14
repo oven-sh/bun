@@ -3,13 +3,12 @@
 // apply to builtins.
 declare function $cpp<T = any>(filename: string, symbol: string): T;
 declare function $rust<T = any>(filename: string, symbol: string): T;
-declare function $newCppFunction<T = (...args: any) => any>(filename: string, symbol: string, argCount: number): T;
 declare function $newCppFunction<T = (...args: any) => any>(
   filename: string,
   symbol: string,
   argCount: number,
-  guard: "ASSERT_ENABLED",
-): T | undefined;
+  guard?: "ASSERT_ENABLED",
+): T;
 declare function $newRustFunction<T = (...args: any) => any>(filename: string, symbol: string, argCount: number): T;
 declare function $bindgenFn<T = (...args: any) => any>(filename: string, symbol: string): T;
 declare function $ERR_INVALID_ARG_VALUE(name: string, value: any, reason?: string): TypeError;

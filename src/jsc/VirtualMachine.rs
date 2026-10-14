@@ -505,14 +505,14 @@ pub unsafe extern "C" fn Bun__standaloneInternalModuleBytecode(
     true
 }
 
-/// `GlobalObject::moduleLoaderResolve`, for what `bun:main` imports: `ENTRY_POINT_SPECIFIER` is the entry point's path.
+/// `GlobalObject::moduleLoaderResolve`, for what `bun:main` imports: `BUN_MAIN_ENTRY_SPECIFIER` is the entry point's path.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__VM__resolveEntryPointSpecifier(
     vm: &VirtualMachine,
     specifier: &bun_core::String,
     entry_point_path: &mut bun_core::String,
 ) -> bool {
-    if !specifier.eq_ascii(bun_bundler::entry_points::ENTRY_POINT_SPECIFIER) {
+    if !specifier.eq_ascii(bun_bundler::entry_points::BUN_MAIN_ENTRY_SPECIFIER) {
         return false;
     }
     *entry_point_path = bun_core::String::clone_utf8(vm.main());
@@ -3440,7 +3440,7 @@ impl VirtualMachine {
         }
     }
 
-    /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
+    /// `reloadEntryPoint(entry_path)` — set `main`, choose the static
     /// `bun:main` entry, run preloads, and kick off module evaluation.
     pub(crate) fn reload_entry_point(
         &mut self,

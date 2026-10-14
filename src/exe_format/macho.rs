@@ -91,19 +91,18 @@ impl MachoFile {
     }
 
     pub fn write_section(&mut self, data: &[u8]) -> Result<(), MachoError> {
-        let blob_alignment: u64 = BUN_SECTION_ALIGNMENT;
         const PAGE_SIZE: u64 = 1 << 12;
         const HASH_SIZE: usize = 32; // SHA256 = 32 bytes
 
         let header_size = size_of::<u64>() as u64;
         let total_size = header_size + data.len() as u64;
-        let aligned_size = align_size(total_size, blob_alignment);
+        let aligned_size = align_size(total_size, BUN_SECTION_ALIGNMENT);
 
         // Look for existing __BUN,__BUN section
 
         let mut original_fileoff: u64 = 0;
         let mut original_data_end: u64 = 0;
-        let mut original_segsize: u64 = blob_alignment;
+        let mut original_segsize: u64 = BUN_SECTION_ALIGNMENT;
 
         // Use an index instead of a pointer to avoid issues with resizing the arraylist later.
         let mut code_sign_cmd_idx: Option<usize> = None;
@@ -156,7 +155,7 @@ impl MachoFile {
 
                                     // Update segment with proper sizes and alignment
                                     self.segment.vmsize =
-                                        align_vmsize(aligned_size, blob_alignment);
+                                        align_vmsize(aligned_size, BUN_SECTION_ALIGNMENT);
                                     self.segment.filesize = aligned_size;
                                     self.segment.maxprot = macho::PROT::READ | macho::PROT::WRITE;
                                     self.segment.initprot = macho::PROT::READ | macho::PROT::WRITE;
@@ -167,7 +166,7 @@ impl MachoFile {
                                         addr: original_vmaddr,
                                         size: total_size,
                                         offset: u32::try_from(original_fileoff).expect("int cast"),
-                                        align: (blob_alignment as f64).log2() as u32,
+                                        align: (BUN_SECTION_ALIGNMENT as f64).log2() as u32,
                                         reloff: 0,
                                         nreloc: 0,
                                         flags: macho::S_REGULAR | macho::S_ATTR_NO_DEAD_STRIP,

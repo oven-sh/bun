@@ -241,7 +241,7 @@ export function applyReplacements(src: string, length: number) {
         throw new Error(`Call is not known at bundle-time: '$${name}${inner.result}'`);
       }
       // $newCppFunction(file, symbol, argCount, "ASSERT_ENABLED"): the function is inside #if ASSERT_ENABLED.
-      const requiresAssertEnabled = name === "newCppFunction" && args.length === 4 && args[3] === "ASSERT_ENABLED";
+      const requiresAssertEnabled = name === "newCppFunction" && args[3] === "ASSERT_ENABLED";
       if (requiresAssertEnabled) args.pop();
       if (
         args.length != (is_create_fn ? 3 : 2) ||
@@ -250,9 +250,7 @@ export function applyReplacements(src: string, length: number) {
         (is_create_fn && typeof args[2] !== "number")
       ) {
         if (is_create_fn) {
-          throw new Error(
-            `$${name} takes three arguments${name === "newCppFunction" ? ', and optionally "ASSERT_ENABLED"' : ""}, but got '$${name}${inner.result}'`,
-          );
+          throw new Error(`$${name} takes three arguments, but got '$${name}${inner.result}'`);
         } else {
           throw new Error(`$${name} takes two string arguments, but got '$${name}${inner.result}'`);
         }

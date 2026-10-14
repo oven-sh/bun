@@ -23,20 +23,20 @@ pub struct ClientEntryPoint {
     pub(crate) source: bun_ast::Source,
 }
 
-macro_rules! entry_point_specifier {
+macro_rules! bun_main_entry_specifier {
     () => {
         "bun:main/entry"
     };
 }
 
 /// What `bun:main` imports. The module loader's resolve hook answers it with the entry point's path.
-pub const ENTRY_POINT_SPECIFIER: &[u8] = entry_point_specifier!().as_bytes();
+pub const BUN_MAIN_ENTRY_SPECIFIER: &[u8] = bun_main_entry_specifier!().as_bytes();
 
 /// The source of `bun:main` with `--hot` or `--watch`. A static, like [`BUN_MAIN_SOURCE`], to have one address: see `static_module_sources`.
 pub static BUN_MAIN_SOURCE_HOT: &[u8] = concat!(
     "// @bun\n\
      import * as start from '",
-    entry_point_specifier!(),
+    bun_main_entry_specifier!(),
     "';\n\
      var hmrSymbol = Symbol(\"BunServerHMR\");\n\
      var entryNamespace = start;\n\
@@ -73,7 +73,7 @@ pub static BUN_MAIN_SOURCE_HOT: &[u8] = concat!(
 pub static BUN_MAIN_SOURCE: &[u8] = concat!(
     "// @bun\n\
      import * as start from \"",
-    entry_point_specifier!(),
+    bun_main_entry_specifier!(),
     "\";\n\
      var entryNamespace = start;\n\
      function isServerConfig(def) {\n\

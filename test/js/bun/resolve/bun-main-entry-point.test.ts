@@ -3,14 +3,7 @@ import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-// `bun:main` is backed by ServerEntryPoint.contents — a slice that is
-// regenerated on every hot-reload cycle. Previously the backing
-// `logger.Source` defaulted to `undefined`, so any read of
-// `entry_point.source.contents` that wasn't paired with a successful
-// `generate()` dereferenced garbage (high non-null fault in
-// toBunStringComptime). These tests exercise the read path directly and
-// the regenerate path under --hot so ASAN covers the new
-// free-then-reallocate on each reload.
+// `import("bun:main")` from the entry point and from a preload, and `bun:main` across reloads under --hot.
 
 function stripAsanWarning(stderr: string): string[] {
   return stderr.split("\n").filter(l => l.length > 0 && !l.startsWith("WARNING: ASAN interferes"));

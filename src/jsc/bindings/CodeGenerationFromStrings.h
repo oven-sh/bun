@@ -63,7 +63,7 @@ inline JSC::JSObject* createCodeGenerationFromStringsError(JSC::JSGlobalObject* 
         }                                                                                                      \
     } while (false)
 
-// JSC::Config::isEmbeddedCode, which "=strict" in a standalone executable allows nothing but. By address: a copy of embedded code is not embedded.
+// The JSC::Config::isEmbeddedCode callback. Answers by address: a copy of embedded code is not embedded.
 bool isEmbeddedCode(std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset);
 
 inline bool isDataOrBlobURL(const WTF::String& specifier)

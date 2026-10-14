@@ -71,7 +71,7 @@ These keep working at both levels:
 - `JSON.parse()`, `RegExp`, and `eval()` of a value that is not a string.
 - WebAssembly.
 - Native addons and `bun:ffi`. See [What the flag does not cover](#what-the-flag-does-not-cover).
-- A plugin that returns an `exports` object, or `contents` for a data loader such as `json` or `toml`.
+- A plugin that returns an `exports` object.
 - `vm.createContext()` and `new vm.SyntheticModule()`. Neither one compiles a string.
 
 A compiled executable with `=strict` loads modules, Workers and `require()`d files from the executable only. See [Only embedded code runs](#only-embedded-code-runs).
@@ -155,15 +155,13 @@ In a compiled executable, `=strict` allows embedded code and nothing else. Embed
 - Bun's own built-in modules and functions.
 - The JavaScript modules that `bun build --compile` put in the executable, and their bytecode when you build with `--bytecode`.
 
-An [embedded file](/bundler/executables) that is not JavaScript, such as an asset, is not code.
-
 The engine refuses everything else, with an `EvalError` that you can catch:
 
 ```txt
-EvalError: Refused to run /app/plugins/extra.js because it is not embedded in the executable
+EvalError: Refused to run "/app/plugins/extra.js" because it is not embedded in the executable
 ```
 
-Bun makes this check in the engine, at the one place where code is made ready to run. It does not depend on the API that the code came through, so it also holds for a way in that the tables above do not list.
+Bun makes this check in the engine. It does not depend on the API that the code came through, so it also holds for a way in that the tables above do not list.
 
 | At run time                                                                                         | `=strict` in a compiled executable                    |
 | --------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
@@ -173,7 +171,7 @@ Bun makes this check in the engine, at the one place where code is made ready to
 | `import()` of an embedded file that is not JavaScript, such as an asset                             | refused                                               |
 | [Macros](/bundler/macros), in text given to `Bun.Transpiler` or in a file given to `Bun.build()`    | refused, with a build error                           |
 | `Bun.serve()` with the experimental `app` option                                                    | refused                                               |
-| A `.jsc` file beside a script, a `module.enableCompileCache()` entry, a transpiler cache entry      | not used                                              |
+| A [plugin](/runtime/plugins) that returns `contents`, for any loader                                | refused: return an `exports` object instead           |
 | `import()` or `require()` of a `.json`, `.jsonc`, `.json5`, `.toml`, `.yaml` or `.xml` file on disk | works: Bun makes the value without making code        |
 | `import()` of a database on disk with `{ type: "sqlite" }`                                          | works                                                 |
 | `import()` or `require()` of a `.txt` or `.md` file on disk, or of any file with `{ type: "text" }` | refused: read the file with `Bun.file()` instead      |

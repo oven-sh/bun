@@ -56,6 +56,6 @@ export function registerAllRules(n: Ninja, cfg: Config): void {
   // host_tool_cc (darwin cross)
   registerShimRules(n, cfg);
 
-  // exe_features_tool, feature_table
+  // exe_features_tool
   registerFeatureTableRules(n, cfg);
 }

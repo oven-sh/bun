@@ -442,7 +442,7 @@ export const globalFlags: Flag[] = [
 
   // ─── Unwinding / exception tables ───
   // These go together: -fno-unwind-tables at compile, --no-eh-frame-hdr at
-  // link (release glibc, musl), and strip -R .eh_frame at post-link (the same).
+  // link (release glibc), and strip -R .eh_frame at post-link (release glibc).
   // See linkerFlags and stripFlags below — kept adjacent intentionally.
   {
     flag: ["-fno-unwind-tables", "-fno-asynchronous-unwind-tables"],
@@ -1076,9 +1076,9 @@ export const linkerFlags: Flag[] = [
     desc: "Linker maps: the order file tracer's symbol table (see windows-symbols.ts)",
   },
   {
-    // What the link's feature table is made from (feature-table.ts), besides
-    // lld's map: the objects LTO generated, which library each member came
-    // from, and in the map the names the object files use.
+    // What the feature table is made from (feature-table.ts), besides lld's
+    // map: the objects LTO generated, which library each member came from, and
+    // in the map the names the object files use.
     flag: ["/lldsavetemps:prelink", "/verbose", "/demangle:no"],
     when: c => c.windows && c.featureTable,
     desc: "Feature table: leave behind what refers to what",
@@ -1199,12 +1199,16 @@ export const linkerFlags: Flag[] = [
     desc: "Dead-code strip + emit linker map",
   },
   {
-    // The hints let the linker turn adrp + add into adr + nop and the like,
-    // after which the object files' relocations, which the feature table is
-    // made from (feature-table.ts), no longer describe the instructions.
-    flag: "-Wl,-ignore_optimization_hints",
+    // `bun build --compile --compile-exclude-features` splits `__TEXT` where it
+    // leaves pages out, which takes a load command for each part.
+    flag: "-Wl,-headerpad,0x2000",
     when: c => c.darwin && c.featureTable,
-    desc: "Feature table: instructions stay as the relocations describe them",
+    desc: "Feature table: room for more load commands",
+  },
+  {
+    flag: c => `-Wl,-cache_path_lto,${featureTableLtoCache(c)}`,
+    when: c => c.darwin && c.featureTable,
+    desc: "Feature table: the second link of that command takes seconds (feature-table.ts)",
   },
   {
     // Mach-O keeps DWARF in the input .o files and records their paths in
@@ -1224,8 +1228,8 @@ export const linkerFlags: Flag[] = [
     // starting up, and Apple's linker sorts them to the front of __text. Where
     // the file comes from is the same as on linux (see that entry). Unknown
     // names are silently skipped, so a stale file only costs part of the win.
-    flag: c => `-Wl,-order_file,${orderFilePath(c)}`,
-    when: c => c.darwin && usesOrderFile(c),
+    flag: c => `-Wl,-order_file,${linkedOrderFilePath(c)}`,
+    when: c => c.darwin && (usesOrderFile(c) || c.featureTable),
     desc: "Sort startup-hot functions to the front of __text (cuts resident binary pages)",
   },
 
@@ -1336,13 +1340,13 @@ export const linkerFlags: Flag[] = [
     // runtime regardless of LTO. Backtraces walk frame pointers (forced on
     // both sides). Debug builds keep .eh_frame for gdb/libunwind.
     flag: "-Wl,--no-eh-frame-hdr",
-    when: c => c.linux && c.abi !== "android" && c.release,
+    when: c => c.linux && c.abi === "gnu" && c.release,
     desc: "Omit eh_frame header (release; size/RSS opt; see stripFlags for matching -R .eh_frame)",
   },
   {
     flag: "-Wl,--eh-frame-hdr",
-    when: c => c.linux && !(c.abi !== "android" && c.release),
-    desc: "Keep eh_frame header (debug/android; needed for DWARF backtraces)",
+    when: c => c.linux && !(c.abi === "gnu" && c.release),
+    desc: "Keep eh_frame header (debug/musl/android; needed for DWARF backtraces)",
   },
   {
     flag: c => `--ld-path=${c.ld}`,
@@ -1405,20 +1409,13 @@ export const linkerFlags: Flag[] = [
     desc: "Linker map",
   },
   {
-    // What the link's feature table is made from (feature-table.ts), besides
-    // the map: the relocations, the objects LTO generated, and which sections
-    // identical code folding merged. `bun-exe-features table`, at the end of
-    // the link command, removes the first two again.
-    flag: ["-Wl,--emit-relocs", "-Wl,--save-temps=prelink", "-Wl,--print-icf-sections"],
+    // What the feature table is made from (feature-table.ts), besides the map:
+    // the objects LTO generated, which are what its cache holds, and which
+    // sections identical code folding merged. The cache is also what makes the
+    // second link of that command take seconds.
+    flag: c => [`-Wl,--thinlto-cache-dir=${featureTableLtoCache(c)}`, "-Wl,--print-icf-sections"],
     when: c => c.linux && c.featureTable,
     desc: "Feature table: leave behind what refers to what",
-  },
-  {
-    // Relaxation turns adrp + add into nop + adr, which reaches 1 MB. Leaving
-    // features out packs code and constants apart from each other.
-    flag: "-Wl,--no-relax",
-    when: c => c.linux && c.arm64 && c.featureTable,
-    desc: "Feature table: every address keeps its full reach",
   },
   {
     // When a PGO profile is loaded (`--pgo-use`, e.g. the two-stage
@@ -1455,8 +1452,8 @@ export const linkerFlags: Flag[] = [
     //
     // A local `bun run build:release` therefore links unordered until you run
     // `bun run orderfile` and build again.
-    flag: c => [`-Wl,--symbol-ordering-file=${orderFilePath(c)}`, "-Wl,--no-warn-symbol-ordering"],
-    when: c => c.linux && usesOrderFile(c),
+    flag: c => [`-Wl,--symbol-ordering-file=${linkedOrderFilePath(c)}`, "-Wl,--no-warn-symbol-ordering"],
+    when: c => c.linux && (usesOrderFile(c) || c.featureTable),
     desc: "Sort startup-hot functions to the front of .text (cuts resident binary pages)",
   },
 
@@ -1622,6 +1619,16 @@ export function orderFilePath(cfg: Pick<Config, "buildDir">): string {
   return join(cfg.buildDir, "linker.order");
 }
 
+/** The order file the linker is given: with a feature table, the one above and what feature-table.ts adds to it. */
+export function linkedOrderFilePath(cfg: Pick<Config, "buildDir" | "featureTable" | "windows">): string {
+  return cfg.featureTable && !cfg.windows ? join(cfg.buildDir, "feature-table", "linker.order") : orderFilePath(cfg);
+}
+
+/** Emptied before each link, and after. */
+export function featureTableLtoCache(cfg: Pick<Config, "buildDir">): string {
+  return join(cfg.buildDir, "feature-table", "lto-cache");
+}
+
 /**
  * Whether the link writes its map(s); mirrors the map flags above (linux: the
  * `-icf=safe` entry, darwin: `-dead_strip`, windows: `/lldmap` + `/map`).
@@ -1722,8 +1729,10 @@ export const stripFlags: Flag[] = [
     desc: "Remove unwind/exception sections (we compile with -fno-exceptions; these come from lolhtml etc., built with panic=abort)",
   },
   {
+    // musl: no eh_frame handling differences, but CMake gates on NOT musl so we do too.
+    //
     // Gated on release to match -Wl,--no-eh-frame-hdr in linkerFlags above
-    // (both fire on `c.linux && c.abi !== "android" && c.release`). GNU strip
+    // (both fire on `c.linux && c.abi === "gnu" && c.release`). GNU strip
     // does not rewrite the program header table, so the PT_GNU_EH_FRAME
     // phdr must already be absent at link time — which the matching
     // --no-eh-frame-hdr above guarantees. Nothing unwinds at runtime
@@ -1732,7 +1741,7 @@ export const stripFlags: Flag[] = [
     // .eh_frame_hdr 142 KB + .gcc_except_table 13 KB) that otherwise gets
     // dragged into RSS via 64 KB fault-around on adjacent .rodata reads.
     flag: ["-R", ".eh_frame", "-R", ".eh_frame_hdr", "-R", ".gcc_except_table"],
-    when: c => c.linux && c.abi !== "android" && c.release,
+    when: c => c.linux && c.abi === "gnu" && c.release,
     desc: "Remove unwind sections (GNU strip required — llvm-strip leaves [LOAD #2 [R]])",
   },
 ];

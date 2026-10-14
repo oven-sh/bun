@@ -1,30 +1,23 @@
-//! PE, x86-64, linked by lld-link.
-//!
-//! The link has to be made with `/lldmap`, `/lldsavetemps:prelink`, `/verbose` and `/demangle:no`: the map has to name
+//! PE, x86-64, linked by lld-link with `/lldmap`, `/lldsavetemps:prelink`, `/verbose` and `/demangle:no`: the map has to name
 //! symbols as the object files do. Addresses here, and in the table, are relative to the image base.
 //!
-//! A linked PE keeps only the relocations the loader needs, and lld-link cannot be asked to keep the rest. The object files
-//! have them. What is missing is where each section of each object ended up: the map lists CHUNKS as file:(section name),
-//! and in COFF nearly all of them are called .text or .rdata.
+//! A node is a CHUNK: a section of an object file. The map lists them as file:(section name), and in COFF nearly all of them
+//! are called .text or .rdata. So which section of its file a chunk is has to be found out.
 //!
-//! So the link is replayed. A section that defines a symbol the map lists under the same file has a known address. For a
-//! relocation in such a section, the image holds the final address of the target and the object holds the addend, and the
+//! For that the link is replayed. A section that defines a symbol the map lists under the same file has a known address. For
+//! a relocation in such a section, the image holds the final address of the target and the object holds the addend, and the
 //! difference is the final address of the section the target is in, exactly, even if it has no name (a jump table) and
 //! even if the addend points outside of it. That section is then known too. Whatever is live is reached this way.
 //!
-//! Only .text is packed, for now: towards its start, so that the file can hold fewer bytes of it. Its virtual size stays,
-//! and with it the address of everything else. Constants (.rdata) can die, and are blanked, but stay in place.
+//! Only code is left out. The map does not list what the linker made itself. In .text that can be told from padding, which
+//! is int3. In .rdata padding is zeroes, and so is some of what the linker made.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::rc::Rc;
 
-use super::blocks::{Functions, Marker, listing, marker_patch};
-use super::features::{FEATURES, Select, matches};
-use super::live::{Blocks, Excluded, Image, mark};
-use super::{Data, FeatureRow, Link, Made, Nodes, Parts, Result, Units, fail, read};
-use crate::executable::fixed_name;
-use crate::table::{Arch, Area, Container, Feature, Form, Format, ROOT, Table};
+use super::{Data, Graph, Link, Node, Record as FeatureRecord, Result, fail, find, read};
+use crate::bytes::fixed_name;
 
 /// `IMAGE_REL_AMD64_*`
 mod reloc {
@@ -123,7 +116,6 @@ impl<'a> Pe<'a> {
 struct Chunk<'m> {
     rva: u64,
     size: u64,
-    align: u64,
     file: Rc<[u8]>,
     output: &'m [u8],
     names: Vec<&'m [u8]>,
@@ -191,12 +183,7 @@ fn read_map(text: &[u8]) -> Map<'_> {
         let rest = &line[17..];
         let rest = &rest[rest.iter().take_while(|&&b| b == b' ').count()..];
         let digits = rest.iter().take_while(|b| b.is_ascii_digit()).count();
-        let (Some(align), Some(text)) = (
-            core::str::from_utf8(&rest[..digits])
-                .ok()
-                .and_then(|d| d.parse::<u64>().ok()),
-            rest[digits..].strip_prefix(b" "),
-        ) else {
+        let Some(text) = rest[digits..].strip_prefix(b" ").filter(|_| digits != 0) else {
             continue;
         };
         let indent = text.iter().take_while(|&&b| b == b' ').count();
@@ -218,7 +205,6 @@ fn read_map(text: &[u8]) -> Map<'_> {
                     map.chunks.push(Chunk {
                         rva: address,
                         size,
-                        align: align.max(1),
                         file,
                         output,
                         names,
@@ -436,8 +422,7 @@ fn parse(bytes: &[u8]) -> Option<Parsed<'_>> {
 
 struct Record {
     place: u64,
-    kind: u16,
-    /// Where the chunk referred to starts.
+    /// Where the chunk referred to starts. None: it is no chunk, and `target` is what there is to go by.
     chunk: Option<u64>,
     /// The address referred to.
     target: i64,
@@ -699,7 +684,6 @@ fn replay(pe: &Pe<'_>, map: &Map<'_>, printed: &[u8]) -> Result<Replayed> {
                 }
                 records.push(Record {
                     place: p,
-                    kind,
                     chunk: target.and_then(|t| u64::try_from(t).ok()),
                     target: t,
                 });
@@ -741,100 +725,10 @@ fn replay(pe: &Pe<'_>, map: &Map<'_>, printed: &[u8]) -> Result<Replayed> {
     })
 }
 
-// ---------------------------------------------------------------- the table
+// ---------------------------------------------------------------- the graph
 
-struct Node<'m> {
-    align: u64,
-    is_code: bool,
-    names: Vec<&'m [u8]>,
-    is_comdat: bool,
-    /// The linker made it, or its section could not be told: see `thunk_fields`.
-    has_no_relocations: bool,
-}
-
-struct Linked<'a, 'm> {
-    pe: &'a Pe<'a>,
-    text: (u64, u64),
-    nodes: Nodes,
-    list: Vec<Node<'m>>,
-    records: Vec<Record>,
-    blocks: Blocks,
-    /// Node of a function -> its unwind infos.
-    unwind_info_of: HashMap<usize, Vec<u64>>,
-    thunk_fields: Vec<u64>,
-}
-
-impl Linked<'_, '_> {
-    fn records_in(&self, start: u64, end: u64) -> &[Record] {
-        let from = self.records.partition_point(|r| r.place < start);
-        let to = from + self.records[from..].partition_point(|r| r.place < end);
-        &self.records[from..to]
-    }
-
-    fn is_in_text(&self, rva: i64) -> bool {
-        rva >= self.text.0.cast_signed() && rva < self.text.1.cast_signed()
-    }
-
-    fn find(&self, rva: i64) -> Option<usize> {
-        self.nodes.find(u64::try_from(rva).ok()?)
-    }
-
-    /// What the 4 bytes at `place` refer to, relative to the instruction pointer.
-    fn relative(&self, place: u64) -> i64 {
-        place.cast_signed() + 4 + i64::from(self.pe.b.i32(self.pe.file_offset(place)))
-    }
-}
-
-impl Image for Linked<'_, '_> {
-    fn nodes(&self) -> &Nodes {
-        &self.nodes
-    }
-    fn blocks(&self) -> &Blocks {
-        &self.blocks
-    }
-    fn references(&self, start: u64, end: u64, touch: &mut dyn FnMut(u64)) -> Result<()> {
-        for r in self.records_in(start, end) {
-            let Some(chunk) = r.chunk else {
-                if self.is_in_text(r.target) {
-                    touch(r.target.cast_unsigned()); // a thunk
-                }
-                continue;
-            };
-            // Into a function that is split into blocks: the address decides which block.
-            let n = self
-                .nodes
-                .find(chunk)
-                .filter(|&n| self.blocks.of(n).is_some());
-            touch(if n.is_some() && self.find(r.target) == n {
-                r.target.cast_unsigned()
-            } else {
-                chunk
-            });
-        }
-        let Some(n) = self.nodes.find(start) else {
-            return Ok(());
-        };
-        if self.nodes.addr[n] == start {
-            self.unwind_info_of
-                .get(&n)
-                .into_iter()
-                .flatten()
-                .copied()
-                .for_each(&mut *touch);
-        }
-        if self.list[n].has_no_relocations {
-            let inside = self
-                .thunk_fields
-                .iter()
-                .filter(|&&place| place >= start && place < end);
-            inside.for_each(|&place| touch(self.relative(place).cast_unsigned()));
-        }
-        Ok(())
-    }
-}
-
-pub(super) fn make(link: &Link<'_>, linked: &[u8], arch: Arch) -> Result<Made> {
-    if arch != Arch::X64 {
+pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Graph> {
+    if is_arm64 {
         fail!("arm64 is not supported yet");
     }
     let pe = Pe::open(linked);
@@ -855,534 +749,163 @@ pub(super) fn make(link: &Link<'_>, linked: &[u8], arch: Arch) -> Result<Made> {
         }
         chunk.is_unidentified = !replayed.identified.contains(&chunk.rva);
     }
-    let section = |name: &str| {
-        pe.sections
-            .iter()
-            .find(|s| s.name == name.as_bytes())
-            .ok_or_else(|| format!("no section {name}"))
-    };
-    let text = section(".text")?;
-    let text = (text.rva, text.rva + text.size);
-    let file_offset = |rva: u64| pe.file_offset(rva);
-
-    // ---- nodes: the chunks
-    struct Listed<'m> {
-        rva: u64,
-        size: u64,
-        node: Node<'m>,
-    }
-    let mut listed: Vec<Listed<'_>> = Vec::new();
-    for c in map
-        .chunks
+    let text = pe
+        .sections
         .iter()
-        .filter(|c| c.output == b".text" || c.output == b".rdata")
-    {
+        .find(|s| s.name == b".text")
+        .ok_or("no section .text")?;
+
+    // ---- nodes: the chunks, and in .text what else there is between int3 padding, which the linker made: the thunks that jump
+    // through an import slot, and the ones that load a DLL on first use.
+    let mut nodes: Vec<Node> = Vec::new();
+    let mut made_by_the_linker = 0;
+    let mut end_of_code = text.rva;
+    let mut unlisted = |nodes: &mut Vec<Node>, from: u64, to: u64| {
+        let bytes = &linked[pe.file_offset(from)..][..(to - from) as usize];
+        let is_padding = |byte: &u8| *byte == 0xcc;
+        if let (Some(first), Some(last)) = (
+            bytes.iter().position(|b| !is_padding(b)),
+            bytes.iter().rposition(|b| !is_padding(b)),
+        ) {
+            made_by_the_linker += 1;
+            nodes.push(Node {
+                addresses: from + first as u64..from + last as u64 + 1,
+                stretch: 0,
+                can_be_left_out: false,
+                is_root: true,
+                name: None,
+            });
+        }
+    };
+    let mut outputs: Vec<&[u8]> = vec![b".text"];
+    let (mut unidentified, mut unidentified_code) = (0u64, 0u64);
+    for c in &map.chunks {
         let is_code = c.output == b".text";
-        let has_no_relocations = is_code && c.is_unidentified;
-        let node = Node {
-            align: c.align,
-            is_code,
-            names: c.names.clone(),
-            is_comdat: c.is_comdat,
-            has_no_relocations,
-        };
-        listed.push(Listed {
-            rva: c.rva,
-            size: c.size,
-            node,
+        if is_code {
+            if c.rva > end_of_code {
+                unlisted(&mut nodes, end_of_code, c.rva);
+            }
+            end_of_code = c.rva + c.size;
+        }
+        let stretch = outputs
+            .iter()
+            .position(|o| *o == c.output)
+            .unwrap_or_else(|| {
+                outputs.push(c.output);
+                outputs.len() - 1
+            });
+        // The function table is sorted by the linker: what is where the map says a part of it went is not that part.
+        let is_known = !c.is_unidentified && c.output != b".pdata";
+        if !is_known && c.output != b".pdata" {
+            unidentified += c.size;
+            unidentified_code += if is_code { c.size } else { 0 };
+        }
+        nodes.push(Node {
+            addresses: c.rva..c.rva + c.size,
+            stretch: stretch as u32,
+            can_be_left_out: is_code && is_known,
+            // The linker drops only what is a COMDAT. And what is not known refers to what is not known.
+            is_root: !c.is_comdat || !is_known,
+            name: c
+                .names
+                .first()
+                .map(|name| name.iter().map(|&c| char::from(c)).collect()),
         });
     }
-    // The map lists what came from object files. What else there is in .text, between int3 padding, the linker made: the
-    // thunks that jump through an import slot, and the ones that load a DLL on first use. Each stretch is one piece.
-    let mut made_by_the_linker = Vec::new();
-    let mut at = text.0;
-    let code: Vec<(u64, u64)> = listed
-        .iter()
-        .filter(|c| c.node.is_code)
-        .map(|c| (c.rva, c.size))
-        .collect();
-    for (next, size) in code.into_iter().chain([(text.1, 0)]) {
-        let (mut from, mut to) = (at, next);
-        while from < to && b.u8(file_offset(from)) == 0xcc {
-            from += 1;
-        }
-        while to > from && b.u8(file_offset(to - 1)) == 0xcc {
-            to -= 1;
-        }
-        if to > from {
-            made_by_the_linker.push((from, to - from));
-        }
-        at = at.max(next + size);
-    }
-    let linker_made = made_by_the_linker.len();
-    for (rva, size) in made_by_the_linker {
-        let node = Node {
-            align: 1,
-            is_code: true,
-            names: vec![b"<made by the linker>"],
-            is_comdat: false,
-            has_no_relocations: true,
-        };
-        listed.push(Listed { rva, size, node });
-    }
-    listed.sort_by_key(|c| c.rva);
-    let nodes = Nodes {
-        addr: listed.iter().map(|c| c.rva).collect(),
-        size: listed.iter().map(|c| c.size).collect(),
-    };
-    let list: Vec<Node<'_>> = listed.into_iter().map(|c| c.node).collect();
-    let n_nodes = nodes.len();
-
-    // ---- relocations, sorted by the address they apply to
-    let mut records = replayed.records;
-    records.sort_by_key(|r| r.place);
-    if let Some(twice) = records
-        .iter()
-        .zip(records.iter().skip(1))
-        .find(|(a, b)| a.place == b.place)
-    {
-        fail!("two relocations at {:x}", twice.0.place);
-    }
-
-    // ---- what the linker made
-    // The function table says which unwind info lives and dies with which function.
-    let unwind_info: Vec<(u64, u64)> = pe.function_table().collect();
-    let mut exported_functions: Vec<u64> = Vec::new(); // the places that hold their addresses
-    if b.u32(pe.optional + 112 + IMAGE_DIRECTORY_ENTRY_EXPORT * 8 + 4) != 0 {
-        let o = pe.directory(IMAGE_DIRECTORY_ENTRY_EXPORT).0;
-        exported_functions
-            .extend((0..u64::from(b.u32(o + 20))).map(|i| u64::from(b.u32(o + 28)) + 4 * i));
-    }
-    let entry_point_field = pe.optional as u64 + 16;
-
-    // In the thunks every address is relative to the instruction pointer. For these instructions, which take no immediate
-    // operand, it is the last 4 bytes. The same goes for the few nameless scraps of the C runtime's assembly whose section
-    // could not be told: they hold padding, but if one held an address it would be found here, or stop the build.
-    let mut thunk_fields: Vec<u64> = Vec::new();
-    for n in (0..n_nodes).filter(|&n| list[n].has_no_relocations) {
-        let lines = listing(
-            link.objdump,
-            link.linked,
-            nodes.addr[n] + pe.image_base,
-            nodes.end(n) + pe.image_base,
-        )?;
-        for (i, (at, mnemonic, operands)) in lines.iter().enumerate() {
-            let at = at - pe.image_base;
-            let is_direct = matches!(&mnemonic[..], "call" | "callq" | "jmp" | "jmpq")
-                && operands.starts_with("0x");
-            if !is_direct && !operands.contains("(%rip)") {
-                continue;
-            }
-            if !is_direct
-                && !matches!(
-                    &mnemonic[..],
-                    "lea" | "leaq" | "jmp" | "jmpq" | "call" | "callq" | "mov" | "movq"
-                )
-            {
-                fail!("unexpected {mnemonic} {operands} in a thunk at {at:x}");
-            }
-            if operands.contains('$') {
-                fail!("an immediate operand in a thunk at {at:x}");
-            }
-            thunk_fields.push(
-                lines
-                    .get(i + 1)
-                    .map_or_else(|| nodes.end(n), |next| next.0 - pe.image_base)
-                    - 4,
-            );
-        }
-    }
-
-    // ---- markers, and the blocks of the functions that hold them
-    // A record is {marker - ., `false` side - ., id, 0} (4 x 32 bits), in .bunft.
-    let mut markers: Vec<(u64, Marker)> = Vec::new();
-    let table = section(".bunft")?;
-    for r in (0..table.size.saturating_sub(15)).step_by(16) {
-        let (o, at) = ((table.raw + r) as usize, table.rva + r);
-        let (site, marker) = (
-            at.wrapping_add_signed(b.i32(o).into()),
-            Marker {
-                skip: at.wrapping_add_signed(b.i32(o + 4).into()),
-                id: b.u32(o + 8),
-            },
+    if text.rva + text.size.min(text.raw_size) > end_of_code {
+        unlisted(
+            &mut nodes,
+            end_of_code,
+            text.rva + text.size.min(text.raw_size),
         );
-        match markers.iter_mut().find(|m| m.0 == site) {
-            _ if marker.id == 0 => {}
-            Some(known) => known.1 = marker,
-            None => markers.push((site, marker)),
-        }
     }
-    let mut unwind_info_of: HashMap<usize, Vec<u64>> = HashMap::new();
-    for &(begin, info) in &unwind_info {
-        if let Some(n) = nodes.find(begin) {
-            unwind_info_of.entry(n).or_default().push(info);
-        }
-    }
-    let mut image = Linked {
-        pe: &pe,
-        text,
-        nodes,
-        list,
-        records,
-        blocks: Blocks::default(),
-        unwind_info_of,
-        thunk_fields,
+    nodes.sort_by_key(|n| n.addresses.start);
+    let is_known = |nodes: &[Node], rva: u64| {
+        find(nodes, rva).is_some_and(|n| {
+            map.chunk_starting_at(nodes[n as usize].addresses.start.cast_signed())
+                .is_some_and(|c| {
+                    !map.chunks[c].is_unidentified && map.chunks[c].output != b".pdata"
+                })
+        })
     };
-    image.blocks = Functions {
-        arch,
-        objdump: link.objdump,
-        path: link.linked,
-        bias: pe.image_base,
-        bytes: b,
-        file_offset: &file_offset,
-        markers: &markers,
-        nodes: &image.nodes,
-        is_code: &|n| image.list[n].is_code,
-        does_not_return: &HashSet::new(),
-        constants_taken_by: &|_, _| Vec::new(),
-        jump_tables_in_code: &[],
-    }
-    .split()?;
 
-    // A jump table holds `label - table` in 32 bits. In the object that is a relocation relative to the entry, with the
-    // entry's position in the table folded into the addend, so the address recovered for it is off by that position. The
-    // table starts where the function's own `lea` points, which is known exactly: the label is that plus the value of the
-    // entry.
-    {
-        let mut table_starts: Vec<u64> = Vec::new();
-        for &(n, _) in &image.blocks.of {
-            let taken = image
-                .records_in(image.nodes.addr[n], image.nodes.end(n))
-                .iter();
-            table_starts.extend(
-                taken
-                    .filter(|r| r.chunk.is_some() && !image.is_in_text(r.target))
-                    .map(|r| r.target.cast_unsigned()),
-            );
-        }
-        table_starts.sort_unstable();
-        let mut corrected = Vec::new();
-        for (k, r) in image.records.iter().enumerate() {
-            let Some(n) = r
-                .chunk
-                .and_then(|c| image.nodes.find(c))
-                .filter(|&n| image.blocks.of(n).is_some())
-            else {
-                continue;
-            };
-            if image.is_in_text(r.place.cast_signed())
-                || r.kind == reloc::ADDR64
-                || r.kind == reloc::ADDR32NB
-            {
-                continue;
-            }
-            let start = table_starts
-                .partition_point(|&t| t <= r.place)
-                .checked_sub(1)
-                .map(|i| table_starts[i]);
-            let Some(start) = start.filter(|&s| image.nodes.find(s) == image.nodes.find(r.place))
-            else {
-                fail!("a jump table nobody points at, at {:x}", r.place);
-            };
-            let target = start.cast_signed() + i64::from(b.i32(file_offset(r.place)));
-            if image.find(target) != Some(n) {
-                fail!(
-                    "an entry of a jump table leaves its function, at {:x}",
-                    r.place
-                );
-            }
-            corrected.push((k, target));
-        }
-        for (k, target) in corrected {
-            image.records[k].target = target;
+    // ---- edges
+    let mut edges: Vec<(u32, u32)> = Vec::new();
+    for r in &replayed.records {
+        let to = r.chunk.or_else(|| u64::try_from(r.target).ok());
+        if let (Some(from), Some(to)) = (find(&nodes, r.place), to.and_then(|to| find(&nodes, to)))
+        {
+            edges.push((from, to));
         }
     }
-    let image = image;
-    let (nodes, list, records, blocks) = (&image.nodes, &image.list, &image.records, &image.blocks);
-    let is_in_text = |rva: u64| rva >= text.0 && rva < text.1;
+    // A function has unwind info, which may refer to a handler.
+    for (function, info) in pe.function_table() {
+        if let (Some(from), Some(to)) = (find(&nodes, function), find(&nodes, info)) {
+            edges.push((from, to));
+        }
+    }
 
-    // ---- rows of tables that belong to features
-    let pointer_at = |rva: u64| {
-        b.u64(file_offset(rva))
-            .wrapping_sub(pe.image_base)
-            .cast_signed()
-    };
-    let mut feature_rows: Vec<FeatureRow> = Vec::new();
-    for (feature, row) in FEATURES
-        .iter()
-        .flat_map(|f| f.rows.iter().map(move |row| (f, row)))
-    {
-        let found: Vec<usize> = (0..n_nodes)
-            .filter(|&n| {
-                list[n]
-                    .names
-                    .iter()
-                    .any(|name| matches(row.msvc_table, name))
-            })
-            .collect();
-        let &[table] = &found[..] else {
-            fail!("{} tables match {}", found.len(), row.msvc_table)
-        };
-        let (start, end) = (nodes.addr[table], nodes.end(table));
-        let before = feature_rows.len();
-        let mut add = |a: u64| {
-            if !feature_rows.iter().any(|r| r.start == a) {
-                feature_rows.push(FeatureRow {
-                    node: table,
-                    start: a,
-                    end: a + row.size,
-                    feature: feature.id,
+    // ---- what is reached from outside, or from what is not known
+    let mut roots: Vec<u64> = vec![b.u32(pe.optional + 16).into()];
+    let (exports, exports_size) = (
+        b.u32(pe.optional + 112 + IMAGE_DIRECTORY_ENTRY_EXPORT * 8),
+        b.u32(pe.optional + 116 + IMAGE_DIRECTORY_ENTRY_EXPORT * 8),
+    );
+    if exports_size != 0 {
+        let at = pe.file_offset(exports.into());
+        let functions = pe.file_offset(b.u32(at + 28).into());
+        roots.extend((0..b.u32(at + 20) as usize).map(|i| u64::from(b.u32(functions + i * 4))));
+    }
+    // Every pointer in the image is listed for the loader.
+    let mut pointers_from_the_unknown = 0;
+    let (mut at, size) = pe.directory(IMAGE_DIRECTORY_ENTRY_BASERELOC);
+    let end = at + size;
+    while at < end {
+        let (page, block) = (u64::from(b.u32(at)), b.u32(at + 4) as usize);
+        for entry in (at + 8..at + block)
+            .step_by(2)
+            .map(|e| b.u16(e))
+            .filter(|e| e >> 12 == IMAGE_REL_BASED_DIR64)
+        {
+            let place = page + u64::from(entry & 0xfff);
+            if !is_known(&nodes, place) {
+                pointers_from_the_unknown += 1;
+                roots.push(b.u64(pe.file_offset(place)).wrapping_sub(pe.image_base));
+            }
+        }
+        at += block;
+    }
+    for root in roots {
+        if let Some(node) = find(&nodes, root) {
+            nodes[node as usize].is_root = true;
+        }
+    }
+
+    // ---- records: {no-op - ., other side - . or 0, id, 0}
+    let mut records = Vec::new();
+    for s in pe.sections.iter().filter(|s| s.name == b".bunft") {
+        for r in (0..s.size.saturating_sub(15)).step_by(16) {
+            let (o, at) = (pe.file_offset(s.rva + r), s.rva + r);
+            let relative = |field: usize| at.wrapping_add_signed(b.u32(field).cast_signed().into());
+            if b.u32(o + 8) != 0 {
+                records.push(FeatureRecord {
+                    no_op: relative(o),
+                    otherwise: (b.u32(o + 4) != 0).then(|| relative(o + 4)),
+                    id: b.u32(o + 8),
                 });
             }
-        };
-        match row.select {
-            // It starts with its name, as {pointer, length including the terminator}.
-            Select::Key(key) => {
-                for a in (start..=end.saturating_sub(row.size)).step_by(row.size as usize) {
-                    let is_named =
-                        b.u32(file_offset(a + 8)) as usize == key.len() + 1 && pointer_at(a) > 0;
-                    if is_named
-                        && linked[file_offset(pointer_at(a).cast_unsigned())..]
-                            .starts_with(key.as_bytes())
-                    {
-                        add(a);
-                    }
-                }
-            }
-            Select::PointsAt { msvc, .. } => {
-                for r in image.records_in(start, end) {
-                    let target = r.chunk.and_then(|c| nodes.find(c));
-                    if target.is_some_and(|t| list[t].names.iter().any(|name| matches(msvc, name)))
-                    {
-                        add(start + (r.place - start) / row.size * row.size);
-                    }
-                }
-            }
-        }
-        if feature_rows.len() == before {
-            fail!("no row of {} belongs to {}", row.msvc_table, feature.name);
         }
     }
-    feature_rows.sort_by_key(|r| r.start);
-
-    // ---- what is live
-    let mut roots = vec![u64::from(b.u32(entry_point_field as usize))];
-    roots.extend(
-        exported_functions
-            .iter()
-            .map(|&place| u64::from(b.u32(file_offset(place)))),
+    let mut report = replayed.report;
+    let _ = writeln!(
+        report,
+        "stretches of .text that the linker made {made_by_the_linker}; chunks whose section could not be told: {unidentified} bytes, \
+         of which code {unidentified_code}; pointers in those, or in no chunk: {pointers_from_the_unknown}"
     );
-    // The linker drops only COMDAT sections. What is not in a node (.data and so on) stays, and what it refers to with it.
-    roots.extend(
-        (0..n_nodes)
-            .filter(|&n| !list[n].is_comdat)
-            .map(|n| nodes.addr[n]),
-    );
-    for r in records.iter().filter(|r| nodes.find(r.place).is_none()) {
-        image.references(r.place, r.place + 1, &mut |a| roots.push(a))?;
-    }
-    let as_linked = mark(&image, &roots, Excluded::BothSides)?;
-    let unexplained: Vec<usize> = (0..n_nodes).filter(|&n| !as_linked.node[n]).collect();
-
-    // ---- units
-    let mut parts = Parts::default();
-    let Units {
-        first_of_node,
-        of_block,
-    } = parts.add_nodes(nodes, blocks, &feature_rows, &|n| Some(list[n].align));
-    // The unit of the chunk that starts at `chunk`; for a function that is split, of the block that holds `address`.
-    let unit_for = |chunk: u64, address: i64| -> Option<u32> {
-        let n = nodes.find(chunk)?;
-        match blocks.of(n) {
-            Some(of) if image.find(address) == Some(n) => {
-                Some(of_block[blocks.at(of, address.cast_unsigned())])
-            }
-            _ => first_of_node[n],
-        }
-    };
-    // Of the piece that holds `address`.
-    let unit_holding = |address: i64| {
-        image
-            .find(address)
-            .and_then(|n| unit_for(nodes.addr[n], address))
-    };
-    for root in roots
-        .iter()
-        .copied()
-        .chain(unexplained.iter().map(|&n| nodes.addr[n]))
-    {
-        if let Some(u) = unit_for(root, root.cast_signed()) {
-            parts.units[u as usize].flags |= ROOT;
-        }
-    }
-    for i in (0..blocks.all.len()).filter(|&i| !as_linked.block[i]) {
-        parts.units[of_block[i] as usize].flags |= ROOT;
-    }
-
-    // ---- fixups
-    let mut add = |sort: &'static str, place: u64, form: Form, target: Option<u32>| {
-        // If neither end can move there is nothing to patch. It is still an edge if the target can die.
-        let moves =
-            is_in_text(place) || target.is_some_and(|t| is_in_text(parts.units[t as usize].start));
-        let form = if moves { form } else { Form::None };
-        if target.is_some() || !matches!(form, Form::None | Form::Abs64 | Form::Abs32) {
-            parts.add_fixup(sort, place, form, target, 0);
-        }
-    };
-    for r in records {
-        // A thunk has no chunk, but it is a piece.
-        let target = match r.chunk {
-            Some(chunk) => unit_for(chunk, r.target),
-            None if image.is_in_text(r.target) => unit_holding(r.target),
-            None => None,
-        };
-        match r.kind {
-            reloc::ADDR64 if is_in_text(r.place) => {
-                fail!(
-                    "an absolute address in code, which the base relocations would have to follow, at {:x}",
-                    r.place
-                )
-            }
-            reloc::ADDR64 => add("address", r.place, Form::Abs64, target),
-            reloc::ADDR32NB => add("offset from the image base", r.place, Form::Abs32, target),
-            _ => add(
-                "relative to the instruction pointer",
-                r.place,
-                Form::Rel32,
-                target,
-            ),
-        }
-    }
-    for &place in &image.thunk_fields {
-        let t = image.relative(place);
-        add(
-            "in a thunk",
-            place,
-            Form::Rel32,
-            if image.is_in_text(t) {
-                unit_holding(t)
-            } else {
-                None
-            },
-        );
-    }
-    for &(begin, info) in &unwind_info {
-        // An entry of the function table is kept as long as any of the function is left, so its unwind info hangs on the start
-        // of the function, wherever in it the entry begins.
-        if let (Some(n), Some(i)) = (nodes.find(begin), nodes.find(info)) {
-            add(
-                "a function's unwind info",
-                nodes.addr[n],
-                Form::None,
-                unit_for(nodes.addr[i], nodes.addr[i].cast_signed()),
-            );
-        }
-    }
-    // The base relocations list every absolute pointer of the image. One that no object file accounts for, the linker made:
-    // the slots of the delay-load import table start out pointing at thunks.
-    {
-        let covered: HashSet<u64> = records
-            .iter()
-            .filter(|r| r.kind == reloc::ADDR64)
-            .map(|r| r.place)
-            .collect();
-        let (table, size) = pe.directory(IMAGE_DIRECTORY_ENTRY_BASERELOC);
-        let mut block = table;
-        while block < table + size {
-            for entry in (block + 8..block + b.u32(block + 4) as usize).step_by(2) {
-                let place = u64::from(b.u32(block)) + u64::from(b.u16(entry) & 0xfff);
-                if b.u16(entry) >> 12 == IMAGE_REL_BASED_DIR64
-                    && !covered.contains(&place)
-                    && image.is_in_text(pointer_at(place))
-                {
-                    add(
-                        "pointer the linker made",
-                        place,
-                        Form::Abs64,
-                        unit_holding(pointer_at(place)),
-                    );
-                }
-            }
-            block += b.u32(block + 4) as usize;
-        }
-    }
-    let unit_of_piece_at = |rva: u32| {
-        image
-            .find(rva.into())
-            .and_then(|n| unit_for(nodes.addr[n], nodes.addr[n].cast_signed()))
-    };
-    for &place in &exported_functions {
-        add(
-            "exported function",
-            place,
-            Form::Abs32,
-            unit_of_piece_at(b.u32(file_offset(place))),
-        );
-    }
-    add(
-        "entry point",
-        entry_point_field,
-        Form::Abs32,
-        unit_of_piece_at(b.u32(entry_point_field as usize)),
-    );
-
-    // ---- the table
-    let mut patches = Vec::new();
-    for &(site, marker) in &markers {
-        patches.push(marker_patch(arch, b, file_offset(site), site, marker)?);
-    }
-    let bytes_of = |only_code: bool| {
-        unexplained
-            .iter()
-            .filter(|&&n| !only_code || list[n].is_code)
-            .map(|&n| nodes.size[n])
-            .sum::<u64>()
-    };
-    let report = format!(
-        "{}chunks {n_nodes} ({linker_made} made by the linker, {} addresses in them), relocations {}, functions in the function \
-         table {}, markers {} in {} functions ({} blocks), rows of features {}\nkept by the linker but not reached by the \
-         graph: {} chunks, {} bytes (.text {})\nunits {}, flow edges {}, fixups {}, patches {}\n{}\n",
-        replayed.report,
-        image.thunk_fields.len(),
-        records.len(),
-        unwind_info.len(),
-        markers.len(),
-        blocks.of.len(),
-        blocks.all.len(),
-        feature_rows.len(),
-        unexplained.len(),
-        bytes_of(false),
-        bytes_of(true),
-        parts.units.len(),
-        parts.flows.len(),
-        parts.fixups.len(),
-        patches.len(),
-        parts.sorts(),
-    );
-    let table = Table {
-        format: Format {
-            container: Container::Pe,
-            arch,
-        },
-        features: FEATURES
-            .iter()
-            .map(|f| Feature {
-                id: f.id,
-                name: f.name.as_bytes().into(),
-            })
-            .collect(),
-        areas: vec![Area {
-            low: text.0,
-            high: text.1,
-            towards_high: false,
-            fill: [0xcc].into(),
-        }], // int3
-        code: vec![text],
-        patches,
-        units: parts.units,
-        flows: parts.flows,
-        fixups: parts.fixups,
-    }
-    .canonical();
-    Ok(Made { table, report })
+    Ok(Graph {
+        nodes,
+        edges,
+        records,
+        report,
+    })
 }

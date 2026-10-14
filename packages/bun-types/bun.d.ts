@@ -3752,8 +3752,8 @@ declare module "bun" {
     assets?: string[];
     /**
      * Features of the Bun runtime to leave out of the executable, which makes
-     * it smaller. An excluded API is `undefined`; an excluded command reports
-     * that the executable was built without it.
+     * it smaller. An excluded command reports that the executable was built
+     * without it.
      *
      * Passing a name that does not exist fails and lists the ones that do.
      *

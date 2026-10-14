@@ -1,7 +1,7 @@
 // `bun build --compile --compile-exclude-features=<name>` leaves parts of the runtime out of the executable.
 //
-// What can be left out is said by a table that Bun's build embeds in the stripped release binary of the targets it
-// supports (scripts/build/feature-table.ts). A debug or ASAN build has none, and has to say so.
+// What can be left out is said by a table that Bun's build writes into the release binaries of the targets it supports,
+// stripped or not (scripts/build/feature-table.ts). A debug or ASAN build has none, and has to say so.
 
 import { describe, expect, test } from "bun:test";
 import {
@@ -18,16 +18,9 @@ import {
   tempDir,
 } from "harness";
 import { existsSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 const exe = (name: string) => (isWindows ? name + ".exe" : name);
-
-// CI runs the tests with `bun-profile`, which keeps its symbols and has no table. The `bun` that ships is unpacked next
-// to it: `bun-linux-x64-profile/bun-profile` and `bun-linux-x64/bun`.
-const shipped = (() => {
-  const beside = join(dirname(bunExe()).replace(/-profile$/, ""), exe("bun"));
-  return dirname(bunExe()).endsWith("-profile") && existsSync(beside) ? beside : bunExe();
-})();
 
 const app = `
 import { Database } from "bun:sqlite";
@@ -43,11 +36,8 @@ console.log(JSON.stringify({
   sha256: createHash("sha256").update("a").digest("hex").slice(0, 8),
   gzip: gzipSync("hello").length > 0,
   intl: new Intl.NumberFormat("de").format(1234.5),
-  password: typeof Bun.password,
-  hasPassword: "password" in Bun,
-  Transpiler: typeof Bun.Transpiler,
-  randomUUIDv7: typeof Bun.randomUUIDv7,
-  hash: typeof Bun.hash,
+  transpiled: new Bun.Transpiler({ loader: "ts" }).transformSync("const one: number = 1; export { one };").length > 0,
+  verified: await Bun.password.verify("a", await Bun.password.hash("a", { algorithm: "bcrypt", cost: 4 })),
 }));
 `;
 const working = {
@@ -57,11 +47,8 @@ const working = {
   sha256: "ca978112",
   gzip: true,
   intl: "1.234,5",
-  password: "object",
-  hasPassword: true,
-  Transpiler: "function",
-  randomUUIDv7: "function",
-  hash: "function",
+  transpiled: true,
+  verified: true,
 };
 
 async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = bunEnv) {
@@ -69,12 +56,8 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
-const compileFrom = (from: string, cwd: string, outfile: string, ...args: string[]) =>
-  run(
-    [bunExe(), "build", "--compile", "app.ts", "--outfile", outfile, `--compile-executable-path=${from}`, ...args],
-    cwd,
-  );
-const compile = (cwd: string, outfile: string, ...args: string[]) => compileFrom(shipped, cwd, outfile, ...args);
+const compile = (cwd: string, outfile: string, ...args: string[]) =>
+  run([bunExe(), "build", "--compile", "app.ts", "--outfile", outfile, ...args], cwd);
 /** Runs a compiled executable as the `bun` it holds. */
 const asBun = (cwd: string, name: string, ...args: string[]) =>
   run([join(cwd, exe(name)), ...args], cwd, { ...bunEnv, BUN_BE_BUN: "1" });
@@ -82,9 +65,8 @@ const asBun = (cwd: string, name: string, ...args: string[]) =>
 const noTable = "does not say what can be excluded";
 const hasTable = (() => {
   using dir = tempDir("exclude-features-probe", { "app.ts": "" });
-  const from = `--compile-executable-path=${shipped}`;
   const { stdout, stderr } = Bun.spawnSync({
-    cmd: [bunExe(), "build", "--compile", "app.ts", "--outfile", "app", from, "--compile-exclude-features=?"],
+    cmd: [bunExe(), "build", "--compile", "app.ts", "--outfile", "app", "--compile-exclude-features=?"],
     cwd: String(dir),
     env: bunEnv,
   });
@@ -116,94 +98,124 @@ test.skipIf(hasTable)("a bun that cannot exclude features says so", async () => 
 });
 
 describe.skipIf(!hasTable)("with a feature table", () => {
-  test.concurrent("commands", async () => {
-    using dir = tempDir("exclude-features", { "app.ts": app, "lintme.ts": "export const one = 1;\n" });
+  const size = (cwd: string, name: string) => statSync(join(cwd, exe(name))).size;
+  const files = { "app.ts": app, "one.ts": "export const one = 1;\n", "tsconfig.json": `{ "files": ["one.ts"] }` };
+  const commands = { check: ["check"], lint: ["lint", "one.ts"], fmt: ["fmt", "--check", "one.ts"] };
+  const features = Object.keys(commands) as (keyof typeof commands)[];
+
+  // What two features share goes only once both are excluded, so each set of them is an executable of its own.
+  const sets = Array.from({ length: 1 << features.length }, (_, bits) => features.filter((_, i) => bits & (1 << i)));
+  test.concurrent.each(sets.map(set => [set.join(",") || "nothing", set] as const))(
+    "without %s",
+    async (_, excluded) => {
+      using dir = tempDir("exclude-features", files);
+      const cwd = String(dir);
+      const compiled = await compile(cwd, "app", ...excluded.map(name => `--compile-exclude-features=${name}`));
+      expect(compiled.stderr).not.toContain("error");
+      expect(compiled.exitCode).toBe(0);
+
+      const ran = await run([join(cwd, exe("app"))], cwd);
+      expect(JSON.parse(ran.stdout)).toEqual(working);
+      expect(ran.exitCode).toBe(0);
+
+      for (const feature of features) {
+        const { stdout, stderr, exitCode } = await asBun(cwd, "app", ...commands[feature]);
+        if (excluded.includes(feature)) {
+          expect(stderr).toContain("this executable was built without this command");
+          expect(exitCode).not.toBe(0);
+        } else {
+          expect({ feature, output: stdout + stderr, exitCode }).toEqual({
+            feature,
+            output: expect.any(String),
+            exitCode: 0,
+          });
+        }
+      }
+    },
+  );
+
+  test.concurrent("what is excluded is not in the file", async () => {
+    using dir = tempDir("exclude-features", files);
     const cwd = String(dir);
-    const [full, without] = await Promise.all([
+    const compiled = await Promise.all([
       compile(cwd, "full"),
-      // separated by commas, and given again
-      compile(cwd, "without", "--compile-exclude-features=check,lint", "--compile-exclude-features=fmt"),
+      compile(cwd, "lint", "--compile-exclude-features=lint"),
+      // separated by commas
+      compile(cwd, "all", "--compile-exclude-features=check,lint,fmt"),
     ]);
-    expect(full.stderr + without.stderr).not.toContain("error");
-    expect([full.exitCode, without.exitCode]).toEqual([0, 0]);
-    expect(statSync(join(cwd, exe("without"))).size).toBeLessThan(statSync(join(cwd, exe("full"))).size - 1024 * 1024);
+    expect(compiled.map(c => c.exitCode)).toEqual([0, 0, 0]);
+    const MB = 1024 * 1024;
+    expect(size(cwd, "lint")).toBeLessThan(size(cwd, "full") - 5 * MB);
+    expect(size(cwd, "all")).toBeLessThan(size(cwd, "lint") - 5 * MB);
+  });
 
-    const ran = await run([join(cwd, exe("without"))], cwd);
-    expect(JSON.parse(ran.stdout)).toEqual(working);
-    expect(ran.exitCode).toBe(0);
-
-    for (const command of ["check", "lint", "fmt"]) {
-      const gone = await asBun(cwd, "without", command, "lintme.ts");
-      expect(gone.stderr).toContain("this executable was built without this command");
-      expect(gone.exitCode).not.toBe(0);
-    }
-    // What asks for an excluded feature in another way is refused too, not ignored.
+  // What asks for an excluded feature in another way is refused too, not ignored.
+  test.concurrent("--check and `check: true` without check", async () => {
+    using dir = tempDir("exclude-features", files);
+    const cwd = String(dir);
+    expect((await compile(cwd, "app", "--compile-exclude-features=check")).exitCode).toBe(0);
     for (const args of [
-      ["build", "--check", "lintme.ts"],
-      ["run", "--check", "lintme.ts"],
-      ["-e", `await Bun.build({ entrypoints: ["lintme.ts"], check: true })`],
+      ["build", "--check", "one.ts"],
+      ["run", "--check", "one.ts"],
+      ["test", "--check"],
+      ["--check"],
+      ["-e", `await Bun.build({ entrypoints: ["one.ts"], check: true })`],
     ]) {
-      const refused = await asBun(cwd, "without", ...args);
+      const refused = await asBun(cwd, "app", ...args);
       expect(refused.stderr).toContain("this executable was built without type checking");
       expect(refused.exitCode).not.toBe(0);
     }
-    const kept = await asBun(cwd, "full", "lint", "lintme.ts");
-    expect(kept.stderr).not.toContain("built without");
-    expect(kept.exitCode).toBe(0);
+    // The help does not go through what is gone.
+    const help = await asBun(cwd, "app", "check", "--help");
+    expect(help.stderr).toContain("this executable was built without this command");
   });
 
-  test.concurrent("properties, through Bun.build", async () => {
-    using dir = tempDir("exclude-features", { "app.ts": app });
+  test.concurrent("Bun.build", async () => {
+    using dir = tempDir("exclude-features", files);
     const cwd = String(dir);
     const result = await Bun.build({
       entrypoints: [join(cwd, "app.ts")],
-      compile: {
-        outfile: join(cwd, "app"),
-        executablePath: shipped,
-        excludeFeatures: ["Bun.password", "Bun.Transpiler"],
-      },
+      compile: { outfile: join(cwd, "app"), excludeFeatures: ["lint", "fmt"] },
     });
     expect(result.success).toBe(true);
     const ran = await run([join(cwd, exe("app"))], cwd);
-    expect(JSON.parse(ran.stdout)).toEqual({
-      ...working,
-      password: "undefined",
-      hasPassword: false,
-      Transpiler: "undefined",
-    });
+    expect(JSON.parse(ran.stdout)).toEqual(working);
     expect(ran.exitCode).toBe(0);
+    expect((await asBun(cwd, "app", "lint", "one.ts")).stderr).toContain("built without this command");
   });
 
   test.concurrent("a name that does not exist", async () => {
-    using dir = tempDir("exclude-features", { "app.ts": app });
+    using dir = tempDir("exclude-features", files);
     const cwd = String(dir);
     const { stdout, stderr, exitCode } = await compile(cwd, "app", "--compile-exclude-features=lint,nope");
-    expect(stdout + stderr).toContain('there is no feature called "nope". These can be excluded:\n  check\n  lint\n');
+    expect(stdout + stderr).toContain(
+      'there is no feature called "nope". These can be excluded:\n  check\n  lint\n  fmt\n',
+    );
     expect(existsSync(join(cwd, exe("app")))).toBe(false);
     expect(exitCode).not.toBe(0);
 
     const rejected = await Bun.build({
       entrypoints: [join(cwd, "app.ts")],
-      compile: { outfile: join(cwd, "app"), executablePath: shipped, excludeFeatures: ["nope"] },
+      compile: { outfile: join(cwd, "app"), excludeFeatures: ["nope"] },
     }).catch(e => e);
     expect(rejected).toBeInstanceOf(AggregateError);
     expect(rejected.errors[0].message).toContain('there is no feature called "nope"');
   });
 
-  test.concurrent("the executable does not carry the table", async () => {
-    using dir = tempDir("exclude-features", { "app.ts": app });
+  // The table is about the executable as it was.
+  test.concurrent("features cannot be excluded a second time", async () => {
+    using dir = tempDir("exclude-features", files);
     const cwd = String(dir);
-    for (const [name, ...args] of [["full"], ["without", "--compile-exclude-features=lint"]]) {
-      expect((await compile(cwd, name, ...args)).exitCode).toBe(0);
-      const again = await compileFrom(join(cwd, exe(name)), cwd, "again", "--compile-exclude-features=fmt");
-      expect(again.stdout + again.stderr).toContain(noTable);
-      expect(again.exitCode).not.toBe(0);
-    }
+    expect((await compile(cwd, "app", "--compile-exclude-features=lint")).exitCode).toBe(0);
+    const from = `--compile-executable-path=${join(cwd, exe("app"))}`;
+    const again = await compile(cwd, "again", from, "--compile-exclude-features=fmt");
+    expect(again.stdout + again.stderr).toContain(noTable);
+    expect(again.exitCode).not.toBe(0);
   });
 
   // On Windows no compiled executable can: it has a `.bun` section already.
   test.skipIf(isWindows).concurrent("the executable can compile in its turn", async () => {
-    using dir = tempDir("exclude-features", { "app.ts": app });
+    using dir = tempDir("exclude-features", files);
     const cwd = String(dir);
     expect((await compile(cwd, "without", "--compile-exclude-features=check,lint,fmt")).exitCode).toBe(0);
     const compiled = await asBun(cwd, "without", "build", "--compile", "app.ts", "--outfile", "again");
@@ -214,26 +226,33 @@ describe.skipIf(!hasTable)("with a feature table", () => {
     expect(ran.exitCode).toBe(0);
   });
 
-  // A loader that honors p_align maps whole multiples of it. See compile-elf-segment-layout.test.ts.
-  test.skipIf(!isLinux).concurrent("ELF: the segments do not overlap under strict p_align", async () => {
-    using dir = tempDir("exclude-features", { "app.ts": app });
+  test.skipIf(!isLinux).concurrent("ELF: the program headers", async () => {
+    using dir = tempDir("exclude-features", files);
     const cwd = String(dir);
     expect((await compile(cwd, "without", "--compile-exclude-features=check,lint,fmt")).exitCode).toBe(0);
-    const loads = readElf64ProgramHeaders(join(cwd, "without"))
-      .filter(ph => ph.type === 1 /* PT_LOAD */)
-      .sort((a, b) => (a.vaddr < b.vaddr ? -1 : 1))
-      .map(({ vaddr, memsz, offset, align }) => {
-        const a = align > 0x1000n ? align : 0x1000n;
-        return { start: vaddr & ~(a - 1n), end: (vaddr + memsz + a - 1n) & ~(a - 1n), skew: (vaddr - offset) % align };
-      });
-    expect(loads.length).toBeGreaterThan(1);
-    for (let i = 1; i < loads.length; i++) expect(loads[i].start).toBeGreaterThanOrEqual(loads[i - 1].end);
-    expect(loads.map(l => l.skew)).toEqual(loads.map(() => 0n));
+    const headers = readElf64ProgramHeaders(join(cwd, "without"));
+    // Older Linux reads no more than a page of them.
+    expect(headers.length * 56).toBeLessThanOrEqual(4096);
+    const loads = headers.filter(ph => ph.type === 1 /* PT_LOAD */);
+    expect(loads.length).toBeGreaterThan(4);
+    expect(loads.map(l => l.vaddr)).toEqual(loads.map(l => l.vaddr).sort((a, b) => (a < b ? -1 : 1)));
+    // A loader that honors p_align maps whole multiples of it. See compile-elf-segment-layout.test.ts.
+    const spans = loads.map(({ vaddr, memsz, offset, align }) => {
+      const a = align > 0x1000n ? align : 0x1000n;
+      return { start: vaddr & ~(a - 1n), end: (vaddr + memsz + a - 1n) & ~(a - 1n), skew: (vaddr - offset) % align };
+    });
+    for (let i = 1; i < spans.length; i++) expect(spans[i].start).toBeGreaterThanOrEqual(spans[i - 1].end);
+    expect(spans.map(l => l.skew)).toEqual(spans.map(() => 0n));
+    // Older Linux takes the headers to be as far from the start of the image as from the start of the file.
+    const [self] = headers.filter(ph => ph.type === 6 /* PT_PHDR */);
+    expect(loads[0].offset).toBe(0n);
+    expect(self.vaddr - loads[0].vaddr).toBe(self.offset);
+    expect(self.offset + self.filesz).toBeLessThanOrEqual(loads[0].filesz);
   });
 
   // On x64 nothing is signed.
   test.skipIf(!isMacOS || !isArm64).concurrent("Mach-O: the signature is valid", async () => {
-    using dir = tempDir("exclude-features", { "app.ts": app });
+    using dir = tempDir("exclude-features", files);
     const cwd = String(dir);
     expect((await compile(cwd, "without", "--compile-exclude-features=check,lint,fmt")).exitCode).toBe(0);
     const { stderr, exitCode } = await run(["codesign", "--verify", "--strict", "--verbose=2", "without"], cwd);

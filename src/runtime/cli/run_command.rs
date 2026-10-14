@@ -977,10 +977,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // The shell does not need to initialize JSC (saves 1-3ms).
         if strings::has_suffix_comptime(&entry_path, b".sh") {
             // It has no entry point to start from, like a script of a package.json.
-            if bun_core::feature::present::<{ bun_core::feature::CHECK }>()
-                && ctx.runtime_options.check
-                && !crate::cli::check_command::check_project_before()
-            {
+            if ctx.runtime_options.check && !crate::cli::check_command::check_project_before() {
                 Global::exit(1);
             }
             let exit_code = Self::boot_bun_shell(ctx, &entry_path)?;
@@ -992,8 +989,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ctx.runtime_options.check && ctx.runtime_options.eval.interactive_script.is_none();
         // `Run::start` does it then, once there is a file watcher.
         let watches = ctx.debug.hot_reload != cli::command::HotReload::None;
-        if bun_core::feature::present::<{ bun_core::feature::CHECK }>()
-            && is_checked
+        if is_checked
             && !watches
             && !Self::check_main(ctx, &entry_path, loader, &ctx.passthrough, None)
         {
@@ -1486,11 +1482,10 @@ impl Run<'_> {
             }
         }
 
-        let has_type_errors = bun_core::feature::present::<{ bun_core::feature::CHECK }>()
-            && unchecked.is_some_and(|loader| {
-                let watching = crate::cli::check_command::watching(vm);
-                !RunCommand::check_main(ctx, vm.main(), loader, &vm.argv, watching)
-            });
+        let has_type_errors = unchecked.is_some_and(|loader| {
+            let watching = crate::cli::check_command::watching(vm);
+            !RunCommand::check_main(ctx, vm.main(), loader, &vm.argv, watching)
+        });
         if has_type_errors {
             // It is not read if the options are wrong.
             vm.add_main_to_watcher_if_needed();
@@ -2516,8 +2511,7 @@ impl RunCommand {
                         let use_system_shell = ctx.debug.use_system_shell;
 
                         // A script has no entry point to start from: the project is checked, as by `bun check`.
-                        if bun_core::feature::present::<{ bun_core::feature::CHECK }>()
-                            && ctx.runtime_options.check
+                        if ctx.runtime_options.check
                             && !crate::cli::check_command::check_project_before()
                         {
                             Global::exit(1);
@@ -2719,8 +2713,7 @@ impl RunCommand {
                     which(&mut path_buf, path_for_which, top_level_dir, target_name)
                 {
                     // It has no entry point to start from, like a script of a package.json.
-                    if bun_core::feature::present::<{ bun_core::feature::CHECK }>()
-                        && ctx.runtime_options.check
+                    if ctx.runtime_options.check
                         && !crate::cli::check_command::check_project_before()
                     {
                         Global::exit(1);

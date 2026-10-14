@@ -20,16 +20,10 @@ import { cc, cxx, link, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
+import { emitFeatureTableTool, featureTableLinkImplicitInputs, linkFromBuildDir } from "./feature-table.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
-import {
-  emitFeatureTable,
-  emitFeatureTableTool,
-  featureTableLinkImplicitInputs,
-  featureTableLinkOutputs,
-  linkFromBuildDir,
-} from "./feature-table.ts";
 import {
   bunIncludes,
   computeFlags,
@@ -433,10 +427,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // turn reference JSC/WTF, depLibs satisfies those. Every `#[no_mangle]`
   // export the C++ side touches is reached from those roots.
   const shimInputs = emitShims(n, cfg);
-  emitFeatureTableTool(n, cfg);
   const depLink = lazyDepObjects(cfg, depObjects);
   const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg)];
+  emitFeatureTableTool(n, cfg);
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: linkFromBuildDir(cfg, depLibs),
     lazyObjects: depLink.lazy,
@@ -444,7 +438,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     implicitInputs: [...linkImplicitInputs(cfg), ...shimInputs, ...featureTableLinkImplicitInputs(cfg)],
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
-    sideOutputs: [...linkerMapOutputs(cfg), ...featureTableLinkOutputs(cfg)],
+    linkerMapOutputs: linkerMapOutputs(cfg),
     // Static scans: the deps' forbidden-symbol checks on the objects going
     // in, the smoke test on the executable coming out.
     validations: [...depChecks, ...postLinkChecks(cfg, exeName)],
@@ -754,9 +748,7 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, stri
  * The profile binary keeps its symbols for profiling/debugging release crashes.
  */
 function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]): string {
-  const bun = resolve(cfg.buildDir, "bun" + cfg.exeSuffix);
-  // With a feature table this is not yet `bun`: the table is made for the stripped bytes, and goes into them.
-  const out = cfg.featureTable ? resolve(cfg.buildDir, "bun.stripped" + cfg.exeSuffix) : bun;
+  const out = resolve(cfg.buildDir, "bun" + cfg.exeSuffix);
 
   // Windows: strip equivalent is handled at link time (/OPT:REF etc), no
   // separate strip binary. The "stripped" bun is just a copy. Copy command
@@ -787,8 +779,7 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
   if (cfg.windows) n.build({ ...node, rule: "copy_exe" });
   else n.build({ ...node, rule: "strip", vars: { stripflags: stripflags.join(" ") } });
 
-  if (cfg.featureTable) emitFeatureTable(n, cfg, out, bun);
-  return bun;
+  return out;
 }
 
 /**

@@ -1,593 +1,391 @@
-//! Mach-O: which bytes are where, the load commands, and `__LINKEDIT`.
+//! Mach-O, 64-bit.
 //!
-//! `__TEXT` holds the header, then code and constants, then literals. The one area ends where the literals start and is
-//! packed upwards against them. The header follows: `__TEXT` starts at a higher address, `__PAGEZERO` grows by as much, and
-//! the file loses the pages in between. No other address changes, but whatever is relative to the image base does.
-//!
-//! The signature comes out empty: `LC_CODE_SIGNATURE` says where it goes, and whoever writes the file signs it.
+//! Only `__TEXT` has pages left out. It becomes one segment per stretch that stays, each at the address it had. The gaps
+//! between them are not mapped. The load commands grow into the room that the linker was asked to leave behind them
+//! (`-headerpad`).
+
+use core::ops::Range;
 
 use crate::bytes::{
-    minus, offset, put_u16, put_u32, put_u64, slice, u8_at, u16_at, u32_at, u64_at,
+    fixed_name as name, minus, narrow, plus, put_u32, put_u64, slice, u8_at, u32_at, u64_at,
+    usize_at, whole_pages,
 };
-use crate::executable::{
-    Executable, LC_CODE_SIGNATURE, LC_DYLD_CHAINED_FIXUPS, LC_SEGMENT_64, LC_SYMTAB, fixed_name,
-};
-use crate::patch::{moved, patch};
-use crate::plan::{Options, Plan};
-use crate::table::{NO_UNIT, Table};
 use crate::{Error, Result};
 
+const MH_MAGIC_64: u32 = 0xfeed_facf;
+const CPU_TYPE_X86_64: u32 = 0x0100_0007;
+const CPU_TYPE_ARM64: u32 = 0x0100_000c;
+const LC_SEGMENT_64: u32 = 0x19;
+const LC_SYMTAB: u32 = 0x2;
 const LC_DYSYMTAB: u32 = 0xb;
-const LC_FUNCTION_STARTS: u32 = 0x26;
-const LC_DATA_IN_CODE: u32 = 0x29;
-const LC_MAIN: u32 = 0x8000_0028;
-const LC_DYLD_EXPORTS_TRIE: u32 = 0x8000_0033;
+const LC_CODE_SIGNATURE: u32 = 0x1d;
+const LC_DYLD_INFO: u32 = 0x22;
+const LC_DYLD_INFO_ONLY: u32 = 0x8000_0022;
+const LC_DYLD_CHAINED_FIXUPS: u32 = 0x8000_0034;
+const SEGMENT: usize = 72;
+const SECTION: usize = 80;
 const N_STAB: u8 = 0xe0;
 const N_TYPE: u8 = 0x0e;
-const N_EXT: u8 = 1;
-const INDIRECT_SYMBOL_LOCAL: u32 = 0x8000_0000;
-const INDIRECT_SYMBOL_ABS: u32 = 0x4000_0000;
+const N_SECT: u8 = 0x0e;
 
-fn uleb(out: &mut Vec<u8>, mut value: u64) {
-    while value >= 0x80 {
-        out.push(value as u8 | 0x80);
-        value >>= 7;
-    }
-    out.push(value as u8);
-}
-
-fn read_uleb(b: &[u8], at: &mut usize) -> Result<u64> {
-    let mut value = 0u64;
-    for shift in (0..64).step_by(7) {
-        let byte = u8_at(b, *at)?;
-        *at += 1;
-        value |= u64::from(byte & 0x7f) << shift;
-        if byte < 0x80 {
-            return Ok(value);
-        }
-    }
-    Err(Error::InvalidExecutable)
-}
-
-struct Export {
-    name: Vec<u8>,
-    flags: u64,
-    /// From the image base.
-    offset: u64,
-}
-
-fn read_exports(
-    trie: &[u8],
-    node: usize,
-    prefix: &mut Vec<u8>,
-    depth: usize,
-    out: &mut Vec<Export>,
-) -> Result<()> {
-    if depth > 1024 {
-        return Err(Error::InvalidExecutable);
-    }
-    let mut at = node;
-    let terminal_size = read_uleb(trie, &mut at)? as usize;
-    if terminal_size != 0 {
-        let mut terminal = at;
-        let flags = read_uleb(trie, &mut terminal)?;
-        out.push(Export {
-            name: prefix.clone(),
-            flags,
-            offset: read_uleb(trie, &mut terminal)?,
-        });
-    }
-    at += terminal_size;
-    let children = u8_at(trie, at)?;
-    at += 1;
-    for _ in 0..children {
-        let label = fixed_name(trie.get(at..).ok_or(Error::InvalidExecutable)?);
-        at += label.len() + 1;
-        let child = read_uleb(trie, &mut at)? as usize;
-        prefix.extend_from_slice(label);
-        read_exports(trie, child, prefix, depth + 1, out)?;
-        prefix.truncate(prefix.len() - label.len());
-    }
-    Ok(())
-}
-
-#[derive(Default)]
-struct TrieNode {
-    edges: Vec<(Vec<u8>, usize)>,
-    terminal: Option<(u64, u64)>,
-    at: u64,
-}
-
-fn write_exports(exports: &[Export]) -> Vec<u8> {
-    let mut nodes = vec![TrieNode::default()];
-    for x in exports {
-        let (mut node, mut rest) = (0, &x.name[..]);
-        'descend: while !rest.is_empty() {
-            for e in 0..nodes[node].edges.len() {
-                let label = &nodes[node].edges[e].0;
-                let common = label.iter().zip(rest).take_while(|(a, b)| a == b).count();
-                if common == 0 {
-                    continue;
-                }
-                if common < label.len() {
-                    // split the edge
-                    let tail = label[common..].to_vec();
-                    let child = nodes[node].edges[e].1;
-                    nodes.push(TrieNode {
-                        edges: vec![(tail, child)],
-                        ..Default::default()
-                    });
-                    let middle = nodes.len() - 1;
-                    nodes[node].edges[e].0.truncate(common);
-                    nodes[node].edges[e].1 = middle;
-                }
-                node = nodes[node].edges[e].1;
-                rest = &rest[common..];
-                continue 'descend;
-            }
-            nodes.push(TrieNode::default());
-            let leaf = nodes.len() - 1;
-            nodes[node].edges.push((rest.to_vec(), leaf));
-            node = leaf;
-            rest = &[];
-        }
-        nodes[node].terminal = Some((x.flags, x.offset));
-    }
-
-    let mut order = Vec::with_capacity(nodes.len());
-    let mut stack = vec![0];
-    while let Some(n) = stack.pop() {
-        order.push(n);
-        stack.extend(nodes[n].edges.iter().rev().map(|e| e.1));
-    }
-    let encode = |nodes: &[TrieNode], n: usize, out: &mut Vec<u8>| {
-        let mut terminal = Vec::new();
-        if let Some((flags, offset)) = nodes[n].terminal {
-            uleb(&mut terminal, flags);
-            uleb(&mut terminal, offset);
-        }
-        uleb(out, terminal.len() as u64);
-        out.extend_from_slice(&terminal);
-        out.push(nodes[n].edges.len() as u8);
-        for (label, child) in &nodes[n].edges {
-            out.extend_from_slice(label);
-            out.push(0);
-            uleb(out, nodes[*child].at);
-        }
-    };
-    // A node's offset is itself a number of variable length: repeat until the offsets stop changing.
-    let mut out = Vec::new();
-    loop {
-        out.clear();
-        let mut has_changed = false;
-        for &n in &order {
-            has_changed |= nodes[n].at != out.len() as u64;
-            nodes[n].at = out.len() as u64;
-            encode(&nodes, n, &mut out);
-        }
-        if !has_changed {
-            return out;
-        }
+/// The fields of each load command that are offsets in the file, all 32 bits wide.
+fn file_offsets(command: u32) -> &'static [usize] {
+    match command {
+        LC_SYMTAB => &[8, 16],
+        LC_DYSYMTAB => &[32, 40, 48, 56, 64, 72],
+        // code signature, split info, function starts, data in code, code sign DRs, optimization hints, exports trie,
+        // chained fixups, atom info
+        0x1d | 0x1e | 0x26 | 0x29 | 0x2b | 0x2e | 0x8000_0033 | 0x8000_0034 | 0x36 => &[8],
+        _ => &[],
     }
 }
 
-struct Segment {
-    command: usize,
-    name: Vec<u8>,
-    mem_size: u64,
-    offset: u64,
-    file_size: u64,
+pub(crate) fn is(file: &[u8]) -> bool {
+    u32_at(file, 0) == Ok(MH_MAGIC_64)
 }
 
-struct Section {
-    header: usize,
-    is_in_text: bool,
-    addr: u64,
-    size: u64,
-    offset: u32,
+pub(crate) fn is_arm64(file: &[u8]) -> Result<bool> {
+    match u32_at(file, 4)? {
+        CPU_TYPE_X86_64 => Ok(false),
+        CPU_TYPE_ARM64 => Ok(true),
+        _ => Err(Error::UnrecognizedExecutable),
+    }
 }
 
-/// The pointers of one page, each of which holds the distance to the next.
-struct Chain {
-    /// Where in the fixups blob the offset of the first one is.
-    page_start: usize,
-    page: u64,
-    members: Vec<u64>,
-}
-
-pub(crate) fn apply(
-    exe: &Executable<'_>,
-    t: &Table,
-    o: &Options<'_>,
-    mut p: Plan,
-) -> Result<Vec<u8>> {
-    let mut bytes = exe.bytes.to_vec();
-    let file_offset = |address: u64| exe.file_offset(address).ok_or(Error::InvalidExecutable);
-
-    let header_size = 32 + u32_at(&bytes, 20)? as usize;
-    let mut commands: Vec<(u32, usize, usize)> = Vec::new(); // {type, offset, size}
-    let mut segments = Vec::new();
-    let mut sections = Vec::new();
-    let mut base = None;
+/// {command, where it is, its size}
+fn commands(file: &[u8]) -> Result<Vec<(u32, usize, usize)>> {
+    let mut list = Vec::new();
     let mut at = 32;
-    for _ in 0..u32_at(&bytes, 16)? {
-        let (kind, size) = (u32_at(&bytes, at)?, u32_at(&bytes, at + 4)? as usize);
-        commands.push((kind, at, size));
-        if kind == LC_SEGMENT_64 {
-            let name = fixed_name(slice(&bytes, at + 8, 16)?).to_vec();
-            if name == b"__TEXT" {
-                base = Some(u64_at(&bytes, at + 24)?);
-            }
-            for s in 0..u32_at(&bytes, at + 64)? as usize {
-                let header = at + 72 + s * 80;
-                sections.push(Section {
-                    header,
-                    is_in_text: name == b"__TEXT",
-                    addr: u64_at(&bytes, header + 32)?,
-                    size: u64_at(&bytes, header + 40)?,
-                    offset: u32_at(&bytes, header + 48)?,
-                });
-            }
-            segments.push(Segment {
-                command: at,
-                name,
-                mem_size: u64_at(&bytes, at + 32)?,
-                offset: u64_at(&bytes, at + 40)?,
-                file_size: u64_at(&bytes, at + 48)?,
-            });
-        }
+    for _ in 0..u32_at(file, 16)? {
+        let size = u32_at(file, at + 4)? as usize;
+        slice(file, at, size.max(8))?;
+        list.push((u32_at(file, at)?, at, size));
         at += size;
     }
-    let command = |kind: u32| commands.iter().find(|c| c.0 == kind).map(|c| c.1);
-    let base = base.ok_or(Error::InvalidExecutable)?;
-    let text = segments
-        .iter()
-        .find(|s| s.name == b"__TEXT")
-        .ok_or(Error::InvalidExecutable)?;
-    let (text_offset, text_size) = (text.offset as usize, text.file_size as usize);
-    let linkedit_offset = segments
-        .iter()
-        .find(|s| s.name == b"__LINKEDIT")
-        .ok_or(Error::InvalidExecutable)?
-        .offset;
-    let area = t.areas.first().ok_or(Error::InvalidTable)?;
-
-    // ---- how far the header moves
-    let page = t.format.arch.macho_page_size();
-    let first = p.runs[0].first().ok_or(Error::Inconsistent)?;
-    let first_byte = offset(first.start, first.delta);
-    let shift = first_byte
-        .checked_sub(base + header_size as u64)
-        .ok_or(Error::Inconsistent)?
-        / page
-        * page;
-    let new_base = base + shift;
-    // The header is a unit too, in no area.
-    let header_unit = t.unit_at(base);
-    *p.delta
-        .get_mut(header_unit as usize)
-        .ok_or(Error::InvalidTable)? = shift.cast_signed();
-    let p = p;
-    let runs = &p.runs[0];
-    let delta_at = |address: u64| match t.unit_at(address) {
-        NO_UNIT => 0,
-        unit => p.delta[unit as usize],
-    };
-    let is_piece_live_at = |address: u64| match t.unit_at(address) {
-        NO_UNIT => None,
-        unit => Some(p.is_piece_live[unit as usize]),
-    };
-    /// For the commands that are {offset, size} of a blob in `__LINKEDIT`.
-    fn blob_of(bytes: &[u8], command: usize) -> Result<Vec<u8>> {
-        Ok(slice(
-            bytes,
-            u32_at(bytes, command + 8)? as usize,
-            u32_at(bytes, command + 12)? as usize,
-        )?
-        .to_vec())
-    }
-
-    // ---- the fixup chains, before anything is blanked
-    let fixups_command = command(LC_DYLD_CHAINED_FIXUPS).ok_or(Error::InvalidExecutable)?;
-    let mut fixups = blob_of(&bytes, fixups_command)?;
-    let mut chains = Vec::new();
-    let starts = u32_at(&fixups, 4)? as usize;
-    for i in 0..u32_at(&fixups, starts)? as usize {
-        let in_segment = u32_at(&fixups, starts + 4 + 4 * i)? as usize;
-        if in_segment == 0 {
-            continue;
-        }
-        let in_segment = starts + in_segment;
-        let segment_offset = u64_at(&fixups, in_segment + 8)?;
-        let page_size = u64::from(u16_at(&fixups, in_segment + 4)?);
-        for n in 0..usize::from(u16_at(&fixups, in_segment + 20)?) {
-            let page_start = in_segment + 22 + 2 * n;
-            let first = u16_at(&fixups, page_start)?;
-            if first == 0xffff {
-                continue;
-            }
-            let page = base + segment_offset + n as u64 * page_size;
-            let mut members = Vec::new();
-            let mut address = page + u64::from(first);
-            loop {
-                members.push(address);
-                let next = (u64_at(&bytes, file_offset(address)?)? >> 51) & 0xfff;
-                if next == 0 {
-                    break;
-                }
-                address += next * 4;
-            }
-            chains.push(Chain {
-                page_start,
-                page,
-                members,
-            });
-        }
-        put_u64(
-            &mut fixups,
-            in_segment + 8,
-            segment_offset
-                .checked_sub(shift)
-                .ok_or(Error::Inconsistent)?,
-        )?;
-    }
-
-    patch(t, o, &p, exe, &mut bytes, shift.cast_signed())?;
-
-    // A pointer in a dead unit is gone: link its neighbours to each other.
-    for chain in &chains {
-        let is_kept = |&address: &u64| match t.unit_at(address) {
-            NO_UNIT => true,
-            unit => p.is_unit_live[unit as usize],
-        };
-        if chain.members.iter().all(is_kept) {
-            continue;
-        }
-        let kept: Vec<u64> = chain.members.iter().copied().filter(is_kept).collect();
-        put_u16(
-            &mut fixups,
-            chain.page_start,
-            kept.first()
-                .map_or(0xffff, |first| (first - chain.page) as u16),
-        )?;
-        for (i, &address) in kept.iter().enumerate() {
-            let at = file_offset(address)?;
-            let next = kept.get(i + 1).map_or(0, |next| (next - address) / 4);
-            let value = u64_at(&bytes, at)?;
-            put_u64(&mut bytes, at, (value & !(0xfff << 51)) | (next << 51))?;
-        }
-    }
-
-    // ---- `__LINKEDIT`, rebuilt
-    let mut header = slice(&bytes, 0, header_size)?.to_vec();
-    let mut linkedit: Vec<u8> = Vec::new();
-    let new_linkedit_offset = minus(linkedit_offset, shift)?;
-    let mut append = |blob: &[u8]| {
-        let at = new_linkedit_offset + linkedit.len() as u64;
-        linkedit.extend_from_slice(blob);
-        linkedit.resize(linkedit.len().next_multiple_of(16), 0);
-        at as u32
-    };
-    let rebased = |offset_from_base: u64| {
-        let address = base
-            .checked_add(offset_from_base)
-            .ok_or(Error::InvalidExecutable)?;
-        minus(offset(address, delta_at(address)), new_base)
-    };
-
-    put_u32(&mut header, fixups_command + 8, append(&fixups))?;
-    if let Some(c) = command(LC_DYLD_EXPORTS_TRIE) {
-        let trie = blob_of(&bytes, c)?;
-        let mut exports = Vec::new();
-        if !trie.is_empty() {
-            read_exports(&trie, 0, &mut Vec::new(), 0, &mut exports)?;
-        }
-        for x in &mut exports {
-            x.offset = rebased(x.offset)?;
-        }
-        let trie = write_exports(&exports);
-        put_u32(&mut header, c + 8, append(&trie))?;
-        put_u32(&mut header, c + 12, trie.len() as u32)?;
-    }
-    if let Some(c) = command(LC_FUNCTION_STARTS) {
-        let blob = blob_of(&bytes, c)?;
-        let mut kept = Vec::new();
-        let (mut at, mut address) = (0, base);
-        while blob.get(at).is_some_and(|&b| b != 0) {
-            address = address
-                .checked_add(read_uleb(&blob, &mut at)?)
-                .ok_or(Error::InvalidExecutable)?;
-            if is_piece_live_at(address) == Some(true) {
-                kept.push(offset(address, delta_at(address)));
-            }
-        }
-        kept.sort_unstable();
-        let mut blob = Vec::new();
-        let mut previous = new_base;
-        for address in kept {
-            uleb(&mut blob, minus(address, previous)?);
-            previous = address;
-        }
-        blob.push(0);
-        put_u32(&mut header, c + 8, append(&blob))?;
-        put_u32(&mut header, c + 12, blob.len() as u32)?;
-    }
-    if let Some(c) = command(LC_MAIN) {
-        let entry = rebased(u64_at(&bytes, c + 8)?)?;
-        put_u64(&mut header, c + 8, entry)?;
-    }
-    if let Some(c) = command(LC_DATA_IN_CODE) {
-        // {offset from the base, length and kind}, sorted
-        let blob = blob_of(&bytes, c)?;
-        let mut kept = Vec::new();
-        for at in (0..blob.len()).step_by(8) {
-            let from_base = u64::from(u32_at(&blob, at)?);
-            if is_piece_live_at(base.wrapping_add(from_base)) == Some(true) {
-                kept.push((rebased(from_base)? as u32, u32_at(&blob, at + 4)?));
-            }
-        }
-        kept.sort_unstable();
-        let blob: Vec<u8> = kept
-            .iter()
-            .flat_map(|(from_base, rest)| [from_base.to_le_bytes(), rest.to_le_bytes()])
-            .flatten()
-            .collect();
-        put_u32(&mut header, c + 8, append(&blob))?;
-        put_u32(&mut header, c + 12, blob.len() as u32)?;
-    }
-
-    // The symbol table keeps what is exported or imported. The indirect symbol table refers to it by index.
-    if let (Some(symtab), Some(dysymtab)) = (command(LC_SYMTAB), command(LC_DYSYMTAB)) {
-        let symbols = u32_at(&bytes, symtab + 8)? as usize;
-        let count = u32_at(&bytes, symtab + 12)? as usize;
-        let strings = u32_at(&bytes, symtab + 16)? as usize;
-        let mut definitions = Vec::new();
-        let mut imports = Vec::new();
-        for i in 0..count {
-            let kind = u8_at(&bytes, symbols + i * 16 + 4)?;
-            if kind & N_STAB != 0 {
-                continue; // for debuggers
-            }
-            if kind & N_TYPE == 0 {
-                imports.push(i);
-            } else if kind & N_EXT != 0
-                && is_piece_live_at(u64_at(&bytes, symbols + i * 16 + 8)?) != Some(false)
-            {
-                definitions.push(i);
-            }
-        }
-        let mut new_index = vec![INDIRECT_SYMBOL_LOCAL; count];
-        let mut entries = Vec::with_capacity((definitions.len() + imports.len()) * 16);
-        let mut names = b" \0".to_vec();
-        for (j, &i) in definitions.iter().chain(&imports).enumerate() {
-            new_index[i] = j as u32;
-            let entry = symbols + i * 16;
-            let at = entries.len();
-            entries.extend_from_slice(slice(&bytes, entry, 16)?);
-            put_u32(&mut entries, at, names.len() as u32)?;
-            let name = fixed_name(
-                bytes
-                    .get(strings + u32_at(&bytes, entry)? as usize..)
-                    .ok_or(Error::InvalidExecutable)?,
-            );
-            names.extend_from_slice(name);
-            names.push(0);
-            if u8_at(&bytes, entry + 4)? & N_TYPE != 0 {
-                let address = u64_at(&bytes, entry + 8)?;
-                put_u64(&mut entries, at + 8, offset(address, delta_at(address)))?;
-            }
-        }
-        put_u32(&mut header, symtab + 8, append(&entries))?;
-        put_u32(&mut header, symtab + 12, (entries.len() / 16) as u32)?;
-
-        let mut indirect = slice(
-            &bytes,
-            u32_at(&bytes, dysymtab + 56)? as usize,
-            4 * u32_at(&bytes, dysymtab + 60)? as usize,
-        )?
-        .to_vec();
-        for at in (0..indirect.len()).step_by(4) {
-            let i = u32_at(&indirect, at)?;
-            if i & (INDIRECT_SYMBOL_LOCAL | INDIRECT_SYMBOL_ABS) == 0 {
-                let new = *new_index.get(i as usize).ok_or(Error::InvalidExecutable)?;
-                put_u32(&mut indirect, at, new)?;
-            }
-        }
-        put_u32(&mut header, dysymtab + 56, append(&indirect))?;
-
-        // The signature follows, and signing wants every byte of `__LINKEDIT` accounted for: count the padding.
-        names.resize(names.len().next_multiple_of(16), 0);
-        put_u32(&mut header, symtab + 16, append(&names))?;
-        put_u32(&mut header, symtab + 20, names.len() as u32)?;
-        // {first, count} of the local, the defined external and the undefined symbols
-        let (defined, undefined) = (definitions.len() as u32, imports.len() as u32);
-        for (i, value) in [0, 0, 0, defined, defined, undefined]
-            .into_iter()
-            .enumerate()
+    // So that what follows can add and subtract these.
+    for &(_, at, size) in list.iter().filter(|c| c.0 == LC_SEGMENT_64) {
+        let sections = u32_at(file, at + 64)? as usize;
+        if size != SEGMENT + sections * SECTION
+            || plus(u64_at(file, at + 40)?, u64_at(file, at + 48)?)? > file.len() as u64
         {
-            put_u32(&mut header, dysymtab + 8 + 4 * i, value)?;
+            return Err(Error::InvalidExecutable);
+        }
+        plus(u64_at(file, at + 24)?, u64_at(file, at + 32)?)?;
+        plus(u64_at(file, at + 24)?, u64_at(file, at + 48)?)?;
+        for header in (0..sections).map(|s| at + SEGMENT + s * SECTION) {
+            plus(u64_at(file, header + 32)?, u64_at(file, header + 40)?)?;
+        }
+    }
+    Ok(list)
+}
+
+/// Where in the file the section is.
+pub(crate) fn section(file: &[u8], segment: &[u8], section: &[u8]) -> Result<Option<Range<usize>>> {
+    for (_, at, _) in commands(file)?.into_iter().filter(|c| c.0 == LC_SEGMENT_64) {
+        for s in 0..u32_at(file, at + 64)? as usize {
+            let header = at + SEGMENT + s * SECTION;
+            if name(slice(file, header, 16)?) == section
+                && name(slice(file, header + 16, 16)?) == segment
+            {
+                let start = u32_at(file, header + 48)? as usize;
+                return Ok(Some(start..start + usize_at(file, header + 40)?));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Where in the file the byte at `address` is.
+pub(crate) fn offset_of(file: &[u8], address: u64) -> Result<usize> {
+    for (_, at, _) in commands(file)?.into_iter().filter(|c| c.0 == LC_SEGMENT_64) {
+        let (start, offset, size) = (
+            u64_at(file, at + 24)?,
+            u64_at(file, at + 40)?,
+            u64_at(file, at + 48)?,
+        );
+        if address >= start && address - start < size {
+            return Ok((offset + (address - start)) as usize);
+        }
+    }
+    Err(Error::InvalidTable)
+}
+
+/// `file` without the whole pages of `dead`, which is sorted address ranges.
+pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>> {
+    let page: u64 = if is_arm64(file)? { 0x4000 } else { 0x1000 };
+    let commands = commands(file)?;
+    let end_of_commands = 32 + u32_at(file, 20)? as usize;
+    let segments: Vec<usize> = commands
+        .iter()
+        .filter(|c| c.0 == LC_SEGMENT_64)
+        .map(|c| c.1)
+        .collect();
+    let find = |wanted: &[u8]| {
+        segments
+            .iter()
+            .position(|&at| slice(file, at + 8, 16).is_ok_and(|n| name(n) == wanted))
+    };
+    let (Some(text_index), Some(linkedit_index)) = (find(b"__TEXT"), find(b"__LINKEDIT")) else {
+        return Err(Error::InvalidExecutable);
+    };
+    // Rebase and bind opcodes name segments by number. Chained fixups do too, in one small array.
+    if commands
+        .iter()
+        .any(|c| c.0 == LC_DYLD_INFO || c.0 == LC_DYLD_INFO_ONLY)
+    {
+        return Err(Error::InvalidExecutable);
+    }
+    let (text, linkedit) = (segments[text_index], segments[linkedit_index]);
+    let text_range = u64_at(file, text + 24)?..u64_at(file, text + 24)? + u64_at(file, text + 48)?;
+    if u64_at(file, text + 40)? != 0 || linkedit_index + 1 != segments.len() {
+        return Err(Error::InvalidExecutable);
+    }
+    let sections: Vec<usize> = (0..u32_at(file, text + 64)? as usize)
+        .map(|s| text + SEGMENT + s * SECTION)
+        .collect();
+    let mut first_content = text_range.end - text_range.start;
+    for &header in &sections {
+        first_content = first_content.min(u64::from(u32_at(file, header + 48)?));
+    }
+
+    let mut gaps: Vec<Range<u64>> = Vec::new();
+    for gap in dead.iter().filter_map(|range| whole_pages(range, page)) {
+        if gap.start >= text_range.start + first_content && gap.end <= text_range.end {
+            gaps.push(gap);
         }
     }
 
-    // ---- load commands
-    for s in &segments {
-        match &s.name[..] {
-            b"__PAGEZERO" => put_u64(&mut header, s.command + 32, s.mem_size + shift)?,
-            b"__TEXT" => {
-                put_u64(&mut header, s.command + 24, new_base)?;
-                put_u64(&mut header, s.command + 32, minus(s.mem_size, shift)?)?;
-                put_u64(&mut header, s.command + 48, minus(s.file_size, shift)?)?;
-            }
-            name => {
-                put_u64(&mut header, s.command + 40, minus(s.offset, shift)?)?;
-                if name == b"__LINKEDIT" {
-                    put_u64(&mut header, s.command + 48, linkedit.len() as u64)?;
-                    put_u64(
-                        &mut header,
-                        s.command + 32,
-                        (linkedit.len() as u64).next_multiple_of(page),
-                    )?;
+    // What stays of `__TEXT`, and of each stretch the sections in it, as {header, addresses}.
+    let stretches = |gaps: &[Range<u64>]| -> Result<Vec<(Range<u64>, Vec<(usize, Range<u64>)>)>> {
+        let mut list = Vec::new();
+        let mut start = text_range.start;
+        for end_and_next in gaps
+            .iter()
+            .map(|g| (g.start, g.end))
+            .chain([(text_range.end, text_range.end)])
+        {
+            if start < end_and_next.0 {
+                let stretch = start..end_and_next.0;
+                let mut inside = Vec::new();
+                for &header in &sections {
+                    let address = u64_at(file, header + 32)?;
+                    let part = address.max(stretch.start)
+                        ..(address + u64_at(file, header + 40)?).min(stretch.end);
+                    if part.start < part.end {
+                        inside.push((header, part));
+                    }
                 }
+                list.push((stretch, inside));
+            }
+            start = end_and_next.1;
+        }
+        Ok(list)
+    };
+    // The load commands grow into the room that the linker left behind them. The largest gaps that there is room for.
+    let room = minus(first_content, end_of_commands as u64)? as usize;
+    gaps.sort_by_key(|g| core::cmp::Reverse(g.end - g.start));
+    loop {
+        let mut sorted = gaps.clone();
+        sorted.sort_by_key(|g| g.start);
+        let kept = stretches(&sorted)?;
+        let size: usize = kept.iter().map(|s| SEGMENT + s.1.len() * SECTION).sum();
+        if size <= SEGMENT + sections.len() * SECTION + room {
+            gaps = sorted;
+            break;
+        }
+        gaps.pop();
+    }
+    if gaps.is_empty() {
+        return Ok(file.to_vec());
+    }
+    let kept = stretches(&gaps)?;
+    let added = kept.len() - 1;
+    let dropped: u64 = gaps.iter().map(|g| g.end - g.start).sum();
+
+    // ---- the contents: `__TEXT` without the gaps, the other segments as they are
+    let linkedit_offset = usize_at(file, linkedit + 40)?;
+    let mut out: Vec<u8> = Vec::with_capacity(file.len());
+    let mut offset_of_stretch = Vec::new();
+    for (stretch, _) in &kept {
+        offset_of_stretch.push(out.len() as u64);
+        let from = (stretch.start - text_range.start) as usize;
+        out.extend_from_slice(slice(file, from, (stretch.end - stretch.start) as usize)?);
+    }
+    let text_end = (text_range.end - text_range.start) as usize;
+    out.extend_from_slice(slice(
+        file,
+        text_end,
+        linkedit_offset
+            .checked_sub(text_end)
+            .ok_or(Error::InvalidExecutable)?,
+    )?);
+
+    // ---- `__LINKEDIT`: the chained fixups have one more entry per segment, the signature goes
+    let command = |wanted: u32| commands.iter().find(|c| c.0 == wanted).map(|c| c.1);
+    let fixups = command(LC_DYLD_CHAINED_FIXUPS).ok_or(Error::InvalidExecutable)?;
+    let (fixups_offset, fixups_size) = (
+        u32_at(file, fixups + 8)? as usize,
+        u32_at(file, fixups + 12)? as usize,
+    );
+    let grown = (added * 4).next_multiple_of(8);
+    let content_end = match command(LC_CODE_SIGNATURE) {
+        Some(c) => u32_at(file, c + 8)? as usize,
+        None => linkedit_offset + usize_at(file, linkedit + 48)?,
+    };
+    let new_linkedit_offset = out.len();
+    out.extend_from_slice(slice(
+        file,
+        linkedit_offset,
+        fixups_offset
+            .checked_sub(linkedit_offset)
+            .ok_or(Error::InvalidExecutable)?,
+    )?);
+    {
+        let old = slice(file, fixups_offset, fixups_size)?;
+        let starts = u32_at(old, 4)? as usize;
+        let count = u32_at(old, starts)? as usize;
+        if count != segments.len() {
+            return Err(Error::InvalidExecutable);
+        }
+        let array_end = starts + 4 + count * 4;
+        let mut new = slice(old, 0, starts)?.to_vec();
+        for at in [8, 12] {
+            // imports and symbols follow the starts
+            let moved = narrow(u64::from(u32_at(&new, at)?) + grown as u64)?;
+            put_u32(&mut new, at, moved)?;
+        }
+        new.extend_from_slice(&((count + added) as u32).to_le_bytes());
+        for index in 0..count {
+            let offset = u32_at(old, starts + 4 + index * 4)?;
+            let offset = match offset {
+                0 => 0,
+                offset => narrow(u64::from(offset) + grown as u64)?,
+            };
+            new.extend_from_slice(&offset.to_le_bytes());
+            if index == text_index {
+                new.resize(new.len() + added * 4, 0);
             }
         }
+        new.resize(array_end + grown, 0);
+        new.extend_from_slice(old.get(array_end..).ok_or(Error::InvalidExecutable)?);
+        out.extend_from_slice(&new);
     }
-    for s in &sections {
-        if !s.is_in_text {
-            if s.offset != 0 {
-                put_u32(
-                    &mut header,
-                    s.header + 48,
-                    minus(s.offset.into(), shift)? as u32,
-                )?;
+    let fixups_end = fixups_offset + fixups_size;
+    out.extend_from_slice(slice(
+        file,
+        fixups_end,
+        content_end
+            .checked_sub(fixups_end)
+            .ok_or(Error::InvalidExecutable)?,
+    )?);
+    out.resize(out.len().next_multiple_of(16), 0);
+    let moved = |offset: u32| -> Result<u32> {
+        match u64::from(offset) {
+            0 => Ok(0),
+            o if o >= fixups_end as u64 => narrow(minus(o + grown as u64, dropped)?),
+            o => narrow(minus(o, dropped)?),
+        }
+    };
+
+    // ---- the load commands
+    let mut header = slice(file, 0, 32)?.to_vec();
+    // Of each section as it was numbered, the number of its first part. Numbers start at 1.
+    let mut parts: Vec<(Range<u64>, u8)> = Vec::new();
+    let mut number = 0u8;
+    for &(kind, at, size) in &commands {
+        let mut bytes = slice(file, at, size)?.to_vec();
+        if at == text {
+            for (index, (stretch, inside)) in kept.iter().enumerate() {
+                let mut segment = slice(file, at, SEGMENT)?.to_vec();
+                if index > 0 {
+                    let label = format!("__TEXT.{index}");
+                    segment[8..24].fill(0);
+                    segment[8..8 + label.len()].copy_from_slice(label.as_bytes());
+                }
+                put_u32(&mut segment, 4, (SEGMENT + inside.len() * SECTION) as u32)?;
+                put_u64(&mut segment, 24, stretch.start)?;
+                put_u64(&mut segment, 32, stretch.end - stretch.start)?;
+                put_u64(&mut segment, 40, offset_of_stretch[index])?;
+                put_u64(&mut segment, 48, stretch.end - stretch.start)?;
+                put_u32(&mut segment, 64, inside.len() as u32)?;
+                for (section, part) in inside {
+                    let mut section = slice(file, *section, SECTION)?.to_vec();
+                    put_u64(&mut section, 32, part.start)?;
+                    put_u64(&mut section, 40, part.end - part.start)?;
+                    let offset = offset_of_stretch[index] + (part.start - stretch.start);
+                    put_u32(&mut section, 48, narrow(offset)?)?;
+                    segment.extend_from_slice(&section);
+                    number = number.checked_add(1).ok_or(Error::InvalidExecutable)?;
+                    parts.push((part.clone(), number));
+                }
+                header.extend_from_slice(&segment);
             }
             continue;
         }
-        let (mut start, mut length) = (s.addr, s.size);
-        if s.addr < area.high {
-            // A section inside the area now spans what is left of it.
-            let mut left = runs.iter().filter_map(|r| {
-                let (from, to) = (r.start.max(s.addr), r.end.min(s.addr + s.size));
-                (from < to).then(|| (offset(from, r.delta), offset(to, r.delta)))
-            });
-            match left.next() {
-                None => (start, length) = (first_byte, 0),
-                Some((first, end)) => {
-                    (start, length) = (first, left.next_back().map_or(end, |(_, end)| end) - first)
-                }
+        if kind == LC_SEGMENT_64 {
+            if u64_at(&bytes, 48)? != 0 {
+                let offset = minus(u64_at(&bytes, 40)?, dropped)?;
+                put_u64(&mut bytes, 40, offset)?;
+            }
+            for s in 0..u32_at(&bytes, 64)? as usize {
+                let section = SEGMENT + s * SECTION;
+                let offset = match u64::from(u32_at(&bytes, section + 48)?) {
+                    0 => 0,
+                    offset => narrow(minus(offset, dropped)?)?,
+                };
+                put_u32(&mut bytes, section + 48, offset)?;
+                number = number.checked_add(1).ok_or(Error::InvalidExecutable)?;
+                parts.push((
+                    u64_at(&bytes, section + 32)?
+                        ..u64_at(&bytes, section + 32)? + u64_at(&bytes, section + 40)?,
+                    number,
+                ));
+            }
+            if at == linkedit {
+                let size = (out.len() - new_linkedit_offset) as u64;
+                put_u64(&mut bytes, 48, size)?;
+                put_u64(&mut bytes, 32, size.next_multiple_of(page))?;
             }
         }
-        put_u64(&mut header, s.header + 32, start)?;
-        put_u64(&mut header, s.header + 40, length)?;
-        put_u32(&mut header, s.header + 48, minus(start, new_base)? as u32)?;
+        for &field in file_offsets(kind) {
+            let offset = moved(u32_at(&bytes, field)?)?;
+            put_u32(&mut bytes, field, offset)?;
+        }
+        match kind {
+            LC_DYLD_CHAINED_FIXUPS => {
+                put_u32(&mut bytes, 12, narrow((fixups_size + grown) as u64)?)?;
+            }
+            // Whoever writes the executable signs it.
+            LC_CODE_SIGNATURE => {
+                put_u32(&mut bytes, 8, narrow(out.len() as u64)?)?;
+                put_u32(&mut bytes, 12, 0)?;
+            }
+            _ => {}
+        }
+        header.extend_from_slice(&bytes);
     }
+    put_u32(&mut header, 16, (commands.len() + added) as u32)?;
+    let size_of_commands = (header.len() - 32) as u32;
+    put_u32(&mut header, 20, size_of_commands)?;
+    out.get_mut(..header.len())
+        .ok_or(Error::InvalidExecutable)?
+        .copy_from_slice(&header);
 
-    if let Some(c) = command(LC_CODE_SIGNATURE) {
-        put_u32(
-            &mut header,
-            c + 8,
-            (new_linkedit_offset + linkedit.len() as u64) as u32,
-        )?;
-        put_u32(&mut header, c + 12, 0)?;
+    // ---- symbols say which section they are in, by number
+    if let Some(c) = command(LC_SYMTAB) {
+        let symbols = moved(u32_at(file, c + 8)?)? as usize;
+        for index in 0..u32_at(file, c + 12)? as usize {
+            let at = symbols + index * 16;
+            let (kind, old) = (u8_at(&out, at + 4)?, u8_at(&out, at + 5)?);
+            if old != 0 && (kind & N_STAB != 0 || kind & N_TYPE == N_SECT) {
+                let value = u64_at(&out, at + 8)?;
+                // One in a gap is of something that is gone.
+                let found = parts
+                    .iter()
+                    .find(|p| p.0.contains(&value) || p.0.end == value && p.0.start < value);
+                out[at + 5] = found.map_or(1, |p| p.1);
+            }
+        }
     }
-
-    // ---- the file
-    let packed = moved(t, &p, exe, &bytes, 0)?;
-    let mut out = slice(&bytes, text_offset, text_size)?.to_vec();
-    out.get_mut(minus(area.low, base)? as usize..)
-        .and_then(|o| o.get_mut(..packed.len()))
-        .ok_or(Error::TableOfAnotherExecutable)?
-        .copy_from_slice(&packed);
-    out.drain(..shift as usize);
-    out.get_mut(..(first_byte - new_base) as usize)
-        .ok_or(Error::Inconsistent)?
-        .fill(0);
-    out[..header.len()].copy_from_slice(&header);
-    for s in segments
-        .iter()
-        .filter(|s| !matches!(&s.name[..], b"__PAGEZERO" | b"__TEXT" | b"__LINKEDIT"))
-    {
-        out.extend_from_slice(slice(&bytes, s.offset as usize, s.file_size as usize)?);
-    }
-    out.extend_from_slice(&linkedit);
     Ok(out)
 }

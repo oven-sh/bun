@@ -1282,10 +1282,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
         : // The link command goes on after the link, which takes a shell. Releases are built on Linux.
           host.os === "windows"
           ? "it cannot be made on a Windows host"
-          : toolchain.objdump === undefined || toolchain.rustSysroot === undefined
-            ? "it takes llvm-objdump and rustc"
-            : // Android keeps its unwind tables, which refer to functions and are not kept up to date.
-              !((linux && abi !== "android") || darwin || (windows && x64))
+          : toolchain.rustSysroot === undefined
+            ? "it takes rustc"
+            : !((linux && abi !== "android") || darwin || (windows && x64))
               ? "this target is not supported yet"
               : undefined;
   if (partial.featureTable === true && whyNoFeatureTable !== undefined) {

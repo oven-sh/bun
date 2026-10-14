@@ -151,10 +151,7 @@ impl BuildCommand {
             .cloned()
             .unwrap_or_default();
 
-        if bun_core::feature::present::<{ bun_core::feature::CHECK }>()
-            && ctx.bundler_options.check
-            && ctx.bundler_options.transform_only
-        {
+        if ctx.bundler_options.check && ctx.bundler_options.transform_only {
             // Nothing is bundled, so nothing has been resolved or read.
             let entry_points = this_transpiler.options.entry_points.iter();
             let checked = options::TypeChecked {
@@ -172,9 +169,7 @@ impl BuildCommand {
                 Output::flush();
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
-        } else if bun_core::feature::present::<{ bun_core::feature::CHECK }>()
-            && ctx.bundler_options.check
-        {
+        } else if ctx.bundler_options.check {
             this_transpiler.options.type_check =
                 Some(crate::cli::check_command::check_for_build_command);
         }

@@ -22,6 +22,16 @@ impl Object {
     }
 }
 
+impl Object {
+    pub(super) fn read(path: &Path) -> Option<Object> {
+        let file: Rc<[u8]> = std::fs::read(path).ok()?.into();
+        Some(Object {
+            range: 0..file.len(),
+            file,
+        })
+    }
+}
+
 impl Objects {
     /// `name` is a path, or `archive(member)`. Relative to the current directory, which is the one the link ran in.
     pub(super) fn get(&mut self, name: &str) -> Option<Object> {
@@ -34,11 +44,7 @@ impl Objects {
             Some((&inner[..at - 1], &inner[at..]))
         });
         let Some((archive, member)) = archive else {
-            let file: Rc<[u8]> = std::fs::read(name).ok()?.into();
-            return Some(Object {
-                range: 0..file.len(),
-                file,
-            });
+            return Object::read(Path::new(name));
         };
         let file = self
             .archives
@@ -60,7 +66,7 @@ fn member_of(ar: &[u8], wanted: &str) -> Option<core::ops::Range<usize>> {
         let body = at + 60;
         if let Some(length) = id.strip_prefix("#1/").and_then(|n| n.parse::<usize>().ok()) {
             // BSD: the name precedes the contents
-            if crate::executable::fixed_name(&ar[body..body + length]) == wanted.as_bytes() {
+            if crate::bytes::fixed_name(&ar[body..body + length]) == wanted.as_bytes() {
                 return Some(body + length..body + size);
             }
         } else if id == "//" {

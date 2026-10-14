@@ -26,9 +26,6 @@ pub(crate) fn u16_at(bytes: &[u8], at: usize) -> Result<u16> {
 pub(crate) fn u32_at(bytes: &[u8], at: usize) -> Result<u32> {
     array(bytes, at).map(u32::from_le_bytes)
 }
-pub(crate) fn i32_at(bytes: &[u8], at: usize) -> Result<i32> {
-    array(bytes, at).map(i32::from_le_bytes)
-}
 pub(crate) fn u64_at(bytes: &[u8], at: usize) -> Result<u64> {
     array(bytes, at).map(u64::from_le_bytes)
 }
@@ -40,9 +37,25 @@ pub(crate) fn usize_at(file: &[u8], at: usize) -> Result<usize> {
     }
 }
 
+/// `a + b`, of numbers that the headers of the executable say.
+pub(crate) fn plus(a: u64, b: u64) -> Result<u64> {
+    a.checked_add(b).ok_or(Error::InvalidExecutable)
+}
 /// `a - b`, of numbers that the headers of the executable say.
 pub(crate) fn minus(a: u64, b: u64) -> Result<u64> {
     a.checked_sub(b).ok_or(Error::InvalidExecutable)
+}
+/// A number that goes into a field of 32 bits.
+pub(crate) fn narrow(value: u64) -> Result<u32> {
+    u32::try_from(value).map_err(|_| Error::InvalidExecutable)
+}
+/// The whole pages of `range`.
+pub(crate) fn whole_pages(
+    range: &core::ops::Range<u64>,
+    page: u64,
+) -> Option<core::ops::Range<u64>> {
+    let pages = range.start.checked_next_multiple_of(page)?..range.end / page * page;
+    (pages.start < pages.end).then_some(pages)
 }
 
 pub(crate) fn put_u16(bytes: &mut [u8], at: usize, value: u16) -> Result<()> {
@@ -71,9 +84,9 @@ pub(crate) fn slice_mut(bytes: &mut [u8], at: usize, length: usize) -> Result<&m
         .ok_or(Error::InvalidExecutable)
 }
 
-/// `value + delta`, for an address or the contents of a field.
-pub(crate) fn offset(value: u64, delta: i64) -> u64 {
-    value.wrapping_add_signed(delta)
+/// A name in a field of a fixed size, padded with NUL.
+pub(crate) fn fixed_name(field: &[u8]) -> &[u8] {
+    core::ffi::CStr::from_bytes_until_nul(field).map_or(field, core::ffi::CStr::to_bytes)
 }
 
 /// The numbers of a table: LEB128.
@@ -86,20 +99,11 @@ impl<'a> Reader<'a> {
         Self { bytes }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
-    }
-
-    pub(crate) fn byte(&mut self) -> Result<u8> {
-        let (&first, rest) = self.bytes.split_first().ok_or(Error::InvalidTable)?;
-        self.bytes = rest;
-        Ok(first)
-    }
-
-    pub(crate) fn unsigned(&mut self) -> Result<u64> {
+    pub(crate) fn number(&mut self) -> Result<u64> {
         let mut value = 0u64;
         for shift in (0..64).step_by(7) {
-            let byte = self.byte()?;
+            let (&byte, rest) = self.bytes.split_first().ok_or(Error::InvalidTable)?;
+            self.bytes = rest;
             value |= u64::from(byte & 0x7f) << shift;
             if byte < 0x80 {
                 return Ok(value);
@@ -108,57 +112,26 @@ impl<'a> Reader<'a> {
         Err(Error::InvalidTable)
     }
 
-    pub(crate) fn signed(&mut self) -> Result<i64> {
-        let value = self.unsigned()?;
-        Ok((value >> 1).cast_signed() ^ -((value & 1).cast_signed()))
-    }
-
-    pub(crate) fn u32(&mut self) -> Result<u32> {
-        u32::try_from(self.unsigned()?).map_err(|_| Error::InvalidTable)
-    }
-
-    /// A count of things that each take at least a byte, so that a corrupt one cannot ask for more memory than the table has.
+    /// A number of things that each take at least a byte, so no more than there are bytes left.
     pub(crate) fn count(&mut self) -> Result<usize> {
-        usize::try_from(self.unsigned()?).map_err(|_| Error::InvalidTable)
+        match self.number()? {
+            count if count <= self.bytes.len() as u64 => Ok(count as usize),
+            _ => Err(Error::InvalidTable),
+        }
     }
 
-    pub(crate) fn take(&mut self, length: usize) -> Result<&'a [u8]> {
-        let (taken, rest) = self
-            .bytes
-            .split_at_checked(length)
-            .ok_or(Error::InvalidTable)?;
-        self.bytes = rest;
-        Ok(taken)
+    /// An index into something that has `length` entries.
+    pub(crate) fn index(&mut self, length: usize) -> Result<usize> {
+        match self.number()? {
+            index if index < length as u64 => Ok(index as usize),
+            _ => Err(Error::InvalidTable),
+        }
     }
 
     pub(crate) fn blob(&mut self) -> Result<&'a [u8]> {
         let length = self.count()?;
-        self.take(length)
-    }
-}
-
-#[cfg(feature = "tool")]
-#[derive(Default)]
-pub(crate) struct Writer {
-    pub(crate) bytes: Vec<u8>,
-}
-
-#[cfg(feature = "tool")]
-impl Writer {
-    pub(crate) fn unsigned(&mut self, mut value: u64) {
-        while value >= 0x80 {
-            self.bytes.push(value as u8 | 0x80);
-            value >>= 7;
-        }
-        self.bytes.push(value as u8);
-    }
-
-    pub(crate) fn signed(&mut self, value: i64) {
-        self.unsigned(((value << 1) ^ (value >> 63)).cast_unsigned());
-    }
-
-    pub(crate) fn blob(&mut self, bytes: &[u8]) {
-        self.unsigned(bytes.len() as u64);
-        self.bytes.extend_from_slice(bytes);
+        let (taken, rest) = self.bytes.split_at(length);
+        self.bytes = rest;
+        Ok(taken)
     }
 }

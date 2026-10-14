@@ -2066,10 +2066,9 @@ impl<'a> Injected<'a> {
 
 /// `executable` without the features of `--compile-exclude-features`, or what is wrong with the request.
 fn without_features(executable: Vec<u8>, exclude: &[Box<[u8]>]) -> Result<Vec<u8>, CompileError> {
-    use bun_exe_features::{Error, Features, table_section, without_table};
+    use bun_exe_features::{Error, Features};
     if exclude.is_empty() {
-        // What says how to exclude features is of no use to the executable.
-        return Ok(without_table(&executable).unwrap_or(executable));
+        return Ok(executable);
     }
     let explain = |e: Error| match e {
         Error::MissingTable => CompileError::fmt(format_args!(
@@ -2079,9 +2078,7 @@ fn without_features(executable: Vec<u8>, exclude: &[Box<[u8]>]) -> Result<Vec<u8
             "failed to exclude features from the executable: {e}"
         )),
     };
-    let table = bun_zstd::decompress_alloc(table_section(&executable).map_err(explain)?)
-        .map_err(|_| explain(Error::InvalidTable))?;
-    let features = Features::open(&executable, &table).map_err(explain)?;
+    let features = Features::of(&executable).map_err(explain)?;
     let is_known = |name: &[u8]| features.names().any(|known| known == name);
     if let Some(unknown) = exclude.iter().find(|name| !is_known(name)) {
         let mut message = Vec::new();
@@ -2095,7 +2092,7 @@ fn without_features(executable: Vec<u8>, exclude: &[Box<[u8]>]) -> Result<Vec<u8
         return Err(CompileError::Message(message));
     }
     let exclude: Vec<&[u8]> = exclude.iter().map(|name| &**name).collect();
-    features.remove(&exclude).map_err(explain)
+    features.without(&exclude).map_err(explain)
 }
 
 pub(crate) fn inject<'a>(

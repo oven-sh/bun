@@ -421,7 +421,18 @@ fn style_for(cwd: &[u8], pretty: Option<bool>, to: Destination, show_all: bool) 
 const HAS_TYPESCRIPT_TEST_RUNNER: bool =
     bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
 
+/// Everything here that is used from elsewhere goes through this: `--compile-exclude-features=check` leaves out what only
+/// `door` reaches. `--check` and `check: true` are refused in such an executable, so nothing gets as far as this.
+#[inline(always)]
+fn enter<R>(door: impl FnOnce() -> R) -> R {
+    bun_core::feature::enter::<{ bun_core::feature::CHECK }, R>(door).unwrap_or_else(|| {
+        Output::err_generic("this executable was built without type checking", ());
+        Global::exit(1)
+    })
+}
+
 impl CheckCommand {
+    /// Behind the door of the command.
     pub(crate) fn exec(args: &[&ZStr]) -> ! {
         if HAS_TYPESCRIPT_TEST_RUNNER
             && let [first, rest @ ..] = args
@@ -437,12 +448,14 @@ impl CheckCommand {
     /// `bun --check` without an entry point: `bun check` without an argument. The arguments are
     /// those of `bun`, which has read them.
     pub(crate) fn exec_without_arguments() -> ! {
-        Self::exec_with(&Options {
-            command_line: CommandLine {
-                project: tsconfig_override().map(<[u8]>::to_vec),
+        enter(|| {
+            Self::exec_with(&Options {
+                command_line: CommandLine {
+                    project: tsconfig_override().map(<[u8]>::to_vec),
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
+            })
         })
     }
 
@@ -547,6 +560,10 @@ impl<'a> EntryPoint<'a> {
 /// Type checks `entry_points` and everything they import before they are run. Returns whether they
 /// have no errors. Reports the errors on stderr, which leaves stdout to the program.
 pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<BeforeRead>) -> bool {
+    enter(|| check_entry_points(entry_points, before_read))
+}
+
+fn check_entry_points(entry_points: &[EntryPoint], before_read: Option<BeforeRead>) -> bool {
     let cwd = working_directory();
     // `--loader`, `--conditions`
     let args = bun_options_types::context::try_get().map(|ctx| &ctx.args);
@@ -606,12 +623,14 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
     use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     use bun_sema_driver::host::to_native;
     let (watch, cwd) = (vm.watcher_for_threads()?, working_directory());
-    Some(Box::new(move |path| {
-        if !bun_core::strings::contains(path, b"/node_modules/") {
-            // The watcher knows a file by its path as the system spells it.
-            watch(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
-        }
-    }))
+    enter(|| -> Option<BeforeRead> {
+        Some(Box::new(move |path| {
+            if !bun_core::strings::contains(path, b"/node_modules/") {
+                // The watcher knows a file by its path as the system spells it.
+                watch(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
+            }
+        }))
+    })
 }
 
 /// `sources` of `bun_bundler::options::TypeCheck`. A key of `files` of `Bun.build` may be relative,
@@ -630,12 +649,12 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 
 /// `BundleOptions::type_check` for `bun build --check`.
 pub(crate) fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    check_for_build(checked, log, true)
+    enter(|| check_for_build(checked, log, true))
 }
 
 /// `BundleOptions::type_check` for `Bun.build({ check: true })`. It prints nothing.
 pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    check_for_build(checked, log, false)
+    enter(|| check_for_build(checked, log, false))
 }
 
 /// The files of the bundle, `sources`, are not read again. The errors are added to `log`, which the
@@ -837,7 +856,7 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 /// Type checks the project that contains the working directory, as `bun check` does, before one of
 /// its scripts is run.
 pub(crate) fn check_project_before() -> bool {
-    check_and_report(&Paths::EntryPoints(Entries::default()), Provided::default())
+    enter(|| check_and_report(&Paths::EntryPoints(Entries::default()), Provided::default()))
 }
 
 /// `--tsconfig-override` of `bun`: what is run is resolved with it, in place of every other.

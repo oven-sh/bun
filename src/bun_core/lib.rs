@@ -1,4 +1,8 @@
 #![feature(allocator_api)]
+#![cfg_attr(
+    any(target_os = "linux", target_os = "macos", windows),
+    feature(used_with_arg)
+)] // `feature::TABLE` stays though nothing refers to it
 #![feature(adt_const_params)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time

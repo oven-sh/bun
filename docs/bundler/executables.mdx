@@ -1101,19 +1101,15 @@ An executable contains a copy of the whole Bun runtime, including parts your pro
 
 On the command line, separate names with commas or repeat the flag.
 
-| Feature          | What the executable loses                                                                |
-| ---------------- | ---------------------------------------------------------------------------------------- |
-| `check`          | The `bun check` command                                                                  |
-| `lint`           | The `bun lint` command                                                                   |
-| `fmt`            | The `bun fmt` command                                                                    |
-| `Bun.password`   | `Bun.password` is `undefined`                                                            |
-| `Bun.Transpiler` | `Bun.Transpiler` is `undefined`. Loading TypeScript and JSX files at runtime still works |
+| Feature | What the executable loses                                                       |
+| ------- | ------------------------------------------------------------------------------- |
+| `check` | The `bun check` command, the `--check` flag, and `check: true` in `Bun.build()` |
+| `lint`  | The `bun lint` command                                                          |
+| `fmt`   | The `bun fmt` command                                                           |
 
-Bun removes a feature together with every function and constant that nothing else in the runtime uses. Code that another part of the runtime shares stays. On Linux x64, excluding `check`, `lint`, and `fmt` takes a small program from 108 MB to 84 MB.
+Bun removes a feature together with everything that nothing else in the runtime uses. Code that another part of the runtime shares stays, and code that only two features share goes once both are excluded. These three share a lot, so excluding all of them saves the most: on Linux x64 it takes a small program from 108 MB to 84 MB.
 
 A command is only reachable in an executable that [acts as the Bun CLI](#act-as-the-bun-cli). An excluded command prints `error: this executable was built without this command` and exits with a non-zero code.
-
-Bun does not check whether your program uses what you exclude. If your code calls `Bun.password.hash()` and you exclude `Bun.password`, the call throws a `TypeError` at runtime.
 
 A name that does not exist is an error. The error message lists the names that the targeted Bun supports.
 

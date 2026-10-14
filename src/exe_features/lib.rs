@@ -1,90 +1,65 @@
-//! Removes features from a bun executable, for `bun build --compile`.
+//! Leaves features out of a bun executable, for `bun build --compile --compile-exclude-features`.
 //!
-//! A release build of bun carries a TABLE that says which piece of the executable refers to which, and where every
-//! address is stored. With it, what an excluded feature leaves unreferenced can be dropped and the rest packed, without
-//! a linker, a disassembler or symbols, for an ELF, Mach-O or PE file from any host.
+//! A release build of bun says of itself which of its bytes only which features need: the TABLE, a list of address ranges,
+//! each with the features that need it. Leaving features out is then
 //!
-//! - UNIT: an address range with a liveness of its own. Sorted, not overlapping.
-//! - PIECE: one or more consecutive units that the linker placed as one thing. It moves as a whole and stays if any of
-//!   its units is live. A function that holds feature markers is one unit per basic block; a data table with rows that
-//!   belong to features is one unit per such row. A dead unit of a live piece is blanked.
-//! - FIXUP: a field that holds an address: where it is, how the address is encoded, which unit it refers to. So it is
-//!   an edge of the liveness graph and an instruction for patching at once.
-//! - FLOW: an edge between units that is no address: one block runs into another, a table has a row. It may depend on
-//!   a feature, which is what a marker (`bun_core::feature::present`) is.
-//! - PATCH: bytes to write if a feature is excluded: the jump that replaces a marker.
-//! - AREA: an address range whose pieces are packed, towards its low or its high end.
+//! 1. turn each `bun_core::feature::present` of theirs into a jump to its `false` side,
+//! 2. overwrite the ranges that no feature that is left needs, with an instruction that traps,
+//! 3. leave the pages that hold nothing else out of the file.
 //!
-//! Whatever is in no unit always stays and never moves. A fixup there makes its target a root.
+//! Nothing moves. Every byte that stays is loaded at the address it was linked for, so no address stored anywhere has to be
+//! found or changed: not in code, not in data, not in symbols, debug information or unwind tables, and not in a crash
+//! report, which is read against the symbols of the release. All that changes is where in the file things are, which only
+//! the headers of the file say. That is the whole of what [`elf`], [`macho`] and [`pe`] do.
 //!
-//! Nothing says which code belongs to a feature. A piece goes when nothing that stays refers to it, so a missing marker
-//! leaves bytes in the file and cannot remove something that is still used.
+//! An executable is loaded in pages, so only whole pages leave the file. Bun's build lays out what each set of features
+//! needs as one stretch, so that is nearly all of it.
 //!
-//! The table as it ships holds only what cannot be read off the executable it describes: see [`scan`].
+//! Which bytes those are is found out by Bun's build (`make`), where the linker's work is still at hand and anything
+//! unexpected stops the build.
 //!
-//! This crate has no dependencies, so that the host tool of Bun's build (`main.rs`, feature `tool`) is these same
-//! functions and nothing else. The table is compressed in the executable; the caller decompresses it.
+//! This crate has no dependencies, so that the host tool of Bun's build (`main.rs`, feature `tool`) is these same functions
+//! and nothing else.
 
 mod bytes;
 mod elf;
-mod executable;
-mod expand;
 mod macho;
-mod patch;
 mod pe;
-mod plan;
-mod scan;
 mod table;
-mod without_table;
 
-#[cfg(feature = "tool")]
-mod compact;
-#[cfg(feature = "tool")]
-mod embed;
 #[cfg(feature = "tool")]
 mod make;
-#[cfg(feature = "tool")]
-mod merge;
 
-use executable::Executable;
-use plan::Options;
+use core::ops::Range;
+
+use bytes::{slice, slice_mut};
 use table::Table;
 
-pub use without_table::without_table;
-
 #[cfg(feature = "tool")]
-pub use embed::embed;
-#[cfg(feature = "tool")]
-pub use make::{Link, check_blocks, make_table};
-#[cfg(feature = "tool")]
-pub use plan::Testing;
+pub use make::{Link, make_order, make_table};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Error {
-    /// Not an ELF x86-64, Mach-O arm64 or PE x86-64 executable.
+    /// Not a 64-bit ELF, Mach-O or PE executable for x86-64 or arm64.
     UnrecognizedExecutable,
-    /// A header or a table of the executable points outside the file.
+    /// A header of the executable points outside the file, or it is not laid out as bun is.
     InvalidExecutable,
-    /// The executable has no feature table: a bun older than this, or one that features were removed from already.
+    /// The executable does not say what can be left out: a build of bun that is not a release, one older than this, or one
+    /// that features were left out of already.
     MissingTable,
     InvalidTable,
-    UnsupportedTableVersion,
-    /// The table was made for other bytes than these.
-    TableOfAnotherExecutable,
-    /// Something that stays refers to something that was removed, or can no longer reach it.
-    Inconsistent,
+    /// `Features::without` was given a name that is not among `Features::names`.
+    NoSuchFeature,
 }
 
 impl Error {
     pub fn name(self) -> &'static str {
         match self {
-            Self::UnrecognizedExecutable => "UnrecognizedExecutable",
-            Self::InvalidExecutable => "InvalidExecutable",
-            Self::MissingTable => "MissingFeatureTable",
-            Self::InvalidTable => "InvalidFeatureTable",
-            Self::UnsupportedTableVersion => "UnsupportedFeatureTableVersion",
-            Self::TableOfAnotherExecutable => "FeatureTableOfAnotherExecutable",
-            Self::Inconsistent => "InconsistentFeatureTable",
+            Error::UnrecognizedExecutable => "UnrecognizedExecutable",
+            Error::InvalidExecutable => "InvalidExecutable",
+            Error::MissingTable => "MissingTable",
+            Error::InvalidTable => "InvalidTable",
+            Error::NoSuchFeature => "NoSuchFeature",
         }
     }
 }
@@ -99,90 +74,143 @@ impl core::error::Error for Error {}
 
 pub type Result<T> = core::result::Result<T, Error>;
 
-/// The compressed table in `executable`.
-pub fn table_section(executable: &[u8]) -> Result<&[u8]> {
-    Executable::open(executable)?.table_section()
+#[derive(Clone, Copy, PartialEq)]
+enum Container {
+    Elf,
+    MachO,
+    Pe,
 }
 
-/// An executable and its table.
-pub struct Features<'a> {
-    executable: Executable<'a>,
-    table: Table,
-}
-
-impl<'a> Features<'a> {
-    /// `table` is [`table_section`], decompressed.
-    pub fn open(executable: &'a [u8], table: &[u8]) -> Result<Self> {
-        let executable = Executable::open(executable)?;
-        let table = expand::expand(table, &executable)?;
-        Ok(Self { executable, table })
+impl Container {
+    fn of(file: &[u8]) -> Result<Self> {
+        if elf::is(file) {
+            Ok(Container::Elf)
+        } else if macho::is(file) {
+            Ok(Container::MachO)
+        } else if pe::is(file) {
+            Ok(Container::Pe)
+        } else {
+            Err(Error::UnrecognizedExecutable)
+        }
     }
 
-    /// The features that can be excluded.
-    pub fn names(&self) -> impl Iterator<Item = &[u8]> {
-        self.table.features.iter().map(|f| &*f.name)
+    fn is_arm64(self, file: &[u8]) -> Result<bool> {
+        match self {
+            Container::Elf => elf::is_arm64(file),
+            Container::MachO => macho::is_arm64(file),
+            Container::Pe => pe::is_arm64(file),
+        }
     }
 
-    fn id(&self, name: &[u8]) -> Option<u32> {
-        self.table
-            .features
-            .iter()
-            .find(|f| &*f.name == name)
-            .map(|f| f.id)
+    /// Where in the file the room for the table is: `TABLE` of `bun_core::feature`.
+    fn room_for_table(self, file: &[u8]) -> Result<Range<usize>> {
+        match self {
+            Container::Elf => elf::section(file, b".bun_feature_table"),
+            Container::MachO => macho::section(file, b"__TEXT", b"__bun_feat_tab"),
+            Container::Pe => pe::section(file, b".bunftab"),
+        }?
+        .ok_or(Error::MissingTable)
     }
 
-    /// The executable without `excluded`, each of which is one of [`Self::names`], and without the table.
-    /// A Mach-O comes out with room for a signature and none in it.
-    pub fn remove(&self, excluded: &[&[u8]]) -> Result<Vec<u8>> {
-        let excluded: Vec<u32> = excluded.iter().filter_map(|name| self.id(name)).collect();
-        self.apply(&Options::excluding(&excluded))
+    fn offset_of(self, file: &[u8], address: u64) -> Result<usize> {
+        match self {
+            Container::Elf => elf::offset_of(file, address),
+            Container::MachO => macho::offset_of(file, address),
+            Container::Pe => pe::offset_of(file, address),
+        }
     }
 
-    fn apply(&self, options: &Options<'_>) -> Result<Vec<u8>> {
-        let plan = plan::plan(&self.table, options);
-        match self.table.format.container {
-            table::Container::Elf => elf::apply(&self.executable, &self.table, options, &plan),
-            table::Container::MachO => macho::apply(&self.executable, &self.table, options, plan),
-            table::Container::Pe => pe::apply(&self.executable, &self.table, options, &plan),
+    fn without_pages(self, file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>> {
+        match self {
+            Container::Elf => elf::without_pages(file, dead),
+            Container::MachO => macho::without_pages(file, dead),
+            Container::Pe => pe::without_pages(file, dead),
         }
     }
 }
 
-#[cfg(feature = "tool")]
+/// What can be left out of an executable.
+pub struct Features<'a> {
+    executable: &'a [u8],
+    container: Container,
+    room: Range<usize>,
+    table: Table<'a>,
+}
+
 impl<'a> Features<'a> {
-    /// From a table with every fixup written out, as `scripts/build` makes it. Only such a table, unmerged, can scatter
-    /// every piece.
-    pub fn open_written_out(executable: &'a [u8], table: &[u8]) -> Result<Self> {
+    pub fn of(executable: &'a [u8]) -> Result<Self> {
+        let container = Container::of(executable)?;
+        let room = container.room_for_table(executable)?;
+        let table = Table::read(slice(executable, room.start, room.len())?)?;
         Ok(Self {
-            executable: Executable::open(executable)?,
-            table: Table::read_written_out(table)?,
+            executable,
+            container,
+            room,
+            table,
         })
     }
 
-    pub fn remove_for_testing(&self, excluded: &[&[u8]], testing: Testing) -> Result<Vec<u8>> {
-        let excluded: Vec<u32> = excluded.iter().filter_map(|name| self.id(name)).collect();
-        self.apply(&Options {
-            excluded: &excluded,
-            testing,
-        })
+    pub fn names(&self) -> impl Iterator<Item = &'a [u8]> {
+        self.table.features.iter().copied()
     }
-}
 
-/// What ships: `written_out` merged and reduced to what cannot be read off `executable`, which has to be the file as it
-/// ships. Checked to expand to the same table.
-#[cfg(feature = "tool")]
-pub fn compact(executable: &[u8], written_out: &[u8]) -> Result<Vec<u8>> {
-    let executable = Executable::open(executable)?;
-    let table = merge::merge(&Table::read_written_out(written_out)?);
-    let bytes = compact::compact(&table, &executable)?;
-    if expand::expand(&bytes, &executable)? != table {
-        return Err(Error::Inconsistent);
+    /// The executable without the features `excluded`.
+    pub fn without(&self, excluded: &[&[u8]]) -> Result<Vec<u8>> {
+        let (file, table) = (self.executable, &self.table);
+        if !excluded.iter().all(|name| table.features.contains(name)) {
+            return Err(Error::NoSuchFeature);
+        }
+        let is_excluded: Vec<bool> = table
+            .features
+            .iter()
+            .map(|name| excluded.contains(name))
+            .collect();
+        let mut out = file.to_vec();
+
+        for marker in table.markers.iter().filter(|m| is_excluded[m.feature]) {
+            let there = slice_mut(
+                &mut out,
+                self.container.offset_of(file, marker.address)?,
+                marker.present.len(),
+            )?;
+            if there != marker.present {
+                return Err(Error::InvalidTable);
+            }
+            there.copy_from_slice(marker.excluded);
+        }
+
+        let mut dead: Vec<Range<u64>> = Vec::new();
+        for (range, needed_by) in &table.ranges {
+            if needed_by.iter().all(|&feature| is_excluded[feature]) {
+                match dead.last_mut() {
+                    Some(last) if last.end == range.start => last.end = range.end,
+                    _ => dead.push(range.clone()),
+                }
+            }
+        }
+        // int3; brk #1
+        let trap: &[u8] = if self.container.is_arm64(file)? {
+            &[0x20, 0x00, 0x20, 0xd4]
+        } else {
+            &[0xcc]
+        };
+        for range in dead.iter().filter(|r| r.start < r.end) {
+            // One stretch of the file.
+            let length = (range.end - range.start) as usize;
+            let first = self.container.offset_of(file, range.start)?;
+            if self.container.offset_of(file, range.end - 1)? != first.saturating_add(length - 1) {
+                return Err(Error::InvalidTable);
+            }
+            let addresses = range.start as usize..;
+            for (byte, address) in slice_mut(&mut out, first, length)?
+                .iter_mut()
+                .zip(addresses)
+            {
+                *byte = trap[address % trap.len()];
+            }
+        }
+        // It is about what the executable was.
+        slice_mut(&mut out, self.room.start, self.room.len())?.fill(0);
+        self.container.without_pages(&out, &dead)
     }
-    Ok(bytes)
-}
-
-/// `written_out` in the one order that [`make_table`] writes, to compare two tables.
-#[cfg(feature = "tool")]
-pub fn canonical(written_out: &[u8]) -> Result<Vec<u8>> {
-    Ok(Table::read_written_out(written_out)?.write_written_out())
 }

@@ -5,7 +5,7 @@
 //! per-command exec bodies live in the sibling `*_command.rs` modules.
 
 use bun_core::strings;
-use bun_core::{self as bun, Global, Output};
+use bun_core::{self as bun, Global, Output, feature};
 use bun_core::{pretty, pretty_error, pretty_errorln};
 
 // ─── compiling submodules ────────────────────────────────────────────────────
@@ -1335,19 +1335,9 @@ pub(crate) mod command {
             Tag::UpdateInteractiveCommand => exec_update_interactive(log),
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
-            Tag::CheckCommand if bun_core::feature::present::<{ bun_core::feature::CHECK }>() => {
-                exec_check(log)
-            }
-            Tag::LintCommand if bun_core::feature::present::<{ bun_core::feature::LINT }>() => {
-                exec_lint(log)
-            }
-            Tag::FormatCommand if bun_core::feature::present::<{ bun_core::feature::FMT }>() => {
-                exec_format(log)
-            }
-            Tag::CheckCommand | Tag::LintCommand | Tag::FormatCommand => {
-                Output::err_generic("this executable was built without this command", ());
-                Global::exit(1);
-            }
+            Tag::CheckCommand => unless_excluded::<{ feature::CHECK }>(|| exec_check(log)),
+            Tag::LintCommand => unless_excluded::<{ feature::LINT }>(|| exec_lint(log)),
+            Tag::FormatCommand => unless_excluded::<{ feature::FMT }>(|| exec_format(log)),
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
@@ -1468,8 +1458,7 @@ pub(crate) mod command {
         // Scripts have no entry point to start from: the project is checked, as by `bun check`.
         let runs_several =
             ctx.parallel || ctx.sequential || !ctx.filters.is_empty() || ctx.workspaces;
-        if bun_core::feature::present::<{ bun_core::feature::CHECK }>()
-            && runs_several
+        if runs_several
             && ctx.runtime_options.check
             && !super::check_command::check_project_before()
         {
@@ -1509,9 +1498,7 @@ pub(crate) mod command {
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
-            if bun_core::feature::present::<{ bun_core::feature::LINT }>() {
-                lint_command::read_program_of_script(ctx);
-            }
+            feature::enter::<{ feature::LINT }, _>(|| lint_command::read_program_of_script(ctx));
             return run_command::RunCommand::exec_eval(ctx);
         }
 
@@ -1523,11 +1510,7 @@ pub(crate) mod command {
         }
 
         // `bun --check` and `bun run --check` are `bun check`, also where that is a script.
-        if bun_core::feature::present::<{ bun_core::feature::CHECK }>()
-            && no_target
-            && ctx.runtime_options.check
-            && ctx.runtime_options.eval.script.is_empty()
-        {
+        if no_target && ctx.runtime_options.check && ctx.runtime_options.eval.script.is_empty() {
             super::check_command::CheckCommand::exec_without_arguments();
         }
 
@@ -1612,6 +1595,15 @@ pub(crate) mod command {
         let ctx = init(Tag::BuildCommand, log)?;
         super::build_command::BuildCommand::exec(ctx, None)?;
         Ok(())
+    }
+
+    /// A command that `bun build --compile --compile-exclude-features` can leave out of an executable.
+    #[inline(always)]
+    fn unless_excluded<const FEATURE: u32>(command: impl FnOnce() -> CmdResult) -> CmdResult {
+        feature::enter::<FEATURE, _>(command).unwrap_or_else(|| {
+            Output::err_generic("this executable was built without this command", ());
+            Global::exit(1)
+        })
     }
 
     #[cold]
@@ -2354,9 +2346,9 @@ Execute a shell script directly from Bun.
 <b>Flags:<r>"
                 );
                 Output::flush();
-                if bun_core::feature::present::<{ bun_core::feature::CHECK }>() {
+                feature::enter::<{ feature::CHECK }, _>(|| {
                     bun_clap::simple_help(crate::cli::check_command::PARAMS);
-                }
+                });
                 pretty!(
                     "
       <cyan>--strict<r>, <cyan>--target<r><d><cyan>=\\<val\\><r>, ...  Any compiler option, as for <b>tsc<r>. Overrides tsconfig.json
@@ -2390,9 +2382,9 @@ Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r
   Format JavaScript, TypeScript, CSS, HTML, JSON, YAML, Markdown and more.
 "
                 );
-                if bun_core::feature::present::<{ bun_core::feature::FMT }>() {
+                feature::enter::<{ feature::FMT }, _>(|| {
                     print_flags(&crate::cli::format_command::HELP, show_all_flags);
-                }
+                });
                 pretty!(
                     "
 <b>Examples:<r>
@@ -2416,9 +2408,9 @@ Full documentation is available at <magenta>https://bun.com/docs/format<r>
   Find and fix problems in JavaScript and TypeScript.
 "
                 );
-                if bun_core::feature::present::<{ bun_core::feature::LINT }>() {
+                feature::enter::<{ feature::LINT }, _>(|| {
                     print_flags(&crate::cli::lint_command::HELP, show_all_flags);
-                }
+                });
                 pretty!(
                     "
 <b>Examples:<r>

@@ -496,12 +496,21 @@ impl<'a, 'c> AttachContext<'a, 'c> {
     /// it or after the `{`. The parser has recorded the nodes that Prettier finds, and the enclosing node is a `Program`, a
     /// `BlockStatement`, a `ClassBody`, a `TSInterfaceBody`, a `TSTypeLiteral` or a `TSEnumBody`, for which Prettier has no rule.
     fn list_elements_around(&self, comment: comments::Comment<'a>) -> Option<SurroundingNodes<'a>> {
-        if self.options.flavor.is_oxfmt() || self.file.is_flow() {
+        if self.file.is_flow() {
             return None;
         }
         let NodeOrName::Node(following_node) = comment.following_node()? else {
             return None;
         };
+        // The rules of oxfmt are about comments that stay on the line of what is before or after them.
+        if self.options.flavor.is_oxfmt()
+            && !(comment.id()..self.file.comment_count() as u32)
+                .map(|id| self.file.comment(id))
+                .take_while(|it| it.next_token_start() == comment.next_token_start())
+                .all(|it| it.has_newline_before())
+        {
+            return None;
+        }
         let text = self.file.text();
         let enclosing_node = comment.enclosing_node();
         // The body is no node in the HIR, so the enclosing node is what has the body.

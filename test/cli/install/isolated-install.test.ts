@@ -1727,7 +1727,8 @@ describe("existing node_modules, missing node_modules/.bun", () => {
 });
 
 // A new store resets what another linker left. When the root has no node_modules, the node_modules of each
-// workspace is still there.
+// workspace is still there. Not concurrent: on a debug build, installs that run at the same time pass the
+// default timeout of a test.
 describe("workspace node_modules, missing root node_modules", () => {
   async function install(packageDir: string) {
     await using proc = spawn({

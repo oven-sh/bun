@@ -336,6 +336,8 @@ complete -c bun -n "__fish_seen_subcommand_from fmt" -l "sort-imports" -d "Sort 
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "sort-tailwindcss" -d "Sort Tailwind CSS classes"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "sort-package-json" -d "Sort the keys of package.json"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "jsdoc" -d "Format JSDoc comments"
+complete -c bun -n "__fish_seen_subcommand_from fmt" -l "svelte" -d "Format Svelte components (default without a Prettier or oxfmt config)"
+complete -c bun -n "__fish_seen_subcommand_from fmt" -l "no-svelte" -d "Do not format Svelte components"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "staged" -d "Only format files that are staged in git, and stage them again"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "changed" -d "Only format files that differ from a branch or commit (default: the default branch)"
 complete -c bun -n "__fish_seen_subcommand_from fmt" -l "stdin-filepath" -r -F -d "Format standard input as this file and print the result"

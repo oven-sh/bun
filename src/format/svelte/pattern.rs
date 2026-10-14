@@ -190,16 +190,32 @@ impl<'f> Expander<'f, '_> {
     }
 }
 
-const BEFORE_PATTERN: &[u8] = b"function _(";
+pub(crate) const BEFORE_PATTERN: &[u8] = b"function _(";
 
-fn path_of(is_typescript: bool) -> &'static [u8] {
+pub(crate) fn path_of(is_typescript: bool) -> &'static [u8] {
     match is_typescript {
         true => b"dummy.ts",
         false => b"dummy.js",
     }
 }
 
-/// Where the keys are in `pattern` that are the names behind them, which `expand` leaves out: the first `a` of `{ a: a }`.
+/// Where `key` is behind [`BEFORE_PATTERN`], if it is `name` and before `value_start`.
+#[optimize(size)]
+fn repeated_key<'f>(
+    file: &'f File<'f>,
+    key: Key<'f>,
+    name: &[u8],
+    value_start: u32,
+) -> Option<(usize, usize)> {
+    let (span, before) = (key.inner_span(file), BEFORE_PATTERN.len());
+    (matches!(key.kind(), KeyKind::Ident(it) if it.bytes() == name)
+        && !key.is_computed()
+        && span.end <= value_start)
+        .then(|| (span.start as usize - before, span.end as usize - before))
+}
+
+/// Where the keys are in `pattern` that are the names behind them: the first `a` of `{ a: a }`. `expand` leaves it out of a
+/// pattern, and writes it in an object that is a default: `{ b = { a } }` is `{ b = { a: a } }`.
 #[optimize(size)]
 pub(crate) fn repeated_keys(
     parse: Parse<'_>,
@@ -213,33 +229,41 @@ pub(crate) fn repeated_keys(
             return;
         };
         let mut patterns: Vec<Pat<'_>> = function.params().iter().map(|it| it.pat()).collect();
+        let mut defaults: Vec<Expr<'_>> = Vec::new();
         while let Some(pattern) = patterns.pop() {
             match pattern.kind() {
                 PatKind::Array(elements) => {
-                    patterns.extend(elements.iter().filter_map(|it| it.pat()))
+                    patterns.extend(elements.iter().filter_map(|it| it.pat()));
+                    defaults.extend(elements.iter().filter_map(|it| it.default()));
                 }
                 PatKind::Object(properties) => {
                     for property in properties.iter() {
                         let value = property.value();
                         patterns.push(value);
-                        if let Some(key) = property.key()
-                            && let (KeyKind::Ident(key_name), PatKind::Ident(name)) =
-                                (key.kind(), value.kind())
-                            && key_name.bytes() == name.bytes()
-                            && !key.is_computed()
-                        {
-                            let span = key.inner_span(file);
-                            if span.end <= value.span().start {
-                                let before = BEFORE_PATTERN.len();
-                                keys.push((
-                                    span.start as usize - before,
-                                    span.end as usize - before,
-                                ));
-                            }
+                        defaults.extend(property.default());
+                        if let (Some(key), PatKind::Ident(name)) = (property.key(), value.kind()) {
+                            keys.extend(repeated_key(file, key, name.bytes(), value.span().start));
                         }
                     }
                 }
                 PatKind::Ident(_) | PatKind::Missing => {}
+            }
+        }
+        while let Some(default) = defaults.pop() {
+            match default.kind() {
+                ExprKind::Array(elements) => defaults.extend(elements.iter()),
+                ExprKind::Object(properties) => {
+                    for property in properties.iter() {
+                        let (Some(key), Some(value)) = (property.key(), property.value()) else {
+                            continue;
+                        };
+                        defaults.push(value);
+                        if let ExprKind::Ident(name) = value.kind() {
+                            keys.extend(repeated_key(file, key, name.bytes(), value.span().start));
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     });

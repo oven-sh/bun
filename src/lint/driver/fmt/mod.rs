@@ -1012,8 +1012,10 @@ pub fn is_same_svelte_for_tests(before: &[u8], after: &[u8]) -> bool {
 
 /// Why the file at `path`, which has `scope`, is in no language that is known.
 fn has_no_parser(configs: &Configs, scope: &config::Scope, path: Vec<u8>) -> Vec<u8> {
+    let is_off = || configs.asks_for_parser_of_svelte() && configs.turns_svelte_off_for(&path);
     let reason: &[u8] = match configs.leaves_svelte_for_part(scope, &path) {
         true => b"A range or a cursor offset cannot be used with a Svelte file: \"",
+        false if is_off() => b"Cannot use --parser svelte, because Svelte is off for \"",
         false => b"No parser could be inferred for file \"",
     };
     [reason, &paths::to_native(path)[..], b"\"."].concat()
@@ -2163,7 +2165,7 @@ impl Run<'_> {
         match scope.as_ref().map(|scope| configs.config_of(scope)) {
             Ok(Ok(other)) => {
                 let other = other.map(|it| &it.path[..]);
-                crate::init::FORMAT.add(other, self.environment)
+                crate::init::FORMAT.add(other, self.options.bunfig_above(), self.environment)
             }
             Ok(Err(Fatal(error))) => self.fail_to_start(configs.flavor, &error),
             Err(Fatal(error)) => self.fail_to_start(configs.flavor, error),
@@ -2192,6 +2194,14 @@ impl Run<'_> {
         }
         if !(options.plugins.iter()).all(|it| configs.is_built_in(it)) {
             self.warn(b"--plugin has no effect because bun fmt does not load Prettier plugins");
+        }
+        if configs.asks_for_parser_of_svelte()
+            && (configs.for_directory(&environment.cwd))
+                .is_ok_and(|own| configs.turns_svelte_off(&own, &environment.cwd))
+        {
+            return self.fail(
+                b"Cannot use --parser svelte while Svelte is off (--no-svelte, or svelte = false in bunfig.toml).",
+            );
         }
         if options.config.is_some() && !options.config_lookup {
             let mut out = self.fail(b"Cannot use --no-config and --config together.");

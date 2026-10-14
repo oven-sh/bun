@@ -295,6 +295,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
     default: {
         JSC::JSValue moduleName = callFrame->argument(0);
         JSC::JSValue fromValue = callFrame->argument(1);
+        JSC::JSValue parentModule = fromValue;
         JSC::JSValue optionsValue = callFrame->argument(3); // 4th argument is options
         auto& names = builtinNames(vm);
 
@@ -378,7 +379,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
                 return {};
             }
 
-            result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, paths.begin(), paths.size());
+            result = Bun__resolveSyncWithPaths(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, paths.begin(), paths.size(), JSValue::encode(parentModule));
 
             // Clean up BunStrings to avoid leaking
             for (auto& path : paths) {
@@ -396,7 +397,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
         }
 
         // No paths provided, use regular resolution
-        result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true);
+        result = Bun__resolveSync(globalObject, JSC::JSValue::encode(moduleName), JSValue::encode(fromValue), false, true, JSValue::encode(parentModule));
         RETURN_IF_EXCEPTION(scope, {});
 
         if (!JSC::JSValue::decode(result).isString()) {

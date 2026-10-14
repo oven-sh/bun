@@ -172,10 +172,6 @@ pub mod external_string {
             lhs_buf: &[u8],
             rhs_buf: &[u8],
         ) -> Ordering {
-            if self.hash == rhs.hash && self.hash > 0 {
-                return Ordering::Equal;
-            }
-
             self.value.order(rhs.value, lhs_buf, rhs_buf)
         }
 
@@ -564,16 +560,7 @@ pub mod semver_string {
                 return Ok(String::init_inline(str));
             }
 
-            let hash = Builder::string_hash(str);
-            let entry = self.pool.get_or_put(hash)?;
-            if entry.found_existing {
-                return Ok(*entry.value_ptr);
-            }
-
-            // new entry
-            let new = String::init_append(self.bytes, str)?;
-            *entry.value_ptr = new;
-            Ok(new)
+            self.append_with_hash(str, Builder::string_hash(str))
         }
 
         pub fn append_with_hash(&mut self, str: &[u8], hash: u64) -> Result<String, AllocError> {
@@ -583,7 +570,11 @@ pub mod semver_string {
 
             let entry = self.pool.get_or_put(hash)?;
             if entry.found_existing {
-                return Ok(*entry.value_ptr);
+                // An equal hash is not an equal string: the second one stays out of the pool.
+                if strings::eql(entry.value_ptr.slice(self.bytes), str) {
+                    return Ok(*entry.value_ptr);
+                }
+                return String::init_append(self.bytes, str);
             }
 
             // new entry
@@ -593,26 +584,7 @@ pub mod semver_string {
         }
 
         pub fn append_external(&mut self, str: &[u8]) -> Result<ExternalString, AllocError> {
-            let hash = Builder::string_hash(str);
-
-            if String::can_inline(str) {
-                return Ok(ExternalString {
-                    value: String::init_inline(str),
-                    hash,
-                });
-            }
-
-            let entry = self.pool.get_or_put(hash)?;
-            if entry.found_existing {
-                return Ok(ExternalString {
-                    value: *entry.value_ptr,
-                    hash,
-                });
-            }
-
-            let new = String::init_append(self.bytes, str)?;
-            *entry.value_ptr = new;
-            Ok(ExternalString { value: new, hash })
+            self.append_external_with_hash(str, Builder::string_hash(str))
         }
 
         pub fn append_external_with_hash(
@@ -620,24 +592,10 @@ pub mod semver_string {
             str: &[u8],
             hash: u64,
         ) -> Result<ExternalString, AllocError> {
-            if String::can_inline(str) {
-                return Ok(ExternalString {
-                    value: String::init_inline(str),
-                    hash,
-                });
-            }
-
-            let entry = self.pool.get_or_put(hash)?;
-            if entry.found_existing {
-                return Ok(ExternalString {
-                    value: *entry.value_ptr,
-                    hash,
-                });
-            }
-
-            let new = String::init_append(self.bytes, str)?;
-            *entry.value_ptr = new;
-            Ok(ExternalString { value: new, hash })
+            Ok(ExternalString {
+                value: self.append_with_hash(str, hash)?,
+                hash,
+            })
         }
     }
 
@@ -699,19 +657,19 @@ pub mod semver_string {
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            for &c in self.bytes {
-                let n = match c {
-                    b'/' => b'+',
-                    b'\\' => b'+',
-                    b':' => b'+',
-                    b'#' => b'+',
-                    // `?` would be parsed as a query-string delimiter during
-                    // module resolution (and is invalid in Windows filenames).
-                    b'?' => b'+',
-                    _ => c,
-                };
-                use core::fmt::Write;
-                f.write_char(n as char)?;
+            use core::fmt::Write;
+            for chunk in self.bytes.utf8_chunks() {
+                // `?`: a query-string delimiter in module resolution, invalid in Windows filenames.
+                let mut rest = chunk.valid();
+                while let Some(i) = strings::index_of_any(rest.as_bytes(), b"/\\:#?") {
+                    f.write_str(&rest[..i])?;
+                    f.write_char('+')?;
+                    rest = &rest[i + 1..];
+                }
+                f.write_str(rest)?;
+                for &c in chunk.invalid() {
+                    f.write_char(c as char)?;
+                }
             }
             Ok(())
         }
@@ -838,6 +796,10 @@ pub mod semver_string {
         pub fn contains(&self, hash: u64) -> bool {
             self.map.contains_key(&hash)
         }
+        #[inline]
+        pub fn get(&self, hash: u64) -> Option<String> {
+            self.map.get(&hash).copied()
+        }
         /// Number of slots reservable without rehash.
         #[inline]
         pub fn capacity(&self) -> usize {
@@ -860,7 +822,8 @@ pub mod semver_string {
     }
 
     impl Builder {
-        #[inline]
+        // `Wyhash11::hash` is `#[inline(always)]`: about 700 bytes at each of 130 call sites.
+        #[inline(never)]
         pub fn string_hash(buf: &[u8]) -> u64 {
             bun_wyhash::Wyhash11::hash(0, buf)
         }

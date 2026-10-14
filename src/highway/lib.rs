@@ -10,6 +10,8 @@ unsafe extern "C" {
 
     fn highway_count_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
 
+    fn highway_line_starts(text: *const u8, text_len: usize, out: *mut u32) -> usize;
+
     #[cfg(not(miri))]
     fn highway_memmem(
         haystack: *const u8,
@@ -54,6 +56,10 @@ unsafe extern "C" {
         text: *const u8,
         text_len: usize,
     ) -> usize;
+
+    fn highway_scanner_run_stops(text: *const u8, text_len: usize, out: *mut u8, plane_len: usize);
+
+    fn highway_odd_blocks(text: *const u8, text_len: usize, out: *mut u64);
 
     fn highway_index_of_newline_or_non_ascii(haystack: *const u8, haystack_len: usize) -> usize;
 
@@ -270,6 +276,28 @@ pub fn count_char(haystack: &[u8], needle: u8) -> usize {
     unsafe { highway_count_char(haystack.as_ptr(), haystack.len(), needle) }
 }
 
+/// Where the lines of `text` start when only `\n` ends a line: 0, then the offset of the byte after
+/// each `\n`.
+pub fn line_starts(text: &[u8]) -> Vec<u32> {
+    assert!(u32::try_from(text.len()).is_ok());
+    let count = count_char(text, b'\n');
+    let mut starts = Vec::with_capacity(1 + count);
+    starts.push(0);
+    if scalar_only(text.len()) {
+        let newlines = text.iter().enumerate().filter(|it| *it.1 == b'\n');
+        starts.extend(newlines.map(|it| it.0 as u32 + 1));
+        return starts;
+    }
+    let spare = starts.spare_capacity_mut();
+    // SAFETY: `text` is readable, and the kernel writes one offset per `\n`: `spare` has room for `count`.
+    let written =
+        unsafe { highway_line_starts(text.as_ptr(), text.len(), spare.as_mut_ptr().cast::<u32>()) };
+    assert_eq!(written, count);
+    // SAFETY: the kernel has written that many after the first.
+    unsafe { starts.set_len(1 + written) };
+    starts
+}
+
 #[inline(always)]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
@@ -451,6 +479,139 @@ pub fn index_of_interesting_character_in_multiline_comment(slice: &[u8]) -> Opti
     }
 
     Some(result)
+}
+
+/// Buffer for [`ScannerStops`]. Keep one per thread so the allocation is reused from file to file.
+#[derive(Default)]
+pub struct ScannerStopsBuffer {
+    /// As long as the longest text so far needs: the kernel writes all that is read, so nothing
+    /// is cleared from one text to the next.
+    planes: Vec<u8>,
+    /// The address and the length of the text that `planes` is filled for.
+    filled_for: Option<(usize, usize)>,
+}
+
+/// Where runs of bytes end in a JavaScript or TypeScript source. One kernel call finds them for the
+/// whole text, so a scanner gets the length of a name or a string from a load and a bit scan
+/// instead of a call per token.
+#[derive(Copy, Clone)]
+pub struct ScannerStops<'a> {
+    /// Everything but ASCII letters, digits, `_` and `$`.
+    pub after_name: Stops<'a>,
+    /// Everything but tabs and spaces.
+    pub after_blanks: Stops<'a>,
+    /// `"`, `'`, `` ` ``, `$`, `\`, control characters, and everything that isn't ASCII.
+    pub in_string: Stops<'a>,
+}
+
+impl ScannerStopsBuffer {
+    /// 8 bytes more than the kernel writes, so that `Stops::window` can load a whole word at any
+    /// position. They are set, like all bits past the end: a run ends with the text.
+    fn plane_len(text: &[u8]) -> usize {
+        text.len().div_ceil(64) * 8 + 8
+    }
+
+    /// The stops of `text`.
+    pub fn find(&mut self, text: &[u8]) -> ScannerStops<'_> {
+        self.fill(text);
+        self.filled(text)
+    }
+
+    /// The stops of `text`, which may be the text of the last call. The caller has held on to that
+    /// text since, or has called [`ScannerStopsBuffer::forget`]: another text can get the same address.
+    pub fn find_again(&mut self, text: &[u8]) -> ScannerStops<'_> {
+        if self.filled_for != Some((text.as_ptr().addr(), text.len())) {
+            self.fill(text);
+        }
+        #[cfg(debug_assertions)]
+        {
+            let found = self.planes.clone();
+            self.fill(text);
+            assert!(found == self.planes, "the text has changed");
+        }
+        self.filled(text)
+    }
+
+    /// The text of the last call is no longer held on to.
+    pub fn forget(&mut self) {
+        self.filled_for = None;
+    }
+
+    fn fill(&mut self, text: &[u8]) {
+        let plane_len = Self::plane_len(text);
+        if self.planes.len() < 3 * plane_len {
+            self.planes.resize(3 * plane_len, 0);
+        }
+        for plane in self.planes[..3 * plane_len].chunks_exact_mut(plane_len) {
+            plane[plane_len - 8..].fill(0xFF);
+        }
+        // SAFETY: `text` is readable, and the kernel writes `plane_len - 8` bytes to each of the three planes.
+        unsafe {
+            highway_scanner_run_stops(
+                text.as_ptr(),
+                text.len(),
+                self.planes.as_mut_ptr(),
+                plane_len,
+            );
+        }
+        self.filled_for = Some((text.as_ptr().addr(), text.len()));
+    }
+
+    fn filled(&self, text: &[u8]) -> ScannerStops<'_> {
+        let plane_len = Self::plane_len(text);
+        let (after_name, rest) = self.planes.split_at(plane_len);
+        let (after_blanks, rest) = rest.split_at(plane_len);
+        ScannerStops {
+            after_name: Stops(after_name),
+            after_blanks: Stops(after_blanks),
+            in_string: Stops(&rest[..plane_len]),
+        }
+    }
+}
+
+/// One bit per byte of a text, lowest bit first. A set bit is a byte that ends a run.
+#[derive(Copy, Clone)]
+pub struct Stops<'a>(&'a [u8]);
+
+impl Stops<'_> {
+    /// The bits from `pos` on. The upper 7 may be zeros that were shifted in.
+    #[inline(always)]
+    fn window(self, pos: usize) -> u64 {
+        let at = pos >> 3;
+        match self.0.get(at..at + 8) {
+            Some(bits) => u64::from_le_bytes(bits.try_into().unwrap_or_default()) >> (pos & 7),
+            None => 1,
+        }
+    }
+
+    /// How many bytes there are from `pos` to the next stop. Exact below 57; anything higher only
+    /// says that there are at least 57.
+    #[inline(always)]
+    pub fn run(self, pos: usize) -> u32 {
+        self.window(pos).trailing_zeros()
+    }
+
+    /// The first stop at or after `pos`. The end of the text is one.
+    #[inline(always)]
+    pub fn next(self, mut pos: usize) -> usize {
+        loop {
+            let window = self.window(pos);
+            if window != 0 {
+                return pos + window.trailing_zeros() as usize;
+            }
+            pos += 56;
+        }
+    }
+}
+
+/// Fills `out` with one bit for every 64 bytes of `text`, the lowest bit of the first word first:
+/// whether one of them is anything but a printable character of ASCII other than the backslash, a
+/// tab, a line feed or a carriage return. The bits past the end of the text are clear.
+pub fn odd_blocks(text: &[u8], out: &mut Vec<u64>) {
+    out.clear();
+    out.resize(text.len().div_ceil(64 * 64), 0);
+    // SAFETY: `text` is readable, and the kernel writes a word for every 64 blocks of 64 bytes, whole or not.
+    unsafe { highway_odd_blocks(text.as_ptr(), text.len(), out.as_mut_ptr()) };
 }
 
 #[inline(always)]

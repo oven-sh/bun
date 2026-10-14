@@ -3,6 +3,7 @@ import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
+import type { ReadableStreamDefaultReader } from "node:stream/web";
 import { deserialize as v8Deserialize } from "node:v8";
 import { deflate } from "node:zlib";
 import { join } from "path";
@@ -52,7 +53,7 @@ function jscSerializeRoundtripCrossProcessCold(original: any) {
     `,
     ],
     env: bunEnv,
-    stdin: serialized,
+    stdin: serialized as any,
     stdout: "pipe",
     stderr: "inherit",
   });
@@ -310,8 +311,8 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
           const d = new Date(7);
           const e = new TypeError("boom");
           const cloned = structuredCloneFn({ a: { d, e }, b: [d, e], map: new Map([["d", d]]), set: new Set([e]) });
-          expect(cloned.a.d).toBe(cloned.b[0]);
-          expect(cloned.a.e).toBe(cloned.b[1]);
+          expect(cloned.a.d).toBe(cloned.b[0] as Date);
+          expect(cloned.a.e).toBe(cloned.b[1] as TypeError);
           expect(cloned.map.get("d")).toBe(cloned.a.d);
           expect(cloned.set.has(cloned.a.e)).toBe(true);
         });
@@ -451,6 +452,36 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             structuredCloneFn(buffer, { transfer: [buffer] });
           }).toThrow(DOMException);
         });
+        // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializewithtransfer
+        // Serialization can run user code, so the transfer list is checked again after it
+        // (step 5): a listed buffer that a getter detached is a DataCloneError. Bun checks the
+        // whole list before it detaches anything, so the failed call also leaves `first`
+        // intact (previously: TypeError, with `first` already detached). HTML detaches entry
+        // by entry, so this is stricter. `second` is kept out of the value so the serializer
+        // itself never sees it.
+        test("a listed ArrayBuffer detached during serialization fails without detaching the others", () => {
+          const first = new ArrayBuffer(8);
+          const second = new ArrayBuffer(8);
+          const value = {
+            first,
+            get detachSecond() {
+              structuredCloneFn(second, { transfer: [second] });
+              return 1;
+            },
+          };
+          let error: unknown;
+          try {
+            structuredCloneFn(value, { transfer: [first, second] });
+          } catch (e) {
+            error = e;
+          }
+          expect(error).toBeInstanceOf(DOMException);
+          expect({
+            name: (error as DOMException).name,
+            first: first.byteLength,
+            second: second.byteLength,
+          }).toEqual({ name: "DataCloneError", first: 8, second: 0 });
+        });
         // Bun's native borrows call ArrayBuffer::pin(), which makes the buffer
         // non-detachable without setting the C-API lock flag. Transferring a
         // pinned buffer must copy via transferTo()'s copyTo() fallback, not
@@ -507,6 +538,7 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         test("Transferring a non-transferable platform object fails", () => {
           const blob = new Blob();
           expect(() => {
+            // @ts-expect-error
             structuredCloneFn(blob, { transfer: [blob] });
           }).toThrow(DOMException);
         });
@@ -766,7 +798,7 @@ for (const structuredCloneFn of [
       const o = { x: 1 };
       const c = await structuredCloneFn([cert, o, o]);
       expect(c[0]).toBeInstanceOf(X509Certificate);
-      expect(c[0].subject).toBe(cert.subject);
+      expect((c[0] as X509Certificate).subject).toBe(cert.subject);
       expect(c[1]).toEqual({ x: 1 });
       expect(c[2]).toBe(c[1]);
     });
@@ -1167,7 +1199,7 @@ describe("X509Certificate records whose DER does not decode are rejected", () =>
 
   test("a real certificate rebuilt through record() still round-trips", () => {
     // Guards the record layout the crafted payloads assume.
-    expect(record(der)).toEqual(real);
+    expect(record(der)).toEqual<Buffer>(real);
     const cloned = deserialize(record(der));
     expect(cloned).toBeInstanceOf(X509Certificate);
     expect(cloned.fingerprint256).toBe(cert.fingerprint256);

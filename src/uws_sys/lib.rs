@@ -49,6 +49,19 @@ pub struct us_bun_verify_error_t {
 impl us_bun_verify_error_t {
     /// `X509_V_ERR_HOSTNAME_MISMATCH`, from the in-handshake server identity check (`ERR_TLS_CERT_ALTNAME_INVALID`).
     pub const HOSTNAME_MISMATCH: core::ffi::c_int = 62;
+    /// `error` of [`Self::peer_disconnected`]. Not an X509 code.
+    pub const PEER_DISCONNECTED: core::ffi::c_int = -46;
+
+    /// The peer left before the handshake finished, like `ssl_trigger_handshake_econnreset` in openssl.c.
+    pub const fn peer_disconnected() -> Self {
+        Self {
+            error_no: Self::PEER_DISCONNECTED,
+            code: c"ECONNRESET".as_ptr(),
+            reason:
+                c"Client network socket disconnected before secure TLS connection was established"
+                    .as_ptr(),
+        }
+    }
 }
 
 impl Default for us_bun_verify_error_t {
@@ -63,7 +76,7 @@ impl Default for us_bun_verify_error_t {
 impl us_bun_verify_error_t {
     /// Borrow the BoringSSL verify-error `code` as a `CStr`, or `None` if null.
     ///
-    /// uSockets populates `code`/`reason` from BoringSSL's static error-string
+    /// uSockets populates `code` from BoringSSL's static error-string
     /// table (`X509_verify_cert_error_string` and friends), so the pointee is
     /// `'static` in practice; the borrow is conservatively tied to `&self` so
     /// the accessor is sound even if a future caller heap-allocates the struct.
@@ -79,14 +92,13 @@ impl us_bun_verify_error_t {
     }
 
     /// Borrow the BoringSSL verify-error `reason` as a `CStr`, or `None` if null.
-    /// See [`Self::code`] for the safety argument.
+    /// An `EPROTO` reason is a stack buffer of the reporter: copy it before the handshake callback returns.
     #[inline]
     pub fn reason(&self) -> Option<&core::ffi::CStr> {
         if self.reason.is_null() {
             return None;
         }
-        // SAFETY: same invariant as `code()` — non-null `reason` is a valid
-        // NUL-terminated C string from BoringSSL's static error table.
+        // SAFETY: a non-null `reason` is a valid NUL-terminated C string for the duration of the report.
         Some(unsafe { core::ffi::CStr::from_ptr(self.reason) })
     }
 
@@ -227,6 +239,8 @@ unsafe extern "C" {
     safe fn UpgradedDuplex__shutdown_read(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__close(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__abandon_js_side(this: &mut UpgradedDuplex);
+    safe fn UpgradedDuplex__pause_stream(this: &mut UpgradedDuplex) -> bool;
+    safe fn UpgradedDuplex__resume_stream(this: &mut UpgradedDuplex) -> bool;
 }
 impl UpgradedDuplex {
     #[inline]
@@ -295,6 +309,14 @@ impl UpgradedDuplex {
     #[inline]
     pub(crate) fn abandon_js_side(&mut self) {
         UpgradedDuplex__abandon_js_side(self)
+    }
+    #[inline]
+    pub(crate) fn pause_stream(&mut self) -> bool {
+        UpgradedDuplex__pause_stream(self)
+    }
+    #[inline]
+    pub(crate) fn resume_stream(&mut self) -> bool {
+        UpgradedDuplex__resume_stream(self)
     }
 }
 
@@ -472,6 +494,8 @@ pub mod fault_inject {
     /// Not a syscall: the JS `Buffer` allocated for a TLS session/keylog
     /// payload in the `on_session`/`on_keylog` dispatch.
     pub const SESSION_BUFFER: c_int = 12;
+    /// Not a syscall: one `SSL_write` call in `us_internal_ssl_writev`.
+    pub const SSL_WRITE: c_int = 13;
 
     pub const ACTION_NONE: c_int = 0;
     pub const ACTION_ERRNO: c_int = 1;

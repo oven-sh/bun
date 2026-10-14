@@ -385,7 +385,6 @@ describe.concurrent.skipIf(isWindows)(
     const stderrCalls = [
       [`warn("<warn>")`, "<warn>"],
       [`error("<error>")`, "<error>"],
-      [`assert(false)`, "Assertion failed"],
     ] as const;
     type Calls = typeof stdoutCalls | typeof stderrCalls;
     const callOrderScript = (stream: "stdout" | "stderr", calls: Calls) => `

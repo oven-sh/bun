@@ -12,6 +12,7 @@
 //! Most nodes have no comment anywhere near them. While [`Formatter::is_quiet`] is true, only steps 4 to 6 are done.
 
 use super::ast_nodes::{AsAstNodes, AstNodes, ChainElement, inner_of_stmt};
+use super::comments::OwnedComments;
 use super::parentheses;
 use super::print;
 use super::print::program::ends_before_semicolon;
@@ -147,11 +148,40 @@ fn format_node_with_comments<'a>(
 ) {
     let skip_trailing = f.context_mut().take_skip_trailing_comments();
     let owned = f.comments().of_node(node);
-    FormatLeadingComments::Comments(owned.leading).fmt(f);
-    match owned.is_ignored {
-        true => write_ignored_node(node, f),
-        false => f.in_scope(node.span(), write),
+    if owned.is_ignored {
+        return format_ignored_node(node, owned, skip_trailing, f, |f| {
+            write_ignored_node(node, f)
+        });
     }
+    FormatLeadingComments::Comments(owned.leading).fmt(f);
+    f.in_scope(node.span_with_decorators(), write);
+    if !skip_trailing {
+        FormatTrailingComments::Comments(owned.trailing).fmt(f);
+    }
+}
+
+/// Writes an ignored node with the comments it owns. `write_source_text` copies the node.
+///
+/// Like Prettier's `printIgnored`, this first marks the comments inside the node as printed. One of them can be a comment that
+/// the node owns, which would otherwise be printed twice:
+///
+/// ```js
+/// a
+/// // prettier-ignore
+/// .b;
+/// ```
+#[cold]
+fn format_ignored_node<'a>(
+    node: AstNodes<'a>,
+    owned: OwnedComments<'a>,
+    skip_trailing: bool,
+    f: &mut Formatter<'a>,
+    write_source_text: impl FnOnce(&mut Formatter<'a>),
+) {
+    f.comments_mut()
+        .mark_printed_in(node.span_with_decorators());
+    FormatLeadingComments::Comments(owned.leading).fmt(f);
+    write_source_text(f);
     if !skip_trailing {
         FormatTrailingComments::Comments(owned.trailing).fmt(f);
     }
@@ -169,9 +199,7 @@ pub(crate) fn format_node_without_comments<'a>(
         return write(f);
     }
     let owned = f.comments().of_node(node);
-    FormatLeadingComments::Comments(owned.leading).fmt(f);
-    write_ignored_node(node, f);
-    FormatTrailingComments::Comments(owned.trailing).fmt(f);
+    format_ignored_node(node, owned, false, f, |f| write_ignored_node(node, f));
 }
 
 /// Writes a name or a key, which is a token here and a node for Prettier, with the comments it owns.
@@ -193,6 +221,14 @@ pub(crate) fn format_name<'a>(
 /// Prettier's `printIgnored`: copies the source text of `node`, with the parentheses and the `;` that it needs where it
 /// is. This is the only place that writes an ignored node.
 pub(crate) fn write_ignored_node<'a>(node: AstNodes<'a>, f: &mut Formatter<'a>) {
+    // `<T>`. The handle in these two is the node that has the type parameters or arguments.
+    if matches!(
+        node,
+        AstNodes::TSTypeParameterDeclaration(_) | AstNodes::TSTypeParameterInstantiation(_)
+    ) {
+        let span = node.span();
+        return f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
+    }
     if let Some(expr) = node.as_expression() {
         return write_suppressed_expression(expr, false, f);
     }
@@ -210,14 +246,10 @@ pub(crate) fn write_ignored_node<'a>(node: AstNodes<'a>, f: &mut Formatter<'a>) 
         _ => None,
     };
     if let Some(statement) = statement {
-        let mut span = span_for_comments(node, f);
-        // Prettier's `locStart`: the decorators of a class can be before its `export`.
-        if matches!(
-            node,
-            AstNodes::ExportNamedDeclaration(_) | AstNodes::ExportDefaultDeclaration(_)
-        ) {
-            span.start = span.start.min(statement.span().start);
-        }
+        let span = Span::new(
+            node.span_with_decorators().start,
+            span_for_comments(node, f).end,
+        );
         return write_ignored_statement(statement, span, f);
     }
     match (node, node.raw()) {
@@ -352,11 +384,13 @@ impl<'a> FormatExpr<'a> {
         }
         let skip_trailing = f.context_mut().take_skip_trailing_comments();
         let owned = f.comments().of_node(node);
-        FormatLeadingComments::Comments(owned.leading).fmt(f);
-        match owned.is_ignored {
-            true => write_suppressed_expression(expr, is_chain_expression, f),
-            false => f.in_scope(span, |f| self.write_in_parentheses(is_chain_expression, f)),
+        if owned.is_ignored {
+            return format_ignored_node(node, owned, skip_trailing, f, |f| {
+                write_suppressed_expression(expr, is_chain_expression, f)
+            });
         }
+        FormatLeadingComments::Comments(owned.leading).fmt(f);
+        f.in_scope(span, |f| self.write_in_parentheses(is_chain_expression, f));
         if !skip_trailing {
             FormatTrailingComments::Comments(owned.trailing).fmt(f);
         }
@@ -619,7 +653,7 @@ fn write_unary_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     };
     match op.is_update() {
         true => print::expressions::write_update_expression(op, operand, f),
-        false => print::expressions::write_unary_expression(e, op, operand, f),
+        false => print::expressions::write_unary_expression(op, operand, f),
     }
 }
 

@@ -7,6 +7,7 @@ use super::function_type::{
 use super::import_declaration::FormatStringLiteral;
 use super::object_like::ObjectLike;
 use super::type_parameters::{FormatDanglingCommentsForInline, type_arguments};
+use super::union_type::union_writes_comments_behind_colon;
 use crate::cursor::extend_node;
 use crate::js::format::{FormatTypeOfPredicate, format_node, identifier};
 use crate::js::utils::conditional::ConditionalLike;
@@ -15,6 +16,7 @@ use crate::js::utils::number::format_number_token;
 use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::js::utils::suppressed::{FormatSuppressedNode, FormatTemplateText};
+use crate::js::utils::typescript::without_lone_operator;
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
 
@@ -371,29 +373,15 @@ pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
                 f,
                 [member.flags().contains(Flags::OPTIONAL).then_some("?"), ":"]
             );
-            match has_line_comment_behind_colon_that_stays(member, f) {
-                true => write!(f, hard_line_break()),
-                false => write!(f, space()),
+            write!(f, space());
+            // `a: // comment ⏎ B` stays as it is for oxfmt. The comment dangles from the signature.
+            if !f.is_quiet() && !union_writes_comments_behind_colon(without_lone_operator(ty), f) {
+                let comments_behind_colon = f.comments().of_node(node).dangling;
+                write!(f, FormatLeadingComments::Comments(comments_behind_colon));
             }
             write!(f, ty);
         }
     }
-}
-
-/// `a: // comment ⏎ B;` stays as it is for oxfmt. For Prettier it is `a: B; // comment`. The comment trails the name.
-fn has_line_comment_behind_colon_that_stays<'a>(member: Member<'a>, f: &Formatter<'a>) -> bool {
-    if f.is_quiet() || !f.options().flavor.is_oxfmt() {
-        return false;
-    }
-    let comments_of_key = match (member.computed_key(), member.key()) {
-        (Some(key), _) => f.comments().of_node(key.as_chain_element()),
-        (None, Some(key)) => f.comments().of_name(key.span(f.file()).start),
-        (None, None) => return false,
-    };
-    comments_of_key.trailing.last().is_some_and(|comment| {
-        let colon = comment.prev_token_end().saturating_sub(1);
-        comment.is_line() && f.source_text().byte_at(colon) == Some(b':')
-    })
 }
 
 /// `A extends B ? C : D`
@@ -471,7 +459,7 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
             write!(f, group(&format_args!("import", arguments)));
         }
         // A long module name does not break.
-        None if comments.leading_source.is_empty() && comments.trailing_source.is_empty() => {
+        None if !comments.has_comments_of_source(source, f) => {
             write!(f, ["import(", format_source, ")"])
         }
         None => write!(
@@ -545,13 +533,8 @@ impl<'a> ImportTypeComments<'a> {
             trailing_source: dangling,
             ..ImportTypeComments::default()
         };
-        let attributes = options.and_then(|options| match options.entries().first()?.parent() {
-            Node::Expr(attributes) => {
-                Some((options, f.comments().of_node(attributes.as_ast_nodes())))
-            }
-            _ => None,
-        });
-        if let Some((options, owned)) = attributes {
+        if let Some(options) = options {
+            let owned = f.comments().of_node(options.object().as_ast_nodes());
             let (outer, mut leading, mut trailing) =
                 (options.options_span(), owned.leading, owned.trailing);
             comments.leading_source = take_up_to(&mut leading, source.start);
@@ -563,6 +546,14 @@ impl<'a> ImportTypeComments<'a> {
             comments.trailing_options = trailing;
         }
         comments
+    }
+
+    fn has_comments_of_source(&self, source: Span, f: &Formatter<'a>) -> bool {
+        let owned = f.comments().of_name(source.start);
+        !(self.leading_source.is_empty()
+            && self.trailing_source.is_empty()
+            && owned.leading.is_empty()
+            && owned.trailing.is_empty())
     }
 
     /// The module specifier at `source`, with its comments.
@@ -692,7 +683,15 @@ fn write_import_type_options<'a>(
             FormatLeadingComments::Comments(comments.leading_attributes)
         );
         let Some(first) = entries.first() else {
-            return write!(f, "{}");
+            let attributes = options.object().as_ast_nodes();
+            return write!(
+                f,
+                [
+                    "{",
+                    dangling_comments(attributes).with_soft_block_indent(),
+                    "}"
+                ]
+            );
         };
         let format_entries = format_with(|f| {
             let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());

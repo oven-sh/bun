@@ -687,6 +687,14 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         self.finish_name(pos, end);
     }
 
+    /// Goes on from a string literal that is a field of its node here, and a `Literal` node in ESTree: `module "a" {}`.
+    #[inline(always)]
+    pub(crate) fn next_after_string(&mut self) {
+        let (pos, end) = (self.lx.start, self.lx.end);
+        self.next();
+        self.finish_name(pos, end);
+    }
+
     /// The token, a word, is taken as a name.
     #[inline(always)]
     pub(crate) fn take_as_name(&mut self) {

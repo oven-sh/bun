@@ -5,6 +5,7 @@ use crate::js::format::FormatTypeAnnotation;
 use crate::js::utils::call_expression::{
     is_angular_test_wrapper, is_test_call_expression_in_flavor,
 };
+use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -177,6 +178,8 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
         };
     }
 
+    let pattern = param.pat();
+    let type_annotation = param.ty().map(FormatTypeAnnotation);
     let content = format_with(|f| {
         let left = format_with(|f| {
             let modifiers = param.modifiers();
@@ -189,20 +192,29 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
                     write!(f, [keyword, space()]);
                 }
             }
-            write!(
-                f,
-                [
-                    param.pat(),
-                    param.is_optional().then_some("?"),
-                    param.ty().map(FormatTypeAnnotation)
-                ]
-            );
+            let optional = param.is_optional().then_some("?");
+            match param.default() {
+                Some(_) => write!(
+                    f,
+                    [
+                        FormatNodeWithoutTrailingComments(&pattern),
+                        optional,
+                        (type_annotation.as_ref()).map(FormatNodeWithoutTrailingComments)
+                    ]
+                ),
+                None => write!(f, [pattern, optional, type_annotation]),
+            }
         });
 
-        match param.default() {
-            Some(initializer) => write!(f, [group(&left), space(), "=", space(), initializer]),
-            None => write!(f, left),
+        let Some(initializer) = param.default() else {
+            return write!(f, left);
+        };
+        // `({ a } // comment⏎ = {}) => {}`: the comment does not break the pattern.
+        write!(f, [group(&left), trailing_comments(pattern.as_ast_nodes())]);
+        if let Some(ty) = param.ty() {
+            write!(f, trailing_comments(AstNodes::TSTypeAnnotation(ty)));
         }
+        write!(f, [space(), "=", space(), initializer]);
     });
 
     // A group makes no difference to what has no place to break at.

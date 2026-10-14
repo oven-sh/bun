@@ -59,7 +59,7 @@ pub(crate) struct Attachment<'a> {
     pub(crate) owner: Owner<'a>,
     pub(crate) placement: Placement,
     pub(crate) marker: Marker,
-    /// Prettier's `comment.unignore`: a `prettier-ignore` comment that applies to a node other than its owner.
+    /// Prettier's `comment.unignore`: a `prettier-ignore` comment that does not apply to its owner.
     pub(crate) is_unignored: bool,
     /// A `prettier-ignore` comment that applies to its owner.
     pub(crate) ignores_owner: bool,
@@ -279,9 +279,13 @@ pub(crate) fn attach<'a>(
         if !nearby.contains(&Some(attachment.owner)) {
             (attached.relocated_owner_starts).push(cx.start_of(attachment.owner));
         }
+        // `interface A {⏎ // prettier-ignore ⏎}`: for oxfmt a comment in an empty node ignores nothing.
+        let is_unignored = ignored_node.is_some()
+            || attachment.is_unignored
+            || (options.flavor.is_oxfmt() && attachment.placement == Placement::Dangling);
         attached.attachments[id] = Attachment {
-            is_unignored: ignored_node.is_some(),
-            ignores_owner: context.is_ignore_comment && ignored_node.is_none(),
+            is_unignored,
+            ignores_owner: context.is_ignore_comment && !is_unignored,
             ..attachment
         };
     }

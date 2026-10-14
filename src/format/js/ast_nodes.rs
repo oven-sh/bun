@@ -1086,6 +1086,28 @@ impl<'a> AstNodes<'a> {
         }
     }
 
+    /// [`AstNodes::span`], starting at Prettier's `locStart`. The decorators of a class can come before its `export`, and
+    /// belong to the class and to the export: `@decorator export class A {}`.
+    pub(crate) fn span_with_decorators(self) -> Span {
+        use AstNodes as N;
+        let span = self.span();
+        let class = match self {
+            N::Class(class) => Some(class),
+            N::ExportNamedDeclaration(statement) | N::ExportDefaultDeclaration(statement) => {
+                match statement.kind() {
+                    StmtKind::Class(class) => Some(class),
+                    StmtKind::ExportDefault(e) => e.as_class(),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        match class.and_then(|class| class.decorators().next()) {
+            Some(first) => Span::new(N::Decorator(first).span().start.min(span.start), span.end),
+            None => span,
+        }
+    }
+
     /// The range that the node has in oxc.
     pub(crate) fn span(self) -> Span {
         use AstNodes as N;

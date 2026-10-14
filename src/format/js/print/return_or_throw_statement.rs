@@ -143,32 +143,32 @@ fn left_side(e: Expr<'_>) -> Option<Expr<'_>> {
 /// Prettier's `returnArgumentHasLeadingComment`: whether a leading comment of `argument` ends its line or spans several, or a
 /// leading comment of anything down its left edge ends its line.
 pub(crate) fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
+    // `yield a⏎// comment⏎.b()`: the comment leads `a.b`, and is in it. After `yield`, which only oxfmt asks about, it does not
+    // count.
+    let is_after_yield = matches!(argument.ast_parent(), AstNodes::YieldExpression(_));
+    let counts = |comment: Comment<'_>, owner: Expr<'a>| {
+        !is_after_yield || comment.span().start < owner.span().start
+    };
     let is_cast = is_cast_target(argument, f);
-    if has_leading_own_line_comment(argument, f)
-        || ((argument.tag() != ExprTag::Jsx || is_cast)
-            && (leading_comments_of_expression(argument, f).iter())
-                .any(|comment| comment.is_multiline_block()))
-    {
+    let has_leading_comment = match argument.tag() == ExprTag::Jsx && !is_cast {
+        true => has_leading_own_line_comment(argument, f),
+        false => (leading_comments_of_expression(argument, f).iter()).any(|comment| {
+            (comment.has_newline_after() || comment.is_multiline_block())
+                && counts(comment, argument)
+        }),
+    };
+    if has_leading_comment {
         return true;
     }
     if is_cast || !has_naked_left_side(argument) {
         return false;
     }
-    // `yield a⏎// comment⏎.b()`: the comment leads `a.b`. After `yield`, which only oxfmt asks about, it does not count.
-    let is_after_yield = matches!(argument.ast_parent(), AstNodes::YieldExpression(_));
-    let ends_its_line = |comment: Comment<'_>| {
-        comment.has_newline_after()
-            && !(is_after_yield && comment.span().start > argument.span().start)
+    let has_own_line_comment = |e: Expr<'a>| {
+        let comments = f.comments().of_node(e.as_chain_element()).leading;
+        (comments.iter()).any(|comment| comment.has_newline_after() && counts(comment, e))
     };
     // The member access or the call in a `ChainExpression`.
-    if is_chain_expression_without_comments(argument, f)
-        && (f
-            .comments()
-            .of_node(argument.as_chain_element())
-            .leading
-            .iter())
-        .any(ends_its_line)
-    {
+    if is_chain_expression_without_comments(argument, f) && has_own_line_comment(argument) {
         return true;
     }
     let mut current = argument;
@@ -176,14 +176,13 @@ pub(crate) fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatte
         // Every `ParenthesizedExpression` around it is a step of its own.
         let has_comment_before_parentheses = f.comments().has_type_cast_comments()
             && left.parens().any(|parentheses| {
-                let comments = f.comments().of_cast_parens(parentheses.start);
-                comments.leading.iter().any(ends_its_line)
+                let comments = f.comments().of_cast_parens(parentheses.start).leading;
+                comments.iter().any(|comment| comment.has_newline_after())
             });
         if has_comment_before_parentheses
             || match left.tag() {
                 ExprTag::Jsx => has_leading_own_line_comment(left, f),
-                _ => (f.comments().of_node(left.as_chain_element()).leading.iter())
-                    .any(ends_its_line),
+                _ => has_own_line_comment(left),
             }
         {
             return true;

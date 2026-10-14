@@ -1133,7 +1133,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }
                 (name, name_pos) = (ModuleName::String(self.lx.atom), self.pos());
                 specifies_module = false;
-                self.next();
+                self.next_after_string();
             }
         }
         let (body, has_body) = match self.token() {
@@ -1187,6 +1187,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             let flags = flags & Flags::AMBIENT | Flags::EXPORT;
             let inner =
                 self.namespace_declaration(inner, Span::EMPTY, flags, specifies_module, nested);
+            // ESTree has one declaration for `a.b`.
+            self.unfinish_node(NodeData::Stmt(inner));
             if self.options.is_javascript {
                 self.check_js_statement(inner);
             }
@@ -1731,11 +1733,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             && let Some(&Expr {
                 kind: ExprKind::Ident(label),
                 pos,
-                ..
+                end,
             }) = self.f.exprs.last()
             && pos == start.pos
         {
-            self.f.exprs.pop();
+            self.pop_expr();
+            self.finish_name(pos, end);
             self.next();
             let body = self.embedded_statement();
             self.f.rare_syntax |= rare::ODD_JUMP;

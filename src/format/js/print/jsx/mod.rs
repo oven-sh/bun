@@ -6,11 +6,12 @@ mod opening_element;
 
 use self::element::AnyJsxTagWithChildren;
 pub(crate) use self::element::ignored_jsx_gets_no_parentheses;
-use crate::js::comments::OwnedComments;
 use crate::js::format::{format_name, format_node, identifier};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::tailwindcss::{InTailwindContext, context_of_attribute};
-use crate::js::utils::typecast::is_cast_target;
+use crate::js::utils::typecast::{
+    comments_of_expression, has_comments, is_cast_target, is_chain_expression_without_comments,
+};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -207,26 +208,6 @@ fn ignore_comment_applies_to_empty_expression(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
-/// Prettier's `node.comments` for an expression.
-fn comments_of_expression<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> OwnedComments<'a> {
-    let comments = f.comments();
-    // `/** @type {T} */ (e)`: the node is the outermost `ParenthesizedExpression`.
-    if comments.has_type_cast_comments()
-        && let Some(parentheses) = (expression.parens().rev())
-            .find(|parentheses| comments.is_cast_parenthesis(parentheses.start))
-    {
-        return comments.of_cast_parens(parentheses.start);
-    }
-    // typescript-estree has a `ChainExpression` around an optional chain, which cannot own comments. For oxfmt the comments
-    // of the member access or the call in it count.
-    comments.of_node(
-        match f.context().has_tree_of_babel() || f.options().flavor.is_oxfmt() {
-            true => expression.as_chain_element(),
-            false => expression.as_ast_nodes(),
-        },
-    )
-}
-
 /// ```jsx
 /// <a                 <a
 ///   b={                b={{
@@ -251,7 +232,7 @@ fn should_inline_jsx_expression<'a>(
     f: &Formatter<'a>,
 ) -> bool {
     loop {
-        if !f.is_quiet() {
+        if !f.is_quiet() && !is_chain_expression_without_comments(expression, f) {
             let comments = comments_of_expression(expression, f);
             if !comments.leading.is_empty()
                 || !comments.trailing.is_empty()
@@ -313,11 +294,7 @@ pub(crate) fn write_jsx_attribute<'a>(attribute: Prop<'a>, f: &mut Formatter<'a>
 
 /// `{...argument}`. Prettier's `printJsxSpreadAttributeOrChild`: the comments of the argument are written before the dots.
 fn write_jsx_spread<'a>(argument: Expr<'a>, f: &mut Formatter<'a>) {
-    if f.is_quiet() {
-        return write!(f, ["{...", argument, "}"]);
-    }
-    let comments = comments_of_expression(argument, f);
-    if comments.leading.is_empty() && comments.trailing.is_empty() && comments.dangling.is_empty() {
+    if f.is_quiet() || !has_comments(argument, f) {
         return write!(f, ["{...", argument, "}"]);
     }
     write!(
@@ -325,7 +302,7 @@ fn write_jsx_spread<'a>(argument: Expr<'a>, f: &mut Formatter<'a>) {
         [
             "{",
             soft_block_indent(&format_args!(
-                FormatLeadingComments::Comments(comments.leading),
+                FormatLeadingComments::Comments(comments_of_expression(argument, f).leading),
                 "...", argument
             )),
             "}"

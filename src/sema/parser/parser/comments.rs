@@ -79,6 +79,26 @@ pub(crate) struct CommentTracker {
     undo_log: Vec<PendingComment>,
     /// Start and end of the last identifier that was parsed as a name.
     last_name: (u32, u32),
+    /// The last node that changed a pending comment, and the length of `undo_log` before it did. See
+    /// [`Parser::unfinish_node`].
+    last_finished: (NodeOrName, usize),
+}
+
+impl CommentTracker {
+    /// Restores the pending comments to what they were when `undo_log` had `len` entries.
+    fn undo_until(&mut self, len: usize) {
+        while self.undo_log.len() > len {
+            let Some(previous) = self.undo_log.pop() else {
+                break;
+            };
+            let pending = &mut self.pending;
+            match pending.binary_search_by_key(&previous.id, |comment| comment.id) {
+                Ok(index) => pending[index] = previous,
+                Err(index) => pending.insert(index, previous),
+            }
+        }
+        self.last_finished = (NodeOrName::None, 0);
+    }
 }
 
 /// The part of a [`Checkpoint`] that belongs to the [`CommentTracker`].
@@ -185,6 +205,52 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.update_pending_comments(NodeOrName::Name(start), start, end);
         }
         self.comments.last_name = (start, end);
+    }
+
+    /// Takes back [`Parser::finish_node`] for the node that was finished last.
+    ///
+    /// Call it when the parser removes that node because it turns out to be something else. For example, the `a` of `a: b` is
+    /// parsed as an expression before the `:` shows that it is a label. The id of the removed node will be used again, so no
+    /// comment may keep it. Also call it for a node that stays but is not a node in ESTree, or has another range there.
+    #[inline(always)]
+    pub(crate) fn unfinish_node(&mut self, node: NodeData) {
+        if self.comments.last_finished.0 == NodeOrName::Node(node) {
+            self.undo_last_finished_node();
+        }
+    }
+
+    /// Removes the last expression, which nothing refers to.
+    #[inline(always)]
+    pub(crate) fn pop_expr(&mut self) -> Option<Expr> {
+        let last = ExprId(self.f.exprs.len().saturating_sub(1) as u32);
+        self.unfinish_node(NodeData::Expr(last));
+        self.f.exprs.pop()
+    }
+
+    /// Removes the last type, which nothing refers to.
+    #[inline(always)]
+    pub(crate) fn pop_type(&mut self) -> Option<TypeNode> {
+        let last = TypeNodeId(self.f.types.len().saturating_sub(1) as u32);
+        self.unfinish_node(NodeData::Type(last));
+        self.f.types.pop()
+    }
+
+    /// The same for a word that was taken as a name and turns out to be a keyword: `import type a = b`.
+    #[inline(always)]
+    pub(crate) fn unfinish_name(&mut self, start: u32) {
+        if self.comments.last_finished.0 == NodeOrName::Name(start) {
+            self.undo_last_finished_node();
+        }
+        if self.comments.last_name.0 == start {
+            self.comments.last_name = (0, 0);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn undo_last_finished_node(&mut self) {
+        self.comments.undo_until(self.comments.last_finished.1);
+        self.lx.max_relevant_node_start = u32::MAX;
     }
 
     #[inline(always)]
@@ -314,13 +380,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 start: name_start,
                 end: name_end,
             }),
-            (file.exprs.last()).map(|e| {
-                candidate(
-                    NodeData::Expr(ExprId(last_index(&file.exprs))),
-                    e.pos,
-                    e.end,
-                )
-            }),
+            // A hole in an array literal is an expression without a width.
+            (file.exprs.iter().enumerate())
+                .rfind(|(_, e)| e.pos < e.end)
+                .map(|(index, e)| candidate(NodeData::Expr(ExprId(index as u32)), e.pos, e.end)),
             (file.stmts.iter().enumerate())
                 .rfind(|(_, statement)| !matches!(statement.kind, StmtKind::Empty))
                 .map(|(index, statement)| {
@@ -342,16 +405,32 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 )
             }),
         ];
+        // A list element can end with a name: the `B` of `<B>(/* comment */ c) => d` is a type parameter.
+        macro_rules! last_elements {
+            ($($field:ident)*) => {
+                [$((file.$field.last())
+                    .and_then(|element| element.as_node(last_index(&file.$field), file))
+                    .map(|(node, start, end)| candidate(node, start, end))),*]
+            };
+        }
+        let last_list_elements = || {
+            last_elements!(
+                var_decls params type_params props members cases pat_props pat_elems enum_members
+                import_specs export_specs tuple_elems
+            )
+        };
         for id in first_new..self.lx.comments.len() {
             let start = self.lx.comments[id].pos;
-            let mut preceding = Candidate::default();
-            for candidate in last_finished.into_iter().flatten() {
-                if candidate.start < candidate.end
+            let better_of = |best: Candidate, candidate: Candidate| {
+                let is_better = candidate.start < candidate.end
                     && candidate.end <= start
-                    && candidate.is_better_preceding_node_than(preceding)
-                {
-                    preceding = candidate;
-                }
+                    && candidate.is_better_preceding_node_than(best);
+                if is_better { candidate } else { best }
+            };
+            let mut preceding =
+                (last_finished.into_iter().flatten()).fold(Candidate::default(), better_of);
+            if matches!(preceding.node, NodeOrName::Name(_)) {
+                preceding = (last_list_elements().into_iter().flatten()).fold(preceding, better_of);
             }
             self.comments.pending.push(PendingComment {
                 id: id as u32,
@@ -373,6 +452,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.add_new_pending_comments();
         if start < end {
             let finished = Candidate { node, start, end };
+            self.comments.last_finished = (node, self.comments.undo_log.len());
             let CommentTracker {
                 pending, undo_log, ..
             } = &mut self.comments;
@@ -443,6 +523,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
         }
         self.comments.undo_log.clear();
+        self.comments.last_finished = (NodeOrName::None, 0);
     }
 
     #[inline(always)]
@@ -458,21 +539,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if !self.options.attach_comments {
             return;
         }
+        self.comments.undo_until(to.comments.undo_log_len as usize);
         let CommentTracker {
             pending,
             tracked_count,
-            undo_log,
             last_name,
+            ..
         } = &mut self.comments;
-        while undo_log.len() > to.comments.undo_log_len as usize {
-            let Some(previous) = undo_log.pop() else {
-                break;
-            };
-            match pending.binary_search_by_key(&previous.id, |comment| comment.id) {
-                Ok(index) => pending[index] = previous,
-                Err(index) => pending.insert(index, previous),
-            }
-        }
         // Comments that were first seen after the checkpoint will be seen again.
         *tracked_count = to.comments.tracked_count;
         pending.truncate(pending.partition_point(|comment| comment.id < *tracked_count));

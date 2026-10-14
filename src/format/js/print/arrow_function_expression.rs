@@ -300,7 +300,11 @@ fn write_arrow<'a>(
             space(),
             "=>",
             indent_if_group_breaks(&format_body, group_id),
-            is_callee.then_some(if_group_breaks(&soft_line_break()).with_group_id(Some(group_id)))
+            // `(⏎// comment⏎(a) => (b) =>⏎c⏎⏎)()`: another line break follows if there are comments in the parentheses. The empty
+            // text makes it count.
+            is_callee.then_some(
+                if_group_breaks(&format_args!(soft_line_break(), "")).with_group_id(Some(group_id))
+            )
         ))
     );
 }

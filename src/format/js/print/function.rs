@@ -7,6 +7,7 @@ use super::type_parameters::type_parameters;
 use crate::js::format::{
     ExprOptions, FormatTypeAnnotation, format_node, identifier, write_expression,
 };
+use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::write;
@@ -159,6 +160,25 @@ pub(crate) fn write_called_function_with_comments<'a>(
     true
 }
 
+/// Writes the space between a head and `body`. For oxfmt a comment on its own line between the two stays there, so the body
+/// starts on a new line.
+///
+/// ```js
+/// function a()
+/// // comment
+/// {}
+/// ```
+pub(crate) fn write_space_before_body<'a>(body: AstNodes<'a>, f: &mut Formatter<'a>) {
+    let starts_on_new_line = !f.is_quiet()
+        && comments_stay_between_head_and_body(f)
+        && (f.comments().of_node(body).leading.first())
+            .is_some_and(|comment| comment.has_newline_before());
+    match starts_on_new_line {
+        true => write!(f, hard_line_break()),
+        false => write!(f, space()),
+    }
+}
+
 /// The `{ .. }` of a function.
 #[derive(Copy, Clone)]
 pub(crate) struct FormatFunctionBody<'a>(pub(crate) Func<'a>);
@@ -184,7 +204,7 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
             };
         }
         let node = AstNodes::FunctionBody(func);
-        write!(f, space());
+        write_space_before_body(node, f);
         format_node(node, f, |f| match is_empty_block(statements) {
             true => write!(f, ["{", dangling_comments(node).with_block_indent(), "}"]),
             false => write!(f, ["{", block_indent(&FormatStatements(statements)), "}"]),

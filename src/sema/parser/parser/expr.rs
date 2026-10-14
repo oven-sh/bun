@@ -411,7 +411,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 }) = self.f.exprs.last()
                 && pos == start
             {
-                self.f.exprs.pop();
+                self.pop_expr();
                 return self.simple_arrow_function(
                     name,
                     (pos, end, full),
@@ -2327,7 +2327,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }) = self.f.exprs.last()
             && !self.is_parenthesized(callee)
         {
-            self.f.exprs.pop();
+            self.pop_expr();
             (callee, type_args) = (expr, written);
         }
         let (args, close_pos) = match self.token() {
@@ -2518,7 +2518,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if let Some(Expr {
                 kind: ExprKind::Number(n),
                 ..
-            }) = self.f.exprs.pop()
+            }) = self.pop_expr()
                 && n as usize + 1 == self.f.numbers.len()
             {
                 self.f.numbers.pop();

@@ -17,6 +17,10 @@ impl<'a> Format<'a> for FormatStringLiteral {
     fn fmt(&self, f: &mut Formatter<'a>) {
         format_name(self.span, f, |f| {
             let string = f.source_text().text_for(&self.span);
+            // `import /* prettier-ignore */ 'a'`
+            if !f.is_quiet() && f.comments().of_name(self.span.start).is_ignored {
+                return write!(f, text(string));
+            }
             write!(
                 f,
                 FormatLiteralStringToken::new(string, false, StringLiteralParentKind::Expression)
@@ -146,6 +150,7 @@ impl<'a, T: Format<'a>> Format<'a> for FormatSpecifier<'a, T> {
         if !f.is_quiet()
             && empty_line_before_comments_of_specifier_stays(f)
             && let Some(first) = f.comments().of_node(self.node).leading.first()
+            && first.span().start < self.node.span().start
             && crate::text::is_previous_line_empty(
                 f.source_text().as_bytes(),
                 first.span().start as usize,

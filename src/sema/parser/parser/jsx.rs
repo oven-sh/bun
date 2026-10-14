@@ -826,14 +826,33 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.add_expr(ExprKind::Missing, open, open)
     }
 
-    /// `{/* comment */}`: the `JSXEmptyExpression` of ESTree is everything between the braces. Here it is a missing expression
-    /// without a width, so a comment would not be inside it.
+    /// Call at the `}` of `{expression}`, which starts at `open` and ends at `end`.
     #[inline(always)]
     fn finish_jsx_expression_container(&mut self, expression: ExprId, open: u32, end: u32) {
-        if open <= self.lx.max_relevant_node_start
-            && matches!(self.f.exprs.get(expression.idx()), Some(e) if matches!(e.kind, ExprKind::Missing))
-        {
-            self.finish_node(NodeData::Expr(expression), open + 1, end.saturating_sub(1));
+        if open <= self.lx.max_relevant_node_start {
+            self.finish_jsx_expression_container_near_comment(expression, open, end);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn finish_jsx_expression_container_near_comment(
+        &mut self,
+        expression: ExprId,
+        open: u32,
+        end: u32,
+    ) {
+        let node = NodeData::Expr(expression);
+        match self.f.exprs.get(expression.idx()).map(|e| e.kind) {
+            // `{/* comment */}`: the `JSXEmptyExpression` of ESTree is everything between the braces. Here it is a missing
+            // expression without a width, so a comment would not be inside it.
+            Some(ExprKind::Missing) => self.finish_node(node, open + 1, end.saturating_sub(1)),
+            // `{...a /* comment */}`: the `JSXSpreadChild` of ESTree includes the braces.
+            Some(ExprKind::Spread(_)) => {
+                self.unfinish_node(node);
+                self.finish_node(node, open, end);
+            }
+            _ => {}
         }
     }
 

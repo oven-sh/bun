@@ -1,5 +1,7 @@
 use super::decorators::FormatDecorators;
-use super::function::{FormatFunctionBody, should_group_function_parameters};
+use super::function::{
+    FormatFunctionBody, should_group_function_parameters, write_space_before_body,
+};
 use super::function_type::write_accessor_keyword;
 use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
@@ -250,7 +252,7 @@ impl<'a> Format<'a> for FormatIndexSignatureName<'a> {
                 f,
                 [
                     param.is_rest().then_some("..."),
-                    source_text(param.pat().span()),
+                    param.pat(),
                     param.is_optional().then_some("?"),
                     param.ty().map(FormatTypeAnnotation)
                 ]
@@ -437,21 +439,17 @@ impl<'a> Format<'a> for FormatClass<'a> {
                     .with_group_id(Some(heritage_id))
             );
             // The `{` on a line of its own sets the members apart from a head that is broken.
-            if class.members().is_empty() {
-                write!(f, space());
-            } else {
+            if !class.members().is_empty() {
                 write!(
                     f,
-                    [
-                        if_group_breaks(&hard_line_break()).with_group_id(Some(heritage_id)),
-                        if_group_fits_on_line(&space()).with_group_id(Some(heritage_id))
-                    ]
+                    if_group_breaks(&hard_line_break()).with_group_id(Some(heritage_id))
                 );
             }
         } else {
-            write!(f, [head, format_heritage_clauses, space()]);
+            write!(f, [head, format_heritage_clauses]);
         }
 
+        write_space_before_body(AstNodes::ClassBody(class), f);
         format_node(AstNodes::ClassBody(class), f, |f| {
             write_class_body(class, f)
         });

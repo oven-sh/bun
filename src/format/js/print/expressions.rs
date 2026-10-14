@@ -6,7 +6,7 @@ use super::function::FormatFunctionBody;
 use super::object_like::ObjectLike;
 use super::object_pattern_like::ObjectPatternLike;
 use super::return_or_throw_statement::has_argument_leading_comments;
-use crate::js::format::{FormatExpr, format_node};
+use crate::js::format::{FormatExpr, format_name, format_node};
 use crate::js::parentheses::expression::left_edge_end;
 use crate::js::utils::array::write_array_node;
 use crate::js::utils::assignment_like::AssignmentLike;
@@ -167,34 +167,35 @@ fn write_object_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
     }
 }
 
-/// `import.meta`, `new.target`
+/// `import.meta`, `new.target`. Both words are `Identifier` nodes for Prettier, so comments can be attached to them.
 pub(crate) fn write_meta_property<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
-    match e.kind() {
-        ExprKind::ImportMeta => write!(f, "import.meta"),
+    let span = e.span();
+    let (meta, property_start) = match e.kind() {
+        ExprKind::ImportMeta => ("import", span.end.saturating_sub("meta".len() as u32)),
         _ => {
-            let text = e.text();
             // With its escapes: `new.t\u0061rget`, `new.t\u{61}rget`.
             let is_in_name = |byte: &u8| {
                 byte.is_ascii_alphanumeric()
                     || matches!(byte, b'_' | b'$' | b'\\' | b'{' | b'}' | 0x80..)
             };
-            let name = text
-                .iter()
+            let property = (e.text().iter())
                 .rposition(|byte| !is_in_name(byte))
                 .map_or(0, |at| at + 1);
-            match text.get(name..) {
-                Some(b"target") | None => write!(f, "new.target"),
-                // An error: `new.targ`.
-                Some(_) => write!(
-                    f,
-                    [
-                        "new.",
-                        source_text(Span::new(e.span().start + name as u32, e.span().end))
-                    ]
-                ),
-            }
+            ("new", span.start + property as u32)
         }
-    }
+    };
+    let property = Span::new(property_start, span.end);
+    format_name(
+        Span::new(span.start, span.start + meta.len() as u32),
+        f,
+        |f| {
+            write!(f, meta);
+        },
+    );
+    let comments = f.comments().of_node(e.as_ast_nodes()).dangling;
+    write!(f, [".", FormatLeadingComments::Comments(comments)]);
+    // `new.targ` is an error.
+    format_name(property, f, |f| write!(f, source_text(property)));
 }
 
 /// `++a`, `a--`
@@ -206,12 +207,7 @@ pub(crate) fn write_update_expression<'a>(op: UnOp, operand: Expr<'a>, f: &mut F
 }
 
 /// `!a`, `typeof a`
-pub(crate) fn write_unary_expression<'a>(
-    _unary: Expr<'a>,
-    op: UnOp,
-    operand: Expr<'a>,
-    f: &mut Formatter<'a>,
-) {
+pub(crate) fn write_unary_expression<'a>(op: UnOp, operand: Expr<'a>, f: &mut Formatter<'a>) {
     write!(f, [op.as_str(), op.is_keyword().then_some(space())]);
     if !f.is_quiet() && has_comments(operand, f) {
         write!(

@@ -2,14 +2,17 @@
 
 use super::parameters::can_avoid_parentheses;
 use super::semicolon::OptionalSemicolon;
+use crate::js::comments::OwnedComments;
 use crate::js::format::identifier;
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::js::utils::expression::ExpressionLeftSide;
+use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::statement_body::{
-    FormatStatementBody, write_comments_before_keyword, write_space_before_body,
+    FormatStatementBody, TrailingComments, write_comments_before_keyword,
+    write_comments_before_token, write_space_before_body,
 };
-use crate::js::utils::typecast::is_cast_target;
+use crate::js::utils::typecast::{comments_of_expression, is_cast_target};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -213,7 +216,12 @@ pub(crate) fn write_do_while_statement<'a>(
     f: &mut Formatter<'a>,
 ) {
     let comments_stay = !f.is_quiet() && comments_stay_between_head_and_body(f);
-    let format_body = FormatStatementBody::new(body).without_trailing_comments(comments_stay);
+    let trailing_comments = match (comments_stay, body.kind()) {
+        (false, _) => TrailingComments::All,
+        (true, StmtKind::Block(_)) => TrailingComments::None,
+        (true, _) => TrailingComments::OnSameLine,
+    };
+    let format_body = FormatStatementBody::new(body).with_trailing_comments(trailing_comments);
     write!(f, group(&format_args!("do", format_body)));
     let needs_separator = !comments_stay
         || write_comments_before_keyword(f.comments().of_node(body.as_ast_nodes()).trailing, f);
@@ -335,15 +343,58 @@ impl<'a> Format<'a> for FormatForHead<'a> {
     }
 }
 
-/// See `comments_stay_between_head_and_body`: what is between the parentheses of a `for` with `comments` where it has no
-/// initializer, no test or no update. Each comment stays on its side of the two `;`.
+impl Spanned for FormatForHead<'_> {
+    fn span(&self) -> Span {
+        match self.0.kind() {
+            StmtKind::Expr(expression) => expression.span(),
+            _ => self.0.span(),
+        }
+    }
+}
+
+impl<'a> FormatForHead<'a> {
+    fn comments(self, f: &Formatter<'a>) -> OwnedComments<'a> {
+        match self.0.kind() {
+            StmtKind::Expr(expression) => comments_of_expression(expression, f),
+            _ => f.comments().of_node(self.0.as_ast_nodes()),
+        }
+    }
+}
+
+/// Of `comments`, which follow a `;` in the head of a `for`, those on the line of the `;`, if the line ends after them.
+fn comments_ending_line_of_semicolon<'a>(
+    comments: CommentList<'a>,
+    f: &Formatter<'a>,
+) -> CommentList<'a> {
+    let follows_semicolon = comments.first().is_some_and(|first| {
+        f.source_text()
+            .byte_at(first.prev_token_end().saturating_sub(1))
+            == Some(b';')
+    });
+    let count = comments
+        .iter()
+        .take_while(|comment| follows_semicolon && !comment.has_newline_before())
+        .position(|comment| comment.has_newline_after())
+        .map_or(0, |last| last + 1);
+    comments.slice(0, count)
+}
+
+/// See `comments_stay_between_head_and_body`: what is between the parentheses of a `for` that has comments there. Each
+/// stays on its side of the two `;`. `dangling`: the comments where the `for` has no initializer, no test or no update.
 ///
 /// ```js
 /// for (a; /* comment */; /* comment */);
+/// for (
+///   a
+///   // comment
+///   ;
+///   b; // comment
+///   c
+/// );
 /// ```
-fn write_for_head_with_comments_in_empty_slots<'a>(
+fn write_for_head_with_comments_in_place<'a>(
     (init, test, update): (Option<Stmt<'a>>, Option<Expr<'a>>, Option<Expr<'a>>),
-    comments: CommentList<'a>,
+    dangling: CommentList<'a>,
     f: &mut Formatter<'a>,
 ) {
     let source = f.source_text();
@@ -352,32 +403,57 @@ fn write_for_head_with_comments_in_empty_slots<'a>(
     };
     let precedes_parenthesis =
         |comment: &Comment<'a>| source.byte_at(comment.next_token_start()) == Some(b')');
-    let init_count = comments.iter().take_while(follows_parenthesis).count();
-    let update_count = comments
-        .iter()
-        .rev()
+    let init_count = dangling.iter().take_while(follows_parenthesis).count();
+    let update_count = (dangling.iter().rev())
         .take_while(precedes_parenthesis)
         .count();
-    let (in_init, rest) = comments.split_at(init_count);
+    let (in_init, rest) = dangling.split_at(init_count);
     let (in_test, in_update) = rest.split_at(rest.len() - update_count);
 
     let is_empty = init.is_none() && test.is_none() && update.is_none();
     let separator = (!is_empty).then_some(soft_line_break_or_space());
+
+    match init.map(FormatForHead) {
+        Some(init) => {
+            write!(f, FormatNodeWithoutTrailingComments(&init));
+            write_comments_before_token(init.comments(f).trailing, f);
+        }
+        None => {
+            write_comments_before_token(in_init, f);
+        }
+    }
+    let after_semicolon = test.map_or(in_test, |test| comments_of_expression(test, f).leading);
+    let after_semicolon = comments_ending_line_of_semicolon(after_semicolon, f);
     write!(
         f,
         [
-            init.map(FormatForHead),
-            FormatTrailingComments::Comments(in_init),
             ";",
-            separator,
-            test,
-            FormatTrailingComments::Comments(in_test),
-            ";",
-            update.and(separator),
-            update,
-            FormatTrailingComments::Comments(in_update),
+            FormatTrailingComments::Comments(after_semicolon),
+            separator
         ]
     );
+
+    match test {
+        Some(test) => {
+            write!(f, FormatNodeWithoutTrailingComments(&test));
+            write_comments_before_token(comments_of_expression(test, f).trailing, f);
+        }
+        None => {
+            write_comments_before_token(in_test, f);
+        }
+    }
+    let after_semicolon = update.map_or(in_update, |update| {
+        comments_of_expression(update, f).leading
+    });
+    let after_semicolon = comments_ending_line_of_semicolon(after_semicolon, f);
+    write!(f, [";", FormatTrailingComments::Comments(after_semicolon)]);
+
+    match update {
+        Some(update) => write!(f, [separator, update]),
+        None => {
+            write_comments_before_token(in_update, f);
+        }
+    }
 }
 
 pub(crate) fn write_for_statement<'a>(
@@ -394,9 +470,12 @@ pub(crate) fn write_for_statement<'a>(
         true => CommentList::empty(),
         false => f.comments().of_node(node).dangling,
     };
-    if !dangling.is_empty() && comments_stay_between_head_and_body(f) {
+    if !f.is_quiet()
+        && comments_stay_between_head_and_body(f)
+        && (f.comments()).has_comment_in_span(Span::before(statement.span().start, body.span()))
+    {
         let head = format_with(|f| {
-            write_for_head_with_comments_in_empty_slots((init, test, update), dangling, f);
+            write_for_head_with_comments_in_place((init, test, update), dangling, f);
         });
         return write!(
             f,
@@ -513,7 +592,12 @@ pub(crate) fn write_if_statement<'a>(
             "if (",
             FormatCondition(test),
             ")",
-            FormatStatementBody::new(consequent).without_trailing_comments(moves_trailing_comments)
+            FormatStatementBody::new(consequent).with_trailing_comments(
+                match moves_trailing_comments {
+                    true => TrailingComments::None,
+                    false => TrailingComments::All,
+                }
+            )
         ))
     );
     let Some(alternate) = alternate else {
@@ -595,19 +679,32 @@ pub(crate) fn write_labeled_statement<'a>(
     };
     let has_leading_comments =
         !f.is_quiet() && !f.comments().of_node(body.as_ast_nodes()).leading.is_empty();
-    write!(f, [identifier(label), ":"]);
-    if has_leading_comments && comments_stay_between_head_and_body(f) {
-        write_space_before_body(body.as_ast_nodes(), f);
-        return write!(f, body);
-    }
-    // `a // comment⏎: b;`: oxfmt starts a line after the comment, which is written behind the `:`.
-    if !f.is_quiet()
-        && comments_stay_between_head_and_body(f)
-        && f.comments()
-            .has_printed_line_comment_after(label.span().start)
-    {
-        return write!(f, [hard_line_break(), body]);
-    }
     let is_only_semicolon = matches!(body.kind(), StmtKind::Empty) && !has_leading_comments;
-    write!(f, [maybe_space(!is_only_semicolon), body]);
+    if f.is_quiet() || !comments_stay_between_head_and_body(f) {
+        return write!(
+            f,
+            [
+                identifier(label),
+                ":",
+                maybe_space(!is_only_semicolon),
+                body
+            ]
+        );
+    }
+
+    // `a // comment⏎: b;` is `a: // comment⏎b;`
+    let label_comments = f.comments().of_name(label.span().start);
+    write!(
+        f,
+        [
+            FormatLeadingComments::Comments(label_comments.leading),
+            source_text(label.span())
+        ]
+    );
+    let follows_line_comment = write_comments_before_token(label_comments.trailing, f);
+    write!(f, [":", follows_line_comment.then_some(hard_line_break())]);
+    if !is_only_semicolon {
+        write_space_before_body(body.as_ast_nodes(), f);
+    }
+    write!(f, body);
 }

@@ -13,8 +13,8 @@ use crate::js::format::is_in_head_of_for;
 use crate::js::source_text::SourceText;
 use bun_lint::ast::comments::{self, NodeOrName};
 use bun_lint::ast::{
-    Expr, ExprKind, File, FnBody, FnKind, Func, List, Node, Stmt, StmtKind, StmtTag, TypeKind,
-    TypeNode,
+    Expr, ExprKind, ExprTag, File, FnBody, FnKind, Func, List, Node, Stmt, StmtKind, StmtTag,
+    TypeKind, TypeNode,
 };
 use bun_lint::span::Span;
 
@@ -86,17 +86,107 @@ fn body_of(node: N<'_>) -> Option<N<'_>> {
         N::Class(class) => Some(N::ClassBody(class)),
         N::TSInterfaceDeclaration(statement) => Some(N::TSInterfaceBody(statement)),
         N::TSEnumDeclaration(statement) => Some(N::TSEnumBody(statement)),
-        N::TSModuleDeclaration(statement) => match statement.kind() {
-            StmtKind::Module(module) if module.innermost().has_body() => {
-                Some(N::TSModuleBlock(statement))
+        N::TSModuleDeclaration(statement) | N::TSGlobalDeclaration(statement) => {
+            match statement.kind() {
+                StmtKind::Module(module) if module.innermost().has_body() => {
+                    Some(N::TSModuleBlock(statement))
+                }
+                _ => None,
             }
-            _ => None,
-        },
+        }
         _ => function_of(node)
             .filter(|func| {
                 matches!(func.body(), FnBody::Block(_)) && func.kind() != FnKind::StaticBlock
             })
             .map(N::FunctionBody),
+    }
+}
+
+/// The import or export whose `with { .. }` is `node`.
+fn declaration_of_import_attribute_braces(node: Node<'_>) -> Option<Stmt<'_>> {
+    let Node::Expr(braces) = node else {
+        return None;
+    };
+    match braces.parent() {
+        Node::Stmt(statement)
+            if braces.tag() == ExprTag::Object
+                && matches!(
+                    statement.tag(),
+                    StmtTag::Import | StmtTag::ExportNamed | StmtTag::ExportStar
+                ) =>
+        {
+            Some(statement)
+        }
+        _ => None,
+    }
+}
+
+/// The enclosing, the preceding and the following node that the parser recorded for `comment`. The `{ .. }` of import
+/// attributes are an object literal in the HIR. ESTree has no node for them: the attributes are children of the
+/// declaration and come after its source.
+fn recorded_nodes_without_import_attribute_braces<'a>(
+    comment: comments::Comment<'a>,
+) -> (
+    Option<Node<'a>>,
+    Option<NodeOrName<'a>>,
+    Option<NodeOrName<'a>>,
+) {
+    let mut enclosing_node = comment.enclosing_node();
+    let mut preceding_node = comment.preceding_node();
+    let mut following_node = comment.following_node();
+    if let Some(NodeOrName::Node(node)) = following_node
+        && let Some(statement) = declaration_of_import_attribute_braces(node)
+    {
+        let attributes = statement.import_attributes().map(|it| it.entries());
+        following_node = attributes
+            .and_then(|it| it.first())
+            .map(|first| NodeOrName::Node(Node::Prop(first)));
+    }
+    if let Some(statement) = enclosing_node.and_then(declaration_of_import_attribute_braces) {
+        enclosing_node = Some(Node::Stmt(statement));
+        preceding_node = preceding_node.or_else(|| {
+            let source = statement.module_specifier_span()?;
+            Some(NodeOrName::Name(source.start))
+        });
+    }
+    (enclosing_node, preceding_node, following_node)
+}
+
+/// The import attribute whose value is `node`. In the HIR the parent of the value is the import or the export.
+fn import_attribute_of_value(node: N<'_>) -> Option<N<'_>> {
+    let N::StringLiteral(value) = node else {
+        return None;
+    };
+    let Node::Stmt(statement) = value.parent() else {
+        return None;
+    };
+    let mut attributes = statement.import_attributes()?.entries().iter();
+    attributes
+        .find(|attribute| attribute.value() == Some(value))
+        .map(N::ObjectProperty)
+}
+
+/// The opening tag whose name is `node`: the `<a b="c">` around `a`. `AstNodes::parent` gives the element.
+fn opening_element_of_name(node: N<'_>) -> Option<N<'_>> {
+    let name = node.as_expression()?;
+    match name.parent() {
+        Node::Expr(element) if matches!(element.kind(), ExprKind::Jsx(jsx) if jsx.tag() == Some(name)) => {
+            Some(N::JSXOpeningElement(element))
+        }
+        _ => None,
+    }
+}
+
+/// In ESTree the type annotation is a child of the `Identifier`. So for the comment in `let a /* comment */: T`, the identifier
+/// is the enclosing node and not the preceding node.
+fn account_for_type_annotation_of_identifier(nodes: &mut SurroundingNodes<'_>) {
+    if let (
+        Some(identifier @ Owner::Node(N::BindingIdentifier(_))),
+        Some(Owner::Node(N::TSTypeAnnotation(_))),
+    ) = (nodes.preceding_node, nodes.following_node)
+    {
+        nodes.enclosing_node = Some(identifier);
+        nodes.preceding_node = None;
     }
 }
 
@@ -118,7 +208,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         Owner::Node(node_as_ast_nodes(Node::File(self.file)))
     }
 
-    fn is_cast_paren(&self, open: u32) -> bool {
+    pub(super) fn is_cast_paren(&self, open: u32) -> bool {
         self.cast_parens.binary_search(&open).is_ok()
     }
 
@@ -186,8 +276,10 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                 {
                     e = right;
                 }
-                self.owner_of_expr(e)
+                Owner::Node(e.as_chain_element())
             }
+            // The comment can be inside type cast parentheses around `e`. `climb_while` finds the ones it is outside of.
+            NodeOrName::Node(Node::Expr(e)) => Owner::Node(e.as_chain_element()),
             NodeOrName::Node(node) => self.owner_of_node(node),
         }
     }
@@ -212,7 +304,9 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                 {
                     return Some(Owner::CastParens(e, paren.start));
                 }
-                node.parent()
+                import_attribute_of_value(node)
+                    .or_else(|| opening_element_of_name(node))
+                    .unwrap_or_else(|| node.parent())
             }
         };
         while !self.can_attach_comment(node) {
@@ -239,23 +333,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             }
             Owner::Node(node) => node,
         };
-        let span = node.span();
-        // Decorators can come before `export`: `@decorator export class A {}`.
-        let class = match node {
-            N::Class(class) => Some(class),
-            N::ExportNamedDeclaration(statement) | N::ExportDefaultDeclaration(statement) => {
-                match statement.kind() {
-                    StmtKind::Class(class) => Some(class),
-                    StmtKind::ExportDefault(e) => e.as_class(),
-                    _ => None,
-                }
-            }
-            _ => None,
-        };
-        match class.and_then(|class| class.decorators().next()) {
-            Some(first) => Span::new(N::Decorator(first).span().start.min(span.start), span.end),
-            None => span,
-        }
+        node.span_with_decorators()
     }
 
     pub(super) fn start_of(&self, owner: Owner<'a>) -> u32 {
@@ -316,18 +394,19 @@ impl<'a, 'c> AttachContext<'a, 'c> {
 
     fn surrounding_nodes(&self, parsed_comment: comments::Comment<'a>) -> SurroundingNodes<'a> {
         let comment = parsed_comment.span();
-        let enclosing_node = parsed_comment.enclosing_node();
+        let (enclosing_node, preceding_node, following_node) =
+            recorded_nodes_without_import_attribute_braces(parsed_comment);
         let name_parent = match enclosing_node {
             Some(Node::Stmt(statement)) => inner_of_stmt(statement),
             Some(node) => node_as_ast_nodes(node),
             None => node_as_ast_nodes(Node::File(self.file)),
         };
         // Each is a pair of the node and its parent, which contains the comment.
-        let preceding = parsed_comment.preceding_node().map(|node| {
+        let preceding = preceding_node.map(|node| {
             let owner = self.owner_of_node_or_name(node, true);
             self.climb_while(owner, name_parent, |span| span.end <= comment.start)
         });
-        let following = parsed_comment.following_node().map(|node| {
+        let following = following_node.map(|node| {
             let owner = self.owner_of_node_or_name(node, false);
             self.climb_while(owner, name_parent, |span| span.start >= comment.end)
         });
@@ -379,7 +458,10 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                 }
             }
         };
+        self.account_for_object_method_of_babel(&mut nodes, comment);
         self.account_for_empty_body(&mut nodes, comment);
+        self.account_for_rebalanced_logical_expression(&mut nodes);
+        account_for_type_annotation_of_identifier(&mut nodes);
         self.stay_in_template_substitution(&mut nodes, comment);
         self.stay_in_jsx_tag(&mut nodes, comment);
         // With typescript-estree, Prettier gives a top-level comment no enclosing node.
@@ -387,6 +469,48 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             nodes.enclosing_node = None;
         }
         nodes
+    }
+
+    /// The children of Babel's `ObjectMethod` are the key, the parameters and the body. Here the parameters and the body are in
+    /// a function expression, which Babel does not have.
+    fn account_for_object_method_of_babel(&self, nodes: &mut SurroundingNodes<'a>, comment: Span) {
+        let Some(Owner::Node(N::ObjectProperty(prop))) = nodes.enclosing_node else {
+            return;
+        };
+        let (true, Some(func), Some(key)) = (self.is_babel(), prop.func(), prop.key()) else {
+            return;
+        };
+        // `{ a /* comment */ (b) {} }`
+        if nodes.following_node == Some(Owner::Node(N::Function(func))) {
+            let first_parameter = func.params().first();
+            nodes.following_node = first_parameter.map(|it| self.owner_of_node(Node::Param(it)));
+        }
+        // `{ a() /* comment */ {} }`
+        if nodes.preceding_node.is_none() && key.span(self.file).end <= comment.start {
+            nodes.preceding_node = Some(match prop.computed_key() {
+                Some(e) => self.owner_of_expr(e),
+                None => Owner::Name(key.span(self.file).start),
+            });
+        }
+    }
+
+    /// Prettier turns `a && (b && c)` into `(a && b) && c` before it attaches comments. So for the comment in
+    /// `a && ((/* comment */ b && c) && d)`, which is at the start of `(b && c) && d`, the preceding node is `a`.
+    fn account_for_rebalanced_logical_expression(&self, nodes: &mut SurroundingNodes<'a>) {
+        let (Some(Owner::Node(N::LogicalExpression(e))), None) =
+            (nodes.enclosing_node, nodes.preceding_node)
+        else {
+            return;
+        };
+        if let Node::Expr(parent) = e.parent()
+            && let ExprKind::Binary { op, left, right } = parent.kind()
+            && right == e
+            && e.binary_op() == Some(op)
+            && self.owner_of_expr(e) == Owner::Node(N::LogicalExpression(e))
+        {
+            nodes.enclosing_node = Some(Owner::Node(N::LogicalExpression(parent)));
+            nodes.preceding_node = Some(self.owner_of_expr(left));
+        }
     }
 
     /// An empty `{}` body has no child to climb up from, so it has to be checked separately.

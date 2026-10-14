@@ -27,6 +27,11 @@ impl<'a> FormatDecorators<'a> {
         Self::new(member.decorators(), member.as_ast_nodes())
     }
 
+    /// `@a export class B {}`, as opposed to `export @a class B {}`.
+    fn are_before_export(&self) -> bool {
+        (self.decorators.first()).is_some_and(|first| first.span().end <= self.parent.span().start)
+    }
+
     /// Whether one of them is followed by a line break in the source.
     fn should_expand(&self, f: &Formatter<'a>) -> bool {
         self.decorators.iter().any(|it| {
@@ -69,6 +74,12 @@ impl<'a> Format<'a> for FormatDecorators<'a> {
             }
             AstNodes::FormalParameter(_) | AstNodes::FormalParameterRest(_) => {
                 write!(f, self.should_expand(f).then_some(expand_parent()));
+            }
+            // Prettier's `printDecoratorsBeforeExport`
+            AstNodes::ExportNamedDeclaration(_) | AstNodes::ExportDefaultDeclaration(_)
+                if self.are_before_export() =>
+            {
+                write!(f, expand_parent());
             }
             AstNodes::ExportNamedDeclaration(_) | AstNodes::ExportDefaultDeclaration(_) => {
                 write!(f, hard_line_break());

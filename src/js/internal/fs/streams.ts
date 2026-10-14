@@ -33,6 +33,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
    * sink = FileSink
    */
   [kWriteStreamFastPath]?: undefined | true | FileSink;
+  [kFileSinkStdin]?: true;
 };
 type FD = number;
 
@@ -43,6 +44,7 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
+const kFileSinkStdin = Symbol("kFileSinkStdin");
 const kFs = Symbol("kFs");
 
 const {
@@ -602,6 +604,14 @@ function _write(data, encoding, cb) {
 }
 writeStreamPrototype._write = _write;
 
+function fileSinkWriteError(stream: FSStream, err: any) {
+  if (stream[kFileSinkStdin] && stream.destroyed && err?.code === "ECANCELED") {
+    const { ErrnoException } = require("internal/shared");
+    return new ErrnoException(process.binding("uv").UV_ECANCELED, "write");
+  }
+  return err;
+}
+
 function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) {
   let fileSink = this[kWriteStreamFastPath];
   if (!fileSink) {
@@ -624,6 +634,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
           emitDrain(this);
         },
         err => {
+          err = fileSinkWriteError(this, err);
           if (cb) cb(err);
           require("internal/streams/destroy").errorOrDestroy(this, err);
         },
@@ -692,6 +703,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
           cb(null);
         },
         err => {
+          err = fileSinkWriteError(this, err);
           cb(err);
           // Node.js onwriteError: callback AND destroy are both invoked; the
           // callback is additive, not a replacement for the 'error' event.
@@ -835,7 +847,21 @@ function writableFromFileSink(fileSink: any) {
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
   w.path = undefined;
+  w[kFileSinkStdin] = true;
+  w._destroy = destroyFileSink;
   return w;
+}
+
+function destroyFileSink(this: FSStream, err: Error | null, cb: (err?: Error | null) => void) {
+  if (
+    this.writableFinished ||
+    !$newRustFunction("runtime/webcore/FileSink.rs", "cancel", 1)(this[kWriteStreamFastPath])
+  ) {
+    close(this, err, cb);
+    return;
+  }
+  this.fd = null;
+  cb(err);
 }
 
 export default {

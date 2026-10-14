@@ -754,7 +754,7 @@ test("lazy import", async () => {
 - Mocking a module that's already imported updates it in place. Its existing exports change, exports that only the mock has aren't added, and getters are read once.
 - Every module that imports the mocked module gets the mock. In Vitest, a module that's first loaded while the factory runs gets the original and keeps it.
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before.
-- `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`.
+- `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
 
 ## Implementation Details

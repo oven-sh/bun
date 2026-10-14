@@ -216,7 +216,13 @@ fn is_empty_line_between<'a>(end: u32, next: Expr<'a>, f: &Formatter<'a>) -> boo
 /// Whether there is an empty line after the argument at `index`, which has been written.
 fn is_empty_line_kept_after<'a>(args: List<'a, Expr<'a>>, index: usize, f: &Formatter<'a>) -> bool {
     match (counts_line_breaks_between_arguments(f), args.get(index + 1)) {
-        (true, Some(next)) => f.lines_before(next.span()) > 1,
+        (true, Some(next)) => {
+            let first_comment = (!f.is_quiet())
+                .then(|| comments_of_expression(next, f).leading.first())
+                .flatten();
+            let first_comment = first_comment.map(|comment| comment.span());
+            (f.source_text()).get_lines_before(next.span(), first_comment, false) > 1
+        }
         _ => is_followed_by_empty_line(args, index, f),
     }
 }
@@ -391,10 +397,22 @@ fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Format
         return false;
     }
 
-    if has_comment(first, f) {
+    if has_comment(first, f) || has_comment_before_comma_for_oxfmt(first, second, f) {
         return false;
     }
     is_hopefully_short_call_argument(second, f)
+}
+
+/// `a(function () {}⏎/* comment */, b)`: the comment leads `b`. For oxfmt the function is not hugged all the same.
+fn has_comment_before_comma_for_oxfmt<'a>(
+    argument: Expr<'a>,
+    next: Expr<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    !f.is_quiet()
+        && f.options().flavor.is_oxfmt()
+        && (comments_of_expression(next, f).leading.iter())
+            .any(|comment| comment.prev_token_end() <= argument.outer_span().end)
 }
 
 fn should_group_last_argument_impl<'a>(
@@ -495,6 +513,14 @@ fn is_hopefully_short_call_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -
     }
 }
 
+/// `hasComment(arg)` in Prettier's `couldExpandArg`, for `{}` and `[]`. oxfmt only looks at the comments inside.
+fn empty_literal_has_comment<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
+    match f.options().flavor.is_oxfmt() {
+        true => !f.is_quiet() && !comments_of_expression(argument, f).dangling.is_empty(),
+        false => has_comment(argument, f),
+    }
+}
+
 /// Prettier's `couldExpandArg`.
 fn can_group_expression_argument<'a>(mut argument: Expr<'a>, f: &Formatter<'a>) -> bool {
     loop {
@@ -503,10 +529,10 @@ fn can_group_expression_argument<'a>(mut argument: Expr<'a>, f: &Formatter<'a>) 
         }
         argument = match argument.kind() {
             ExprKind::Object(props) => {
-                return !props.is_empty() || has_comment(argument, f);
+                return !props.is_empty() || empty_literal_has_comment(argument, f);
             }
             ExprKind::Array(elements) => {
-                return !elements.is_empty() || has_comment(argument, f);
+                return !elements.is_empty() || empty_literal_has_comment(argument, f);
             }
             ExprKind::As { .. } if argument.is_flow_type_cast() => return false,
             ExprKind::As { expr, .. }
@@ -610,7 +636,10 @@ fn write_grouped_arguments<'a>(
         };
         has_cached = has_cached || options.is_some();
         let interned = match options {
-            Some(options) => f.intern(&format_args!(FormatBareFunction(argument, options), comma)),
+            Some(options) => f.intern(&format_args!(
+                FormatExpr::with_options(argument, options),
+                comma
+            )),
             None => f.intern(&format_args!(argument, comma)),
         };
 
@@ -814,16 +843,6 @@ fn has_signature_without_soft_lines(function: Func<'_>) -> bool {
     function.is_arrow() || !function.params().is_empty() || function.this_param().is_some()
 }
 
-/// A function or an arrow function with options, without the comments and the parentheses around
-/// it, which an argument has none of.
-struct FormatBareFunction<'a>(Expr<'a>, ExprOptions);
-
-impl<'a> Format<'a> for FormatBareFunction<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        crate::js::format::write_expression(self.0, self.1, f);
-    }
-}
-
 struct FormatGroupedFirstArgument<'a> {
     argument: Expr<'a>,
 }
@@ -831,7 +850,7 @@ struct FormatGroupedFirstArgument<'a> {
 impl<'a> Format<'a> for FormatGroupedFirstArgument<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         match self.argument.arrow_function() {
-            Some(_) => FormatBareFunction(
+            Some(_) => FormatExpr::with_options(
                 self.argument,
                 ExprOptions::Arrow(FormatJsArrowFunctionExpressionOptions {
                     cache_mode: FunctionCacheMode::Cache,
@@ -856,7 +875,7 @@ impl<'a> Format<'a> for FormatGroupedLastArgument<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let layout = Some(GroupedCallArgumentLayout::GroupedLastArgument);
         match self.argument.as_fn() {
-            Some(function) if function.is_arrow() => FormatBareFunction(
+            Some(function) if function.is_arrow() => FormatExpr::with_options(
                 self.argument,
                 ExprOptions::Arrow(FormatJsArrowFunctionExpressionOptions {
                     cache_mode: FunctionCacheMode::Cache,
@@ -865,7 +884,7 @@ impl<'a> Format<'a> for FormatGroupedLastArgument<'a> {
                 }),
             )
             .fmt(f),
-            Some(_) if self.expands_parameters => FormatBareFunction(
+            Some(_) if self.expands_parameters => FormatExpr::with_options(
                 self.argument,
                 ExprOptions::Function(FormatFunctionOptions {
                     cache_mode: FunctionCacheMode::Cache,

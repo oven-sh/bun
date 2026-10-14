@@ -7,7 +7,8 @@ use super::arrow_function_expression::is_multiline_template_starting_on_same_lin
 use super::type_parameters::type_arguments;
 use crate::js::parentheses::expression::chain_expression_needs_parentheses;
 use crate::js::utils::call_expression::{
-    FormatCallee, has_comment, is_call_expression, is_test_call_expression_in_flavor,
+    FormatCallee, comments_of_expression, has_comment, is_call_expression,
+    is_test_call_expression_in_flavor,
 };
 use crate::js::utils::member_chain::write_member_chain;
 use crate::js::utils::tailwindcss::{InTailwindContext, TailwindContext, context_of_function};
@@ -220,6 +221,11 @@ fn is_simple_module_import<'a>(call: Call<'a>, f: &Formatter<'a>) -> bool {
     is_module_function && is_lone_string_without_comments(call.args(), f)
 }
 
+/// `require("a" // comment⏎)` is `require("a"); // comment` for oxfmt.
+fn only_leading_comment_breaks_require(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// Prettier's `isCommonsJsOrAmdModuleDefinition`: `require("a", b)`, and `define` of AMD.
 fn is_commonjs_or_amd_module_definition<'a>(
     e: Expr<'a>,
@@ -237,7 +243,14 @@ fn is_commonjs_or_amd_module_definition<'a>(
         // `require(path.join(__dirname, "a"))` can break.
         b"require" => {
             (args.len() > 1 || (args.len() == 1 && is_string(args.first())))
-                && !args.first().is_some_and(|first| has_comment(first, f))
+                && !args
+                    .first()
+                    .is_some_and(|first| match only_leading_comment_breaks_require(f) {
+                        true => {
+                            !f.is_quiet() && !comments_of_expression(first, f).leading.is_empty()
+                        }
+                        false => has_comment(first, f),
+                    })
         }
         b"define" => {
             matches!(e.as_chain_element().parent(), AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body())

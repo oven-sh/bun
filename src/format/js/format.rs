@@ -160,10 +160,10 @@ fn format_node_with_comments<'a>(
     }
 }
 
-/// Writes an ignored node with the comments it owns. `write_source_text` copies the node.
+/// Writes an ignored node with the comments it owns. `write_source_text` copies the node, and marks the comments in the copied
+/// text as printed.
 ///
-/// Like Prettier's `printIgnored`, this first marks the comments inside the node as printed. One of them can be a comment that
-/// the node owns, which would otherwise be printed twice:
+/// A comment that the node owns can be inside the node. It is copied with the node, so it is not printed here:
 ///
 /// ```js
 /// a
@@ -178,9 +178,11 @@ fn format_ignored_node<'a>(
     f: &mut Formatter<'a>,
     write_source_text: impl FnOnce(&mut Formatter<'a>),
 ) {
-    let copied = span_for_comments(node, f);
-    f.comments_mut().mark_printed_in(copied);
-    FormatLeadingComments::Comments(owned.leading).fmt(f);
+    let node_start = node.span_with_decorators().start;
+    let count_before_node = (owned.leading.iter())
+        .take_while(|comment| comment.span().start < node_start)
+        .count();
+    FormatLeadingComments::Comments(owned.leading.slice(0, count_before_node)).fmt(f);
     write_source_text(f);
     if !skip_trailing {
         FormatTrailingComments::Comments(owned.trailing).fmt(f);
@@ -1140,8 +1142,7 @@ fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &
             _ => write(f),
         };
     }
-    // Flow has no node that starts at the `=>`: the comments before it lead the type.
-    if mark == Some("=>") && f.file().is_flow() {
+    if f.file().is_flow() && print::flow::is_return_type_of_function_type(ty) {
         return write(f);
     }
     let node = AstNodes::TSTypeAnnotation(ty);

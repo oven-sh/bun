@@ -2625,6 +2625,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if is_generator {
                 fn_flags |= Flags::GENERATOR;
             }
+            let type_parameters = self.pos();
             let func = self.function_rest(
                 fn_kind,
                 fn_flags,
@@ -2637,7 +2638,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 true => self.start_of_parameters(func),
                 false => self.f[func].anchor,
             };
-            self.finish_expr(ExprKind::Fn(func), parameters)
+            let value = self.finish_expr(ExprKind::Fn(func), parameters);
+            // In ESTree it starts at its type parameters: `{ a<T> /* comment */ () {} }`
+            if type_parameters < parameters {
+                self.unfinish_node(NodeData::Expr(value));
+                self.finish_node(NodeData::Expr(value), type_parameters, self.prev_end());
+            }
+            value
         } else if is_identifier && self.token() != T::Colon {
             kind = PropKind::Shorthand;
             let PropKey::Name(name) = key else {

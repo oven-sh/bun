@@ -149,15 +149,6 @@ impl<'a> Format<'a> for FormatComputedMemberExpressionWithoutObject<'a> {
         let ExprKind::Index { index, .. } = member.kind() else {
             return;
         };
-        if !f.is_quiet() && comments_in_member_access_stay(f) {
-            let comments = f.comments().of_node(member.as_chain_element()).dangling;
-            if !comments.is_empty() {
-                write!(
-                    f,
-                    [hard_line_break(), FormatLeadingComments::Comments(comments)]
-                );
-            }
-        }
         let optional = member.is_optional().then_some("?.");
         if matches!(index.kind(), ExprKind::Number(_))
             && !breaks_around_a_number_with_comments(index, f)

@@ -1107,13 +1107,14 @@ pub(crate) fn is_short_argument<'a>(
     f: &Formatter<'a>,
 ) -> bool {
     let threshold = threshold as usize;
-    if has_comments(argument, f) {
+    let has_comments = |e: Expr<'a>| !f.is_quiet() && has_comments(e, f);
+    if has_comments(argument) {
         return false;
     }
     let mut node = argument.as_ast_nodes();
     while let AstNodes::UnaryExpression(_) = node {
         match argument.argument() {
-            Some(operand) if !has_comments(operand, f) => {
+            Some(operand) if !has_comments(operand) => {
                 (argument, node) = (operand, operand.as_ast_nodes());
             }
             _ => return false,

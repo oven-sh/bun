@@ -81,7 +81,9 @@ fn write_with_comments_in_place<'a>(
         .chain(glued_before_type)
         .any(|comment| comment.is_line())
         || (!is_union
-            && (moved.iter().chain(leading).chain(leading_type)).any(is_on_lines_of_its_own));
+            && (moved.iter().chain(leading).chain(leading_type)).any(is_on_lines_of_its_own))
+        // `a as // prettier-ignore⏎T`
+        || (is_ignored && leading_type.iter().any(|comment| comment.has_newline_after()));
 
     let format_type = format_with(|f| {
         write!(

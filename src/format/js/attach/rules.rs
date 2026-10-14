@@ -126,6 +126,15 @@ fn keeps_comment_in_parentheses(mut e: Expr<'_>, mut gets_parentheses: bool) -> 
     }
 }
 
+/// Whether the only statement after `case` is a block. Empty statements do not count.
+fn is_only_block_of(case: Case<'_>) -> bool {
+    let mut statements = (case.body().iter()).filter(|it| it.tag() != StmtTag::Empty);
+    statements
+        .next()
+        .is_some_and(|it| it.tag() == StmtTag::Block)
+        && statements.next().is_none()
+}
+
 impl<'a> Rules<'_, 'a, '_> {
     // ───────────────────────────── tokens around the comment ─────────────────────────────
 
@@ -351,8 +360,11 @@ impl<'a> Rules<'_, 'a, '_> {
         {
             return Some(attachment);
         }
-        // `handleClosureTypeCastComments`
+        // `handleClosureTypeCastComments`. Between two nodes on one line it is left to `break_ties`, which makes it a leading
+        // comment too, together with the comments before it: `f(a, /* comment */ /** @type {T} */ (b))`.
+        let is_tie = self.context.text_position == Remaining && self.preceding_node.is_some();
         if comment.looks_like_type_cast()
+            && !is_tie
             && let Some(following_node) = self.following_node
         {
             if self.cx.options.flavor.is_oxfmt()
@@ -393,10 +405,7 @@ impl<'a> Rules<'_, 'a, '_> {
                     | N::TSModuleBlock(_),
                 )) => false,
                 // `case a: // comment⏎{}`: a block that is the only statement of a `case` counts as its body.
-                Some(Owner::Node(N::SwitchCase(case))) => {
-                    let mut statements = case.body().iter().filter(|it| it.tag() != StmtTag::Empty);
-                    statements.next().is_some() && statements.next().is_none()
-                }
+                Some(Owner::Node(N::SwitchCase(case))) => is_only_block_of(case),
                 _ => true,
             },
             _ => false,
@@ -492,24 +501,28 @@ impl<'a> Rules<'_, 'a, '_> {
         }
     }
 
-    /// A comment before the `:` of a `case` or a `default`. For Prettier it leads the first statement if it starts its line.
+    /// A comment before the `:` of a `case` or a `default` whose only statement is a block. For Prettier it leads the block if
+    /// it starts its line, and goes into the block after `default`.
     ///
     /// ```js
     /// case a
     /// // comment
     /// : {
     /// }
+    /// default: // comment
+    /// {
+    /// }
     /// ```
+    ///
+    /// The second is also what `default // comment⏎: {}` is printed as.
     fn handle_switch_case_comments_for_oxfmt(&self, case: Case<'a>) -> Option<Attachment<'a>> {
+        let block = self.following_node.filter(|_| is_only_block_of(case))?;
         if !self.next_token_starts_with(b':') {
             return None;
         }
-        match case.test() {
-            Some(test) if self.preceding_node == Some(self.cx.owner_of_expr(test)) => {
-                self.preceding_node.map(Attachment::trailing)
-            }
-            Some(_) => None,
-            None => Some(Attachment::dangling(Owner::Node(N::SwitchCase(case)))),
+        match self.preceding_node {
+            Some(test) => Some(Attachment::trailing(test)),
+            None => Some(Attachment::leading(block)),
         }
     }
 
@@ -625,6 +638,8 @@ impl<'a> Rules<'_, 'a, '_> {
     /// the `export` and not inside the declaration.
     fn handle_comment_before_semicolon_of_export(&self, node: N<'a>) -> Option<Attachment<'a>> {
         let statement = match node {
+            // Flow's `declare export default A /* comment */;` is a type alias in the tree. The comment trails the `A`.
+            N::TSTypeAliasDeclaration(statement) if statement.is_default_export() => return None,
             N::TSTypeAliasDeclaration(statement)
             | N::TSImportEqualsDeclaration(statement)
             | N::TSModuleDeclaration(statement) => statement,
@@ -933,6 +948,15 @@ impl<'a> Rules<'_, 'a, '_> {
             N::TSInterfaceDeclaration(statement) if is_flow_opaque_type(statement) => None,
             N::BinaryExpression(e) if self.cx.file.is_flow() && flow::is_match_or_pattern(e) => {
                 self.handle_match_or_pattern_comments(ignored_node)
+            }
+            // Flow's `A</* comment */>`. For Prettier the enclosing node is the empty `TypeParameterInstantiation`.
+            N::TSTypeReference(ty)
+                if self.cx.file.is_flow()
+                    && self.prev_token_ends_with(b'<')
+                    && self.next_token_starts_with(b'>') =>
+            {
+                let type_arguments = N::TSTypeParameterInstantiation(Node::Type(ty));
+                Some(Attachment::dangling(Owner::Node(type_arguments)))
             }
 
             N::ConditionalExpression(_) | N::TSConditionalType(_) => {
@@ -1388,6 +1412,15 @@ impl<'a> Rules<'_, 'a, '_> {
     }
 
     fn handle_function_comments(&self, node: N<'a>) -> Option<Attachment<'a>> {
+        // The other rules are not for the function types of Flow.
+        if self.cx.file.is_flow()
+            && function_of(node).is_some_and(|it| flow::function_type(it).is_some())
+        {
+            return match self.context.text_position {
+                OwnLine | EndOfLine => self.handle_last_function_parameter_comments(node),
+                Remaining => None,
+            };
+        }
         match self.context.text_position {
             OwnLine => self
                 .handle_last_function_parameter_comments(node)
@@ -1560,6 +1593,13 @@ impl<'a> Rules<'_, 'a, '_> {
         }
         if self.context.comment.prev_token_end() == callee.outer_span().end {
             return Some(Attachment::trailing(self.cx.owner_of_expr(callee)));
+        }
+        // `a?. /* comment */ ()`
+        if call.is_optional() && self.prev_token_ends_with(b'.') {
+            return Some(match self.following_node {
+                Some(following_node) => Attachment::leading(following_node),
+                None => Attachment::dangling(self.cx.owner_of_expr(e)),
+            });
         }
         (self.context.text_position == EndOfLine)
             .then(|| self.handle_call_expression_comments(e))?

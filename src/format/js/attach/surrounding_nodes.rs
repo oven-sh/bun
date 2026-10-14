@@ -14,8 +14,8 @@ use crate::js::print::flow::is_flow_opaque_type;
 use crate::js::source_text::SourceText;
 use bun_lint::ast::comments::{self, NodeOrName};
 use bun_lint::ast::{
-    Expr, ExprKind, ExprTag, File, FnBody, FnKind, Func, List, Node, Stmt, StmtKind, StmtTag,
-    TypeKind, TypeNode,
+    Expr, ExprKind, File, FnBody, FnKind, Func, List, Node, Stmt, StmtKind, StmtTag, TypeKind,
+    TypeNode,
 };
 use bun_lint::span::Span;
 
@@ -95,15 +95,13 @@ fn type_annotation_of_predicate(node: N<'_>) -> Option<N<'_>> {
 /// `namespace A.B { .. }` is a namespace `B` in a namespace `A` in the HIR, and the statements are in `B`. In ESTree it is one
 /// declaration, so its body is the body of `A`.
 fn body_of_whole_namespace(node: N<'_>) -> N<'_> {
-    let N::TSModuleBlock(mut statement) = node else {
-        return node;
-    };
-    while let Some(module) = statement.as_module()
-        && module.outermost().stmt() != statement
-    {
-        statement = module.outermost().stmt();
+    match node {
+        N::TSModuleBlock(statement) => match statement.as_module() {
+            Some(module) => N::TSModuleBlock(module.outermost().stmt()),
+            None => node,
+        },
+        _ => node,
     }
-    N::TSModuleBlock(statement)
 }
 
 /// The `{ .. }` body of `node`. The printers treat it as a separate node.
@@ -129,25 +127,6 @@ fn body_of(node: N<'_>) -> Option<N<'_>> {
     }
 }
 
-/// The import or export whose `with { .. }` is `node`.
-fn declaration_of_import_attribute_braces(node: Node<'_>) -> Option<Stmt<'_>> {
-    let Node::Expr(braces) = node else {
-        return None;
-    };
-    match braces.parent() {
-        Node::Stmt(statement)
-            if braces.tag() == ExprTag::Object
-                && matches!(
-                    statement.tag(),
-                    StmtTag::Import | StmtTag::ExportNamed | StmtTag::ExportStar
-                ) =>
-        {
-            Some(statement)
-        }
-        _ => None,
-    }
-}
-
 /// The enclosing, the preceding and the following node that the parser recorded for `comment`. The `{ .. }` of import
 /// attributes are an object literal in the HIR. ESTree has no node for them: the attributes are children of the
 /// declaration and come after its source.
@@ -161,15 +140,21 @@ fn recorded_nodes_without_import_attribute_braces<'a>(
     let mut enclosing_node = comment.enclosing_node();
     let mut preceding_node = comment.preceding_node();
     let mut following_node = comment.following_node();
-    if let Some(NodeOrName::Node(node)) = following_node
-        && let Some(statement) = declaration_of_import_attribute_braces(node)
+    // `import a from "a" /* comment */ with { type: "json" }`
+    if let (Some(Node::Stmt(statement)), Some(NodeOrName::Node(Node::Expr(braces)))) =
+        (enclosing_node, following_node)
+        && let Some(attributes) = statement.import_attributes()
+        && attributes.object() == braces
     {
-        let attributes = statement.import_attributes().map(|it| it.entries());
-        following_node = attributes
-            .and_then(|it| it.first())
-            .map(|first| NodeOrName::Node(Node::Prop(first)));
+        let first = attributes.entries().first();
+        following_node = first.map(|first| NodeOrName::Node(Node::Prop(first)));
     }
-    if let Some(statement) = enclosing_node.and_then(declaration_of_import_attribute_braces) {
+    // `import a from "a" with { /* comment */ type: "json" }`
+    if let Some(Node::Expr(braces)) = enclosing_node
+        && let Some(first) = braces.as_object().and_then(|attributes| attributes.first())
+        && first.is_import_attribute()
+        && let Node::Stmt(statement) = first.parent()
+    {
         enclosing_node = Some(Node::Stmt(statement));
         preceding_node = preceding_node.or_else(|| {
             let source = statement.module_specifier_span()?;
@@ -481,8 +466,11 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         let (enclosing_node, mut preceding_node, mut following_node) =
             recorded_nodes_without_import_attribute_braces(parsed_comment);
         if self.file.is_flow() {
-            preceding_node = preceding_node.and_then(|it| flow::preceding_node(it, enclosing_node));
-            following_node = following_node.and_then(flow::following_node);
+            preceding_node = match preceding_node {
+                Some(node) => flow::preceding_node(node, enclosing_node),
+                None => flow::outer_name_of_component_parameter(enclosing_node, comment.start),
+            };
+            following_node = following_node.and_then(|it| flow::following_node(it, enclosing_node));
         }
         let name_parent = match enclosing_node {
             Some(Node::Stmt(statement)) => inner_of_stmt(statement),

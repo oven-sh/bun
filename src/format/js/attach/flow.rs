@@ -4,12 +4,12 @@
 
 use crate::js::ast_nodes::{AsAstNodes, AstNodes as N};
 use crate::js::print::flow::{
-    as_match_expression, head_of_match_statement, is_inexact_mark, is_unknown_members_mark,
-    keyword_of_function_type,
+    as_match_expression, head_of_match_statement, is_inexact_mark, is_return_type_of_function_type,
+    is_unknown_members_mark, keyword_of_function_type,
 };
 use bun_lint::ast::comments::NodeOrName;
 use bun_lint::ast::{
-    BinOp, Expr, ExprKind, Func, Handle, List, Node, StmtKind, TypeKind, TypeNode,
+    BinOp, EnumMember, Expr, ExprKind, Func, Handle, List, Node, StmtKind, TypeKind, TypeNode,
 };
 
 fn second_to_last<'a, T: Handle<'a>>(list: List<'a, T>) -> Option<T> {
@@ -229,9 +229,7 @@ pub(super) fn is_no_node(node: N<'_>) -> bool {
         N::ObjectExpression(e) => is_braces_of_match(e),
         N::LogicalExpression(e) => as_pattern_with_guard(e).is_some(),
         N::BinaryExpression(e) => last_of_inner_or_pattern(e).is_some(),
-        // The `=> T` of a function type. `returnType` is the `T`.
-        N::TSTypeAnnotation(ty) => matches!(ty.parent(), Node::Func(func)
-            if matches!(func.owner(), Node::Type(_))),
+        N::TSTypeAnnotation(ty) => is_return_type_of_function_type(ty),
         _ => false,
     }
 }
@@ -255,7 +253,8 @@ pub(super) fn type_annotation_around(node: N<'_>) -> Option<N<'_>> {
     has_type_annotation.then_some(N::TSTypeAnnotation(ty))
 }
 
-/// What Prettier's tree has in the place of `node`, which the parser recorded as the node before a comment in `enclosing_node`.
+/// What Prettier's tree has in the place of `node`, which the parser recorded as the node before a comment in
+/// `enclosing_node`.
 pub(super) fn preceding_node<'a>(
     node: NodeOrName<'a>,
     enclosing_node: Option<Node<'a>>,
@@ -265,7 +264,9 @@ pub(super) fn preceding_node<'a>(
         NodeOrName::Name(start) => {
             let is_name_of_type_parameter = matches!(enclosing_node, Some(Node::TypeParam(param))
                 if param.name().span().start == start);
-            return (!is_name_of_type_parameter).then_some(node);
+            let is_no_node = is_name_of_type_parameter
+                || members_of_enum_with_explicit_type(enclosing_node, start).is_some();
+            return (!is_no_node).then_some(node);
         }
         NodeOrName::Node(node) => node,
     };
@@ -293,10 +294,47 @@ pub(super) fn preceding_node<'a>(
     Some(NodeOrName::Node(Node::Expr(e)))
 }
 
+/// `enum A of string { B }`: the members, if `enclosing_node` is the enum and the `string`, which is no node, starts at `start`.
+fn members_of_enum_with_explicit_type(
+    enclosing_node: Option<Node<'_>>,
+    start: u32,
+) -> Option<List<'_, EnumMember<'_>>> {
+    let Some(Node::Stmt(statement)) = enclosing_node else {
+        return None;
+    };
+    let StmtKind::Enum(declaration) = statement.kind() else {
+        return None;
+    };
+    (declaration.flow_explicit_type()?.start == start).then(|| declaration.members())
+}
+
+/// `component A(a /* comment */ as b) {}`: the `a`, which the parser does not record. `comment_start`: where the comment starts.
+pub(super) fn outer_name_of_component_parameter(
+    enclosing_node: Option<Node<'_>>,
+    comment_start: u32,
+) -> Option<NodeOrName<'_>> {
+    let Some(Node::Param(param)) = enclosing_node else {
+        return None;
+    };
+    let outer_name = param.flow_outer_name()?;
+    (outer_name.end <= comment_start).then_some(NodeOrName::Name(outer_name.start))
+}
+
 /// The same for the node after a comment.
-pub(super) fn following_node(node: NodeOrName<'_>) -> Option<NodeOrName<'_>> {
-    let NodeOrName::Node(node) = node else {
-        return Some(node);
+pub(super) fn following_node<'a>(
+    node: NodeOrName<'a>,
+    enclosing_node: Option<Node<'a>>,
+) -> Option<NodeOrName<'a>> {
+    let node = match node {
+        NodeOrName::Name(start) => {
+            return match members_of_enum_with_explicit_type(enclosing_node, start) {
+                Some(members) => (members.first())
+                    .filter(|first| !is_unknown_members_mark(*first))
+                    .map(|first| NodeOrName::Node(Node::EnumMember(first))),
+                None => Some(node),
+            };
+        }
+        NodeOrName::Node(node) => node,
     };
     if sibling_before_dots(node).is_some() {
         return None;

@@ -648,7 +648,10 @@ impl<'a> Format<'a> for FormatArrowBody<'a> {
                 return;
             }
             write_leading_comments_of_arrow(next, cache_mode, f);
-            write_arrow(body, next, self.options, true, f);
+            match !f.is_quiet() && f.comments().is_ignored(next.as_ast_nodes()) {
+                true => write!(f, FormatSuppressedNode(body.span())),
+                false => write_arrow(body, next, self.options, true, f),
+            }
             return write_trailing_comments_of_arrow(next, cache_mode, f);
         }
 

@@ -161,6 +161,11 @@ fn write_object_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
     }
     // An error.
     write!(f, property.is_optional().then_some("?"));
+    // `{ a(/* prettier-ignore */) {} }`: with typescript-estree the comment dangles from the `FunctionExpression`.
+    let function = AstNodes::Function(value);
+    if !f.is_quiet() && f.comments().is_ignored(function) {
+        return format_node(function, f, |_| {});
+    }
     format_grouped_parameters_with_return_type_for_method(value, f);
     if value.has_body() {
         write!(f, [space(), FormatFunctionBody(value)]);

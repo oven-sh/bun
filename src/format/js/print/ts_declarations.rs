@@ -497,10 +497,17 @@ fn write_ts_enum_body<'a>(body: AstNodes<'a>, declaration: Enum<'a>, f: &mut For
         write!(
             f,
             block_indent(&format_with(|f| {
-                // Flow's `enum A of /* comment */ string { B }`
+                // Flow's `enum A { /* comment */ ... }`
+                let comments = f.comments().of_node(body).dangling;
                 write!(
                     f,
-                    FormatLeadingComments::Comments(f.comments().of_node(body).dangling)
+                    [
+                        FormatDanglingComments::Comments {
+                            comments,
+                            indent: DanglingIndentMode::None
+                        },
+                        (!comments.is_empty()).then_some(hard_line_break())
+                    ]
                 );
                 let trailing_separator = match members
                     .last()

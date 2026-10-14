@@ -143,6 +143,12 @@ fn is_function_type_param(param: Param<'_>) -> bool {
         .is_some_and(|func| !func.has_body() && !func.is_arrow())
 }
 
+/// Whether `ty` is the return type of a function type, of a signature or of a function that is declared. In Flow's tree it is
+/// directly in the function type: no `TypeAnnotation` starts at the `=>` or the `:`.
+pub(crate) fn is_return_type_of_function_type(ty: TypeNode<'_>) -> bool {
+    matches!(ty.parent(), Node::Func(func) if !func.has_body() && !func.is_arrow())
+}
+
 /// Prettier's `includesFunctionTypeInObjectType`. `is_in_object_type`: `node` is.
 fn includes_function_type_in_object_type(node: Node<'_>, is_in_object_type: bool) -> bool {
     // What is in it and has not been looked at.

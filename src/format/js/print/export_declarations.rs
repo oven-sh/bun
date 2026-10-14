@@ -63,15 +63,29 @@ pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Format
         }
         // They are part of the class, so its leading comments are written before them.
         Some((class, _)) => {
-            match comments_of_decorated_class_start_a_line(f) {
+            let starts_a_line = comments_of_decorated_class_start_a_line(f);
+            match starts_a_line {
                 true => write!(f, [keyword, hard_line_break()]),
                 false => write!(f, keyword_and_space),
             }
-            format_node(AstNodes::Class(class), f, |f| {
+            // Prettier's `printDecorators` starts with a line break, also behind the one that ends a comment.
+            let class_node = AstNodes::Class(class);
+            let follows_line_break = !f.is_quiet()
+                && !starts_a_line
+                && (f.comments().of_node(class_node).leading.last())
+                    .is_some_and(|last| last.is_line() || last.has_newline_after());
+            format_node(class_node, f, |f| {
                 write!(
                     f,
                     [
-                        FormatDecorators::new(class.decorators(), node),
+                        follows_line_break.then_some(empty_line()),
+                        FormatDecorators::new(
+                            class.decorators(),
+                            match starts_a_line {
+                                true => class_node,
+                                false => node,
+                            }
+                        ),
                         hard_line_break()
                     ]
                 );
@@ -79,7 +93,12 @@ pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Format
             });
         }
     }
-    if matches!(statement.kind(), StmtKind::Var(_)) {
+    // An ignored declaration is written with its `;`.
+    if matches!(statement.kind(), StmtKind::Var(_))
+        && !f
+            .comments()
+            .is_ignored(AstNodes::VariableDeclaration(statement))
+    {
         write!(f, OptionalSemicolon);
     }
 }

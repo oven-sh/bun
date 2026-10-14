@@ -516,6 +516,27 @@ describe("TextEncoder", () => {
     var encoder = new TextEncoder();
     expect(new TextDecoder().decode(encoder.encode(text))).toBe(textReal);
   });
+
+  describe("substring of a string whose storage changes width", () => {
+    const narrow = (a, b) => [a, b].join("");
+    const wide = (a, b) => `${a}\u0100${b}`.replace(/\u0100/g, "");
+
+    // A property lookup swaps the key's storage for the equal string already used as a key.
+    it.each([
+      { name: "8-bit to 16-bit", makeBase: narrow, makeKey: wide, a: "encode-narrow-", b: "to-wide-base" },
+      { name: "16-bit to 8-bit", makeBase: wide, makeKey: narrow, a: "encode-wide-", b: "to-narrow-base" },
+    ])("$name", ({ makeBase, makeKey, a, b }) => {
+      const table = { [makeKey(a, b)]: 1 };
+      const base = makeBase(a, b);
+      const part = base.slice(3, base.length - 3);
+      const expected = Array.from(a + b, c => c.charCodeAt(0)).slice(3, -3);
+
+      const encoder = new TextEncoder();
+      expect(Array.from(encoder.encode(part))).toEqual(expected);
+      expect(table[base]).toBe(1);
+      expect(Array.from(encoder.encode(part))).toEqual(expected);
+    });
+  });
 });
 
 function utf8Reference(str) {

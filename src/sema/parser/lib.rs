@@ -12,7 +12,6 @@
 //! first has refused.
 
 #![forbid(unsafe_code)]
-#![feature(portable_simd)]
 
 mod lexer;
 mod names;
@@ -27,8 +26,8 @@ pub use parser::keyword_suggestion;
 use bun_sema::atom::Intern;
 use bun_sema::hir::FileBuilder;
 pub use summarize::{
-    COUNTS, Counts, Summary, ThreadCaches, summarize, summarize_as, summarize_in, with_summary,
-    with_summary_in_place,
+    COUNTS, Counts, PartError, Parts, Summary, ThreadCaches, summarize, summarize_as, summarize_in,
+    with_summary, with_summary_in_place,
 };
 
 /// Why a text is not parsed.
@@ -138,6 +137,9 @@ pub struct Options {
     pub is_json: bool,
     /// The top level is not an await context.
     pub await_is_a_name: bool,
+    /// For oxc, in a file whose name does not say what it is: until something says that it is a module, an `await` at the top
+    /// level is a name unless a word or a literal follows it.
+    pub is_module_or_script: bool,
     /// Goes on after a syntax error as TypeScript's parser does, and reports it.
     pub recovers: bool,
     /// The tags of JSDoc comments are read as TypeScript's parser reads them: in a JavaScript file
@@ -145,6 +147,30 @@ pub struct Options {
     /// what the checker asks about them. Only [`parse`] does it, and only for TypeScript's dialect.
     pub reads_jsdoc: bool,
     pub dialect: bun_sema::resolve::Dialect,
+    /// Not the whole text is parsed.
+    pub part: Option<Part>,
+}
+
+/// A part of a text, as acorn's `parseExpressionAt` reads one: nothing is said about what follows it, and nothing of that
+/// is read but one token. The file has one statement.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Part {
+    pub goal: Goal,
+    /// Where it starts.
+    pub from: u32,
+    /// Where the text ends for the parser.
+    pub until: u32,
+}
+
+/// What a [`Part`] is.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Goal {
+    /// `parseExpression`: an expression statement.
+    Expression,
+    /// `var`, `let` or `const` and their declarations, with or without a `;` behind them.
+    Declaration,
+    /// `parseType`: the type of a type alias without a name.
+    Type,
 }
 
 /// What a thread keeps from one file to the next: the caches of names, and the capacity of every
@@ -152,7 +178,9 @@ pub struct Options {
 #[derive(Default)]
 pub struct Scratch {
     names: names::Names,
+    stops: bun_highway::ScannerStopsBuffer,
     stacks: parser::Stacks,
+    declared: parser::Declared,
     /// A file that is no longer needed: its lists are for the next one, and so is the box. A file is large, and goes from
     /// hand to hand.
     recycled: Option<Box<FileBuilder>>,
@@ -161,6 +189,8 @@ pub struct Scratch {
     jsdoc_wanted: u8,
     /// Of the text that was parsed last.
     html_opens: lexer::HtmlOpens,
+    /// The text that was parsed last has an `await` at its top level, and each of them can be a name: `await (a)`.
+    has_only_ambiguous_awaits: bool,
 }
 
 impl Scratch {
@@ -198,10 +228,13 @@ pub struct Parsed {
     pub file: Box<FileBuilder>,
     /// `await` was read as a keyword at the top level.
     pub has_top_level_await: bool,
+    /// The end of the last token of [`Options::part`], or of the text, and the end of the token behind it: the last that has
+    /// been looked at.
+    pub end: (u32, u32),
 }
 
 /// The HIR of `text`. Names are interned in `atoms`.
-pub fn parse(
+pub(crate) fn parse(
     text: &[u8],
     options: Options,
     atoms: &dyn Intern,
@@ -227,7 +260,7 @@ pub fn parse(
 
 /// The HIR of `text`, with atoms that are the file's own: `Scratch::atoms` knows them until the next
 /// file is parsed.
-pub fn parse_with_own_atoms(
+pub(crate) fn parse_with_own_atoms(
     text: &[u8],
     options: Options,
     scratch: &mut Scratch,

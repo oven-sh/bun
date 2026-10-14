@@ -1,8 +1,8 @@
 // Texts that are nearly normal: Prettier's fixtures, or real files, each a little changed: a token deleted, two neighbours deleted, a token
-// doubled, swapped with the next, or the text cut off after it. That is what a file looks like while it is typed. `bun format --write` runs on
+// doubled, swapped with the next, or the text cut off after it. That is what a file looks like while it is typed. `bun fmt --write` runs on
 // them, with the checks that it makes before it writes, and the npm package of Prettier, or oxfmt, is asked about each.
 //
-//   bun near.ts --command="bun format" --prettier=<directory with node_modules/prettier> --language=css
+//   bun near.ts --command="bun fmt" --prettier=<directory with node_modules/prettier> --language=css
 //     [--oxfmt=<directory with node_modules/oxfmt>]  the flavor of oxfmt, against oxfmt
 //     [--options]            each text with one of SETS in the place of the defaults
 //     [--files=<directory>]  real files in the place of the fixtures, one change each. More than once: more directories
@@ -14,7 +14,7 @@
 // Languages: js (with jsx, ts, tsx), css (with less, scss), yaml, graphql, json, handlebars, markdown (with mdx), html (with vue, angular, mjml).
 // Nothing is stored: what is expected is asked when it is run. The same seed makes the same texts.
 //
-// It prints two tables. The second is about refusals: `bun format` leaves a file alone if what it has printed does not say what the file says.
+// It prints two tables. The second is about refusals: `bun fmt` leaves a file alone if what it has printed does not say what the file says.
 // Where the other tool prints something, that is a true alarm if the other tool has lost or added a letter or a digit (in HTML and Handlebars also
 // a `<` or a `{`), and a false one if not.
 import { spawnSync } from "node:child_process";
@@ -82,7 +82,7 @@ if (process.argv[2] == "--child") {
   const endings = ENDINGS[language];
   if (!endings || !flags.has("command") || !(flags.has("prettier") || isOxfmt)) {
     throw new Error(
-      `usage: bun near.ts --command="bun format" --prettier=<directory> --language=<${Object.keys(ENDINGS).join("|")}> ..`,
+      `usage: bun near.ts --command="bun fmt" --prettier=<directory> --language=<${Object.keys(ENDINGS).join("|")}> ..`,
     );
   }
 
@@ -310,7 +310,7 @@ if (process.argv[2] == "--child") {
     if (flags.has("texts") && ours !== undefined && expected !== undefined)
       writeFileSync(join(flag("texts"), name), text);
     if (verdict == "only we refuse: a check") {
-      const key = `${ending} | ${refusal!.replace(/\. It is left as it is.*$/, "")}`;
+      const key = `${ending} | ${refusal!.replace(/\. It was not formatted.*$/, "")}`;
       const alarm = alarms.get(key) ?? { texts: 0, isTrue: 0 };
       alarms.set(key, alarm);
       alarm.texts++;

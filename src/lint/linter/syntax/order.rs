@@ -63,6 +63,7 @@ fn ranks_in_function(func: Func) -> [u16; 4] {
 }
 
 /// When `child` is converted, among the children of `parent`. From 1: the checks of `parent` itself come first.
+#[optimize(size)]
 fn rank<'a>(parent: Node<'a>, child: Node<'a>) -> u16 {
     let is = |it: Node<'a>| it == child;
     let is_some = |it: Option<Node<'a>>| it == Some(child);
@@ -258,6 +259,7 @@ fn rank_of_check(node: Node, when: When) -> u16 {
 }
 
 /// The index of the candidate whose check comes first.
+#[optimize(size)]
 pub(super) fn first<'a>(file: &'a File<'a>, candidates: &[Candidate]) -> Option<usize> {
     let mut inside: Vec<usize> = (0..candidates.len()).collect();
     let mut at = Node::File(file);

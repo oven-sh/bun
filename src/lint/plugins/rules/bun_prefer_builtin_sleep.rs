@@ -7,7 +7,7 @@ pub struct PreferBuiltinSleep;
 
 const HANDMADE_SLEEP: Message = Message::new(
     "handmadeSleep",
-    "This promise does nothing but wait. `Bun.sleep(ms)` does that, and so does `setTimeout(ms)` of `node:timers/promises`.",
+    "This promise only waits. Use `Bun.sleep(ms)` or `setTimeout(ms)` from `node:timers/promises`.",
 );
 const USE_BUN_SLEEP: Message = Message::new("useBunSleep", "Replace it with `Bun.sleep()`.");
 

@@ -147,7 +147,7 @@ pub(crate) fn for_each_parallel_in_turns(
         work,
     };
     // A thread of a pool that waited here for the others could wait for ever: they may all be waiting like it. It has its turn.
-    if !bun_threading::thread_pool::Thread::current().is_null() {
+    if !bun_threading::thread_pool::Thread::current().is_null() || keeps_regions() {
         return region.work_off();
     }
     let mut runners = vec![(); region.threads];
@@ -182,7 +182,19 @@ static OWN_POOL: OnceLock<bun_threading::ThreadPool> = OnceLock::new();
 /// The parser nests as deep as on a thread of Bun's pool. The binder, the checker, hundreds of rules and the printers then walk
 /// the tree by recursion, with frames of their own size, so their threads have eight times that stack. What is not touched
 /// costs no memory.
-const STACK_OF_A_WORKER: u32 = 8 * bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE;
+pub const STACK_OF_A_WORKER: u32 = 8 * bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE;
+
+static KEEP_REGIONS: Guarded<Vec<ThreadId>> = Guarded::new(Vec::new());
+
+/// From now on, parallel regions that start on the calling thread run on that thread alone, like they do on a pool thread. Call
+/// this on a thread outside the pool that pool threads wait for. If it waited for them too, they'd deadlock.
+pub fn keep_regions_on_this_thread() {
+    KEEP_REGIONS.lock().push(std::thread::current().id());
+}
+
+fn keeps_regions() -> bool {
+    KEEP_REGIONS.lock().contains(&std::thread::current().id())
+}
 
 /// From now on parallel regions run on a pool of their own. For work that waits on its thread for what Bun's pool does:
 /// `bun lint` waits for rules in JavaScript, and such a rule can wait for a `Worker`, whose files are read and whose modules
@@ -301,6 +313,11 @@ pub struct PlanOptions {
     /// How many projects of a `tsc -b` run are loaded or checked at the same time, at most. Each
     /// occupies memory.
     pub projects_at_once: usize,
+    /// A project with at most this many files of its own is small: see `projects_at_once`. Where
+    /// there are at least as many projects as threads, a small project is built by one thread,
+    /// and at most four times `projects_at_once` of them at once, and no more than there are
+    /// threads: each program occupies memory.
+    pub files_of_a_small_project: usize,
     /// `Request::after_file` is only called for the files that are checked, not at the end for the
     /// declaration files and the JSON files that are not. Then nothing reads what the last step
     /// publishes, so it publishes nothing. The declaration files of the project itself, which are
@@ -367,6 +384,7 @@ impl Default for PlanOptions {
             checkers: 0,
             reproduces_symbol_ids: true,
             projects_at_once: 4,
+            files_of_a_small_project: 64,
             after_file_is_for_checked_files: false,
             checks_only_named: false,
             reads_sources_of_references: false,
@@ -1366,7 +1384,7 @@ pub fn check_provided_then<R>(
     provided: host::Provided,
     then: impl FnOnce(Report) -> R,
 ) -> R {
-    // Unless `bun lint` or `bun format` has one.
+    // Unless `bun lint` or `bun fmt` has one.
     use_a_pool_of_their_own("Bun Check");
     let threads = match request.threads {
         0 => usize::from(bun_core::get_thread_count()),
@@ -2617,6 +2635,9 @@ struct WithOutputs<'h> {
     awaited: Guarded<Vec<usize>>,
     /// `Host::take_unreadable`, for this project: others are read through `disk` at the same time.
     unreadable: Guarded<Vec<Vec<u8>>>,
+    /// A small project (`PlanOptions::files_of_a_small_project`): the thread that builds it
+    /// loads and checks it, with the plan of one thread. That thread has the stack of a worker.
+    is_small: bool,
 }
 
 impl WithOutputs<'_> {
@@ -2757,16 +2778,33 @@ impl Host for WithOutputs<'_> {
         self.disk.parse_package_json(arena, text)
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        if self.is_small {
+            return self.disk.on_this_thread(count, work);
+        }
         self.disk.parallel(count, work);
+    }
+    fn is_of_one_thread(&self) -> bool {
+        self.is_small
+    }
+    fn on_this_thread(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        self.disk.on_this_thread(count, work);
     }
     fn loaded(&self) {
         self.disk.loaded();
     }
     fn threads(&self) -> usize {
-        self.disk.threads()
+        match self.is_small {
+            true => 1,
+            false => self.disk.threads(),
+        }
     }
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
-        self.disk.io_pool()
+        // The thread that builds a small project reads its files too: the threads that only
+        // read serve one load at a time.
+        match self.is_small {
+            true => None,
+            false => self.disk.io_pool(),
+        }
     }
 }
 
@@ -2919,6 +2957,7 @@ fn check_with_references(
     let is_solution =
         |index: usize| roots[index].is_empty() && projects[index].project.has_references;
     let loaded = || (0..count).filter(|&index| !is_left_out[index] && !is_solution(index));
+    let built_at_once = loaded().count();
     if !request.plan_options.shares_every_file {
         let variants = variants_of_several(loaded().map(|index| &projects[index].project.options));
         host.share_declaration_files(variants, loaded().count());
@@ -2977,6 +3016,20 @@ fn check_with_references(
     // What each project has emitted, once it is built: see `WithOutputs::files`.
     type Emitted = Vec<(Vec<u8>, Arc<Vec<u8>>)>;
     let emitted: Vec<Guarded<Emitted>> = (0..count).map(|_| Guarded::new(Vec::new())).collect();
+    // A thread that waits for the pool to check a handful of files costs more than checking
+    // them: where there are more projects than are built at once, each small one is loaded and
+    // checked by the thread that builds it, and as many of them at once as there are threads.
+    let large_at_once = (request.plan_options.projects_at_once)
+        .clamp(1, host.threads().max(1))
+        .min(count.max(1));
+    // A program that reads the sources of what it references has all of those files too. With
+    // fewer projects than threads, one thread each would leave threads idle.
+    let is_small = |index: usize| {
+        !reads_sources
+            && built_at_once > large_at_once
+            && built_at_once >= host.threads()
+            && roots[index].len() <= request.plan_options.files_of_a_small_project
+    };
     // `is_built`: by project, now. `Err`: the projects that have to be built first, besides those
     // that it references.
     let build = |index: usize, is_built: &[bool]| -> Result<Option<Report>, Vec<usize>> {
@@ -3021,6 +3074,7 @@ fn check_with_references(
                 .collect(),
             awaited: Guarded::new(Vec::new()),
             unreadable: Guarded::new(Vec::new()),
+            is_small: is_small(index),
         };
         for i in (0..index).filter(|&i| is_built[i]) {
             for (path, text) in emitted[i].lock().iter() {
@@ -3142,11 +3196,14 @@ fn check_with_references(
         is_built: Vec<bool>,
         /// By project: what `build` has returned.
         awaited: Vec<Vec<usize>>,
+        /// How many projects that are not small are being built.
+        large: usize,
     }
     let builds = Guarded::new(Builds {
         is_started: vec![false; count],
         is_built: vec![false; count],
         awaited: vec![Vec::new(); count],
+        large: 0,
     });
     let one_is_built = bun_threading::Condvar::new();
     let reports: Vec<Guarded<Option<Report>>> = (0..count).map(|_| Guarded::new(None)).collect();
@@ -3156,7 +3213,9 @@ fn check_with_references(
             let index = loop {
                 let is_ready = |&i: &usize| {
                     let mut first = up_stream[i].iter().chain(&state.awaited[i]);
-                    !state.is_started[i] && first.all(|&it| state.is_built[it])
+                    !state.is_started[i]
+                        && (is_small(i) || state.large < large_at_once)
+                        && first.all(|&it| state.is_built[it])
                 };
                 if let Some(index) = (0..count).find(is_ready) {
                     break index;
@@ -3167,37 +3226,52 @@ fn check_with_references(
                 one_is_built.wait_guarded(&mut state);
             };
             state.is_started[index] = true;
+            state.large += usize::from(!is_small(index));
             let is_built = state.is_built.clone();
             drop(state);
-            match build(index, &is_built) {
+            let built = build(index, &is_built);
+            let mut state = builds.lock();
+            state.large -= usize::from(!is_small(index));
+            match built {
                 Ok(report) => {
                     *reports[index].lock() = report;
-                    builds.lock().is_built[index] = true;
+                    state.is_built[index] = true;
                 }
                 Err(awaited) => {
-                    let mut state = builds.lock();
                     state.awaited[index].extend(awaited);
                     state.is_started[index] = false;
                 }
             }
+            drop(state);
             one_is_built.notify_all();
         }
     };
-    let at_once = (request.plan_options.projects_at_once)
-        .min(host.threads())
-        .min(count);
+    // Each program occupies memory: it has its own copy of the declaration files it reaches,
+    // however few files the project lists. One thread checks a small project, so four of them
+    // take the place of a large one.
+    let at_once = match (0..count).any(is_small) {
+        true => (host.threads().min(count)).min(large_at_once * 4),
+        false => large_at_once,
+    };
+    // The thread that builds a small project parses and checks it, so it needs the stack of a
+    // worker: the calling thread has the stack it was given, and only waits then.
+    let has_small = (0..count).any(is_small);
     std::thread::scope(|scope| {
-        for _ in 1..at_once {
+        let mut started = 0;
+        for _ in usize::from(!has_small)..at_once {
             // Without the thread, the others build its share.
-            let _ = std::thread::Builder::new()
+            let builder = std::thread::Builder::new()
                 .stack_size(STACK_OF_A_WORKER as usize)
                 .spawn_scoped(scope, || {
                     // As a thread of the pool does when it starts: the parsers check the stack.
                     bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
                     build_what_is_ready();
                 });
+            started += usize::from(builder.is_ok());
         }
-        build_what_is_ready();
+        if !has_small || started == 0 {
+            build_what_is_ready();
+        }
     });
     // `BuildTask.report`: project by project, in build order. What two projects say about a file
     // that both include is there twice.
@@ -3456,7 +3530,10 @@ fn check_named_files(
     run: Option<&Run<'_>>,
     in_room: Option<&Place<'_>>,
 ) -> Report {
+    // A small project of a build is checked by the one thread that builds it, and has the plan
+    // of one thread.
     let threads = match request.threads {
+        _ if host.is_of_one_thread() => 1,
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
     };
@@ -4060,149 +4137,159 @@ fn check_named_files(
     let task_times: Guarded<Vec<(Duration, usize, usize)>> = Guarded::new(Vec::new());
     // Returns the invalid tasks.
     // `ahead`: by task. Empty: every task checks whole files.
-    let run_round = |number: usize, step: &[Task], ahead: &[Ahead], expected: Requested| {
-        // After the last step the published state is read by the loop over the files that are not
-        // checked, which runs with `after_file`, and by a caller that goes on to query the program.
-        // The tasks of split files read the ranges, and nothing else of the step before theirs.
-        let is_read_later = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len()
-            || request.retains_everything
-            || request.after_file.is_some()
-                && !request.plan_options.after_file_is_for_checked_files;
-        let tasks = step.len();
-        let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
-        // The largest first, so that no thread begins it when the others are nearly done.
-        let mut start_order: Vec<usize> = (0..tasks).collect();
-        match request.order {
-            1 if is_one_thread => {}
-            1 => start_order.shared_sort_by_key(|&i| Reverse(weight_of(i))),
-            order => start_order.shared_sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
-        }
-        let outcomes: Vec<Guarded<Option<Outcome>>> =
-            (0..tasks).map(|_| Guarded::new(None)).collect();
-        let (started, busy) = (Instant::now(), AtomicU64::new(0));
-        host.parallel(tasks, &|i| {
-            let (index, began) = (start_order[i], Instant::now());
-            let cost_before = request.task_clock.map(|clock| clock());
-            let files: Vec<FileId> = step[index].iter().map(|&file| to_check[file]).collect();
-            let outcome = match ahead.get(index).copied().flatten() {
-                Some(range) => check_ahead(files[0], range, expected, [number, index]),
-                None => check_chunk(&files, expected, Some((number, index, is_read_later))),
-            };
-            *outcomes[index].lock() = Some(outcome);
-            let elapsed = began.elapsed();
-            busy.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
-            let cost = match (request.task_clock, cost_before) {
-                (Some(clock), Some(before)) => Duration::from_nanos(clock() - before),
-                _ => elapsed,
-            };
-            task_times.lock().push((cost, files.len(), step[index][0]));
-        });
-        let in_tasks = started.elapsed();
-        // The barrier. Everything from here on is in task order.
-        let mut outcomes: Vec<Outcome> = (outcomes.into_iter())
-            .map(|mut outcome| outcome.get_mut().take().unwrap())
-            .collect();
-        let mut finished: Vec<Finished> = (outcomes.iter_mut())
-            .map(|outcome| outcome.finished.take().unwrap())
-            .collect();
-        // The checkers of `checkerPool` share nothing, so there is no serial order to validate against.
-        let mut invalid: Vec<Task> = Vec::new();
-        let (mut ranges_dropped, mut ranges_by_obstacle) = (0, [0; 3]);
-        if checker_count == 0 {
-            // The ranges take part like any task, at the place of their file, so the serial order is what it is without them.
-            let mut is_invalid = program.validate(&finished);
-            // A range that met an obstacle is not published, like an invalid one. Neither is retried: the task of the file
-            // evaluates what is missing.
-            let tolerated = request.plan_options.split_tolerates & 7;
-            for (is_invalid, outcome) in is_invalid.iter_mut().zip(&outcomes) {
-                *is_invalid |= outcome.obstacles & !tolerated != 0;
-                for (bit, count) in ranges_by_obstacle.iter_mut().enumerate() {
-                    *count += usize::from((outcome.obstacles >> bit) & 1);
-                }
+    // `is_retry`: the valid tasks publish, so that the tasks retried after them find what they stored.
+    let run_round =
+        |number: usize, step: &[Task], ahead: &[Ahead], expected: Requested, is_retry: bool| {
+            // After the last step the published state is read by the loop over the files that are not
+            // checked, which runs with `after_file`, and by a caller that goes on to query the program.
+            // The tasks of split files read the ranges, and nothing else of the step before theirs.
+            let is_read_later = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len()
+                || is_retry
+                || request.retains_everything
+                || request.after_file.is_some()
+                    && !request.plan_options.after_file_is_for_checked_files;
+            let tasks = step.len();
+            let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
+            // The largest first, so that no thread begins it when the others are nearly done.
+            let mut start_order: Vec<usize> = (0..tasks).collect();
+            match request.order {
+                1 if is_one_thread => {}
+                1 => start_order.shared_sort_by_key(|&i| Reverse(weight_of(i))),
+                order => start_order.shared_sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
             }
-            let mut at = is_invalid.iter();
-            finished.retain(|_| !*at.next().unwrap());
-            let mut at = is_invalid.iter().zip(step).enumerate();
-            outcomes.retain(|_| {
-                let (index, (&is_invalid, task)) = at.next().unwrap();
-                if is_invalid && ahead.get(index).is_some_and(Option::is_some) {
-                    ranges_dropped += 1;
-                } else if is_invalid {
-                    if let Some(progress) = request.progress {
-                        let bytes = task.iter().map(|&file| bytes_of(file)).sum();
-                        progress.checked.fetch_sub(task.len(), Ordering::Relaxed);
-                        progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
-                    }
-                    invalid.push(task.clone());
-                }
-                !is_invalid
+            let outcomes: Vec<Guarded<Option<Outcome>>> =
+                (0..tasks).map(|_| Guarded::new(None)).collect();
+            let (started, busy) = (Instant::now(), AtomicU64::new(0));
+            host.parallel(tasks, &|i| {
+                let (index, began) = (start_order[i], Instant::now());
+                let cost_before = request.task_clock.map(|clock| clock());
+                let files: Vec<FileId> = step[index].iter().map(|&file| to_check[file]).collect();
+                let outcome = match ahead.get(index).copied().flatten() {
+                    Some(range) => check_ahead(files[0], range, expected, [number, index]),
+                    None => check_chunk(&files, expected, Some((number, index, is_read_later))),
+                };
+                *outcomes[index].lock() = Some(outcome);
+                let elapsed = began.elapsed();
+                busy.fetch_add(elapsed.as_nanos() as u64, Ordering::Relaxed);
+                let cost = match (request.task_clock, cost_before) {
+                    (Some(clock), Some(before)) => Duration::from_nanos(clock() - before),
+                    _ => elapsed,
+                };
+                task_times.lock().push((cost, files.len(), step[index][0]));
             });
-        }
-        for outcome in &mut outcomes {
-            free_trees(std::mem::take(&mut outcome.trees_to_free));
-        }
-        let mut foreign_evaluations = [0u64; FOREIGN_EVALUATION_KINDS.len()];
-        for finished in &finished {
-            for (sum, &more) in foreign_evaluations
-                .iter_mut()
-                .zip(&finished.foreign_evaluations)
-            {
-                *sum += u64::from(more);
+            let in_tasks = started.elapsed();
+            // The barrier. Everything from here on is in task order.
+            let mut outcomes: Vec<Outcome> = (outcomes.into_iter())
+                .map(|mut outcome| outcome.get_mut().take().unwrap())
+                .collect();
+            let mut finished: Vec<Finished> = (outcomes.iter_mut())
+                .map(|outcome| outcome.finished.take().unwrap())
+                .collect();
+            // The checkers of `checkerPool` share nothing, so there is no serial order to validate against.
+            let mut invalid: Vec<Task> = Vec::new();
+            let (mut ranges_dropped, mut ranges_by_obstacle) = (0, [0; 3]);
+            if checker_count == 0 {
+                // The ranges take part like any task, at the place of their file, so the serial order is what it is without them.
+                let mut is_invalid = program.validate(&finished, is_read_later);
+                // A range that met an obstacle is not published, like an invalid one. Neither is retried: the task of the file
+                // evaluates what is missing.
+                let tolerated = request.plan_options.split_tolerates & 7;
+                for (is_invalid, outcome) in is_invalid.iter_mut().zip(&outcomes) {
+                    *is_invalid |= outcome.obstacles & !tolerated != 0;
+                    for (bit, count) in ranges_by_obstacle.iter_mut().enumerate() {
+                        *count += usize::from((outcome.obstacles >> bit) & 1);
+                    }
+                }
+                let mut at = is_invalid.iter();
+                finished.retain(|_| !*at.next().unwrap());
+                let mut at = is_invalid.iter().zip(step).enumerate();
+                outcomes.retain(|_| {
+                    let (index, (&is_invalid, task)) = at.next().unwrap();
+                    if is_invalid && ahead.get(index).is_some_and(Option::is_some) {
+                        ranges_dropped += 1;
+                    } else if is_invalid {
+                        if let Some(progress) = request.progress {
+                            let bytes = task.iter().map(|&file| bytes_of(file)).sum();
+                            progress.checked.fetch_sub(task.len(), Ordering::Relaxed);
+                            progress.bytes_checked.fetch_sub(bytes, Ordering::Relaxed);
+                        }
+                        invalid.push(task.clone());
+                    }
+                    !is_invalid
+                });
             }
-        }
-        let linking = Instant::now();
-        let records = program.link(&mut finished, &in_parallel);
-        let (in_link, publishing) = (linking.elapsed(), Instant::now());
-        let entries = program.publish(&mut finished, &in_parallel, request.digests);
-        let in_publish = publishing.elapsed();
-        let not_published = outcomes
-            .iter()
-            .map(|it| it.generic_relation_entries_not_published);
-        let generic_relation_entries_not_published = not_published.sum();
-        outcomes.into_iter().for_each(&accept);
-        let mut slowest = std::mem::take(&mut *task_times.lock());
-        slowest.shared_sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
-        if request.task_clock.is_none() {
-            slowest.truncate(5);
-        }
-        let path_of = |file: usize| {
-            program.files.modules[to_check[file].idx()]
-                .file_name()
-                .to_vec()
+            for outcome in &mut outcomes {
+                free_trees(std::mem::take(&mut outcome.trees_to_free));
+            }
+            let mut foreign_evaluations = [0u64; FOREIGN_EVALUATION_KINDS.len()];
+            for finished in &finished {
+                for (sum, &more) in foreign_evaluations
+                    .iter_mut()
+                    .zip(&finished.foreign_evaluations)
+                {
+                    *sum += u64::from(more);
+                }
+            }
+            let linking = Instant::now();
+            let records = program.link(&mut finished, &in_parallel);
+            let (in_link, publishing) = (linking.elapsed(), Instant::now());
+            let entries = program.publish(&mut finished, &in_parallel, request.digests);
+            let in_publish = publishing.elapsed();
+            let not_published = outcomes
+                .iter()
+                .map(|it| it.generic_relation_entries_not_published);
+            let generic_relation_entries_not_published = not_published.sum();
+            outcomes.into_iter().for_each(&accept);
+            let mut slowest = std::mem::take(&mut *task_times.lock());
+            slowest.shared_sort_by_key(|&(elapsed, _, file)| (Reverse(elapsed), file));
+            if request.task_clock.is_none() {
+                slowest.truncate(5);
+            }
+            let path_of = |file: usize| {
+                program.files.modules[to_check[file].idx()]
+                    .file_name()
+                    .to_vec()
+            };
+            steps.lock().push(StepReport {
+                slowest_tasks: (slowest.into_iter())
+                    .map(|(elapsed, files, file)| (elapsed, files, path_of(file)))
+                    .collect(),
+                tasks,
+                ranges: ahead.iter().flatten().count(),
+                ranges_dropped,
+                ranges_by_obstacle,
+                files: step.iter().map(Vec::len).sum(),
+                in_tasks,
+                in_link,
+                in_publish,
+                idle: (in_tasks * threads as u32)
+                    .saturating_sub(Duration::from_nanos(busy.into_inner())),
+                entries,
+                records,
+                generic_relation_entries_not_published,
+                foreign_evaluations,
+            });
+            invalid
         };
-        steps.lock().push(StepReport {
-            slowest_tasks: (slowest.into_iter())
-                .map(|(elapsed, files, file)| (elapsed, files, path_of(file)))
-                .collect(),
-            tasks,
-            ranges: ahead.iter().flatten().count(),
-            ranges_dropped,
-            ranges_by_obstacle,
-            files: step.iter().map(Vec::len).sum(),
-            in_tasks,
-            in_link,
-            in_publish,
-            idle: (in_tasks * threads as u32)
-                .saturating_sub(Duration::from_nanos(busy.into_inner())),
-            entries,
-            records,
-            generic_relation_entries_not_published,
-            foreign_evaluations,
-        });
-        invalid
-    };
     // Retries the files of invalid tasks until every task is valid (`Program::validate`). They are partitioned again, because a few long
     // tasks would leave most threads idle. The first task of a round is always valid, so every round has fewer files.
     let run_step = |number: usize, step: &[Task], expected: Requested| {
-        let mut invalid = run_round(number, step, plan.ahead_of(number), expected);
+        program.compare_listings();
+        let mut invalid = run_round(number, step, plan.ahead_of(number), expected, false);
+        let mut retried = 0;
         while !invalid.is_empty() {
             let mut files = invalid.concat();
             files.shared_sort_unstable();
+            // A round of retries that left every file invalid.
+            if retried != 0 && files.len() >= retried {
+                program.stop_comparing_listings();
+            }
+            retried = files.len();
             let again = match is_one_thread {
                 true => Plan::of_one_thread(files, &size_of, &request.plan_options),
                 false => Plan::cut(files, &size_of, &request.plan_options),
             };
-            invalid = run_round(number, &again, &[], expected);
+            invalid = run_round(number, &again, &[], expected, true);
         }
     };
     // `NewDiagnosticForNode` without a node: the range is empty, not undefined.

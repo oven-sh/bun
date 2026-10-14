@@ -62,8 +62,12 @@ pub(crate) struct FileResult {
     pub(crate) text: Option<Vec<u8>>,
     /// Where the lines of `text` start, if that was looked for while it was linted.
     pub(crate) line_starts: Option<Vec<u32>>,
+    /// [`LintResult::run_keys`](bun_lint::linter::LintResult::run_keys), for when the file is linted again.
+    pub(crate) run_keys: Vec<(u64, u128)>,
     /// The text has been changed by fixes: `text` is ESLint's `output`.
     pub(crate) is_fixed: bool,
+    /// Number of fixes applied.
+    pub(crate) fixes: usize,
     /// What the fixes have made of the text, if that is not `text`: oxlint fixes once, and reports what is left where it was.
     pub(crate) fixed_text: Option<Vec<u8>>,
     /// `None` is ESLint's `createIgnoreResult`: the file is not linted, and the only message says
@@ -113,7 +117,9 @@ impl FileResult {
             had_types: false,
             text: None,
             line_starts: None,
+            run_keys: Vec::new(),
             is_fixed: false,
+            fixes: 0,
             fixed_text: None,
             linted: None,
             deprecated: None,

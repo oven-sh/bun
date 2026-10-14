@@ -9,7 +9,8 @@ pub struct NoUnusedExpressions {
 impl Rule for NoUnusedExpressions {
     const META: Meta = Meta::typescript("no-unused-expressions", Kind::Suggestion)
         .recommended()
-        .extends_base_rule("no-unused-expressions");
+        .extends_base_rule("no-unused-expressions")
+        .hints();
     const ON: On = On::new().stmts(&[StmtTag::Expr]);
     type State<'a> = Prologue<'a>;
 

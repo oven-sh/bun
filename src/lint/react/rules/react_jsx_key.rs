@@ -28,6 +28,8 @@ struct Checks {
     key_must_before_spread: bool,
     warn_on_duplicates: bool,
     fragment_shorthand: bool,
+    /// `checkArraysOutsideJSX`, which only `bun lint` has. `false`: an array literal counts only where React renders it as a list.
+    arrays_outside_jsx: bool,
 }
 
 const MISSING_ITER_KEY: Message = Message::new("missingIterKey", "Missing \"key\" prop for element in iterator");
@@ -109,6 +111,7 @@ impl Rule for JsxKey {
             key_must_before_spread: options.bool_or("checkKeyMustBeforeSpread", default),
             warn_on_duplicates: options.bool_or("warnOnDuplicates", default),
             fragment_shorthand: options.bool_or("checkFragmentShorthand", default),
+            arrays_outside_jsx: options.bool_or("checkArraysOutsideJSX", true),
         };
         // oxlint: without options nothing is on. In an object of options, what is missing is on.
         JsxKey { eslint: checks(false), oxlint: checks(is_given) }
@@ -225,12 +228,37 @@ fn array_or_iterator_of<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mut Cx<'a, JsxKey>) 
     Some(outer)
 }
 
+/// Whether React gets to render `array` as a list: it's a child of an element, or a function returns it. Not `steps[step]`, a
+/// table of icons, or a prop like `actions={[<a />, <b />]}`, where the component decides what to do with the elements.
+fn is_rendered_as_a_list(array: Expr) -> bool {
+    let mut e = array;
+    loop {
+        e = match e.parent() {
+            Node::Expr(parent) => match parent.kind() {
+                ExprKind::Jsx(_) => return true,
+                ExprKind::Cond { test, .. } if test != e => parent,
+                ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } => parent,
+                _ => return false,
+            },
+            Node::Stmt(statement) => return statement.tag() == StmtTag::Return,
+            Node::Func(func) => return func.is_arrow(),
+            _ => return false,
+        };
+    }
+}
+
 /// `e`: an element without a `key`, or a fragment.
 fn check_missing_key<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mut Cx<'a, JsxKey>) {
     let Some(outer) = array_or_iterator_of(e, jsx, cx) else {
         return;
     };
     if !cx.state.is_oxlint {
+        if matches!(outer, InsideArrayOrIterator::Array(_))
+            && !cx.state.checks.arrays_outside_jsx
+            && !matches!(e.parent(), Node::Expr(array) if is_rendered_as_a_list(array))
+        {
+            return;
+        }
         let message = match (outer, jsx.is_fragment()) {
             (InsideArrayOrIterator::Array(_), false) => MISSING_ARRAY_KEY,
             (InsideArrayOrIterator::Array(_), true) => MISSING_ARRAY_KEY_USE_PRAG,

@@ -2,8 +2,8 @@ use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKind;
 use bun_lint::utils::ts_scope::reference_contains_type_query;
 use bun_lint_eslint::rules::no_use_before_define::{
-    Config, Initializers, definition_name_end, end_of_definition, first_use, is_class_ref_in_class_decorator,
-    is_named_export, starts_after,
+    Config, Initializers, definition_name_end, end_of_definition, first_use,
+    is_class_ref_in_class_decorator, is_named_export, starts_after,
 };
 
 /// Disallow the use of variables before they are defined.
@@ -11,8 +11,10 @@ pub struct NoUseBeforeDefine {
     config: Config,
 }
 
-const NO_USE_BEFORE_DEFINE: Message =
-    Message::new("noUseBeforeDefine", "'{{name}}' was used before it was defined.");
+const NO_USE_BEFORE_DEFINE: Message = Message::new(
+    "noUseBeforeDefine",
+    "'{{name}}' was used before it was defined.",
+);
 
 #[derive(Default)]
 pub struct State<'a> {
@@ -22,8 +24,15 @@ pub struct State<'a> {
 }
 
 fn report<'a>(reference: Reference<'a>, at: Span, cx: &mut Cx<'a, NoUseBeforeDefine>) {
-    cx.report(at, NO_USE_BEFORE_DEFINE).data("name", reference.name()).labels_with(|labels| {
-        if let Some(defined) = reference.symbol().and_then(|it| it.declarations().next()?.name_span()) {
+    let report = match reference.expr() {
+        Some(identifier) => cx.report(at, NO_USE_BEFORE_DEFINE).called_with(identifier),
+        None => cx.report(at, NO_USE_BEFORE_DEFINE),
+    };
+    report.data("name", reference.name()).labels_with(|labels| {
+        if let Some(defined) = reference
+            .symbol()
+            .and_then(|it| it.declarations().next()?.name_span())
+        {
             labels.push(defined, "defined here");
         }
     });
@@ -37,9 +46,12 @@ fn oxlint_is_in_key_of_type(reference: Reference) -> bool {
     };
     loop {
         match e.parent() {
-            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == e) => e = parent,
+            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == e) => {
+                e = parent
+            }
             Node::Member(member) => {
-                return member.is_signature() || member.flags().intersects(Flags::ABSTRACT | Flags::AMBIENT);
+                return member.is_signature()
+                    || member.flags().intersects(Flags::ABSTRACT | Flags::AMBIENT);
             }
             _ => return false,
         }
@@ -79,7 +91,12 @@ fn oxlint_takes_for_a_value(variable: Symbol, reference: Reference) -> bool {
 
 impl NoUseBeforeDefine {
     /// typescript-eslint's `isForbidden`.
-    fn is_forbidden<'a>(&self, variable: Symbol<'a>, kind: DeclarationKind, reference: Reference<'a>) -> bool {
+    fn is_forbidden<'a>(
+        &self,
+        variable: Symbol<'a>,
+        kind: DeclarationKind,
+        reference: Reference<'a>,
+    ) -> bool {
         let config = &self.config;
         if config.ignore_type_references
             && (reference.is_type() && !oxlint_takes_for_a_value(variable, reference)
@@ -114,7 +131,8 @@ impl NoUseBeforeDefine {
     }
 
     fn check<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
-        let (Some(first), Some(definition)) = (first_use(variable), variable.declarations().next()) else {
+        let (Some(first), Some(definition)) = (first_use(variable), variable.declarations().next())
+        else {
             return;
         };
         // Only of a value is it asked whether it is in an initializer.
@@ -123,7 +141,9 @@ impl NoUseBeforeDefine {
             _ => (end_of_definition(definition), false),
         };
         let is_defined = |it: Reference<'a>| {
-            starts_after(it, end) && !(is_type && it.is_value()) || it.is_init() || it.is_jsx_pragma()
+            starts_after(it, end) && !(is_type && it.is_value())
+                || it.is_init()
+                || it.is_jsx_pragma()
         };
         if end.is_none_or(|end| first <= end) || is_type && !variable.references().all(is_defined) {
             self.check_references(variable, definition, &is_defined, cx);
@@ -140,7 +160,9 @@ impl NoUseBeforeDefine {
         cx: &mut Cx<'a, Self>,
     ) {
         let references = variable.references();
-        let (Some(kind), Some(definition_end)) = (definition.kind(), definition_name_end(definition)) else {
+        let (Some(kind), Some(definition_end)) =
+            (definition.kind(), definition_name_end(definition))
+        else {
             return;
         };
         let declared = cx.state.initializers.declared(definition);
@@ -160,7 +182,10 @@ impl NoUseBeforeDefine {
                 continue;
             }
             // For oxlint nothing more is asked about an `export { a }` that is allowed.
-            if cx.language().is_oxlint && self.config.allow_named_exports && is_named_export(reference) {
+            if cx.language().is_oxlint
+                && self.config.allow_named_exports
+                && is_named_export(reference)
+            {
                 continue;
             }
             if !self.config.allow_named_exports && is_named_export(reference)
@@ -171,7 +196,8 @@ impl NoUseBeforeDefine {
                 report(reference, reference.span(), cx);
                 // For oxlint that is a reference too.
                 if cx.language().is_oxlint
-                    && let Some(closing) = name_in_closing_tag(reference).filter(|it| it.end < definition_end)
+                    && let Some(closing) =
+                        name_in_closing_tag(reference).filter(|it| it.end < definition_end)
                 {
                     report(reference, closing, cx);
                 }

@@ -45,11 +45,13 @@ fn report<'a>(statement: Stmt<'a>, cx: &mut Cx<'a, NoUnsafeFinally>) {
         StmtTag::Break => "BreakStatement",
         _ => "ContinueStatement",
     };
-    cx.report(statement, UNSAFE_USAGE).data("nodeType", node_type);
+    cx.report(statement, UNSAFE_USAGE)
+        .data("nodeType", node_type)
+        .hint("It replaces whatever try and catch return or throw.");
 }
 
 impl Rule for NoUnsafeFinally {
-    const META: Meta = Meta::eslint("no-unsafe-finally", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-unsafe-finally", Kind::Problem).recommended().hints();
     const ON: On =
         On::new().stmts(&[StmtTag::Return, StmtTag::Throw, StmtTag::Break, StmtTag::Continue]).finish();
     type State<'a> = State<'a>;

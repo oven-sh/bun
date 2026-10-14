@@ -1,8 +1,8 @@
 //! The lexer of `@handlebars/parser` (`src/handlebars.l`): in each state the first rule that matches wins.
 
 use super::Error;
-use super::positions::Positions;
 use crate::syntax_error::{Message, Refusal};
+use bun_collections::ByteSet;
 use bun_core::strings;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -57,19 +57,13 @@ enum State {
     Raw,
 }
 
-/// Which bytes are ASCII that `[^\s!"#%-,\.\/;->@\[-\^`\{-~]` matches.
-const IS_ASCII_OF_ID: [bool; 256] = {
-    let mut table = [false; 256];
-    let mut byte = 0;
-    while byte < 0x80 {
-        table[byte] = !matches!(
-            byte as u8,
-            b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' ' | b'!' | b'"' | b'#' | b'%'..=b',' | b'.' | b'/' | b';'..=b'>' | b'@' | b'['..=b'^' | b'`' | b'{'..=b'~'
-        );
-        byte += 1;
-    }
-    table
-};
+/// The ASCII bytes that `[^\s!"#%-,\.\/;->@\[-\^`\{-~]` matches.
+const ASCII_OF_ID: ByteSet = ByteSet::of(b"$-:?_\x7F")
+    .with_range(0x00, 0x08)
+    .with_range(0x0E, 0x1F)
+    .with_range(b'0', b'9')
+    .with_range(b'A', b'Z')
+    .with_range(b'a', b'z');
 
 /// How many bytes at the start of `text` can be in an `ID`.
 pub(crate) fn id_len(text: &[u8]) -> usize {
@@ -77,7 +71,7 @@ pub(crate) fn id_len(text: &[u8]) -> usize {
     loop {
         at += text[at..]
             .iter()
-            .take_while(|byte| IS_ASCII_OF_ID[**byte as usize])
+            .take_while(|byte| ASCII_OF_ID.has(**byte))
             .count();
         match text.get(at) {
             Some(0x80..) if strings::js_whitespace_len(&text[at..]) == 0 => at += 1,
@@ -452,15 +446,8 @@ fn number_len(text: &[u8]) -> Option<usize> {
     is_literal_lookahead(&text[len..]).then_some(len)
 }
 
-/// Writes the tokens of `text` to `tokens`, which is empty, and where the parser takes them to be to `positions`. The
-/// last is `Eof`.
-pub(crate) fn lex(
-    text: &[u8],
-    tokens: &mut Vec<Token>,
-    positions: &mut Positions,
-    refusal: &Refusal,
-) -> Result<(), Error> {
-    let counts_wrongly = Positions::can_be_wrong(text);
+/// Writes the tokens of `text` to `tokens`, which is empty. The last is `Eof`.
+pub(crate) fn lex(text: &[u8], tokens: &mut Vec<Token>, refusal: &Refusal) -> Result<(), Error> {
     let mut lexer = Lexer {
         text,
         refusal,
@@ -477,19 +464,14 @@ pub(crate) fn lex(
                 return Err(lexer.error(Message::UnexpectedEnd));
             }
             lexer.token(TokenKind::Eof, 0);
-            positions.finish(text);
             return Ok(());
         }
-        let start = lexer.at;
         match state {
             State::Initial => lexer.initial()?,
             State::Mu => lexer.mustache()?,
             State::Emu => lexer.escaped_mustache()?,
             State::Com => lexer.comment()?,
             State::Raw => lexer.raw()?,
-        }
-        if counts_wrongly {
-            positions.add_match(text, start, lexer.at);
         }
     }
 }

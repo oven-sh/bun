@@ -1,4 +1,4 @@
-// Small inputs in every language that `bun format` reads, with line breaks wherever they mean something: in comments, in
+// Small inputs in every language that `bun fmt` reads, with line breaks wherever they mean something: in comments, in
 // `prettier-ignore`d code, in strings, templates and block scalars, in embedded code, between things that keep an empty line.
 // They are written with \n. `format.test.ts` gives them other line breaks and a byte order mark.
 export const inputs: Record<string, string> = {

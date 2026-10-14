@@ -15,7 +15,7 @@ pub struct NoUnhandledEmitterErrors {
 
 const NO_LISTENER: Message = Message::new(
     "noListener",
-    "What `{{name}}()` returns emits `error` when it fails, and without a listener for that event the process ends.",
+    "`{{name}}()` emits `error` when it fails, which crashes the process if nothing listens. Add an `error` listener.",
 );
 
 const FORK: TraceMap<'static, ()> = TraceMap::new(&[("fork", CALLED)]);
@@ -63,9 +63,10 @@ fn method_call<'a>(receiver: Expr<'a>) -> Option<(Name<'a>, Call<'a>, Expr<'a>)>
 type Known = FxHashMap<usize, bool>;
 
 fn has_listener(variable: Symbol) -> bool {
+    let is_exported = |it: Declaration| matches!(it.parent(), Some(Node::Stmt(statement)) if statement.is_exported());
     // What is no expression, as in `export { a }`, cannot be followed.
     let mut uses = variable.references().filter(|it| !it.is_init()).map(Reference::expr);
-    uses.any(|it| it.is_none_or(|e| is_taken_care_of(e, None)))
+    variable.declarations().any(is_exported) || uses.any(|it| it.is_none_or(|e| is_taken_care_of(e, None)))
 }
 
 /// Whether the emitter `e` gets a listener for `error`, or goes where that cannot be seen. `known`: it is not the name

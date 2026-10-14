@@ -11,6 +11,7 @@
 //! And the rules of `bun`, which are Bun's own.
 
 #![forbid(unsafe_code)]
+#![deny(clippy::iter_over_hash_type)]
 
 mod bun;
 mod import_export_map;
@@ -26,7 +27,9 @@ mod oxlint;
 mod prettier;
 
 bun_lint::rules! {
+    bun_axios_no_unbounded_requests::AxiosNoUnboundedRequests,
     bun_consistent_directive_prefix::ConsistentDirectivePrefix,
+    bun_fast_check_no_unseeded_random::FastCheckNoUnseededRandom,
     bun_jsx_no_forbidden_nesting::JsxNoForbiddenNesting,
     bun_no_array_just_to_count::NoArrayJustToCount,
     bun_no_cast_to_brand::NoCastToBrand,
@@ -40,13 +43,10 @@ bun_lint::rules! {
     bun_no_redundant_catch_type::NoRedundantCatchType,
     bun_no_restricted_text::NoRestrictedText,
     bun_no_side_effects_on_import::NoSideEffectsOnImport,
-    bun_no_unbounded_requests::NoUnboundedRequests,
     bun_no_unhandled_emitter_errors::NoUnhandledEmitterErrors,
     bun_no_unportable_commands::NoUnportableCommands,
-    bun_no_unseeded_random_in_property_test::NoUnseededRandomInPropertyTest,
     bun_no_useless_spread_fallback::NoUselessSpreadFallback,
     bun_prefer_builtin_sleep::PreferBuiltinSleep,
-    bun_prefer_lazy_schema::PreferLazySchema,
     bun_prefer_local_module::PreferLocalModule,
     bun_prefer_timeout_signal::PreferTimeoutSignal,
     bun_prefer_url_for_sibling_files::PreferUrlForSiblingFiles,
@@ -54,6 +54,7 @@ bun_lint::rules! {
     bun_react_no_local_render_helpers::ReactNoLocalRenderHelpers,
     bun_react_no_namespace_hooks::ReactNoNamespaceHooks,
     bun_react_prefer_updater_function::ReactPreferUpdaterFunction,
+    bun_zod_prefer_lazy_schema::ZodPreferLazySchema,
     import_consistent_type_specifier_style::ConsistentTypeSpecifierStyle,
     import_default::Default,
     import_dynamic_import_chunkname::DynamicImportChunkname,

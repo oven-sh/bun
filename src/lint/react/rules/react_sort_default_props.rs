@@ -87,7 +87,7 @@ impl<const OLD_NAME: bool> Rule for SortDefaultProps<OLD_NAME> {
     /// `checkSorted`, for each of the objects. One that many variables lead to is looked at once, and reported as often.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut objects = std::mem::take(&mut cx.state);
-        objects.sort_unstable_by_key(|it| it.span().start);
+        utils::sort::sort_unstable_by_key(&mut objects, |it| it.span().start);
         for same in objects.chunk_by(|a, b| a == b) {
             let unsorted = same.first().map_or_else(Vec::new, |&object| self.unsorted(object));
             for _ in same {

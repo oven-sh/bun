@@ -657,7 +657,7 @@ pub(crate) mod help_command {
   <b><magenta>test<r>                           Run unit tests with Bun
   <b><magenta>check<r>                          Type check a TypeScript project
   <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint
-  <b><magenta>format<r>                         Format JavaScript and TypeScript, like Prettier
+  <b><magenta>fmt<r>                            Format JavaScript and TypeScript, like Prettier
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -1069,8 +1069,8 @@ pub(crate) mod command {
                 false => Tag::LintCommand,
             };
         }
-        if x == RootCommandMatcher::case(b"format") {
-            return match super::script_or_command::is_of_the_project(b"format") {
+        if x == RootCommandMatcher::case(b"fmt") {
+            return match super::script_or_command::is_of_the_project(b"fmt") {
                 true => Tag::AutoCommand,
                 false => Tag::FormatCommand,
             };
@@ -1623,13 +1623,47 @@ pub(crate) mod command {
         &[]
     }
 
+    /// The flags of `command` that stand before it, as in `bun --check format` or `bun -c format`, and then what follows it. If
+    /// they were dropped, `--check` would write. `knows` tells whether `command` has a flag. The others are for `bun`, or come
+    /// from `BUN_OPTIONS`.
+    fn with_own_flags_before(
+        argv: &[&'static bun_core::ZStr],
+        command: &[u8],
+        knows: fn(&[u8]) -> bool,
+    ) -> Vec<&'static bun_core::ZStr> {
+        let is_of_bun = |arg: &[u8]| match strings::split_once_char(arg, b'=') {
+            // `bun -c=bunfig.toml lint`. Without a value it's `--check` of `bun fmt`.
+            Some((name, _)) => matches!(name, b"--config" | b"-c" | b"--cwd"),
+            None => matches!(arg, b"--config" | b"--cwd" | b"--help" | b"--silent"),
+        };
+        let before = (argv.iter().skip(1)).take_while(|arg| arg.as_bytes() != command);
+        let mut args: Vec<_> = before
+            .filter(|arg| arg.as_bytes().starts_with(b"-"))
+            .filter(|arg| !is_of_bun(arg.as_bytes()) && knows(arg.as_bytes()))
+            .copied()
+            .collect();
+        args.extend_from_slice(after_command(argv, command));
+        args
+    }
+
+    /// `bun --help lint`: prints the help of `command` and exits if `--help` or `-h` is among the flags of `bun`, which precede it.
+    fn print_help_if_asked_before(argv: &[&'static bun_core::ZStr], command: &[u8], tag: Tag) {
+        let mut before = (argv.iter().map(|it| it.as_bytes())).take_while(|arg| *arg != command);
+        if before.any(|arg| matches!(arg, b"--help" | b"-h")) {
+            tag_print_help(tag, false);
+            Global::exit(0);
+        }
+    }
+
     #[cold]
     #[inline(never)]
     fn exec_lint(log: &mut bun_ast::Log) -> CmdResult {
         // LintCommand parses its own argv.
         let ctx = init(Tag::LintCommand, log)?;
         let argv = argv_zslice();
-        super::lint_command::LintCommand::exec(ctx, after_command(&argv, b"lint"))
+        print_help_if_asked_before(&argv, b"lint", Tag::LintCommand);
+        let knows = super::lint_command::LintCommand::has_flag;
+        super::lint_command::LintCommand::exec(ctx, &with_own_flags_before(&argv, b"lint", knows))
     }
 
     #[cold]
@@ -1638,7 +1672,12 @@ pub(crate) mod command {
         // FormatCommand parses its own argv.
         let ctx = init(Tag::FormatCommand, log)?;
         let argv = argv_zslice();
-        super::format_command::FormatCommand::exec(ctx, after_command(&argv, b"format"))
+        print_help_if_asked_before(&argv, b"fmt", Tag::FormatCommand);
+        let knows = super::format_command::FormatCommand::has_flag;
+        super::format_command::FormatCommand::exec(
+            ctx,
+            &with_own_flags_before(&argv, b"fmt", knows),
+        )
     }
 
     #[cold]
@@ -2043,6 +2082,34 @@ To create a project with the official Next.js scaffolding tool, run\n\
         super::pm_view_command::view(pm, package_name, property_path, json_output)
     }
 
+    /// Prints the flags for `bun lint --help` and `bun fmt --help`: the common ones, or with `all`, every flag by group.
+    fn print_flags(help: &bun_lint_driver::cli::Help, all: bool) {
+        if all {
+            for group in help.groups {
+                pretty!("\n<b>{}:<r>", group.title);
+                bun_clap::simple_help(group.params);
+                pretty!("\n");
+            }
+            return;
+        }
+        pretty!("\n<b>Flags:<r>");
+        bun_clap::simple_help(&help.common());
+        pretty!("\n");
+    }
+
+    /// Printed at the end of `bun <command> --help` if the project has a script with the same name.
+    fn print_note_about_script(command: &str) {
+        use crate::cli::script_or_command::{Runs, runs};
+        if runs(command.as_bytes()) == Runs::Script {
+            pretty!(
+                "\n<blue>note<r><d>:<r> package.json has a \"{}\" script, so <b>bun {}<r> runs that script\n  Change the script to <b>\"bun {}\"<r> to use the built-in command\n",
+                command,
+                command,
+                command,
+            );
+        }
+    }
+
     pub(crate) fn tag_print_help(cmd: Tag, show_all_flags: bool) {
         // the output of --help uses the following syntax highlighting
         // template: <b>Usage<r>: <b><green>bun <command><r> <cyan>[flags]<r> <blue>[arguments]<r>
@@ -2294,77 +2361,55 @@ Execute a shell script directly from Bun.
 Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r>
 "
                 );
+                print_note_about_script("check");
                 Output::flush();
             }
             Tag::FormatCommand => {
                 pretty!(
                     "\
-<b>Usage<r>: <b><green>bun format<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
-  Format JavaScript and TypeScript the way Prettier does, using all CPU cores.
-
-  Writes the files that change, unless <cyan>--check<r> or <cyan>--list-different<r> is given.
-  Uses the nearest <b>.prettierrc<r>, <b>prettier.config.js<r>, <b>package.json#prettier<r> or <b>.oxfmtrc.json<r>, and <b>.editorconfig<r>.
-
-<b>Flags:<r>"
-                );
-                Output::flush();
-                bun_clap::simple_help(crate::cli::format_command::PARAMS);
-                pretty!(
-                    "
-
-<b>Examples:<r>
-  <d>Format the current directory<r>
-  <b><green>bun format<r>
-
-  <d>Format some files and directories<r>
-  <b><green>bun format<r> <blue>src test/a.test.ts<r>
-
-  <d>Fail if a file is not formatted, and write nothing<r>
-  <b><green>bun format<r> <cyan>--check<r>
-
-  <d>Format what an editor has in a buffer<r>
-  <b><green>bun format<r> <cyan>--stdin-filepath<r> <blue>src/index.ts<r>
-
-Full documentation is available at <magenta>https://bun.com/docs/runtime/format<r>
+<b>Usage<r>: <b><green>bun fmt<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
+  Format JavaScript, TypeScript, CSS, HTML, JSON, YAML, Markdown and more.
 "
                 );
+                print_flags(&crate::cli::format_command::HELP, show_all_flags);
+                pretty!(
+                    "
+<b>Examples:<r>
+  <b><green>bun fmt<r>
+  <b><green>bun fmt<r> <blue>src test/a.test.ts<r>
+  <b><green>bun fmt<r> <cyan>--check<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/format<r>
+"
+                );
+                if !show_all_flags {
+                    pretty!("See every flag with <b><green>bun fmt<r> <cyan>--help --all<r>\n");
+                }
+                print_note_about_script("fmt");
                 Output::flush();
             }
             Tag::LintCommand => {
                 pretty!(
                     "\
 <b>Usage<r>: <b><green>bun lint<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
-  Lint JavaScript and TypeScript with the rules of ESLint and typescript-eslint, using all CPU cores.
-
-  Uses the nearest <b>eslint.config.js<r>, <b>.oxlintrc.json<r> or <b>.eslintrc.json<r>, and takes the flags of <b>eslint<r> and <b>oxlint<r>.
-  Without a configuration file: <b>eslint:recommended<r>, <b>typescript-eslint/recommended<r> for TypeScript, and some of <b>bun:test/*<r> for tests.
-
-<b>Flags:<r>"
-                );
-                Output::flush();
-                bun_clap::simple_help(crate::cli::lint_command::PARAMS);
-                pretty!(
-                    "
-
-<b>Examples:<r>
-  <d>Lint the current directory<r>
-  <b><green>bun lint<r>
-
-  <d>Lint some files and directories<r>
-  <b><green>bun lint<r> <blue>src test/a.test.ts<r>
-
-  <d>Fix what can be fixed<r>
-  <b><green>bun lint<r> <cyan>--fix<r>
-
-  <d>Fail on warnings too<r>
-  <b><green>bun lint<r> <cyan>--max-warnings 0<r>
-
-  <d>Try a rule without editing the configuration<r>
-  <b><green>bun lint<r> <cyan>--rule<r> <blue>'eqeqeq: error'<r>
-
-Full documentation is available at <magenta>https://bun.com/docs/runtime/lint<r>
+  Find and fix problems in JavaScript and TypeScript.
 "
                 );
+                print_flags(&crate::cli::lint_command::HELP, show_all_flags);
+                pretty!(
+                    "
+<b>Examples:<r>
+  <b><green>bun lint<r>
+  <b><green>bun lint<r> <cyan>--fix<r> <blue>src<r>
+  <b><green>bun lint<r> <cyan>--rule<r> <blue>'no-console: error'<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/lint<r>
+"
+                );
+                if !show_all_flags {
+                    pretty!("See every flag with <b><green>bun lint<r> <cyan>--help --all<r>\n");
+                }
+                print_note_about_script("lint");
                 Output::flush();
             }
             Tag::DedupeCommand => {

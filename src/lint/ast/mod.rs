@@ -45,7 +45,7 @@ pub use decl::*;
 pub use expr::*;
 pub use list::{Iter as ListIter, List};
 pub use name::{Ident, Name};
-pub use node::{Ancestors, Node};
+pub use node::{Ancestors, Node, Packed};
 pub use pat::*;
 #[doc(hidden)]
 pub use reach::NOT_IN_TREE;
@@ -191,7 +191,7 @@ pub(crate) struct Lazy {
     pub(crate) sequence_roots: OnceCell<rustc_hash::FxHashMap<hir::ExprId, hir::ExprId>>,
     /// Where the `a.b` of each `<a.b>` and `</a.b>` starts and ends, in order.
     jsx_tags_with_dots: OnceCell<Box<[(u32, u32)]>>,
-    pub(crate) references: OnceCell<crate::semantic::ReferenceIndex>,
+    pub(crate) references: crate::semantic::ReferenceIndex,
     pub(crate) by_kind: crate::runner::ByKind,
     pub(crate) code_paths: crate::code_path::Store,
     pub(crate) linter: crate::linter::PerFile,
@@ -228,6 +228,7 @@ pub struct File<'a> {
     hides_casts: bool,
     has_parse_errors: bool,
     may_bind_a_parameter_twice: bool,
+    rare_syntax: u32,
 }
 
 impl<'a> File<'a> {
@@ -242,6 +243,8 @@ impl<'a> File<'a> {
         types: Option<crate::types::Checker<'a>>,
     ) -> File<'a> {
         let hides_casts = hir.is_js && !hir.jsdoc_comments.is_empty();
+        // Every lookup in the list is a binary search by the keyword's position.
+        debug_assert!(hir.import_attributes.is_sorted_by_key(|it| it.0));
         File {
             language,
             body: hir.body,
@@ -259,6 +262,7 @@ impl<'a> File<'a> {
             },
             has_parse_errors: hir.has_errors || hir.has_parse_diagnostics,
             may_bind_a_parameter_twice: hir.may_bind_a_parameter_twice,
+            rare_syntax: hir.rare_syntax,
             hir: Hir::new(hir),
             bound: Bound::new(bound),
             atoms,
@@ -317,6 +321,12 @@ impl<'a> File<'a> {
         self.is_js
     }
 
+    /// Whether `hir::File::rare_syntax` has `bit`, which is one of `hir::rare`, or one of several.
+    #[inline]
+    pub(crate) fn has_rare_syntax(&self, bit: u32) -> bool {
+        self.rare_syntax & bit != 0
+    }
+
     /// `hir::File::may_bind_a_parameter_twice`
     #[inline]
     pub(crate) fn may_bind_a_parameter_twice(&self) -> bool {
@@ -359,6 +369,15 @@ impl<'a> File<'a> {
     #[inline]
     pub fn has_parse_errors(&self) -> bool {
         self.has_parse_errors
+    }
+
+    /// In a JavaScript file: where the first thing is that only TypeScript has, which is parsed all the same. `a: T`, `a as T`,
+    /// `class A<T> {}`, `enum A {}`.
+    pub fn first_of_typescript_in_javascript(&self) -> Option<u32> {
+        (self.hir.diagnostics.iter())
+            .filter(|it| it.kind == hir::DiagnosticKind::Js)
+            .map(|it| it.start)
+            .min()
     }
 
     /// The statements at the top level.
@@ -770,12 +789,6 @@ macro_rules! handle {
             #[inline]
             fn is_synthetic(self) -> bool {
                 self.file.has_synthetic_nodes() && self.starts_in_jsdoc()
-            }
-        }
-        impl crate::span::Spanned for $name<'_> {
-            #[inline]
-            fn span(&self) -> $crate::span::Span {
-                $name::span(*self)
             }
         }
     };

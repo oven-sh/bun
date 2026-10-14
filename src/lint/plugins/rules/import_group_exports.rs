@@ -1,10 +1,11 @@
-use bun_lint_oxlint::ast_util::{is_specific_id, static_property_name};
-use bun_lint_oxlint::import::{
-    AssignmentTargets, export_declaration_span, is_assignment_target, is_export_declaration, is_type_export_declaration,
-    module_items,
-};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint_oxlint::ast_util::{is_specific_id, static_property_name};
+use bun_lint_oxlint::import::{
+    AssignmentTargets, export_declaration_span, is_assignment_target, is_export_declaration,
+    is_type_export_declaration, module_items,
+};
+use bun_lint_oxlint::module_record::in_order_of_map;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -50,8 +51,14 @@ impl Rule for GroupExports {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let is_export = if cx.language().is_oxlint { is_commonjs_export } else { has_exporting_accessor_chain };
-        if e.left().is_some_and(is_export) && !is_assignment_target(e, &mut cx.state.assignment_targets) {
+        let is_export = if cx.language().is_oxlint {
+            is_commonjs_export
+        } else {
+            has_exporting_accessor_chain
+        };
+        if e.left().is_some_and(is_export)
+            && !is_assignment_target(e, &mut cx.state.assignment_targets)
+        {
             cx.state.commonjs_exports.push(e.span());
         }
     }
@@ -59,7 +66,9 @@ impl Rule for GroupExports {
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         // Of values, of types.
         let mut nodes: [Spans; 2] = [Spans::new(), Spans::new()];
-        let mut source_records: [FxHashMap<Name<'a>, Spans>; 2] = [FxHashMap::default(), FxHashMap::default()];
+        // Those of each source, in the order in which the sources come, and where each source is.
+        let mut source_records: [Vec<(Name<'a>, Spans)>; 2] = [Vec::new(), Vec::new()];
+        let mut places: FxHashMap<(usize, Name<'a>), usize> = FxHashMap::default();
         let is_oxlint = cx.language().is_oxlint;
         for stmt in module_items(cx.file()) {
             match stmt.kind() {
@@ -68,24 +77,39 @@ impl Rule for GroupExports {
                     match export.spec().filter(|_| export.has_from()) {
                         // The original keeps them by name in an object, of which that is no key. oxlint has a map.
                         Some(source) if !is_oxlint && source.is("__proto__") => {}
-                        Some(source) => source_records[kind].entry(source).or_default().push(stmt.span()),
+                        Some(source) => {
+                            let records = &mut source_records[kind];
+                            let at = *places.entry((kind, source)).or_insert(records.len());
+                            if at == records.len() {
+                                records.push((source, Spans::new()));
+                            }
+                            records[at].1.push(stmt.span());
+                        }
                         None => nodes[kind].push(stmt.span()),
                     }
                 }
                 _ if is_export_declaration(stmt) => {
-                    nodes[usize::from(is_type_export_declaration(stmt))].push(export_declaration_span(stmt));
+                    nodes[usize::from(is_type_export_declaration(stmt))]
+                        .push(export_declaration_span(stmt));
                 }
                 _ => {}
             }
         }
-        let groups = nodes.iter().chain(source_records.iter().flat_map(|it| it.values()));
-        for span in groups.filter(|it| it.len() > 1).flatten() {
+        // oxlint reports one sort after the other, and those with a source in the order of its hash map.
+        for span in nodes.iter().filter(|it| it.len() > 1).flatten() {
             cx.report(*span, ES_MODULE);
         }
-        if cx.state.commonjs_exports.len() > 1 {
-            for span in &cx.state.commonjs_exports {
-                cx.report(*span, COMMONJS);
-            }
+        let mut commonjs_exports = std::mem::take(&mut cx.state.commonjs_exports);
+        utils::sort::sort_unstable_by_key(&mut commonjs_exports, |it| it.start);
+        for span in commonjs_exports
+            .iter()
+            .filter(|_| commonjs_exports.len() > 1)
+        {
+            cx.report(*span, COMMONJS);
+        }
+        let of_sources = source_records.into_iter().flat_map(in_order_of_map);
+        for span in of_sources.filter(|it| it.1.len() > 1).flat_map(|it| it.1) {
+            cx.report(span, ES_MODULE);
         }
     }
 }
@@ -96,10 +120,14 @@ fn has_exporting_accessor_chain(left: Expr) -> bool {
     // From the last to the first. `None`: what is in the brackets is no name.
     let mut chain: SmallVec<[Option<&[u8]>; 5]> = SmallVec::new();
     let mut node = left;
-    while chain.len() <= 3 && let Some(object) = node.object() {
+    while chain.len() <= 3
+        && let Some(object) = node.object()
+    {
         chain.push(match node.index() {
             Some(index) => index.as_ident().map(Name::bytes),
-            None => node.member_name().map(|it| it.bytes().strip_prefix(b"#").unwrap_or_else(|| it.bytes())),
+            None => node
+                .member_name()
+                .map(|it| it.bytes().strip_prefix(b"#").unwrap_or_else(|| it.bytes())),
         });
         if let Some(name) = object.as_ident() {
             chain.push(Some(name.bytes()));
@@ -112,7 +140,9 @@ fn has_exporting_accessor_chain(left: Expr) -> bool {
     }
     matches!(
         chain[..],
-        [_, Some(b"exports")] | [Some(b"exports"), Some(b"module")] | [_, Some(b"exports"), Some(b"module")]
+        [_, Some(b"exports")]
+            | [Some(b"exports"), Some(b"module")]
+            | [_, Some(b"exports"), Some(b"module")]
     )
 }
 
@@ -127,5 +157,8 @@ fn is_commonjs_export(left: Expr) -> bool {
 }
 
 fn check_module_export(member: Expr) -> bool {
-    static_property_name(member).is_some_and(|it| it.is("exports")) && member.object().is_some_and(|it| is_specific_id(it, "module"))
+    static_property_name(member).is_some_and(|it| it.is("exports"))
+        && member
+            .object()
+            .is_some_and(|it| is_specific_id(it, "module"))
 }

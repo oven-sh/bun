@@ -206,15 +206,25 @@ pub(super) fn all_exprs() -> NodeTags {
 // ───────────────────────────── statements ─────────────────────────────
 
 /// `Program.sourceType`
-pub(super) fn source_type(file: &File) -> &'static str {
+pub(super) fn source_type<'a>(file: &'a File<'a>) -> &'static str {
     use crate::language::SourceType;
-    match (Dialect::of(file), file.language().source_type) {
-        (Dialect::Espree, SourceType::Module) => "module",
-        (Dialect::Espree, SourceType::Script) => "script",
-        (Dialect::Espree, SourceType::CommonJs) => "commonjs",
-        (Dialect::TypeScript, _) if file.is_module_program() => "module",
-        (Dialect::TypeScript, _) => "script",
+    let source_type = match Dialect::of(file) {
+        // oxlint decides for each file, whatever the configuration says.
+        _ if file.language().is_oxlint => crate::utils::oxlint::source_type(file),
+        Dialect::Espree => file.language().source_type,
+        Dialect::TypeScript if file.is_module_program() => SourceType::Module,
+        Dialect::TypeScript => SourceType::Script,
+    };
+    match source_type {
+        SourceType::Module => "module",
+        SourceType::Script => "script",
+        SourceType::CommonJs => "commonjs",
     }
+}
+
+/// Whether the values in the nodes are typescript-estree's where it goes its own way. oxlint has its fields, and the values of ECMAScript.
+fn is_typescript_estree(file: &File) -> bool {
+    Dialect::of(file) == Dialect::TypeScript && !file.language().is_oxlint
 }
 
 /// It has the modifier `declare`.
@@ -238,7 +248,7 @@ pub(super) fn directive<'a>(statement: Stmt<'a>) -> Option<&'a [u8]> {
     let Node::Func(block) = statement.parent() else {
         return None;
     };
-    if block.kind() != FnKind::StaticBlock || Dialect::of(statement.file()) != Dialect::TypeScript {
+    if block.kind() != FnKind::StaticBlock || !is_typescript_estree(statement.file()) {
         return None;
     }
     let text = |it: Stmt<'a>| match it.kind() {
@@ -478,20 +488,21 @@ pub(super) fn quasi<'a>(v: VNode<'a>) -> Option<Quasi<'a>> {
                 return None;
             };
             let i = i as usize;
-            let cooked = match Dialect::of(e.file()) {
+            let is_typescript_estree = is_typescript_estree(e.file());
+            let cooked = match is_typescript_estree {
                 // It only looks for `\u` and `\x`, also after a `\`.
-                Dialect::TypeScript => {
+                true => {
                     let is_tagged =
                         matches!(e.parent(), Node::Expr(it) if it.tag() == ExprTag::TaggedTemplate);
                     template
                         .text_of_scanner(i)
                         .filter(|_| !is_tagged || has_valid_escapes(template.raw(i)))
                 }
-                Dialect::Espree => template.cooked(i),
+                false => template.cooked(i),
             };
             // In the raw text of ECMAScript every line break is a line feed.
-            let raw = match (Dialect::of(e.file()), template.raw(i)) {
-                (Dialect::Espree, raw) if bun_core::strings::contains_char(raw, b'\r') => {
+            let raw = match (is_typescript_estree, template.raw(i)) {
+                (false, raw) if bun_core::strings::contains_char(raw, b'\r') => {
                     let mut text = Vec::with_capacity(raw.len());
                     for (at, &byte) in raw.iter().enumerate() {
                         match byte {
@@ -534,6 +545,15 @@ pub(super) fn jsx_text_value<'a>(e: Expr<'a>) -> Option<&'a [u8]> {
         std::borrow::Cow::Borrowed(text) => text,
         std::borrow::Cow::Owned(text) => e.file().intern(&text).bytes(),
     })
+}
+
+/// The same for text that is nothing but whitespace, which [`crate::ast`] has no node for.
+pub(super) fn jsx_whitespace_value<'a>(v: VNode<'a>) -> &'a [u8] {
+    let is_espree = v.file().language().parser == crate::language::Parser::Espree;
+    match crate::ast::jsx_text_value_of(v.file().slice(v.span()), is_espree) {
+        std::borrow::Cow::Borrowed(text) => text,
+        std::borrow::Cow::Owned(text) => v.file().intern(&text).bytes(),
+    }
 }
 
 /// oxlint's `value` of a string that is the value of a JSX attribute, without braces: what is between the quotes, where it does not

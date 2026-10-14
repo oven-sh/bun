@@ -5,7 +5,7 @@ use crate::eslint::{self, Suggested};
 use crate::oxlint::{Rendered, render_all};
 use bun_core::strings;
 use bun_lint::ast::File;
-use bun_lint::context::Cx;
+use bun_lint::context::{Cx, Report};
 use bun_lint::rule::{Message, Rule};
 use bun_lint::span::Span;
 use bun_react_compiler::diagnostics::ErrorCategory;
@@ -15,7 +15,14 @@ const DESCRIPTION: Message = Message::new("", "{{description}}");
 
 /// oxlint's `run_react_compiler_rule`: reports what the compiler says of the file in `category`.
 pub fn report<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
-    let file = cx.file();
+    report_with(cx.file(), category, &|at| cx.report(at, MESSAGE));
+}
+
+fn report_with<'a>(
+    file: &'a File<'a>,
+    category: ErrorCategory,
+    report_at: &dyn Fn(Span) -> Report<'a>,
+) {
     let findings = crate::findings(file, Flavor::Oxlint)
         .iter()
         .filter(|finding| finding.category == category);
@@ -32,8 +39,7 @@ pub fn report<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
         let place = first
             .as_ref()
             .map_or_else(|| Span::empty(0), |label| label.span);
-        let mut report = cx
-            .report(place, MESSAGE)
+        let mut report = report_at(place)
             .data("message", message.into_owned())
             .help(help)
             .note(note);
@@ -49,7 +55,14 @@ pub fn report<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
 
 /// `makeRule` of eslint-plugin-react-hooks: reports what the compiler says of the file in `category`.
 pub fn report_as_eslint<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
-    let file = cx.file();
+    report_as_eslint_with(cx.file(), category, &|at| cx.report(at, MESSAGE));
+}
+
+fn report_as_eslint_with<'a>(
+    file: &'a File<'a>,
+    category: ErrorCategory,
+    report_at: &dyn Fn(Span) -> Report<'a>,
+) {
     let findings = crate::findings(file, Flavor::Eslint)
         .iter()
         .filter(|finding| finding.category == category);
@@ -57,9 +70,7 @@ pub fn report_as_eslint<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
         let Some(rendered) = eslint::render(file, finding) else {
             continue;
         };
-        let mut report = cx
-            .report(rendered.span, MESSAGE)
-            .data("message", rendered.message);
+        let mut report = report_at(rendered.span).data("message", rendered.message);
         for suggested in rendered.suggestions {
             let Suggested {
                 description,

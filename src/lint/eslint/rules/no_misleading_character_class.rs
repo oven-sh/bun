@@ -317,7 +317,10 @@ impl NoMisleadingCharacterClass {
             };
             // Two kinds start together only at an escape that is two code units, and the kind that is about that alone is the
             // first of `KINDS`: the shorter first.
-            let report = cx.report(span, message).shorter_first();
+            let report = cx
+                .report(span, message)
+                .shorter_first()
+                .hint("What looks like one character is several, and the class matches each of them alone.");
             if kind == SURROGATE_PAIR_WITHOUT_U_FLAG {
                 report.suggest(SUGGEST_UNICODE_FLAG, &unicode_fixer);
             }
@@ -343,7 +346,8 @@ impl NoMisleadingCharacterClass {
 impl Rule for NoMisleadingCharacterClass {
     const META: Meta = Meta::eslint("no-misleading-character-class", Kind::Problem)
         .has_suggestions()
-        .recommended();
+        .recommended()
+        .hints();
     const ON: On = On::new().exprs(&[ExprTag::Regex]).finish();
     /// The regular expression literals in which something can be found.
     type State<'a> = Vec<Expr<'a>>;

@@ -157,7 +157,7 @@ impl<'a> ReactImports<'a> {
             _ => None,
         });
         let mut react: SmallVec<[Import<'a>; 2]> = react.collect();
-        react.sort_unstable_by_key(|it| it.span().start);
+        utils::sort::sort_unstable_by_key(&mut react, |it| it.span().start);
         let mut all = ReactImports::default();
         for import in react {
             all.starts.push(import.span().start);

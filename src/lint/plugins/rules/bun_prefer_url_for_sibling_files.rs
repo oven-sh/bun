@@ -12,7 +12,7 @@ pub struct PreferUrlForSiblingFiles;
 
 const JOINED_PATH: Message = Message::new(
     "joinedPath",
-    "A bundler cannot tell which file this path names. It can with `new URL(\"./file\", import.meta.url)`.",
+    "Bundlers cannot follow this path. Use `new URL(\"./file\", import.meta.url)`.",
 );
 
 const PATH: Each<'static> =

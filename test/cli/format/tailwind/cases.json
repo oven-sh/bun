@@ -1025,8 +1025,8 @@
     "options": {
       "sortTailwindcss": {}
     },
-    "input": "<div class=\"p-4 flex m-2\"></div>\n<div class=\"p-4 {{a}} flex m-2 {{if b \"p-4 flex\"}} p-1\"></div>\n<div class=\"p-4 flex{{a}}m-2 p-1\"></div>\n<div class={{if a \"p-4 flex\" \"m-2  p-1 \"}}></div>\n<div class={{concat \"p-4 flex\" a \" m-2 p-1 \"}}></div>\n<div class={{x (concat \"p-4 flex\" a) y=\"p-4 flex\"}} other=\"p-4 flex\"></div>\n<Foo @class=\"p-4 flex\" class=\"  p-4   flex  \" />\n{{foo class=\"p-4 flex\"}}\n",
-    "output": "<div class=\"m-2 flex p-4\"></div>\n<div class=\"p-4 {{a}} m-2 flex {{if b 'flex p-4'}} p-1\"></div>\n<div class=\"p-4 flex{{a}}m-2 p-1\"></div>\n<div class={{if a \"flex p-4\" \"m-2 p-1\"}}></div>\n<div class={{concat \"flex p-4\" a \" m-2 p-1\"}}></div>\n<div class={{x (concat \"p-4 flex\" a) y=\"flex p-4\"}} other=\"p-4 flex\"></div>\n<Foo @class=\"p-4 flex\" class=\"flex p-4\" />\n{{foo class=\"p-4 flex\"}}"
+    "input": "<div class=\"p-4 flex m-2\"></div>\n<div class=\"p-4 {{a}} flex m-2 {{if b \"p-4 flex\"}} p-1\"></div>\n<div class=\"p-4 flex{{a}}m-2 p-1\"></div>\n<div class={{if a \"p-4 flex\" \"m-2  p-1 \"}}></div>\n<div class={{x (concat \"p-4 flex\" a) y=\"p-4 flex\"}} other=\"p-4 flex\"></div>\n<Foo @class=\"p-4 flex\" class=\"  p-4   flex  \" />\n{{foo class=\"p-4 flex\"}}\n",
+    "output": "<div class=\"m-2 flex p-4\"></div>\n<div class=\"p-4 {{a}} m-2 flex {{if b 'flex p-4'}} p-1\"></div>\n<div class=\"p-4 flex{{a}}m-2 p-1\"></div>\n<div class={{if a \"flex p-4\" \"m-2 p-1\"}}></div>\n<div class={{x (concat \"p-4 flex\" a) y=\"flex p-4\"}} other=\"p-4 flex\"></div>\n<Foo @class=\"p-4 flex\" class=\"flex p-4\" />\n{{foo class=\"p-4 flex\"}}"
   },
   {
     "name": "Angular",

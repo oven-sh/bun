@@ -480,6 +480,32 @@ describe.each(implementations)("ws server, sending ($name)", ({ ws: implementati
 
   // Winsock takes all of it on loopback, so nothing ever waits there.
   describe.skipIf(isWindows)("a peer that does not read", () => {
+    // The peer decides how many Pings there are, so a flood of them must not fill the memory of the server.
+    // RFC 6455 5.5.3 lets a Pong answer only the latest Ping. npm ws queues an answer to each.
+    test.skipIf(!builtin)("Pings are not answered while more than 16 MiB wait for the socket", async () => {
+      await using server = await openServer(implementation);
+      const { ws, client } = server;
+      let sent = 0;
+      const send = (size: number) => (ws.send(Buffer.alloc(size, sent)), sent++, size);
+      client.socket.pause();
+      const sizes = [send(17 * MiB)];
+      // The kernel has taken a part of it.
+      while (ws.bufferedAmount <= 16 * MiB && sent < 32) sizes.push(send(MiB));
+      expect(ws.bufferedAmount).toBeGreaterThan(16 * MiB);
+
+      const pings = 100;
+      const { promise: heard, resolve } = Promise.withResolvers<void>();
+      let count = 0;
+      ws.on("ping", () => ++count === pings && resolve());
+      for (let i = 0; i < pings; i++) client.ping("flood");
+      await heard;
+
+      client.socket.resume();
+      expect(await takeLarge(client, sizes.length)).toEqual(sizes.map((size, i) => `binary ${size} bytes of ${i}`));
+      // The Pong of the round trip itself shows that Pings are answered again.
+      expect(await client.roundTrip()).toEqual([]);
+    });
+
     // Bun.serve() drops a message when 16 MiB wait for the socket already. A `ws` socket has no such limit.
     test("messages and their callbacks wait, past 16 MiB, then each message arrives once, whole and in order", async () => {
       await using server = await openServer(implementation);

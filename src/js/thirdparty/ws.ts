@@ -2263,10 +2263,17 @@ class ClientRequest extends EventEmitter {
     nativeOptions.headers = headers;
     nativeOptions.extensions = this[kHeaders]["sec-websocket-extensions"]?.[1] as string | undefined;
 
-    const native =
-      (this[kNative] =
-      websocket[kNative] =
-        createWebSocket(this[kUrl], nativeOptions, websocket, clientHandlers));
+    let native: NativeClient;
+    try {
+      native = createWebSocket(this[kUrl], nativeOptions, websocket, clientHandlers);
+    } catch (err) {
+      // The caller of the constructor catches it. After a redirect there is no caller.
+      if (websocket._redirects === 0) throw err;
+
+      this.destroy(err as Error);
+      return this;
+    }
+    this[kNative] = websocket[kNative] = native;
 
     if (this.listenerCount("socket") > 0) process.nextTick(emitSocket, this, native);
     return this;
@@ -2682,11 +2689,11 @@ function initAsClient(
   }
   if (tls) nativeOptions.tls = tls;
 
-  // The credentials travel in the Authorization header below.
+  // The credentials travel in the Authorization header below, an empty fragment nowhere.
   let url = parsedUrl.href;
-  if (username || password) {
+  if (username || password || url.endsWith("#")) {
     const bare = new URL(url);
-    bare.username = bare.password = "";
+    bare.username = bare.password = bare.hash = "";
     url = bare.href;
   }
 

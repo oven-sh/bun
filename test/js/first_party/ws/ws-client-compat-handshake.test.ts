@@ -638,6 +638,32 @@ describe.each(implementations)("ws client, opening ($name)", ({ ws: implementati
       expect(client.events).toEqual([`error SyntaxError ${JSON.stringify(message)} rs=2`, lost]);
     });
 
+    test("Location: /# is followed, an empty fragment is no fragment", async () => {
+      await using client = await dial(
+        implementation,
+        { followRedirects: true },
+        { respond: conn => (conn.headLines[0] === "GET / HTTP/1.1" ? redirect("/dest#") : response101(conn)) },
+      );
+      await client.opened;
+      expect(client.events).toEqual(opening);
+      expect(client.ws.url).toBe(client.peer.url + "/dest#");
+      expect(client.peer.connections.map(conn => conn.headLines[0])).toEqual(["GET / HTTP/1.1", "GET /dest HTTP/1.1"]);
+    });
+
+    // npm ws takes the empty socket path for none and dials localhost:80.
+    test.skipIf(!builtin)("Location: ws+unix::/x, without a socket path, is an 'error', not an exception", async () => {
+      await using client = await dial(
+        implementation,
+        { followRedirects: true },
+        { respond: () => redirect("ws+unix::/x") },
+      );
+      await client.closed;
+      expect(client.events).toEqual([
+        'error SyntaxError "Invalid url for WebSocket ws+unix::/x (missing unix socket path)" rs=2',
+        lost,
+      ]);
+    });
+
     const headers = { Authorization: "Basic Zm9vOmJhcg==", Cookie: "foo=bar", Host: "example.test", "X-Other": "1" };
     const all = { authorization: "Basic Zm9vOmJhcg==", cookie: "foo=bar", host: "example.test", other: "1" };
     const own = "127.0.0.1:PORT";

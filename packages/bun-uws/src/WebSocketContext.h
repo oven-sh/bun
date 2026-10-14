@@ -87,6 +87,16 @@ private:
         }
     }
 
+    /* The peer decides how many Pings there are, so their answers have a limit also where maxBackpressure is 0 and
+     * the application's own messages have none. RFC 6455 5.5.3 lets a Pong answer only the latest Ping. */
+    static void sendAutomaticPong(WebSocket<SSL, isServer, USERDATA> *webSocket, std::string_view payload) {
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) webSocket);
+        if (!getExtS((us_socket_t *) webSocket)->autoPong || webSocketData->closeFrameSent || webSocket->getBufferedAmount() > 16 * 1024 * 1024) {
+            return;
+        }
+        webSocket->send(payload, OpCode::PONG);
+    }
+
     /* Returns false after failing the connection */
     static bool inflateMessage(void *s, char *&data, size_t &length) {
         WebSocketContextData<SSL, USERDATA> *webSocketContextData = getExtS((us_socket_t *) s);
@@ -203,9 +213,7 @@ private:
                     return true;
                 } else {
                     if (opCode == PING) {
-                        if (webSocketContextData->autoPong && !webSocketData->closeFrameSent) {
-                            webSocket->send(std::string_view(data, length), (OpCode) OpCode::PONG);
-                        }
+                        sendAutomaticPong(webSocket, std::string_view(data, length));
                         if (webSocketContextData->pingHandler) {
                             webSocketContextData->pingHandler(webSocket, {data, length});
                             if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {
@@ -233,9 +241,7 @@ private:
                         return true;
                     } else {
                         if (opCode == PING) {
-                            if (webSocketContextData->autoPong && !webSocketData->closeFrameSent) {
-                                webSocket->send(std::string_view(controlBuffer, webSocketData->controlTipLength), (OpCode) OpCode::PONG);
-                            }
+                            sendAutomaticPong(webSocket, std::string_view(controlBuffer, webSocketData->controlTipLength));
                             if (webSocketContextData->pingHandler) {
                                 webSocketContextData->pingHandler(webSocket, std::string_view(controlBuffer, webSocketData->controlTipLength));
                                 if (us_socket_is_closed((us_socket_t *) s) || webSocketData->isShuttingDown) {

@@ -121,6 +121,17 @@ pub enum Protocol {
     Http3,
 }
 
+/// Which redirects the request's credential headers survive.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum RedirectCredentialsPolicy {
+    /// fetch(): https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
+    #[default]
+    SameOrigin,
+    /// `bun install`: also http -> https on the same hostname, from port 80 to port 443 or on one port.
+    HttpsUpgrade,
+}
+
 pub use bun_http_types::Encoding::Encoding;
 pub use header_value_iterator::{
     HeaderValueIterator, connection_header_keep_alive, fold_transfer_encoding,
@@ -223,6 +234,7 @@ pub struct Flags {
     pub forced_protocol: Option<Protocol>,
     pub(crate) h3_retried: bool,
     pub is_node_http_client: bool,
+    pub redirect_credentials: RedirectCredentialsPolicy,
 }
 
 impl Default for Flags {
@@ -246,6 +258,7 @@ impl Default for Flags {
             forced_protocol: None,
             h3_retried: false,
             is_node_http_client: false,
+            redirect_credentials: RedirectCredentialsPolicy::SameOrigin,
         }
     }
 }
@@ -936,6 +949,7 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
+use bun_core::fmt::{EscapeControlChars, escape_control_chars};
 use bun_core::{FeatureFlags, Global, Output};
 use bun_core::{String as BunString, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
@@ -1033,6 +1047,26 @@ bun_core::comptime_string_map! {
         b"cookie" => (),
         b"host" => (),
     };
+}
+
+#[derive(Copy, Clone)]
+struct RedirectHop {
+    same_origin: bool,
+    /// http -> https on one hostname, from port 80 to port 443 or on one port.
+    https_upgrade: bool,
+}
+
+impl RedirectHop {
+    fn between(from: &URL<'_>, to: &URL<'_>) -> Self {
+        let (from_port, to_port) = (from.get_port_auto(), to.get_port_auto());
+        Self {
+            same_origin: is_same_origin_url(from, to),
+            https_upgrade: from.is_http()
+                && to.is_https()
+                && strings::eql_case_insensitive_ascii(from.hostname, to.hostname, true)
+                && (from_port == to_port || (from_port == 80 && to_port == 443)),
+        }
+    }
 }
 
 // ── shared per-thread buffers ───────────────────────────────────────────
@@ -1385,7 +1419,7 @@ pub(crate) fn print_request(
         "> {} {} {}",
         ver,
         BStr::new(request.method),
-        bun_core::fmt::redacted_npm_url(url),
+        EscapeControlChars(bun_core::fmt::redacted_npm_url(url)),
     );
     for header in request.headers {
         let name = header.name();
@@ -1396,8 +1430,8 @@ pub(crate) fn print_request(
             let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
             bun_core::pretty_errorln!(
                 "> <r><cyan>{}<r><d>: <r>{}<d>[redacted]<r>",
-                BStr::new(name),
-                BStr::new(&value[..scheme_len]),
+                escape_control_chars(name),
+                escape_control_chars(&value[..scheme_len]),
             );
         } else {
             bun_core::pretty_errorln!("> {}", header);
@@ -5114,7 +5148,7 @@ impl<'a> HTTPClient<'a> {
                 {
                     return Err(crate::Error::RequestBodyNotReusable);
                 }
-                let is_same_origin;
+                let hop: RedirectHop;
 
                 {
                     if let Some(i) = strings::index_of(location, b"://") {
@@ -5178,7 +5212,7 @@ impl<'a> HTTPClient<'a> {
                         // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                         let new_url: URL<'a> =
                             unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                        is_same_origin = is_same_origin_url(&new_url, &self.url);
+                        hop = RedirectHop::between(&self.url, &new_url);
                         self.url = new_url;
                         // connected_url still borrows from the previous hop's buffer
                         // until doRedirect releases the socket, so park it in
@@ -5229,7 +5263,7 @@ impl<'a> HTTPClient<'a> {
                         // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                         let new_url: URL<'a> =
                             unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                        is_same_origin = is_same_origin_url(&new_url, &self.url);
+                        hop = RedirectHop::between(&self.url, &new_url);
                         self.url = new_url;
                         debug_assert!(self.prev_redirect.is_empty());
                         self.prev_redirect =
@@ -5253,7 +5287,7 @@ impl<'a> HTTPClient<'a> {
                         // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
                         // below, which lives as long as `self` (≥ `'a`).
                         self.url = unsafe { parsed_url.erase_lifetime() };
-                        is_same_origin = is_same_origin_url(&self.url, &original_url);
+                        hop = RedirectHop::between(&original_url, &self.url);
                         debug_assert!(self.prev_redirect.is_empty());
                         self.prev_redirect = core::mem::replace(&mut self.redirect, new_url);
                     }
@@ -5295,13 +5329,17 @@ impl<'a> HTTPClient<'a> {
                 // locationURL's origin, then for each headerName of CORS
                 // non-wildcard request-header name, delete headerName from
                 // request's header list.
-                if !is_same_origin && self.header_entries.len() > 0 {
+                // The credential headers (all but `host`) follow `Flags::redirect_credentials`.
+                if !hop.same_origin && self.header_entries.len() > 0 {
+                    let strip_credentials = !hop.https_upgrade
+                        || self.flags.redirect_credentials == RedirectCredentialsPolicy::SameOrigin;
                     let mut i = 0;
                     while i < self.header_entries.len() {
                         let name = self.header_str(self.header_entries.items_name()[i]);
                         if CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS
                             .get_ascii_case_insensitive(name)
                             .is_some()
+                            && (strip_credentials || name.eq_ignore_ascii_case(b"host"))
                         {
                             let _ = self.header_entries.ordered_remove(i);
                         } else {

@@ -706,3 +706,131 @@ describe.skipIf(isWindows)("bun init when a file cannot be written", () => {
     },
   );
 });
+
+// `bun init` in a directory that already has a package.json takes the entry
+// point from `module` or `main`. It creates the "Hello via Bun!" stub at that
+// path only when the path names a script and nothing loads for the package
+// yet. It used to create it whenever that exact path did not exist, and the
+// stub then ran in place of the module the package resolved to before. The
+// fixtures list the dependencies, so no `bun install` runs.
+describe("bun init over a package.json that names an entry point", () => {
+  const stubSource = 'console.log("Hello via Bun!");\n';
+  const scaffold = new Set([".gitignore", "README.md", "package.json", "tsconfig.json", "jsconfig.json"]);
+
+  function manifest(fields: Record<string, string>) {
+    return JSON.stringify({
+      name: "pkg",
+      version: "1.0.0",
+      ...fields,
+      devDependencies: { "@types/bun": "latest" },
+      peerDependencies: { typescript: "^7" },
+    });
+  }
+
+  async function bun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: initEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  /** Everything below `dir` that is not one of init's own scaffold files, directories included. */
+  function leftBehind(dir: string) {
+    return readdirSync(dir, { recursive: true, encoding: "utf8" })
+      .map(name => name.replaceAll("\\", "/"))
+      .filter(name => !scaffold.has(name))
+      .sort();
+  }
+
+  describe.each([
+    // [what, package.json fields, the module that `bun .` runs, where the stub used to be written]
+    ["an extensionless main beside index.js", { main: "./index" }, "index.js", "index"],
+    ["a .js main beside index.ts", { main: "./index.js" }, "index.ts", "index.js"],
+    ["a missing main beside index.js", { main: "./missing.js" }, "index.js", "missing.js"],
+    ["a missing module beside a main", { module: "./missing.mjs", main: "./real.js" }, "real.js", "missing.mjs"],
+  ] as const)("%s", (_what, fields, real, stub) => {
+    test.concurrent.each([
+      ["-y", ["-y"], ""],
+      ["--minimal -y", ["--minimal", "-y"], ""],
+      ["-y <folder>", ["-y", "pkg"], "pkg"],
+    ] as const)("`bun .` still runs that module after bun init %s", async (_flags, args, folder) => {
+      const project = { "package.json": manifest(fields), [real]: `console.log("the real module");` };
+      using dir = tempDir("bun-init-entry-shadow", folder ? { [folder]: project } : project);
+      const cwd = path.join(String(dir), folder);
+
+      const init = await bun(String(dir), "init", ...args);
+      const run = await bun(cwd, ".");
+
+      expect(init.stdout).not.toContain(" + ./" + stub);
+      expect({
+        ran: run.stdout,
+        stubCreated: fs.existsSync(path.join(cwd, stub)),
+        exitCode: init.exitCode,
+      }).toEqual({ ran: "the real module\n", stubCreated: false, exitCode: 0 });
+    });
+  });
+
+  // The documented case: the entry point named by package.json is created when
+  // it is a script and the package does not load yet.
+  test.concurrent.each([
+    ["main", "dist/index.js"],
+    ["module", "index.ts"],
+  ] as const)("creates the stub at a %s that nothing loads for yet", async (field, entry) => {
+    using dir = tempDir("bun-init-entry-create", { "package.json": manifest({ [field]: entry }) });
+    const init = await bun(String(dir), "init", "-y");
+    expect(init.stdout).toContain(" + " + entry);
+    expect(fs.readFileSync(path.join(String(dir), entry), "utf8")).toBe(stubSource);
+    expect(init.exitCode).toBe(0);
+  });
+
+  test.concurrent("--minimal creates no stub at a main that nothing loads for yet", async () => {
+    using dir = tempDir("bun-init-entry-minimal", { "package.json": manifest({ main: "./missing.js" }) });
+    const init = await bun(String(dir), "init", "--minimal", "-y");
+    expect(leftBehind(String(dir))).toEqual([]);
+    expect(init.exitCode).toBe(0);
+  });
+
+  test.concurrent.each([
+    ["data.json", {}],
+    ["build/Release/addon.node", {}],
+    ["bin/cli", {}],
+    ["./addon", { "addon.node": "" }],
+  ] as const)("creates nothing at main %s, which does not name a script", async (main, files) => {
+    using dir = tempDir("bun-init-entry-not-script", { "package.json": manifest({ main }), ...files });
+    const init = await bun(String(dir), "init", "-y");
+    expect(leftBehind(String(dir))).toEqual(Object.keys(files));
+    expect(init.exitCode).toBe(0);
+  });
+
+  test.concurrent("a main that cannot be created is skipped: nothing is left behind and init exits 0", async () => {
+    const long = Buffer.alloc(4096, "m").toString();
+    const rows: { main: string; files: Record<string, string> }[] = [
+      { main: "./lib/", files: {} },
+      { main: "a/b/", files: {} },
+      { main: "f/child.js", files: { f: "a file, not a directory" } },
+      { main: long + ".js", files: {} },
+      // Whether the package loads is decided without reading tsconfig.json.
+      { main: "./index.js", files: { "index.ts": "", "tsconfig.json": JSON.stringify({ extends: "./" + long }) } },
+    ];
+    const results = await Promise.all(
+      rows.map(async ({ main, files }) => {
+        using dir = tempDir("bun-init-entry-skip", { "package.json": manifest({ main }), ...files });
+        const init = await bun(String(dir), "init", "-y");
+        return { main: main.slice(0, 16), left: leftBehind(String(dir)), exitCode: init.exitCode };
+      }),
+    );
+    expect(results).toEqual(
+      rows.map(({ main, files }) => ({
+        main: main.slice(0, 16),
+        left: Object.keys(files).filter(name => !scaffold.has(name)),
+        exitCode: 0,
+      })),
+    );
+  });
+});

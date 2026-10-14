@@ -41,7 +41,7 @@ It creates:
 
 - a `package.json` file with a name that defaults to the current directory name, and a `typecheck` script that runs [`bun check`](/runtime/check)
 - a `tsconfig.json` or `jsconfig.json` file, depending on whether the entry point is a TypeScript file
-- an entry point, which defaults to `index.ts` unless any of `index.{tsx, jsx, js, mts, mjs}` exist or the `package.json` specifies a `module` or `main` field
+- an entry point, which defaults to `index.ts` unless any of `index.{tsx, jsx, js, mts, mjs}` exist or the `package.json` specifies a `module` or `main` field. An entry point that `package.json` names is only created when it is a JavaScript or TypeScript file and the package does not resolve to a module yet, and never with `--minimal`
 - a `README.md` file
 
 AI Agent rules (disable with `$BUN_AGENT_RULE_DISABLED=1`):

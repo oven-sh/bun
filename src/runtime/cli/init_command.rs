@@ -13,7 +13,8 @@ use bun_resolver::fs as Fs;
 use bun_sys::{self, Fd};
 
 use crate::cli as CLI;
-use bun_bundler::options;
+use bun_bundler::{Transpiler, options};
+use bun_options_types::schema::api;
 
 // ──────────────────────────────────────────────────────────────────────────
 // RadioChoice trait — the choice enums used by `process_radio_button`
@@ -466,6 +467,8 @@ impl InitCommand {
             b"project".to_vec()
         };
         let mut did_load_package_json = false;
+        let mut entry_from_manifest = false;
+        let mut longest_main_field: usize = 0;
         if !package_json_contents.list.is_empty() {
             'process_package_json: {
                 let source = bun_ast::Source::init_path_string(
@@ -501,6 +504,15 @@ impl InitCommand {
                 {
                     if let Some(str_) = name.as_utf8_string_literal() {
                         fields.entry_point = str_.to_vec();
+                        entry_from_manifest = !fields.entry_point.is_empty();
+                    }
+                }
+                for main_field in [b"module".as_slice(), b"main", b"jsnext:main"] {
+                    if let Some(len) = package_json_expr
+                        .get(main_field)
+                        .and_then(|value| value.as_utf8_string_literal().map(<[u8]>::len))
+                    {
+                        longest_main_field = longest_main_field.max(len);
                     }
                 }
 
@@ -868,23 +880,21 @@ impl InitCommand {
                     Output::flush();
                 }
 
-                if !fields.entry_point.is_empty()
+                if !minimal
+                    && !fields.entry_point.is_empty()
                     && is_safe_entry_point_path(&fields.entry_point)
+                    && (!entry_from_manifest || is_script_file_name(&fields.entry_point))
                     && !exists(&fields.entry_point)
+                    && !(entry_from_manifest && package_entry_loads(longest_main_field))
                 {
-                    if let Some(dirname) = bun_core::dirname(&fields.entry_point) {
-                        if dirname != b"." {
-                            let _ = bun_sys::Dir::cwd().make_path(dirname);
-                        }
-                    }
-
-                    Assets::check(
-                        Assets::create_new(
-                            &fields.entry_point,
-                            b"console.log(\"Hello via Bun!\");\n",
-                        ),
+                    let created = Assets::create_new(
                         &fields.entry_point,
+                        b"console.log(\"Hello via Bun!\");\n",
                     );
+                    // A project that already has a package.json works without the stub.
+                    if !entry_from_manifest {
+                        Assets::check(created, &fields.entry_point);
+                    }
                 }
 
                 if steps.write_tsconfig {
@@ -1873,6 +1883,38 @@ fn is_type_script_entry_point(entry_point: &[u8]) -> bool {
 /// inside the current working directory.
 fn is_safe_entry_point_path(path: &[u8]) -> bool {
     !bun_paths::is_absolute_loose(path) && !strings::split_any(path, b"/\\").any(|seg| seg == b"..")
+}
+
+/// Whether `path` names a JavaScript or TypeScript file, the only kind of file the stub can be.
+fn is_script_file_name(path: &[u8]) -> bool {
+    !matches!(path.last(), Some(b'/' | b'\\'))
+        && bun_ast::Loader::from_string(bun_paths::extension(path))
+            .is_some_and(|loader| loader.is_java_script_like())
+}
+
+/// Whether `bun .` finds a module for the package in the current directory; undecidable counts as found.
+#[cold]
+fn package_entry_loads(longest_main_field: usize) -> bool {
+    let top_level_dir = Fs::FileSystem::get().top_level_dir;
+    // The resolver joins the directory and a main field into a path buffer without a length check.
+    if top_level_dir.len() + longest_main_field + 64 > bun_paths::MAX_PATH_BYTES {
+        return true;
+    }
+    let mut log = bun_ast::Log::init();
+    let options = api::TransformOptions {
+        target: Some(api::Target::Bun),
+        ..Default::default()
+    };
+    let Ok(mut transpiler) = Transpiler::init(CLI::cli_arena(), &raw mut log, options, None) else {
+        return true;
+    };
+    transpiler.resolver.opts.load_tsconfig_json = false;
+    !matches!(
+        transpiler
+            .resolver
+            .resolve(top_level_dir, b".", bun_ast::ImportKind::EntryPointRun),
+        Err(bun_resolver::Error::ModuleNotFound)
+    )
 }
 
 #[inline]

@@ -2278,6 +2278,7 @@ fn parse_build_command_options(
                             )
                         ),
                     );
+                    Global::exit(1);
                 }
             }
         }

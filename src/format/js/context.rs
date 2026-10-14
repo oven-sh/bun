@@ -1,7 +1,6 @@
 //! What the code that formats a file can see besides the node it is formatting.
 
 use super::comments::{Comments, FileComments};
-use super::source_text::SourceText;
 use super::utils::tailwindcss::TailwindContext;
 use crate::cursor::CursorRegion;
 use crate::ir::element::FormatElement;
@@ -58,29 +57,19 @@ impl<'a> JsFormatContext<'a> {
             has_tree_of_babel: file.is_javascript()
                 || options.in_html.has_tree_of_babel
                 || !matches!(options.in_html.root, HtmlRoot::None | HtmlRoot::Program),
-            comments: Comments::new(
-                Some(file),
-                SourceText::new(file.text()),
-                options.flavor,
-                comments,
-            ),
-            ..Self::without_file(file.text(), options, comments)
+            comments: Comments::new(Some(file), options.flavor, comments),
+            ..Self::without_file(options, comments)
         }
     }
 
-    /// For a document that is written for `source`, which is in another language. Nothing that
-    /// writes it asks for the [file](JsFormatContext::file).
-    pub(crate) fn without_file(
-        source: &'a [u8],
-        options: FormatOptions,
-        comments: &'a FileComments,
-    ) -> Self {
+    /// For a document in another language. Nothing that writes it asks for the [file](JsFormatContext::file).
+    pub(crate) fn without_file(options: FormatOptions, comments: &'a FileComments) -> Self {
         let tailwind = options.tailwind.as_deref();
         let of_plugin = (tailwind.filter(|it| it.follows_plugin)).map(TailwindContext::of_plugin);
         Self {
             file: None,
             has_tree_of_babel: false,
-            comments: Comments::new(None, SourceText::new(source), options.flavor, comments),
+            comments: Comments::new(None, options.flavor, comments),
             options,
             skip_trailing_comments: false,
             cached_elements: FxHashMap::default(),

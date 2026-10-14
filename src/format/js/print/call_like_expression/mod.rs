@@ -7,10 +7,8 @@ use super::arrow_function_expression::is_multiline_template_starting_on_same_lin
 use super::type_parameters::type_arguments;
 use crate::js::parentheses::expression::chain_expression_needs_parentheses;
 use crate::js::utils::call_expression::{
-    is_call_expression, is_test_call_expression_in_flavor, type_arguments_trailing_comments,
-    write_callee_trailing_comments,
+    FormatCallee, has_comment, is_call_expression, is_test_call_expression_in_flavor,
 };
-use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::member_chain::write_member_chain;
 use crate::js::utils::tailwindcss::{InTailwindContext, TailwindContext, context_of_function};
 use crate::js::utils::typecast::is_cast_target;
@@ -39,20 +37,14 @@ fn write_call<'a>(
 ) {
     let callee = call.callee();
     let head = format_args!(
-        FormatCallee(call),
+        FormatCallee(callee),
+        boundary_behind_callee(f),
         call.is_optional().then_some("?."),
-        FormatTypeArguments(e, call),
+        type_arguments(call.type_args(), Node::Expr(e)),
         boundary_behind_callee(f).filter(|_| !call.type_args().is_empty())
     );
 
     if keeps_arguments_on_one_line(e, call, f) {
-        // This is no member chain, so what leads `a.b` is written before the `a`, if it is the next comment.
-        if !f.is_quiet()
-            && let Some(object) = callee.object()
-        {
-            let comments = f.comments().comments_leading_link(object.span().end);
-            FormatLeadingComments::Comments(comments).fmt(f);
-        }
         let arguments = InTailwindContext(context, FormatArgumentsOnOneLine(call.args()));
         return write!(f, [head, arguments]);
     }
@@ -102,7 +94,7 @@ fn keeps_arguments_on_one_line<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a
         return false;
     }
     is_template_on_its_own_line_only_argument(call.args(), f)
-        || is_simple_module_import(e, call, f)
+        || is_simple_module_import(call, f)
         || is_commonjs_or_amd_module_definition(e, call, f)
         || (is_test_call_expression_in_flavor(e, f)
             && !call
@@ -111,28 +103,13 @@ fn keeps_arguments_on_one_line<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a
                 .any(|argument| is_cast_target(argument, f)))
 }
 
-/// ```js
-/// new A( // comment      new A(b); // comment
-///   b
-/// );
-/// ```
-///
-/// For oxfmt it trails `A`, like any comment that ends the line after it.
-fn comment_behind_parenthesis_of_new_trails_class(call: Call<'_>, f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt() && call.type_args().is_empty()
-}
-
 pub(crate) fn write_new_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Formatter<'a>) {
     let head = format_args!(
         "new",
         space(),
-        format_with(
-            |f| match comment_behind_parenthesis_of_new_trails_class(call, f) {
-                true => write!(f, call.callee()),
-                false => write!(f, FormatCallee(call)),
-            }
-        ),
-        FormatTypeArguments(e, call),
+        FormatCallee(call.callee()),
+        boundary_behind_callee(f),
+        type_arguments(call.type_args(), Node::Expr(e)),
         boundary_behind_callee(f).filter(|_| !call.type_args().is_empty())
     );
     if is_template_on_its_own_line_only_argument(call.args(), f) {
@@ -153,7 +130,7 @@ pub(crate) fn write_import_expression<'a>(
     let phase = e.import_call_phase();
     let head = format_args!("import", phase.map(|_| "."), phase);
     if is_template_on_its_own_line_only_argument(args, f)
-        || is_lone_string_without_comments(e, args, f)
+        || is_lone_string_without_comments(args, f)
     {
         return write!(f, [head, FormatArgumentsOnOneLine(args)]);
     }
@@ -166,51 +143,10 @@ pub(crate) fn write_import_expression<'a>(
     );
 }
 
-/// What is called, with the comments between it and the `?.`, the `<` or the `(`. A comment that
-/// ends the line stays there, and the rest of the call goes on the next line.
-struct FormatCallee<'a>(Call<'a>);
-
-impl<'a> Format<'a> for FormatCallee<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        let call = self.0;
-        let callee = call.callee();
-        // `new A` has no `(` to look for.
-        if f.is_quiet() || call.close_paren().is_none() {
-            return write!(f, [callee, boundary_behind_callee(f)]);
-        }
-        write!(f, FormatNodeWithoutTrailingComments(&callee));
-        write_callee_trailing_comments(call, callee.span().end, f);
-        write!(f, boundary_behind_callee(f));
-    }
-}
-
 /// A comment at the end of the line of the callee stays there. oxfmt, like Prettier 3.8, moves it behind
 /// the call: `call // comment\n()` is `call(); // comment`.
 fn boundary_behind_callee(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
     (!f.options().flavor.is_oxfmt()).then_some(line_suffix_boundary())
-}
-
-/// The `<T>` of `a<T>()`, with the comments around it.
-pub(crate) struct FormatTypeArguments<'a>(pub(crate) Expr<'a>, pub(crate) Call<'a>);
-
-impl<'a> Format<'a> for FormatTypeArguments<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        let FormatTypeArguments(e, call) = *self;
-        if call.type_args().is_empty() {
-            return;
-        }
-        let type_arguments = type_arguments(call.type_args(), Node::Expr(e));
-        if f.is_quiet() || call.close_paren().is_none() {
-            return write!(f, type_arguments);
-        }
-        let span = AstNodes::TSTypeParameterInstantiation(Node::Expr(e)).span();
-        write!(f, format_leading_comments(span));
-        type_arguments.write_without_comments(f);
-        write!(
-            f,
-            FormatTrailingComments::Comments(type_arguments_trailing_comments(call, span.end, f))
-        );
-    }
 }
 
 /// `(a, b)`, without a way to break between the arguments.
@@ -241,17 +177,12 @@ fn is_template_on_its_own_line_only_argument<'a>(
     args.len() == 1 && args.first().is_some_and(is_one)
 }
 
-/// Whether the only argument of `e` is a string, and there are no comments around it.
-fn is_lone_string_without_comments<'a>(
-    e: Expr<'a>,
-    args: List<'a, Expr<'a>>,
-    f: &Formatter<'a>,
-) -> bool {
+/// Whether the only argument is a string without comments.
+fn is_lone_string_without_comments<'a>(args: List<'a, Expr<'a>>, f: &Formatter<'a>) -> bool {
     args.len() == 1
         && args
             .first()
-            .is_some_and(|first| first.tag() == ExprTag::String)
-        && (f.is_quiet() || !f.comments().has_comment_before(e.span().end))
+            .is_some_and(|first| first.tag() == ExprTag::String && !has_comment(first, f))
 }
 
 fn is_identifier(e: Expr<'_>, name: &[u8]) -> bool {
@@ -261,7 +192,7 @@ fn is_identifier(e: Expr<'_>, name: &[u8]) -> bool {
 /// Prettier's `isSimpleModuleImport` for a call: `require("a")`, `require.resolve("a")`,
 /// `require.resolve.paths("a")`, `import.meta.resolve("a")`. A long name of a module is no reason
 /// to break.
-fn is_simple_module_import<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a>) -> bool {
+fn is_simple_module_import<'a>(call: Call<'a>, f: &Formatter<'a>) -> bool {
     if call.args().len() != 1
         || call.chain() != Chain::No
         || !call
@@ -286,7 +217,7 @@ fn is_simple_module_import<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a>) -
         },
         _ => false,
     };
-    is_module_function && is_lone_string_without_comments(e, call.args(), f)
+    is_module_function && is_lone_string_without_comments(call.args(), f)
 }
 
 /// Prettier's `isCommonsJsOrAmdModuleDefinition`: `require("a", b)`, and `define` of AMD.
@@ -306,9 +237,7 @@ fn is_commonjs_or_amd_module_definition<'a>(
         // `require(path.join(__dirname, "a"))` can break.
         b"require" => {
             (args.len() > 1 || (args.len() == 1 && is_string(args.first())))
-                && !args
-                    .first()
-                    .is_some_and(|first| f.comments().has_comment_before(first.span().start))
+                && !args.first().is_some_and(|first| has_comment(first, f))
         }
         b"define" => {
             matches!(e.as_chain_element().parent(), AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body())

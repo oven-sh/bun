@@ -6,8 +6,11 @@ mod opening_element;
 
 use self::element::AnyJsxTagWithChildren;
 pub(crate) use self::element::ignored_jsx_gets_no_parentheses;
-use crate::js::format::{format_name, format_node};
+use crate::js::comments::OwnedComments;
+use crate::js::format::{format_name, format_node, identifier};
+use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::tailwindcss::{InTailwindContext, context_of_attribute};
+use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -16,32 +19,20 @@ pub(crate) fn write_jsx_element<'a>(e: Expr<'a>, jsx: Jsx<'a>, f: &mut Formatter
     AnyJsxTagWithChildren { expr: e, jsx }.fmt(f);
 }
 
-/// The name in a tag: `a`, `a.b`, `a-b`, `a:b`. `parent`: the element.
-struct FormatJsxName<'a> {
-    name: Expr<'a>,
-    parent: AstNodes<'a>,
-}
+/// The name in a tag: `a`, `a.b`, `a-b`, `a:b`.
+struct FormatJsxName<'a>(Expr<'a>);
 
 impl<'a> Format<'a> for FormatJsxName<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let name = self.name;
-        format_name(name.span(), f, |f| match name.kind() {
+        let name = self.0;
+        format_node(name.as_ast_nodes(), f, |f| match name.kind() {
+            // The object is not written by way of `Expr`.
             ExprKind::Dot { .. } if !f.context_mut().has_stack_left() => {}
             ExprKind::Dot {
                 obj,
                 name: property,
                 ..
-            } => write!(
-                f,
-                [
-                    FormatJsxName {
-                        name: obj,
-                        parent: self.parent
-                    },
-                    ".",
-                    source_text(property.span())
-                ]
-            ),
+            } => write!(f, [FormatJsxName(obj), ".", identifier(property)]),
             _ => write_jsx_identifier(name.span(), f),
         });
     }
@@ -61,57 +52,41 @@ fn write_jsx_identifier<'a>(span: Span, f: &mut Formatter<'a>) {
         span.end - text.iter().rev().take_while(is_part).count() as u32,
         span.end,
     );
-    let comments_before_colon = f.comments().comments_before_character(namespace.end, b':');
-    write!(
-        f,
-        [
-            source_text(namespace),
-            FormatTrailingComments::Comments(comments_before_colon),
-            ":"
-        ]
-    );
-    let comments_after_colon = f.comments().comments_before(name.start);
-    write!(
-        f,
-        [
-            FormatLeadingComments::Comments(comments_after_colon),
-            source_text(name)
-        ]
-    );
+    write!(f, [source_text(namespace), ":"]);
+    format_name(name, f, |f| write!(f, source_text(name)));
 }
 
-/// `</a>`
-fn write_jsx_closing_element<'a>(e: Expr<'a>, name: Expr<'a>, f: &mut Formatter<'a>) {
-    let leading_comments = f.comments().comments_before(name.span().start);
-    let name_has_leading_comment = !leading_comments.is_empty();
-    let name_has_own_line_leading_comment = leading_comments.iter().any(|it| it.is_line());
-    let name = FormatJsxName {
-        name,
-        parent: AstNodes::JSXElement(e),
-    };
-
+/// `</a>`. Prettier's `printJsxClosingElement`.
+fn write_jsx_closing_element<'a>(name: Expr<'a>, f: &mut Formatter<'a>) {
+    if f.is_quiet() {
+        return write!(f, ["</", FormatJsxName(name), ">"]);
+    }
+    let leading_comments = f.comments().of_node(name.as_ast_nodes()).leading;
+    let name = FormatJsxName(name);
     write!(f, "</");
-    if name_has_own_line_leading_comment {
+    if leading_comments.iter().any(|comment| comment.is_line()) {
         write!(
             f,
-            [hard_line_break(), block_indent(&name), hard_line_break()]
+            [
+                indent(&format_args!(hard_line_break(), name)),
+                hard_line_break()
+            ]
         );
     } else {
-        write!(f, [name_has_leading_comment.then_some(space()), name]);
+        write!(f, [(!leading_comments.is_empty()).then_some(space()), name]);
     }
     write!(f, ">");
 }
 
-/// `<>` and `</>`. `span`: of the tag.
-fn write_jsx_fragment_tag<'a>(span: Span, is_closing: bool, f: &mut Formatter<'a>) {
+/// `<>` and `</>`, with the `comments` inside the tag. Prettier's `printJsxOpeningClosingFragment`.
+fn write_jsx_fragment_tag<'a>(comments: CommentList<'a>, is_closing: bool, f: &mut Formatter<'a>) {
     let open = if is_closing { "</" } else { "<" };
-    let comments = f.comments().comments_before(span.end);
     if comments.is_empty() {
         return write!(f, [open, ">"]);
     }
-    let has_own_line_comment = comments.iter().any(|c| c.is_line());
+    let has_line_comment = comments.iter().any(|comment| comment.is_line());
     let format_comments = format_with(|f| {
-        if has_own_line_comment {
+        if has_line_comment {
             write!(f, hard_line_break());
         } else if is_closing {
             write!(f, space());
@@ -129,7 +104,7 @@ fn write_jsx_fragment_tag<'a>(span: Span, is_closing: bool, f: &mut Formatter<'a
         [
             open,
             indent(&format_comments),
-            has_own_line_comment.then_some(hard_line_break()),
+            has_line_comment.then_some(hard_line_break()),
             ">"
         ]
     );
@@ -142,19 +117,19 @@ pub(crate) struct FormatJsxChild<'a>(pub(crate) Expr<'a>);
 impl<'a> Format<'a> for FormatJsxChild<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let e = self.0;
-        let Some(span) = e.jsx_container_span() else {
+        if e.jsx_container_span().is_none() {
             return e.fmt(f);
-        };
+        }
         match e.kind() {
             ExprKind::Spread(argument) => {
                 format_node(AstNodes::JSXSpreadChild(e), f, |f| {
-                    write_jsx_spread(argument, span, f)
+                    write_jsx_spread(argument, f)
                 });
             }
             _ => {
                 let node = AstNodes::JSXExpressionContainer(e);
                 format_node(node, f, |f| {
-                    write_jsx_expression_container(e, span, node.parent(), f)
+                    write_jsx_expression_container(e, node.parent(), f)
                 });
             }
         }
@@ -167,73 +142,89 @@ impl Spanned for FormatJsxChild<'_> {
     }
 }
 
-/// `{e}`. `span`: of the braces.
+/// `{e}`. Prettier's `printJsxExpressionContainer`.
 fn write_jsx_expression_container<'a>(
     expression: Expr<'a>,
-    span: Span,
     parent: AstNodes<'a>,
     f: &mut Formatter<'a>,
 ) {
     if matches!(expression.kind(), ExprKind::Missing) {
-        // `{/* comment */}`
-        let comments = f.comments().comments_before(span.end);
-        let has_line_comment = comments.iter().any(|c| c.is_line());
-        let indent = if has_line_comment {
-            DanglingIndentMode::Block
-        } else {
-            DanglingIndentMode::None
-        };
         return write!(
             f,
             group(&format_args!(
                 "{",
-                FormatDanglingComments::Comments { comments, indent },
+                FormatJsxEmptyExpression(expression),
                 line_suffix_boundary(),
                 "}"
             ))
         );
     }
-
-    let has_comment = !f.is_quiet()
-        && (f.comments().has_comment_before(expression.span().start)
-            || f.comments()
-                .has_comment_in_range(expression.span().end, span.end)
-            || (has_only_comments(expression, f) && comments_alone_in_braces_are_not_hugged(f)));
     let is_child = matches!(parent, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_));
-    if !has_comment && should_inline_jsx_expression(expression, is_child) {
-        return write!(
+    match should_inline_jsx_expression(expression, is_child, f) {
+        true => write!(
             f,
             group(&format_args!("{", expression, line_suffix_boundary(), "}"))
-        );
+        ),
+        false => write!(
+            f,
+            group(&format_args!(
+                "{",
+                soft_block_indent(&expression),
+                line_suffix_boundary(),
+                "}"
+            ))
+        ),
     }
-
-    let format_with_comments = format_with(|f| {
-        write!(f, expression);
-        let comments = f.comments().comments_before(span.end);
-        write!(f, FormatTrailingComments::Comments(comments));
-    });
-    write!(
-        f,
-        group(&format_args!(
-            "{",
-            soft_block_indent(&format_with_comments),
-            line_suffix_boundary(),
-            "}"
-        ))
-    );
 }
 
-/// `{}`, `[]` or the `()` of a call with nothing but comments in it, which are comments of `expression` for Prettier.
-fn has_only_comments<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
-    let empty = match expression.kind() {
-        ExprKind::Object(properties) if properties.is_empty() => expression.span(),
-        ExprKind::Array(elements) if elements.is_empty() => expression.span(),
-        ExprKind::Call(call) | ExprKind::New(call) if call.args().is_empty() => {
-            Span::after(call.callee().outer_span(), expression.span().end)
+/// What is between the braces of `{/* comment */}`. Prettier's `printJsxEmptyExpression`.
+struct FormatJsxEmptyExpression<'a>(Expr<'a>);
+
+impl<'a> Format<'a> for FormatJsxEmptyExpression<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let comments = (f.comments()).of_node(AstNodes::JSXEmptyExpression(self.0));
+        if comments.is_ignored
+            && ignore_comment_applies_to_empty_expression(f)
+            && let Some(braces) = self.0.jsx_container_span()
+        {
+            return write!(
+                f,
+                FormatSuppressedNode(Span::new(braces.start + 1, braces.end - 1))
+            );
         }
-        _ => return false,
-    };
-    f.comments().has_comment_in_span(empty)
+        let comments = comments.dangling;
+        let indent = match comments.iter().any(|comment| comment.is_line()) {
+            true => DanglingIndentMode::Block,
+            false => DanglingIndentMode::None,
+        };
+        write!(f, FormatDanglingComments::Comments { comments, indent });
+    }
+}
+
+/// `{   /* prettier-ignore */   }`: for Prettier the comment also applies to the `JSXEmptyExpression` that owns it, which is
+/// everything between the braces, so the blanks stay. oxfmt prints `{/* prettier-ignore */}`.
+fn ignore_comment_applies_to_empty_expression(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
+}
+
+/// Prettier's `node.comments` for an expression.
+fn comments_of_expression<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> OwnedComments<'a> {
+    let comments = f.comments();
+    // `/** @type {T} */ (e)`: the node is the outermost `ParenthesizedExpression`.
+    if comments.has_type_cast_comments()
+        && let Some(parentheses) = (expression.parens().rev())
+            .find(|parentheses| comments.is_cast_parenthesis(parentheses.start))
+    {
+        return comments.of_cast_parens(parentheses.start);
+    }
+    // typescript-estree has a `ChainExpression` around an optional chain, which cannot own comments. For oxfmt the comments
+    // of the member access or the call in it count.
+    comments.of_node(
+        match f.context().has_tree_of_babel() || f.options().flavor.is_oxfmt() {
+            true => expression.as_chain_element(),
+            false => expression.as_ast_nodes(),
+        },
+    )
 }
 
 /// ```jsx
@@ -254,8 +245,22 @@ fn comments_alone_in_braces_are_not_hugged(f: &Formatter<'_>) -> bool {
 /// Prettier's `shouldInline` in `printJsxExpressionContainer`: it starts right after the `{` and
 /// ends right before the `}`, even if it breaks. `is_child`: the braces are among the children of
 /// an element.
-fn should_inline_jsx_expression(mut expression: Expr<'_>, mut is_child: bool) -> bool {
+fn should_inline_jsx_expression<'a>(
+    mut expression: Expr<'a>,
+    mut is_child: bool,
+    f: &Formatter<'a>,
+) -> bool {
     loop {
+        if !f.is_quiet() {
+            let comments = comments_of_expression(expression, f);
+            if !comments.leading.is_empty()
+                || !comments.trailing.is_empty()
+                || (!comments.dangling.is_empty() && comments_alone_in_braces_are_not_hugged(f))
+                || is_cast_target(expression, f)
+            {
+                return false;
+            }
+        }
         match expression.as_ast_nodes() {
             AstNodes::ArrayExpression(_)
             | AstNodes::ObjectExpression(_)
@@ -290,7 +295,7 @@ fn should_inline_jsx_expression(mut expression: Expr<'_>, mut is_child: bool) ->
 pub(crate) fn write_jsx_attribute<'a>(attribute: Prop<'a>, f: &mut Formatter<'a>) {
     if attribute.kind() == PropKind::Spread {
         if let Some(argument) = attribute.value() {
-            write_jsx_spread(argument, attribute.span(), f);
+            write_jsx_spread(argument, f);
         }
         return;
     }
@@ -306,25 +311,32 @@ pub(crate) fn write_jsx_attribute<'a>(attribute: Prop<'a>, f: &mut Formatter<'a>
     }
 }
 
-/// `{...argument}`. `span`: of the braces.
-fn write_jsx_spread<'a>(argument: Expr<'a>, span: Span, f: &mut Formatter<'a>) {
-    let has_comment = !f.is_quiet()
-        && (f.comments().has_comment_before(argument.span().start)
-            || f.comments()
-                .has_comment_in_range(argument.span().end, span.end));
-    let format_inner = format_args!(format_leading_comments(argument.span()), "...", argument);
-    write!(f, "{");
-    match has_comment {
-        true => write!(f, soft_block_indent(&format_inner)),
-        false => write!(f, format_inner),
+/// `{...argument}`. Prettier's `printJsxSpreadAttributeOrChild`: the comments of the argument are written before the dots.
+fn write_jsx_spread<'a>(argument: Expr<'a>, f: &mut Formatter<'a>) {
+    if f.is_quiet() {
+        return write!(f, ["{...", argument, "}"]);
     }
-    write!(f, "}");
+    let comments = comments_of_expression(argument, f);
+    if comments.leading.is_empty() && comments.trailing.is_empty() && comments.dangling.is_empty() {
+        return write!(f, ["{...", argument, "}"]);
+    }
+    write!(
+        f,
+        [
+            "{",
+            soft_block_indent(&format_args!(
+                FormatLeadingComments::Comments(comments.leading),
+                "...", argument
+            )),
+            "}"
+        ]
+    );
 }
 
 /// `{...e}` among the children of an element. `e`: the `Spread`.
 pub(crate) fn write_jsx_spread_child<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     if let ExprKind::Spread(argument) = e.kind() {
-        write_jsx_spread(argument, AstNodes::JSXSpreadChild(e).span(), f);
+        write_jsx_spread(argument, f);
     }
 }
 

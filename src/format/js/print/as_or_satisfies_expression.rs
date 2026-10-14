@@ -1,6 +1,7 @@
 //! `a as T`, `a as const`, `a satisfies T`
 
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use crate::js::utils::typecast::comments_of_expression;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -17,27 +18,37 @@ fn comments_stay_around_cast_operator(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// See [`comments_stay_around_cast_operator`]. `comments`: those between `expression` and the type.
-/// `is_union`: the type is a union, which places the comments before it itself.
+/// See [`comments_stay_around_cast_operator`]. `cast`: the whole expression. `type_annotation`: `None` for `const`.
 fn write_with_comments_in_place<'a>(
+    cast: Expr<'a>,
     expression: Expr<'a>,
     operation: &'static str,
-    comments: CommentList<'a>,
-    is_union: bool,
-    format_type: &dyn Format<'a>,
+    type_annotation: Option<TypeNode<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    // One that is about the type has to be seen by it: then all are left to the type.
-    let has_suppression_comment = comments
-        .iter()
-        .any(|comment| f.comments().is_suppression_comment(comment));
-    let operator = operation.as_bytes().first().copied().unwrap_or_default();
-    let before_operator_count = f
-        .comments()
-        .comments_before_character(expression.span().end, operator)
-        .len()
-        .min(comments.len());
-    let (before_operator, after_operator) = comments.split_at(before_operator_count);
+    let type_node = type_annotation.map(|ty| ty.as_ast_nodes());
+    let after_expression = comments_of_expression(expression, f).trailing;
+    let before_type = match type_node {
+        Some(ty) => f.comments().of_node(ty).leading,
+        // `const` is not a node. A comment of several lines before it trails the whole expression.
+        None => {
+            let comments = f.comments().of_node(cast.as_ast_nodes()).trailing;
+            let count = (comments.iter())
+                .take_while(|comment| comment.span().end <= cast.span().end)
+                .count();
+            comments.slice(0, count)
+        }
+    };
+    let is_ignored = type_node.is_some_and(|ty| f.comments().is_ignored(ty));
+    // A union places the comments before it itself.
+    let is_union =
+        !is_ignored && type_annotation.is_some_and(|ty| matches!(ty.kind(), TypeKind::Union(_)));
+
+    let expression_end = expression.outer_span().end;
+    let before_operator_count = (after_expression.iter())
+        .take_while(|comment| comment.prev_token_end() <= expression_end)
+        .count();
+    let (before_operator, after_operator) = after_expression.split_at(before_operator_count);
     // No line break can be before the operator: only block comments on the line of the expression stay
     // there. A line comment is written behind the operator anyway.
     let glued_before_count = before_operator
@@ -46,35 +57,59 @@ fn write_with_comments_in_place<'a>(
         .count();
     let (glued_before, moved) = before_operator.split_at(glued_before_count);
     // Those on the line of the operator.
-    let glued_after_count = match is_union || !moved.is_empty() {
-        true => 0,
-        false => after_operator
-            .iter()
-            .take_while(|comment| {
-                !(comment.has_newline_before()
-                    || (comment.is_multiline_block() && comment.has_newline_after()))
-            })
-            .count(),
+    let is_glued_after = |comment: &Comment<'_>| {
+        !(comment.has_newline_before()
+            || (comment.is_multiline_block() && comment.has_newline_after()))
+    };
+    let can_glue_after = !is_union && moved.is_empty() && !is_ignored;
+    let glued_after_count = match can_glue_after {
+        true => after_operator.iter().take_while(is_glued_after).count(),
+        false => 0,
     };
     let (glued_after, leading) = after_operator.split_at(glued_after_count);
+    let glued_before_type_count = match can_glue_after && leading.is_empty() {
+        true => before_type.iter().take_while(is_glued_after).count(),
+        false => 0,
+    };
+    let (glued_before_type, leading_type) = before_type.split_at(glued_before_type_count);
     let is_on_lines_of_its_own = |comment: Comment<'_>| {
         comment.has_newline_after()
             && (comment.has_newline_before() || comment.is_multiline_block())
     };
-    let is_type_on_next_line = glued_before
-        .iter()
+    let is_type_on_next_line = (glued_before.iter())
         .chain(glued_after)
+        .chain(glued_before_type)
         .any(|comment| comment.is_line())
-        || (!is_union && moved.iter().chain(leading).any(is_on_lines_of_its_own));
+        || (!is_union
+            && (moved.iter().chain(leading).chain(leading_type)).any(is_on_lines_of_its_own));
 
-    write!(f, FormatNodeWithoutTrailingComments(&expression));
-    if !has_suppression_comment {
-        write!(f, FormatTrailingComments::Comments(glued_before));
-    }
-    write!(f, [space(), operation]);
-    if !has_suppression_comment {
-        write!(f, FormatTrailingComments::Comments(glued_after));
-    }
+    let format_type = format_with(|f| {
+        write!(
+            f,
+            [
+                FormatLeadingComments::Comments(moved),
+                FormatLeadingComments::Comments(leading),
+                type_annotation
+                    .is_none()
+                    .then_some(FormatLeadingComments::Comments(leading_type))
+            ]
+        );
+        match type_annotation {
+            Some(ty) => write!(f, ty),
+            None => write!(f, "const"),
+        }
+    });
+    write!(
+        f,
+        [
+            FormatNodeWithoutTrailingComments(&expression),
+            FormatTrailingComments::Comments(glued_before),
+            space(),
+            operation,
+            FormatTrailingComments::Comments(glued_after),
+            FormatTrailingComments::Comments(glued_before_type)
+        ]
+    );
     match is_type_on_next_line {
         true => write!(f, indent(&format_args!(hard_line_break(), format_type))),
         false => write!(f, [space(), format_type]),
@@ -88,91 +123,24 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
         ExprKind::Satisfies { expr, ty } => (expr, Some(ty), "satisfies"),
         _ => return,
     };
-    let type_start = match type_annotation {
-        Some(ty) => ty.span().start,
-        None => e
-            .const_keyword_span()
-            .map_or_else(|| e.span().end, |it| it.start),
-    };
 
     let format_inner = format_with(|f| {
-        let format_type = format_with(|f| match type_annotation {
+        if !f.is_quiet() && comments_stay_around_cast_operator(f) {
+            return write_with_comments_in_place(e, expression, operation, type_annotation, f);
+        }
+        write!(f, [expression, space(), operation]);
+        // Prettier's space is text. It shows before a line comment that trails the expression if the type starts on the
+        // next line: `a as  // comment`.
+        let is_after_line_comment = !f.is_quiet()
+            && (comments_of_expression(expression, f).trailing.last())
+                .is_some_and(|comment| comment.is_line());
+        match is_after_line_comment {
+            true => write!(f, " "),
+            false => write!(f, space()),
+        }
+        match type_annotation {
             Some(ty) => write!(f, ty),
             None => write!(f, "const"),
-        });
-        let comments = match f.is_quiet() {
-            true => CommentList::empty(),
-            false => f
-                .comments()
-                .comments_in(Span::after(expression.span(), type_start)),
-        };
-        if !comments.is_empty() && comments_stay_around_cast_operator(f) {
-            let is_union = type_annotation.is_some_and(|ty| {
-                matches!(ty.kind(), TypeKind::Union(_))
-                    && !f.comments().is_suppressed(ty.span().start)
-            });
-            // `const` is no node that would write the comments before it.
-            let format_type = format_with(|f| {
-                if type_annotation.is_none() {
-                    write!(
-                        f,
-                        FormatLeadingComments::Comments(f.comments().comments_before(type_start))
-                    );
-                }
-                write!(f, format_type);
-            });
-            return write_with_comments_in_place(
-                expression,
-                operation,
-                comments,
-                is_union,
-                &format_type,
-                f,
-            );
-        }
-        // Those up to the first that spans several lines.
-        let count = comments
-            .iter()
-            .take_while(|c| !c.is_multiline_block())
-            .count();
-        let block_comments = comments.slice(0, count);
-
-        if !comments.is_empty() && type_annotation.is_none() {
-            write!(
-                f,
-                [
-                    FormatNodeWithoutTrailingComments(&expression),
-                    FormatTrailingComments::Comments(block_comments),
-                    space(),
-                    operation,
-                    space(),
-                    "const"
-                ]
-            );
-        } else if block_comments.is_empty() {
-            write!(
-                f,
-                [
-                    FormatNodeWithoutTrailingComments(&expression),
-                    space(),
-                    operation,
-                    space(),
-                    format_type
-                ]
-            );
-        } else {
-            write!(f, [expression, space(), operation]);
-            // Prettier's space is text, which is seen before a line comment that trails the expression if
-            // the type starts on the next line: `a as  // comment`.
-            let is_after_line_comment = f
-                .comments()
-                .printed_comments()
-                .last()
-                .is_some_and(|it| it.is_line());
-            match is_after_line_comment {
-                true => write!(f, [" ", format_type]),
-                false => write!(f, [space(), format_type]),
-            }
         }
     });
 

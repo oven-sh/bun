@@ -267,6 +267,11 @@ impl<'a> Rules<'_, 'a, '_> {
         if let Some(placed) = node.and_then(|node| self.handle_comment_in_empty_parens(node)) {
             return Some(placed);
         }
+        if self.cx.options.flavor.is_oxfmt()
+            && let Some(attachment) = self.handle_comment_before_body_for_oxfmt()
+        {
+            return Some(attachment);
+        }
         // `handleClosureTypeCastComments`
         if comment.looks_like_type_cast()
             && let Some(following_node) = self.following_node
@@ -286,6 +291,35 @@ impl<'a> Rules<'_, 'a, '_> {
         node.and_then(|node| self.handle_by_enclosing_node(node, ignored_node))
             .or_else(|| self.handle_comments_in_destructuring_pattern())
             .or_else(|| self.handle_union_type_leading_comments(ignored_node))
+    }
+
+    /// oxfmt leaves a comment between a head and the `{` of its body where it is. Prettier moves most of them into the body.
+    ///
+    /// ```ts
+    /// interface A // comment
+    /// {}
+    /// ```
+    fn handle_comment_before_body_for_oxfmt(&self) -> Option<Attachment<'a>> {
+        let body = self.following_node?;
+        let is_body = match body {
+            Owner::Node(
+                N::ClassBody(_) | N::TSInterfaceBody(_) | N::TSEnumBody(_) | N::TSModuleBlock(_),
+            ) => true,
+            Owner::Node(N::FunctionBody(func)) => !func.is_arrow(),
+            Owner::Node(N::BlockStatement(_)) => !matches!(
+                self.enclosing_node,
+                None | Some(Owner::Node(
+                    N::Program(_)
+                        | N::BlockStatement(_)
+                        | N::FunctionBody(_)
+                        | N::SwitchCase(_)
+                        | N::StaticBlock(_)
+                        | N::TSModuleBlock(_)
+                ))
+            ),
+            _ => false,
+        };
+        (is_body && self.is_directly_before(body)).then(|| Attachment::leading(body))
     }
 
     /// `f(/* comment */)` and `function f(/* comment */) {}`

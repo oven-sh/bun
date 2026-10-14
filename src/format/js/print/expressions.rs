@@ -9,10 +9,10 @@ use super::return_or_throw_statement::has_argument_leading_comments;
 use crate::js::format::{FormatExpr, format_node};
 use crate::js::parentheses::expression::left_edge_end;
 use crate::js::utils::array::write_array_node;
-use crate::js::utils::assignment_like::{AssignmentLike, comments_stay_around_operator};
+use crate::js::utils::assignment_like::AssignmentLike;
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::object::{format_computed_or_property_key, should_preserve_quote};
-use crate::js::utils::suppressed::FormatSuppressedNode;
+use crate::js::utils::typecast::has_comments;
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
 
@@ -141,32 +141,7 @@ impl Spanned for FormatObjectMember<'_> {
 }
 
 fn write_object_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
-    if !f.is_quiet()
-        && f.comments()
-            .has_trailing_suppression_comment(property.span().end)
-    {
-        return write!(f, FormatSuppressedNode(property.span()));
-    }
     let Some(value) = property.func() else {
-        // Prettier's `handlePropertyComments`: a comment at the end of the line of the key leads
-        // the property.
-        if !f.is_quiet()
-            && !comments_stay_around_operator(f)
-            && property.kind() != PropKind::Shorthand
-            && let (Some(key), Some(value)) = (property.key(), property.value())
-            && !f.comments().has_comment_in_span(key.span(f.file()))
-        {
-            let comments = f
-                .comments()
-                .comments_leading_property(key.span(f.file()).end, value.span().start);
-            if comments
-                .iter()
-                .any(|comment| f.comments().is_suppression_comment(comment))
-            {
-                return write!(f, FormatSuppressedNode(property.span()));
-            }
-            write!(f, FormatLeadingComments::Comments(comments));
-        }
         return write!(f, AssignmentLike::ObjectProperty(property));
     };
     match property.kind() {
@@ -232,13 +207,13 @@ pub(crate) fn write_update_expression<'a>(op: UnOp, operand: Expr<'a>, f: &mut F
 
 /// `!a`, `typeof a`
 pub(crate) fn write_unary_expression<'a>(
-    e: Expr<'a>,
+    _unary: Expr<'a>,
     op: UnOp,
     operand: Expr<'a>,
     f: &mut Formatter<'a>,
 ) {
     write!(f, [op.as_str(), op.is_keyword().then_some(space())]);
-    if !f.is_quiet() && unary_argument_has_comments(e, operand, f) {
+    if !f.is_quiet() && has_comments(operand, f) {
         write!(
             f,
             group(&format_args!("(", soft_block_indent(&operand), ")"))
@@ -246,77 +221,6 @@ pub(crate) fn write_unary_expression<'a>(
     } else {
         write!(f, operand);
     }
-}
-
-/// Whether a comment leads or trails `argument`, which is the operand of `unary`. The answer does
-/// not depend on which comments are printed already.
-pub(crate) fn unary_argument_has_comments<'a>(
-    unary: Expr<'a>,
-    argument: Expr<'a>,
-    f: &Formatter<'a>,
-) -> bool {
-    // Prettier attaches no comment to a `ChainExpression`, so what is in it has them.
-    if !f.options().flavor.is_oxfmt()
-        && !f.context().has_tree_of_babel()
-        && argument.is_chain_root()
-    {
-        return false;
-    }
-    let (outer, inner) = (unary.span(), argument.span());
-    let is_leading = |comment: Comment<'_>| {
-        comment.span().start >= outer.start && comment.span().end <= inner.start
-    };
-    let comments = f.comments();
-    if comments.printed_comments().last().is_some_and(is_leading) {
-        return true;
-    }
-    let unprinted = comments.unprinted_comments();
-    match unprinted.first() {
-        Some(first) if first.span().start < outer.end => {
-            if is_leading(first) {
-                return true;
-            }
-        }
-        _ => return false,
-    }
-    unprinted
-        .iter()
-        .skip_while(|comment| comment.span().start < inner.end)
-        .take_while(|comment| comment.span().end <= outer.end)
-        .any(|comment| !is_last_binary_operand_comment(argument, comment, f))
-}
-
-/// Prettier's `handleLastBinaryOperatorOperand`: whether `comment`, which is after `argument`, the
-/// operand of a unary expression, trails the last operand of `argument` and not all of it:
-///
-/// ```javascript
-/// !(
-///   a || // 1
-///   b // 2
-/// );
-/// ```
-pub(crate) fn is_last_binary_operand_comment<'a>(
-    argument: Expr<'a>,
-    comment: Comment<'_>,
-    f: &Formatter<'a>,
-) -> bool {
-    let ExprKind::Binary { op, right, .. } = argument.kind() else {
-        return false;
-    };
-    let source_text = f.source_text();
-    op != BinOp::Comma
-        && comment_can_trail_last_operand(f)
-        && !comment.has_newline_before()
-        && comment.has_newline_after()
-        && !comment.is_multiline_block()
-        && source_text.contains_newline(Span::before(argument.span().start, right.span()))
-        && !source_text.contains_newline(Span::before(right.span().start, comment.span()))
-}
-
-/// For oxfmt a comment before the `)` trails all that is in the parentheses here as everywhere else, and
-/// breaks no chain of operators.
-fn comment_can_trail_last_operand(f: &Formatter<'_>) -> bool {
-    !f.options().flavor.is_oxfmt()
 }
 
 /// `a = b`, `a += b`. In the target of a destructuring assignment, a target with its default value.
@@ -344,7 +248,7 @@ pub(crate) fn write_array_assignment_target<'a>(
     if elements.is_empty() {
         write!(
             f,
-            format_dangling_comments(e.span()).with_soft_block_indent()
+            dangling_comments(e.as_ast_nodes()).with_soft_block_indent()
         );
     } else {
         let rest = elements

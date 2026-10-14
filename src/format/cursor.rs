@@ -1584,16 +1584,6 @@ pub(crate) fn around_jsx_children<'a>(
     }
 }
 
-/// What is written from here on is the node at `span`, up to [`extend_node`]. For a node that writes
-/// the comments around it itself.
-#[inline]
-pub(crate) fn enter_node(span: Span, f: &mut Formatter<'_>) {
-    if f.context().cursor.is_active() {
-        let cursor = f.context().cursor;
-        cursor.enter(span, f);
-    }
-}
-
 /// What has been written since the node at `span` is part of what Prettier prints for that node:
 /// the `;` after a member.
 #[inline]

@@ -6,39 +6,23 @@ use super::function_type::{
 };
 use super::import_declaration::FormatStringLiteral;
 use super::object_like::ObjectLike;
-use super::type_parameters::type_arguments;
+use super::type_parameters::{FormatDanglingCommentsForInline, type_arguments};
 use crate::cursor::extend_node;
-use crate::js::format::{FormatTypeOfPredicate, identifier, write_trailing_comments_of};
+use crate::js::format::{FormatTypeOfPredicate, format_node, identifier};
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::number::format_number_token;
 use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::js::utils::suppressed::{FormatSuppressedNode, FormatTemplateText};
-use crate::js::utils::typescript::{end_of_line_comments, without_lone_operator};
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
-use smallvec::SmallVec;
-use std::cell::Cell;
 
-/// `A.B.C`. `parent`: what it is a name in.
+/// `A.B.C`
 pub(crate) fn entity_name<'a>(name: EntityName<'a>) -> impl Format<'a> {
     format_with(move |f: &mut Formatter<'a>| {
-        if f.is_quiet() {
-            f.join_with(".")
-                .entries(name.parts().map(|part| identifier(part)));
-            return;
-        }
-        // The next name is what follows a name, which `parent` does not tell.
-        let mut parts = name.parts().peekable();
-        while let Some(part) = parts.next() {
-            let part = identifier(part);
-            let Some(next) = parts.peek() else {
-                return write!(f, part);
-            };
-            let comments = format_trailing_comments(name.span(), part.span(), next.span().start);
-            write!(f, [FormatNodeWithoutTrailingComments(&part), comments, "."]);
-        }
+        f.join_with(".")
+            .entries(name.parts().map(|part| identifier(part)));
     })
 }
 
@@ -78,25 +62,17 @@ pub(crate) fn write_ts_type_reference<'a>(
             return write!(f, "boolean");
         }
         // `A<>`
-        if let Some(last) = name.get(name.len().wrapping_sub(1))
-            && ty.text().ends_with(b">")
-        {
-            let brackets = Span::after(last.span(), ty.span().end);
-            let has_line_comment = f
-                .comments()
-                .comments_in(brackets)
-                .iter()
-                .any(|it| it.is_line());
-            match name.len() {
-                1 => write!(f, FormatNodeWithoutTrailingComments(&identifier(last))),
-                _ => write!(f, entity_name(name)),
-            }
-            write!(f, "<");
-            match has_line_comment {
-                true => write!(f, format_dangling_comments(brackets).with_block_indent()),
-                false => write!(f, format_dangling_comments(brackets)),
-            }
-            return write!(f, ">");
+        if ty.text().ends_with(b">") {
+            let arguments = AstNodes::TSTypeParameterInstantiation(Node::Type(ty));
+            return write!(
+                f,
+                [
+                    entity_name(name),
+                    "<",
+                    FormatDanglingCommentsForInline(arguments),
+                    ">"
+                ]
+            );
         }
     }
     let wrap =
@@ -195,20 +171,17 @@ pub(crate) fn write_ts_literal_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>)
             let Some(rest) = text.strip_prefix(b"-") else {
                 return write!(f, format_digits(text));
             };
-            // `- /* comment */ 1`: like a unary expression whose operand has a comment. The text of one that has been
-            // moved to the end of the type is behind it.
-            let comments = f.comments().comments_before(ty.span().end);
-            let count = (comments.iter())
-                .take_while(|it| it.span().end <= ty.span().end)
-                .count();
-            let comments = comments.slice(0, count);
+            // `- /* comment */ 1`: like a unary expression whose operand has a comment.
+            let comments = match f.is_quiet() {
+                true => CommentList::empty(),
+                false => f.comments().of_node(ty.as_ast_nodes()).dangling,
+            };
             let Some(last) = comments.last() else {
                 return write!(f, ["-", format_digits(rest.trim_ascii_start())]);
             };
             let digits = f
                 .source_text()
-                .text_for(&Span::after(last.span(), ty.span().end))
-                .trim_ascii_start();
+                .text_for(&Span::new(last.next_token_start(), ty.span().end));
             let operand = format_args!(
                 FormatLeadingComments::Comments(comments),
                 format_digits(digits)
@@ -394,56 +367,33 @@ pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
             let Some(ty) = member.ty() else {
                 return write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
             };
-            // Prettier does not attach comments to the `: T` of a property signature, only to the
-            // name and the type.
-            if !f.is_quiet() {
-                write!(
-                    f,
-                    FormatTrailingComments::Comments(comments_after_property_name(ty, f))
-                );
-            }
             write!(
                 f,
-                [
-                    member.flags().contains(Flags::OPTIONAL).then_some("?"),
-                    ":",
-                    space(),
-                    ty
-                ]
+                [member.flags().contains(Flags::OPTIONAL).then_some("?"), ":"]
             );
-            write_trailing_comments_of(AstNodes::TSTypeAnnotation(ty), f);
+            match has_line_comment_behind_colon_that_stays(member, f) {
+                true => write!(f, hard_line_break()),
+                false => write!(f, space()),
+            }
+            write!(f, ty);
         }
     }
 }
 
-/// `a: // comment ⏎ B;` stays as it is for oxfmt. For Prettier it is `a: B; // comment`.
-fn comments_behind_colon_of_property_signature_stay(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
-}
-
-/// Of the comments between the name of a property signature and its type `ty`, those that trail
-/// the name: those on its line that are before the `:`, or at the end of the line, unless a union
-/// or an intersection follows (Prettier's `handlePropertySignatureComments`).
-pub(super) fn comments_after_property_name<'a>(
-    ty: TypeNode<'a>,
-    f: &Formatter<'a>,
-) -> CommentList<'a> {
-    let comments = f.comments().comments_before(ty.span().start);
-    let colon = ty.annotation_span().start;
-    let before_colon = comments
-        .iter()
-        .take_while(|comment| comment.span().start < colon && !comment.has_newline_before())
-        .count();
-    let (_, rest) = comments.split_at(before_colon);
-    let takes_comments = comments_behind_colon_of_property_signature_stay(f)
-        || matches!(
-            without_lone_operator(ty).kind(),
-            TypeKind::Union(_) | TypeKind::Intersection(_)
-        );
-    match takes_comments {
-        true => comments.slice(0, before_colon),
-        false => comments.slice(0, before_colon + end_of_line_comments(rest).len()),
+/// `a: // comment ⏎ B;` stays as it is for oxfmt. For Prettier it is `a: B; // comment`. The comment trails the name.
+fn has_line_comment_behind_colon_that_stays<'a>(member: Member<'a>, f: &Formatter<'a>) -> bool {
+    if f.is_quiet() || !f.options().flavor.is_oxfmt() {
+        return false;
     }
+    let comments_of_key = match (member.computed_key(), member.key()) {
+        (Some(key), _) => f.comments().of_node(key.as_chain_element()),
+        (None, Some(key)) => f.comments().of_name(key.span(f.file()).start),
+        (None, None) => return false,
+    };
+    comments_of_key.trailing.last().is_some_and(|comment| {
+        let colon = comment.prev_token_end().saturating_sub(1);
+        comment.is_line() && f.source_text().byte_at(colon) == Some(b':')
+    })
 }
 
 /// `A extends B ? C : D`
@@ -461,18 +411,29 @@ pub(crate) fn write_ts_type_query<'a>(
     if f.file().is_flow() && super::flow::write_declared_predicate(ty, expr, args, f) {
         return;
     }
-    // The name is ESTree's `TSQualifiedName`, which does not break like a member expression.
-    let mut names: SmallVec<[Ident<'a>; 4]> = SmallVec::new();
-    let mut leftmost = expr;
-    while let ExprKind::Dot { obj, name, .. } = leftmost.kind() {
-        names.push(name);
-        leftmost = obj;
-    }
-    write!(f, ["typeof ", leftmost]);
-    for &name in names.iter().rev() {
-        write!(f, [".", identifier(name)]);
-    }
+    write!(f, "typeof ");
+    write_qualified_name(expr, f);
     write!(f, type_arguments(args, Node::Type(ty)));
+}
+
+/// `a.b.c` after `typeof`. It is ESTree's `TSQualifiedName`, which does not break like a member expression.
+fn write_qualified_name<'a>(name: Expr<'a>, f: &mut Formatter<'a>) {
+    let ExprKind::Dot {
+        obj: left,
+        name: right,
+        ..
+    } = name.kind()
+    else {
+        return write!(f, name);
+    };
+    // Not by way of `Expr`.
+    if !f.context_mut().has_stack_left() {
+        return;
+    }
+    format_node(name.as_chain_element(), f, |f| {
+        write_qualified_name(left, f);
+        write!(f, [".", identifier(right)]);
+    });
 }
 
 /// `import("a").B<C>`, `typeof import("a")`
@@ -489,27 +450,30 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
     let Some(source) = ty.import_source_span() else {
         return write!(f, FormatSuppressedNode(ty.span()));
     };
-    let format_source = FormatStringLiteral { span: source };
-
-    // Up to what follows the `)`, they lead or trail the module specifier.
-    let has_comment = !f.is_quiet() && {
-        let following = name
-            .first()
-            .map(|it| it.span())
-            .or_else(|| args.angle_brackets_span());
-        let span = ty.span();
-        f.comments()
-            .has_comment_in_range(span.start, following.map_or(span.end, |it| it.start))
+    let options = ty.import_attributes();
+    let comments = match f.is_quiet() {
+        true => ImportTypeComments::default(),
+        false => ImportTypeComments::new(ty, source, options, f),
     };
+    let format_source = comments.format_source(source);
 
-    write!(f, is_typeof.then_some("typeof "));
-    match ty.import_attributes() {
+    write!(
+        f,
+        [
+            is_typeof.then_some("typeof "),
+            FormatLeadingComments::Comments(comments.leading_import)
+        ]
+    );
+    match options {
         Some(options) => {
-            let arguments = format_with(|f| write_import_type_arguments(source, options, f));
+            let arguments =
+                format_with(|f| write_import_type_arguments(source, options, &comments, f));
             write!(f, group(&format_args!("import", arguments)));
         }
         // A long module name does not break.
-        None if !has_comment => write!(f, ["import(", format_source, ")"]),
+        None if comments.leading_source.is_empty() && comments.trailing_source.is_empty() => {
+            write!(f, ["import(", format_source, ")"])
+        }
         None => write!(
             f,
             group(&format_args!(
@@ -524,6 +488,97 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
         write!(f, [".", entity_name(name)]);
     }
     write!(f, type_arguments(args, Node::Type(ty)));
+}
+
+/// The comments in `typeof import("a", { with: { .. } })`, by the ESTree node that Prettier attaches them to. Only the inner
+/// object is a node here. It owns the comments around it, and the type owns the rest as dangling comments.
+#[derive(Default)]
+struct ImportTypeComments<'a> {
+    /// `typeof /* comment */ import("a")`
+    leading_import: CommentList<'a>,
+    leading_source: CommentList<'a>,
+    trailing_source: CommentList<'a>,
+    /// Before the `{` of `{ with: { .. } }`.
+    leading_options: CommentList<'a>,
+    /// Before `with`.
+    leading_property: CommentList<'a>,
+    /// Before the `{` of `{ .. }`.
+    leading_attributes: CommentList<'a>,
+    /// Before the `}` of `{ with: { .. } }`.
+    trailing_property: CommentList<'a>,
+    trailing_options: CommentList<'a>,
+}
+
+impl<'a> ImportTypeComments<'a> {
+    fn new(
+        ty: TypeNode<'a>,
+        source: Span,
+        options: Option<ImportAttributes<'a>>,
+        f: &Formatter<'a>,
+    ) -> Self {
+        /// Splits off the comments at the start of `comments` whose next token starts at or before `token_start`.
+        fn take_up_to<'a>(comments: &mut CommentList<'a>, token_start: u32) -> CommentList<'a> {
+            let count = (comments.iter())
+                .take_while(|comment| comment.next_token_start() <= token_start)
+                .count();
+            let (taken, rest) = comments.split_at(count);
+            *comments = rest;
+            taken
+        }
+        let mut dangling = f.comments().of_node(ty.as_ast_nodes()).dangling;
+        let end_of_typeof = ty.span().start + "typeof".len() as u32;
+        let is_typeof = matches!(
+            ty.kind(),
+            TypeKind::Import {
+                is_typeof: true,
+                ..
+            }
+        );
+        let is_behind_typeof =
+            |comment: &Comment<'a>| is_typeof && comment.prev_token_end() == end_of_typeof;
+        let behind_typeof = dangling.iter().take_while(is_behind_typeof).count();
+        let leading_import = dangling.slice(0, behind_typeof);
+        dangling = dangling.slice(behind_typeof, dangling.len());
+        let mut comments = ImportTypeComments {
+            leading_import,
+            leading_source: take_up_to(&mut dangling, source.start),
+            trailing_source: dangling,
+            ..ImportTypeComments::default()
+        };
+        let attributes = options.and_then(|options| match options.entries().first()?.parent() {
+            Node::Expr(attributes) => {
+                Some((options, f.comments().of_node(attributes.as_ast_nodes())))
+            }
+            _ => None,
+        });
+        if let Some((options, owned)) = attributes {
+            let (outer, mut leading, mut trailing) =
+                (options.options_span(), owned.leading, owned.trailing);
+            comments.leading_source = take_up_to(&mut leading, source.start);
+            comments.trailing_source = take_up_to(&mut leading, outer.start.saturating_sub(1));
+            comments.leading_options = take_up_to(&mut leading, outer.start);
+            comments.leading_property = take_up_to(&mut leading, options.keyword_span().start);
+            comments.leading_attributes = leading;
+            comments.trailing_property = take_up_to(&mut trailing, outer.end.saturating_sub(1));
+            comments.trailing_options = trailing;
+        }
+        comments
+    }
+
+    /// The module specifier at `source`, with its comments.
+    fn format_source(&self, source: Span) -> impl Format<'a> {
+        let (leading, trailing) = (self.leading_source, self.trailing_source);
+        format_with(move |f: &mut Formatter<'a>| {
+            write!(
+                f,
+                [
+                    FormatLeadingComments::Comments(leading),
+                    FormatStringLiteral { span: source },
+                    FormatTrailingComments::Comments(trailing)
+                ]
+            );
+        })
+    }
 }
 
 /// ```ts
@@ -542,19 +597,21 @@ fn options_of_import_type_are_on_a_line_of_their_own(f: &Formatter<'_>) -> bool 
 fn write_import_type_arguments<'a>(
     source: Span,
     options: ImportAttributes<'a>,
+    comments: &ImportTypeComments<'a>,
     f: &mut Formatter<'a>,
 ) {
-    let span = options.options_span();
-    let format_source = FormatStringLiteral { span: source }.memoized();
+    let format_source = comments.format_source(source).memoized();
     let does_source_break = format_source.inspect(f).will_break();
 
-    let has_comments = Cell::new(f.comments().has_comment_before(span.start));
+    let has_comments =
+        !(comments.leading_options.is_empty() && comments.trailing_options.is_empty());
     let format_options = format_with(|f| {
-        write!(f, format_leading_comments(span));
-        write_import_type_options(options, f);
-        let comments = f.comments().comments_before_character(span.end, b')');
-        has_comments.set(has_comments.get() || !comments.is_empty());
-        write!(f, FormatTrailingComments::Comments(comments));
+        write!(f, FormatLeadingComments::Comments(comments.leading_options));
+        write_import_type_options(options, comments, f);
+        write!(
+            f,
+            FormatTrailingComments::Comments(comments.trailing_options)
+        );
     })
     .memoized();
     let do_options_break = format_options.inspect(f).will_break();
@@ -571,7 +628,7 @@ fn write_import_type_arguments<'a>(
             );
         })
     };
-    if has_comments.get() {
+    if has_comments {
         return write!(f, all_broken_out(does_source_break || do_options_break));
     }
     if does_source_break {
@@ -613,7 +670,11 @@ fn write_import_type_arguments<'a>(
 
 /// `{ with: { type: "json" } }`. It is an object literal, of which the HIR has only the properties
 /// of the inner one.
-fn write_import_type_options<'a>(options: ImportAttributes<'a>, f: &mut Formatter<'a>) {
+fn write_import_type_options<'a>(
+    options: ImportAttributes<'a>,
+    comments: &ImportTypeComments<'a>,
+    f: &mut Formatter<'a>,
+) {
     let (outer, keyword, inner) = (
         options.options_span(),
         options.keyword_span(),
@@ -626,16 +687,12 @@ fn write_import_type_options<'a>(options: ImportAttributes<'a>, f: &mut Formatte
     let has_space = f.options().bracket_spacing.value();
 
     let format_inner = format_with(|f| {
-        write!(f, format_leading_comments(inner));
+        write!(
+            f,
+            FormatLeadingComments::Comments(comments.leading_attributes)
+        );
         let Some(first) = entries.first() else {
-            return write!(
-                f,
-                [
-                    "{",
-                    format_dangling_comments(inner).with_soft_block_indent(),
-                    "}"
-                ]
-            );
+            return write!(f, "{}");
         };
         let format_entries = format_with(|f| {
             let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());
@@ -656,18 +713,12 @@ fn write_import_type_options<'a>(options: ImportAttributes<'a>, f: &mut Formatte
         write!(
             f,
             [
-                format_leading_comments(keyword),
+                FormatLeadingComments::Comments(comments.leading_property),
                 source_text(keyword),
                 ":",
                 space(),
-                format_inner
-            ]
-        );
-        let comments = f.comments().comments_before(outer.end.saturating_sub(1));
-        write!(
-            f,
-            [
-                FormatTrailingComments::Comments(comments),
+                format_inner,
+                FormatTrailingComments::Comments(comments.trailing_property),
                 FormatTrailingCommas::ES5
             ]
         );
@@ -701,16 +752,10 @@ pub(crate) fn write_ts_type_predicate<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a
     let Some(type_annotation) = type_annotation else {
         return write!(f, parameter);
     };
-    write!(f, parameter.as_ref().map(FormatNodeWithoutTrailingComments));
-    if let Some(parameter) = parameter {
-        write!(
-            f,
-            format_trailing_comments(ty.span(), parameter.span(), type_annotation.span().start)
-        );
-    }
     write!(
         f,
         [
+            parameter,
             space(),
             "is",
             space(),

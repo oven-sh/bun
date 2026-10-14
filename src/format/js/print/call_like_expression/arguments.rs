@@ -10,7 +10,9 @@ use crate::js::print::arrow_function_expression::{
 use crate::js::print::function::FormatFunctionOptions;
 use crate::js::print::parameters::{FormatFormalParameters, has_only_simple_parameters};
 use crate::js::print::program::is_next_line_empty;
-use crate::js::utils::call_expression::{is_call_expression, strip_chain_element_wrappers};
+use crate::js::utils::call_expression::{
+    comments_of_expression, has_comment, is_call_expression, strip_chain_element_wrappers,
+};
 use crate::js::utils::is_long_curried_call;
 use crate::js::utils::member_chain::simple_argument::SimpleArgument;
 use crate::js::utils::typecast::is_cast_target;
@@ -70,13 +72,13 @@ impl<'a> Format<'a> for FormatArguments<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let last_index = match self.len() {
             0 if f.is_quiet() => return write!(f, "()"),
-            // `call/* comment1 */(/* comment2 */)`
+            // `call(/* comment */)`
             0 => {
                 return write!(
                     f,
                     [
                         "(",
-                        format_dangling_comments(self.parent.span()).with_soft_block_indent(),
+                        dangling_comments(self.parent).with_soft_block_indent(),
                         ")"
                     ]
                 );
@@ -97,9 +99,7 @@ impl<'a> Format<'a> for FormatArguments<'a> {
         }
         let has_function = has & kind(ExprTag::Fn) != 0;
 
-        if has_function
-            && has & kind(ExprTag::Array) != 0
-            && is_react_hook_with_deps_array(self, f.comments(), f.options().flavor)
+        if has_function && has & kind(ExprTag::Array) != 0 && is_react_hook_with_deps_array(self, f)
         {
             return write!(
                 f,
@@ -348,7 +348,7 @@ fn arguments_grouped_layout<'a>(
             has_embed_label_with_hug(only, f)
                 && (f.is_quiet()
                     || f.options().flavor.is_oxfmt()
-                    || !f.comments().is_suppressed(only.span().start))
+                    || !f.comments().is_ignored(only.as_ast_nodes()))
         })
     {
         return Some(GroupedCallArgumentLayout::GroupedLastArgument);
@@ -391,22 +391,8 @@ fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Format
         return false;
     }
 
-    // Not if there are comments around the first argument: before it, between it and the comma, or
-    // behind the comma at the end of the line.
-    if !f.is_quiet() {
-        if f.comments().has_comment_before(first.span().start)
-            || f.comments()
-                .comments_in(first.span().between(second.span()))
-                .iter()
-                .any(|comment| {
-                    comment.has_newline_after()
-                        || !f
-                            .source_text()
-                            .contains_byte(first.span().between(comment.span()), b',')
-                })
-        {
-            return false;
-        }
+    if has_comment(first, f) {
+        return false;
     }
     is_hopefully_short_call_argument(second, f)
 }
@@ -418,9 +404,6 @@ fn should_group_last_argument_impl<'a>(
     f: &Formatter<'a>,
 ) -> bool {
     let args_len = args.len();
-    let previous_end = args
-        .get(args_len.wrapping_sub(2))
-        .map(|previous| previous.span().end);
 
     // Not if the one before is of the same kind.
     if let Some(penultimate) = penultimate
@@ -445,33 +428,9 @@ fn should_group_last_argument_impl<'a>(
         return false;
     }
 
-    // Not if there are comments around the last argument.
     if !f.is_quiet() {
-        let last_span = last.span();
-        // A comment at the end of the line of the argument before, or before the comma, trails that.
-        let has_comment_before_last = match previous_end {
-            Some(previous_end) => f
-                .comments()
-                .comments_in(Span::before(previous_end, last_span))
-                .iter()
-                .any(|comment| {
-                    comment.has_newline_before()
-                        || (!comment.has_newline_after()
-                            && !f
-                                .source_text()
-                                .contains_byte(comment.span().between(last_span), b','))
-                }),
-            None => f.comments().has_comment_before(last_span.start),
-        };
-        if has_comment_before_last
-            || f.comments()
-                .comments_after(last_span.end)
-                .first()
-                .is_some_and(|c| {
-                    !f.source_text()
-                        .contains_byte(last_span.between(c.span()), b')')
-                })
-        {
+        let owned = comments_of_expression(last, f);
+        if !owned.leading.is_empty() || !owned.trailing.is_empty() {
             return false;
         }
     }
@@ -482,7 +441,7 @@ fn should_group_last_argument_impl<'a>(
             if args_len == 2 && penultimate.is_some_and(|it| it.arrow_function().is_some()) {
                 return false;
             }
-            !can_concisely_print_array_list(last.span(), elements, f)
+            !can_concisely_print_array_list(elements, f)
         }
         _ => true,
     }
@@ -544,10 +503,10 @@ fn can_group_expression_argument<'a>(mut argument: Expr<'a>, f: &Formatter<'a>) 
         }
         argument = match argument.kind() {
             ExprKind::Object(props) => {
-                return !props.is_empty() || f.comments().has_comment_in_span(argument.span());
+                return !props.is_empty() || has_comment(argument, f);
             }
             ExprKind::Array(elements) => {
-                return !elements.is_empty() || f.comments().has_comment_in_span(argument.span());
+                return !elements.is_empty() || has_comment(argument, f);
             }
             ExprKind::As { .. } if argument.is_flow_type_cast() => return false,
             ExprKind::As { expr, .. }
@@ -919,11 +878,7 @@ impl<'a> Format<'a> for FormatGroupedLastArgument<'a> {
 }
 
 /// `useMemo(() => {}, [a, b])`, `useImperativeHandle(ref, () => {}, [a, b])`
-fn is_react_hook_with_deps_array<'a>(
-    arguments: &FormatArguments<'a>,
-    comments: &Comments<'a>,
-    flavor: Flavor,
-) -> bool {
+fn is_react_hook_with_deps_array<'a>(arguments: &FormatArguments<'a>, f: &Formatter<'a>) -> bool {
     if arguments.len() > 3 || arguments.len() < 2 {
         return false;
     }
@@ -947,17 +902,21 @@ fn is_react_hook_with_deps_array<'a>(
     {
         return false;
     }
-    // Not if there is a comment that is not in the callback or the array. For Prettier one in an empty
-    // array is a comment of the array.
-    let is_empty = !flavor.is_oxfmt()
-        && matches!(deps.kind(), ExprKind::Array(elements) if elements.is_empty());
-    !comments
-        .comments_before(arguments.parent.span().end)
+    !arguments
         .iter()
-        .any(|comment| {
-            !callback.span().contains(comment.span())
-                && (is_empty || !deps.span().contains(comment.span()))
+        .any(|argument| match comment_in_argument_is_none_of_it(f) {
+            true => {
+                let owned = comments_of_expression(argument, f);
+                !owned.leading.is_empty() || !owned.trailing.is_empty()
+            }
+            false => has_comment(argument, f),
         })
+}
+
+/// `useEffect(() => {}, [/* comment */])`: for Prettier the array has a comment, so this is a call like any other. oxfmt
+/// only looks at the comments around the arguments.
+fn comment_in_argument_is_none_of_it(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Prettier's `isDecoratedFunction`:

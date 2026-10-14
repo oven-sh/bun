@@ -11,10 +11,9 @@
 use super::ast_nodes::AstNodes;
 use super::attach::{self, Marker, Owner, Placement};
 use super::owners::Owners;
-use super::source_text::SourceText;
 use crate::options::{Flavor, FormatOptions};
+use bun_lint::ast::File;
 pub(crate) use bun_lint::ast::comments::Comment;
-use bun_lint::ast::{Expr, ExprKind, File};
 use bun_lint::span::Span;
 use std::cell::Cell;
 
@@ -98,17 +97,6 @@ impl<'a> CommentList<'a> {
         CommentList {
             file: None,
             ids: Ids::Listed(&[]),
-        }
-    }
-
-    /// A list with one comment.
-    pub(crate) fn of(comment: Comment<'a>) -> CommentList<'a> {
-        CommentList {
-            file: Some(comment.file()),
-            ids: Ids::Consecutive {
-                first: comment.id(),
-                len: 1,
-            },
         }
     }
 
@@ -337,16 +325,6 @@ pub(crate) fn of_file<'a>(
     comments.unwrap_or(&NO_COMMENTS)
 }
 
-/// The object of a member access, the callee of a call or a `new`, or the operand of a `!`. `None` for any other expression.
-pub(crate) fn inner_of_link(link: Expr<'_>) -> Option<Expr<'_>> {
-    match link.kind() {
-        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
-        ExprKind::Call(call) | ExprKind::New(call) => Some(call.callee()),
-        ExprKind::NonNull(operand) => Some(operand),
-        _ => None,
-    }
-}
-
 /// See [`Comments::snapshot`].
 #[derive(Copy, Clone)]
 pub(crate) struct CommentSnapshot {
@@ -356,7 +334,6 @@ pub(crate) struct CommentSnapshot {
 pub(crate) struct Comments<'a> {
     /// `None` if the document is not written for JavaScript. There are no comments then.
     file: Option<&'a File<'a>>,
-    pub(super) source_text: SourceText<'a>,
     flavor: Flavor,
     file_comments: &'a FileComments,
     /// The result of the last search by offset. Nodes are mostly printed in source order, so the next search starts here.
@@ -370,13 +347,11 @@ pub(crate) struct Comments<'a> {
 impl<'a> Comments<'a> {
     pub(crate) fn new(
         file: Option<&'a File<'a>>,
-        source_text: SourceText<'a>,
         flavor: Flavor,
         file_comments: &'a FileComments,
     ) -> Self {
         Comments {
             file,
-            source_text,
             flavor,
             file_comments,
             search_hint: Cell::new(0),
@@ -513,11 +488,6 @@ impl<'a> Comments<'a> {
         self.has_comment_in_span(span)
     }
 
-    #[inline]
-    pub(crate) fn has_comment_in_range(&self, start: u32, end: u32) -> bool {
-        self.has_comment_in_span(Span::new(start, end))
-    }
-
     /// The comments between the token that starts at `token_start` and the token before it.
     pub(crate) fn comments_directly_before(&self, token_start: u32) -> CommentList<'a> {
         let end = self.first_id_at_or_after(token_start);
@@ -554,27 +524,6 @@ impl<'a> Comments<'a> {
     pub(crate) fn has_leading_own_line_comment(&self, token_start: u32) -> bool {
         (self.comments_directly_before(token_start).iter())
             .any(|comment| comment.has_newline_after())
-    }
-
-    /// The offset after the first `character` at or after `start` that is not inside a comment, or `start` if there is none.
-    pub(crate) fn position_after_character(&self, start: u32, character: u8) -> u32 {
-        let mut from = start;
-        loop {
-            let rest = self
-                .source_text
-                .as_bytes()
-                .get(from as usize..)
-                .unwrap_or_default();
-            let Some(found) = bun_core::strings::index_of_char(rest, character) else {
-                return start;
-            };
-            let found = from + found;
-            let last_before = self.first_id_at_or_after(found + 1).checked_sub(1);
-            match last_before.and_then(|id| self.comment(id)) {
-                Some(comment) if comment.span().end > found => from = comment.span().end,
-                _ => return found + 1,
-            }
-        }
     }
 
     /// Whether printing the node at `span` has to deal with comments at all: a comment starts inside it, or a node inside it

@@ -408,7 +408,7 @@ pub(super) fn format_children<'a>(
                     let is_suppressed = is_after_ignore_comment
                         && (matches!(node.0.kind(), ExprKind::Jsx(_)) || children.is_oxfmt);
                     is_after_ignore_comment = matches!(node.0.kind(), ExprKind::Missing)
-                        && f.comments().is_suppressed(node.span().end);
+                        && (f.comments()).is_ignored(AstNodes::JSXEmptyExpression(node.0));
                     let format_node = format_with(|f| match is_suppressed {
                         true => FormatSuppressedNode(node.span()).fmt(f),
                         false => node.fmt(f),

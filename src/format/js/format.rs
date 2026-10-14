@@ -157,8 +157,8 @@ fn format_node_with_comments<'a>(
     }
 }
 
-/// Writes a node whose printer, or whose parent's printer, writes its comments (Prettier's `willPrintOwnComments`).
-/// This only handles `prettier-ignore`.
+/// Writes a node whose own printer prints its leading and trailing comments (Prettier's `willPrintOwnComments`). This only
+/// handles `prettier-ignore`.
 #[inline]
 pub(crate) fn format_node_without_comments<'a>(
     node: AstNodes<'a>,
@@ -1019,7 +1019,13 @@ fn write_suppressed_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
 
 #[cold]
 fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
-    format_node_with_comments(ty.as_ast_nodes(), f, |f| write_type_in_parentheses(ty, f));
+    let write = |f: &mut Formatter<'a>| write_type_in_parentheses(ty, f);
+    match print::union_type::union_prints_own_comments(ty, f) {
+        true => format_node_without_comments(ty.as_ast_nodes(), f, |f| {
+            f.around_cursor(ty.span(), write)
+        }),
+        false => format_node_with_comments(ty.as_ast_nodes(), f, write),
+    }
 }
 
 pub(crate) fn write_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {

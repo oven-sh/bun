@@ -1,7 +1,8 @@
 //! How comments are written.
 //!
-//! [`Comments`](super::comments::Comments) tells which comments belong where. This writes them,
-//! with the spaces and line breaks around them, and marks them as printed.
+//! [`Comments`](super::comments::Comments) says which comments a node owns. The functions here write them, with the spaces and
+//! line breaks around them, and mark them as printed. They are Prettier's `printLeadingComments`, `printTrailingComments` and
+//! `printDanglingComments`.
 
 use super::ast_nodes::AstNodes;
 use super::comments::{Comment, CommentExt, CommentList};
@@ -26,12 +27,6 @@ fn lines_before(comment: Comment<'_>, f: &Formatter<'_>) -> usize {
     }
 }
 
-/// The comments before the node at `span`.
-#[inline]
-pub(crate) const fn format_leading_comments<'a>(span: Span) -> FormatLeadingComments<'a> {
-    FormatLeadingComments::Node(span)
-}
-
 /// The leading comments that `node` owns.
 #[inline]
 pub(crate) const fn leading_comments<'a>(node: AstNodes<'a>) -> FormatLeadingComments<'a> {
@@ -40,7 +35,6 @@ pub(crate) const fn leading_comments<'a>(node: AstNodes<'a>) -> FormatLeadingCom
 
 #[derive(Copy, Clone)]
 pub(crate) enum FormatLeadingComments<'a> {
-    Node(Span),
     Owner(AstNodes<'a>),
     Comments(CommentList<'a>),
 }
@@ -49,8 +43,6 @@ impl<'a> Format<'a> for FormatLeadingComments<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let comments = match *self {
-            Self::Node(span) if f.comments().next_start() > span.start => return,
-            Self::Node(span) => f.comments().comments_leading_node(span),
             Self::Owner(node) => f.comments().of_node(node).leading,
             Self::Comments(comments) => comments,
         };
@@ -117,17 +109,6 @@ fn write_leading_comments<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) 
     }
 }
 
-/// The comments after the node at `preceding_span`, whose parent is at `enclosing_span` and whose
-/// next sibling starts at `following_span_start`, which is 0 if there is none.
-#[inline]
-pub(crate) const fn format_trailing_comments<'a>(
-    enclosing_span: Span,
-    preceding_span: Span,
-    following_span_start: u32,
-) -> FormatTrailingComments<'a> {
-    FormatTrailingComments::Node((enclosing_span, preceding_span, following_span_start))
-}
-
 /// The trailing comments that `node` owns.
 #[inline]
 pub(crate) const fn trailing_comments<'a>(node: AstNodes<'a>) -> FormatTrailingComments<'a> {
@@ -136,8 +117,6 @@ pub(crate) const fn trailing_comments<'a>(node: AstNodes<'a>) -> FormatTrailingC
 
 #[derive(Clone, Copy)]
 pub(crate) enum FormatTrailingComments<'a> {
-    /// `(enclosing_span, preceding_span, following_span_start)`
-    Node((Span, Span, u32)),
     Owner(AstNodes<'a>),
     Comments(CommentList<'a>),
 }
@@ -146,10 +125,6 @@ impl<'a> Format<'a> for FormatTrailingComments<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let comments = match *self {
-            Self::Node((enclosing, ..)) if f.comments().next_start() >= enclosing.end => return,
-            Self::Node((enclosing, preceding, following)) => f
-                .comments()
-                .get_trailing_comments(enclosing, preceding, following),
             Self::Owner(node) => f.comments().of_node(node).trailing,
             Self::Comments(comments) => comments,
         };
@@ -224,15 +199,6 @@ fn write_trailing_comments<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>)
     }
 }
 
-/// The comments that are left in the node at `span`, which has nothing else in it: `{ /* a */ }`.
-#[inline]
-pub(crate) const fn format_dangling_comments<'a>(span: Span) -> FormatDanglingComments<'a> {
-    FormatDanglingComments::Node {
-        span,
-        indent: DanglingIndentMode::None,
-    }
-}
-
 /// The dangling comments that `node` owns.
 #[inline]
 pub(crate) const fn dangling_comments<'a>(node: AstNodes<'a>) -> FormatDanglingComments<'a> {
@@ -243,10 +209,6 @@ pub(crate) const fn dangling_comments<'a>(node: AstNodes<'a>) -> FormatDanglingC
 }
 
 pub(crate) enum FormatDanglingComments<'a> {
-    Node {
-        span: Span,
-        indent: DanglingIndentMode,
-    },
     Owner {
         node: AstNodes<'a>,
         indent: DanglingIndentMode,
@@ -280,8 +242,7 @@ impl FormatDanglingComments<'_> {
 
     fn with_indent_mode(mut self, mode: DanglingIndentMode) -> Self {
         match &mut self {
-            FormatDanglingComments::Node { indent, .. }
-            | FormatDanglingComments::Owner { indent, .. }
+            FormatDanglingComments::Owner { indent, .. }
             | FormatDanglingComments::Comments { indent, .. } => *indent = mode,
         }
         self
@@ -292,8 +253,6 @@ impl<'a> Format<'a> for FormatDanglingComments<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let (comments, indent) = match *self {
-            Self::Node { span, .. } if f.comments().next_start() >= span.end => return,
-            Self::Node { span, indent } => (f.comments().comments_before_end_of(span), indent),
             Self::Owner { node, indent } => (f.comments().of_node(node).dangling, indent),
             Self::Comments { comments, indent } => (comments, indent),
         };
@@ -348,76 +307,6 @@ fn write_dangling_comments<'a>(
 /// ```
 pub(crate) fn comments_stay_between_head_and_body(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
-}
-
-/// See [`comments_stay_between_head_and_body`]: what is between a head and its body, which starts at
-/// `body_start`: a space, or a line break if a comment starts the next line, and the comments.
-pub(crate) fn write_head_body_separator(body_start: u32, f: &mut Formatter<'_>) {
-    let comments = f.comments().comments_before(body_start);
-    match comments
-        .first()
-        .is_some_and(|comment| comment.has_newline_before())
-    {
-        true => write!(f, hard_line_break()),
-        false => write!(f, space()),
-    }
-    FormatLeadingComments::Comments(comments).fmt(f);
-}
-
-/// See [`comments_stay_between_head_and_body`]: `comments` are between a `}` and a keyword, or between
-/// what is called and the `(`. Those on the line of what is before them trail it, the others keep
-/// their lines. Returns whether what separates the two if there are no comments is still to be written.
-pub(crate) fn write_comments_between_blocks<'a>(
-    comments: CommentList<'a>,
-    f: &mut Formatter<'a>,
-) -> bool {
-    let same_line_count = comments
-        .iter()
-        .take_while(|comment| !comment.has_newline_before())
-        .count();
-    let (same_line, own_line) = comments.split_at(same_line_count);
-    FormatTrailingComments::Comments(same_line).fmt(f);
-    if let Some(first) = own_line.first() {
-        match lines_before(first, f) > 1 {
-            true => write!(f, empty_line()),
-            false => write!(f, hard_line_break()),
-        }
-        FormatLeadingComments::Comments(own_line).fmt(f);
-        false
-    } else if same_line.last().is_some_and(|comment| comment.is_line()) {
-        write!(f, hard_line_break());
-        false
-    } else {
-        true
-    }
-}
-
-/// See [`comments_stay_between_head_and_body`]: writes the comments after `start` that are before
-/// `character`, which the caller writes next. Returns whether a line break has to follow that, because a
-/// line comment is waiting for the end of the line.
-pub(crate) fn write_trailing_comments_before(
-    start: u32,
-    character: u8,
-    f: &mut Formatter<'_>,
-) -> bool {
-    let comments = f.comments().comments_before_character(start, character);
-    let same_line_count = comments
-        .iter()
-        .take_while(|comment| !comment.has_newline_before())
-        .count();
-    let (same_line, own_line) = comments.split_at(same_line_count);
-    FormatTrailingComments::Comments(same_line).fmt(f);
-    for comment in own_line {
-        if !f.comments_mut().mark_printed(comment) {
-            continue;
-        }
-        match lines_before(comment, f) > 1 {
-            true => write!(f, empty_line()),
-            false => write!(f, hard_line_break()),
-        }
-        write!(f, [comment, comment.is_line().then_some(hard_line_break())]);
-    }
-    own_line.is_empty() && same_line.last().is_some_and(|comment| comment.is_line())
 }
 
 /// oxfmt hands its document for a script of a Vue file to Prettier, whose printer takes away the blanks before a line

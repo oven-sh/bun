@@ -3,8 +3,7 @@
 use super::object_pattern_like::ObjectPatternLike;
 use crate::js::format::format_node;
 use crate::js::utils::array::write_array_node;
-use crate::js::utils::assignment_like::{AssignmentLike, comments_stay_around_operator};
-use crate::js::utils::suppressed::FormatSuppressedNode;
+use crate::js::utils::assignment_like::AssignmentLike;
 use crate::prelude::*;
 use crate::write;
 
@@ -23,7 +22,7 @@ fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mu
     if elements.is_empty() {
         write!(
             f,
-            format_dangling_comments(pat.span()).with_soft_block_indent()
+            dangling_comments(pat.as_ast_nodes()).with_soft_block_indent()
         );
     } else {
         let rest = elements.last().filter(|it| is_rest_element(*it));
@@ -50,21 +49,7 @@ fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mu
 
 /// `left = right`, ESTree's `AssignmentPattern`.
 fn write_assignment_pattern<'a>(left: Pat<'a>, right: Expr<'a>, f: &mut Formatter<'a>) {
-    let left = left.memoized();
-    // So that the comments in it are not taken for comments before the `=`.
-    left.inspect(f);
-    let comments = f.comments().own_line_comments_before(right.span().start);
-    write!(
-        f,
-        [
-            FormatLeadingComments::Comments(comments),
-            group(&left),
-            space(),
-            "=",
-            space(),
-            right
-        ]
-    );
+    write!(f, [group(&left), space(), "=", space(), right]);
 }
 
 /// `[...a = 1]` is an error, and `a = 1` in typescript-estree's tree.
@@ -92,25 +77,6 @@ pub(crate) fn write_array_pattern_element<'a>(element: PatElem<'a>, f: &mut Form
 pub(crate) fn write_binding_property<'a>(property: PatProp<'a>, f: &mut Formatter<'a>) {
     if property.is_rest() {
         return write!(f, ["...", property.value()]);
-    }
-    // Prettier's `handlePropertyComments`: a comment at the end of the line of the key leads the
-    // property.
-    if !f.is_quiet()
-        && !comments_stay_around_operator(f)
-        && !property.is_shorthand()
-        && let Some(key) = property.key()
-        && !f.comments().has_comment_in_span(key.span(f.file()))
-    {
-        let comments = f
-            .comments()
-            .comments_leading_property(key.span(f.file()).end, property.value().span().start);
-        if comments
-            .iter()
-            .any(|comment| f.comments().is_suppression_comment(comment))
-        {
-            return write!(f, FormatSuppressedNode(property.span()));
-        }
-        write!(f, FormatLeadingComments::Comments(comments));
     }
     AssignmentLike::BindingProperty(property).fmt(f);
 }

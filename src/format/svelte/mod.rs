@@ -163,7 +163,7 @@ pub fn format(
         unformatted: &unformatted,
     };
     let mut context =
-        JsFormatContext::without_file(text, host.clone(), &crate::js::comments::NO_COMMENTS);
+        JsFormatContext::without_file(host.clone(), &crate::js::comments::NO_COMMENTS);
     context.parse_javascript = parse_javascript;
     let root = crate::ir::run::write_with(context, text, &mut scratch.document, |f| {
         let mut writer = Writer::new(f, Some(0), true);

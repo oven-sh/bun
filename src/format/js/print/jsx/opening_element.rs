@@ -1,4 +1,5 @@
 use super::FormatJsxName;
+use crate::js::comments::OwnedComments;
 use crate::js::print::type_parameters::type_arguments;
 use crate::js::utils::tailwindcss::loses_line_breaks;
 use crate::prelude::*;
@@ -25,30 +26,34 @@ fn has_line_break<'a>(string: Expr<'a>, f: &Formatter<'a>) -> bool {
         && !loses_line_breaks(string, f)
 }
 
+/// Prettier's `hasComment(node)`.
+fn has_comments(comments: OwnedComments<'_>) -> bool {
+    !comments.leading.is_empty() || !comments.trailing.is_empty() || !comments.dangling.is_empty()
+}
+
 impl<'a> FormatOpeningElement<'a> {
     fn compute_layout(&self, f: &Formatter<'a>) -> OpeningElementLayout {
         let attributes = self.jsx.attrs();
-        let span = self.jsx.opening_span();
         let comments = f.comments();
+        let (mut name_has_comments, mut last_attribute_has_trailing_comments) = (false, false);
+        let mut only_attribute_has_comments = false;
+        if !f.is_quiet() {
+            let type_arguments = AstNodes::TSTypeParameterInstantiation(Node::Expr(self.expr));
+            name_has_comments = (self.jsx.tag())
+                .is_some_and(|name| has_comments(comments.of_node(name.as_ast_nodes())))
+                || has_comments(comments.of_node(type_arguments));
+            if let Some(last) = attributes.last() {
+                let comments = comments.of_node(last.as_ast_nodes());
+                last_attribute_has_trailing_comments = !comments.trailing.is_empty();
+                only_attribute_has_comments = has_comments(comments);
+            }
+        }
 
-        let last_attribute_has_comment = attributes
-            .last()
-            .is_some_and(|a| comments.has_comment_in_range(a.span().end, span.end));
-        let type_arguments_or_name_end = (self.jsx.type_args().angle_brackets_span())
-            .or_else(|| self.jsx.tag().map(|it| it.span()))
-            .map_or(span.start, |it| it.end);
-        let first_attribute_start_or_element_end =
-            attributes.first().map_or(span.end, |a| a.span().start);
-        let name_has_comment = comments.has_comment_in_range(
-            type_arguments_or_name_end,
-            first_attribute_start_or_element_end,
-        );
-
-        if self.jsx.is_self_closing() && attributes.is_empty() && !name_has_comment {
+        if self.jsx.is_self_closing() && attributes.is_empty() && !name_has_comments {
             OpeningElementLayout::Inline
         } else if attributes.len() == 1
-            && !name_has_comment
-            && !last_attribute_has_comment
+            && !name_has_comments
+            && !only_attribute_has_comments
             && attributes
                 .first()
                 .and_then(as_string_literal_attribute_value)
@@ -57,8 +62,8 @@ impl<'a> FormatOpeningElement<'a> {
             OpeningElementLayout::SingleStringAttribute
         } else {
             OpeningElementLayout::IndentAttributes {
-                name_has_comment,
-                last_attribute_has_comment,
+                name_has_comments,
+                last_attribute_has_trailing_comments,
             }
         }
     }
@@ -72,10 +77,7 @@ impl<'a> Format<'a> for FormatOpeningElement<'a> {
 
         let format_open = format_args!(
             "<",
-            jsx.tag().map(|name| FormatJsxName {
-                name,
-                parent: AstNodes::JSXOpeningElement(e)
-            }),
+            jsx.tag().map(FormatJsxName),
             type_arguments(jsx.type_args(), Node::Expr(e))
         );
         let format_close = format_args!(is_self_closing.then_some("/"), ">");
@@ -119,27 +121,25 @@ impl<'a> Format<'a> for FormatOpeningElement<'a> {
                 );
             }
             OpeningElementLayout::IndentAttributes {
-                name_has_comment,
-                last_attribute_has_comment,
+                name_has_comments,
+                last_attribute_has_trailing_comments,
             } => {
                 let format_inner = format_with(|f| {
                     write!(f, format_open);
                     if !attributes.is_empty() {
                         write!(f, soft_line_indent_or_space(&format_attributes));
                     }
-                    let comments = f.comments().comments_before(jsx.opening_span().end);
-                    FormatTrailingComments::Comments(comments).fmt(f);
-
-                    let force_bracket_same_line = f.options().bracket_same_line.value();
-                    let wants_bracket_same_line = attributes.is_empty() && !name_has_comment;
-
+                    // Prettier's `shouldPrintBracketSameLine`
+                    let bracket_same_line = match attributes.is_empty() {
+                        true => !name_has_comments,
+                        false => {
+                            f.options().bracket_same_line.value()
+                                && !last_attribute_has_trailing_comments
+                        }
+                    };
                     if is_self_closing {
                         write!(f, [soft_line_break_or_space(), format_close]);
-                    } else if last_attribute_has_comment {
-                        write!(f, [soft_line_break(), format_close]);
-                    } else if (force_bracket_same_line && !attributes.is_empty())
-                        || wants_bracket_same_line
-                    {
+                    } else if bracket_same_line {
                         write!(f, format_close);
                     } else {
                         write!(f, [soft_line_break(), format_close]);
@@ -167,7 +167,7 @@ enum OpeningElementLayout {
     SingleStringAttribute,
     /// Each attribute is on its own line if they do not fit on one.
     IndentAttributes {
-        name_has_comment: bool,
-        last_attribute_has_comment: bool,
+        name_has_comments: bool,
+        last_attribute_has_trailing_comments: bool,
     },
 }

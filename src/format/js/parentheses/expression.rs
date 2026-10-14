@@ -2,8 +2,8 @@
 
 use crate::js::ast_nodes::ExpressionStatement;
 use crate::js::print::binary_like_expression::{is_angular_pipe, should_flatten};
-use crate::js::print::expressions::unary_argument_has_comments;
-use crate::js::utils::typecast::is_cast_target;
+use crate::js::print::return_or_throw_statement::has_argument_leading_comments;
+use crate::js::utils::typecast::{has_comments, is_cast_target};
 use crate::prelude::*;
 use AstNodes as N;
 
@@ -320,8 +320,9 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             op: BinOp::Comma, ..
         } => match parent {
             N::ForStatement(_) => false,
-            // Written by `print/return_or_throw_statement.rs` and `print/arrow_function_expression.rs`.
-            N::ReturnStatement(_) | N::ThrowStatement(_) => false,
+            // The statement writes parentheses around a comment and what follows it.
+            N::ReturnStatement(_) | N::ThrowStatement(_) => !has_argument_leading_comments(e, f),
+            // Written by `print/arrow_function_expression.rs`.
             N::ExpressionStatement(statement) => !statement.is_arrow_function_body(),
             _ => true,
         },
@@ -673,25 +674,9 @@ fn assignment_needs_parentheses<'a>(
             !matches!(parent.parent(), N::ForStatement(statement) if is_init_or_update(statement, sequence))
         }
         // The statement writes parentheses around a comment and what follows it.
-        N::ReturnStatement(statement) | N::ThrowStatement(statement) => {
-            !has_own_line_comment_between(statement.span().start, e.span().start, f)
-        }
+        N::ReturnStatement(_) | N::ThrowStatement(_) => !has_argument_leading_comments(e, f),
         _ => true,
     }
-}
-
-/// Whether one of the comments between `start` and `end`, printed or not, ends its line or spans
-/// several.
-pub(crate) fn has_own_line_comment_between(start: u32, end: u32, f: &Formatter<'_>) -> bool {
-    let breaks = |comment: Comment<'_>| comment.has_newline_after() || comment.is_multiline_block();
-    let comments = f.comments();
-    comments
-        .printed_comments()
-        .iter()
-        .rev()
-        .take_while(|comment| comment.span().start >= start)
-        .any(breaks)
-        || comments.comments_before_iter(end).any(breaks)
 }
 
 /// `<T>a | 0`: Prettier puts `<T>a` in parentheses next to `|`, `&`, `^` and the shifts. oxfmt only where it has to: before
@@ -727,9 +712,8 @@ fn binary_or_cast_needs_parentheses<'a>(
         | N::TSNonNullExpression(_)
         | N::UpdateExpression(_) => return true,
         // It writes parentheses around an argument with comments. For oxfmt `a as T` has its own in them.
-        N::UnaryExpression(unary) => {
-            return (is_binary_cast && f.options().flavor.is_oxfmt())
-                || !unary_argument_has_comments(unary, e, f);
+        N::UnaryExpression(_) => {
+            return (is_binary_cast && f.options().flavor.is_oxfmt()) || !has_comments(e, f);
         }
         N::AssignmentExpression(assignment) | N::AssignmentTargetWithDefault(assignment) => {
             return operator.is_none() && assignment.left() == Some(e);

@@ -1,15 +1,13 @@
 use super::arrow_function_expression::{FormatMaybeCachedFunctionBody, FunctionCacheMode};
 use super::block_statement::is_empty_block;
-use super::parameters::{FormatFormalParameters, follows_name_or_type_parameters};
+use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::type_parameters::type_parameters;
 use crate::js::format::{
     ExprOptions, FormatTypeAnnotation, format_node, identifier, write_expression,
 };
-use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::suppressed::FormatSuppressedNode;
-use crate::js::utils::typescript::end_of_line_comments;
 use crate::prelude::*;
 use crate::write;
 
@@ -48,7 +46,6 @@ pub(crate) fn write_function<'a>(
                 (!is_only_head).then_some(space()),
                 func.name().map(|name| identifier(name)),
                 group(&type_parameters(func.type_params(), Node::Func(func))),
-                FormatCommentsBehindParenthesis(func),
             ]
         );
     });
@@ -62,21 +59,7 @@ pub(crate) fn write_function<'a>(
 
     let format_return_type = func.return_type().map(|return_type| {
         let return_type = FormatTypeAnnotation(return_type);
-        let content = format_with(move |f: &mut Formatter<'a>| {
-            let needs_space = f.comments().has_comment_before(return_type.span().start);
-            // The comments before the `{` are written with the body.
-            match func.has_body() {
-                true => write!(
-                    f,
-                    [
-                        maybe_space(needs_space),
-                        FormatNodeWithoutTrailingComments(&return_type)
-                    ]
-                ),
-                false => write!(f, [maybe_space(needs_space), return_type]),
-            }
-        });
-        FormatContentWithCacheMode::new(|| return_type.span(), content, options.cache_mode)
+        FormatContentWithCacheMode::new(|| return_type.span(), return_type, options.cache_mode)
     });
 
     write!(
@@ -117,29 +100,6 @@ pub(crate) fn write_function<'a>(
         );
     } else {
         write!(f, OptionalSemicolon);
-    }
-}
-
-/// The comments behind the `(` of the parameters on its line, if nothing else follows on that line.
-/// They trail what is before the `(`, a name or type parameters, if there is such a node:
-///
-/// ```js
-/// function f( // comment
-///   a) {}
-/// ```
-pub(crate) struct FormatCommentsBehindParenthesis<'a>(pub(crate) Func<'a>);
-
-impl<'a> Format<'a> for FormatCommentsBehindParenthesis<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        // For oxfmt the parentheses are a node, and the comments in it lead the first parameter.
-        if !f.is_quiet()
-            && !f.options().flavor.is_oxfmt()
-            && let Some(first) = self.0.params_with_this().next()
-            && follows_name_or_type_parameters(self.0)
-        {
-            let comments = end_of_line_comments(f.comments().comments_before(first.span().start));
-            write!(f, FormatTrailingComments::Comments(comments));
-        }
     }
 }
 

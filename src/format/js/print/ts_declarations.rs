@@ -1,7 +1,6 @@
 //! The declarations of TypeScript.
 
 use super::block_statement::is_empty_block;
-use super::class::FormatClassImplements;
 use super::import_declaration::FormatStringLiteral;
 use super::intersection_type::lone_type_of_intersection_is_a_group;
 use super::program::FormatStatements;
@@ -10,15 +9,13 @@ use super::ts_types::{entity_name, write_ts_interface_signatures};
 use super::type_parameters::{FormatTSTypeParametersOptions, type_parameters};
 use super::union_type::{
     type_alias_union_breaks_after_operator, union_breaks_one_per_line, union_prints_itself,
-    write_ts_union_type_in,
+    union_prints_own_comments, write_ts_union_type_in,
 };
 use crate::cursor::around_node;
-use crate::js::format::{format_name, format_node, identifier, write_trailing_comments_of};
-use crate::js::trivia::{comments_stay_between_head_and_body, write_head_body_separator};
-use crate::js::utils::assignment_like::{
-    AssignmentLikeLayout, operator_line_run, write_comments_before_operator,
-};
-use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use crate::js::comments::OwnedComments;
+use crate::js::format::{format_name, format_node, identifier};
+use crate::js::trivia::comments_stay_between_head_and_body;
+use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::object::{FormatKey, key_requires_quotes};
 use crate::js::utils::typescript::{should_hug_type, without_lone_operator};
 use crate::prelude::*;
@@ -31,7 +28,42 @@ fn is_declared(statement: Stmt<'_>) -> bool {
         .any(|it| it.flag() == Flags::AMBIENT)
 }
 
-/// `interface A<T> extends B { .. }`
+/// For oxfmt a comment on its own line between a head and its body stays there, so the body starts on a new line.
+///
+/// ```ts
+/// enum A
+/// // comment
+/// {}
+/// ```
+fn write_space_before_body<'a>(body: AstNodes<'a>, f: &mut Formatter<'a>) {
+    let starts_on_new_line = !f.is_quiet()
+        && comments_stay_between_head_and_body(f)
+        && (f.comments().of_node(body).leading.first())
+            .is_some_and(|comment| comment.has_newline_before());
+    match starts_on_new_line {
+        true => write!(f, hard_line_break()),
+        false => write!(f, space()),
+    }
+}
+
+/// The name or the type parameters of an interface, with the comments `owned` by it. Prettier's `printClass` indents the
+/// trailing comments.
+fn write_part_of_interface_head<'a>(
+    owned: OwnedComments<'a>,
+    part: &impl Format<'a>,
+    f: &mut Formatter<'a>,
+) {
+    write!(
+        f,
+        [
+            FormatLeadingComments::Comments(owned.leading),
+            part,
+            indent(&FormatTrailingComments::Comments(owned.trailing))
+        ]
+    );
+}
+
+/// `interface A<T> extends B { .. }`. Prettier's `printClass`.
 pub(crate) fn write_ts_interface_declaration<'a>(
     statement: Stmt<'a>,
     interface: Interface<'a>,
@@ -40,90 +72,77 @@ pub(crate) fn write_ts_interface_declaration<'a>(
     if f.file().is_flow() && super::flow::is_opaque_type(statement, f) {
         return super::flow::write_opaque_type(statement, interface, f);
     }
-    let id = identifier(interface.name());
+    let name = interface.name().span();
     let type_params = interface.type_params();
     let extends = interface.extends();
-    let body_span = interface.body_span();
+    let name_comments = f.comments().of_name(name.start);
+    let type_parameters_node = AstNodes::TSTypeParameterDeclaration(Node::Stmt(statement));
+    let type_parameters_comments = f.comments().of_node(type_parameters_node);
 
-    // Whether the head is a group that can break before `extends`: there are several types, or one
-    // that is `A.B` without type arguments, or a comment trails the name or the type parameters.
+    // Prettier's `shouldPrintClassInGroupMode`: the head can break before `extends`.
     let group_mode = extends.len() > 1
-        || extends.first().is_some_and(|first| {
-            let is_member = match first.kind() {
-                TypeKind::Ref { name, args } => name.len() > 1 && args.is_empty(),
-                TypeKind::Heritage { expr, args } => {
-                    matches!(expr.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. })
-                        && args.is_empty()
-                }
-                _ => false,
-            };
-            // A comment after `extends` on its line leads the type. All others trail what is before.
-            is_member || {
-                let previous = type_params
-                    .angle_brackets_span()
-                    .unwrap_or_else(|| id.span());
-                let comments = f.comments().comments_in(previous.between(first.span()));
-                comments
-                    .iter()
-                    .any(|comment| comment.has_newline_before() || comment.has_newline_after())
-                    || comments.first().is_some_and(|comment| {
-                        f.source_text()
-                            .all_bytes(previous.between(comment.span()), |b| {
-                                b.is_ascii_whitespace()
-                            })
-                    })
+        || !name_comments.trailing.is_empty()
+        || !type_parameters_comments.trailing.is_empty()
+        || extends.first().is_some_and(|first| match first.kind() {
+            TypeKind::Ref { name, args } => name.len() > 1 && args.is_empty(),
+            TypeKind::Heritage { expr, args } => {
+                matches!(expr.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. })
+                    && args.is_empty()
             }
+            _ => false,
         });
 
-    let format_id = format_with(|f| {
-        match type_params.is_empty() && extends.is_empty() {
-            true => FormatNodeWithoutTrailingComments(&id).fmt(f),
-            false => write!(f, id),
-        }
+    let format_name_and_type_parameters = format_with(|f| {
+        write_part_of_interface_head(name_comments, &source_text(name), f);
         if type_params.angle_brackets_span().is_some() {
             let options = FormatTSTypeParametersOptions {
                 group_id: None,
                 is_type_or_interface_decl: true,
             };
-            type_parameters(type_params, Node::Stmt(statement))
-                .with_options(options)
-                .write_without_comments(f);
-            if !extends.is_empty() {
-                write_trailing_comments_of(
-                    AstNodes::TSTypeParameterDeclaration(Node::Stmt(statement)),
-                    f,
-                );
-            }
+            let type_parameters = format_with(|f| {
+                type_parameters(type_params, Node::Stmt(statement))
+                    .with_options(options)
+                    .write_without_comments(f)
+            });
+            write_part_of_interface_head(type_parameters_comments, &type_parameters, f);
         }
     });
 
+    // Prettier's `printHeritageClauses`.
     let format_extends = format_with(|f| {
-        let Some(first_extend) = extends.first() else {
+        if extends.is_empty() {
             return;
-        };
-        if f.comments()
-            .has_leading_own_line_comment(first_extend.span().start)
-        {
-            write!(
-                f,
-                FormatTrailingComments::Comments(
-                    f.comments().comments_before(first_extend.span().start)
-                )
-            );
         }
-
-        let heritage = FormatClassImplements(extends);
+        let comments_before_keyword = (f
+            .comments()
+            .of_node(AstNodes::TSInterfaceDeclaration(statement)))
+        .dangling;
+        let format_comments_before_keyword = FormatDanglingComments::Comments {
+            comments: comments_before_keyword,
+            indent: DanglingIndentMode::None,
+        };
+        let heritage = format_with(|f| {
+            f.join_with(soft_line_break_or_space())
+                .entries_with_trailing_separator(
+                    extends.iter(),
+                    ",",
+                    TrailingSeparator::Disallowed,
+                );
+        });
         if extends.len() > 1 {
             write!(
                 f,
                 [
                     soft_line_break_or_space(),
+                    format_comments_before_keyword,
+                    (!comments_before_keyword.is_empty()).then_some(hard_line_break()),
                     "extends",
                     group(&soft_line_indent_or_space(&heritage))
                 ]
             );
         } else {
-            let format_extends = format_args!("extends", space(), heritage);
+            let format_extends =
+                format_args!("extends", space(), format_comments_before_keyword, heritage);
             match group_mode {
                 true => write!(f, [soft_line_break_or_space(), group(&format_extends)]),
                 false => write!(f, [space(), format_extends]),
@@ -131,6 +150,7 @@ pub(crate) fn write_ts_interface_declaration<'a>(
         }
     });
 
+    let body = AstNodes::TSInterfaceBody(statement);
     let content = format_with(|f| {
         write!(
             f,
@@ -140,30 +160,21 @@ pub(crate) fn write_ts_interface_declaration<'a>(
                 space()
             ]
         );
-
-        if !extends.is_empty() && group_mode {
-            write!(f, group(&format_args!(format_id, indent(&format_extends))));
-        } else {
-            write!(f, [format_id, format_extends]);
+        match group_mode {
+            true => write!(
+                f,
+                group(&format_args!(
+                    format_name_and_type_parameters,
+                    indent(&format_extends)
+                ))
+            ),
+            false => write!(f, [format_name_and_type_parameters, format_extends]),
         }
-
-        // The comments on the line of the `{` stay before it. All others are in the body.
-        if !f.is_quiet() && comments_stay_between_head_and_body(f) {
-            write_head_body_separator(body_span.start, f);
-        } else if !f.is_quiet() {
-            let comments = f.comments().comments_before(body_span.start);
-            if !comments
-                .iter()
-                .any(|comment| comment.has_newline_before() || comment.has_newline_after())
-            {
-                write!(f, [space(), FormatLeadingComments::Comments(comments)]);
-            }
-        }
-        write!(f, space());
-        around_node(body_span, f, |f| {
+        write_space_before_body(body, f);
+        format_node(body, f, |f| {
             write!(f, "{");
             match interface.members().is_empty() {
-                true => write!(f, format_dangling_comments(body_span).with_block_indent()),
+                true => write!(f, dangling_comments(body).with_block_indent()),
                 false => {
                     write!(
                         f,
@@ -180,10 +191,13 @@ pub(crate) fn write_ts_interface_declaration<'a>(
     write!(f, group(&content));
 }
 
-/// `type A = B /* comment */;` is `type A = B; /* comment */` for oxfmt, as after any other statement.
-/// Prettier does that only if the type is exported.
-fn comments_before_semicolon_of_type_alias_go_behind_it(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
+/// `type A = B /* comment */;` is `type A = B; /* comment */` for oxfmt, as after any other statement. Prettier does that
+/// only if the type alias is exported.
+fn comments_before_semicolon_of_type_alias_go_behind_it(
+    statement: Stmt<'_>,
+    f: &Formatter<'_>,
+) -> bool {
+    f.options().flavor.is_oxfmt() || statement.is_exported()
 }
 
 /// `type A = B`. Prettier's `printTypeAlias`, with what its `printAssignment` does if the right side
@@ -197,54 +211,13 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
         return;
     }
     let ty = without_lone_operator(alias.ty());
+    let right_node = ty.as_ast_nodes();
 
-    // The comments before the `;` of an export are behind it: see `Comments::without_semicolon`.
-    let is_exported = !f.is_quiet()
-        && (comments_before_semicolon_of_type_alias_go_behind_it(f)
-            || matches!(
-                statement.as_ast_nodes(),
-                AstNodes::ExportNamedDeclaration(_)
-            ));
-    let view_limit = is_exported.then(|| {
-        let end = match comments_before_semicolon_of_type_alias_go_behind_it(f) {
-            // Without the parentheses around the type, which are not written.
-            true => ty.span().end,
-            false => f.file().without_semicolon(statement.span()).end,
-        };
-        f.comments_mut().limit_comments_up_to(end)
-    });
-
-    // Whether the left side is a group depends on the layout, which depends on the comments that
-    // are left after the left side is written.
-    let outer_group = f.reserve_tag();
-    let left_group = f.reserve_tag();
-    write!(f, [is_declared(statement).then_some("declare "), "type "]);
-    let id = identifier(alias.name());
-    if alias.type_params().angle_brackets_span().is_some() {
-        let type_parameters = type_parameters(alias.type_params(), Node::Stmt(statement));
-        write!(f, [id, FormatNodeWithoutTrailingComments(&type_parameters)]);
-    } else {
-        write!(f, FormatNodeWithoutTrailingComments(&id));
-    }
-    // What oxfmt writes behind the `=`, and whether a line comment is on the line of the `=`.
-    let mut operator_line: (CommentList<'_>, bool) = (CommentList::empty(), false);
-    if !f.is_quiet() {
-        match type_alias_comments_stay_behind_operator(f) {
-            true => operator_line = write_comments_after_type_alias_left_side(alias, f),
-            false => {
-                write!(
-                    f,
-                    FormatTrailingComments::Comments(comments_before_type_alias_operator(
-                        id.span().end,
-                        ty,
-                        f
-                    ))
-                );
-            }
-        }
-    }
-    let (operator_line_run, has_line_comment_on_operator_line) = operator_line;
-
+    let comments_around_operator = CommentsAroundOperator::new(ty, f);
+    let has_line_comment_on_operator_line = !comments_around_operator.behind.is_empty()
+        || (type_alias_comments_stay_around_operator(f)
+            && (comments_trailing_type_alias_left_side(statement, f).last())
+                .is_some_and(|comment| comment.is_line()));
     let layout = match type_alias_layout(statement, alias, ty, f) {
         AssignmentLikeLayout::Fluid | AssignmentLikeLayout::NeverBreakAfterOperator
             if has_line_comment_on_operator_line =>
@@ -253,30 +226,44 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
         }
         layout => layout,
     };
-    if layout != AssignmentLikeLayout::BreakLeftHandSide {
-        f.group_from(left_group, false);
-    }
-    write!(f, [space(), "="]);
-    if !operator_line_run.is_empty() {
-        write!(f, FormatTrailingComments::Comments(operator_line_run));
-        if operator_line_run
-            .iter()
-            .any(|comment| f.comments().is_suppression_comment(comment))
-        {
-            f.comments_mut()
-                .mark_suppressed_after_operator(ty.span().start);
-        }
-    }
 
+    let left = format_with(|f| {
+        write!(
+            f,
+            [
+                is_declared(statement).then_some("declare "),
+                "type ",
+                identifier(alias.name())
+            ]
+        );
+        if alias.type_params().angle_brackets_span().is_some() {
+            let options = FormatTSTypeParametersOptions {
+                group_id: None,
+                is_type_or_interface_decl: true,
+            };
+            let type_parameters =
+                type_parameters(alias.type_params(), Node::Stmt(statement)).with_options(options);
+            let node = AstNodes::TSTypeParameterDeclaration(Node::Stmt(statement));
+            format_node(node, f, |f| type_parameters.write_without_comments(f));
+        }
+        write!(
+            f,
+            FormatTrailingComments::Comments(comments_around_operator.before)
+        );
+    });
+    let moves_trailing_comments =
+        !f.is_quiet() && comments_before_semicolon_of_type_alias_go_behind_it(statement, f);
     let right = format_with(|f| {
+        if moves_trailing_comments {
+            f.context_mut().set_skip_trailing_comments(true);
+        }
         match ty.kind() {
-            // The comments before a union are written with it.
-            TypeKind::Union(types) => {
-                let is_indented = layout == AssignmentLikeLayout::BreakAfterOperator;
-                around_node(ty.span(), f, |f| {
-                    write_ts_union_type_in(ty, types, is_indented, f)
-                });
-                write_trailing_comments_of(ty.as_ast_nodes(), f);
+            TypeKind::Union(types)
+                if layout == AssignmentLikeLayout::BreakAfterOperator
+                    && union_prints_own_comments(ty, f)
+                    && !f.comments().is_ignored(right_node) =>
+            {
+                around_node(ty.span(), f, |f| write_ts_union_type_in(ty, types, true, f));
             }
             _ if ty != alias.ty()
                 && matches!(alias.ty().kind(), TypeKind::Intersection(_))
@@ -286,101 +273,141 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
             }
             _ => write!(f, ty),
         }
-        if ty != alias.ty() {
-            write_trailing_comments_of(alias.ty().as_ast_nodes(), f);
+        f.context_mut().set_skip_trailing_comments(false);
+    });
+    let content = format_with(|f| {
+        match layout {
+            AssignmentLikeLayout::BreakLeftHandSide => write!(f, left),
+            _ => write!(f, group(&left)),
+        }
+        write!(
+            f,
+            [
+                space(),
+                "=",
+                FormatTrailingComments::Comments(comments_around_operator.behind)
+            ]
+        );
+        match layout {
+            // A line comment that has been written after the `=` stays there.
+            AssignmentLikeLayout::BreakAfterOperator
+                if type_alias_comments_stay_around_operator(f)
+                    && (has_line_comment_on_operator_line
+                        || !matches!(ty.kind(), TypeKind::Cond { .. })) =>
+            {
+                write!(f, soft_line_indent_or_space(&right));
+            }
+            AssignmentLikeLayout::BreakAfterOperator => {
+                write!(f, group(&soft_line_indent_or_space(&right)))
+            }
+            AssignmentLikeLayout::BreakLeftHandSide => write!(f, [space(), group(&right)]),
+            AssignmentLikeLayout::NeverBreakAfterOperator => write!(f, [space(), right]),
+            _ => {
+                let group_id = f.group_id("assignment_like");
+                write!(
+                    f,
+                    [
+                        group(&indent(&soft_line_break_or_space())).with_group_id(Some(group_id)),
+                        line_suffix_boundary(),
+                        indent_if_group_breaks(&right, group_id)
+                    ]
+                );
+            }
         }
     });
-    match layout {
-        // A line comment that has been written after the `=` stays there.
-        AssignmentLikeLayout::BreakAfterOperator
-            if type_alias_comments_stay_behind_operator(f)
-                && (has_line_comment_on_operator_line
-                    || !matches!(ty.kind(), TypeKind::Cond { .. })) =>
-        {
-            write!(f, soft_line_indent_or_space(&right));
-        }
-        AssignmentLikeLayout::BreakAfterOperator => {
-            write!(f, group(&soft_line_indent_or_space(&right)))
-        }
-        AssignmentLikeLayout::BreakLeftHandSide => write!(f, [space(), group(&right)]),
-        AssignmentLikeLayout::NeverBreakAfterOperator => write!(f, [space(), right]),
-        _ => {
-            let group_id = f.group_id("assignment_like");
-            write!(
-                f,
-                [
-                    group(&indent(&soft_line_break_or_space())).with_group_id(Some(group_id)),
-                    line_suffix_boundary(),
-                    indent_if_group_breaks(&right, group_id)
-                ]
-            );
-        }
-    }
-    f.group_from(outer_group, false);
-    write!(f, OptionalSemicolon);
-    if let Some(view_limit) = view_limit {
-        f.comments_mut().restore_view_limit(view_limit);
+    write!(f, [group(&content), OptionalSemicolon]);
+    if moves_trailing_comments {
+        write!(f, trailing_comments(right_node));
     }
 }
 
-/// oxfmt follows Prettier 3.8: a line comment behind the `=` of a type alias trails the left side.
-/// For 3.9 every comment after the `=` leads the type.
+/// oxfmt follows Prettier 3.8: a comment that ends the line of the left side of a type alias, or the line of the `=`, stays
+/// there. For 3.9 it leads the type.
 ///
 /// ```ts
 /// type A = // comment      type A =
 ///   B;                       // comment
 ///                            B;
 /// ```
-fn type_alias_comments_stay_behind_operator(f: &Formatter<'_>) -> bool {
+fn type_alias_comments_stay_around_operator(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// What oxc's `AssignmentLike::fmt` does with the comments between the two sides of a type alias: it
-/// writes those that trail the left side. Returns those to write behind the `=`, and whether a line
-/// comment is on the line of the `=`. See `comments_stay_around_operator`.
-fn write_comments_after_type_alias_left_side<'a>(
-    alias: Alias<'a>,
-    f: &mut Formatter<'a>,
-) -> (CommentList<'a>, bool) {
-    let left_end = alias
-        .type_params()
-        .angle_brackets_span()
-        .map_or_else(|| alias.name().span().end, |it| it.end);
-    if !f
-        .comments()
-        .has_any_comment_in(Span::before(left_end, alias.ty().span()))
-    {
-        return (CommentList::empty(), false);
-    }
-    let operator_end = f.comments().position_after_character(left_end, b'=');
-    let previous_limit = f.comments_mut().limit_comments_up_to(operator_end);
-    write_comments_before_operator(left_end, f);
-    f.comments_mut().restore_view_limit(previous_limit);
-    let run = operator_line_run(operator_end, f);
-    (
-        run,
-        !run.is_empty() || f.comments().has_printed_line_comment_after(left_end),
-    )
-}
-
-/// Of the comments that are left between the name of a type alias, which ends at `start`, and the
-/// first `=` after it, those that trail the left side. All others lead the type (Prettier's
-/// `handleAssignmentLikeComments`, for which the `=` of a default type is as good as any).
-fn comments_before_type_alias_operator<'a>(
-    start: u32,
-    ty: TypeNode<'a>,
+/// The trailing comments of the name of the type alias `statement`, or of its type parameters if it has any.
+pub(super) fn comments_trailing_type_alias_left_side<'a>(
+    statement: Stmt<'a>,
     f: &Formatter<'a>,
 ) -> CommentList<'a> {
-    let comments = f.comments().comments_before_character(start, b'=');
-    let is_object = matches!(ty.kind(), TypeKind::Object(_));
-    let count = comments
-        .iter()
-        .take_while(|comment| {
-            !comment.has_newline_before()
-                && !(comment.has_newline_after() && (is_object || comment.is_block()))
-        })
-        .count();
-    comments.slice(0, count)
+    let StmtKind::TypeAlias(alias) = statement.kind() else {
+        return CommentList::empty();
+    };
+    match alias.type_params().angle_brackets_span() {
+        Some(_) => {
+            let type_parameters = AstNodes::TSTypeParameterDeclaration(Node::Stmt(statement));
+            f.comments().of_node(type_parameters).trailing
+        }
+        None => f.comments().of_name(alias.name().span().start).trailing,
+    }
+}
+
+/// See [`type_alias_comments_stay_around_operator`]: the leading comments of the type of a type alias that the type alias
+/// writes. They are the first of its leading comments.
+#[derive(Copy, Clone, Default)]
+pub(super) struct CommentsAroundOperator<'a> {
+    /// `type A /* comment */ ⏎ = B`
+    pub(super) before: CommentList<'a>,
+    /// `type A = // comment ⏎ B`
+    pub(super) behind: CommentList<'a>,
+}
+
+impl<'a> CommentsAroundOperator<'a> {
+    /// `ty`: the type of a type alias.
+    pub(super) fn new(ty: TypeNode<'a>, f: &Formatter<'a>) -> Self {
+        if f.is_quiet() || !type_alias_comments_stay_around_operator(f) {
+            return CommentsAroundOperator::default();
+        }
+        /// The comments at the start of `comments` that are behind code on its line, if the last of them ends the line.
+        fn up_to_end_of_line(comments: CommentList<'_>) -> CommentList<'_> {
+            let count = (comments.iter())
+                .take_while(|comment| !comment.has_newline_before())
+                .position(|comment| comment.has_newline_after())
+                .map_or(0, |last| last + 1);
+            comments.slice(0, count)
+        }
+        let is_operator = |offset: u32| f.source_text().byte_at(offset) == Some(b'=');
+        let leading_comments = f.comments().of_node(ty.as_ast_nodes()).leading;
+        let before_operator = (leading_comments.iter())
+            .take_while(|comment| is_operator(comment.next_token_start()))
+            .count();
+        let (before_operator, behind_operator) = leading_comments.split_at(before_operator);
+
+        let before = up_to_end_of_line(before_operator);
+        let before = match before.last() {
+            Some(last) if !last.is_multiline_block() => before,
+            _ => CommentList::empty(),
+        };
+        // A comment that is left before the `=` is written behind it, and the others follow it.
+        if before.len() < before_operator.len() {
+            return CommentsAroundOperator {
+                before,
+                behind: CommentList::empty(),
+            };
+        }
+        let behind = up_to_end_of_line(behind_operator);
+        let behind = match (behind.first(), behind.last()) {
+            (Some(first), Some(last))
+                if last.is_line() && is_operator(first.prev_token_end().saturating_sub(1)) =>
+            {
+                behind
+            }
+            _ => CommentList::empty(),
+        };
+        CommentsAroundOperator { before, behind }
+    }
+
+    pub(super) fn len(self) -> usize {
+        self.before.len() + self.behind.len()
+    }
 }
 
 /// Prettier's `chooseLayout` for the type alias `alias`, whose type is `ty`.
@@ -395,35 +422,28 @@ fn type_alias_layout<'a>(
         TypeKind::Ref { args, .. } => !args.is_empty(),
         _ => false,
     };
+    let leading_comments = match f.is_quiet() {
+        true => CommentList::empty(),
+        false => {
+            let leading_comments = f.comments().of_node(ty.as_ast_nodes()).leading;
+            let written_by_type_alias = CommentsAroundOperator::new(ty, f).len();
+            leading_comments.slice(written_by_type_alias, leading_comments.len())
+        }
+    };
     let should_break_after_operator = match ty.kind() {
-        TypeKind::Union(types)
-            if !union_breaks_one_per_line(f) && !should_hug_type(ty, types, f) =>
-        {
+        TypeKind::Union(types) if !union_breaks_one_per_line(f) && !should_hug_type(types, f) => {
             true
         }
-        _ if type_alias_comments_stay_behind_operator(f)
-            && !f.is_quiet()
-            && f.comments()
-                .comments_before_iter(ty.span().start)
-                .any(|comment| comment.is_indentable_block()) =>
+        _ if type_alias_comments_stay_around_operator(f)
+            && (leading_comments.iter()).any(|comment| comment.is_indentable_block()) =>
         {
             true
         }
         // It is up to the union where it breaks, unless it leaves that to the `=`.
         TypeKind::Union(_)
-            if type_alias_comments_stay_behind_operator(f) && union_prints_itself(ty, f) =>
+            if type_alias_comments_stay_around_operator(f) && union_prints_itself(ty, f) =>
         {
-            !f.is_quiet()
-                && type_alias_union_breaks_after_operator(
-                    statement,
-                    f.comments().comments_before(ty.span().start),
-                    f,
-                )
-        }
-        _ if type_alias_comments_stay_behind_operator(f)
-            && f.comments().has_leading_own_line_comment(ty.span().start) =>
-        {
-            true
+            type_alias_union_breaks_after_operator(statement, ty, f)
         }
         TypeKind::Cond { check, extends, .. }
             if f.options().experimental_ternaries || is_generic(check) || is_generic(extends) =>
@@ -432,12 +452,8 @@ fn type_alias_layout<'a>(
         }
         // Flow's `StringLiteralTypeAnnotation`
         TypeKind::StringLit(_) if f.file().is_javascript() => true,
-        _ => {
-            !f.is_quiet()
-                && f.comments()
-                    .comments_before_iter(ty.span().start)
-                    .any(|comment| comment.has_newline_after() || comment.is_indentable_block())
-        }
+        _ => (leading_comments.iter())
+            .any(|comment| comment.has_newline_after() || comment.is_indentable_block()),
     };
     if should_break_after_operator {
         return AssignmentLikeLayout::BreakAfterOperator;
@@ -477,29 +493,18 @@ pub(crate) fn write_ts_enum_declaration<'a>(
             space(),
         ]
     );
-    let name = identifier(declaration.name());
-    if !f.is_quiet() && comments_stay_between_head_and_body(f) {
-        write!(f, FormatNodeWithoutTrailingComments(&name));
-        write_head_body_separator(declaration.body_span().start, f);
-    } else {
-        write!(
-            f,
-            [
-                name,
-                space(),
-                format_leading_comments(declaration.body_span())
-            ]
-        );
-    }
-    if f.file().is_flow() {
-        super::flow::write_explicit_type_of_enum(declaration, f);
-    }
-    around_node(declaration.body_span(), f, |f| {
-        write_ts_enum_body(declaration, f)
+    let body = AstNodes::TSEnumBody(statement);
+    write!(f, identifier(declaration.name()));
+    write_space_before_body(body, f);
+    format_node(body, f, |f| {
+        if f.file().is_flow() {
+            super::flow::write_explicit_type_of_enum(declaration, f);
+        }
+        write_ts_enum_body(body, declaration, f);
     });
 }
 
-fn write_ts_enum_body<'a>(declaration: Enum<'a>, f: &mut Formatter<'a>) {
+fn write_ts_enum_body<'a>(body: AstNodes<'a>, declaration: Enum<'a>, f: &mut Formatter<'a>) {
     write!(f, "{");
     let members = declaration.members();
     if members.is_empty() {
@@ -507,7 +512,7 @@ fn write_ts_enum_body<'a>(declaration: Enum<'a>, f: &mut Formatter<'a>) {
         write!(
             f,
             [
-                format_dangling_comments(declaration.body_span()).with_soft_block_indent(),
+                dangling_comments(body).with_soft_block_indent(),
                 expand_parent()
             ]
         );
@@ -524,6 +529,11 @@ fn write_ts_enum_body<'a>(declaration: Enum<'a>, f: &mut Formatter<'a>) {
         write!(
             f,
             block_indent(&format_with(|f| {
+                // Flow's `enum A of /* comment */ string { B }`
+                write!(
+                    f,
+                    FormatLeadingComments::Comments(f.comments().of_node(body).dangling)
+                );
                 let trailing_separator = match members
                     .last()
                     .is_some_and(super::flow::is_unknown_members_mark)
@@ -574,20 +584,8 @@ pub(crate) fn write_ts_module_declaration<'a>(
     let body_span = innermost.body_span();
     write!(f, is_declared(statement).then_some("declare "));
 
-    // Which of the comments after the name trail it depends on the body.
-    let name_end = innermost.name_span().end;
-    let view_limit = (!f.is_quiet()).then(|| f.comments_mut().limit_comments_up_to(name_end));
     match module.name() {
-        ModuleName::Global => {
-            let comments_before_global = f.comments().comments_before(module.name_span().start);
-            write!(
-                f,
-                [
-                    FormatLeadingComments::Comments(comments_before_global),
-                    "global"
-                ]
-            );
-        }
+        ModuleName::Global => format_name(module.name_span(), f, |f| write!(f, "global")),
         ModuleName::String(name) => write!(
             f,
             ["module", space(), FormatStringLiteral { span: name.span() }]
@@ -608,25 +606,14 @@ pub(crate) fn write_ts_module_declaration<'a>(
         }
         current = nested;
     }
-    if let Some(view_limit) = view_limit {
-        f.comments_mut().restore_view_limit(view_limit);
-        if !(body_span.is_some() && comments_stay_between_head_and_body(f)) {
-            let following = body_span.map_or(0, |it| it.start);
-            write!(
-                f,
-                format_trailing_comments(statement.span(), innermost.name_span(), following)
-            );
-        }
-    }
 
     let Some(span) = body_span else {
         return write!(f, OptionalSemicolon);
     };
-    match !f.is_quiet() && comments_stay_between_head_and_body(f) {
-        true => write_head_body_separator(span.start, f),
-        false => write!(f, space()),
-    }
-    format_node(AstNodes::TSModuleBlock(statement), f, |f| {
+    // The `B` of `namespace A.B {}` is a statement of its own here, and the body is its body.
+    let body = AstNodes::TSModuleBlock(innermost.stmt());
+    write_space_before_body(body, f);
+    format_node(body, f, |f| {
         write!(f, "{");
         match is_empty_block(innermost.body()) {
             // Prettier's `printBlock` does not know Flow's `declare namespace`.
@@ -636,7 +623,7 @@ pub(crate) fn write_ts_module_declaration<'a>(
             {
                 write!(f, hard_line_break());
             }
-            true => write!(f, format_dangling_comments(span).with_block_indent()),
+            true => write!(f, dangling_comments(body).with_block_indent()),
             false => write!(f, block_indent(&FormatStatements(innermost.body()))),
         }
         write!(f, "}");

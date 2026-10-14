@@ -72,11 +72,16 @@ function pruneTrackedContexts() {
 }
 
 function createContext(contextObject?, options?) {
+  return createTrackedContext(contextObject, options, false);
+}
+
+// runInNewContext() names the code generation options `contextCodeGeneration`, createContext() `codeGeneration`.
+function createTrackedContext(contextObject, options, optionsOfRunInNewContext: boolean) {
   if (typeof options === "object" && options !== null) {
     validateOneOf(options.microtaskMode, "options.microtaskMode", ["afterEvaluate", undefined]);
   }
   const alreadyContextified = $isObject(contextObject) && isContext(contextObject);
-  const context = createContextNative(contextObject, options);
+  const context = createContextNative(contextObject, options, optionsOfRunInNewContext);
   if (!alreadyContextified) {
     if (trackedContexts.length >= trackedContextsPruneAt) {
       const alive = pruneTrackedContexts();
@@ -116,7 +121,7 @@ function runInNewContext(code, context, options) {
   } else {
     options = { ...options };
   }
-  context = createContext(context, options);
+  context = createTrackedContext(context, options, true);
   return createScript(code, options).runInNewContext(context, options);
 }
 

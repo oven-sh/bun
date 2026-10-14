@@ -538,7 +538,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     bool notContextified = NodeVM::getContextArg(globalObject, contextObjectValue);
 
-    if (!contextObjectValue || !contextObjectValue.isObject()) [[unlikely]] {
+    if (!notContextified && !contextObjectValue.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Context must be an object"_s);
         return {};
     }
@@ -551,6 +551,12 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     RETURN_IF_EXCEPTION(scope, {});
 
     contextOptions.notContextified = notContextified;
+
+    if (!notContextified) {
+        if (auto* existingContext = getGlobalObjectFromContext(globalObject, contextObjectValue, false)) {
+            RELEASE_AND_RETURN(scope, runInContext(existingContext, script, callFrame->argument(1)));
+        }
+    }
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     auto* targetContext = NodeVMGlobalObject::create(vm,

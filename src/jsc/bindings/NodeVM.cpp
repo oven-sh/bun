@@ -859,7 +859,6 @@ bool getContextArg(JSGlobalObject* globalObject, JSValue& contextArg)
     } else if (contextArg.isSymbol()) {
         Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
         if (contextArg == zigGlobalObject->m_nodeVMDontContextify.get(zigGlobalObject)) {
-            contextArg = JSC::constructEmptyObject(globalObject);
             return true;
         }
     }
@@ -1462,7 +1461,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     bool notContextified = getContextArg(globalObject, contextArg);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (!contextArg.isObject()) {
+    if (!notContextified && !contextArg.isObject()) {
         return ERR::INVALID_ARG_TYPE(scope, globalObject, "context"_s, "object"_s, contextArg);
     }
 
@@ -1475,15 +1474,14 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
     JSValue importer;
 
-    getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions, optionNames(vm).codeGeneration(vm), &importer);
+    bool optionsOfRunInNewContext = callFrame->argument(2).isTrue();
+    getNodeVMContextOptions(globalObject, vm, scope, optionsArg, contextOptions, optionsOfRunInNewContext ? optionNames(vm).contextCodeGeneration(vm) : optionNames(vm).codeGeneration(vm), &importer);
     RETURN_IF_EXCEPTION(scope, {});
 
     contextOptions.notContextified = notContextified;
 
-    JSObject* sandbox = asObject(contextArg);
-
-    if (isContext(globalObject, sandbox)) {
-        return JSValue::encode(sandbox);
+    if (!notContextified && isContext(globalObject, contextArg)) {
+        return JSValue::encode(contextArg);
     }
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
@@ -1497,6 +1495,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     if (notContextified) {
         return JSValue::encode(targetContext->globalThis());
     }
+
+    JSObject* sandbox = asObject(contextArg);
 
     // Set sandbox as contextified object
     targetContext->setContextifiedObject(sandbox);

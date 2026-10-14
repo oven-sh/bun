@@ -1677,8 +1677,8 @@ describe("context options with throwing getters", () => {
   // the process, so run the matrix in a subprocess.
   test.concurrent("the getter's exception propagates to the caller", async () => {
     // Each entry point tests the context-option keys it actually reads:
-    // createContext takes codeGeneration, Script#runInNewContext takes
-    // contextCodeGeneration, and vm.runInNewContext goes through both.
+    // createContext takes codeGeneration, Script#runInNewContext and
+    // vm.runInNewContext take contextCodeGeneration.
     // A dotted key puts the throwing getter on the nested object.
     const codeGenerationKeys = (key: string) => [key, `${key}.strings`, `${key}.wasm`];
     const contextKeys = (...codeGenerationKeyNames: string[]) => [
@@ -1690,7 +1690,7 @@ describe("context options with throwing getters", () => {
     ];
     const matrix = {
       createContext: contextKeys("codeGeneration"),
-      runInNewContext: contextKeys("codeGeneration", "contextCodeGeneration"),
+      runInNewContext: contextKeys("contextCodeGeneration"),
       scriptRunInNewContext: contextKeys("contextCodeGeneration"),
     };
     const code = `
@@ -1866,6 +1866,38 @@ describe("DONT_CONTEXTIFY", () => {
     Object.preventExtensions(ctx);
     expect(run("Array = 1; typeof Array", ctx)).toBe("number");
   });
+
+  test.each([
+    [
+      "vm.runInNewContext()",
+      (code: string, options?: object) => runInNewContext(code, constants.DONT_CONTEXTIFY, options),
+    ],
+    [
+      "Script#runInNewContext()",
+      (code: string, options?: object) => new Script(code).runInNewContext(constants.DONT_CONTEXTIFY, options),
+    ],
+  ])("%s runs in the vanilla context itself", (_name, runInNew) => {
+    expect(runInNew("globalThis.x = 1; delete globalThis.x; typeof x")).toBe("undefined");
+    expect(runInNew("globalThis.x = 1; var y = 2; Object.keys(globalThis).join()")).toBe("y,x");
+    expect(runInNew("globalThis === this")).toBe(true);
+    expect(isContext(runInNew("this"))).toBe(true);
+    expect(() => runInNew("eval('1')", { contextCodeGeneration: { strings: false } })).toThrow(
+      expect.objectContaining({ name: "EvalError" }),
+    );
+  });
+});
+
+test.each([
+  ["a sandbox", () => createContext({})],
+  ["DONT_CONTEXTIFY", () => createContext(constants.DONT_CONTEXTIFY)],
+])("runInNewContext() with a context made from %s runs in that context", (_name, makeContext) => {
+  const viaFunction = makeContext();
+  runInNewContext("var made = []; let lexical = 1", viaFunction);
+  expect(runInContext("[made instanceof Array, typeof lexical].join()", viaFunction)).toBe("true,number");
+
+  const viaScript = makeContext();
+  new Script("var made = []; let lexical = 1").runInNewContext(viaScript);
+  expect(runInContext("[made instanceof Array, typeof lexical].join()", viaScript)).toBe("true,number");
 });
 
 test("the global object of a contextified context is not a context", () => {

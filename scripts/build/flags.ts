@@ -1391,6 +1391,14 @@ export const linkerFlags: Flag[] = [
     desc: "Identical-code-folding (safe in release; perf symbolication uses the linker-map)",
   },
   {
+    // What is given the name of a section is otherwise one piece per compilation unit, of which the linker can neither
+    // drop nor fold a function or a constant. feature-pass.cpp names the sections of all that is compiled for a feature.
+    // clang's -fseparate-named-sections, said to the linker because with LTO that is where code is generated.
+    flag: "-Wl,-mllvm,-separate-named-sections",
+    when: c => c.linux || c.freebsd,
+    desc: "A section of its own for each function and constant in a named section",
+  },
+  {
     flag: c => `-Wl,-Map=${linkerMapPath(c)}`,
     when: c => c.linux && writesLinkerMap(c),
     desc: "Linker map",

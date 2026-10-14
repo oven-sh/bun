@@ -231,7 +231,7 @@ The algorithm is Prettier's, not oxc's. Before printing starts, every comment is
 ### Attaching: `js/attach/`
 
 1. `surrounding_nodes.rs` converts the three recorded nodes to `AstNodes`, and adjusts them where ESTree's tree is not the HIR's. For example, ESTree has a node for the closing tag of a JSX element.
-2. `rules.rs` is Prettier's `handle-comments.js`, with the same function names.
+2. `rules.rs` is Prettier's `handle-comments.js`, with the same function names. `rules/oxfmt.rs` has the rules of the oxfmt flavor: where oxfmt prints a comment somewhere else than Prettier, the comment has another owner.
 3. A comment that no rule handles is attached by its position in the line (`attach_by_text_position`, `break_ties` in `mod.rs`): on its own line it leads the following node, at the end of a line it trails the preceding node.
 
 An owner is an `AstNodes`, a name (an identifier or a literal key is a token here and a node in ESTree, so it is identified by its start offset), or the parentheses after a `/** @type {T} */` cast.
@@ -270,6 +270,7 @@ In builds that have the test runner (debug and canary):
 
 ```sh
 bun bd fmt --debug-comments out a.ts             # out/a.ts.txt: the owner of each comment, and what the parser recorded
+bun bd fmt --debug-comments-oxfmt out a.ts       # the same in the oxfmt flavor
 bun bd fmt --debug-unprinted-comments out a.ts   # the comments that no printer printed
 ```
 

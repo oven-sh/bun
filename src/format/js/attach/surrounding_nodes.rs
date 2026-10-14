@@ -44,7 +44,7 @@ pub(super) fn union_members(ty: TypeNode<'_>) -> Option<List<'_, TypeNode<'_>>> 
     }
 }
 
-/// The function behind `node`, if `node` is a function, a method or a call signature.
+/// The function of `node`, if `node` is a function, a method or a call signature.
 pub(super) fn function_of(node: N<'_>) -> Option<Func<'_>> {
     match node {
         N::Function(func) | N::ArrowFunctionExpression(func) => Some(func),

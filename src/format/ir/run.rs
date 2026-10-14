@@ -108,7 +108,6 @@ pub(crate) fn write_with<'a>(
 /// Gives the vectors of `formatter` back to `scratch`. Returns where the document is.
 fn finish(formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, FormatError> {
     let ran_out_of_stack = formatter.context().ran_out_of_stack;
-    let has_unprinted_comments = formatter.context().has_unprinted_comments;
     scratch.unprinted_comments.clear();
     for comment in formatter.context().comments().unprinted() {
         use std::io::Write;
@@ -133,7 +132,7 @@ fn finish(formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, F
         return Err(FormatError::NestedTooDeeply);
     }
     // Prettier's `ensureAllCommentsPrinted`: a file is left alone rather than written without one of its comments.
-    if has_unprinted_comments || !scratch.unprinted_comments.is_empty() {
+    if !scratch.unprinted_comments.is_empty() {
         return Err(FormatError::InvalidDocument);
     }
     Ok(root)

@@ -221,7 +221,7 @@ pub(super) fn function_type(func: Func<'_>) -> Option<FunctionType> {
     })
 }
 
-/// Where Prettier's `HookTypeAnnotation` starts: behind the `hook`.
+/// Where Prettier's `HookTypeAnnotation` starts: after the `hook`.
 pub(super) fn start_of_hook_type(ty: TypeNode<'_>) -> Option<u32> {
     let TypeKind::Fn(func) = ty.kind() else {
         return None;
@@ -349,7 +349,7 @@ fn members_of_enum_with_explicit_type(
     (declaration.flow_explicit_type()?.start == start).then(|| declaration.members())
 }
 
-/// Whether `offset` is behind the `(` of a function type that `enclosing_node` stands for together with its name.
+/// Whether `offset` is after the `(` of a function type that `enclosing_node` stands for together with its name.
 fn is_in_function_type(enclosing_node: Option<Node<'_>>, offset: u32) -> bool {
     let func = match enclosing_node {
         Some(Node::Func(func)) => Some(func),

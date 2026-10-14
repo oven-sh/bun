@@ -243,13 +243,14 @@ pub(crate) fn with_file(
                         return;
                     }
                     let context = JsFormatContext::new(file, options.clone(), comments);
-                    let is_written = f.write_embedded(context, file.text(), |f| {
-                        let is_written = write(file, f);
-                        if is_written && f.comments().unprinted().next().is_some() {
-                            f.context_mut().has_unprinted_comments = true;
-                        }
-                        is_written
-                    });
+                    let is_written = match file.comment_count() {
+                        0 => f.write_embedded(context, file.text(), |f| write(file, f)),
+                        // Prettier's `ensureAllCommentsPrinted`. It throws, and the code stays as it is written:
+                        // `v-slot="/* comment */"`
+                        _ => f.try_write_embedded(context, file.text(), |f| {
+                            write(file, f) && f.comments().unprinted().next().is_none()
+                        }),
+                    };
                     result = Attempt::Written(is_written);
                 });
                 result

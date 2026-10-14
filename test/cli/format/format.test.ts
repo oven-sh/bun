@@ -1060,6 +1060,17 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("a binding of Vue that is nothing but a comment stays as it is", async () => {
+    // oxfmt 0.72 prints `v-slot=""` and `v-for=" in xs"`.
+    const text =
+      '<template>\n  <a   v-slot="/* a */"   b="c" />\n  <a   v-for="(/* d */) in xs"   b="c" />\n</template>\n';
+    const result = await format({ ".oxfmtrc.json": "{}", "a.vue": text }, [], { reads: ["a.vue"] });
+    expect(result.files).toEqual({
+      "a.vue": '<template>\n  <a v-slot="/* a */" b="c" />\n  <a v-for="(/* d */) in xs" b="c" />\n</template>\n',
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
   test("Handlebars", async () => {
     const result = await format({ "a.hbs": '<div   class="a  b">{{foo   bar}}</div>\n', "b.handlebars": "{{a}}" }, [], {
       reads: ["a.hbs", "b.handlebars"],

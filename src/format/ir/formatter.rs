@@ -512,6 +512,26 @@ impl<'a> Formatter<'a> {
         result
     }
 
+    /// The same, but what `write` has written only becomes part of the document if `write` returns true.
+    pub(crate) fn try_write_embedded<'b>(
+        &mut self,
+        context: JsFormatContext<'b>,
+        source: &'b [u8],
+        write: impl FnOnce(&mut Formatter<'b>) -> bool,
+    ) -> bool {
+        let first = self.storage.pool.len();
+        let mut inner = self.start_embedded(context, source);
+        let slot = inner.start_capture();
+        let is_written = write(&mut inner);
+        if let Some(content) = inner.end_intern(slot)
+            && is_written
+        {
+            inner.write_element(content);
+        }
+        self.end_embedded(inner, first);
+        is_written
+    }
+
     /// A formatter for `source` that has what this one has written.
     fn start_embedded<'b>(
         &mut self,
@@ -536,7 +556,6 @@ impl<'a> Formatter<'a> {
     fn end_embedded(&mut self, inner: Formatter<'_>, first: usize) {
         let source = inner.source;
         self.context.ran_out_of_stack |= inner.context.ran_out_of_stack;
-        self.context.has_unprinted_comments |= inner.context.has_unprinted_comments;
         self.next_group_id.set(inner.next_group_id.get());
         (self.storage, self.tracker, self.spare, self.cleaned) =
             (inner.storage, inner.tracker, inner.spare, inner.cleaned);

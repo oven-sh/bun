@@ -43,8 +43,6 @@ pub(crate) struct JsFormatContext<'a> {
     stack_check: bun_core::StackCheck,
     /// Something has not been written because it is nested too deeply.
     pub(crate) ran_out_of_stack: bool,
-    /// Code in another file, such as an expression in a Vue template, was written without one of its comments.
-    pub(crate) has_unprinted_comments: bool,
     /// The last member access with many member accesses around it, and whether it stays on the line
     /// of its object. The one around it has the same answer.
     pub(crate) long_member_chain: Cell<Option<(Expr<'a>, bool)>>,
@@ -87,7 +85,6 @@ impl<'a> JsFormatContext<'a> {
             cursor: CursorRegion::NONE,
             stack_check: bun_core::StackCheck::init(),
             ran_out_of_stack: false,
-            has_unprinted_comments: false,
             line_start: Cell::new((0, 0)),
             long_member_chain: Cell::new(None),
             is_vue_filter_sequence: Cell::new(false),

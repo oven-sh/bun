@@ -54,7 +54,7 @@ impl<'a> Format<'a> for FormatLeadingComments<'a> {
 }
 
 /// `a ⏎ /* comment */; ⏎ b`: the `;`, which is that of `a`, is written before the comment. For oxfmt
-/// the comment stays on a line of its own, so the line breaks after it are counted from behind the `;`.
+/// the comment stays on a line of its own, so the line breaks after it are counted from the end of the `;`.
 /// For Prettier it is on the line of `b`.
 pub(crate) fn comment_before_semicolon_keeps_its_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()

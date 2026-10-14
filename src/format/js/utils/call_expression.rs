@@ -92,11 +92,11 @@ pub(crate) fn has_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 /// Not after `new A` without type arguments, not after `a[b]`, not between `a.b` and `?.`, and not after a call that is a link
 /// of a member chain.
 pub(crate) fn comments_stay_behind_callee<'a>(callee: Expr<'a>, f: &Formatter<'a>) -> bool {
-    f.options().flavor.is_oxfmt() && comments_stay_behind_callee_for_oxfmt(callee)
+    f.options().flavor.is_oxfmt() && comments_stay_after_callee_for_oxfmt(callee)
 }
 
 /// See [`comments_stay_behind_callee`]. The attachment of comments asks this too.
-pub(crate) fn comments_stay_behind_callee_for_oxfmt(callee: Expr<'_>) -> bool {
+pub(crate) fn comments_stay_after_callee_for_oxfmt(callee: Expr<'_>) -> bool {
     matches!(callee.parent(), Node::Expr(parent) if match parent.kind() {
         ExprKind::Call(call) => call.callee() == callee && match callee.tag() {
             ExprTag::Index => false,

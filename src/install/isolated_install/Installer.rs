@@ -2244,8 +2244,7 @@ impl<'a> Installer<'a> {
     }
 
     /// Ok(true) when at least one dependency link of the entry was written.
-    /// `only_committed` limits the links to the link of that commit, and to when the store has
-    /// the package with its patch.
+    /// `only_committed`: only the link of that commit, and only when the store has its patch.
     fn symlink_dependencies(
         &self,
         entry_id: StoreEntryId,
@@ -2318,8 +2317,7 @@ impl<'a> Installer<'a> {
         Ok(changed)
     }
 
-    /// True when `store_path`, the folder of the package of `entry_id`, has the tag file of the
-    /// patch of `committed`. A patch that did not apply leaves no tag.
+    /// True when `store_path`, the package folder of `entry_id`, has the tag of the new patch.
     fn store_holds_commit(
         &self,
         committed: &CommittedPatchCopy,
@@ -2349,9 +2347,7 @@ impl<'a> Installer<'a> {
         has_tag
     }
 
-    /// `bun patch --commit` wrote a patch from the copy behind a link of this root or workspace
-    /// entry. When the store has the package with that patch, the link goes back into the
-    /// store. The dependencies of the entry are installed, and its scripts did not run yet.
+    /// Puts the link of the committed `bun patch` copy back into the store, before the scripts run.
     fn relink_committed_patch(&self, entry_id: StoreEntryId) -> sys::Result<()> {
         let Some(committed) = self.manager().committed_patch_copy.as_ref() else {
             return Ok(());
@@ -2364,8 +2360,7 @@ impl<'a> Installer<'a> {
         Ok(())
     }
 
-    /// Main thread, when the tasks are done. Ends the session of `bun patch --commit` when
-    /// the store has the package with the new patch: the copy is not needed then.
+    /// Main thread, after the tasks: removes the committed copy when the store has its patch.
     pub(crate) fn finish_patch_commit(&mut self) {
         let Some(committed) = self.manager().committed_patch_copy.as_ref() else {
             return;
@@ -2379,8 +2374,7 @@ impl<'a> Installer<'a> {
             let entry_id = StoreEntryId::from(u32::try_from(entry_id).expect("int cast"));
             let pkg_res = &pkg_resolutions[node_pkg_ids[node_id.get() as usize] as usize];
             if matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
-                // An entry in a dependency cycle does not wait for its dependencies, so its
-                // task can be before the package is installed.
+                // In a dependency cycle, the task of an entry can run before its dependencies.
                 if let sys::Result::Err(err) = self.relink_committed_patch(entry_id) {
                     Output::err(err, "failed to link the patched package again", ());
                     Output::flush();

@@ -157,8 +157,7 @@ impl Symlinker {
         }
     }
 
-    /// `bun patch` points the link of a dependency at its copy until `bun patch --commit`. A
-    /// link to a copy that is gone, or that has no package.json, is a link with a wrong target.
+    /// True for the link of `bun patch` to its copy, when the copy still has a package.json.
     #[cold]
     fn is_link_to_patch_copy(&mut self, current_link: &[u8]) -> bool {
         if !is_patch_copy_link(self.dest.slice(), current_link) {
@@ -180,8 +179,7 @@ impl Symlinker {
 #[derive(Clone, Copy)]
 pub enum Strategy {
     ExpectExisting,
-    /// `ExpectExisting`, for the links of the root and of a workspace: the link that
-    /// `bun patch` points at its copy stays.
+    /// `ExpectExisting` for root and workspace links: the link of `bun patch` to its copy stays.
     ExpectExistingOrPatchCopy,
     ExpectMissing,
 }

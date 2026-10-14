@@ -53,10 +53,7 @@ pub struct PatchCommitResult {
     pub(crate) not_in_workspace_root: bool,
 }
 
-/// The copy in `PATCH_COPIES_DIR` that `bun patch --commit` diffed. The install of that commit
-/// ends the session when the store has the package with the new patch: the link of the
-/// dependency goes back into the store, and the copy is removed. A patch that does not apply
-/// leaves the link and the copy as they are.
+/// The `bun patch` copy that `--commit` diffed, for `Installer::finish_patch_commit`.
 pub struct CommittedPatchCopy {
     pub(crate) name_and_version_hash: u64,
     pub(crate) copy: Box<[u8]>,
@@ -100,10 +97,7 @@ fn real_path_of_folder<'a>(folder: &[u8], buf: &'a mut PathBuffer) -> sys::Resul
     dir.get_fd_path(buf).map(|real_path| &*real_path)
 }
 
-/// With the isolated linker, `node_modules/<name>` of the root and of each workspace is a link
-/// to the package in `node_modules/.bun`. `bun patch` keeps it a link: the copy to edit goes to
-/// this directory in the same `node_modules`, and the link points at the copy until the install
-/// of `bun patch --commit` (`CommittedPatchCopy`).
+/// Isolated linker: `bun patch` puts its copy here and points the dependency link at it.
 pub(crate) const PATCH_COPIES_DIR: &[u8] = b".bun-patches";
 
 /// `path` without its last component, and that component.
@@ -114,9 +108,7 @@ fn split_last_component(path: &[u8]) -> (&[u8], &[u8]) {
     }
 }
 
-/// True when `target` is the target that `point_link_at_patch_copy` writes for the link at
-/// `link`: `PATCH_COPIES_DIR/<one name>` in the `node_modules` that holds the link. A link to
-/// another folder that has `PATCH_COPIES_DIR` in its path is not from `bun patch`.
+/// True when `target` is exactly what `point_link_at_patch_copy` writes for the link at `link`.
 pub(crate) fn is_patch_copy_link(link: &[u8], target: &[u8]) -> bool {
     let (copies_dir, name) = split_last_component(strings::without_trailing_slash(target));
     if name.is_empty() || name == b"." || name == b".." {
@@ -137,15 +129,13 @@ pub(crate) fn is_patch_copy_link(link: &[u8], target: &[u8]) -> bool {
         return link_dir_name.first() == Some(&b'@')
             && split_last_component(scope_parent).1 == b"node_modules";
     }
-    // Windows writes a junction where it cannot write a symbolic link. A junction has an
-    // absolute target.
+    // A Windows junction (the fallback for a symbolic link) has an absolute target.
     cfg!(windows)
         && Platform::AUTO.is_absolute(target)
         && split_last_component(above).1 == b"node_modules"
 }
 
-/// The `PATCH_COPIES_DIR` that holds `copy`, when `copy` is where `prepare_patch` puts a copy:
-/// `<node_modules>/PATCH_COPIES_DIR/<one name>`.
+/// The `PATCH_COPIES_DIR` of `copy`, when `copy` is `<node_modules>/PATCH_COPIES_DIR/<name>`.
 fn patch_copies_dir_of(copy: &[u8]) -> Option<&[u8]> {
     let (copies_dir, name) = split_last_component(copy);
     let (node_modules, copies_dir_name) = split_last_component(copies_dir);
@@ -179,8 +169,7 @@ fn link_target(path: &[u8]) -> Option<Vec<u8>> {
 
 const NODE_MODULES_DIR: &[u8] = b"node_modules/";
 
-/// The folder for the copy of the package `patch_key` (`<name>@<version>`), in the
-/// `node_modules` that holds `link`. `link` has `/` separators.
+/// The copy folder for `patch_key` in the `node_modules` that holds `link` (`/` separators).
 fn patch_copy_folder(link: &[u8], patch_key: &[u8]) -> Option<Vec<u8>> {
     let node_modules_len = strings::last_index_of(link, NODE_MODULES_DIR)? + NODE_MODULES_DIR.len();
     let escaped = escape_patch_filename(patch_key);
@@ -208,8 +197,7 @@ fn remove_link(path: &ZStr) -> sys::Result<()> {
     }
 }
 
-/// Points the link at `link` at `copy`, which is in `PATCH_COPIES_DIR` of the same
-/// `node_modules`. Both have `/` separators.
+/// Points `link` at `copy` in `PATCH_COPIES_DIR` of the same `node_modules` (`/` separators).
 fn point_link_at_patch_copy(link: &[u8], copy: &[u8]) -> sys::Result<()> {
     let node_modules_len =
         copy.len() - bun_paths::basename(copy).len() - 1 - PATCH_COPIES_DIR.len();
@@ -314,8 +302,7 @@ pub fn do_patch_commit(
             workspace_package_id,
             argument,
         ) {
-            // The prepared copy is a real directory, or a link that prepare_patch pointed at its
-            // copy. Any other link here means the prepared copy is at the root.
+            // Not the link of prepare_patch to its copy: the prepared copy is at the root.
             let is_prepared_copy = is_real_dir_not_symlink(&rel_path)
                 || link_target(&rel_path)
                     .is_some_and(|target| is_patch_copy_link(&rel_path, &target));
@@ -469,15 +456,13 @@ pub fn do_patch_commit(
     )
     .expect("formatting into a Vec is infallible");
 
-    // The path can have `./`, `//` or a separator at the end. `readlink` follows a link then,
-    // and the directory of the link is not the directory of that path.
+    // Normalized, so that `readlink` does not follow the link and its directory is correct.
     let mut changes_dir =
         strings::without_trailing_slash(resolve_path::join::<platform::Auto>(&[&changes_dir]))
             .to_vec();
     // The link that `prepare_patch` pointed at its copy. The copy has the changes.
     if let Some(target) = link_target(&changes_dir) {
-        // `git diff` records a link as `new file mode 120000`, and no install can apply that
-        // patch.
+        // `git diff` of a link is `new file mode 120000`, a patch that no install can apply.
         if !is_patch_copy_link(&changes_dir, &target) {
             bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> {} is a link to {}, not a folder that bun patch prepared",
@@ -518,8 +503,7 @@ pub fn do_patch_commit(
         };
         changes_dir = copy;
     } else if arg_kind == PatchArgKind::NameAndVersion && !is_real_dir_not_symlink(&changes_dir) {
-        // A package that is nested in another one has no link of its own. `prepare_patch` puts
-        // that copy in the `node_modules` of the first link above the package.
+        // A nested package has no link: its copy is in the `node_modules` of the first link above.
         #[cfg(windows)]
         let mut posix_buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
@@ -801,8 +785,7 @@ pub fn do_patch_commit(
             return Ok(None);
         }
 
-        // git prints this line where a text diff cannot hold the change of a file, and the
-        // patch parser drops that file.
+        // git prints this for a file that a text diff cannot hold, and the patch parser drops it.
         let has_binary_file = strings::split(&contents, b"\n")
             .any(|line| line.starts_with(b"Binary files ") && line.ends_with(b" differ"));
         if has_binary_file {
@@ -873,8 +856,7 @@ pub fn do_patch_commit(
         b".bun-patch-tag",
     ]));
 
-    // `prepare_patch` made this copy. The install that follows ends the session when it has
-    // installed the package with this patch (`Installer::finish_patch_commit`).
+    // `Installer::finish_patch_commit` removes this copy when the patched package is installed.
     if patch_copies_dir_of(changes_dir).is_some() {
         if copy_has_more {
             bun_core::note!(
@@ -1239,8 +1221,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
             }
         };
 
-    // The path can have `./`, `//` or a separator at the end. `lstat` follows a link then, and
-    // the directory of the link is not the directory of that path.
+    // Normalized, so that `lstat` does not follow the link and its directory is correct.
     let module_folder =
         strings::without_trailing_slash(resolve_path::join::<platform::Posix>(&[&module_folder]))
             .to_vec();
@@ -1299,8 +1280,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         }
     }
 
-    // The user edits the package through its link. A package that is nested in another one has
-    // no link of its own.
+    // A nested package has no link of its own, so the user edits its copy.
     let edit_folder: &[u8] = match &place {
         PatchCopyPlace::BesideAncestorLink(copy) => copy,
         PatchCopyPlace::InPlace | PatchCopyPlace::BesideLink { .. } => module_folder,
@@ -1384,11 +1364,9 @@ fn is_real_dir_not_symlink(path: &[u8]) -> bool {
 enum PatchCopyPlace {
     /// At the folder of the package.
     InPlace,
-    /// In `PATCH_COPIES_DIR`. The folder of the package is the link of a dependency, and
-    /// `prepare_patch` points it at the copy.
+    /// In `PATCH_COPIES_DIR`; `prepare_patch` points the dependency link `link` at it.
     BesideLink { link: Vec<u8>, copy: Vec<u8> },
-    /// In `PATCH_COPIES_DIR`. The package is nested in a dependency, and the link of that
-    /// dependency stays as it is.
+    /// In `PATCH_COPIES_DIR`, for a package nested in a dependency. That link stays as it is.
     BesideAncestorLink(Vec<u8>),
 }
 
@@ -1420,8 +1398,7 @@ fn detach_module_folder_from_shared_store(
         }
     }
     let mut depth: usize = 0;
-    // The package is not at `module_folder`. Then only the link of a dependency above it changes
-    // where the copy goes.
+    // The package is not at `module_folder`: then only a dependency link above it matters.
     let mut missing = false;
     while depth < components {
         let is_symlink: bool = {
@@ -1470,10 +1447,7 @@ fn detach_module_folder_from_shared_store(
             if missing {
                 return PatchCopyPlace::InPlace;
             }
-            // If removal fails the symlink is still live, and the caller's
-            // `deleteTree` + `FileCopier` would follow it into the shared
-            // global-store entry — so fail loudly here rather than silently
-            // corrupting the cache.
+            // A link that stays would lead the copy into the shared store entry: fail loudly.
             if let Err(e) = remove_link(p.slice_z()) {
                 Output::err(
                     e,

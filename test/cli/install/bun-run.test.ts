@@ -1248,4 +1248,225 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(1);
     }
   });
+
+  // Windows runs a .cmd or .bat file through cmd.exe, which reads the
+  // arguments a second time. cmd.exe replaces `%NAME%` with the value of the
+  // environment variable NAME, even inside quotes, so `arg=` in the output of
+  // the batch file below shows what cmd.exe made of the argument.
+  const cmdProbeEnv = { ...bunEnv, CMD_METACHAR_PROBE: "read-by-cmd" };
+  const printFirstArgumentCmd = "@echo off\r\necho arg=%1\r\n";
+
+  it.if(isWindows)(
+    "the node_modules/.bin launcher refuses an argument containing a cmd.exe special character",
+    async () => {
+      using dir = tempDir("bun-run-bin-launcher-metachar", {
+        "package.json": JSON.stringify({
+          name: "consumer",
+          version: "0.0.0",
+          dependencies: { "cmd-tool-pkg": "file:./cmd-tool-pkg" },
+        }),
+        "cmd-tool-pkg": {
+          "package.json": JSON.stringify({
+            name: "cmd-tool-pkg",
+            version: "0.0.0",
+            bin: { "cmd-tool": "./tool.cmd", "bat-tool": "./tool.bat" },
+          }),
+          "tool.cmd": printFirstArgumentCmd,
+          "tool.bat": printFirstArgumentCmd,
+        },
+      });
+
+      {
+        await using install = Bun.spawn({
+          cmd: [bunExe(), "install"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          install.stdout.text(),
+          install.stderr.text(),
+          install.exited,
+        ]);
+        expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+      }
+
+      // bun install writes the launcher exe plus the .bunx file it reads.
+      const launcher = join(String(dir), "node_modules", ".bin", "cmd-tool.exe");
+      expect(await Bun.file(launcher).exists()).toBe(true);
+      expect(await Bun.file(join(String(dir), "node_modules", ".bin", "cmd-tool.bunx")).exists()).toBe(true);
+
+      // A plain argument still reaches the batch file.
+      {
+        await using proc = Bun.spawn({
+          cmd: [launcher, "hello"],
+          cwd: String(dir),
+          env: cmdProbeEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toContain("arg=hello");
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      }
+
+      // The launcher runs on its own as node_modules\.bin\cmd-tool.exe.
+      {
+        await using proc = Bun.spawn({
+          cmd: [launcher, "%CMD_METACHAR_PROBE%"],
+          cwd: String(dir),
+          env: cmdProbeEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).not.toContain("arg=");
+        expect(stderr).toContain(
+          'argument "%CMD_METACHAR_PROBE%" contains a cmd.exe special character and cannot be passed to a batch file',
+        );
+        expect(exitCode).toBe(255);
+      }
+
+      // The other characters, and a quote inside the argument. The message shows
+      // the argument the way the command line of the launcher holds it.
+      for (const [arg, shown] of [
+        ["a&b", "a&b"],
+        ["a|b", "a|b"],
+        ["a<b", "a<b"],
+        ["a>b", "a>b"],
+        ["a^b", "a^b"],
+        ['x" & echo marker & "', 'x\\" & echo marker & \\"'],
+      ]) {
+        await using proc = Bun.spawn({
+          cmd: [launcher, arg],
+          cwd: String(dir),
+          env: cmdProbeEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
+        expect(stderr).toContain(
+          `argument "${shown}" contains a cmd.exe special character and cannot be passed to a batch file`,
+        );
+        expect(exitCode).toBe(255);
+      }
+
+      // A .bat bin gets the same launcher.
+      {
+        await using proc = Bun.spawn({
+          cmd: [join(String(dir), "node_modules", ".bin", "bat-tool.exe"), "%CMD_METACHAR_PROBE%"],
+          cwd: String(dir),
+          env: cmdProbeEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
+        expect(stderr).toContain(
+          'argument "%CMD_METACHAR_PROBE%" contains a cmd.exe special character and cannot be passed to a batch file',
+        );
+        expect(exitCode).toBe(255);
+      }
+
+      // The same launcher runs inside bun.exe for `bun run <name>`.
+      {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", "cmd-tool", "%CMD_METACHAR_PROBE%"],
+          cwd: String(dir),
+          env: cmdProbeEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).not.toContain("arg=");
+        expect(stderr).toContain(
+          'argument "%CMD_METACHAR_PROBE%" contains a cmd.exe special character and cannot be passed to a batch file',
+        );
+        expect(exitCode).toBe(255);
+      }
+    },
+  );
+
+  it.if(isWindows)(
+    "bun run and bunx refuse an argument containing a cmd.exe special character for a .cmd bin",
+    async () => {
+      // npm and pnpm write the .cmd file into node_modules/.bin directly. There
+      // is no .bunx file beside it, so bun spawns the .cmd file itself.
+      using dir = tempDir("bun-run-bare-cmd-metachar", {
+        "package.json": JSON.stringify({ name: "consumer", version: "0.0.0" }),
+        "node_modules/.bin/bare-tool.cmd": printFirstArgumentCmd,
+        "node_modules/.bin/bare-bat.bat": printFirstArgumentCmd,
+      });
+
+      {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", "bare-tool", "hello"],
+          cwd: String(dir),
+          env: cmdProbeEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toContain("arg=hello");
+        expect(exitCode).toBe(0);
+      }
+
+      // An argument with a space still reaches the batch file in one piece.
+      {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", "bare-tool", "hello world"],
+          cwd: String(dir),
+          env: cmdProbeEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toContain('arg="hello world"');
+        expect(exitCode).toBe(0);
+      }
+
+      for (const [tool, arg, shown] of [
+        ["bare-tool", "a&b", "a&b"],
+        ["bare-tool", "a|b", "a|b"],
+        ["bare-tool", "a<b", "a<b"],
+        ["bare-tool", "a>b", "a>b"],
+        ["bare-tool", "a^b", "a^b"],
+        ["bare-tool", 'a"b', 'a\\"b'],
+        ["bare-bat", "%CMD_METACHAR_PROBE%", "%CMD_METACHAR_PROBE%"],
+      ]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "run", tool, arg],
+          cwd: String(dir),
+          env: cmdProbeEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("");
+        expect(stderr).toContain(
+          `argument "${shown}" contains a cmd.exe special character and cannot be passed to a batch file`,
+        );
+        expect(exitCode).toBe(1);
+      }
+
+      for (const command of ["run", "x"]) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), command, "bare-tool", "%CMD_METACHAR_PROBE%"],
+          cwd: String(dir),
+          env: cmdProbeEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).not.toContain("arg=");
+        expect(stderr).toContain(
+          'argument "%CMD_METACHAR_PROBE%" contains a cmd.exe special character and cannot be passed to a batch file',
+        );
+        expect(exitCode).toBe(1);
+      }
+    },
+  );
 });

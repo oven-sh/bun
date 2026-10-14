@@ -2144,6 +2144,23 @@ impl RunCommand {
     ) -> crate::Result<::core::convert::Infallible> {
         use crate::api::bun_process::{Status as SpawnStatus, sync};
 
+        // cmd.exe reads the arguments of a batch file a second time, past the quoting of the spawn.
+        if cfg!(windows) && bun_which::is_batch_file(executable) {
+            if let Some(arg) = passthrough
+                .iter()
+                .find(|arg| bun_which::batch_arg_has_cmd_metachars(arg))
+            {
+                // Not gated on `silent`: bunx sets it for every run, and nothing else reports this.
+                pretty_errorln!(
+                    "<r><red>error<r>: Failed to run \"<b>{}<r>\": argument {} contains a cmd.exe special character and cannot be passed to a batch file",
+                    bstr::BStr::new(Self::basename_or_bun(executable)),
+                    bun_core::fmt::quote(&arg[..]),
+                );
+                Output::flush();
+                Global::exit(1);
+            }
+        }
+
         let mut argv: Vec<Box<[u8]>> = Vec::with_capacity(1 + passthrough.len());
         argv.push(executable.to_vec().into_boxed_slice());
         for p in passthrough {

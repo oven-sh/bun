@@ -180,21 +180,29 @@ it("process.env converts the value to a string each time the same assignment run
       bunExe(),
       "-e",
       `
-        const values = [];
+        const values = [], indexed = [], inherited = [];
         for (let i = 0; i < 6; i++) {
           process.env.ASSIGNED_IN_A_LOOP = i;
           values.push(process.env.ASSIGNED_IN_A_LOOP);
+          process.env[0] = i;
+          indexed.push(process.env[0]);
+          process.env[7] = i;
+          inherited.push(process.env[7]);
         }
-        console.log(JSON.stringify(values));
+        console.log(JSON.stringify({ values, indexed, inherited }));
       `,
     ],
-    env: bunEnv,
+    env: { ...bunEnv, 7: "from the environment" },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-    out: ["0", "1", "2", "3", "4", "5"],
+    out: {
+      values: ["0", "1", "2", "3", "4", "5"],
+      indexed: ["0", "1", "2", "3", "4", "5"],
+      inherited: ["0", "1", "2", "3", "4", "5"],
+    },
     stderr: "",
     exitCode: 0,
   });

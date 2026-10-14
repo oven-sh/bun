@@ -1730,6 +1730,7 @@ impl Expect {
         // SAFETY: bun_vm() returns the live VM pointer for this global.
         let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
 
+        // try to retrieve the Expect instance
         let Some(expect_ptr) = Expect::from_js(call_frame.this()) else {
             // if no Expect instance, assume it is a static call (`expect.myMatcher()`), so create an ExpectCustomAsymmetricMatcher instance
             return ExpectCustomAsymmetricMatcher::create(global_this, call_frame, Self::custom_matcher_fn(global_this, call_frame)?);
@@ -1739,6 +1740,8 @@ impl Expect {
         // `expect()` chain; aliased `&Expect` is sound, aliased `&mut Expect` is not.
         let expect = unsafe { &*expect_ptr };
 
+        // if we got an Expect instance, then it's a non-static call (`expect().myMatcher`),
+        // so now execute the symmetric matching
         expect.call_matcher(global_this, call_frame, Self::custom_matcher)
     }
 

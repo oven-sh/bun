@@ -29,6 +29,28 @@ const SELF_CLOSING_TAGS: [&[u8]; 14] = [
     b"source", b"track", b"wbr",
 ];
 
+/// What else than the types of `infer_parser_by_type_attribute` says that a script is code: the other names of JavaScript and
+/// TypeScript, and Partytown's, which runs it in a worker.
+const TYPES_OF_CODE: [&[u8]; 17] = [
+    b"application/ecmascript",
+    b"application/typescript",
+    b"application/x-ecmascript",
+    b"application/x-javascript",
+    b"text/ecmascript",
+    b"text/javascript1.0",
+    b"text/javascript1.1",
+    b"text/javascript1.2",
+    b"text/javascript1.3",
+    b"text/javascript1.4",
+    b"text/javascript1.5",
+    b"text/jscript",
+    b"text/livescript",
+    b"text/partytown",
+    b"text/typescript",
+    b"text/x-ecmascript",
+    b"text/x-javascript",
+];
+
 const BLOCK_ELEMENTS: [&[u8]; 33] = [
     b"address",
     b"article",
@@ -129,7 +151,7 @@ fn print_whitespace<'a>(text: &[u8]) -> Doc<'a> {
 }
 
 /// `text.split("\n")`, with `literalline` in between.
-pub(crate) fn lines_as_they_are<'a>(text: &Cow<'a, [u8]>) -> Doc<'a> {
+fn lines_as_they_are<'a>(text: &Cow<'a, [u8]>) -> Doc<'a> {
     let (mut parts, mut start) = (Vec::new(), 0);
     loop {
         let end = strings::index_of_char_usize(&text[start..], b'\n').map(|at| start + at);
@@ -496,28 +518,23 @@ impl<'a, 'o> Printer<'a, 'o> {
         Some(value.strip_prefix(b"text/").unwrap_or(&value[..]))
     }
 
-    /// The `type` of a script with these attributes, if it does not stand for code and there is no `lang`.
-    fn type_that_is_no_code(&self, attributes: &[Id]) -> Option<&[u8]> {
+    /// Whether a script with these attributes has code in it: it has a `lang`, no `type`, or a `type` that stands for code.
+    /// What is behind a `;` in the `type`, and which letters are capitals, makes no difference.
+    fn has_type_of_code(&self, attributes: &[Id]) -> bool {
         let text_of = |name: &[u8]| self.attribute_text_value(attributes, name);
-        let is_code = |kind: &[u8]| {
-            let parser = infer_parser_by_type_attribute(kind);
-            kind.is_empty() || matches!(parser, Some(b"babel" | b"typescript"))
+        let Some(kind) =
+            text_of(b"type").filter(|_| text_of(b"lang").is_none_or(|it| it.is_empty()))
+        else {
+            return true;
         };
-        (text_of(b"type").map(|it| &it[..]))
-            .filter(|it| !is_code(it) && text_of(b"lang").is_none_or(|it| it.is_empty()))
-    }
-
-    /// Whether a script with these attributes has markup in it, by its `type`.
-    fn is_template(&self, attributes: &[Id]) -> bool {
-        self.type_that_is_no_code(attributes).is_some_and(|kind| {
-            matches!(
-                kind,
-                b"text/template" | b"text/x-template" | b"text/ng-template"
-            ) || matches!(
-                infer_parser_by_type_attribute(kind),
-                Some(b"html" | b"markdown" | b"glimmer")
+        let end = strings::index_of_char(kind, b';').map_or(kind.len(), |it| it as usize);
+        let kind = kind[..end].trim_ascii().to_ascii_lowercase();
+        kind.is_empty()
+            || matches!(
+                infer_parser_by_type_attribute(&kind),
+                Some(b"babel" | b"typescript")
             )
-        })
+            || TYPES_OF_CODE.contains(&&kind[..])
     }
 
     /// `isNodeSupportedLanguage`
@@ -1034,9 +1051,6 @@ impl<'a, 'o> Printer<'a, 'o> {
             "script" if lang.ends_with(b"json") || lang.ends_with(b"importmap") => {
                 Some(Parser::Json)
             }
-            "script" if self.type_that_is_no_code(attributes).is_some() => {
-                Some(Parser::BabelTsIfCode)
-            }
             "script" => Some(Parser::BabelTs),
             "style" if lang == b"less" => Some(Parser::Less),
             "style" if matches!(lang, b"sass" | b"scss") => Some(Parser::Scss),
@@ -1048,8 +1062,9 @@ impl<'a, 'o> Printer<'a, 'o> {
             .last()
             .is_some_and(|it| self.is_ignore_directive(it.0));
         let body = match parser.filter(|_| self.is_supported_language(attributes) && !is_ignored) {
-            // The plugin reads it as JavaScript, and `<p>{{a}}</p>` in a `text/template` is JSX, which gets a `;`.
-            Some(Parser::BabelTsIfCode) if self.is_template(attributes) => {
+            // The plugin reads every one as JavaScript: `<p>{{a}}</p>` in a `text/template` is JSX, which gets a `;`, and
+            // `x^2 + y^2` in a `math/tex` becomes `x ^ (2 + y) ^ 2;`.
+            Some(Parser::BabelTs) if !self.has_type_of_code(attributes) => {
                 lines_as_they_are(&Cow::Borrowed(content))
             }
             Some(parser) if !strings::trim_js_whitespace(content).is_empty() => {

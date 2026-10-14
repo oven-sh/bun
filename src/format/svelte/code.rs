@@ -1,13 +1,14 @@
 //! The code in a component: the plugin's `embed.ts`, from `textToDoc` on.
 
 use super::doc::{self, Brace, Code, Js, JsKind, Parser};
-use super::print::{lines_as_they_are, preformatted_body};
+use super::print::preformatted_body;
 use crate::html::js::{self, Hug, Parse, Piece, SourceType, Syntax};
 use crate::html::writer::Writer;
 use crate::js::comments::Comment;
 use crate::js::format::{ExprOptions, write_expression};
 use crate::js::parentheses::expression::needs_parentheses;
 use crate::js::print::function::{FormatFunctionOptions, write_function};
+use crate::js::print::parameters::should_hug_function_parameters;
 use crate::options::{Flavor, HtmlRoot, InHtml};
 use crate::prelude::*;
 use crate::stack::Stack;
@@ -15,7 +16,6 @@ use crate::syntax_error::{Message, SyntaxError};
 use crate::{FormatError, write};
 use bun_core::strings;
 use bun_lint::linter::{TypesInJavaScript, refusal_of_prettier};
-use std::borrow::Cow;
 use std::cell::RefCell;
 
 pub(crate) struct How<'o> {
@@ -226,27 +226,39 @@ fn write_js_function(
                         && it.followed_by_newline()
                         && first.is_some_and(|first| it.span.start < first.span().start))
             };
-            // The only parameter is hugged if it is a pattern, so no line ends before the `)`, and a comment that waits for the
-            // end of one is printed behind that, where Svelte wants the `}`: `{#snippet a({ b } = {}) // c\n}`.
-            let is_hugged = function.params_with_this().count() == 1
-                && first.is_some_and(|it| {
-                    matches!(it.pat().kind(), PatKind::Object(_) | PatKind::Array(_))
-                });
-            let waits_for_end_of_line =
-                |it: &Comment| it.is_line() || it.preceded_by_newline() || it.followed_by_newline();
-            // Prettier puts such a comment into the parentheses, and takes it out of them the next time, and so on:
-            // `a = // b\n(c as D).e`.
+            // Where the only parameter is hugged no line ends before the `)`, and a comment that waits for the end of one is
+            // printed behind that, where Svelte wants the `}`: `{#snippet a({ b } = {}) // c\n}`. Between the brackets of the
+            // pattern or of the default, and between the braces of a type, a line ends behind it.
+            let hugged = first.filter(|_| should_hug_function_parameters(function, false, f));
+            let is_behind_hugged = |it: &Comment| {
+                let is_in = |part: Span| part.start <= it.span.start && it.span.end <= part.end;
+                (it.is_line() || it.preceded_by_newline() || it.followed_by_newline())
+                    && hugged.is_some_and(|hugged| {
+                        !is_in(hugged.pat().span())
+                            && !hugged.default().is_some_and(|it| is_in(it.span()))
+                            && ![TypeTag::Object, TypeTag::Mapped]
+                                .iter()
+                                .flat_map(|&tag| file.types_of_kind(tag))
+                                .any(|it| is_in(it.span()))
+                    })
+            };
+            // Prettier puts a comment behind the `=` of a default into the parentheses that the default starts with, and takes it
+            // out of them the next time, and so on: `a = // b\n(c as D).e`.
             let is_before_parenthesis = |it: &Comment| {
-                let (before, behind) = file.text().split_at(it.span.start as usize);
-                let behind = behind.get((it.span.end - it.span.start) as usize..);
-                strings::trim_js_whitespace_end(before).ends_with(b"=")
-                    && behind
-                        .is_some_and(|it| strings::trim_js_whitespace_start(it).starts_with(b"("))
+                let behind = file.text().get(it.span.end as usize..).unwrap_or_default();
+                let code = strings::trim_js_whitespace_start(behind);
+                let at = it.span.end + (behind.len() - code.len()) as u32;
+                it.is_line()
+                    && !it.preceded_by_newline()
+                    && code.starts_with(b"(")
+                    && [ExprTag::Dot, ExprTag::Index, ExprTag::Call]
+                        .iter()
+                        .flat_map(|&tag| file.exprs_of_kind(tag))
+                        .any(|e| e.span().start == at && !matches!(e.parent(), Node::Expr(_)))
             };
             let comments = f.comments().unprinted_comments();
-            if comments.iter().any(is_behind_name)
-                || (comments.iter().filter(|it| waits_for_end_of_line(it)))
-                    .any(|it| is_hugged || is_before_parenthesis(it))
+            if (comments.iter())
+                .any(|it| is_behind_name(it) || is_behind_hugged(it) || is_before_parenthesis(it))
             {
                 return false;
             }
@@ -417,7 +429,7 @@ fn write_body(
     };
     let written = match parser {
         Parser::TypeScript => program(Syntax::TypeScript, out),
-        Parser::BabelTs | Parser::BabelTsIfCode => program(Syntax::BabelTs, out),
+        Parser::BabelTs => program(Syntax::BabelTs, out),
         Parser::Json => write_printed_text(out, how.options, |options, printed| {
             let parser = crate::json::Parser::Json;
             crate::json::format(content, parser, options, &mut Default::default(), printed)
@@ -431,13 +443,9 @@ fn write_body(
         out.end_indent();
     }
     out.hardline();
-    // The plugin writes the error to stderr, and leaves what is in the tag as it is, but for the line breaks at its ends. It
-    // does so with a shader in a `x-shader/x-vertex` too, in which nothing is wrong.
+    // The plugin writes the error to stderr, and leaves what is in the tag as it is, but for the line breaks at its ends.
     let is_written = written == Ok(true);
-    let is_code = parser != Parser::BabelTsIfCode;
-    if let Err((message, at)) = written
-        && is_code
-    {
+    if let Err((message, at)) = written {
         how.unformatted.borrow_mut().push((message, start + at));
     }
     if !out.end_attempt(attempt, is_written) {
@@ -445,11 +453,7 @@ fn write_body(
             code: &mut |_, _| {},
             stack: how.stack,
         };
-        let as_it_is = match is_code {
-            true => preformatted_body(content),
-            false => lines_as_they_are(&Cow::Borrowed(content)),
-        };
-        doc::write(as_it_is, out, &mut write);
+        doc::write(preformatted_body(content), out, &mut write);
     }
 }
 

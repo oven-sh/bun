@@ -32,7 +32,7 @@ use crate::js::utils::number::format_trimmed_number;
 use crate::options::HtmlWhitespaceSensitivity;
 use crate::verify::{is_in_another_language, is_table, without_unicode_escapes};
 use bun_core::strings;
-use bun_lint::ast::{Expr, ExprTag, File};
+use bun_lint::ast::{Expr, ExprKind, ExprTag, File, KeyKind};
 use bun_lint::tokens::{Token, TokenKind};
 use std::borrow::Cow;
 
@@ -649,7 +649,16 @@ fn read_tokens<'a>(
     let mut left_out = left_out.iter().peekable();
     // What a token is does not depend on the tokens next to it, which are free to change. A string that is none of these is a
     // key, a type or the name of a module.
-    let values = starts_of(file, &[ExprTag::String], |_| true);
+    let mut values = starts_of(file, &[ExprTag::String], |_| true);
+    // `{ ["a"]: b }`: the tree has no expression for it.
+    for object in file.exprs_of_kind(ExprTag::Object) {
+        if let ExprKind::Object(properties) = object.kind() {
+            let keys = properties.iter().filter_map(|it| it.key());
+            let computed = keys.filter(|it| matches!(it.kind(), KeyKind::ComputedString(_)));
+            values.extend(computed.map(|it| it.inner_span(file).start));
+        }
+    }
+    crate::sort::sort(&mut values[..]);
     // A word like `static` that is none of these is a modifier or a key.
     let names = starts_of(file, &[ExprTag::Ident], |it| {
         is_spelled_like_modifier(it.text())

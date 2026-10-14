@@ -230,6 +230,11 @@ pub(crate) fn collect<'a>(
     );
 }
 
+/// `\s` for one byte. `u8::is_ascii_whitespace` does not know the vertical tab.
+fn is_white_space(b: u8) -> bool {
+    b.is_ascii_whitespace() || b == 0x0B
+}
+
 /// Only Babel, which Prettier parses JavaScript with, tells it about the parentheses after
 /// `/** @type {T} */`. In TypeScript they are parentheses like any other. oxfmt keeps them there too.
 fn type_casts_are_kept_in_typescript(flavor: Flavor) -> bool {
@@ -540,7 +545,7 @@ fn attach_in_link<'a>(
             }
             Some(_) => {
                 let is_adjacent = source.all_bytes(Span::after(comment.span, leading_start), |b| {
-                    b.is_ascii_whitespace() || b == b'('
+                    is_white_space(b) || b == b'('
                 });
                 match is_adjacent {
                     true => {
@@ -670,7 +675,7 @@ fn attach_between_sides_of_assignment<'a>(
         } else {
             is_tie_broken = is_tie_broken
                 || !source.all_bytes(Span::after(comment.span, leading_start), |b| {
-                    b.is_ascii_whitespace() || b == b'('
+                    is_white_space(b) || b == b'('
                 });
             if !is_tie_broken {
                 leading_start = comment.span.start;
@@ -959,9 +964,7 @@ fn move_comments<'a>(
             }
             // `a: (b // comment ⏎ ),`
             [b')', ..] if !is_own_line => {
-                let after_parentheses = after
-                    .iter()
-                    .find(|b| **b != b')' && !b.is_ascii_whitespace());
+                let after_parentheses = after.iter().find(|b| **b != b')' && !is_white_space(**b));
                 match (comment.followed_by_newline(), after_parentheses) {
                     (true, Some(b',' | b'}')) => moved_out_of_property(&mut nodes, comment),
                     _ => None,
@@ -1124,7 +1127,7 @@ impl<'a> Comments<'a> {
                 && self
                     .source_text
                     .byte_at(end - 1)
-                    .is_some_and(|b| b.is_ascii_whitespace())
+                    .is_some_and(is_white_space)
             {
                 end -= 1;
             }
@@ -1477,7 +1480,7 @@ impl<'a> Comments<'a> {
                     continue;
                 }
                 let is_adjacent = source_text.all_bytes(Span::new(start, comment.start()), |b| {
-                    b.is_ascii_whitespace() || matches!(b, b')' | b',' | b';')
+                    is_white_space(b) || matches!(b, b')' | b',' | b';')
                 });
                 if !is_adjacent {
                     return &comments[..index];
@@ -1529,7 +1532,7 @@ impl<'a> Comments<'a> {
             .rev()
         {
             let is_adjacent = source_text.all_bytes(Span::new(comment.end(), gap_end), |b| {
-                b.is_ascii_whitespace() || b == b'('
+                is_white_space(b) || b == b'('
             });
             if !is_adjacent {
                 return &comments[..=index];
@@ -1624,7 +1627,7 @@ impl<'a> Comments<'a> {
             let gap = Span::new(reached, comment.start());
             let is_adjacent = self
                 .source_text
-                .all_bytes(gap, |b| b.is_ascii_whitespace() || matches!(b, b',' | b';'));
+                .all_bytes(gap, |b| is_white_space(b) || matches!(b, b',' | b';'));
             if !is_adjacent {
                 break;
             }
@@ -1685,7 +1688,7 @@ impl<'a> Comments<'a> {
                 self.is_type_cast_comment(comment)
                     && self
                         .source_text
-                        .all_bytes(Span::after(comment.span, open), |b| b.is_ascii_whitespace())
+                        .all_bytes(Span::after(comment.span, open), is_white_space)
             })
     }
 

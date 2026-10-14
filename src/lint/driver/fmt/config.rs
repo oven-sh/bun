@@ -1741,10 +1741,11 @@ impl<'c> Configs<'c> {
         self.svelte_of_flags(Some(path)) == Some(false)
     }
 
-    /// Whether an override of `[fmt]` has `svelte = false`, and nothing counts for more.
-    pub(crate) fn turns_svelte_off_for_some(&self) -> bool {
-        matches!(self.options.config_precedence, Precedence::CliOverride)
-            && (self.overrides.iter()).any(|it| svelte_in(&it.settings) == Some(false))
+    /// Whether an override of `[fmt]` has `svelte = false`, and nothing counts for more in `directory`, which has `scope`.
+    pub(crate) fn turns_svelte_off_for_some(&self, scope: &Scope, directory: &[u8]) -> bool {
+        let path = paths::join(directory, b"a.svelte");
+        (self.overrides.iter()).any(|it| svelte_in(&it.settings) == Some(false))
+            && self.svelte_with(scope, Some(&path), Some(false)) == Svelte::Nobody
     }
 
     /// Whether `--parser svelte`, or the same in `[fmt]`, is there.
@@ -1773,8 +1774,13 @@ impl<'c> Configs<'c> {
     /// to the Prettier of the project. Which of the two counts is up to `--config-precedence`, as for every option. Where
     /// neither says anything, Bun does if no config applies.
     fn svelte_for(&self, scope: &Scope, path: Option<&[u8]>) -> Svelte {
+        self.svelte_with(scope, path, self.svelte_of_flags(path))
+    }
+
+    /// The same if the flags and `[fmt]` say `of_flags` about it.
+    fn svelte_with(&self, scope: &Scope, path: Option<&[u8]>, of_flags: Option<bool>) -> Svelte {
         let by = |is_on: bool| if is_on { Svelte::Bun } else { Svelte::Nobody };
-        let of_flags = || self.svelte_of_flags(path).map(by);
+        let of_flags = || of_flags.map(by);
         let of_files = || match self.is_oxfmt_for(scope) {
             true => self.svelte_of_oxfmt(scope, path).map(by),
             false if !self.names_plugin_for_svelte(scope, path) => None,

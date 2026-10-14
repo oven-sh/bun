@@ -1,7 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 use std::io::Write as _;
 
-use bun_ast::{Loc, Log};
+use bun_ast::Log;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_js_parser as js_ast;
@@ -138,8 +138,6 @@ impl UpdateRequest {
         }
     }
 
-    // NOTE: `from_js` lives on an extension trait in the `*_jsc` crate.
-
     pub fn parse<'a>(
         pm: Option<&mut PackageManager>,
         log: &mut Log,
@@ -147,7 +145,7 @@ impl UpdateRequest {
         update_requests: &'a mut Array,
         subcommand: Subcommand,
     ) -> &'a mut [UpdateRequest] {
-        Self::parse_with_error(pm, log, positionals, update_requests, subcommand, true)
+        Self::parse_with_error(pm, log, positionals, update_requests, subcommand)
             .unwrap_or_else(|_| Global::crash())
     }
     pub fn parse_with_error<'a>(
@@ -156,7 +154,6 @@ impl UpdateRequest {
         positionals: &[&[u8]],
         update_requests: &'a mut Array,
         subcommand: Subcommand,
-        fatal: bool,
     ) -> crate::Result<&'a mut [UpdateRequest]> {
         // first one is always either:
         // add
@@ -223,21 +220,10 @@ impl UpdateRequest {
                 Some(&mut *log),
                 pm.as_deref_mut(),
             ) else {
-                if fatal {
-                    Output::err_generic(
-                        "unrecognised dependency format: {}",
-                        format_args!("{}", bstr::BStr::new(positional)),
-                    );
-                } else {
-                    log.add_error_fmt(
-                        None,
-                        Loc::EMPTY,
-                        format_args!(
-                            "unrecognised dependency format: {}",
-                            bstr::BStr::new(positional)
-                        ),
-                    );
-                }
+                Output::err_generic(
+                    "unrecognised dependency format: {}",
+                    format_args!("{}", bstr::BStr::new(positional)),
+                );
 
                 return Err(crate::Error::UnrecognizedDependencyFormat);
             };
@@ -262,21 +248,10 @@ impl UpdateRequest {
                 dependency::version::Tag::Npm => version.npm().name.eql(placeholder, input, input),
                 _ => false,
             } {
-                if fatal {
-                    Output::err_generic(
-                        "unrecognised dependency format: {}",
-                        format_args!("{}", bstr::BStr::new(positional)),
-                    );
-                } else {
-                    log.add_error_fmt(
-                        None,
-                        Loc::EMPTY,
-                        format_args!(
-                            "unrecognised dependency format: {}",
-                            bstr::BStr::new(positional)
-                        ),
-                    );
-                }
+                Output::err_generic(
+                    "unrecognised dependency format: {}",
+                    format_args!("{}", bstr::BStr::new(positional)),
+                );
 
                 return Err(crate::Error::UnrecognizedDependencyFormat);
             }

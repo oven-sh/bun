@@ -3498,6 +3498,17 @@ fn maybe_watch_file(
 pub(crate) static WASI_RUNNER_SOURCE: &[u8] = include_bytes!("../js/wasi-runner.js");
 
 // Generated `bun:sqlite` import shims.
+/// For a database embedded in a standalone executable: `import.meta.path` is under the `/$bunfs/` virtual root.
+pub(crate) static SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
+/* Generated code */
+import {Database} from 'bun:sqlite';
+import {readFileSync} from 'node:fs';
+export const db = new Database(readFileSync(import.meta.path));
+
+export const __esModule = true;
+export default db;
+";
+
 pub(crate) static SQLITE_MODULE_SOURCE_HOT: &[u8] = b"\
 // Generated code
 import {Database} from 'bun:sqlite';
@@ -3521,17 +3532,6 @@ pub(crate) static SQLITE_MODULE_SOURCE: &[u8] = b"\
 // Generated code
 import {Database} from 'bun:sqlite';
 export const db = new Database(import.meta.path);
-
-export const __esModule = true;
-export default db;
-";
-
-/// For a database embedded in a standalone executable: `import.meta.path` is under the `/$bunfs/` virtual root.
-pub(crate) static SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
-/* Generated code */
-import {Database} from 'bun:sqlite';
-import {readFileSync} from 'node:fs';
-export const db = new Database(readFileSync(import.meta.path));
 
 export const __esModule = true;
 export default db;

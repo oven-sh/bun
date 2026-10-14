@@ -1178,13 +1178,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             == bun_core::CodeGenerationFromStrings::Disallowed
         {
             // Embedded code is known by its address, so the bytes there must not change.
-            if let Err(errno) = graph.make_section_read_only() {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: failed to make the executable's modules read-only for --disallow-code-generation-from-strings=strict: {}",
-                    <&'static str>::from(errno),
-                );
-                Global::exit(1);
-            }
+            graph.make_section_read_only();
             bun_jsc::disallow_non_embedded_code();
         }
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);

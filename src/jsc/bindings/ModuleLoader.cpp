@@ -206,7 +206,6 @@ PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObje
     return virtualModule;
 }
 
-// The bytes of a typed array, a DataView, an ArrayBuffer or a SharedArrayBuffer.
 static std::optional<std::span<const uint8_t>> bufferContentsBytes(JSC::JSValue contents)
 {
     if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(contents))
@@ -218,9 +217,7 @@ static std::optional<std::span<const uint8_t>> bufferContentsBytes(JSC::JSValue 
     return std::nullopt;
 }
 
-// Points `source` at the text of an onLoad `contents` for one transpile. False: an exception is pending.
-// A string lends its characters. Buffer bytes go into `copy`: macros and onResolve plugins run JS during
-// the transpile and another thread can write a SharedArrayBuffer, so the parser cannot read them in place.
+// False: an exception is pending.
 static bool sourceTextForTranspile(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue contents, WTF::Vector<uint8_t>& copy, EncodedSlice& source)
 {
     if (contents.isString()) {
@@ -229,13 +226,15 @@ static bool sourceTextForTranspile(Zig::GlobalObject* globalObject, JSC::ThrowSc
         return true;
     }
 
+    // The transpiler reads a copy: macros and onResolve plugins run JS meanwhile, and another thread can write a SharedArrayBuffer.
     auto bytes = bufferContentsBytes(contents);
     ASSERT(bytes);
     if (bytes->size() > Bun::maxVectorSize<uint8_t>() || !copy.tryAppend(*bytes)) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return false;
     }
-    source = EncodedSlice { copy.span().data(), copy.size() };
+    // Bytes are what a file holds: UTF-8. An untagged EncodedSlice is Latin-1.
+    source = copy.isEmpty() ? EncodedSlice {} : EncodedSlice { Zig::taggedUTF8Ptr(copy.span().data()), copy.size() };
     return true;
 }
 
@@ -341,7 +340,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         result.value.sourceText.value = contentsValue;
 
     if (result.value.sourceText.value.isEmpty()) [[unlikely]] {
-        throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string, ArrayBufferView, ArrayBuffer, or SharedArrayBuffer"_s));
+        throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string, an ArrayBufferView or an ArrayBuffer"_s));
         result.value.error = scope.exception();
         (void)scope.tryClearException();
         return result;
@@ -426,7 +425,7 @@ static JSValue handleVirtualModuleResult(
         if (!sourceTextForTranspile(globalObject, scope, contents, copy, source)) [[unlikely]]
             return rejectOrResolve({});
         Bun__transpileVirtualModule(globalObject, specifier, referrer, &source, onLoadResult.value.sourceText.loader, res);
-        // `source` can point into the string. The JSString has to stay alive while the transpiler reads it.
+        // `source` can point into the JSString.
         JSC::ensureStillAliveHere(contents);
         if (!res->success) {
             RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err)));

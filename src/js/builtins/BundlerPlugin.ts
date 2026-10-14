@@ -573,9 +573,14 @@ export function runOnLoadPlugins(
           }
         }
 
-        if (!(typeof contents === "string") && !$isTypedArrayView(contents) && !$inheritsArrayBuffer(contents)) {
+        if (
+          !(typeof contents === "string") &&
+          !$isTypedArrayView(contents) &&
+          !$inheritsArrayBuffer(contents) &&
+          !$inheritsDataView(contents)
+        ) {
           throw new TypeError(
-            'onLoad plugins must return an object with "contents" as a string, TypedArray, ArrayBuffer, or SharedArrayBuffer',
+            'onLoad plugins must return an object with "contents" as a string, an ArrayBufferView or an ArrayBuffer',
           );
         }
 

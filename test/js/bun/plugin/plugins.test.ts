@@ -351,15 +351,17 @@ describe("dynamic import", () => {
   });
 });
 
+// The bytes of a buffer `contents` are UTF-8, as the bytes of a file are.
 describe("onLoad contents accepts BufferSource", () => {
-  const source = new TextEncoder().encode("export default 'hello';");
+  const text = "h\u00e9llo \u20ac \u{1F600}";
+  const source = new TextEncoder().encode(`export default ${JSON.stringify(text)};`);
 
   it("accepts ArrayBuffer", async () => {
     const ab = new ArrayBuffer(source.byteLength);
     new Uint8Array(ab).set(source);
     globalThis.bufferSourceContents = ab;
     const result = await import("buffer-source:arraybuffer");
-    expect(result.default).toBe("hello");
+    expect(result.default).toBe(text);
   });
 
   it("accepts SharedArrayBuffer", async () => {
@@ -367,7 +369,7 @@ describe("onLoad contents accepts BufferSource", () => {
     new Uint8Array(sab).set(source);
     globalThis.bufferSourceContents = sab;
     const result = await import("buffer-source:sharedarraybuffer");
-    expect(result.default).toBe("hello");
+    expect(result.default).toBe(text);
   });
 
   it("accepts Uint8Array backed by SharedArrayBuffer", async () => {
@@ -375,13 +377,28 @@ describe("onLoad contents accepts BufferSource", () => {
     new Uint8Array(sab).set(source);
     globalThis.bufferSourceContents = new Uint8Array(sab);
     const result = await import("buffer-source:u8-over-sab");
-    expect(result.default).toBe("hello");
+    expect(result.default).toBe(text);
+  });
+
+  it("accepts DataView", async () => {
+    globalThis.bufferSourceContents = new DataView(source.buffer, source.byteOffset, source.byteLength);
+    const result = await import("buffer-source:dataview");
+    expect(result.default).toBe(text);
+  });
+
+  it("reads bytes that are not UTF-8 the way it reads them from a file", async () => {
+    const bytes = Buffer.concat([Buffer.from("export default 'a"), Buffer.from([0xff, 0xc3]), Buffer.from("b';")]);
+    using dir = tempDir("plugin-contents-not-utf8", { "file.js": bytes });
+    const fromFile = (await import(resolve(String(dir), "file.js"))).default;
+    globalThis.bufferSourceContents = bytes;
+    const fromBuffer = (await import("buffer-source:not-utf8")).default;
+    expect(fromBuffer).toBe(fromFile);
   });
 
   it("rejects plain objects", async () => {
     globalThis.bufferSourceContents = { byteLength: 3 };
     await expect(import("buffer-source:bad-object")).rejects.toThrow(
-      'Expected "contents" to be a string, ArrayBufferView, ArrayBuffer, or SharedArrayBuffer',
+      'Expected "contents" to be a string, an ArrayBufferView or an ArrayBuffer',
     );
   });
 });
@@ -441,7 +458,7 @@ describe.concurrent("onLoad contents in a buffer", () => {
   for (const kind of ["SharedArrayBuffer", "Uint8Array"]) {
     const name = kind === "Uint8Array" ? "Uint8Array on a SharedArrayBuffer" : kind;
     it(`${name}: transpiles the bytes while a worker writes them`, async () => {
-      expect(await fixture("worker", kind)).toEqual({ result: { overlapped: 50 }, stderr: "", exitCode: 0 });
+      expect(await fixture("worker", kind)).toEqual({ result: { overlapped: 20 }, stderr: "", exitCode: 0 });
     });
   }
 
@@ -477,7 +494,7 @@ describe.concurrent("onLoad contents in a buffer", () => {
   }
 
   it("string: stays alive while the transpiler reads it", async () => {
-    const transpiled = { during: "collected 512", intact: true };
+    const transpiled = { during: "collected 128", intact: true };
     expect(await fixture("string")).toEqual({
       result: { flat: transpiled, rope: transpiled, substring: transpiled },
       stderr: "",

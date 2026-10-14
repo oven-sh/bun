@@ -1325,8 +1325,15 @@ describe("Bun.build", () => {
       expect(await res.outputs[0].text()).toContain('"hello"');
     });
 
+    test("accepts DataView", async () => {
+      const res = await buildWith(new DataView(source.buffer, source.byteOffset, source.byteLength));
+      expect(res.logs).toEqual([]);
+      expect(res.success).toBe(true);
+      expect(await res.outputs[0].text()).toContain('"hello"');
+    });
+
     const rejection =
-      'onLoad plugins must return an object with "contents" as a string, TypedArray, ArrayBuffer, or SharedArrayBuffer';
+      'onLoad plugins must return an object with "contents" as a string, an ArrayBufferView or an ArrayBuffer';
 
     test("rejects plain objects", async () => {
       const res = await buildWith({ byteLength: 3 });

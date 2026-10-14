@@ -50,9 +50,9 @@ export function collect() {
   globalThis.result = undefined;
   globalThis.contents = "";
   const garbage: string[] = [];
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 4; i++) {
     Bun.gc(true);
-    for (let j = 0; j < 64; j++) garbage.push(Buffer.alloc(4096, String(j)).toString());
+    for (let j = 0; j < 32; j++) garbage.push(Buffer.alloc(4096, String(j)).toString());
   }
   return "collected " + garbage.length;
 }

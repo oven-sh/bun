@@ -8,4 +8,5 @@ export default [
   ["WritableStream", "streams/JSWritableStream.h"],
   ["TransformStream", "streams/JSTransformStream.h"],
   ["ArrayBuffer"],
+  ["DataView", "JavaScriptCore/JSDataView.h"],
 ];

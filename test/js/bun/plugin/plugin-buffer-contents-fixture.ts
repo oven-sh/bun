@@ -45,14 +45,19 @@ const results: Record<string, unknown> = {};
 const failure = (e: unknown) => ({ error: String((e as Error)?.message ?? e).split("\n")[0] });
 
 if (mode === "mutate") {
+  // What the onResolve hook does to `contents` when the transpiler resolves
+  // the import of the module that is being loaded.
+  let pending: string | undefined;
+
   // The source of the module at `<by>/<how>/<n>`. `by` is what runs
   // mutate(how) while the transpiler reads this source.
   const moduleSource = (path: string) => {
     const [by, how] = path.split("/");
+    pending = by === "onResolve" ? how : undefined;
     return make(
       (by === "macro"
         ? `import { mutate } from ${macros} with { type: "macro" };\nexport const during = mutate(${JSON.stringify(how)});\n`
-        : `import { during } from "mutate:${path}";\nexport { during };\n`) +
+        : `import ${macros};\nexport const during = ${JSON.stringify(how)};\n`) +
         `export const after = "after the mutation";\n`,
     );
   };
@@ -69,15 +74,13 @@ if (mode === "mutate") {
         return { contents: moduleSource(path), loader: "ts" };
       });
 
-      // The transpiler resolves the imports of a module after it has parsed the module and before it prints it.
-      build.onResolve({ filter: /.*/, namespace: "mutate" }, ({ path }) => {
-        mutate(path.split("/")[1]);
-        return { path, namespace: "mutate" };
+      // The transpiler resolves the imports of a module after it has parsed the
+      // module and before it prints it. The hook returns nothing, so the
+      // import resolves to the file as it does with no plugin.
+      build.onResolve({ filter: /plugin-buffer-contents-macro\.ts$/ }, () => {
+        if (pending) mutate(pending);
+        pending = undefined;
       });
-      build.onLoad({ filter: /.*/, namespace: "mutate" }, ({ path }) => ({
-        contents: `export const during = ${JSON.stringify(path.split("/")[1])};`,
-        loader: "js",
-      }));
 
       for (const how of rest) {
         for (const by of ["macro", "onResolve"]) {
@@ -130,7 +133,8 @@ if (mode === "mutate") {
   const base = encode("export default [\n" + Buffer.alloc(literals * literal.length, literal).toString() + "];\n");
   // Each separator that reads as `0` makes the literal ten times larger.
   const values = new Set([1e15, 1e16, 1e17, 1e18, 1e19, 1e20]);
-  const imports = 50;
+  // An unfixed build fails within 10 imports.
+  const imports = 20;
 
   if (isMainThread) {
     const shared = fill(new SharedArrayBuffer(base.length), base);

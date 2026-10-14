@@ -458,6 +458,8 @@ vi.mock("dep", () => ({ default: fake })); // a library that requires "dep" stil
 jest.mock("dep", () => fake); // the library gets the fake too
 ```
 
+If the package is already loaded, what imported it keeps the real one, and the next `import()` or `require()` from your own code calls the factory. The real package is never loaded a second time: `vi.importActual()` returns the loaded one, and `vi.doUnmock()` brings it back.
+
 A mocked builtin such as `node:fs` is mocked for every importer with all of them.
 
 ### Mocking Without a Factory
@@ -773,7 +775,7 @@ test("lazy import", async () => {
 
 ### Differences from Vitest
 
-- Mocking a module that's already imported updates it in place. Its existing exports change, exports that only the mock has aren't added, and getters are read once.
+- Mocking a module of your own that's already imported updates it in place. Its existing exports change, exports that only the mock has aren't added, and getters are read once.
 - Every module outside `node_modules` that imports the mocked module gets the mock. In Vitest, a module that's first loaded while the factory runs gets the original and keeps it.
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.

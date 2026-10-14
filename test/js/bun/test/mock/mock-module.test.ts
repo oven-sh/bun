@@ -1456,6 +1456,102 @@ describe.concurrent("resetModules", () => {
     );
   });
 
+  test.each([[[]], [["--isolate"]]])(
+    "vi.doMock() of a package that is still loaded calls the factory lazily %j",
+    async args => {
+      await expectFixturesToPass(
+        {
+          "node_modules/esm-pkg/package.json": `{ "name": "esm-pkg", "type": "module", "main": "index.js" }`,
+          "node_modules/esm-pkg/index.js": `export const who = "real";`,
+          "node_modules/cjs-pkg/package.json": `{ "name": "cjs-pkg", "main": "index.js" }`,
+          "node_modules/cjs-pkg/index.js": `module.exports = { who: "real" };`,
+          "own.js": `export const load = name => import(name).then(exports => exports.who, error => "caught " + error.message);`,
+          "lazy.test.js": `
+          import { beforeEach, describe, expect, test, vi } from "vitest";
+          import * as esm from "esm-pkg";
+          import cjs from "cjs-pkg";
+          beforeEach(() => void vi.resetModules());
+
+          describe.each(["esm-pkg", "cjs-pkg"])("%s", name => {
+            test("a factory that throws", async () => {
+              const factory = vi.fn(() => { throw new TypeError("from the factory"); });
+              vi.doMock(name, factory);
+              expect(factory).not.toHaveBeenCalled();
+              expect(await (await import("./own.js")).load(name)).toContain("caught");
+              expect(factory).toHaveBeenCalledTimes(1);
+              vi.doUnmock(name);
+            });
+
+            test("what was imported before keeps the real package", async () => {
+              vi.doMock(name, () => ({ who: "mock" }));
+              expect([esm.who, cjs.who]).toEqual(["real", "real"]);
+              expect(await (await import("./own.js")).load(name)).toBe("mock");
+              vi.doUnmock(name);
+            });
+          });
+        `,
+        },
+        4,
+        args,
+      );
+    },
+  );
+
+  test.each([[[]], [["--isolate"]]])("a real package stays one instance while vi.doMock() mocks it %j", async args => {
+    await expectFixturesToPass(
+      {
+        "node_modules/esm-pkg/package.json": `{ "name": "esm-pkg", "type": "module", "main": "index.js" }`,
+        "node_modules/esm-pkg/index.js": `globalThis.loads.push("esm-pkg"); export const who = () => "real"; export const token = {};`,
+        "node_modules/cjs-pkg/package.json": `{ "name": "cjs-pkg", "main": "index.js" }`,
+        "node_modules/cjs-pkg/index.js": `globalThis.loads.push("cjs-pkg"); module.exports = { who: () => "real", token: {} };`,
+        "node_modules/lib/package.json": `{ "name": "lib", "type": "module", "main": "index.js" }`,
+        "node_modules/lib/index.js": `
+          globalThis.loads.push("lib");
+          import cjs from "cjs-pkg";
+          import * as esm from "esm-pkg";
+          export const read = () => [cjs.who(), esm.who(), cjs.token, esm.token];
+        `,
+        "own.js": `
+          import cjs from "cjs-pkg";
+          import * as esm from "esm-pkg";
+          export const read = () => [cjs.who(), esm.who(), cjs.token, esm.token];
+        `,
+        "preload.js": `globalThis.loads = [];`,
+        "one.test.js": `
+          import { expect, test, vi } from "vitest";
+          import cjs from "cjs-pkg";
+          import * as esm from "esm-pkg";
+          import * as lib from "lib";
+
+          test("mocked, reset and unmocked", async () => {
+            vi.doMock("cjs-pkg", async () => {
+              const actual = await vi.importActual("cjs-pkg");
+              return { ...actual, default: { ...actual.default, who: () => "mock" } };
+            });
+            vi.doMock("esm-pkg", async importOriginal => ({ ...(await importOriginal()), who: () => "mock" }));
+            expect((await vi.importActual("cjs-pkg")).default).toBe(cjs);
+            expect((await vi.importActual("esm-pkg")).token).toBe(esm.token);
+
+            vi.resetModules();
+            expect((await import("./own.js")).read()).toEqual(["mock", "mock", cjs.token, esm.token]);
+            expect(lib.read()).toEqual(["real", "real", cjs.token, esm.token]);
+            expect(await import("lib")).toBe(lib);
+
+            vi.doUnmock("cjs-pkg");
+            vi.doUnmock("esm-pkg");
+            vi.resetModules();
+            expect((await import("./own.js")).read()).toEqual(["real", "real", cjs.token, esm.token]);
+            expect((await import("cjs-pkg")).default).toBe(cjs);
+            expect(await import("lib")).toBe(lib);
+            expect(globalThis.loads.toSorted()).toEqual(["cjs-pkg", "esm-pkg", "lib"]);
+          });
+        `,
+      },
+      1,
+      ["--preload=./preload.js", ...args],
+    );
+  });
+
   test("the next import or require() evaluates a module again", async () => {
     await expectFixturesToPass(
       {

@@ -1772,6 +1772,8 @@ struct ModulesToEvict {
     bool all { false };
     // With `all`: modules in node_modules stay, as in Vitest, which doesn't load packages through the registry it resets.
     bool exceptPackages { false };
+    // Packages that vi.mock() no longer mocks. See setLoadedPackageAside().
+    Vector<String> packagesToBringBack;
     bool onlyImportersFromEarlierTestFiles { false };
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
     bool isEndOfTestFile { false };
@@ -1813,6 +1815,44 @@ static void giveLoadedModuleBackToPreloadModuleMock(Zig::GlobalObject* globalObj
 
 extern "C" bool JSMock__isInPreload(Zig::GlobalObject*);
 
+static void moveLoadedModule(Zig::GlobalObject* globalObject, const String& from, const String& to)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* loader = globalObject->moduleLoader();
+    JSC::JSMap* requireMap = globalObject->requireMap();
+
+    auto fromKey = JSC::Identifier::fromString(vm, from);
+    auto* entry = loader->getRegisteredMayBeNull(fromKey, JSC::ScriptFetchParameters::Type::JavaScript);
+    if (entry && entry->record() && entry->status() < JSC::ModuleRegistryEntry::Status::FetchFailed && !pendingLoadOf(globalObject, entry)) {
+        auto* record = entry->record();
+        loader->removeEntry(fromKey);
+        auto* moved = loader->ensureRegistered(globalObject, JSC::Identifier::fromString(vm, to), JSC::ScriptFetchParameters::Type::JavaScript);
+        RETURN_IF_EXCEPTION(scope, );
+        if (!moved->record()) {
+            moved->provideModule(vm, record);
+            moved->markLoaded();
+        }
+    }
+
+    JSString* fromString = jsString(vm, from);
+    JSValue commonJSModule = requireMap->get(globalObject, fromString);
+    RETURN_IF_EXCEPTION(scope, );
+    if (commonJSModule.isCell()) {
+        requireMap->set(globalObject, jsString(vm, to), commonJSModule);
+        RETURN_IF_EXCEPTION(scope, );
+        JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(fromString));
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
+// As in Vitest, a real package is one instance however often it's mocked and unmocked. While vi.mock() mocks it, the loaded
+// instance is registered under the key that vi.importActual() and the modules in node_modules import.
+static void setLoadedPackageAside(Zig::GlobalObject* globalObject, const String& specifier)
+{
+    moveLoadedModule(globalObject, specifier, originalModuleKey(specifier));
+}
+
 // Importers stay linked to the record they imported, so they're evicted too, except preload modules, which nothing would load again.
 // The loader looks up the entries of a loading module's imports more than once and expects the same ones, so an entry that is
 // loading, or that a loading module has requested, stays until that load settles (modulesToEvictOnceLoaded).
@@ -1821,7 +1861,7 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Modul
     auto& plugins = globalObject->onLoadPlugins;
     Vector<String>& keys = evict.modules;
     keys.removeAllMatching([&](const String& key) { return plugins.modulesToEvictOnceLoaded.contains(key); });
-    if (keys.isEmpty() && evict.patchedESModules.isEmpty() && evict.patchedCommonJSModules.isEmpty() && evict.abandonedModules.isEmpty() && !evict.all && !evict.isEndOfTestFile && !evict.hasLoadSettled)
+    if (keys.isEmpty() && evict.patchedESModules.isEmpty() && evict.patchedCommonJSModules.isEmpty() && evict.abandonedModules.isEmpty() && evict.packagesToBringBack.isEmpty() && !evict.all && !evict.isEndOfTestFile && !evict.hasLoadSettled)
         return;
 
     auto& vm = JSC::getVM(globalObject);
@@ -1955,6 +1995,9 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Modul
         bool stays = staysInRegistry.contains(key) || staysInRequireCache.contains(key);
         for (auto& importer : importers->value) {
             unsigned testFile = plugins.testFileOfModule.get(importer);
+            // It imported the real package before vi.mock() mocked it, and never the mock.
+            if (isInNodeModules(importer) && evict.packagesToBringBack.contains(key))
+                continue;
             if (!testFile || importer == key || (stays && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
                 continue;
             bool stayed = staysInRegistry.remove(importer);
@@ -2033,6 +2076,12 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Modul
                 mock->originalCommonJSExports.clear();
         }
     }
+    for (auto& package : evict.packagesToBringBack) {
+        if (stay.contains(package))
+            continue;
+        moveLoadedModule(globalObject, originalModuleKey(package), package);
+        RETURN_IF_EXCEPTION(scope, );
+    }
     plugins.modulesToEvictOnceLoaded = WTF::move(stay);
 
     if (awaited.isEmpty())
@@ -2107,6 +2156,8 @@ static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, co
     LoadedModule loaded = findLoadedModule(globalObject, mock->specifier.get());
     RETURN_IF_EXCEPTION(scope, );
     keepModuleMockOfLoadInFlight(globalObject, mock, specifier, loaded);
+    if ((mock->function == ModuleMockFunction::ViMock || mock->function == ModuleMockFunction::ViDoMock) && isInNodeModules(specifier))
+        evict.packagesToBringBack.append(specifier);
 
     JSObject* saved = mock->originalExportsOfEvictedModule ? mock->originalExportsOfEvictedModule.get() : mock->originalExports.get();
     if (auto* patched = mock->patchedNamespace.get(); patched && saved) {
@@ -2391,7 +2442,8 @@ static JSC::EncodedJSValue mockModule(JSC::JSGlobalObject* lexicalGlobalObject, 
 
     // Like Vitest, vi.mock() in a test file doesn't patch a module that a preload loaded. The file loads its own mocked copy,
     // and the preload's module is restored when the file ends. mock.module() and jest.mock() patch it in place.
-    bool leavesLoadedModuleAlone = (function == ModuleMockFunction::ViMock || function == ModuleMockFunction::ViDoMock) && Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && !globalObject->onLoadPlugins.testFileOfModule.get(specifier);
+    // Nor does it patch a package, which vi.resetModules() leaves loaded: the factory has to stay lazy.
+    bool leavesLoadedModuleAlone = (function == ModuleMockFunction::ViMock || function == ModuleMockFunction::ViDoMock) && Bun::isBunTest && !mock->isFromPreload && !isBuiltinModuleKey(specifier) && (!globalObject->onLoadPlugins.testFileOfModule.get(specifier) || isInNodeModules(specifier));
     if (leavesLoadedModuleAlone && previous && !previous->isFromPreload) {
         unmockModule(globalObject, previous, specifier);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2400,6 +2452,12 @@ static JSC::EncodedJSValue mockModule(JSC::JSGlobalObject* lexicalGlobalObject, 
         RETURN_IF_EXCEPTION(scope, {});
     }
     bool isLoadInFlight = loaded.staleESMEntry;
+    if (leavesLoadedModuleAlone && isInNodeModules(specifier) && (loaded.esmNamespace || loaded.commonJSModule)) {
+        setLoadedPackageAside(globalObject, specifier);
+        RETURN_IF_EXCEPTION(scope, {});
+        loaded = findLoadedModule(globalObject, specifierString);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
     if (leavesLoadedModuleAlone) {
         loaded.staleESMEntry |= !!std::exchange(loaded.esmNamespace, nullptr);
         loaded.staleCommonJSEntry |= !!std::exchange(loaded.commonJSModule, nullptr);

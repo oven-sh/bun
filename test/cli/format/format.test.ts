@@ -1056,6 +1056,60 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
+  // The text, what is printed, and what oxfmt 0.72 prints, which is another program or none.
+  test("in the flavor of oxfmt, what is written as it is keeps its parentheses too", async () => {
+    const rows = [
+      [
+        "js",
+        "const x = (a  +  b // prettier-ignore\n)(1);\n",
+        "const x = (a  +  b) // prettier-ignore\n(1);\n",
+        "const x = a  +  b // prettier-ignore\n(1);\n",
+      ],
+      [
+        "js",
+        "const x = (a  =  b // prettier-ignore\n) ? c : d;\n",
+        "const x = (a  =  b) // prettier-ignore\n  ? c\n  : d;\n",
+        "const x = a  =  b // prettier-ignore\n  ? c\n  : d;\n",
+      ],
+      [
+        "js",
+        "class A extends (a  +  b // prettier-ignore\n) {}\n",
+        "class A extends (a  +  b) // prettier-ignore\n{}\n",
+        "class A extends a  +  b // prettier-ignore\n{}\n",
+      ],
+      [
+        "js",
+        "const x = (()  =>  {} // prettier-ignore\n)();\n",
+        "const x = (()  =>  {}) // prettier-ignore\n();\n",
+        "const x = ()  =>  {} // prettier-ignore\n();\n",
+      ],
+      [
+        "ts",
+        "const x = (a  +  b /* prettier-ignore */\n) as T;\n",
+        "const x = (a  +  b) as /* prettier-ignore */ T;\n",
+        "const x = a  +  b as /* prettier-ignore */ T;\n",
+      ],
+      [
+        "ts",
+        "const x = (y  as  T // prettier-ignore\n)(1);\n",
+        "const x = (y  as  T) // prettier-ignore\n(1);\n",
+        "const x = y  as  T // prettier-ignore\n(1);\n",
+      ],
+      // For oxfmt a comment behind the operator is about nothing.
+      [
+        "js",
+        "const x =\n  foo({ a: 1,   b: 2 }) && // prettier-ignore\n  bar;\n",
+        "const x =\n  foo({ a: 1, b: 2 }) && // prettier-ignore\n  bar;\n",
+        null,
+      ],
+    ] as const;
+    const names = rows.map(([extension], index) => `${index}.${extension}`);
+    const texts = Object.fromEntries(rows.map(([, text], index) => [names[index], text]));
+    const result = await format({ ".oxfmtrc.json": "{}", ...texts }, [], { reads: names });
+    expect(result.files).toEqual(Object.fromEntries(rows.map(([, , expected], index) => [names[index], expected])));
+    expect(result.exitCode).toBe(0);
+  });
+
   // What is expected is what Prettier 3.9.9 prints.
   test("a comment with the letters of `else` in it is not the `else`", async () => {
     await expectFormatted([

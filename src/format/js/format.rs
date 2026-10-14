@@ -370,7 +370,9 @@ impl<'a> FormatExpr<'a> {
             // without looking at its comments.
             Some((end, _)) if end == span.end => false,
             // `a && // prettier-ignore ⏎ b`
-            Some((_, ExprKind::Binary { right, .. })) if right != expr => {
+            Some((_, ExprKind::Binary { right, .. }))
+                if right != expr && comment_behind_operator_trails_left_side(f) =>
+            {
                 f.comments().has_trailing_suppression_comment(span.end)
                     || (f.comments())
                         .has_suppression_comment_trailing_left_operand(span.end, right.span().start)
@@ -439,6 +441,11 @@ impl<'a> FormatExpr<'a> {
         }
         write_trailing_comments_of(node, f);
     }
+}
+
+/// `a && // prettier-ignore ⏎ b`: for oxfmt the comment is about nothing.
+fn comment_behind_operator_trails_left_side(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
 }
 
 /// `(/* comment */ a?.b).c` is `/* comment */ (a?.b).c` for oxfmt, in TypeScript as in JavaScript.

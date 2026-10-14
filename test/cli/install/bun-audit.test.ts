@@ -3,7 +3,6 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { exists, readlink } from "fs/promises";
 import {
   DirectoryTree,
-  VerdaccioRegistry,
   bunEnv,
   bunExe,
   gunzipJsonRequest,
@@ -12,20 +11,18 @@ import {
   tempDir,
 } from "harness";
 import { join } from "node:path";
+import { TestRegistry } from "registry";
 import { resolveBulkAdvisoryFixture } from "./registry/fixtures/audit/audit-fixtures";
 
 function fixture(
   folder:
-    | "express@3"
-    | "vuln-with-only-dev-dependencies"
-    | "safe-is-number@7"
-    | "mix-of-safe-and-vulnerable-dependencies",
+    "express@3" | "vuln-with-only-dev-dependencies" | "safe-is-number@7" | "mix-of-safe-and-vulnerable-dependencies",
 ) {
   return join(import.meta.dirname, "registry", "fixtures", "audit", folder);
 }
 
-let server: Bun.Server;
-const verdaccio = new VerdaccioRegistry();
+let server: Bun.Server<undefined>;
+const verdaccio = new TestRegistry();
 
 beforeAll(async () => {
   server = Bun.serve({
@@ -125,7 +122,7 @@ type RegistryOptions = {
   rewriteTime?: Record<string, Record<string, string>>;
 };
 
-// Answers the bulk-advisory endpoint itself and proxies everything else to verdaccio, pointing manifest tarball URLs back at itself.
+// Answers the bulk-advisory endpoint itself and proxies everything else to the fixture registry, pointing manifest tarball URLs back at itself.
 function startRegistry(advisories: Record<string, Advisory[]>, options: RegistryOptions = {}) {
   let bulkRequests = 0;
   return Bun.serve({

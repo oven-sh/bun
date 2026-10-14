@@ -2442,9 +2442,9 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
     auto iter = headers->createIterator(false);
     unsigned int i = 0;
 
-    for (auto pair = iter.next(); pair; pair = iter.next()) {
-        const auto name = pair->key;
-        const auto value = pair->value;
+    while (auto* entry = iter.nextEntry()) {
+        const auto& name = *entry->key;
+        const auto& value = *entry->value;
 
         ASSERT_WITH_MESSAGE(name.length(), "Header name must not be empty");
         ASSERT_WITH_MESSAGE(name.containsOnlyASCII(), "Header name must be ASCII. This should already be validated before calling this function.");
@@ -2486,16 +2486,26 @@ void WebCore__FetchHeaders__copyTo(WebCore::FetchHeaders* headers, StringPointer
 }
 void WebCore__FetchHeaders__count(WebCore::FetchHeaders* headers, uint32_t* count, uint32_t* buf_len)
 {
-    auto iter = headers->createIterator();
-    size_t i = 0;
-    for (auto pair = iter.next(); pair; pair = iter.next()) {
+    uint32_t entries = 0;
+    size_t bytes = 0;
+    auto add = [&](const String& name, const String& value) {
+        // copyTo's iterator passes over a null value.
+        if (value.isNull())
+            return;
+        entries++;
         // copyTo isomorphic-encodes: one byte per code unit.
-        i += pair->key.length();
-        i += pair->value.length();
-    }
+        bytes += name.length() + value.length();
+    };
+    auto& map = headers->internalHeaders();
+    for (auto& header : map.commonHeaders())
+        add(WTF::httpHeaderNameStringImpl(header.key), header.value);
+    for (auto& header : map.uncommonHeaders())
+        add(header.key, header.value);
+    for (auto& cookie : map.getSetCookieHeaders())
+        add(WTF::httpHeaderNameStringImpl(HTTPHeaderName::SetCookie), cookie);
 
-    *count = headers->size();
-    *buf_len = i;
+    *count = entries;
+    *buf_len = bytes;
 }
 
 typedef struct ZigSliceString {
@@ -3435,40 +3445,6 @@ extern "C" JSC::JSPromise* JSModuleLoader__import(JSC::JSGlobalObject* globalObj
 
     EXCEPTION_ASSERT(!!scope.exception() == !promise);
     return promise;
-}
-
-JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObject, const unsigned char* arg1,
-    size_t arg2, const unsigned char* originUrlPtr, size_t originURLLen, const unsigned char* referrerUrlPtr, size_t referrerUrlLen,
-    JSC::EncodedJSValue JSValue5, JSC::EncodedJSValue* arg6)
-{
-    WTF::String src = WTF::String::fromUTF8(std::span { arg1, arg2 }).isolatedCopy();
-    WTF::URL origin = WTF::URL::fileURLWithFileSystemPath(WTF::String::fromUTF8(std::span { originUrlPtr, originURLLen })).isolatedCopy();
-    WTF::URL referrer = WTF::URL::fileURLWithFileSystemPath(WTF::String::fromUTF8(std::span { referrerUrlPtr, referrerUrlLen })).isolatedCopy();
-
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    JSC::SourceCode sourceCode = JSC::makeSource(
-        src, JSC::SourceOrigin { origin }, JSC::SourceTaintedOrigin::Untainted, origin.fileSystemPath(),
-        WTF::TextPosition(), JSC::SourceProviderSourceType::Module);
-    globalObject->moduleLoader()->provideFetch(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSC::ScriptFetchParameters::Type::JavaScript, WTF::move(sourceCode));
-    RETURN_IF_EXCEPTION(scope, {});
-    auto* promise = JSC::importModule(globalObject, JSC::Identifier::fromString(vm, origin.fileSystemPath()), JSC::Identifier::fromString(vm, referrer.fileSystemPath()), nullptr, nullptr);
-
-    if (scope.exception()) [[unlikely]] {
-        promise->rejectWithCaughtException(vm, scope);
-    }
-
-    auto status = promise->status();
-
-    if (status == JSC::JSPromise::Status::Fulfilled) {
-        return JSC::JSValue::encode(promise->result());
-    } else if (status == JSC::JSPromise::Status::Rejected) {
-        *arg6 = JSC::JSValue::encode(promise->result());
-        return JSC::JSValue::encode(JSC::jsUndefined());
-    } else {
-        return JSC::JSValue::encode(promise);
-    }
 }
 
 JSC::EncodedJSValue JSC__JSValue__fromEntries(JSC::JSGlobalObject* globalObject, EncodedSlice* keys,

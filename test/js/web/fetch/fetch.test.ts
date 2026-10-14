@@ -1,3 +1,4 @@
+// @ts-expect-error no such export
 import { AnyFunction, serve, ServeOptions, Server, sleep, TCPSocketListener } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { chmodSync, closeSync, ftruncateSync, openSync, rmSync, writeFileSync } from "fs";
@@ -34,14 +35,14 @@ import { deadPort } from "../../bun/http/proxy-stress-helpers";
 const tmp_dir = tmpdirSync();
 const fetchFixture3 = join(import.meta.dir, "fetch-leak-test-fixture-3.js");
 const fetchFixture4 = join(import.meta.dir, "fetch-leak-test-fixture-4.js");
-let server: Server;
+let server: Server<undefined>;
 function startServer({ fetch, ...options }: ServeOptions) {
   server = serve({
     idleTimeout: 0,
     ...options,
     fetch,
     port: 0,
-  });
+  } as ServeOptions);
   return server;
 }
 
@@ -278,7 +279,7 @@ describe("AbortSignal", () => {
     const controller = new AbortController();
     const signal = controller.signal;
     signal.addEventListener("abort", ev => {
-      const target = ev.currentTarget!;
+      const target = ev.currentTarget! as AbortSignal;
       expect(target).toBeDefined();
       expect(target.aborted).toBe(true);
       expect(target.reason).toBeDefined();
@@ -293,7 +294,7 @@ describe("AbortSignal", () => {
     try {
       await Promise.all([fetch(server.url, { signal: signal }).then(res => res.text()), manualAbort()]);
       expect.unreachable();
-    } catch (e) {
+    } catch (e: any) {
       expect(e?.message).toEqual("The operation was aborted.");
       expect(e?.name).toEqual("AbortError");
       expect(e?.constructor.name).toEqual("DOMException");
@@ -387,7 +388,7 @@ describe("AbortSignal", () => {
     }
 
     try {
-      const request = new Request(server.url, { signal });
+      const request = new Request(server.url as any, { signal });
       await Promise.all([fetch(request).then(res => res.text()), manualAbort()]);
       expect(() => {}).toThrow();
     } catch (ex: any) {
@@ -405,7 +406,7 @@ describe("AbortSignal", () => {
       controller.abort(reason);
       const p = fetch("http://127.0.0.1:1/", { signal: controller.signal });
       expect(Bun.peek.status(p)).toBe("rejected");
-      expect(Bun.peek(p)).toBe(reason);
+      expect<unknown>(Bun.peek(p)).toBe(reason);
       await p.catch(() => {});
     }
     {
@@ -414,7 +415,7 @@ describe("AbortSignal", () => {
       controller.abort();
       const p = fetch("http://127.0.0.1:1/", { signal: controller.signal });
       expect(Bun.peek.status(p)).toBe("rejected");
-      const err = Bun.peek(p);
+      const err: unknown = Bun.peek(p);
       expect(err).toBeInstanceOf(DOMException);
       expect((err as DOMException).name).toBe("AbortError");
       expect(err).toBe(controller.signal.reason);
@@ -428,7 +429,7 @@ describe("AbortSignal", () => {
       const req = new Request("http://127.0.0.1:1/", { signal: controller.signal });
       const p = fetch(req);
       expect(Bun.peek.status(p)).toBe("rejected");
-      expect(Bun.peek(p)).toBe(reason);
+      expect<unknown>(Bun.peek(p)).toBe(reason);
       await p.catch(() => {});
     }
     {
@@ -436,7 +437,7 @@ describe("AbortSignal", () => {
       const reason = new Error("pre-aborted-static");
       const p = fetch("http://127.0.0.1:1/", { signal: AbortSignal.abort(reason) });
       expect(Bun.peek.status(p)).toBe("rejected");
-      expect(Bun.peek(p)).toBe(reason);
+      expect<unknown>(Bun.peek(p)).toBe(reason);
       await p.catch(() => {});
     }
     {
@@ -446,7 +447,7 @@ describe("AbortSignal", () => {
       controller.abort(reason);
       const p = fetch({ url: "http://127.0.0.1:1/", signal: controller.signal } as any);
       expect(Bun.peek.status(p)).toBe("rejected");
-      expect(Bun.peek(p)).toBe(reason);
+      expect<unknown>(Bun.peek(p)).toBe(reason);
       await p.catch(() => {});
     }
     {
@@ -475,7 +476,7 @@ describe("AbortSignal", () => {
       });
       const p = fetch(req);
       expect(Bun.peek.status(p)).toBe("rejected");
-      expect(Bun.peek(p)).toBe(reason);
+      expect<unknown>(Bun.peek(p)).toBe(reason);
       expect(req.bodyUsed).toBe(true);
       await p.catch(() => {});
     }
@@ -495,7 +496,7 @@ describe("AbortSignal", () => {
         signal: AbortSignal.abort(reason),
       });
       expect(Bun.peek.status(p)).toBe("rejected");
-      expect(Bun.peek(p)).toBe(reason);
+      expect<unknown>(Bun.peek(p)).toBe(reason);
       await p.catch(() => {});
       expect(cancelReason).toBe(reason);
       expect(stream.locked).toBe(false);
@@ -543,7 +544,7 @@ describe("Headers", () => {
     });
     const result = await fetch(`http://${server.hostname}:${server.port}/`);
     const value = result.headers.get("content-encoding");
-    const body = await result.json();
+    const body: any = await result.json();
     expect(value).toBe("gzip");
     expect(body).toBeDefined();
     expect(body.message).toBe("Hello world");
@@ -585,7 +586,7 @@ describe("Headers", () => {
       ["X-bun", "abc"],
       ["X-bun", "def"],
     ]).toJSON();
-    expect(headers).toEqual({
+    expect<unknown>(headers).toEqual({
       "x-bun": "abc, def",
       "set-cookie": ["foo=bar", "bar=baz"],
     });
@@ -1073,10 +1074,10 @@ function testBlobInterface(blobbyConstructor: { (..._: any[]): any }, hasBlobFn?
           await new Promise(resolve => setTimeout(resolve, 1));
           if (withGC) gc();
           expect(out).toBe(text);
-          const first = await blobed.arrayBuffer();
+          const first = new Uint8Array(await blobed.arrayBuffer());
           const initial = first[0];
           first[0] = 254;
-          const second = await blobed.arrayBuffer();
+          const second = new Uint8Array(await blobed.arrayBuffer());
           expect(second[0]).toBe(initial);
           expect(first[0]).toBe(254);
         });
@@ -1090,7 +1091,7 @@ describe.concurrent("Bun.file", () => {
     const blob = new Blob([data]);
     const buffer = Bun.peek(blob.arrayBuffer()) as ArrayBuffer;
     const path = join(tmp_dir, `tmp-${count++}.bytes`);
-    writeFileSync(path, buffer);
+    writeFileSync(path, buffer as any);
     const file = Bun.file(path);
     expect(blob.size).toBe(file.size);
     expect(file.lastModified).toBeGreaterThan(0);
@@ -1581,13 +1582,13 @@ describe("Response", () => {
   });
 
   it("should work with bigint", () => {
-    var r = new Response("hello status", { status: 200n });
+    var r = new Response("hello status", { status: 200n as any });
     expect(r.status).toBe(200);
-    r = new Response("hello status", { status: 599n });
+    r = new Response("hello status", { status: 599n as any });
     expect(r.status).toBe(599);
-    r = new Response("hello status", { status: BigInt(200) });
+    r = new Response("hello status", { status: BigInt(200) as any });
     expect(r.status).toBe(200);
-    r = new Response("hello status", { status: BigInt(599) });
+    r = new Response("hello status", { status: BigInt(599) as any });
     expect(r.status).toBe(599);
   });
   testBlobInterface(data => new Response(data), true);
@@ -1720,12 +1721,11 @@ it("Request({}) throws", async () => {
 it("Request({toString() { throw 'wat'; } }) throws", async () => {
   expect(
     () =>
-      // @ts-expect-error
       new Request({
         toString() {
           throw "wat";
         },
-      }),
+      } as any),
   ).toThrow("wat");
 });
 
@@ -2162,7 +2162,7 @@ it("same-origin status code 302 should not strip headers", async () => {
 });
 
 describe("should handle relative location in the redirect, issue#5635", () => {
-  let server: Server;
+  let server: Server<undefined>;
   beforeAll(async () => {
     server = Bun.serve({
       port: 0,
@@ -2222,7 +2222,7 @@ describe("should handle relative location in the redirect, issue#5635", () => {
 });
 
 describe("maxRedirects", () => {
-  let server: Server;
+  let server: Server<undefined>;
   beforeAll(() => {
     server = Bun.serve({
       port: 0,
@@ -2438,7 +2438,7 @@ describe("http/1.1 response body length", () => {
     it("should read json until socket closed", async () => {
       const response = await fetch(`http://${getHost()}/json`);
       expect(response.status).toBe(200);
-      expect(response.json<unknown>()).resolves.toEqual({ "hello": "World" });
+      expect(response.json()).resolves.toEqual({ "hello": "World" });
     });
 
     it("should disable keep-alive", async () => {
@@ -2583,7 +2583,7 @@ describe("fetch should allow duplex", () => {
       duplex: "half",
     });
 
-    const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
+    const reader = resp.body!.pipeThrough(new TextDecoderStream()).getReader();
     var result = "";
     while (true) {
       const { value, done } = await reader.read();
@@ -2595,7 +2595,9 @@ describe("fetch should allow duplex", () => {
 
   it("should allow duplex extending Readable (sync)", async () => {
     class HelloWorldStream extends Readable {
-      constructor(options) {
+      declare chunks: string[];
+      declare index: number;
+      constructor(options?) {
         super(options);
         this.chunks = ["Hello", " ", "World!"];
         this.index = 0;
@@ -2627,7 +2629,9 @@ describe("fetch should allow duplex", () => {
   });
   it("should allow duplex extending Readable (async)", async () => {
     class HelloWorldStream extends Readable {
-      constructor(options) {
+      declare chunks: string[];
+      declare index: number;
+      constructor(options?) {
         super(options);
         this.chunks = ["Hello", " ", "World!"];
         this.index = 0;
@@ -3410,7 +3414,7 @@ describe("fetch() with a streaming request body and caller framing headers", () 
     ],
     ["stream.Readable", () => Readable.from([body])],
   ];
-  const post = (url: string, headers: HeadersInit, makeBody: () => unknown) =>
+  const post = (url: string, headers: Bun.HeadersInit, makeBody: () => unknown) =>
     fetch(url, { method: "POST", headers, body: makeBody(), duplex: "half" } as RequestInit);
   // The response text, or what the fetch rejected with.
   const outcome = (response: Promise<Response>) =>
@@ -3469,7 +3473,7 @@ describe("fetch() with a streaming request body and caller framing headers", () 
       const twoRows = new Headers();
       twoRows.append("Content-Length", "5");
       twoRows.append("Content-Length", "7");
-      const rows: HeadersInit[] = [
+      const rows: Bun.HeadersInit[] = [
         ...["abc", "+5", "0x5", "5.0", "-1", "", "99999999999999999999"].map(value => ({ "Content-Length": value })),
         // FetchHeaders joins two caller rows into "5, 7".
         twoRows,
@@ -3488,7 +3492,7 @@ describe("fetch() with a streaming request body and caller framing headers", () 
 
     it("rejects a Transfer-Encoding that is not a list of known codings ending in chunked, before anything is sent", async () => {
       await using origin = await rawOrigin();
-      const rows: HeadersInit[] = [
+      const rows: Bun.HeadersInit[] = [
         ...["identity", "gzip", "chunked, gzip", "chunked, chunked", "gzip; q=1, chunked", "br2, chunked", ""].map(
           value => ({ "Transfer-Encoding": value }),
         ),
@@ -3507,7 +3511,7 @@ describe("fetch() with a streaming request body and caller framing headers", () 
   it("treats fetch(new Request(url, init)) and fetch(request, { headers }) like fetch(url, init)", async () => {
     await using origin = await rawOrigin();
     const [, makeBody] = bodyKinds[0];
-    const init = (headers: HeadersInit) =>
+    const init = (headers: Bun.HeadersInit) =>
       ({ method: "POST", headers, body: makeBody(), duplex: "half" }) as RequestInit;
     expect(await outcome(fetch(new Request(origin.url, init({ "Content-Length": "abc" }))))).toEqual(invalidHeader);
     expect(
@@ -3523,7 +3527,7 @@ describe("fetch() with a streaming request body and caller framing headers", () 
     // A blob-backed stream has a known size. The caller's framing headers are
     // dropped and the computed Content-Length wins, as for a string or a Blob.
     for (const headers of [{ "Content-Length": "2" }, { "Content-Length": "abc" }, { "Transfer-Encoding": "gzip" }]) {
-      expect(await outcome(post(origin.url, headers, () => new Response(body).body))).toBe("OK");
+      expect(await outcome(post(origin.url, headers as any, () => new Response(body).body))).toBe("OK");
       expect(await origin.nextRequest()).toEqual({ framing: [`Content-Length: ${body.length}`], body });
     }
   });
@@ -3618,7 +3622,7 @@ describe("fetch() with a streaming request body and caller framing headers", () 
     }
 
     const [, makeBody] = bodyKinds[0];
-    const framings: [string, HeadersInit, Pick<Seen, "framing" | "body">][] = [
+    const framings: [string, Bun.HeadersInit, Pick<Seen, "framing" | "body">][] = [
       ["Content-Length: 7", { "Content-Length": "7" }, { framing: ["Content-Length: 7"], body }],
       [
         "Transfer-Encoding: gzip, chunked",

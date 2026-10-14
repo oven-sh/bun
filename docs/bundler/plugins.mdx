@@ -45,20 +45,7 @@ type PluginBuilder = {
 };
 
 type Loader =
-  | "js"
-  | "jsx"
-  | "ts"
-  | "tsx"
-  | "json"
-  | "jsonc"
-  | "toml"
-  | "yaml"
-  | "file"
-  | "napi"
-  | "wasm"
-  | "text"
-  | "css"
-  | "html";
+  "js" | "jsx" | "ts" | "tsx" | "json" | "jsonc" | "toml" | "yaml" | "file" | "napi" | "wasm" | "text" | "css" | "html";
 ```
 
 ## Usage
@@ -230,6 +217,8 @@ await Bun.build({
 ```
 
 An entry point cannot be external. For an entry point, Bun ignores `external: true` without a `path`. With a `path`, the build fails.
+
+This applies when Bun writes a bundle: `Bun.build`, and an HTML route of `Bun.serve` with `development: false`. The dev server ignores `external: true` without a `path`, and a runtime plugin ignores `external`.
 
 ### onLoad
 

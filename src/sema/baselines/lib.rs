@@ -9,8 +9,9 @@ use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
 use bun_sema::json::Json;
 use bun_sema::messages::text;
-use bun_sema::resolve::{Host, Options, join, to_path};
+use bun_sema::resolve::{Host, displayed_path, join, to_path};
 use bun_sema::session::Session;
+use bun_sema::util::SharedSort;
 use bun_sema_driver::{Category, Diagnostic, Report, Request};
 use bun_threading::Guarded;
 use std::borrow::Cow;
@@ -462,7 +463,7 @@ impl Host for Virtual {
         path: &[u8],
         text: &[u8],
         atoms: &bun_sema::atom::Interner<'s>,
-        options: &Options,
+        options: bun_sema::resolve::ParseOptions,
     ) -> bun_sema::hir::File<'s> {
         self.disk.parse(arena, path, text, atoms, options)
     }
@@ -657,18 +658,16 @@ fn without_prefixes_in_bytes(text: &[u8], lib_dir: &str) -> Vec<u8> {
                     continue 'next;
                 }
             }
-            // `/c:/a` is `c:/a` to TypeScript.
-            if let [drive, b':', b'/', ..] = after_first
-                && drive.is_ascii_alphabetic()
-            {
-                rest = after_first;
-                continue;
-            }
         }
         out.push(*first);
         rest = after_first;
     }
     out
+}
+
+/// `FileName()` of the file at `path`, which is in the checker's format.
+fn file_name(path: &[u8]) -> String {
+    text(&displayed_path(path))
 }
 
 /// `isDefaultLibraryFile`
@@ -712,7 +711,7 @@ fn category_color(category: Category) -> &'static str {
 fn write_location(out: &mut String, d: &Diagnostic) {
     out.push_str(&format!(
         "{CYAN}{}{RESET}:{YELLOW}{}{RESET}:{YELLOW}{}{RESET}",
-        text(&d.path),
+        file_name(&d.path),
         d.line,
         d.column
     ));
@@ -822,7 +821,7 @@ fn error_summary(diagnostics: &[Diagnostic]) -> String {
         if !d.path.is_empty() {
             by_file
                 .entry(&d.path)
-                .or_insert_with(|| (0, format!("{}{GREY}:{}{RESET}", text(&d.path), d.line)))
+                .or_insert_with(|| (0, format!("{}{GREY}:{}{RESET}", file_name(&d.path), d.line)))
                 .0 += 1;
         }
     }
@@ -865,7 +864,7 @@ fn render(
     for d in diagnostics.iter().filter(|_| !pretty) {
         let mut line = String::new();
         if !d.path.is_empty() {
-            let path = text(&d.path);
+            let path = file_name(&d.path);
             if is_default_library(&path) {
                 line.push_str(&format!("{path}(--,--): "));
             } else {
@@ -900,7 +899,7 @@ fn render(
             );
         }
         for related in &d.related {
-            let path = text(&related.path);
+            let path = file_name(&related.path);
             let location = if path.is_empty() {
                 String::new()
             } else if is_default_library(&path) {
@@ -923,10 +922,11 @@ fn render(
         error_text(&mut out, &mut new_line, d);
     }
     for (name, content) in inputs {
-        let name = clean(name);
+        let name = clean(&file_name(name.as_bytes()));
+        let is_in_it = |d: &Diagnostic| clean(&file_name(&d.path)).eq_ignore_ascii_case(&name);
         let errors: Vec<&Diagnostic> = diagnostics
             .iter()
-            .filter(|d| !d.path.is_empty() && clean(&text(&d.path)).eq_ignore_ascii_case(&name))
+            .filter(|&d| !d.path.is_empty() && is_in_it(d))
             .collect();
         new_line(&mut out);
         out.extend_from_slice(format!("==== {name} ({} errors) ====", errors.len()).as_bytes());
@@ -1068,7 +1068,8 @@ fn type_or_symbol_baseline(
 ) -> Vec<u8> {
     let mut result = Vec::new();
     for (walked, content) in walked {
-        let mut type_lines = [b"=== ", walked.name.as_bytes(), b" ===\r\n"].concat();
+        let name = displayed_path(walked.name.as_bytes());
+        let mut type_lines = [b"=== ", &name[..], b" ===\r\n"].concat();
         let code_lines = code_lines_of(content);
         // `bracketLineRegex`: `^\s*[{|}]\s*$`
         let is_bracket_line = |line: &[u8]| {
@@ -1163,12 +1164,9 @@ fn sanitize_trace(lines: &[Vec<u8>], is_case_sensitive: bool) -> Vec<u8> {
     let file_of = |line: &[u8]| line.strip_prefix(b"File '").unwrap_or(line).to_vec();
     let mut trace = Vec::new();
     for line in lines {
-        // `/c:/a` is `c:/a` to TypeScript.
-        let mut line = line.clone();
-        bun_sema_driver::host::show_drives(&mut line);
         let is_missing = |file: &[u8]| [b"File '", file, b"' does not exist."].concat();
         let is_found = |file: &[u8]| [b"Found 'package.json' at '", file, b"'."].concat();
-        let sanitized = if strings::contains(&line, b"'7.0.2'") {
+        let sanitized = if strings::contains(line, b"'7.0.2'") {
             line.replacen("'7.0.2'", "'FakeTSVersion'", 1)
         } else if let Some(start) =
             line.strip_suffix(b"' does not exist according to earlier cached lookups.")
@@ -1261,7 +1259,7 @@ fn heads(top: &str) -> Vec<String> {
             Some(line[..code_end].to_owned())
         })
         .collect();
-    heads.sort();
+    heads.shared_sort();
     heads
 }
 
@@ -1397,7 +1395,7 @@ impl Setup<'_> {
                 files_under(&disk, dir, &mut found);
             }
         }
-        found.sort_unstable();
+        found.shared_sort_unstable();
         found
     }
 }
@@ -1488,8 +1486,8 @@ fn run_one(
         match bun_sema::config_options::from_text(name.as_bytes(), value.as_bytes()) {
             // `getOptionValue`: an option declared `IsFilePath` is resolved against the current
             // directory.
-            Some((name @ (b"outDir" | b"rootDir" | b"declarationDir"), Json::String(path))) => {
-                let path = absolute(&text(&path), &cwd).into_bytes();
+            Some((name @ (b"outDir" | b"rootDir" | b"declarationDir"), Json::String(ref path))) => {
+                let path = absolute(&text(path), &cwd).into_bytes();
                 reported.push((name.to_owned(), Json::String(path)))
             }
             Some((name, value)) => reported.push((name.to_owned(), value)),
@@ -1535,13 +1533,13 @@ fn run_one(
             );
         }
         let config_path = absolute(&units[at].name, &config_cwd);
-        let project = config::load_as_typescript_does(
+        let project = config::load_overriding(
             &only_units,
             &Session::new(),
             config_path.as_bytes(),
-            Vec::new(),
+            &|_| Vec::new(),
         );
-        named_by_config = Some(project.files);
+        named_by_config = project.ok().map(|project| project.files);
         config_unit = Some(units.remove(at));
     }
 
@@ -1615,29 +1613,27 @@ fn run_one(
 
     // `CompileFiles`: the default options of a test, unless it overrides them.
     let defaults = |compiler: &mut Vec<(Vec<u8>, Json)>| {
-        if !compiler.iter().any(|o| o.0 == b"skipDefaultLibCheck") {
-            compiler.push((b"skipDefaultLibCheck".to_vec(), Json::Bool(true)));
+        for name in [&b"skipDefaultLibCheck"[..], b"noErrorTruncation"] {
+            if !compiler.iter().any(|o| o.0 == name) {
+                compiler.push((name.to_vec(), Json::Bool(true)));
+            }
         }
-        compiler.push((b"noErrorTruncation".to_vec(), Json::Bool(true)));
     };
     if let Some(unit) = &config_unit {
         host.add_file(absolute(&unit.name, &cwd).as_bytes(), unit.content.clone());
     }
     // `compileFilesWithHost` creates two programs from it.
     let parsed_command_line = || -> Project {
-        let mut project: Project = match &config_unit {
-            Some(unit) => {
-                let mut over = reported.clone();
-                defaults(&mut over);
-                let path = absolute(&unit.name, &cwd);
-                config::load_as_typescript_does(&host, &Session::new(), path.as_bytes(), over)
-            }
-            None => {
-                let mut compiler = reported.clone();
-                defaults(&mut compiler);
-                config::without_config(&host, cwd.as_bytes(), Json::Object(compiler), files.clone())
-            }
-        };
+        let mut compiler = reported.clone();
+        defaults(&mut compiler);
+        let from_config_file = config_unit.as_ref().and_then(|unit| {
+            let path = absolute(&unit.name, &cwd);
+            let over = |_: bool| compiler.clone();
+            config::load_overriding(&host, &Session::new(), path.as_bytes(), &over).ok()
+        });
+        let mut project: Project = from_config_file.unwrap_or_else(|| {
+            config::without_config(&host, cwd.as_bytes(), Json::Object(compiler), files.clone())
+        });
         // `compileDeclarationFiles` passes on `ConfigFile` and not `Errors`.
         if declaration_files.is_some() {
             project.errors.clear();
@@ -1795,7 +1791,9 @@ fn run_one(
             compiler_options: &[],
             cwd: cwd.as_bytes(),
             project: None,
+            listed_projects: None,
             build: false,
+            errors: &[],
             paths: &[],
             are_entry_points: false,
             threads: 1,
@@ -1805,7 +1803,13 @@ fn run_one(
             order: 1,
             digests: false,
             task_clock: None,
-            plan_options: bun_sema_driver::PlanOptions::default(),
+            plan_options: bun_sema_driver::PlanOptions {
+                reproduces_symbol_ids: false,
+                // The tests run side by side, each on one thread. The plan of several threads is the
+                // one with steps, publishing and validation.
+                tasks_on_one_thread: true,
+                ..Default::default()
+            },
             retains_everything: false,
             script_kinds: &[],
             script_kinds_by_extension: &[],
@@ -1881,7 +1885,7 @@ fn run_one(
     declarations.retain(|it| !blocked.contains(&&it.2[..]));
     // `newCompilationResult`: in the order of the inputs, then "any unhandled outputs, ordered by
     // unit name".
-    declarations.sort_by(|a, b| match (a.1, b.1) {
+    declarations.shared_sort_by(|a, b| match (a.1, b.1) {
         (true, true) => a.0.cmp(&b.0),
         (false, false) => a.2.cmp(&b.2),
         (a_is_found, _) => (!a_is_found).cmp(&a_is_found),
@@ -2148,7 +2152,10 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                     // `fileOutput`
                                     let file_output = |(name, text): &(Vec<u8>, Vec<u8>)| {
                                         let name = match is_set("fullemitpaths") {
-                                            true => without_prefixes_in_bytes(name, setup.lib_dir),
+                                            true => without_prefixes_in_bytes(
+                                                &displayed_path(name),
+                                                setup.lib_dir,
+                                            ),
                                             false => {
                                                 name.rsplit(|&b| b == b'/').next().unwrap().to_vec()
                                             }
@@ -2194,7 +2201,8 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
                                                 }
                                                 Some(_) => continue,
                                             };
-                                            let name = without_prefixes_in_bytes(&doc.0, setup.lib_dir);
+                                            let name = displayed_path(&doc.0);
+                                            let name = without_prefixes_in_bytes(&name, setup.lib_dir);
                                             ours.extend_from_slice(
                                                 &[b"\r\n\r\n!!!! File ", &name[..], what].concat(),
                                             );
@@ -2281,7 +2289,7 @@ pub fn run(suite: &Suite, setup: &Setup) -> Vec<Outcome> {
         }
     });
     let mut outcomes = std::mem::take(&mut *outcomes.lock());
-    outcomes.sort_by(|a, b| a.name.cmp(&b.name));
+    outcomes.shared_sort_by(|a, b| a.name.cmp(&b.name));
     outcomes
 }
 
@@ -2412,7 +2420,7 @@ pub fn run_from_command_line(args: &[&[u8]]) -> bool {
         all.len()
     );
     let mut failed: Vec<&Outcome> = all.iter().filter(|o| o.level < Level::All).collect();
-    failed.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    failed.shared_sort_unstable_by(|a, b| a.name.cmp(&b.name));
     for outcome in failed.iter().take(50) {
         output_line!(
             "FAIL Errors {} {:?} {}",

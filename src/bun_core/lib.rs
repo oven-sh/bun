@@ -245,7 +245,8 @@ pub mod deprecated;
 pub mod env_var;
 pub mod feature_flags;
 pub use code_generation::{
-    CodeGenerationFromStrings, code_generation_from_strings, disallow_code_generation_from_strings,
+    CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD, CodeGenerationFromStrings,
+    code_generation_from_strings, disallow_code_generation_from_strings,
 };
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`

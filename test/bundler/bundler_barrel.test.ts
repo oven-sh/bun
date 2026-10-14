@@ -1626,6 +1626,55 @@ describe("bundler", () => {
     };
   });
 
+  // A re-export that the `external` option keeps external has no module. When
+  // a late importer un-defers it, it must not be linked to a plugin module whose
+  // path text is also "react". late.js is loaded only after the "virt" answer is
+  // queued, so that module is in the path map by then.
+  itBundled("barrel/ExternalReExportNotLinkedToModuleWithSameText", () => {
+    const virtAnswered = Promise.withResolvers<void>();
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import { A } from 'textlib';
+          import { x } from 'virt';
+          import late from './late.js';
+          console.log(A, x, late);
+        `,
+        "/late.js": ``,
+        "/node_modules/textlib/package.json": JSON.stringify({
+          name: "textlib",
+          main: "./index.js",
+          sideEffects: false,
+        }),
+        "/node_modules/textlib/index.js": /* js */ `
+          export { default as React } from 'react';
+          export { A } from './a.js';
+        `,
+        "/node_modules/textlib/a.js": /* js */ `
+          export const A = "a";
+        `,
+        "/node_modules/react/package.json": JSON.stringify({ name: "react", main: "./index.js" }),
+        "/node_modules/react/index.js": `module.exports = "real";`,
+      },
+      outfile: "/out.js",
+      external: ["react"],
+      plugins(builder) {
+        builder.onResolve({ filter: /^virt$/ }, () => {
+          virtAnswered.resolve();
+          return { path: "react", namespace: "virt" };
+        });
+        builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+          return { contents: `export const x = "x";`, loader: "js" };
+        });
+        builder.onLoad({ filter: /late\.js$/ }, async () => {
+          await virtAnswered.promise;
+          return { contents: `import { React } from 'textlib'; export default React;`, loader: "js" };
+        });
+      },
+      run: { stdout: "a x real" },
+    };
+  });
+
   // When the plugin does not answer, the record falls back to the resolver and
   // the failure is reported. Resolving the barrel again reported it twice.
   itBundled("barrel/UnresolvableReExportReportedOnce", {

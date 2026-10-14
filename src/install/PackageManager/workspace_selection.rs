@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
+use bun_glob::Prepared;
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 
@@ -47,9 +48,9 @@ pub struct WorkspaceGraph {
 
 enum Base {
     All,
-    Name(Box<[u8]>),
-    Path(Box<[u8]>),
-    Subtree(Box<[u8]>),
+    Name(Prepared<Box<[u8]>>),
+    Path(Prepared<Box<[u8]>>),
+    Subtree(Prepared<Box<[u8]>>),
 }
 
 struct Selector {
@@ -102,13 +103,15 @@ fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
         Global::crash();
     }
 
-    let resolve = |part: &[u8], path_buf: &mut [u8]| -> Box<[u8]> {
-        strings::without_trailing_slash(join_abs_string_buf::<platform::Posix>(
-            original_cwd,
-            path_buf,
-            &[part],
-        ))
-        .into()
+    let resolve = |part: &[u8], path_buf: &mut [u8]| -> Prepared<Box<[u8]>> {
+        Prepared::new(
+            strings::without_trailing_slash(join_abs_string_buf::<platform::Posix>(
+                original_cwd,
+                path_buf,
+                &[part],
+            ))
+            .into(),
+        )
     };
 
     let base = if remain == b"*" || remain == b"**" {
@@ -118,7 +121,7 @@ fn parse(raw: &[u8], original_cwd: &[u8], path_buf: &mut [u8]) -> Selector {
     } else if remain.first() == Some(&b'.') {
         Base::Path(resolve(remain, path_buf))
     } else {
-        Base::Name(remain.into())
+        Base::Name(Prepared::new(remain.into()))
     };
 
     Selector {
@@ -140,12 +143,12 @@ fn base_matches(base: &Base, c: &Candidate<'_>, explicit_root_only: bool) -> boo
                 !c.name.is_empty()
             }
         }
-        Base::Name(glob) => bun_glob::r#match(glob, c.name).matches(),
-        Base::Path(glob) => bun_glob::r#match(glob, c.abs_posix_dir).matches(),
+        Base::Name(glob) => glob.r#match(c.name).matches(),
+        Base::Path(glob) => glob.r#match(c.abs_posix_dir).matches(),
         Base::Subtree(glob) => {
             let mut dir = c.abs_posix_dir;
             loop {
-                if bun_glob::r#match(glob, dir).matches() {
+                if glob.r#match(dir).matches() {
                     return true;
                 }
                 match strings::last_index_of_char(dir, b'/') {

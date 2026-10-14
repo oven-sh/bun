@@ -6,7 +6,7 @@ use core::ffi::c_int;
 
 use ::bstr::BStr;
 use bun_cares_sys::c_ares_draft as c_ares;
-use bun_core::{self as bstr, strings};
+use bun_core as bstr;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc,
 };
@@ -867,11 +867,6 @@ fn bun_canonicalize_ip(global_this: &JSGlobalObject, callframe: &CallFrame) -> J
 
     let addr_arg = arguments[0].to_utf8(global_this)?;
     let addr_str = addr_arg.slice();
-
-    // CIDR not allowed
-    if strings::index_of_char(addr_str, b'/').is_some() {
-        return Ok(JSValue::UNDEFINED);
-    }
 
     let mut ip_addr = [0u8; bun_boringssl::INET6_ADDRSTRLEN + 1];
     let Some(slice) = bun_boringssl::canonicalize_ip(addr_str, &mut ip_addr) else {

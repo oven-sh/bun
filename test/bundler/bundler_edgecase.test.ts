@@ -1823,6 +1823,25 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("h(");
     },
   });
+  // b.js imports a.js by its absolute path, and the `external` option names that path. a.js is also
+  // an entry point, so the bundle has a module with the same path text. The import stays external.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`edgecase/ExternalFileIsAlsoAnEntryPoint_${backend}`, ({ root }) => ({
+      files: {
+        "/a.js": `export const A = "A_BODY";`,
+        "/b.js": `import { A } from ${JSON.stringify(join(root, "a.js"))}; console.log(A);`,
+      },
+      entryPoints: ["/a.js", "/b.js"],
+      external: [join(root, "a.js")],
+      outdir: "/out",
+      backend,
+      onAfterBundle(api) {
+        const b = api.readFile("/out/b.js");
+        expect(b).toMatch(/import \{ A \} from "[^"]*a\.js";/);
+        expect(b).not.toContain("A_BODY");
+      },
+    }));
+  }
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
       "/entry.js": `

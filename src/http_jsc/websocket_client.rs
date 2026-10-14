@@ -546,7 +546,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
 
             // If we disconnected for any reason in the re-entrant case, we should just ignore the data
-            if this.cpp_websocket().is_none() || !this.has_tcp() {
+            if !this.has_tcp() {
                 return;
             }
         }
@@ -570,7 +570,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let terminated = loop {
             // The close event is out: a Close frame from the server gets no second one back.
             if self.cpp_websocket().is_none() {
-                break true;
+                break self.skip_to_server_close(&mut cursor);
             }
             log!("onData ({})", <&'static str>::from(cursor.state));
 
@@ -610,15 +610,84 @@ impl<const SSL: bool> WebSocket<SSL> {
         Step::Terminated
     }
 
-    /// Parse the 2-byte frame header (see the diagram on
-    /// [`parse_websocket_header`]) and validate the opcode/fragmentation/
-    /// compression rules before moving to the payload state.
-    fn recv_frame_header(&self, cursor: &mut RecvCursor<'_>) -> Step {
+    /// The close event is out and our Close frame is with the transport.
+    /// Walk what the server still sends by frame length, without buffering
+    /// or dispatching it, up to its Close frame: both Close frames are
+    /// exchanged then, and [`Self::half_close`] sends our FIN. Returns true
+    /// when there is nothing more to look for in the server's bytes.
+    #[cold]
+    fn skip_to_server_close(&self, cursor: &mut RecvCursor<'_>) -> bool {
+        if SSL {
+            // wss:// sends no FIN of its own after the close event.
+            return true;
+        }
+        while !cursor.data.is_empty() {
+            match cursor.state {
+                ReceiveState::NeedHeader => {
+                    let Some(header) = self.next_frame_header(cursor) else {
+                        return false;
+                    };
+                    cursor.body_remain = header.payload_len;
+                    cursor.state = match header.next {
+                        ReceiveState::Close => {
+                            self.half_close();
+                            return true;
+                        }
+                        // The payload of a Ping or a Pong is skipped like a data frame's.
+                        ReceiveState::Ping | ReceiveState::Pong => ReceiveState::NeedBody,
+                        next @ (ReceiveState::NeedBody
+                        | ReceiveState::ExtendedPayloadLength16
+                        | ReceiveState::ExtendedPayloadLength64) => next,
+                        ReceiveState::NeedHeader | ReceiveState::NeedMask | ReceiveState::Fail => {
+                            return true;
+                        }
+                    };
+                }
+                ReceiveState::ExtendedPayloadLength16 | ReceiveState::ExtendedPayloadLength64 => {
+                    let byte_size = if cursor.state == ReceiveState::ExtendedPayloadLength16 {
+                        2
+                    } else {
+                        8
+                    };
+                    let Some(length) = self.next_extended_payload_length(cursor, byte_size) else {
+                        return false;
+                    };
+                    cursor.body_remain = length;
+                    cursor.state = ReceiveState::NeedBody;
+                }
+                ReceiveState::NeedBody => {
+                    let skipped = cursor.body_remain.min(cursor.data.len());
+                    cursor.body_remain -= skipped;
+                    cursor.data = &cursor.data[skipped..];
+                    if cursor.body_remain == 0 {
+                        cursor.state = ReceiveState::NeedHeader;
+                    }
+                }
+                // The server's Close frame was mid-payload when the close event went out.
+                ReceiveState::Close => {
+                    self.half_close();
+                    return true;
+                }
+                // So was a Ping or a Pong, and `clear_data` dropped how much of it is left.
+                ReceiveState::Ping
+                | ReceiveState::Pong
+                | ReceiveState::NeedMask
+                | ReceiveState::Fail => return true,
+            }
+        }
+        false
+    }
+
+    /// Take the next frame's 2-byte header (see the diagram on
+    /// [`parse_websocket_header`]) off `cursor`; `None` when only its first
+    /// byte has arrived.
+    #[inline(always)]
+    fn next_frame_header(&self, cursor: &mut RecvCursor<'_>) -> Option<ParsedHeader> {
         if cursor.data.len() < 2 {
             debug_assert!(!cursor.data.is_empty());
             if self.header_fragment.get().is_none() {
                 self.header_fragment.set(Some(cursor.data[0]));
-                return Step::NeedMoreData;
+                return None;
             }
         }
 
@@ -631,8 +700,15 @@ impl<const SSL: bool> WebSocket<SSL> {
             cursor.data = &cursor.data[2..];
             bytes
         };
+        Some(parse_websocket_header(header_bytes))
+    }
 
-        let header = parse_websocket_header(header_bytes);
+    /// Parse the 2-byte frame header and validate the opcode/fragmentation/
+    /// compression rules before moving to the payload state.
+    fn recv_frame_header(&self, cursor: &mut RecvCursor<'_>) -> Step {
+        let Some(header) = self.next_frame_header(cursor) else {
+            return Step::NeedMoreData;
+        };
         cursor.state = header.next;
         cursor.body_remain = header.payload_len;
         cursor.is_final = header.is_final;
@@ -714,11 +790,17 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     /// Accumulate the 2- or 8-byte extended payload length (which may itself
-    /// arrive split across reads) into `payload_length_frame_bytes`.
-    fn recv_extended_payload_length(&self, cursor: &mut RecvCursor<'_>, byte_size: usize) -> Step {
+    /// arrive split across reads) into `payload_length_frame_bytes`; `None`
+    /// until all of it has arrived.
+    #[inline(always)]
+    fn next_extended_payload_length(
+        &self,
+        cursor: &mut RecvCursor<'_>,
+        byte_size: usize,
+    ) -> Option<usize> {
         // we need to wait for more data
         if cursor.data.is_empty() {
-            return Step::NeedMoreData;
+            return None;
         }
 
         // copy available payload length bytes to a buffer held on this client instance
@@ -737,11 +819,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         // short read on payload length - we need to wait for more data
         // whatever bytes were returned from the short read are kept in `payload_length_frame_bytes`
         if (self.payload_length_frame_len.get() as usize) < byte_size {
-            return Step::NeedMoreData;
+            return None;
         }
 
         // Multibyte length quantities are expressed in network byte order
-        cursor.body_remain = match byte_size {
+        let length = match byte_size {
             8 => u64::from_be_bytes(payload_length_frame_bytes) as usize,
             2 => u16::from_be_bytes([payload_length_frame_bytes[0], payload_length_frame_bytes[1]])
                 as usize,
@@ -749,7 +831,14 @@ impl<const SSL: bool> WebSocket<SSL> {
         };
 
         self.payload_length_frame_len.set(0);
+        Some(length)
+    }
 
+    fn recv_extended_payload_length(&self, cursor: &mut RecvCursor<'_>, byte_size: usize) -> Step {
+        let Some(length) = self.next_extended_payload_length(cursor, byte_size) else {
+            return Step::NeedMoreData;
+        };
+        cursor.body_remain = length;
         cursor.state = ReceiveState::NeedBody;
 
         if cursor.body_remain == 0 {
@@ -1076,6 +1165,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     fn send_pong(&self) -> bool {
+        if self.cpp_websocket().is_none() || self.has_pending_close_dispatch() {
+            // A `ping` listener called close(): our Close frame is the last frame (RFC 6455 5.5.1).
+            return false;
+        }
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
             return false;
@@ -1151,9 +1244,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if self.enqueue_encoded_bytes(&frame[..frame_len]) {
             let dispatch_code = dispatch_code.unwrap_or(code);
             if self.send_buffer.borrow().readable_length() == 0 {
-                self.wait_for_server_close();
-                self.clear_data();
-                self.dispatch_close(dispatch_code, reason);
+                self.dispatch_close_and_wait(dispatch_code, reason);
             } else {
                 // The close frame was only partially written; the remainder is
                 // in send_buffer. clear_data() would discard it (and the
@@ -1165,24 +1256,48 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// Our Close frame is with the transport. Nothing is shut down behind it:
-    /// a `SHUT_RD` or a FIN here makes the kernel reset the connection on the
-    /// server's next frame, and the reset drops what this client sent and the
-    /// kernel still holds. The socket keeps reading (`handle_data` discards)
-    /// until the server closes the TCP connection first (RFC 6455 7.1.1),
-    /// within reason.
+    /// Our Close frame is with the transport: the close event goes out, and
+    /// the connection stays until the server closes it
+    /// ([`Self::wait_for_server_close`]).
+    fn dispatch_close_and_wait(&self, code: u16, reason: bun_core::String) {
+        self.wait_for_server_close();
+        // `clear_data` zeroes how much of a frame in flight is still to come,
+        // which `skip_to_server_close` needs.
+        let left_in_frame = self.receive_body_remain.get();
+        self.clear_data();
+        self.receive_body_remain.set(left_in_frame);
+        self.dispatch_close(code, reason);
+    }
+
+    /// Nothing is shut down behind our Close frame: a `SHUT_RD` or a FIN
+    /// there makes the kernel reset the connection on the server's next
+    /// frame, and the reset drops what this client sent and the kernel still
+    /// holds. The socket keeps reading (`skip_to_server_close`) until the
+    /// server closes the TCP connection first (RFC 6455 7.1.1), within reason.
     fn wait_for_server_close(&self) {
         match self.tunnel() {
             Some(tunnel) => tunnel.set_timeout(close_timeout_seconds()),
             None => self.tcp.get().set_timeout(close_timeout_seconds()),
         }
+        // A paused socket reads neither the server's Close frame nor its FIN.
+        let _ = self.resume();
+        if self.close_received.get() {
+            self.half_close();
+        }
+    }
+
+    /// Both Close frames are exchanged and ours is with the transport: send
+    /// our FIN, as `ws` does, and keep reading until the server's. wss://
+    /// and a proxy tunnel leave the TCP close to the server.
+    fn half_close(&self) {
+        if !SSL && self.tunnel().is_none() {
+            self.tcp.get().shutdown();
+        }
     }
 
     fn finish_pending_close(&self) {
         if let Some((code, reason)) = self.close_dispatch_pending.take() {
-            self.wait_for_server_close();
-            self.clear_data();
-            self.dispatch_close(code, reason);
+            self.dispatch_close_and_wait(code, reason);
         }
     }
 
@@ -1839,7 +1954,7 @@ impl InitialDataHandler {
     fn deliver<const SSL: bool>(self, ws: ThisPtr<WebSocket<SSL>>) {
         // For tunnel mode, tcp is detached but connection is still active through the tunnel
         let is_connected = !ws.tcp.get().is_closed() || ws.tunnel().is_some();
-        if ws.cpp_websocket().is_some() && is_connected {
+        if is_connected {
             WebSocket::<SSL>::handle_data(ws, &self.slice);
         }
     }

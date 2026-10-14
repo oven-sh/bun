@@ -2092,7 +2092,7 @@ fn without_features(executable: Vec<u8>, exclude: &[Box<[u8]>]) -> Result<Vec<u8
         return Err(CompileError::Message(message));
     }
     let exclude: Vec<&[u8]> = exclude.iter().map(|name| &**name).collect();
-    features.without(&exclude).map_err(explain)
+    bun_exe_features::without(executable, &exclude).map_err(explain)
 }
 
 pub(crate) fn inject<'a>(

@@ -9,6 +9,10 @@
 //! difference is the final address of the section the target is in, exactly, even if it has no name (a jump table) and
 //! even if the addend points outside of it. That section is then known too. Whatever is live is reached this way.
 //!
+//! The linker keeps some things that no relocation refers to, so the graph does not reach them and they stay: what only its own
+//! thunks call (`__delayLoadHelper2`), and sections that are kept with another one, which is how the cleanup code of a C++
+//! function (`?dtor$0@...`) hangs on to it, with all that it calls.
+//!
 //! Only code is left out. The map does not list what the linker made itself. In .text that can be told from padding, which
 //! is int3. In .rdata padding is zeroes, and so is some of what the linker made.
 

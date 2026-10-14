@@ -41,7 +41,10 @@ fn run(args: &[String]) -> Result<(), Box<dyn core::error::Error>> {
         }
         ["without", executable, out, ref excluded @ ..] => {
             let excluded: Vec<&[u8]> = excluded.iter().map(|name| name.as_bytes()).collect();
-            write(out, Features::of(&read(executable)?)?.without(&excluded)?)?;
+            write(
+                out,
+                bun_exe_features::without(read(executable)?, &excluded)?,
+            )?;
             std::fs::set_permissions(out, std::fs::metadata(executable)?.permissions())?;
         }
         ["names", executable] => {

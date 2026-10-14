@@ -3,7 +3,7 @@
 // What can be left out is said by a table that Bun's build writes into the release binaries of the targets it supports,
 // stripped or not (scripts/build/feature-table.ts). A debug or ASAN build has none, and has to say so.
 
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
   bunEnv,
   bunExe,
@@ -154,47 +154,67 @@ test.skipIf(hasTable)("a bun that cannot exclude features says so", async () => 
 });
 
 describe.skipIf(!hasTable)("with a feature table", () => {
-  // Each of these writes executables of 100 MB and starts them, next to the others. On Windows that alone takes seconds.
-  const timeout = 30_000;
-  const size = (cwd: string, name: string) => statSync(join(cwd, exe(name))).size;
-  const files = {
-    "app.ts": app,
-    "one.ts": "export const one = 1;\n",
-    "tsconfig.json": `{ "files": ["one.ts"] }`,
-    // `bun fmt` runs this in a process of its own, with what `bun lint` runs its plugins with.
-    "prettier.config.mjs": "export default { semi: true };\n",
-  };
   const commands = { check: ["check"], lint: ["lint", "one.ts"], fmt: ["fmt", "--check", "one.ts"] };
   const features = Object.keys(commands) as (keyof typeof commands)[];
-
   // What two features share goes only once both are excluded, so each set of them is an executable of its own.
   const sets = Array.from({ length: 1 << features.length }, (_, bits) => features.filter((_, i) => bits & (1 << i)));
+  const without = (...set: string[]) => "without-" + (set.join("-") || "nothing");
+  const expectToWork = async (name: string) => {
+    const ran = await run([join(cwd, exe(name))], cwd);
+    expect(JSON.parse(ran.stdout)).toEqual(working);
+    expect(ran.exitCode).toBe(0);
+  };
+
+  // Each is 100 MB, so each is written once, for all the tests. None of them writes to what another reads.
+  let dir: ReturnType<typeof tempDir>;
+  let cwd: string;
+  beforeAll(async () => {
+    dir = tempDir("exclude-features", {
+      "app.ts": app,
+      "one.ts": "export const one = 1;\n",
+      "tsconfig.json": `{ "files": ["one.ts"] }`,
+      // `bun fmt` runs this in a process of its own, with what `bun lint` runs its plugins with.
+      "prettier.config.mjs": "export default { semi: true };\n",
+    });
+    cwd = String(dir);
+    // Given several times, or separated by commas.
+    const flags = (set: string[]) => (set.length === 2 ? set : set.length ? [set.join(",")] : []);
+    const compiled = await Promise.all(
+      sets.map(set => compile(cwd, without(...set), ...flags(set).map(names => `--compile-exclude-features=${names}`))),
+    );
+    expect(compiled.map(c => c.stderr).join("")).not.toContain("error");
+    expect(compiled.map(c => c.exitCode)).toEqual(sets.map(() => 0));
+  });
+  afterAll(async () => {
+    // Windows goes on with a report of its own about a crash, and has the executable open for that long.
+    for (const deadline = Date.now() + 20_000; ; await Bun.sleep(100)) {
+      try {
+        return dir[Symbol.dispose]();
+      } catch (e) {
+        if (!isWindows || Date.now() > deadline) throw e;
+      }
+    }
+  });
+
   test.concurrent.each(sets.map(set => [set.join(",") || "nothing", set] as const))(
     "without %s",
     async (_, excluded) => {
-      using dir = tempDir("exclude-features", files);
-      const cwd = String(dir);
-      const compiled = await compile(cwd, "app", ...excluded.map(name => `--compile-exclude-features=${name}`));
-      expect(compiled.stderr).not.toContain("error");
-      expect(compiled.exitCode).toBe(0);
-
-      const ran = await run([join(cwd, exe("app"))], cwd);
-      expect(JSON.parse(ran.stdout)).toEqual(working);
-      expect(ran.exitCode).toBe(0);
+      const name = without(...excluded);
+      await expectToWork(name);
 
       if (excluded.length) {
-        if (isLinux) expectWellFormedElf(join(cwd, "app"));
-        if (isWindows) expectWellFormedPe(join(cwd, "app.exe"));
+        if (isLinux) expectWellFormedElf(join(cwd, name));
+        if (isWindows) expectWellFormedPe(join(cwd, exe(name)));
         // On x64 nothing is signed.
         if (isMacOS && isArm64) {
-          const { stderr, exitCode } = await run(["codesign", "--verify", "--strict", "--verbose=2", "app"], cwd);
+          const { stderr, exitCode } = await run(["codesign", "--verify", "--strict", "--verbose=2", name], cwd);
           expect(stderr).toContain("valid on disk");
           expect(exitCode).toBe(0);
         }
       }
 
       for (const feature of features) {
-        const { stdout, stderr, exitCode } = await asBun(cwd, "app", ...commands[feature]);
+        const { stdout, stderr, exitCode } = await asBun(cwd, name, ...commands[feature]);
         if (excluded.includes(feature)) {
           expect(stderr).toContain("this executable was built without this command");
           expect(exitCode).not.toBe(0);
@@ -207,189 +227,108 @@ describe.skipIf(!hasTable)("with a feature table", () => {
         }
       }
     },
-    timeout,
   );
 
-  test.concurrent(
-    "what is excluded is not in the file",
-    async () => {
-      using dir = tempDir("exclude-features", files);
-      const cwd = String(dir);
-      const compiled = await Promise.all([
-        compile(cwd, "full"),
-        compile(cwd, "lint", "--compile-exclude-features=lint"),
-        // separated by commas
-        compile(cwd, "all", "--compile-exclude-features=check,lint,fmt"),
-      ]);
-      expect(compiled.map(c => c.exitCode)).toEqual([0, 0, 0]);
-      const MB = 1024 * 1024;
-      expect(size(cwd, "lint")).toBeLessThan(size(cwd, "full") - 5 * MB);
-      expect(size(cwd, "all")).toBeLessThan(size(cwd, "lint") - 5 * MB);
-    },
-    timeout,
-  );
+  test("what is excluded is not in the file", () => {
+    const size = (...set: string[]) => statSync(join(cwd, exe(without(...set)))).size;
+    const MB = 1024 * 1024;
+    expect(size("lint")).toBeLessThan(size() - 5 * MB);
+    expect(size(...features)).toBeLessThan(size("lint") - 5 * MB);
+  });
 
   // Nothing moves, so it reads against the symbols of the release like any other.
-  test.concurrent(
-    "a crash report has the addresses it would have had",
-    async () => {
-      const dir = tempDir("exclude-features", files);
-      // Windows goes on with a report of its own about a crash, and has the executable open for that long.
-      await using removal = {
-        async [Symbol.asyncDispose]() {
-          for (const deadline = Date.now() + 20_000; ; await Bun.sleep(100)) {
-            try {
-              return dir[Symbol.dispose]();
-            } catch (e) {
-              if (!isWindows || Date.now() > deadline) throw e;
-            }
-          }
-        },
-      };
-      const cwd = String(dir);
-      const compiled = await Promise.all([
-        compile(cwd, "full"),
-        compile(cwd, "without", "--compile-exclude-features=check,lint,fmt"),
-      ]);
-      expect(compiled.map(c => c.exitCode)).toEqual([0, 0]);
-      const report = async (name: string) => {
-        const crash = `require("bun:internal-for-testing").crash_handler.panic()`;
-        // Not sent, and not to where CI collects the crashes that nobody meant.
-        const to = { BUN_CRASH_REPORT_URL: "http://report.invalid", BUN_ENABLE_CRASH_REPORTING: "0" };
-        const env = { ...bunEnv, ...to, BUN_BE_BUN: "1" };
-        const { stderr } = await run([join(cwd, exe(name)), "-e", crash], cwd, env);
-        return /report\.invalid\/\S+/.exec(stderr)?.[0];
-      };
-      const [full, without] = await Promise.all([report("full"), report("without")]);
-      expect(full).toBeString();
-      expect(without).toBe(full);
-    },
-    timeout,
-  );
+  test.concurrent("a crash report has the addresses it would have had", async () => {
+    const report = async (name: string) => {
+      const crash = `require("bun:internal-for-testing").crash_handler.panic()`;
+      // Not sent, and not to where CI collects the crashes that nobody meant.
+      const to = { BUN_CRASH_REPORT_URL: "http://report.invalid", BUN_ENABLE_CRASH_REPORTING: "0" };
+      const env = { ...bunEnv, ...to, BUN_BE_BUN: "1" };
+      const { stderr } = await run([join(cwd, exe(name)), "-e", crash], cwd, env);
+      return /report\.invalid\/\S+/.exec(stderr)?.[0];
+    };
+    const [full, slim] = await Promise.all([report(without()), report(without(...features))]);
+    expect(full).toBeString();
+    expect(slim).toBe(full);
+  });
 
   // What asks for an excluded feature in another way is refused too, not ignored.
-  test.concurrent(
-    "--check and `check: true` without check",
-    async () => {
-      using dir = tempDir("exclude-features", files);
-      const cwd = String(dir);
-      expect((await compile(cwd, "app", "--compile-exclude-features=check")).exitCode).toBe(0);
-      for (const args of [
-        ["build", "--check", "one.ts"],
-        ["run", "--check", "one.ts"],
-        ["test", "--check"],
-        ["--check"],
-        ["-e", `await Bun.build({ entrypoints: ["one.ts"], check: true })`],
-      ]) {
-        const refused = await asBun(cwd, "app", ...args);
-        expect(refused.stderr).toContain("this executable was built without type checking");
-        expect(refused.exitCode).not.toBe(0);
-      }
-      // The help does not go through what is gone.
-      const help = await asBun(cwd, "app", "check", "--help");
-      expect(help.stderr).toContain("this executable was built without this command");
-    },
-    timeout,
-  );
+  test.concurrent("--check and `check: true` without check", async () => {
+    for (const args of [
+      ["build", "--check", "one.ts"],
+      ["run", "--check", "one.ts"],
+      ["test", "--check"],
+      ["--check"],
+      ["-e", `await Bun.build({ entrypoints: ["one.ts"], check: true })`],
+    ]) {
+      const refused = await asBun(cwd, without("check"), ...args);
+      expect(refused.stderr).toContain("this executable was built without type checking");
+      expect(refused.exitCode).not.toBe(0);
+    }
+    // The help does not go through what is gone.
+    const help = await asBun(cwd, without("check"), "check", "--help");
+    expect(help.stderr).toContain("this executable was built without this command");
+  });
 
-  test.concurrent(
-    "Bun.build",
-    async () => {
-      using dir = tempDir("exclude-features", files);
-      const cwd = String(dir);
-      const result = await Bun.build({
-        entrypoints: [join(cwd, "app.ts")],
-        compile: { outfile: join(cwd, "app"), excludeFeatures: ["lint", "fmt"] },
-      });
-      expect(result.success).toBe(true);
-      const ran = await run([join(cwd, exe("app"))], cwd);
-      expect(JSON.parse(ran.stdout)).toEqual(working);
-      expect(ran.exitCode).toBe(0);
-      expect((await asBun(cwd, "app", "lint", "one.ts")).stderr).toContain("built without this command");
-    },
-    timeout,
-  );
+  test.concurrent("Bun.build", async () => {
+    const result = await Bun.build({
+      entrypoints: [join(cwd, "app.ts")],
+      compile: { outfile: join(cwd, "from-the-api"), excludeFeatures: ["lint", "fmt"] },
+    });
+    expect(result.success).toBe(true);
+    await expectToWork("from-the-api");
+    expect((await asBun(cwd, "from-the-api", "lint", "one.ts")).stderr).toContain("built without this command");
+  });
 
-  test.concurrent(
-    "a name that does not exist",
-    async () => {
-      using dir = tempDir("exclude-features", files);
-      const cwd = String(dir);
-      const { stdout, stderr, exitCode } = await compile(cwd, "app", "--compile-exclude-features=lint,nope");
-      expect(stdout + stderr).toContain(
-        'there is no feature called "nope". These can be excluded:\n  check\n  lint\n  fmt\n',
-      );
-      expect(existsSync(join(cwd, exe("app")))).toBe(false);
-      expect(exitCode).not.toBe(0);
+  test.concurrent("a name that does not exist", async () => {
+    const { stdout, stderr, exitCode } = await compile(cwd, "nope", "--compile-exclude-features=lint,nope");
+    expect(stdout + stderr).toContain(
+      'there is no feature called "nope". These can be excluded:\n  check\n  lint\n  fmt\n',
+    );
+    expect(existsSync(join(cwd, exe("nope")))).toBe(false);
+    expect(exitCode).not.toBe(0);
 
-      const rejected = await Bun.build({
-        entrypoints: [join(cwd, "app.ts")],
-        compile: { outfile: join(cwd, "app"), excludeFeatures: ["nope"] },
-      }).catch(e => e);
-      expect(rejected).toBeInstanceOf(AggregateError);
-      expect(rejected.errors[0].message).toContain('there is no feature called "nope"');
-    },
-    timeout,
-  );
+    const rejected = await Bun.build({
+      entrypoints: [join(cwd, "app.ts")],
+      compile: { outfile: join(cwd, "nope"), excludeFeatures: ["nope"] },
+    }).catch(e => e);
+    expect(rejected).toBeInstanceOf(AggregateError);
+    expect(rejected.errors[0].message).toContain('there is no feature called "nope"');
+  });
 
   // The table is about the executable as it was.
-  test.concurrent(
-    "features cannot be excluded a second time",
-    async () => {
-      using dir = tempDir("exclude-features", files);
-      const cwd = String(dir);
-      expect((await compile(cwd, "app", "--compile-exclude-features=lint")).exitCode).toBe(0);
-      const from = `--compile-executable-path=${join(cwd, exe("app"))}`;
-      const again = await compile(cwd, "again", from, "--compile-exclude-features=fmt");
-      expect(again.stdout + again.stderr).toContain(noTable);
-      expect(again.exitCode).not.toBe(0);
-    },
-    timeout,
-  );
+  test.concurrent("features cannot be excluded a second time", async () => {
+    const from = `--compile-executable-path=${join(cwd, exe(without("lint")))}`;
+    const again = await compile(cwd, "a-second-time", from, "--compile-exclude-features=fmt");
+    expect(again.stdout + again.stderr).toContain(noTable);
+    expect(again.exitCode).not.toBe(0);
+  });
 
   // A release is signed. The signature comes behind everything else in the file, and is of the file as it was.
-  test.skipIf(!isWindows).concurrent(
-    "PE: from a signed bun",
-    async () => {
-      using dir = tempDir("exclude-features", files);
-      const cwd = String(dir);
-      const unsigned = readFileSync(bunExe());
-      const directory = unsigned.readUInt32LE(0x3c) + 24 + 112 + 4 * 8; // IMAGE_DIRECTORY_ENTRY_SECURITY
-      expect(unsigned.readUInt32LE(directory + 4)).toBe(0);
-      const certificate = Buffer.alloc(8 + 1000); // WIN_CERTIFICATE
-      certificate.writeUInt32LE(certificate.length, 0);
-      certificate.writeUInt16LE(0x200, 4); // WIN_CERT_REVISION_2_0
-      certificate.writeUInt16LE(2, 6); // WIN_CERT_TYPE_PKCS_SIGNED_DATA
-      const signed = Buffer.concat([unsigned, Buffer.alloc(-unsigned.length & 7), certificate]);
-      signed.writeUInt32LE(signed.length - certificate.length, directory);
-      signed.writeUInt32LE(certificate.length, directory + 4);
-      writeFileSync(join(cwd, "signed.exe"), signed);
+  test.skipIf(!isWindows).concurrent("PE: from a signed bun", async () => {
+    const unsigned = readFileSync(bunExe());
+    const directory = unsigned.readUInt32LE(0x3c) + 24 + 112 + 4 * 8; // IMAGE_DIRECTORY_ENTRY_SECURITY
+    expect(unsigned.readUInt32LE(directory + 4)).toBe(0);
+    const certificate = Buffer.alloc(8 + 1000); // WIN_CERTIFICATE
+    certificate.writeUInt32LE(certificate.length, 0);
+    certificate.writeUInt16LE(0x200, 4); // WIN_CERT_REVISION_2_0
+    certificate.writeUInt16LE(2, 6); // WIN_CERT_TYPE_PKCS_SIGNED_DATA
+    const signed = Buffer.concat([unsigned, Buffer.alloc(-unsigned.length & 7), certificate]);
+    signed.writeUInt32LE(signed.length - certificate.length, directory);
+    signed.writeUInt32LE(certificate.length, directory + 4);
+    writeFileSync(join(cwd, "signed.exe"), signed);
 
-      const from = `--compile-executable-path=${join(cwd, "signed.exe")}`;
-      const compiled = await compile(cwd, "app", from, "--compile-exclude-features=check,lint,fmt");
-      expect(compiled.stdout + compiled.stderr).not.toContain("error");
-      expect(compiled.exitCode).toBe(0);
-      const ran = await run([join(cwd, "app.exe")], cwd);
-      expect(JSON.parse(ran.stdout)).toEqual(working);
-      expect(ran.exitCode).toBe(0);
-    },
-    timeout,
-  );
+    const from = `--compile-executable-path=${join(cwd, "signed.exe")}`;
+    const compiled = await compile(cwd, "from-signed", from, "--compile-exclude-features=check,lint,fmt");
+    expect(compiled.stdout + compiled.stderr).not.toContain("error");
+    expect(compiled.exitCode).toBe(0);
+    await expectToWork("from-signed");
+  });
 
   // On Windows no compiled executable can: it has a `.bun` section already.
-  test.skipIf(isWindows).concurrent(
-    "the executable can compile in its turn",
-    async () => {
-      using dir = tempDir("exclude-features", files);
-      const cwd = String(dir);
-      expect((await compile(cwd, "without", "--compile-exclude-features=check,lint,fmt")).exitCode).toBe(0);
-      const compiled = await asBun(cwd, "without", "build", "--compile", "app.ts", "--outfile", "again");
-      expect(compiled.stderr).not.toContain("error");
-      expect(compiled.exitCode).toBe(0);
-      const ran = await run([join(cwd, exe("again"))], cwd);
-      expect(JSON.parse(ran.stdout)).toEqual(working);
-      expect(ran.exitCode).toBe(0);
-    },
-    timeout,
-  );
+  test.skipIf(isWindows).concurrent("the executable can compile in its turn", async () => {
+    const compiled = await asBun(cwd, without(...features), "build", "--compile", "app.ts", "--outfile", "in-its-turn");
+    expect(compiled.stderr).not.toContain("error");
+    expect(compiled.exitCode).toBe(0);
+    await expectToWork("in-its-turn");
+  });
 });

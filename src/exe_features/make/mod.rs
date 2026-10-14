@@ -221,10 +221,14 @@ fn needs(graph: &Graph) -> Result<Needs> {
     let roots: Vec<u32> = all().filter(|&n| graph.nodes[n as usize].is_root).collect();
 
     let mut is_explained = vec![false; count];
-    reach(&mut is_explained, roots.clone(), &|_| true);
-    // (But for a door: only `enter` refers to one. Its record may have kept it.)
-    let is_unexplained = |&n: &u32| !is_explained[n as usize] && door_of[n as usize].is_none();
-    let unexplained: Vec<u32> = all().filter(is_unexplained).collect();
+    // A door too: only `enter` refers to one, and its record may be all that kept it.
+    let every_door = all().filter(|&n| door_of[n as usize].is_some());
+    reach(
+        &mut is_explained,
+        roots.iter().copied().chain(every_door).collect(),
+        &|_| true,
+    );
+    let unexplained: Vec<u32> = all().filter(|&n| !is_explained[n as usize]).collect();
 
     let mut always_stays = vec![false; count];
     let starts = roots.iter().chain(&unexplained).copied().collect();
@@ -488,7 +492,7 @@ pub fn make_table(link: &Link<'_>) -> Result<String> {
     // What `bun build --compile` is going to do with it, so that it is not there that something about this executable turns out
     // to be unexpected.
     let names: Vec<&[u8]> = FEATURES.iter().map(|f| f.0.as_bytes()).collect();
-    if let Err(e) = crate::Features::of(&linked).and_then(|features| features.without(&names)) {
+    if let Err(e) = crate::without(linked.clone(), &names) {
         fail!("the features cannot be left out of the executable: {e}");
     }
     std::fs::write(link.linked, linked).map_err(|e| format!("{}: {e}", link.linked.display()))?;

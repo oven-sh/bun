@@ -133,88 +133,79 @@ impl Container {
 
 /// What can be left out of an executable.
 pub struct Features<'a> {
-    executable: &'a [u8],
-    container: Container,
-    room: Range<usize>,
     table: Table<'a>,
 }
 
 impl<'a> Features<'a> {
     pub fn of(executable: &'a [u8]) -> Result<Self> {
-        let container = Container::of(executable)?;
-        let room = container.room_for_table(executable)?;
+        let room = Container::of(executable)?.room_for_table(executable)?;
         let table = Table::read(slice(executable, room.start, room.len())?)?;
-        Ok(Self {
-            executable,
-            container,
-            room,
-            table,
-        })
+        Ok(Self { table })
     }
 
     pub fn names(&self) -> impl Iterator<Item = &'a [u8]> {
         self.table.features.iter().copied()
     }
+}
 
-    /// The executable without the features `excluded`.
-    pub fn without(&self, excluded: &[&[u8]]) -> Result<Vec<u8>> {
-        let (file, table) = (self.executable, &self.table);
-        if !excluded.iter().all(|name| table.features.contains(name)) {
-            return Err(Error::NoSuchFeature);
-        }
-        let is_excluded: Vec<bool> = table
-            .features
-            .iter()
-            .map(|name| excluded.contains(name))
-            .collect();
-        let mut out = file.to_vec();
-
-        for marker in table.markers.iter().filter(|m| is_excluded[m.feature]) {
-            let there = slice_mut(
-                &mut out,
-                self.container.offset_of(file, marker.address)?,
-                marker.present.len(),
-            )?;
-            if there != marker.present {
-                return Err(Error::InvalidTable);
-            }
-            there.copy_from_slice(marker.excluded);
-        }
-
-        let is_needed_by_none = |set: &Vec<usize>| set.iter().all(|&feature| is_excluded[feature]);
-        let is_needed_by_none: Vec<bool> = table.sets.iter().map(is_needed_by_none).collect();
-        let mut dead: Vec<Range<u64>> = Vec::new();
-        for (range, needed_by) in &table.ranges {
-            if is_needed_by_none[*needed_by] {
-                match dead.last_mut() {
-                    Some(last) if last.end == range.start => last.end = range.end,
-                    _ => dead.push(range.clone()),
-                }
-            }
-        }
-        // int3; brk #1
-        let trap: &[u8] = if self.container.is_arm64(file)? {
-            &[0x20, 0x00, 0x20, 0xd4]
-        } else {
-            &[0xcc]
-        };
-        for range in dead.iter().filter(|r| r.start < r.end) {
-            // One stretch of the file.
-            let length = (range.end - range.start) as usize;
-            let first = self.container.offset_of(file, range.start)?;
-            if self.container.offset_of(file, range.end - 1)? != first.saturating_add(length - 1) {
-                return Err(Error::InvalidTable);
-            }
-            let addresses = range.start as usize..;
-            for (byte, address) in slice_mut(&mut out, first, length)?
-                .iter_mut()
-                .zip(addresses)
-            {
-                *byte = trap[address % trap.len()];
-            }
-        }
-        // It is about what the executable was.
-        slice_mut(&mut out, self.room.start, self.room.len())?.fill(0);
-        self.container.without_pages(&out, &dead)
+/// `file`, an executable, without the features `excluded`.
+pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
+    let container = Container::of(&file)?;
+    let room = container.room_for_table(&file)?;
+    // A copy of it rather than of the executable, which is written to.
+    let table = slice(&file, room.start, room.len())?.to_vec();
+    let table = Table::read(&table)?;
+    if !excluded.iter().all(|name| table.features.contains(name)) {
+        return Err(Error::NoSuchFeature);
     }
+    let is_excluded: Vec<bool> = table
+        .features
+        .iter()
+        .map(|name| excluded.contains(name))
+        .collect();
+
+    for marker in table.markers.iter().filter(|m| is_excluded[m.feature]) {
+        let at = container.offset_of(&file, marker.address)?;
+        let there = slice_mut(&mut file, at, marker.present.len())?;
+        if there != marker.present {
+            return Err(Error::InvalidTable);
+        }
+        there.copy_from_slice(marker.excluded);
+    }
+
+    let is_needed_by_none = |set: &Vec<usize>| set.iter().all(|&feature| is_excluded[feature]);
+    let is_needed_by_none: Vec<bool> = table.sets.iter().map(is_needed_by_none).collect();
+    let mut dead: Vec<Range<u64>> = Vec::new();
+    for (range, needed_by) in &table.ranges {
+        if is_needed_by_none[*needed_by] {
+            match dead.last_mut() {
+                Some(last) if last.end == range.start => last.end = range.end,
+                _ => dead.push(range.clone()),
+            }
+        }
+    }
+    // int3; brk #1
+    let trap: &[u8] = if container.is_arm64(&file)? {
+        &[0x20, 0x00, 0x20, 0xd4]
+    } else {
+        &[0xcc]
+    };
+    for range in dead.iter().filter(|r| r.start < r.end) {
+        // One stretch of the file.
+        let length = (range.end - range.start) as usize;
+        let first = container.offset_of(&file, range.start)?;
+        if container.offset_of(&file, range.end - 1)? != first.saturating_add(length - 1) {
+            return Err(Error::InvalidTable);
+        }
+        let addresses = range.start as usize..;
+        for (byte, address) in slice_mut(&mut file, first, length)?
+            .iter_mut()
+            .zip(addresses)
+        {
+            *byte = trap[address % trap.len()];
+        }
+    }
+    // It is about what the executable was.
+    slice_mut(&mut file, room.start, room.len())?.fill(0);
+    container.without_pages(&file, &dead)
 }

@@ -103,8 +103,8 @@ fn sections_of(b: Data<'_>) -> Vec<Section<'_>> {
 #[derive(Default)]
 struct Placed {
     /// The node that it is, or that it was folded into. None if it was dropped, is not loaded, or was merged with others piece
-    /// by piece (strings, constants: those refer to nothing and stay). Where an object has several sections of one name, the
-    /// map does not say which is which, so each of them is taken to be all of them.
+    /// by piece (strings, constants: those refer to nothing and stay). Where an object has several sections of one name, neither
+    /// the map nor what the linker prints says which is which, so each of them is taken to be all that any of them became.
     nodes: Vec<u32>,
     /// Not folded into one of another: what is there is its own, and refers to what its relocations say.
     is_its_own: bool,
@@ -274,7 +274,7 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
         }
     }
 
-    // ---- sections that identical code folding replaced by an identical one: {file, section} -> the one kept
+    // ---- sections that identical code folding replaced by an identical one: {file, section} -> those kept
     let mut folded: HashMap<(&str, &str), Vec<(&str, &str)>> = HashMap::new();
     let mut kept = ("", "");
     for line in printed.lines() {
@@ -342,30 +342,33 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
         let (file, b) = (*file, Data(object.bytes()));
         let sections = sections_of(b);
         let is_content = |s: &Section<'_>| s.flags & SHF_ALLOC != 0 && s.size != 0;
-        let mut became: Vec<Placed> = Vec::new();
-        for s in &sections {
-            became.push(if !is_content(s) {
-                Placed::default()
-            } else if let Some(at) = placed[file].get(s.name) {
-                for node in at {
-                    unclaimed.remove(node);
-                }
-                Placed {
-                    nodes: at.clone(),
-                    is_its_own: true,
-                }
-            } else {
-                let kept = folded.get(&(file, s.name)).into_iter().flatten();
-                let at = kept.filter_map(|(file, section)| placed.get(file)?.get(section));
-                Placed {
-                    nodes: at.flatten().copied().collect(),
-                    is_its_own: false,
-                }
-            });
-        }
         let mut copies: HashMap<&str, usize> = HashMap::new();
         for s in sections.iter().filter(|s| is_content(s)) {
             *copies.entry(s.name).or_default() += 1;
+        }
+        let mut became: Vec<Placed> = Vec::new();
+        for s in &sections {
+            if !is_content(s) {
+                became.push(Placed::default());
+                continue;
+            }
+            let own = placed[file].get(s.name);
+            let own_nodes = own.map_or(&[][..], |at| &at[..]);
+            if own_nodes.len() > copies[s.name] {
+                fail!(
+                    "{file}: the map has more sections called {} than the object",
+                    s.name
+                );
+            }
+            for node in own_nodes {
+                unclaimed.remove(node);
+            }
+            let kept = folded.get(&(file, s.name)).into_iter().flatten();
+            let kept = kept.filter_map(|(file, section)| placed.get(file)?.get(section));
+            became.push(Placed {
+                nodes: own_nodes.iter().chain(kept.flatten()).copied().collect(),
+                is_its_own: own.is_some(),
+            });
         }
         for (s, became) in sections.iter().zip(&became).filter(|s| s.1.is_its_own) {
             let size_of = |node: u32| {
@@ -524,7 +527,7 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
                     .peekable();
                 if known.peek().is_none() {
                     fail!(
-                        "{}: the executable knows no {}",
+                        "{}: nothing defines {}",
                         o.file,
                         String::from_utf8_lossy(name)
                     );

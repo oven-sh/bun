@@ -264,18 +264,9 @@ macro_rules! finish_list {
         if COMMENTS {
             let first = ($p.f.$field.get(start as usize)).and_then(|it| it.as_node(start, &$p.f));
             if first.is_some_and(|(_, node_start, _)| node_start <= $p.lx.max_relevant_node_start) {
-                for index in (start..start + len).rev() {
-                    let node =
-                        ($p.f.$field.get(index as usize)).and_then(|it| it.as_node(index, &$p.f));
-                    if let Some((node, node_start, node_end)) = node {
-                        $p.finish_node(node, node_start, node_end);
-                        // A hole in an array has no width and is next to no comment: `[a, , /* comment */ b]`.
-                        if node_start < node_end {
-                            $p.set_aside_pending_comments_after(node_start);
-                        }
-                    }
-                }
-                $p.put_back_pending_comments();
+                $p.finish_list_elements(start, len, |file, index| {
+                    (file.$field.get(index as usize)).and_then(|it| it.as_node(index, file))
+                });
             }
         }
     }};
@@ -698,8 +689,28 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.update_max_relevant_node_start();
     }
 
-    /// See `finish_list!`.
-    pub(crate) fn set_aside_pending_comments_after(&mut self, start: u32) {
+    /// See `finish_list!`. Not inlined: lists are finished in functions that call themselves for what is nested, and what this
+    /// needs of the stack would be taken at each level.
+    #[inline(never)]
+    pub(crate) fn finish_list_elements(
+        &mut self,
+        start: u32,
+        len: u32,
+        as_node: impl Fn(&FileBuilder, u32) -> Option<(NodeData, u32, u32)>,
+    ) {
+        for index in (start..start + len).rev() {
+            if let Some((node, node_start, node_end)) = as_node(&self.f, index) {
+                self.finish_node(node, node_start, node_end);
+                // A hole in an array has no width and is next to no comment: `[a, , /* comment */ b]`.
+                if node_start < node_end {
+                    self.set_aside_pending_comments_after(node_start);
+                }
+            }
+        }
+        self.put_back_pending_comments();
+    }
+
+    fn set_aside_pending_comments_after(&mut self, start: u32) {
         let CommentTracker {
             pending, set_aside, ..
         } = &mut self.comments;
@@ -709,8 +720,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.update_max_relevant_node_start();
     }
 
-    /// See `finish_list!`.
-    pub(crate) fn put_back_pending_comments(&mut self) {
+    fn put_back_pending_comments(&mut self) {
         let CommentTracker {
             pending, set_aside, ..
         } = &mut self.comments;

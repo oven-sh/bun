@@ -91,6 +91,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseStatement`
+    ///
+    /// What needs much of the stack is not inlined into this: it would be taken at each level of `if (a) if (b) ..`.
     pub(crate) fn statement(&mut self) -> StmtId {
         if self.is_too_deep() {
             return StmtId::NONE;
@@ -1343,6 +1345,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseWithStatement`: a block of the expression, as a statement, and the body.
+    #[inline(never)]
     fn with_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
@@ -1364,6 +1367,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     }
 
     /// `parseForOrForInOrForOfStatement`
+    #[inline(never)]
     fn for_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
@@ -1501,6 +1505,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.add_stmt(kind, start, Span::EMPTY)
     }
 
+    #[inline(never)]
     fn break_or_continue(&mut self) -> StmtId {
         let start = self.start();
         let is_break = self.token() == T::Break;
@@ -1583,6 +1588,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.add_stmt(StmtKind::Throw(value), start, Span::EMPTY)
     }
 
+    #[inline(never)]
     fn switch_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
@@ -1651,6 +1657,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.add_stmt(StmtKind::Switch { expr, cases }, start, Span::EMPTY)
     }
 
+    #[inline(never)]
     fn try_statement(&mut self) -> StmtId {
         let start = self.start();
         self.expect(T::Try);

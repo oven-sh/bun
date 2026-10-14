@@ -156,7 +156,9 @@ pub trait Host {
     /// `require()` / `import()` namespace and the visit pass made an import
     /// item for `ns.name`, the host counts the copy as the visit pass counted
     /// the read and returns true: the copy gets `E::Dot::is_import_property_use`.
-    fn namespace_local_read(&mut self, ns: Ref, name: &[u8]) -> bool;
+    fn namespace_local_read(&mut self, _ns: Ref, _name: &[u8]) -> bool {
+        false
+    }
 
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }

@@ -1269,23 +1269,23 @@ fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &
     }
     let node = AstNodes::TSTypeAnnotation(ty);
     if !f.comments().of_node(node).leading.is_empty()
-        && !(comment_sticks_to_name_before_type_annotation(f)
-            && matches!(
-                node.parent(),
-                AstNodes::VariableDeclarator(_)
-                    | AstNodes::TSThisParameter(_)
-                    | AstNodes::FormalParameterRest(_)
-            ))
+        && !comment_sticks_to_what_is_before_type_annotation(ty, f)
     {
         write!(f, space());
     }
     format_node(node, f, write);
 }
 
-/// `const a /* comment */ : T = 1` is `const a/* comment */ : T = 1` for oxfmt. The same after `this` and after `...a` in
-/// the parameters of a function.
-fn comment_sticks_to_name_before_type_annotation(f: &Formatter<'_>) -> bool {
+/// `const a /* comment */ : T = 1` is `const a/* comment */ : T = 1` for oxfmt, and `class A { b() /* comment */ : T {} }` has
+/// `b()/* comment */ : T {}`. Not in `function a(b /* comment */ : T) /* comment */ : T {}`: after the name or the pattern of a
+/// parameter, and after the parameters of a function that is written with `function`.
+fn comment_sticks_to_what_is_before_type_annotation(ty: TypeNode<'_>, f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
+        && match ty.parent() {
+            Node::Param(param) => !matches!(param.as_ast_nodes(), AstNodes::FormalParameter(_)),
+            Node::Func(func) => !matches!(func.kind(), FnKind::Decl | FnKind::Expr),
+            _ => true,
+        }
 }
 
 macro_rules! type_annotations {

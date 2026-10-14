@@ -299,6 +299,22 @@ comments/before-from.js
 189 199 T ImportDefaultSpecifier 187 188 -
 220 230 L StringLiteral 236 239 -
 256 269 L StringLiteral 275 278 -
+comments/before-the-colon-of-a-type.ts
+14 27 L TSTypeAnnotation 28 31 -
+38 51 L TSTypeAnnotation 52 55 -
+63 76 L TSTypeAnnotation 77 80 -
+88 95 T Identifier 86 87 -
+96 100 T Identifier 86 87 -
+114 124 L TSTypeAnnotation 127 130 -
+153 166 T Identifier 151 152 -
+177 190 T Identifier 174 175 -
+202 215 L TSTypeAnnotation 216 219 -
+235 248 L TSTypeAnnotation 249 252 -
+270 283 T Identifier 268 269 -
+305 318 L TSTypeAnnotation 319 322 -
+352 365 L TSTypeAnnotation 366 369 -
+388 401 L TSTypeAnnotation 402 405 -
+407 420 L TSTypeAnnotation 421 424 -
 comments/before-the-comma-after-the-last-parameter.ts
 21 25 L TSTypeAnnotation 28 34 -
 59 66 T Identifier 49 58 -

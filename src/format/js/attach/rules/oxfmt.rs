@@ -126,6 +126,7 @@ impl<'a> Rules<'_, 'a, '_> {
         ignored_node: &mut Option<Owner<'a>>,
     ) -> Option<Attachment<'a>> {
         self.handle_closure_type_cast_comments_for_oxfmt()
+            .or_else(|| self.handle_comment_before_type_annotation_of_member_for_oxfmt())
             .or_else(|| self.handle_comment_in_array_pattern_of_holes_for_oxfmt(ignored_node))
             .or_else(|| self.handle_comment_before_body_for_oxfmt())
             .or_else(|| self.handle_comment_in_parentheses_of_super_class_for_oxfmt())
@@ -773,6 +774,32 @@ impl<'a> Rules<'_, 'a, '_> {
             .filter(|it| matches!(it, Owner::Node(N::TSTypeAnnotation(_))))?;
         self.prev_token_ends_with(b')')
             .then(|| Attachment::leading(return_type))
+    }
+
+    /// `interface A { b? /* comment */ : C }`. oxfmt prints `b?/* comment */ : C`: the comment leads the type annotation. For Prettier
+    /// it trails `b`, and for oxfmt too if it ends the line of `b`, or a comment after it does: `b /* 1 */ // 2⏎: C` is
+    /// `b /* 1 */: C; // 2`.
+    fn handle_comment_before_type_annotation_of_member_for_oxfmt(&self) -> Option<Attachment<'a>> {
+        let Owner::Node(
+            N::PropertyDefinition(member)
+            | N::AccessorProperty(member)
+            | N::TSPropertySignature(member),
+        ) = self.enclosing_node?
+        else {
+            return None;
+        };
+        // Not the following node: for Prettier the type annotation of a signature has no comments.
+        let type_annotation = Owner::Node(N::TSTypeAnnotation(member.ty()?));
+        if !self.is_directly_before(type_annotation) {
+            return None;
+        }
+        let comment = self.context.comment;
+        let last_on_line =
+            (self.cx.comments_between_same_tokens(comment)).first_that_ends_line_of_prev_token;
+        match last_on_line.is_some_and(|last| comment.id() <= last) {
+            true => self.preceding_node.map(Attachment::trailing),
+            false => Some(Attachment::leading(type_annotation)),
+        }
     }
 
     /// `interface A { b(c) /* comment */ ⏎; }`. oxfmt prints `b(c) /* comment */;`: the comment trails the signature. For Prettier it

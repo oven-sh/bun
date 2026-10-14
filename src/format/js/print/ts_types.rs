@@ -375,11 +375,12 @@ pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
             let Some(ty) = member.ty() else {
                 return write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
             };
-            write!(
-                f,
-                [member.flags().contains(Flags::OPTIONAL).then_some("?"), ":"]
-            );
-            write!(f, space());
+            write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
+            // `a?/* comment */ : B` for oxfmt. For Prettier the type annotation has no comments.
+            if !f.is_quiet() {
+                write!(f, leading_comments(AstNodes::TSTypeAnnotation(ty)));
+            }
+            write!(f, [":", space()]);
             // `a: // comment ⏎ B` stays as it is for oxfmt. The comment dangles from the signature.
             if !f.is_quiet() && !union_writes_comments_behind_colon(without_lone_operator(ty), f) {
                 let comments_behind_colon = f.comments().of_node(node).dangling;

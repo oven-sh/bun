@@ -72,6 +72,8 @@ pub(crate) fn run_as_coordinator(
             let _ = env.map.put(name, b"1");
         }
         // SAFETY: see vm_ptr note above.
+        crate::run_command::start_profilers(unsafe { &mut *vm_ptr }, ctx);
+        // SAFETY: see vm_ptr note above.
         TestCommand::run_all_tests(reporter, unsafe { &mut *vm_ptr }, files);
         return Ok(false);
     }
@@ -332,6 +334,36 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if let Some(pattern) = &opts.test_filter_pattern {
         argv.push(lit(b"-t\0"));
         argv.push(dupe_z(pattern));
+    }
+    // No `--cpu-prof-name` or `--heap-prof-name`: every worker writes a profile, and the default names have the pid in them.
+    let cpu_prof = &ctx.runtime_options.cpu_prof;
+    if cpu_prof.enabled {
+        if cpu_prof.json_format {
+            argv.push(lit(b"--cpu-prof\0"));
+        }
+        if cpu_prof.md_format {
+            argv.push(lit(b"--cpu-prof-md\0"));
+        }
+        if !cpu_prof.dir.is_empty() {
+            argv.push(lit(b"--cpu-prof-dir\0"));
+            argv.push(dupe_z(&cpu_prof.dir));
+        }
+        argv.push(print_z(format_args!(
+            "--cpu-prof-interval={}",
+            cpu_prof.interval
+        ))?);
+    }
+    let heap_prof = &ctx.runtime_options.heap_prof;
+    if heap_prof.enabled {
+        argv.push(lit(if heap_prof.text_format {
+            b"--heap-prof-md\0"
+        } else {
+            b"--heap-prof\0"
+        }));
+        if !heap_prof.dir.is_empty() {
+            argv.push(lit(b"--heap-prof-dir\0"));
+            argv.push(dupe_z(&heap_prof.dir));
+        }
     }
     for preload in ctx.preloads.iter() {
         argv.push(lit(b"--preload\0"));

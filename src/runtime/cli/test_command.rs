@@ -2074,6 +2074,7 @@ impl TestCommand {
             // results go out over fd 3. Never returns.
             // SAFETY: `vm` is the live per-thread VM; `reporter`/`ctx` outlive
             // this never-returning call.
+            crate::run_command::start_profilers(vm, ctx);
             ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
         }
 
@@ -2436,6 +2437,7 @@ impl TestCommand {
             } else {
                 // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
                 ParallelRunner::set_ids_without_workers(unsafe { &mut *vm.transpiler.env });
+                crate::run_command::start_profilers(vm, ctx);
                 Self::run_all_tests(&mut reporter, vm, test_files);
             }
         }

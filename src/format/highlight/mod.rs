@@ -100,20 +100,26 @@ pub fn highlight<'s>(code: &[u8], language: Language, scratch: &'s mut Scratch) 
 }
 
 /// Returns a `bun_md::AnsiTheme::highlight` callback, which highlights the code blocks of Markdown shown in a terminal.
-pub fn for_markdown(is_light: bool) -> impl Fn(&[u8], &[u8], &mut Vec<u8>) -> bool {
+pub fn for_markdown(
+    is_light: bool,
+    depth: ColorDepth,
+) -> impl Fn(&[u8], &[u8], &mut Vec<u8>) -> bool {
+    let theme = AnsiStyles::new(Theme::built_in(is_light, depth), depth);
     move |code, language, out| {
         let Some(language) = Language::from_name(language) else {
             return false;
         };
-        // The caller only asks when colors are on.
-        let depth = match Source::color_depth() {
-            ColorDepth::None => ColorDepth::C16,
-            depth => depth,
-        };
-        let theme = AnsiStyles::new(Theme::built_in(is_light, depth), depth);
         let mut scratch = Scratch::default();
         write_ansi(code, highlight(code, language, &mut scratch), &theme, out);
         true
+    }
+}
+
+/// The number of colors of the terminal that Bun is running in, for a caller that has decided to use colors.
+pub fn terminal_color_depth() -> ColorDepth {
+    match Source::color_depth() {
+        ColorDepth::None => ColorDepth::C16,
+        depth => depth,
     }
 }
 
@@ -125,7 +131,7 @@ impl Spans {
         self.try_embed(language, code, at);
     }
 
-    /// Returns false if `code` was left alone: see [`Spans::within`].
+    /// Returns false if `code` was left alone: see [`Spans::can_embed`].
     fn try_embed(&mut self, language: Language, code: &[u8], at: u32) -> bool {
         self.within(language, code, at, |spans| match language {
             Language::JavaScript
@@ -173,22 +179,25 @@ impl Spans {
     }
 
     /// Returns the tokens of `code`, which is stitched together from pieces of the code around it, so offsets are
-    /// relative to `code`. `is_unclosed`: the last piece runs to the end of the code around it. Returns `None` if `code`
-    /// was left alone: see [`Spans::within`].
-    pub(crate) fn tokens_of(
-        &self,
-        language: Language,
-        code: &[u8],
-        is_unclosed: bool,
-    ) -> Option<Vec<Span>> {
+    /// relative to `code`. Returns `None` if `code` was left alone: see [`Spans::can_embed`].
+    pub(crate) fn tokens_of(&self, language: Language, code: &[u8]) -> Option<Vec<Span>> {
         let mut apart = Spans::default();
         apart.reset(code.len().min(u32::MAX as usize) as u32);
-        if is_unclosed {
-            apart.ending_at_limit = self.ending_at_limit;
-        }
+        (apart.once, apart.twice) = (self.once, self.twice);
         apart
             .try_embed(language, code, 0)
             .then(|| apart.finish().to_vec())
+    }
+
+    /// A language can be in itself once: Markdown in a code block of Markdown is highlighted, and a code block of Markdown
+    /// in there is not.
+    ///
+    /// Each level reads its code again. Something unclosed, like `<script>` without `</script>`, runs to the end of the
+    /// text, so `` <script>html` `` over and over nests as deep as the text is long, which would take quadratic time.
+    /// Fences of Markdown, each one backtick longer than the one in it, nest as deep as the square root of that. With this
+    /// rule the depth doesn't depend on the text.
+    pub(crate) fn can_embed(&self, language: Language) -> bool {
+        self.twice & (1 << language as u32) == 0
     }
 
     /// Runs `highlight` with offsets relative to `code`, which is in `language` and starts at `at`. Returns false if it
@@ -200,21 +209,26 @@ impl Spans {
         at: u32,
         highlight: impl FnOnce(&mut Spans),
     ) -> bool {
-        let outer = (self.base, self.limit, self.ending_at_limit);
-        let len = code.len().min(u32::MAX as usize) as u32;
-        let base = outer.0.saturating_add(at);
-        let limit = base.saturating_add(len).min(outer.1);
-        // Something unclosed, like `<script>` without `</script>`, runs to the end of the code around it. If it could hold
-        // its own language again, each repetition of `` <script>html` `` would re-read the rest of the text, which is
-        // quadratic. So a language isn't embedded in itself when both end at the same place.
-        let around = if limit == outer.1 { outer.2 } else { 0 };
-        let bit = 1 << language as u32;
-        if around & bit != 0 || !bun_core::StackCheck::init().is_safe_to_recurse() {
+        if !self.can_embed(language) || !bun_core::StackCheck::init().is_safe_to_recurse() {
             return false;
         }
-        (self.base, self.limit, self.ending_at_limit) = (base, limit, around | bit);
+        let outer = self.enter(language, code.len(), at);
         highlight(self);
-        (self.base, self.limit, self.ending_at_limit) = outer;
+        (self.base, self.limit, self.once, self.twice) = outer;
         true
+    }
+
+    /// Makes offsets relative to code in `language` that is `len` bytes long and starts at `at`. Returns the `base`,
+    /// `limit`, `once` and `twice` to go back to afterwards.
+    fn enter(&mut self, language: Language, len: usize, at: u32) -> (u32, u32, u32, u32) {
+        let outer = (self.base, self.limit, self.once, self.twice);
+        let bit = 1 << language as u32;
+        self.base = self.base.saturating_add(at);
+        self.limit = (self.base)
+            .saturating_add(len.min(u32::MAX as usize) as u32)
+            .min(self.limit);
+        self.twice |= self.once & bit;
+        self.once |= bit;
+        outer
     }
 }

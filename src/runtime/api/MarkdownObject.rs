@@ -169,7 +169,9 @@ pub(crate) fn render_to_ansi(
         }
     }
 
-    let highlight = bun_format::highlight::for_markdown(theme.light);
+    // The rest of the output has the terminal's 16 colors too, so it doesn't depend on where it's made.
+    let highlight =
+        bun_format::highlight::for_markdown(theme.light, bun_core::output::ColorDepth::C16);
     theme.highlight = Some(&highlight);
 
     let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {

@@ -341,6 +341,7 @@ Rules for a `highlight.rs`:
 - **No regular expressions**, and no second parser. If a lexer stops at an error, give it a tolerant mode that the formatter doesn't turn on.
 - **Offsets never move.** To hide something from a parser (a `\r`, the `${..}` of a template, the `> ` in front of a quoted code block), overwrite it in a copy with something of the same length.
 - Linear time, no limits, and anything that recurses asks the stack first, as everywhere in this crate.
+- **A language can be in itself once** (`Spans::can_embed`): Markdown in a code block of Markdown is highlighted, and a code block of Markdown in there is raw. Each level reads its code again, and both unclosed code and longer and longer fences nest as deep as the text allows.
 - Adding spans in source order without overlap skips the sort and the flattening. `js/highlight.rs` does.
 
 What each language starts from:

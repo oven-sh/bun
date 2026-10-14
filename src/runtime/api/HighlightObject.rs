@@ -29,14 +29,16 @@ fn language_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<
     Ok(Language::from_name(&value.to_utf8(global)?))
 }
 
-/// Highlights `code` and returns what `then` makes of the code and its tokens, as a string. Without a language there are
-/// no tokens.
+/// Highlights `code` and returns what `then` makes of the code and its tokens, as a string. Returns `null` without a
+/// language. With `is_plain` there are no tokens.
 fn with_tokens(
     global: &JSGlobalObject,
     code: JSValue,
-    language: Option<Language>,
+    language: JSValue,
+    is_plain: bool,
     then: impl FnOnce(&[u8], &[Span]) -> Vec<u8>,
 ) -> JsResult<JSValue> {
+    let language = language_from_js(global, language)?;
     let Some(code) = StringOrBuffer::from_js(global, code)? else {
         return Err(global.throw_invalid_argument_type_value(
             "code",
@@ -55,19 +57,22 @@ fn with_tokens(
             },
         ));
     }
+    let Some(language) = language else {
+        return Ok(JSValue::NULL);
+    };
     let mut scratch = Scratch::default();
-    let tokens = language.map(|it| highlight::highlight(code, it, &mut scratch));
-    bun_string_jsc::owned_utf8_into_js(global, then(code, tokens.unwrap_or_default()))
+    let tokens = match is_plain {
+        true => &[],
+        false => highlight::highlight(code, language, &mut scratch),
+    };
+    bun_string_jsc::owned_utf8_into_js(global, then(code, tokens))
 }
 
 /// `Bun.highlight.html(code, language)`
 #[bun_jsc::host_fn]
 fn html(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [code, language] = frame.arguments_as_array::<2>();
-    let Some(language) = language_from_js(global, language)? else {
-        return Ok(JSValue::NULL);
-    };
-    with_tokens(global, code, Some(language), |code, spans| {
+    with_tokens(global, code, language, false, |code, spans| {
         let mut out = Vec::new();
         highlight::write_html(code, spans, &mut out);
         out
@@ -144,7 +149,7 @@ fn styles_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Styles> {
     let (mut foreground, mut background) = (None, None);
     let mut styles = [PartialStyle::default(); Token::COUNT];
     let properties =
-        JSPropertyIterator::init(global, object, JSPropertyIteratorOptions::new(true, true))?;
+        JSPropertyIterator::init(global, object, JSPropertyIteratorOptions::new(false, true))?;
     while let Some((name, value)) = properties.next()? {
         if value.is_undefined() {
             continue;
@@ -220,15 +225,17 @@ impl Theme {
     #[bun_jsc::host_fn(method)]
     pub(crate) fn ansi(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let [code, language] = frame.arguments_as_array::<2>();
-        let Some(language) = language_from_js(global, language)? else {
-            return Ok(JSValue::NULL);
-        };
-        let language = self.ansi.has_colors().then_some(language);
-        with_tokens(global, code, language, |code, spans| {
-            let mut out = Vec::new();
-            highlight::write_ansi(code, spans, &self.ansi, &mut out);
-            out
-        })
+        with_tokens(
+            global,
+            code,
+            language,
+            !self.ansi.has_colors(),
+            |code, spans| {
+                let mut out = Vec::new();
+                highlight::write_ansi(code, spans, &self.ansi, &mut out);
+                out
+            },
+        )
     }
 
     /// `theme.css()`

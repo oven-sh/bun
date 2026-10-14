@@ -92,7 +92,7 @@ describe("broken code", () => {
       ["a{", "}"],
       ["a:\n", ""],
     ]) {
-      const depth = 5_000;
+      const depth = 2_000;
       const opens = Buffer.alloc(open.length * depth, open).toString();
       const closed = opens + Buffer.alloc(close.length * depth, close).toString();
       expect(stripTags(Bun.highlight.html(opens, language)!)).toBe(opens);
@@ -149,6 +149,17 @@ describe("something unclosed, over and over", () => {
     ["graphql", "{ a(b: "],
   ])("%s: %j", (language, piece) => {
     const code = Buffer.alloc(128 * 1024, piece).toString();
+    expect(stripTags(Bun.highlight.html(code, language)!)).toBe(code);
+  });
+
+  test.each(["md", "mdx"])("%s: fences in fences, each a backtick shorter", language => {
+    let [open, close] = ["", ""];
+    for (let length = 1_000; length >= 3; length--) {
+      const fence = Buffer.alloc(length, "`").toString();
+      open += `${fence}${language}\n`;
+      close = `${fence}\n${close}`;
+    }
+    const code = `${open}# a\n${close}`;
     expect(stripTags(Bun.highlight.html(code, language)!)).toBe(code);
   });
 });

@@ -36,14 +36,8 @@ mod tag {
 }
 
 pub(crate) fn highlight(code: &[u8], language: Language, spans: &mut Spans) {
-    highlight_at(code, language, spans, 0, false);
-}
-
-/// `at`: where `code` starts in the code that `spans` counts from.
-/// `is_in_itself`: it's in a code block of the same language that nothing closes. See `Highlighter::embed`.
-fn highlight_at(code: &[u8], language: Language, spans: &mut Spans, at: u32, is_in_itself: bool) {
     let is_mdx = language == Language::Mdx;
-    let front_matter_len = crate::front_matter::highlight(code, spans, at);
+    let front_matter_len = crate::front_matter::highlight(code, spans, 0);
     let code = code.get(front_matter_len..).unwrap_or_default();
     let mut marked = Vec::new();
     if is_mdx {
@@ -68,9 +62,8 @@ fn highlight_at(code: &[u8], language: Language, spans: &mut Spans, at: u32, is_
     options.tasklists = false;
     let mut highlighter = Highlighter {
         code,
-        base: at + front_matter_len as u32,
+        base: front_matter_len as u32,
         language,
-        is_in_itself,
         spans,
         pieces: Vec::new(),
         open: Vec::new(),
@@ -102,14 +95,19 @@ fn highlight_at(code: &[u8], language: Language, spans: &mut Spans, at: u32, is_
     highlighter.flush();
 }
 
+/// Whether the byte at `at` has an odd number of backslashes before it.
+fn is_escaped(text: &[u8], at: usize) -> bool {
+    let before = text.get(..at).unwrap_or_default();
+    let backslashes = before.iter().rev().take_while(|&&byte| byte == b'\\');
+    backslashes.count() % 2 == 1
+}
+
 /// Where the next `<` is that can start a tag.
 fn next_tag(code: &[u8], mut from: usize) -> Option<usize> {
     loop {
         let at = strings::index_of_char_pos(code, b'<', from)?;
         from = at + 1;
-        let before = code.get(..at).unwrap_or_default();
-        let backslashes = before.iter().rev().take_while(|&&byte| byte == b'\\');
-        if backslashes.count() % 2 == 1 {
+        if is_escaped(code, at) {
             continue;
         }
         let name = name_len(code, from);
@@ -397,7 +395,9 @@ fn span_at(
         [b'[', ..] => return None,
         [b'$', rest @ ..] => {
             let is_double = rest.starts_with(b"$");
-            let is_in_run = index > 0 && bytes.get(index - 1) == Some(&b'$');
+            // The first `$` of a run can be escaped.
+            let is_in_run =
+                index > 0 && bytes.get(index - 1) == Some(&b'$') && !is_escaped(bytes, index - 1);
             if is_in_run
                 || rest.starts_with(b"$$")
                 || known.is_math_unclosed[usize::from(is_double)]
@@ -450,6 +450,11 @@ fn span_at(
 
 // ───────────────────────────── the events ─────────────────────────────
 
+struct FirstAndLast {
+    first: VerbatimLine,
+    last: VerbatimLine,
+}
+
 #[derive(Copy, Clone)]
 enum What {
     Token(Token),
@@ -493,8 +498,6 @@ struct Highlighter<'a> {
     /// Where `code` starts in the code that `spans` counts from.
     base: u32,
     language: Language,
-    /// See `Highlighter::embed`.
-    is_in_itself: bool,
     spans: &'a mut Spans,
     /// What has been found since the last block ended, in the order of the text. `**` only ends after what's in it, so
     /// everything waits here for the end of the block. That way `Spans` has nothing to sort.
@@ -617,11 +620,6 @@ impl Highlighter<'_> {
         let code = if copy.is_empty() { code } else { &copy };
         let at = self.base + start as u32;
         match what {
-            // `Spans::embed` refuses a language in itself where both end at the same place: each level would read the rest
-            // of the text again. One level is read here, for the README in a ```` ```md ```` block that is streaming in.
-            What::Code(language) if language == self.language && end == whole.len() => {
-                highlight_at(code, language, self.spans, at, true);
-            }
             What::Code(language) => self.spans.embed(language, code, at),
             What::Expression => self.spans.embed_expression(code, at),
             What::Token(_) => {}
@@ -706,13 +704,16 @@ impl Highlighter<'_> {
 
     // ───────────────────────────── leaf blocks ─────────────────────────────
 
-    fn first_and_last_line(&self) -> Option<(VerbatimLine, VerbatimLine)> {
-        Some((*self.lines.first()?, *self.lines.last()?))
+    fn first_and_last_line(&self) -> Option<FirstAndLast> {
+        Some(FirstAndLast {
+            first: *self.lines.first()?,
+            last: *self.lines.last()?,
+        })
     }
 
     /// A paragraph or a table.
     fn text_block(&mut self) {
-        if let Some((first, last)) = self.first_and_last_line() {
+        if let Some(FirstAndLast { first, last }) = self.first_and_last_line() {
             let end = skip_spaces_backwards(self.code, last.end as usize);
             self.start_text(first.beg as usize, end);
         }
@@ -725,7 +726,7 @@ impl Highlighter<'_> {
     }
 
     fn heading(&mut self, level: usize, is_setext: bool) {
-        let Some((first, last)) = self.first_and_last_line() else {
+        let Some(FirstAndLast { first, last }) = self.first_and_last_line() else {
             return;
         };
         let (text_start, text_end) = (first.beg as usize, last.end as usize);
@@ -784,13 +785,10 @@ impl Highlighter<'_> {
 
     /// The lines of the block are code in `language`, or in one that isn't highlighted.
     fn code_block(&mut self, language: Option<Language>) {
-        let Some((first, last)) = self.first_and_last_line() else {
+        let Some(FirstAndLast { first, last }) = self.first_and_last_line() else {
             return;
         };
-        let is_too_deep = self.is_in_itself
-            && language == Some(self.language)
-            && last.end as usize == self.code.len();
-        let language = language.filter(|_| !is_too_deep);
+        let language = language.filter(|&it| self.spans.can_embed(it));
         if language.is_none() && self.container_depth > 0 {
             return self.raw_lines();
         }
@@ -1115,14 +1113,14 @@ impl RendererImpl for Highlighter<'_> {
             BlockType::Html => self.code_block(Some(Language::Html)),
             BlockType::Tr => (self.cell_end, self.row_end) = self.place,
             BlockType::Th | BlockType::Td => {
-                let (start, end) = self.place;
-                if start == self.cell_end + 1 {
-                    self.push(self.cell_end, start, Token::PunctuationDelimiter);
+                let (cell, cell_end) = self.place;
+                if cell == self.cell_end + 1 {
+                    self.push(self.cell_end, cell, Token::PunctuationDelimiter);
                 }
-                self.cell_end = end;
+                self.cell_end = cell_end;
                 if block_type == BlockType::Th {
-                    let text_start = skip_spaces(self.code, start);
-                    let text_end = skip_spaces_backwards(self.code, end);
+                    let text_start = skip_spaces(self.code, cell);
+                    let text_end = skip_spaces_backwards(self.code, cell_end);
                     self.push(text_start, text_end, Token::MarkupHeading);
                 }
             }

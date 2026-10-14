@@ -764,12 +764,14 @@ impl<'a, 's> Highlighter<'a, 's> {
             }
         }
         let (words_end, next) = self.end_of_words(index, to);
-        let name_end = self.name_end(end, words_end);
+        let behind_colons = end;
+        let name_end = self.name_end(behind_colons, words_end);
         self.name(start, name_end, words_end, Token::SelectorPseudo);
         if name_end < words_end {
             self.words(name_end, words_end, next);
         } else if self.is_before_paren(next, words_end) {
-            self.opens = Some((mode_in_pseudo(self.text(end, name_end)), Arguments::No));
+            let name = self.text(behind_colons, name_end);
+            self.opens = Some((mode_in_pseudo(name), Arguments::No));
         }
         next
     }

@@ -1590,12 +1590,8 @@ impl<'a> Repl<'a> {
     }
 
     fn write_highlighted(&self, text: &[u8]) {
-        use bun_core::output::{ColorDepth, Source};
         use bun_format::highlight::{self, AnsiStyles, Language, Scratch, Theme};
-        let depth = match Source::color_depth() {
-            ColorDepth::None => ColorDepth::C16,
-            depth => depth,
-        };
+        let depth = highlight::terminal_color_depth();
         let theme = Theme::built_in(bun_md::root::detect_light_background(), depth);
         let (mut scratch, mut out) = (Scratch::default(), Vec::new());
         let spans = highlight::highlight(text, Language::Tsx, &mut scratch);

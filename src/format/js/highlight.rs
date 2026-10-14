@@ -644,20 +644,18 @@ impl<'a> Highlighter<'a> {
         };
         let (code, count) = (self.file.text(), template.quasi_count());
         let (mut text, mut pieces) = (Vec::new(), Vec::with_capacity(count));
-        let mut is_unclosed = false;
         for index in 0..count {
             let span = template.quasi_span(index);
             let written = code.get(span.start as usize..span.end as usize)?;
-            let (from, to, is_closed) = text_of_template_piece(written);
+            let (from, to, _) = text_of_template_piece(written);
             if index > 0 {
                 text.extend_from_slice(hole);
             }
             pieces.push(text.len() as u32);
             text.extend_from_slice(written.get(from..to)?);
-            is_unclosed = !is_closed && span.end >= self.end;
         }
         Some(Embedded {
-            tokens: spans.tokens_of(language, &text, is_unclosed)?,
+            tokens: spans.tokens_of(language, &text)?,
             next: 0,
             pieces,
             next_piece: 0,
@@ -1055,10 +1053,11 @@ fn add_jsx_text(out: &mut Out, written: &[u8], start: u32, mark: Option<Token>) 
 fn add_doc_comment<'a>(out: &mut Out, file: &'a File<'a>, start: u32, end: u32) {
     let mut at = start;
     let mut add = |span: Span, token: Token| {
-        if span.start >= at && span.end <= end && span.start < span.end {
-            out.add(at, span.start, Token::CommentDoc);
-            out.add(span.start, span.end, token);
-            at = span.end;
+        let (from, to) = (span.start, span.end);
+        if from >= at && to <= end && from < to {
+            out.add(at, from, Token::CommentDoc);
+            out.add(from, to, token);
+            at = to;
         }
     };
     for tag in file.jsdoc().at(start).into_iter().flat_map(|it| it.tags()) {

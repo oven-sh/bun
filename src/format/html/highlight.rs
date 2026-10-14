@@ -421,8 +421,9 @@ impl<'a> Highlighter<'a, '_> {
             },
         );
         let has_value = self.peek().is_some_and(|next| {
+            let (behind_name, value) = (name.end, next.span.start);
             (next.kind == TokenType::AttrQuote || is_part_of_value(&next))
-                && strings::contains_char(Span::new(name.end, next.span.start).of(text), b'=')
+                && strings::contains_char(Span::new(behind_name, value).of(text), b'=')
         });
         match has_value {
             true => self.value(name_text),

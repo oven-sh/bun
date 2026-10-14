@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { basename, join } from "node:path";
@@ -120,6 +121,10 @@ describe("languages", () => {
     );
     // @ts-expect-error
     expect(() => trueColor.ansi(undefined, "js")).toThrow('The "code" argument must be of type string');
+    // @ts-expect-error
+    expect(() => Bun.highlight.html(123, "python")).toThrow('The "code" argument must be of type string');
+    // @ts-expect-error
+    expect(() => trueColor.ansi(undefined, "python")).toThrow('The "code" argument must be of type string');
   });
 });
 
@@ -448,6 +453,29 @@ describe("code in other code", () => {
     expect(inTag("style", `lang="postcss"`, "a{b:c}")).toContainEqual(["b", "property"]);
   });
 
+  test("a language can be in itself once", () => {
+    const code = "`````md\n# a\n````md\n# b\n```md\n# c\n```\n````\n`````\n";
+    expect(tokens(code, "md").filter(token => token[0].startsWith(" ") || token[0].startsWith("#"))).toEqual([
+      ["#", "punctuation.special"],
+      [" a", "markup.heading"],
+      ["# b", "markup.raw"],
+      ["# c", "markup.raw"],
+    ]);
+    // The same while it's being written.
+    expect(tokens("```md\n# a\n", "md")).toContainEqual([" a", "markup.heading"]);
+    expect(tokens("```md\n```md\n# a\n", "md")).toContainEqual(["# a", "markup.raw"]);
+    // JavaScript in HTML in JavaScript.
+    expect(tokensOf("html`<script>let a</script>`", "js", "let")).toEqual(["keyword"]);
+  });
+
+  test("math in Markdown after an escaped $", () => {
+    expect(tokens("\\$$a$ b", "md")).toEqual([
+      ["\\$", "string.escape"],
+      ["$a$", "markup.raw"],
+    ]);
+    expect(tokens("$$a$$", "md")).toEqual([["$$a$$", "markup.raw"]]);
+  });
+
   test("an escaped < or { in MDX is text", () => {
     expect(tokens("a \\<b> \\{c}", "mdx")).toEqual([
       ["\\<", "string.escape"],
@@ -600,6 +628,7 @@ describe("Theme", () => {
     [[1], 'The "styles" argument must be of type string or object'],
     [[null], 'The "styles" argument must be of type string or object'],
     [[{ keywrd: "red" }], '"keywrd" is not a token that a theme can style'],
+    [[{ "": "red" }], '"" is not a token that a theme can style'],
     [[{ keyword: "not a color" }], 'The property "keyword" is invalid'],
     [[{ keyword: "red blue" }], 'The property "keyword" is invalid'],
     [[{ keyword: "transparent" }], 'The property "keyword" is invalid. Expected an opaque CSS color'],
@@ -637,7 +666,7 @@ describe("Theme", () => {
   test("themes are collected", () => {
     for (let i = 0; i < 10_000; i++) new Theme({ keyword: "red" });
     Bun.gc(true);
-    expect(new Theme({ keyword: "#010203" }, { colorDepth: 24 }).ansi("if", "js")).toBe("\x1b[38;2;1;2;3mif\x1b[39m");
+    expect(heapStats().objectTypeCounts.Theme).toBeLessThan(1_000);
   });
 });
 
@@ -656,6 +685,19 @@ describe("Bun.markdown.ansi", () => {
       expect(stripAnsi(colored).replace(language, "unknown")).toBe(stripAnsi(plain));
       expect(colored.split("\x1b[").length).toBeGreaterThan(plain.split("\x1b[").length);
     }
+  });
+
+  test("uses the terminal's 16 colors, whatever the environment says", async () => {
+    const script =
+      'process.stdout.write(JSON.stringify(Bun.markdown.ansi("```js\\nlet a\\n```\\n", { colors: true })))';
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "3", COLORTERM: "truecolor" },
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toContain("\x1b[35mlet\x1b[39m a");
+    expect(exitCode).toBe(0);
   });
 
   test("a token that spans lines stays inside the box", () => {

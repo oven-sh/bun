@@ -139,7 +139,8 @@ impl<'a> Highlighter<'a, '_> {
                 continue;
             }
             if is_escaped {
-                self.add(start - 1, start, Token::StringEscape);
+                let backslash = start - 1;
+                self.add(backslash, backslash + 1, Token::StringEscape);
             }
             // `{{`, `{{~`
             let braces = start + 2 + usize::from(text.get(2) == Some(&b'~'));

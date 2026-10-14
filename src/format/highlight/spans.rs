@@ -22,8 +22,10 @@ pub struct Spans {
     pub(super) base: u32,
     /// Where that code ends in the whole text.
     pub(super) limit: u32,
-    /// A bit for the language being highlighted, and for each language around it whose code also ends at `limit`.
-    pub(super) ending_at_limit: u32,
+    /// A bit for the language being highlighted and for each language around it.
+    pub(super) once: u32,
+    /// A bit for each of them that is there twice.
+    pub(super) twice: u32,
     needs_sort: bool,
     needs_flattening: bool,
 }
@@ -32,7 +34,7 @@ impl Spans {
     pub(super) fn reset(&mut self, len: u32) {
         self.list.clear();
         self.flat.clear();
-        (self.base, self.limit, self.ending_at_limit) = (0, len, 0);
+        (self.base, self.limit, self.once, self.twice) = (0, len, 0, 0);
         (self.needs_sort, self.needs_flattening) = (false, false);
     }
 

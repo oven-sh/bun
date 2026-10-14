@@ -3532,7 +3532,8 @@ impl RunCommand {
         let image_base_dir: &[u8] = if !dir.is_empty() { dir } else { b"." };
 
         let light = md::detect_light_background();
-        let highlight = bun_format::highlight::for_markdown(light);
+        let depth = bun_format::highlight::terminal_color_depth();
+        let highlight = bun_format::highlight::for_markdown(light, depth);
         let theme = md::AnsiTheme {
             light,
             columns,

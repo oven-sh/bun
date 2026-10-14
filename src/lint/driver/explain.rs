@@ -362,7 +362,8 @@ pub(crate) fn explain(
     ]
     .concat();
     let light = detect_light_background();
-    let highlight = bun_format::highlight::for_markdown(light);
+    let depth = bun_format::highlight::terminal_color_depth();
+    let highlight = bun_format::highlight::for_markdown(light, depth);
     let theme = Theme {
         light,
         columns: (environment.columns)(),

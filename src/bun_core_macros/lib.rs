@@ -694,9 +694,11 @@ mod feature {
     include!("../bun_core/feature/ids.rs");
 }
 
-/// `lint, fmt` → 0b110
-fn set_of(features: &syn::punctuated::Punctuated<syn::Ident, Token![,]>) -> syn::Result<u64> {
-    let mut set = 0;
+/// `lint, fmt` → [2, 3], sorted
+fn numbers_of(
+    features: &syn::punctuated::Punctuated<syn::Ident, Token![,]>,
+) -> syn::Result<Vec<u32>> {
+    let mut numbers = Vec::new();
     for name in features {
         let Some(index) = feature::NAMES.iter().position(|known| name == known) else {
             let known = feature::NAMES.join(", ");
@@ -705,42 +707,43 @@ fn set_of(features: &syn::punctuated::Punctuated<syn::Ident, Token![,]>) -> syn:
                 format!("no such feature. There are: {known}"),
             ));
         };
-        set |= 1 << index;
+        numbers.push(index as u32 + 1);
     }
-    match set {
-        0 => Err(syn::Error::new(Span::call_site(), "of which feature?")),
-        _ => Ok(set),
+    numbers.sort_unstable();
+    numbers.dedup();
+    match numbers.is_empty() {
+        true => Err(syn::Error::new(Span::call_site(), "of which feature?")),
+        false => Ok(numbers),
     }
 }
 
 /// What the function behind `door` is called by the linker. A door and a function that do not agree on the features do not
 /// find each other.
-fn symbol_behind(set: u64, door: &syn::Ident) -> String {
-    format!("bun_feature_{set:x}_{door}")
+fn symbol_behind(features: &[u32], door: &syn::Ident) -> String {
+    let features: Vec<String> = features.iter().map(u32::to_string).collect();
+    format!("bun_feature_{}_{door}", features.join("_"))
 }
 
-/// A function that is one jump, to `real`, which `bun build --compile` can turn to `absent`.
+/// A function that goes to `real`, which `bun build --compile` can have go to `absent`.
 fn door_to(
     function: &syn::ItemFn,
-    set: u64,
+    features: &[u32],
     real: &syn::Ident,
     absent: &syn::Ident,
 ) -> proc_macro2::TokenStream {
     let syn::ItemFn {
         attrs, vis, sig, ..
     } = function;
-    let (low, high) = (set as u32, (set >> 32) as u32);
+    let mut rest = format!(".long {}\n", features.len());
+    for feature in features {
+        rest += &format!(".long {feature}\n");
+    }
+    rest += ".popsection";
     quote! {
         #(#attrs)*
         #[unsafe(naked)]
         #vis #sig {
-            ::core::arch::naked_asm!(
-                ::bun_core::__door!(),
-                real = sym #real,
-                absent = sym #absent,
-                low = const #low,
-                high = const #high,
-            )
+            ::core::arch::naked_asm!(::bun_core::__door!(), #rest, real = sym #real, absent = sym #absent)
         }
     }
 }
@@ -751,12 +754,12 @@ pub fn door(features: TokenStream, function: TokenStream) -> TokenStream {
     let parser = syn::punctuated::Punctuated::<syn::Ident, Token![,]>::parse_terminated;
     let features = parse_macro_input!(features with parser);
     let function = parse_macro_input!(function as syn::ItemFn);
-    let set = match set_of(&features) {
-        Ok(set) => set,
+    let numbers = match numbers_of(&features) {
+        Ok(numbers) => numbers,
         Err(e) => return e.to_compile_error().into(),
     };
     let name = &function.sig.ident;
-    let symbol = symbol_behind(set, name);
+    let symbol = symbol_behind(&numbers, name);
     let (real, absent) = (
         syn::Ident::new(&format!("{name}_with_the_feature"), name.span()),
         syn::Ident::new(&format!("{name}_without_the_feature"), name.span()),
@@ -768,7 +771,7 @@ pub fn door(features: TokenStream, function: TokenStream) -> TokenStream {
     without.sig.ident = absent.clone();
     without.vis = syn::Visibility::Inherited;
     without.attrs.clear();
-    let door = door_to(&function, set, &real, &absent);
+    let door = door_to(&function, &numbers, &real, &absent);
     quote! {
         unsafe extern #abi {
             #[link_name = #symbol]
@@ -800,11 +803,11 @@ impl Parse for Behind {
 pub fn behind(door: TokenStream, function: TokenStream) -> TokenStream {
     let Behind { door, features } = parse_macro_input!(door as Behind);
     let function = parse_macro_input!(function as syn::ItemFn);
-    let set = match set_of(&features) {
-        Ok(set) => set,
+    let numbers = match numbers_of(&features) {
+        Ok(numbers) => numbers,
         Err(e) => return e.to_compile_error().into(),
     };
-    let symbol = symbol_behind(set, &door.segments.last().unwrap().ident);
+    let symbol = symbol_behind(&numbers, &door.segments.last().unwrap().ident);
     let syn::Signature {
         unsafety,
         abi,
@@ -834,8 +837,8 @@ pub fn behind(door: TokenStream, function: TokenStream) -> TokenStream {
 pub fn present(features: TokenStream) -> TokenStream {
     let parser = syn::punctuated::Punctuated::<syn::Ident, Token![,]>::parse_terminated;
     let features = parse_macro_input!(features with parser);
-    let set = match set_of(&features) {
-        Ok(set) => set,
+    let numbers = match numbers_of(&features) {
+        Ok(numbers) => numbers,
         Err(e) => return e.to_compile_error().into(),
     };
     let function: syn::ItemFn = syn::parse_quote!(
@@ -845,7 +848,7 @@ pub fn present(features: TokenStream) -> TokenStream {
         syn::Ident::new("yes", Span::call_site()),
         syn::Ident::new("no", Span::call_site()),
     );
-    let door = door_to(&function, set, &yes, &no);
+    let door = door_to(&function, &numbers, &yes, &no);
     quote! {{
         fn yes() -> bool { true }
         fn no() -> bool { false }

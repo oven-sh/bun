@@ -6,7 +6,8 @@ use bun_core::strings;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_semver::{SlicedString, Version, query};
 
-pub fn create(global: &JSGlobalObject) -> JSValue {
+#[bun_core::feature::behind(bun_runtime::features::semver_object, semver)]
+fn create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::create_host_function_object(
         global,
         &[

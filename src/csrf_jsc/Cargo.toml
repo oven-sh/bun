@@ -1,0 +1,22 @@
+[package]
+name = "bun_csrf_jsc"
+version.workspace = true
+edition.workspace = true
+
+[package.metadata.bun]
+feature = "csrf"
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_boringssl_sys.workspace = true
+bun_core.workspace = true
+bun_csrf.workspace = true
+bun_jsc.workspace = true
+bun_runtime.workspace = true
+bun_sha_hmac.workspace = true
+bun_analytics.workspace = true

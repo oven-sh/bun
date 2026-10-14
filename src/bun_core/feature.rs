@@ -2,8 +2,10 @@
 //!
 //! A FEATURE IS CRATES THAT THE REST OF BUN DOES NOT DEPEND ON. They depend on Bun, like a plugin would, and are linked into
 //! it like everything else. So nothing outside can name what is in them, which the compiler sees to, and all of it can go:
-//! Bun's build has everything that is compiled for those crates put in sections of its own (scripts/build/feature-pass.cpp),
-//! and `bun build --compile` leaves those sections out (src/exe_features).
+//! Bun's build has the executable say where everything is that was compiled for those crates
+//! (scripts/build/feature-pass.cpp), and `bun build --compile` leaves that out (src/exe_features).
+//!
+//! There can be any number of features. Nothing about them is a bit in a word or a header of the executable.
 //!
 //! The crate that a feature starts at says so in its `Cargo.toml`:
 //!
@@ -41,15 +43,16 @@ mod ids;
 pub use bun_core_macros::{behind, door, present};
 use ids::NAMES;
 
-/// What a door is made of, for [`door`]: a no-op as long as a jump, the jump to `{real}`, and for `bun build --compile`, which
-/// reads these in the file it copies, where the no-op is and where `{absent}` is, as distances from here, and the features, a
-/// bit for each. It does not start with the jump, because a linker has what calls a jump call where that goes.
+/// What a door starts with, for [`door`]: a no-op as long as a jump, the jump to `{real}`, and for `bun build --compile`, which
+/// reads these in the file it copies, where the no-op is and where `{absent}` is, as distances from here. [`door`] has how
+/// many features follow, the features, and `.popsection`. A door does not start with the jump, because a linker has what
+/// calls a jump call where that goes.
 #[doc(hidden)]
 #[macro_export]
 #[cfg(all(target_arch = "x86_64", not(any(target_os = "macos", windows))))]
 macro_rules! __door {
     () => {
-        "2: .byte 0x0f, 0x1f, 0x44, 0x00, 0x00\njmp {real}\n.pushsection .bun_feature_doors,\"aR\",@progbits\n3: .long 2b - 3b\n.long {absent} - 3b\n.long {low}\n.long {high}\n.popsection"
+        "2: .byte 0x0f, 0x1f, 0x44, 0x00, 0x00\njmp {real}\n.pushsection .bun_feature_doors,\"aR\",@progbits\n3: .long 2b - 3b\n.long {absent} - 3b"
     };
 }
 #[doc(hidden)]
@@ -57,7 +60,7 @@ macro_rules! __door {
 #[cfg(all(target_arch = "aarch64", not(any(target_os = "macos", windows))))]
 macro_rules! __door {
     () => {
-        "2: nop\nb {real}\n.pushsection .bun_feature_doors,\"aR\",@progbits\n3: .long 2b - 3b\n.long {absent} - 3b\n.long {low}\n.long {high}\n.popsection"
+        "2: nop\nb {real}\n.pushsection .bun_feature_doors,\"aR\",@progbits\n3: .long 2b - 3b\n.long {absent} - 3b"
     };
 }
 // On x86-64 Mach-O a label can be subtracted only if a symbol the linker sees comes before it in its section.
@@ -66,7 +69,7 @@ macro_rules! __door {
 #[cfg(all(target_arch = "x86_64", target_os = "macos"))]
 macro_rules! __door {
     () => {
-        "2: .byte 0x0f, 0x1f, 0x44, 0x00, 0x00\njmp {real}\n.pushsection __TEXT,__bun_feat_door,regular,no_dead_strip\n.ifndef l_bun_feat_door\nl_bun_feat_door:\n.endif\n3: .long 2b - 3b\n.long {absent} - 3b\n.long {low}\n.long {high}\n.popsection"
+        "2: .byte 0x0f, 0x1f, 0x44, 0x00, 0x00\njmp {real}\n.pushsection __TEXT,__bun_feat_door,regular,no_dead_strip\n.ifndef l_bun_feat_door\nl_bun_feat_door:\n.endif\n3: .long 2b - 3b\n.long {absent} - 3b"
     };
 }
 #[doc(hidden)]
@@ -74,7 +77,7 @@ macro_rules! __door {
 #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
 macro_rules! __door {
     () => {
-        "2: nop\nb {real}\n.pushsection __TEXT,__bun_feat_door,regular,no_dead_strip\n.ifndef l_bun_feat_door\nl_bun_feat_door:\n.endif\n3: .long 2b - 3b\n.long {absent} - 3b\n.long {low}\n.long {high}\n.popsection"
+        "2: nop\nb {real}\n.pushsection __TEXT,__bun_feat_door,regular,no_dead_strip\n.ifndef l_bun_feat_door\nl_bun_feat_door:\n.endif\n3: .long 2b - 3b\n.long {absent} - 3b"
     };
 }
 #[doc(hidden)]
@@ -82,7 +85,7 @@ macro_rules! __door {
 #[cfg(all(target_arch = "x86_64", windows))]
 macro_rules! __door {
     () => {
-        "2: .byte 0x0f, 0x1f, 0x44, 0x00, 0x00\njmp {real}\n.pushsection .bunfdor,\"dr\"\n3: .long 2b - 3b\n.long {absent} - 3b\n.long {low}\n.long {high}\n.popsection"
+        "2: .byte 0x0f, 0x1f, 0x44, 0x00, 0x00\njmp {real}\n.pushsection .bunfdor,\"dr\"\n3: .long 2b - 3b\n.long {absent} - 3b"
     };
 }
 #[doc(hidden)]
@@ -90,7 +93,7 @@ macro_rules! __door {
 #[cfg(all(target_arch = "aarch64", windows))]
 macro_rules! __door {
     () => {
-        "2: nop\nb {real}\n.pushsection .bunfdor,\"dr\"\n3: .long 2b - 3b\n.long {absent} - 3b\n.long {low}\n.long {high}\n.popsection"
+        "2: nop\nb {real}\n.pushsection .bunfdor,\"dr\"\n3: .long 2b - 3b\n.long {absent} - 3b"
     };
 }
 

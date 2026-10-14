@@ -71,19 +71,18 @@ export function featuresThatNeed(units: RustUnit[], root: RustUnit): Map<RustUni
   return needs;
 }
 
-/** `["lint", "fmt"]` → `"6"`: a bit for each, in hex. */
-function setOf(cfg: Config, crate: string, features: string[]): string {
+/** `["lint", "fmt"]` → `"2,3"` */
+function numbersOf(cfg: Config, crate: string, features: string[]): string {
   const ids = readFileSync(resolve(cfg.cwd, "src", "bun_core", "feature", "ids.rs"), "utf8");
   const names = [...(/NAMES: \[&str; \d+\] = \[([^\]]*)\]/.exec(ids)?.[1] ?? "").matchAll(/"([^"]+)"/g)].map(
     m => m[1]!,
   );
-  let set = 0n;
-  for (const feature of features) {
+  const numbers = features.map(feature => {
     const index = names.indexOf(feature);
     if (index < 0) throw new BuildError(`${crate}: there is no feature "${feature}". There are: ${names.join(", ")}`);
-    set |= 1n << BigInt(index);
-  }
-  return set.toString(16);
+    return index + 1;
+  });
+  return numbers.sort((a, b) => a - b).join(",");
 }
 
 /** What rustc is given for a crate that `features` need: arguments, after everything else, and environment. */
@@ -102,6 +101,6 @@ export function featureFlags(
       ...features.flatMap(feature => ["--cfg", `bun_needed_by="${feature}"`]),
       ...(pass !== undefined ? [`-Zllvm-plugins=${pass}`] : []),
     ],
-    env: pass !== undefined ? { BUN_FEATURES: setOf(cfg, crate, features) } : {},
+    env: pass !== undefined ? { BUN_FEATURES: numbersOf(cfg, crate, features) } : {},
   };
 }

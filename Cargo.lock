@@ -138,9 +138,11 @@ name = "bun_all"
 version = "0.0.0"
 dependencies = [
  "bun_check_command",
+ "bun_csrf_jsc",
  "bun_format_command",
  "bun_lint_command",
  "bun_runtime",
+ "bun_semver_jsc",
 ]
 
 [[package]]
@@ -474,6 +476,19 @@ dependencies = [
  "bun_core",
  "bun_sha_hmac",
  "strum",
+]
+
+[[package]]
+name = "bun_csrf_jsc"
+version = "0.0.0"
+dependencies = [
+ "bun_analytics",
+ "bun_boringssl_sys",
+ "bun_core",
+ "bun_csrf",
+ "bun_jsc",
+ "bun_runtime",
+ "bun_sha_hmac",
 ]
 
 [[package]]
@@ -1543,7 +1558,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_crash_handler",
- "bun_csrf",
  "bun_css",
  "bun_css_jsc",
  "bun_dns",
@@ -1585,7 +1599,6 @@ dependencies = [
  "bun_s3_signing",
  "bun_safety",
  "bun_semver",
- "bun_semver_jsc",
  "bun_sha_hmac",
  "bun_shell_parser",
  "bun_simdutf_sys",
@@ -1742,6 +1755,7 @@ dependencies = [
  "bstr",
  "bun_core",
  "bun_jsc",
+ "bun_runtime",
  "bun_semver",
 ]
 

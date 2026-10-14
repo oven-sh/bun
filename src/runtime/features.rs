@@ -2,8 +2,8 @@
 
 use bun_bundler::options::TypeChecked;
 use bun_core::{Global, Output, ZStr, feature};
-use bun_jsc::JSGlobalObject;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_jsc::{JSGlobalObject, JSValue};
 use bun_options_types::context::ContextData;
 
 pub use crate::cli::arguments::disallow_code_generation_from_strings_as_compiled;
@@ -183,3 +183,22 @@ pub fn is_flag_of_format(flag: &[u8]) -> bool {
 /// The flags, for `bun fmt --help`.
 #[feature::door(fmt)]
 pub fn print_flags_of_format(all: bool) {}
+
+// ───────────────────────────────────────────────────────────────────────────
+// Bun.*
+// ───────────────────────────────────────────────────────────────────────────
+
+pub use crate::crypto::evp::lookup_ignore_case as lookup_digest_ignore_case;
+pub use crate::node::types::Encoding as NodeEncoding;
+
+/// `Bun.semver`
+#[feature::door(semver)]
+pub fn semver_object(global: &JSGlobalObject) -> JSValue {
+    JSValue::UNDEFINED
+}
+
+/// `Bun.CSRF`
+#[feature::door(csrf)]
+pub fn csrf_object(global: &JSGlobalObject) -> JSValue {
+    JSValue::UNDEFINED
+}

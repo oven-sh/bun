@@ -1,12 +1,15 @@
 //! Leaves features out of a bun executable, for `bun build --compile --compile-exclude-features`.
 //!
-//! `bun_core::feature` says what a feature is. In the executable, what is compiled for it is in sections of its own, which have
-//! in their names the features that need them, and the rest of Bun gets into it through doors, which are jumps. Leaving
-//! features out is then
+//! `bun_core::feature` says what a feature is. The executable says, in records, where the parts are that were compiled for
+//! features, with the features that need each, and where the doors are through which the rest of Bun gets into them.
+//! Leaving features out is then
 //!
 //! 1. shut their doors: have each go to what Bun does without the feature,
-//! 2. overwrite the sections that no other feature needs, with an instruction that traps,
+//! 2. overwrite the parts that no other feature needs, with an instruction that traps,
 //! 3. leave the pages that hold nothing else out of the file.
+//!
+//! The first two are done to all of it, however many features there are and however small. The third is a matter of size
+//! only: a loader takes a file in whole pages and in no more than so many pieces, so the largest go.
 //!
 //! Nothing moves. Every byte that stays is loaded at the address it was linked for, so no address stored anywhere has to be
 //! found or changed: not in code, not in data, not in symbols, debug information or unwind tables, and a crash report has
@@ -105,23 +108,17 @@ impl Container {
         Ok(sections)
     }
 
-    /// What the section with the names of the features is called and the one with the doors (`bun_core::feature`), and, up to
-    /// the features that need it, one with code and one with constants (scripts/build/feature-pass.cpp).
-    fn names(self) -> [&'static [u8]; 4] {
+    /// What the section with the names of the features is called, the one with the doors (`bun_core::feature`) and the one
+    /// with the parts (scripts/build/feature-pass.cpp).
+    fn names(self) -> [&'static [u8]; 3] {
         match self {
             Container::Elf => [
                 b".bun_feature_names",
                 b".bun_feature_doors",
-                b".bun_feature_x.",
-                b".bun_feature_r.",
+                b".bun_feature_parts",
             ],
-            Container::MachO => [
-                b"__bun_feat_names",
-                b"__bun_feat_door",
-                b"__bun_feat_x",
-                b"__bun_feat_r",
-            ],
-            Container::Pe => [b".bunfnam", b".bunfdor", b".bfx", b".bfr"],
+            Container::MachO => [b"__bun_feat_names", b"__bun_feat_door", b"__bun_feat_part"],
+            Container::Pe => [b".bunfnam", b".bunfdor", b".bunfprt"],
         }
     }
 
@@ -175,79 +172,138 @@ fn shut(is_arm64: bool, no_op: &mut [u8], at: u64, to: u64) -> Result<()> {
     Ok(())
 }
 
+/// A record of a door or of a part: {an address, an address, how many features, the features}, in words of 32 bits. The
+/// addresses are distances from the record.
+struct Record {
+    first: u64,
+    second: u64,
+    /// None of its features stays.
+    is_excluded: bool,
+}
+
+/// The records in the sections `called`. `is_excluded` is of the features, the first of which is number 1.
+fn records(
+    file: &[u8],
+    sections: &[Section<'_>],
+    called: &[u8],
+    is_excluded: &[bool],
+) -> Result<Vec<Record>> {
+    let mut records = Vec::new();
+    for section in sections.iter().filter(|s| s.name == called) {
+        let length = (section.addresses.end - section.addresses.start) as usize;
+        let words = slice(file, section.offset, length)?;
+        let mut at = 0;
+        while at < words.len() {
+            let address = section.addresses.start + at as u64;
+            let count = u32_at(words, at + 8)? as usize;
+            let features = slice(
+                words,
+                at + 12,
+                count.checked_mul(4).ok_or(Error::InvalidExecutable)?,
+            )?;
+            let mut all = count > 0;
+            for feature in features.as_chunks::<4>().0 {
+                let number = u32::from_le_bytes(*feature) as usize;
+                let index = number.checked_sub(1).ok_or(Error::InvalidExecutable)?;
+                all &= *is_excluded.get(index).ok_or(Error::InvalidExecutable)?;
+            }
+            if count == 0 {
+                return Err(Error::InvalidExecutable);
+            }
+            records.push(Record {
+                first: address.wrapping_add_signed(i32_at(words, at)?.into()),
+                second: address.wrapping_add_signed(i32_at(words, at + 4)?.into()),
+                is_excluded: all,
+            });
+            at += 12 + features.len();
+        }
+    }
+    Ok(records)
+}
+
 /// `file`, an executable, without the features `excluded`.
 pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
     let container = Container::of(&file)?;
     let is_arm64 = container.is_arm64(&file)?;
-    let [called_names, called_doors, code, constants] = container.names();
+    let [called_names, called_doors, called_parts] = container.names();
 
     // ---- what to do, read from the file. Then the file is written to.
     let mut to_shut: Vec<(usize, u64, u64)> = Vec::new();
     let mut traps: Vec<(usize, Range<u64>)> = Vec::new();
     let mut dead: Vec<Range<u64>> = Vec::new();
-    let names_at;
+    let mut spent: Vec<(usize, usize)> = Vec::new();
     {
         let sections = container.sections(&file)?;
         let names = names_in(&file, &sections, called_names)?;
-        if names.len() > 64 {
-            return Err(Error::InvalidExecutable);
-        }
         if !excluded.iter().all(|name| names.contains(name)) {
             return Err(Error::NoSuchFeature);
         }
-        let bit_if_excluded = |(index, name)| u64::from(excluded.contains(name)) << index;
-        let excluded: u64 = names.iter().enumerate().map(bit_if_excluded).sum();
-        let offset_of = |address: u64| {
-            let holds = |s: &&Section<'_>| s.addresses.contains(&address);
-            let section = sections
+        let is_excluded: Vec<bool> = names.iter().map(|name| excluded.contains(name)).collect();
+        let index_of = |address: u64| {
+            let holds = |s: &Section<'_>| s.addresses.contains(&address);
+            sections
                 .iter()
-                .find(holds)
-                .ok_or(Error::InvalidExecutable)?;
-            Ok(section.offset + (address - section.addresses.start) as usize)
+                .position(holds)
+                .ok_or(Error::InvalidExecutable)
         };
+        let offset_in =
+            |s: &Section<'_>, address: u64| s.offset + (address - s.addresses.start) as usize;
 
-        // {the door, where it goes without the features, the features}, the first two as distances from the record.
-        for doors in sections.iter().filter(|s| s.name == called_doors) {
-            for record in doors.addresses.clone().step_by(16) {
-                let at = offset_of(record)?;
-                let of =
-                    u64::from(u32_at(&file, at + 8)?) | u64::from(u32_at(&file, at + 12)?) << 32;
-                if of == 0 || of >> names.len() != 0 {
-                    return Err(Error::InvalidExecutable);
-                }
-                if of & !excluded == 0 {
-                    let door = record.wrapping_add_signed(i32_at(&file, at)?.into());
-                    let absent = record.wrapping_add_signed(i32_at(&file, at + 4)?.into());
-                    to_shut.push((offset_of(door)?, door, absent));
-                }
+        // {the door, where it goes without the features}
+        for door in records(&file, &sections, called_doors, &is_excluded)? {
+            if door.is_excluded {
+                let at = offset_in(&sections[index_of(door.first)?], door.first);
+                to_shut.push((at, door.first, door.second));
             }
         }
 
-        let mut follows_a_dead_one = false;
-        for section in &sections {
-            let needed_by =
-                (section.name.strip_prefix(code)).or(section.name.strip_prefix(constants));
-            let needed_by =
-                needed_by.and_then(|hex| u64::from_str_radix(str::from_utf8(hex).ok()?, 16).ok());
-            if needed_by.is_some_and(|set| set == 0 || set >> names.len() != 0) {
+        // {where it starts, where it ends}, in one section.
+        let mut parts = records(&file, &sections, called_parts, &is_excluded)?;
+        parts.sort_by_key(|part| part.first);
+        let mut before: Option<(&Record, usize)> = None;
+        for part in &parts {
+            let index = index_of(part.first)?;
+            let section = &sections[index];
+            if part.second < part.first
+                || part.second > section.addresses.end
+                || before.is_some_and(|(before, _)| before.second > part.first)
+            {
                 return Err(Error::InvalidExecutable);
             }
-            let is_dead = needed_by.is_some_and(|set| set & !excluded == 0);
-            if is_dead {
-                traps.push((section.offset, section.addresses.clone()));
-                match dead.last_mut() {
-                    // Between two sections there is only padding.
-                    Some(last) if follows_a_dead_one => last.end = section.addresses.end,
-                    _ => dead.push(section.addresses.clone()),
+            if part.is_excluded {
+                // A linker keeps what an object has in a section together, and between two sections there is only padding. So
+                // what is between two parts that follow each other is of the one, of the other, or padding, and goes if
+                // both do.
+                match before.filter(|(before, _)| before.is_excluded) {
+                    Some((before, same)) if same == index => {
+                        traps.push((
+                            offset_in(section, before.second),
+                            before.second..part.second,
+                        ));
+                    }
+                    Some((before, previous)) if previous + 1 == index => {
+                        let previous = &sections[previous];
+                        let rest = before.second..previous.addresses.end;
+                        traps.push((offset_in(previous, rest.start), rest));
+                        traps.push((section.offset, section.addresses.start..part.second));
+                    }
+                    _ => {
+                        traps.push((offset_in(section, part.first), part.first..part.second));
+                        dead.push(part.first..part.first);
+                    }
                 }
+                dead.last_mut().ok_or(Error::InvalidExecutable)?.end = part.second;
             }
-            follows_a_dead_one = is_dead;
+            before = Some((part, index));
         }
-        let names = (sections.iter().find(|s| s.name == called_names)).ok_or(Error::NoFeatures)?;
-        names_at = (
-            names.offset,
-            (names.addresses.end - names.addresses.start) as usize,
-        );
+
+        // An executable with features left out does not say what can be left out: the room for more headers is used up.
+        for section in &sections {
+            if [called_names, called_doors, called_parts].contains(&section.name) {
+                let length = (section.addresses.end - section.addresses.start) as usize;
+                spent.push((section.offset, length));
+            }
+        }
     }
 
     for (at, door, absent) in to_shut {
@@ -269,7 +325,8 @@ pub fn without(mut file: Vec<u8>, excluded: &[&[u8]]) -> Result<Vec<u8>> {
             *byte = trap[address % trap.len()];
         }
     }
-    // The room for more headers is used up.
-    slice_mut(&mut file, names_at.0, names_at.1)?.fill(0);
+    for (at, length) in spent {
+        slice_mut(&mut file, at, length)?.fill(0);
+    }
     container.without_pages(&file, &dead)
 }

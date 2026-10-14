@@ -4,11 +4,10 @@
 use bun_boringssl_sys as boring;
 use bun_core::Utf8Bytes;
 use bun_csrf as csrf;
-use bun_jsc::{CallFrame, IntegerRange, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, IntegerRange, JSFunction, JSGlobalObject, JSValue, JsResult};
 
-use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
-use crate::crypto::evp;
-use crate::node::Encoding as NodeEncoding;
+use bun_runtime::features::{NodeEncoding, lookup_digest_ignore_case};
+use bun_sha_hmac::evp::Algorithm as EvpAlgorithm;
 
 // `bun_jsc::comptime_string_map_jsc` only exposes the case-sensitive `from_js`;
 // map keys are all lower-case ASCII, so lower the probe and do a direct lookup
@@ -18,7 +17,7 @@ fn algorithm_from_js_case_insensitive(
     input: JSValue,
 ) -> JsResult<Option<EvpAlgorithm>> {
     let slice = input.to_utf8(global)?;
-    Ok(evp::lookup_ignore_case(slice.slice()))
+    Ok(lookup_digest_ignore_case(slice.slice()))
 }
 
 /// `expiresIn` / `maxAge`. NaN maps to the default, and `0` would mean "no expiry".
@@ -68,7 +67,7 @@ fn get_optional_token_format(
 /// JS binding function for generating CSRF tokens
 /// First argument is secret (required), second is options (optional)
 #[bun_jsc::host_fn]
-pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn csrf_generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_analytics::features::csrf_generate.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
     // We should have at least one argument (secret)
@@ -186,7 +185,7 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
 /// JS binding function for verifying CSRF tokens
 /// First argument is token (required), second is options (optional)
 #[bun_jsc::host_fn]
-pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+fn csrf_verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_analytics::features::csrf_verify.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // We should have at least one argument (token)
     let args = frame.arguments();
@@ -290,4 +289,66 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
     });
 
     Ok(JSValue::from(is_valid))
+}
+
+#[bun_core::feature::behind(bun_runtime::features::csrf_object, csrf)]
+fn csrf_object(global: &JSGlobalObject) -> JSValue {
+    CSRFObject::create(global)
+}
+
+struct CSRFObject;
+
+impl CSRFObject {
+    fn create(global_this: &JSGlobalObject) -> JSValue {
+        let object = JSValue::create_empty_object(global_this, 2);
+
+        // NOTE: `JSFunction::create` takes the raw JSC-ABI host fn pointer,
+        // so wrap the safe Rust-style `JsResult` fns via `to_js_host_call`.
+        bun_jsc::jsc_host_abi! {
+            unsafe fn csrf_generate_shim(
+                g: *mut JSGlobalObject,
+                f: *mut CallFrame,
+            ) -> JSValue {
+                // SAFETY: JSC always passes valid pointers here.
+                let (g, f) = unsafe { (&*g, &*f) };
+                bun_jsc::to_js_host_call(g, || csrf_generate(g, f))
+            }
+        }
+        bun_jsc::jsc_host_abi! {
+            unsafe fn csrf_verify_shim(
+                g: *mut JSGlobalObject,
+                f: *mut CallFrame,
+            ) -> JSValue {
+                // SAFETY: JSC always passes valid pointers here.
+                let (g, f) = unsafe { (&*g, &*f) };
+                bun_jsc::to_js_host_call(g, || csrf_verify(g, f))
+            }
+        }
+
+        object.put(
+            global_this,
+            b"generate",
+            JSFunction::create(
+                global_this,
+                "generate",
+                csrf_generate_shim,
+                1,
+                Default::default(),
+            ),
+        );
+
+        object.put(
+            global_this,
+            b"verify",
+            JSFunction::create(
+                global_this,
+                "verify",
+                csrf_verify_shim,
+                1,
+                Default::default(),
+            ),
+        );
+
+        object
+    }
 }

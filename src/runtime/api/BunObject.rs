@@ -80,7 +80,6 @@ use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
 
-use crate::api::csrf_jsc;
 use crate::api::{HashObject, JSON5Object, TOMLObject, UnsafeObject, XMLObject, YAMLObject};
 use crate::crypto as Crypto;
 use crate::node;
@@ -1896,7 +1895,7 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
 }
 
 fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    bun_semver_jsc::SemverObject::create(global_this)
+    crate::features::semver_object(global_this)
 }
 
 fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -1906,64 +1905,7 @@ fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
 /// EnvironmentVariables is runtime defined.
 /// Also, you can't iterate over process.env normally since it only exists at build-time otherwise
 fn get_csrf_object(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
-    CSRFObject::create(global_object)
-}
-
-struct CSRFObject;
-
-impl CSRFObject {
-    fn create(global_this: &JSGlobalObject) -> JSValue {
-        let object = JSValue::create_empty_object(global_this, 2);
-
-        // NOTE: `JSFunction::create` takes the raw JSC-ABI host fn pointer,
-        // so wrap the safe Rust-style `JsResult` fns via `to_js_host_call`.
-        bun_jsc::jsc_host_abi! {
-            unsafe fn csrf_generate_shim(
-                g: *mut JSGlobalObject,
-                f: *mut CallFrame,
-            ) -> JSValue {
-                // SAFETY: JSC always passes valid pointers here.
-                let (g, f) = unsafe { (&*g, &*f) };
-                bun_jsc::to_js_host_call(g, || csrf_jsc::csrf__generate(g, f))
-            }
-        }
-        bun_jsc::jsc_host_abi! {
-            unsafe fn csrf_verify_shim(
-                g: *mut JSGlobalObject,
-                f: *mut CallFrame,
-            ) -> JSValue {
-                // SAFETY: JSC always passes valid pointers here.
-                let (g, f) = unsafe { (&*g, &*f) };
-                bun_jsc::to_js_host_call(g, || csrf_jsc::csrf__verify(g, f))
-            }
-        }
-
-        object.put(
-            global_this,
-            b"generate",
-            JSFunction::create(
-                global_this,
-                "generate",
-                csrf_generate_shim,
-                1,
-                Default::default(),
-            ),
-        );
-
-        object.put(
-            global_this,
-            b"verify",
-            JSFunction::create(
-                global_this,
-                "verify",
-                csrf_verify_shim,
-                1,
-                Default::default(),
-            ),
-        );
-
-        object
-    }
+    crate::features::csrf_object(global_object)
 }
 
 // This is aliased to Bun.env

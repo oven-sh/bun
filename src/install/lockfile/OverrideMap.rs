@@ -68,11 +68,22 @@ fn cmp_range_text(l: &ScopedOverride, r: &ScopedOverride, buf: &[u8]) -> Orderin
     })
 }
 
-/// dependency id -> owning package id, filled lazily because packages are only ever appended while a map is live.
+/// dependency id -> owning package id, filled lazily. Checked on use: the folder resolver replaces a package's rows.
 #[derive(Default)]
 struct OwnerIndex {
     by_dep: Vec<PackageID>,
     packages_indexed: usize,
+}
+
+impl OwnerIndex {
+    fn record(&mut self, owner: PackageID, rows: super::DependencySlice, dependencies_len: usize) {
+        let end = (rows.end() as usize).min(dependencies_len);
+        let begin = (rows.begin() as usize).min(end);
+        if end > self.by_dep.len() {
+            self.by_dep.resize(end, invalid_package_id);
+        }
+        self.by_dep[begin..end].fill(owner);
+    }
 }
 
 #[derive(Default)]
@@ -267,12 +278,7 @@ impl OverrideMap {
         let index = &mut *index;
         if index.packages_indexed < dep_slices.len() {
             for (pkg_id, slice) in dep_slices.iter().enumerate().skip(index.packages_indexed) {
-                let end = (slice.end() as usize).min(dependencies_len);
-                let begin = (slice.begin() as usize).min(end);
-                if end > index.by_dep.len() {
-                    index.by_dep.resize(end, invalid_package_id);
-                }
-                index.by_dep[begin..end].fill(pkg_id as PackageID);
+                index.record(pkg_id as PackageID, *slice, dependencies_len);
             }
             index.packages_indexed = dep_slices.len();
         }
@@ -281,10 +287,17 @@ impl OverrideMap {
             .get(dependency_id as usize)
             .copied()
             .unwrap_or(invalid_package_id);
-        debug_assert!(
-            owner == invalid_package_id || dep_slices[owner as usize].contains(dependency_id)
-        );
-        owner
+        if owner != invalid_package_id && dep_slices[owner as usize].contains(dependency_id) {
+            return owner;
+        }
+        let Some(owner) = dep_slices
+            .iter()
+            .position(|slice| slice.contains(dependency_id))
+        else {
+            return invalid_package_id;
+        };
+        index.record(owner as PackageID, dep_slices[owner], dependencies_len);
+        owner as PackageID
     }
 
     /// Plain rules only: a scoped rule does not make every edge of this name root-authored (trust checks in PackageManagerEnqueue.rs / PackageInstaller.rs).

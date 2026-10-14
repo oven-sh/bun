@@ -123,8 +123,10 @@ function windowProperties(win: any, additionalKeys: string[]): Pick<Environment,
 // Like vitest and Jest, report window errors to the runner unless the file has its own "error" listener.
 // Only addEventListener/removeEventListener calls are counted, so `once`, `signal` and `onerror` are ignored.
 function catchWindowErrors(win: any, properties: Properties) {
+  // Counted as vitest counts them: adding a listener twice counts twice, and so does removing one that was never added.
   let listenersOfPreloads = 0;
   let listenersOfFile = 0;
+  const addedByPreloads = new $Map<unknown, true>();
   const addEventListener = win.addEventListener.bind(win);
   const removeEventListener = win.removeEventListener.bind(win);
   function report(event: ErrorEvent) {
@@ -144,14 +146,17 @@ function catchWindowErrors(win: any, properties: Properties) {
   addEventListener("error", (event: ErrorEvent) => void (event.eventPhase === 3 /* BUBBLING_PHASE */ && report(event)));
   properties.$get("addEventListener")!.set!(function (this: unknown, ...args: unknown[]) {
     if (args[0] === "error") {
-      if (isInPreload()) listenersOfPreloads++;
-      else listenersOfFile++;
+      if (isInPreload()) {
+        listenersOfPreloads++;
+        addedByPreloads.$set(args[1], true);
+      } else listenersOfFile++;
     }
     return addEventListener.$apply(this, args);
   });
   properties.$get("removeEventListener")!.set!(function (this: unknown, ...args: unknown[]) {
     if (args[0] === "error" && listenersOfPreloads + listenersOfFile > 0) {
-      if (isInPreload()) listenersOfPreloads--;
+      // listenersOfFile is reset after each file, so a preload's listener that a file removes has to come off the other count.
+      if (isInPreload() || addedByPreloads.$delete(args[1])) listenersOfPreloads--;
       else listenersOfFile--;
     }
     return removeEventListener.$apply(this, args);

@@ -1539,7 +1539,7 @@ describe.concurrent("test environment with the real", () => {
         test("not reported", throwInListener);`;
       using dir = project({
         "preload.js": `window.addEventListener("error", event => console.log(event.error.message));`,
-        "1.test.js": `${file}\ntest("counts one listener less", () => window.removeEventListener("error", () => {}));`,
+        "1.test.js": `${file}\ntest("removes a listener that was never added", () => window.removeEventListener("error", () => {}));`,
         "2.test.js": file,
       });
       const { stdout, stderr, exitCode } = await bunTest(
@@ -1551,6 +1551,23 @@ describe.concurrent("test environment with the real", () => {
       expect(stdout).toEqual(["from the listener", "from the listener"]);
       expect(summary(stderr)).toEqual(["3 pass", "0 fail"]);
       expect(exitCode).toBe(0);
+    });
+
+    test("errors are reported again once a file removes the preload's listener", async () => {
+      const file = (title: string) => `// ${VITEST} jsdom
+        import { test } from "bun:test";
+        ${throwInListener}
+        test("${title}", throwInListener);`;
+      using dir = project({
+        "preload.js": `window.addEventListener("error", (globalThis.preloadListener = () => {}));`,
+        "1.test.js": `${file("not reported")}\ntest("removes it", () => window.removeEventListener("error", preloadListener));`,
+        "2.test.js": file("reported"),
+      });
+      const { stderr, exitCode } = await bunTest(String(dir), "--environment=jsdom", "--preload=./preload.js");
+      expect(stderr).toContain("(pass) not reported");
+      expect(stderr).toContain("(fail) reported");
+      expect(summary(stderr)).toEqual(["2 pass", "1 fail"]);
+      expect(exitCode).toBe(1);
     });
   });
 

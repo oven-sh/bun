@@ -1,7 +1,9 @@
 // send(), ping() and pong() of a `ws` server socket, against a raw TCP client. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { randomBytes } from "node:crypto";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
 import { constants, inflateRawSync } from "node:zlib";
 import type { WebSocket as Socket } from "ws";
 import {
@@ -14,6 +16,7 @@ import {
   type RawClient,
   show,
   showFrame,
+  upgradeRequest,
 } from "./ws-raw-peer";
 
 const MiB = 1024 * 1024;
@@ -505,6 +508,48 @@ describe.each(implementations)("ws server, sending ($name)", ({ ws: implementati
       // The Pong of the round trip itself shows that Pings are answered again.
       expect(await client.roundTrip()).toEqual([]);
     });
+
+    // A send() flushes what waits before it, so it can be the first to find the socket free again. The client reads
+    // in another process, while this one does not return to its event loop. npm ws only writes from the event loop.
+    test.skipIf(!builtin)(
+      "callbacks run in the order of the calls when a later send() finds the socket free",
+      async () => {
+        const wss = new implementation.WebSocketServer({ port: 0, host: "127.0.0.1" });
+        await once(wss, "listening");
+        await using reader = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const socket = require("node:net").connect(${(wss.address() as AddressInfo).port}, "127.0.0.1");
+           socket.write(${JSON.stringify(upgradeRequest())});
+           socket.resume();`,
+          ],
+          env: bunEnv,
+          stdout: "inherit",
+          stderr: "inherit",
+        });
+        try {
+          const [ws] = (await once(wss, "connection")) as [Socket];
+          const order: number[] = [];
+          const { promise: done, resolve } = Promise.withResolvers<void>();
+          let calls = 0;
+          const send = (data: Buffer) => {
+            const call = calls++;
+            ws.send(data, () => order.push(call) === calls && resolve());
+          };
+          send(Buffer.alloc(8 * MiB));
+          expect(ws.bufferedAmount).toBeGreaterThan(0);
+          const one = Buffer.alloc(1);
+          while (ws.bufferedAmount > 0) send(one);
+          await done;
+          expect(order).toEqual(Array.from({ length: calls }, (_, call) => call));
+        } finally {
+          reader.kill();
+          for (const client of wss.clients) client.terminate();
+          wss.close();
+        }
+      },
+    );
 
     // Bun.serve() drops a message when 16 MiB wait for the socket already. A `ws` socket has no such limit.
     test("messages and their callbacks wait, past 16 MiB, then each message arrives once, whole and in order", async () => {

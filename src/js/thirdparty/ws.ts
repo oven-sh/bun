@@ -1494,9 +1494,19 @@ function nativeBufferedAmount(websocket: WebSocket): number {
 
 // A callback runs once its frame has left for the kernel, like the callback of `socket.write()`.
 function written(websocket: WebSocket, buffered: boolean, cb: SendCallback | undefined): void {
-  if (!cb) return;
-  if (buffered) (websocket[kCallbacks] ??= []).push(cb);
-  else process.nextTick(cb, null);
+  if (buffered) {
+    if (cb) (websocket[kCallbacks] ??= []).push(cb);
+    return;
+  }
+
+  // Nothing waits any more, so the frames before this one have left too. Their callbacks come first.
+  const earlier = websocket[kCallbacks];
+  if (earlier !== null) {
+    websocket[kCallbacks] = null;
+    for (let i = 0; i < earlier.length; i++) process.nextTick(earlier[i], null);
+  }
+
+  if (cb) process.nextTick(cb, null);
 }
 
 // The engine has no frame to write any more: the `write` handler did not run.
@@ -2721,7 +2731,7 @@ function initAsClient(
   // Throws for a header that cannot be sent.
   if (!opts.finishRequest) req.end();
 
-  if (handshakeTimeout) {
+  if (handshakeTimeout && !req.destroyed) {
     websocket[kHandshakeTimer] = setTimeout(handshakeOnTimeout, handshakeTimeout, websocket);
   }
 

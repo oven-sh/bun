@@ -664,6 +664,19 @@ describe.each(implementations)("ws client, opening ($name)", ({ ws: implementati
       ]);
     });
 
+    // The process ends once no timer is left, so one that still runs would be heard.
+    test.skipIf(!builtin)("..., and leaves no `handshakeTimeout` timer behind", async () => {
+      await using peer = await createPeer({ respond: () => redirect("ws+unix::/x") });
+      const { lines, exitCode } = await runScript(
+        { specifier },
+        `const ws = new WebSocket(${JSON.stringify(peer.url)}, { followRedirects: true, handshakeTimeout: 2000 });
+         ws.on("error", error => console.log("error " + error.name));
+         ws.on("close", code => console.log("close " + code));`,
+      );
+      expect(lines).toEqual(["error SyntaxError", "close 1006"]);
+      expect(exitCode).toBe(0);
+    });
+
     const headers = { Authorization: "Basic Zm9vOmJhcg==", Cookie: "foo=bar", Host: "example.test", "X-Other": "1" };
     const all = { authorization: "Basic Zm9vOmJhcg==", cookie: "foo=bar", host: "example.test", other: "1" };
     const own = "127.0.0.1:PORT";

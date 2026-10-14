@@ -580,14 +580,12 @@ impl<T: VersionInt> VersionType<T> {
 
                     if part_i < 3 {
                         let number = Self::parse_version_number(&input[part_start_i..last_char_i]);
-                        if number.is_none() {
+                        // A number after a wildcard has no effect, as in node-semver, so the token is read to its end.
+                        if number.is_none() && result.wildcard == Wildcard::None {
                             result.valid = false;
-                            // A range ignores a number after a wildcard, so keep reading the token.
-                            if result.wildcard == Wildcard::None {
-                                result.overflow = true;
-                                is_done = true;
-                                break;
-                            }
+                            result.overflow = true;
+                            is_done = true;
+                            break;
                         }
                         match part_i {
                             0 => result.version.major = number,
@@ -1242,7 +1240,7 @@ pub struct TagResult {
 pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
-    /// A number before any wildcard is above `T::MAX`. The range parser reads this, not `valid`.
+    /// Not valid because a number before any wildcard is above `T::MAX`. A range that has one is empty.
     pub(crate) overflow: bool,
     pub version: Partial<T>,
     pub(crate) len: u32,

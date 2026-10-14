@@ -15,7 +15,7 @@
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import nodeSemver from "semver";
 import { unsortedPrereleases } from "./semver-fixture.js";
 const { satisfies, order } = Bun.semver;
@@ -205,8 +205,9 @@ describe("Bun.semver.order()", () => {
         expect(() => order(version, "1.0.0")).toThrow(`Invalid SemVer: ${version}\n`);
         expect(() => order("1.0.0", version)).toThrow(`Invalid SemVer: ${version}\n`);
       }
-      // order() accepts a wildcard, but not such a number after it.
-      expect(() => order(`1.x.${big}`, "1.0.0")).toThrow(`Invalid SemVer: 1.x.${big}\n`);
+      // A number after a wildcard has no effect: "1.x.<big>" is "1.x".
+      expect(order(`1.x.${big}`, "1.x")).toBe(0);
+      expect(order(`1.x.${big}`, "1.0.0")).toBe(1);
     }
 
     // u64::MAX itself still fits.
@@ -1073,7 +1074,7 @@ function manifestRegistry(versions: string[], requested: string[] = []) {
   });
 }
 
-describe.concurrent("a number above u64::MAX in the package manager", () => {
+describe.concurrent("a number above u64::MAX in a command", () => {
   test("bun install does not resolve a dependency range that has one", async () => {
     // "^99999999999999999999" used to be read as "^0", so this installed foo@0.5.0.
     const requested: string[] = [];
@@ -1178,6 +1179,52 @@ describe.concurrent("a number above u64::MAX in the package manager", () => {
       after: version,
     });
   });
+
+  test(
+    "bun lint reads a Node.js version range that has one as eslint-plugin-n does",
+    async () => {
+      const code = (version: string) =>
+        `/* eslint n/no-unsupported-features/es-syntax: ["error", { version: "${version}" }] */\n` +
+        // Node.js has the `v` flag since 20.0.0.
+        "export const letters = /[\\p{L}--\\p{N}]/v;\n";
+      using dir = tempDir("semver-lint-node-version", {
+        ".eslintrc.json": JSON.stringify({
+          root: true,
+          plugins: ["n"],
+          parserOptions: { ecmaVersion: "latest", sourceType: "module" },
+        }),
+        // node-semver refuses this range, so the rule uses its default. The range used to be read as "^0".
+        "refused.js": code("^99999999999999999999"),
+        // A number after a wildcard has no effect, so this range is "16.x".
+        "wildcard.js": code("16.x.99999999999999999999"),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "lint", "-f", "json-with-metadata", "refused.js", "wildcard.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (!stdout.startsWith('{"results":')) expect(stderr).toBe("");
+      const results: { filePath: string; messages: { message: string }[] }[] = JSON.parse(stdout).results;
+      expect(
+        Object.fromEntries(
+          results.map(({ filePath, messages }) => [basename(filePath), messages.map(it => it.message)]),
+        ),
+      ).toEqual({
+        "refused.js": [
+          "'regexp-v-flag' is not supported until Node.js >=20.0.0. The configured version range is '>=16.0.0'.",
+        ],
+        "wildcard.js": [
+          "'regexp-v-flag' is not supported until Node.js >=20.0.0. The configured version range is '16.x.99999999999999999999'.",
+        ],
+      });
+      expect(exitCode).toBe(1);
+    },
+    // The `n` plugin needs about 2 s to start in a debug build.
+    isDebug || isASAN ? 30_000 : undefined,
+  );
 });
 
 test("a version range with >=256 || comparators does not abort", async () => {

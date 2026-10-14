@@ -473,8 +473,10 @@ impl Group {
         }
     }
 
-    /// A group that no version satisfies.
+    /// A group that no version satisfies, for a range that npm refuses.
     fn null_set(input: &[u8]) -> Group {
+        let mut flags = FlagsBitSet::init_empty();
+        flags.set(Flags::SKIPPED);
         Group {
             head: List {
                 head: Query {
@@ -487,8 +489,9 @@ impl Group {
                 tail: None,
                 next: None,
             },
+            tail: None,
             input: std::ptr::from_ref::<[u8]>(input),
-            ..Default::default()
+            flags,
         }
     }
 
@@ -1206,6 +1209,9 @@ mod tests {
             ("-x", true),
             ("16 || -18", true),
             ("16 || - 18.0.0", true),
+            ("^99999999999999999999", true),
+            ("16 || 99999999999999999999", true),
+            ("16.x.99999999999999999999", false),
             ("01.2.3", false),    // npm refuses it
             ("1.0.0rc1", false),  // npm refuses it
             ("^16 | ^18", false), // npm refuses it

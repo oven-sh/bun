@@ -38,6 +38,8 @@ use bun_sys::{self as sys, Fd};
 // reference would violate provenance. This matches the convention in
 // `src/jsc/lib.rs`.
 unsafe extern "C" {
+    /// Writes `exception` only when the script throws. Start that slot at `JSValue::ZERO`:
+    /// `undefined` and `null` are values a script can throw.
     fn Bun__REPL__evaluate(
         globalObject: *const JSGlobalObject,
         sourcePtr: *const u8,
@@ -945,6 +947,40 @@ impl Drawing {
     }
 }
 
+/// What the REPL evaluates for one input.
+enum ReplSource<'c> {
+    /// Output of the REPL transform. Evaluating it gives the value of the input inside a
+    /// `{ value }` wrapper, or a promise of that when the input has top-level await.
+    Transformed(Box<[u8]>),
+    /// The input as written, because the REPL transform does not take it. Evaluating it
+    /// gives the completion value.
+    AsWritten(&'c [u8]),
+}
+
+impl ReplSource<'_> {
+    fn bytes(&self) -> &[u8] {
+        match self {
+            ReplSource::Transformed(code) => code,
+            ReplSource::AsWritten(code) => code,
+        }
+    }
+
+    /// The promise to wait for, when `result` is what evaluating this source gave. A promise
+    /// that is the completion value of input as written is a value. It is not awaited.
+    fn awaited_promise(&self, result: JSValue) -> Option<*mut jsc::JSPromise> {
+        match self {
+            ReplSource::Transformed(_) => result.as_promise(),
+            ReplSource::AsWritten(_) => None,
+        }
+    }
+
+    /// Whether `result` is the `{ value }` wrapper of the REPL transform. A completion value
+    /// is never one, even if it is an object with a `value` property.
+    fn is_value_wrapper(&self, result: JSValue) -> bool {
+        matches!(self, ReplSource::Transformed(_)) && result.is_object()
+    }
+}
+
 pub(super) struct Repl<'a> {
     line_editor: LineEditor,
     history: History,
@@ -1620,22 +1656,16 @@ impl<'a> Repl<'a> {
             return;
         };
 
-        // Transform the code using REPL mode (hoists declarations, wraps result in { value: expr })
-        let Some(transformed_code) = self.transform_for_repl(code) else {
-            // Transform failed, try evaluating raw code (for syntax errors, etc.)
-            self.evaluate_raw(code);
-            return;
-        };
+        let source = self.source_for_repl(code);
 
-        // Evaluate the transformed code
-        let mut exception: JSValue = JSValue::UNDEFINED;
+        let mut exception: JSValue = JSValue::ZERO;
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
         // are valid for the duration of the call; `exception` is a stack local.
         let result = unsafe {
             Bun__REPL__evaluate(
                 global,
-                transformed_code.as_ptr(),
-                transformed_code.len(),
+                source.bytes().as_ptr(),
+                source.bytes().len(),
                 b"[repl]".as_ptr(),
                 b"[repl]".len(),
                 &raw mut exception,
@@ -1643,7 +1673,7 @@ impl<'a> Repl<'a> {
         };
 
         // Check for exception
-        if !exception.is_undefined() && !exception.is_null() {
+        if !exception.is_empty() {
             self.set_last_error(exception);
             self.print_js_error(exception);
             return;
@@ -1651,7 +1681,7 @@ impl<'a> Repl<'a> {
 
         // Handle async IIFE results - wait for promise to resolve
         let mut resolved_result = result;
-        if let Some(promise) = result.as_promise() {
+        if let Some(promise) = source.awaited_promise(result) {
             // Mark as handled BEFORE waiting to prevent unhandled rejection output
             jsc::JSPromise::opaque_mut(promise).set_handled();
 
@@ -1697,7 +1727,7 @@ impl<'a> Repl<'a> {
         // Extract the value from the result wrapper { value: expr }
         // The REPL transform wraps the last expression in { value: expr }
         let mut actual_result = resolved_result;
-        if resolved_result.is_object() {
+        if source.is_value_wrapper(resolved_result) {
             // Wrapper is REPL-built { __proto__: null, value: ... } so getOwn shouldn't throw,
             // but if it does, propagate as a REPL error.
             let maybe_value =
@@ -1742,10 +1772,12 @@ impl<'a> Repl<'a> {
 
     /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
     /// Uses the REPL transform pipeline (TypeScript/JSX, top-level await, object literal
-    /// wrapping, declaration hoisting), drains the event loop, and optionally prints the
+    /// wrapping, declaration hoisting), or evaluates the script as written when the
+    /// transform does not take it. Drains the event loop, and optionally prints the
     /// result to stdout. Errors are written to stderr.
-    /// Returns true if an error occurred (the caller should set exit_code=1 and
-    /// skip onBeforeExit); false on success (caller preserves process.exitCode).
+    /// Returns true if the script failed: it threw, or its top-level await rejected (the
+    /// caller should set exit_code=1 and skip onBeforeExit); false on success (caller
+    /// preserves process.exitCode).
     pub(super) fn eval_script(&mut self, code: &[u8], print_result: bool) -> bool {
         let Some(global) = self.global else {
             return true;
@@ -1770,49 +1802,30 @@ impl<'a> Repl<'a> {
             return false;
         }
 
-        let Some(transformed_code) = self.transform_for_repl(code) else {
-            // Transform failed — fall back to raw evaluation for the error message
-            let mut exception: JSValue = JSValue::UNDEFINED;
-            // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
-            // are valid for the duration of the call; `exception` is a stack local.
-            unsafe {
-                let _ = Bun__REPL__evaluate(
-                    global,
-                    code.as_ptr(),
-                    code.len(),
-                    b"[eval]".as_ptr(),
-                    b"[eval]".len(),
-                    &raw mut exception,
-                );
-            }
-            if !exception.is_undefined() && !exception.is_null() {
-                self.print_js_error_to(exception, Output::error_writer(), stderr_colors);
-            }
-            return true;
-        };
+        let source = self.source_for_repl(code);
 
-        let mut exception: JSValue = JSValue::UNDEFINED;
+        let mut exception: JSValue = JSValue::ZERO;
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
         // are valid for the duration of the call; `exception` is a stack local.
         let result = unsafe {
             Bun__REPL__evaluate(
                 global,
-                transformed_code.as_ptr(),
-                transformed_code.len(),
+                source.bytes().as_ptr(),
+                source.bytes().len(),
                 b"[eval]".as_ptr(),
                 b"[eval]".len(),
                 &raw mut exception,
             )
         };
 
-        if !exception.is_undefined() && !exception.is_null() {
+        if !exception.is_empty() {
             self.print_js_error_to(exception, Output::error_writer(), stderr_colors);
             return true;
         }
 
         // If the transform wrapped in an async IIFE (top-level await), wait for it
         let mut resolved_result = result;
-        if let Some(promise) = result.as_promise() {
+        if let Some(promise) = source.awaited_promise(result) {
             // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
@@ -1836,7 +1849,7 @@ impl<'a> Repl<'a> {
 
         // Unwrap the { value: expr } wrapper produced by transform_for_repl
         let mut actual_result = resolved_result;
-        if resolved_result.is_object() {
+        if source.is_value_wrapper(resolved_result) {
             let maybe_value =
                 match resolved_result.get_own(global, &bun_core::String::static_("value")) {
                     Ok(v) => v,
@@ -1875,48 +1888,6 @@ impl<'a> Repl<'a> {
         false
     }
 
-    /// Evaluate code without REPL transforms (fallback for errors)
-    /// The C++ Bun__REPL__evaluate handles setting _ and _error
-    fn evaluate_raw(&mut self, code: &[u8]) {
-        let Some(global) = self.global else {
-            return;
-        };
-
-        let mut exception: JSValue = JSValue::UNDEFINED;
-        // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
-        // are valid for the duration of the call; `exception` is a stack local.
-        let result = unsafe {
-            Bun__REPL__evaluate(
-                global,
-                code.as_ptr(),
-                code.len(),
-                b"[repl]".as_ptr(),
-                b"[repl]".len(),
-                &raw mut exception,
-            )
-        };
-
-        if !exception.is_undefined() && !exception.is_null() {
-            self.set_last_error(exception);
-            self.print_js_error(exception);
-            return;
-        }
-
-        self.set_last_result(result);
-
-        if !result.is_undefined() {
-            self.print_formatted_value(result);
-        } else if self.use_colors {
-            self.print(format_args!("{}undefined{}\n", Color::DIM, Color::RESET));
-        } else {
-            self.print(format_args!("undefined\n"));
-        }
-
-        if let Some(vm) = self.vm {
-            vm.as_mut().tick();
-        }
-    }
-
     /// Evaluate code and copy the result to clipboard instead of printing it
     fn evaluate_and_copy(&mut self, code: &[u8]) {
         let Some(global) = self.global else {
@@ -1926,33 +1897,30 @@ impl<'a> Repl<'a> {
             return;
         };
 
-        let Some(transformed_code) = self.transform_for_repl(code) else {
-            self.evaluate_raw(code);
-            return;
-        };
+        let source = self.source_for_repl(code);
 
-        let mut exception: JSValue = JSValue::UNDEFINED;
+        let mut exception: JSValue = JSValue::ZERO;
         // SAFETY: `global` is a live opaque `JSGlobalObject` handle; slice ptr/len pairs
         // are valid for the duration of the call; `exception` is a stack local.
         let result = unsafe {
             Bun__REPL__evaluate(
                 global,
-                transformed_code.as_ptr(),
-                transformed_code.len(),
+                source.bytes().as_ptr(),
+                source.bytes().len(),
                 b"[repl]".as_ptr(),
                 b"[repl]".len(),
                 &raw mut exception,
             )
         };
 
-        if !exception.is_undefined() && !exception.is_null() {
+        if !exception.is_empty() {
             self.set_last_error(exception);
             self.print_js_error(exception);
             return;
         }
 
         let mut resolved_result = result;
-        if let Some(promise) = result.as_promise() {
+        if let Some(promise) = source.awaited_promise(result) {
             // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
@@ -1984,7 +1952,7 @@ impl<'a> Repl<'a> {
         }
 
         let mut actual_result = resolved_result;
-        if resolved_result.is_object() {
+        if source.is_value_wrapper(resolved_result) {
             let maybe_value =
                 match resolved_result.get_own(global, &bun_core::String::static_("value")) {
                     Ok(v) => v,
@@ -2109,6 +2077,16 @@ impl<'a> Repl<'a> {
             self.write(b"\x07");
         }
         Ok(())
+    }
+
+    /// What to evaluate for `code`: the output of the REPL transform, or `code` as written when
+    /// the transform does not take it. Code that the transform does not take can be valid: a
+    /// block, or sloppy-mode syntax. So only the evaluation says whether `code` is an error.
+    fn source_for_repl<'c>(&self, code: &'c [u8]) -> ReplSource<'c> {
+        match self.transform_for_repl(code) {
+            Some(transformed) => ReplSource::Transformed(transformed),
+            None => ReplSource::AsWritten(code),
+        }
     }
 
     /// Transform code using the REPL parser (hoists declarations, wraps expressions)

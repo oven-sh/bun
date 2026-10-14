@@ -50,7 +50,7 @@ pub(crate) const IMAGE_REL_BASED_DIR64: u16 = 10;
 
 /// A name in a fixed-size field, padded with NUL.
 pub(crate) fn fixed_name(field: &[u8]) -> &[u8] {
-    &field[..field.iter().position(|&b| b == 0).unwrap_or(field.len())]
+    core::ffi::CStr::from_bytes_until_nul(field).map_or(field, core::ffi::CStr::to_bytes)
 }
 
 impl<'a> Executable<'a> {

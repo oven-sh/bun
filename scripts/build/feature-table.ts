@@ -28,7 +28,7 @@ const directory = (cfg: Config) => resolve(cfg.buildDir, "feature-table");
 const toolPath = (cfg: Config) => join(directory(cfg), "bun-exe-features");
 /** The table of the link, with every fixup written out. */
 const linkTable = (cfg: Config) => join(directory(cfg), `${bunExeName(cfg)}.table`);
-/** lld reports identical code folding, and lld-link which library each member came from, on its standard output only. */
+/** What the linker prints and writes nowhere else: ld.lld what identical code folding merged, lld-link which libraries it read. */
 const printed = (cfg: Config) => (cfg.darwin ? "/dev/null" : join(directory(cfg), `${bunExeName(cfg)}.printed`));
 
 /**
@@ -54,9 +54,13 @@ export function linkFromBuildDir(cfg: Config, libs: string[]): string[] {
   });
 }
 
-/** Goes right behind the link itself in the link rule's command, before any `&&`: the redirection belongs to the linker. */
-export function featureTableLinkCapture(cfg: Config): string {
-  return cfg.featureTable && !cfg.darwin ? ` > ${q(printed(cfg))}` : "";
+/** `link`, the command that links, keeping what the linker prints. */
+export function keepingWhatTheLinkerPrints(cfg: Config, link: string): string {
+  if (!cfg.featureTable || cfg.darwin) return link;
+  if (!cfg.windows) return `${link} > ${q(printed(cfg))}`;
+  // lld-link logs to where its errors and warnings go. Those are still shown.
+  const show = `awk '!/^lld-link: / || /^lld-link: (error|warning):/' ${q(printed(cfg))} >&2`;
+  return `if ${link} > ${q(printed(cfg))} 2>&1; then ${show}; else ${show}; exit 1; fi`;
 }
 
 /** The end of the link rule's command. */

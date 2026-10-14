@@ -19,9 +19,16 @@ import {
   tempDir,
 } from "harness";
 import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const exe = (name: string) => (isWindows ? name + ".exe" : name);
+
+// CI runs the tests with `bun-profile`, which keeps its symbols and has no table. The `bun` that ships is unpacked next
+// to it: `bun-linux-x64-profile/bun-profile` and `bun-linux-x64/bun`.
+const shipped = (() => {
+  const beside = join(dirname(bunExe()).replace(/-profile$/, ""), exe("bun"));
+  return dirname(bunExe()).endsWith("-profile") && existsSync(beside) ? beside : bunExe();
+})();
 
 const app = `
 import { Database } from "bun:sqlite";
@@ -63,8 +70,12 @@ async function run(cmd: string[], cwd: string, env: Record<string, string | unde
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
-const compile = (cwd: string, outfile: string, ...args: string[]) =>
-  run([bunExe(), "build", "--compile", "app.ts", "--outfile", outfile, ...args], cwd);
+const compileFrom = (from: string, cwd: string, outfile: string, ...args: string[]) =>
+  run(
+    [bunExe(), "build", "--compile", "app.ts", "--outfile", outfile, `--compile-executable-path=${from}`, ...args],
+    cwd,
+  );
+const compile = (cwd: string, outfile: string, ...args: string[]) => compileFrom(shipped, cwd, outfile, ...args);
 /** Runs a compiled executable as the `bun` it holds. */
 const asBun = (cwd: string, name: string, ...args: string[]) =>
   run([join(cwd, exe(name)), ...args], cwd, { ...bunEnv, BUN_BE_BUN: "1" });
@@ -72,8 +83,9 @@ const asBun = (cwd: string, name: string, ...args: string[]) =>
 const noTable = "does not say what can be excluded";
 const hasTable = (() => {
   using dir = tempDir("exclude-features-probe", { "app.ts": "" });
+  const from = `--compile-executable-path=${shipped}`;
   const { stdout, stderr } = Bun.spawnSync({
-    cmd: [bunExe(), "build", "--compile", "app.ts", "--outfile", "app", "--compile-exclude-features=?"],
+    cmd: [bunExe(), "build", "--compile", "app.ts", "--outfile", "app", from, "--compile-exclude-features=?"],
     cwd: String(dir),
     env: bunEnv,
   });
@@ -146,7 +158,11 @@ describe.skipIf(!hasTable)("with a feature table", () => {
     const cwd = String(dir);
     const result = await Bun.build({
       entrypoints: [join(cwd, "app.ts")],
-      compile: { outfile: join(cwd, "app"), excludeFeatures: ["Bun.password", "Bun.Transpiler"] },
+      compile: {
+        outfile: join(cwd, "app"),
+        executablePath: shipped,
+        excludeFeatures: ["Bun.password", "Bun.Transpiler"],
+      },
     });
     expect(result.success).toBe(true);
     const ran = await run([join(cwd, exe("app"))], cwd);
@@ -169,7 +185,7 @@ describe.skipIf(!hasTable)("with a feature table", () => {
 
     const rejected = await Bun.build({
       entrypoints: [join(cwd, "app.ts")],
-      compile: { outfile: join(cwd, "app"), excludeFeatures: ["nope"] },
+      compile: { outfile: join(cwd, "app"), executablePath: shipped, excludeFeatures: ["nope"] },
     }).catch(e => e);
     expect(rejected).toBeInstanceOf(AggregateError);
     expect(rejected.errors[0].message).toContain('there is no feature called "nope"');
@@ -180,8 +196,7 @@ describe.skipIf(!hasTable)("with a feature table", () => {
     const cwd = String(dir);
     for (const [name, ...args] of [["full"], ["without", "--compile-exclude-features=lint"]]) {
       expect((await compile(cwd, name, ...args)).exitCode).toBe(0);
-      const from = `--compile-executable-path=${join(cwd, exe(name))}`;
-      const again = await compile(cwd, "again", from, "--compile-exclude-features=fmt");
+      const again = await compileFrom(join(cwd, exe(name)), cwd, "again", "--compile-exclude-features=fmt");
       expect(again.stdout + again.stderr).toContain(noTable);
       expect(again.exitCode).not.toBe(0);
     }

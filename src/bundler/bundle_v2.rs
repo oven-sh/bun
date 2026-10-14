@@ -7409,8 +7409,7 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         /// Patch source_index on import records from pathToSourceIndexMap and
         /// resolve_tasks_waiting_for_import_source_index. Called after
-        /// processResolveQueue has registered new modules. The map is only asked
-        /// about records that `resolve_import_records` pointed at a module.
+        /// processResolveQueue has registered new modules.
         pub(crate) fn patch_import_record_source_indices(
             &mut self,
             import_records: &mut import_record::List,

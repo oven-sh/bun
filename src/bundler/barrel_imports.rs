@@ -326,10 +326,7 @@ fn record_target(
     map?.get_record(rec)
 }
 
-/// The record that holds the target of `ir`. ConvertESMExportsForHmr marks a
-/// duplicate import of one specifier as unused, so it is never resolved: its
-/// target is the one of the surviving record (`dedup_fallback`, keyed by
-/// specifier). See #28886.
+/// The surviving record of an HMR duplicate import (`dedup_fallback`), else `ir` itself.
 #[inline]
 fn surviving_record<'a>(
     records: &'a [bun_ast::ImportRecord],
@@ -500,11 +497,11 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // In HMR, ConvertESMExportsForHmr deduplicates import records by path:
     // two `import { X } from 'mod'` statements become one, and the second
     // record is marked is_unused=true. resolveImportRecords then skips those
-    // records, so they never get a target of their own. named_imports entries
-    // created for the dedup'd record still point at its index. Build a
-    // fallback: raw specifier → index of the surviving record, using the
-    // non-unused records in this file that resolved to a module. See
-    // `surviving_record`.
+    // records, so their path.text stays as the raw specifier while the
+    // surviving record's path.text becomes the resolved absolute path.
+    // named_imports entries created for the dedup'd record still point at
+    // its index, so the direct path lookup below fails for those entries.
+    // Build a fallback: raw specifier → index of the surviving record. See #28886.
     let mut dedup_fallback: StringArrayHashMap<u32> = StringArrayHashMap::default();
     if dev_handle.is_some() {
         for (idx, ir_probe) in file_import_records.as_slice().iter().enumerate() {

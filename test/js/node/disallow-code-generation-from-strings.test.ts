@@ -601,6 +601,14 @@ describe.concurrent("=strict runs static code only", () => {
           } });
           return import(write("x.plugin-json", ""));
         },
+        // What a module imports is evaluated before the module is.
+        pluginOnLoadImports: () => {
+          const imported = JSON.stringify(write("imported-by-a-refused-module.mjs"));
+          Bun.plugin({ name: "imports", setup(build) {
+            build.onLoad({ filter: /\\.plugin-imports$/ }, () => ({ contents: "import " + imported + ";", loader: "js" }));
+          } });
+          return import(write("x.plugin-imports", ""));
+        },
         macroExportName: () => new Bun.Transpiler({ loader: "ts" }).transformSync(
           'import { "a\\']; (globalThis.ran ??= []).push(/macroExportName/.source); //" as macro } from "bun" with { type: "macro" }; export default macro();'),
         macroInBuild: async () => {
@@ -618,6 +626,11 @@ describe.concurrent("=strict runs static code only", () => {
         routes.evaluate = () => evaluate(recordRun("evaluate"));
         routes.evaluateJSONPAssignment = () => evaluate('ran = {"a":1}');
         routes.evaluateJSONPCall = () => evaluate('process.exit({"a":1})');
+        // A program's global declarations come before its code.
+        routes.evaluateDeclarations = async () => {
+          const error = await evaluate("var declaredVar; let declaredLet; function declaredFunction() {}").catch(String);
+          return [error, "declaredVar" in globalThis, "declaredFunction" in globalThis, typeof declaredLet];
+        };
       }
       if (process.argv[3] === "compiled") {
         Object.assign(routes, {
@@ -727,6 +740,7 @@ describe.concurrent("=strict runs static code only", () => {
   const refusedMacro = `Macros cannot be used with ${strict}`;
   const refusedWhereverTheProgramIsStored = {
     pluginOnLoadJSON: refused,
+    pluginOnLoadImports: refused,
     macroExportName: "BuildMessage: " + refusedMacro,
     macroInBuild: [refusedMacro],
     devServer: refused,
@@ -734,6 +748,7 @@ describe.concurrent("=strict runs static code only", () => {
       evaluate: refused,
       evaluateJSONPAssignment: refused,
       evaluateJSONPCall: refused,
+      evaluateDeclarations: [refused, false, false, "undefined"],
     }),
   };
   const bake = { BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1" };

@@ -3932,6 +3932,23 @@ it("Buffer.from(BigInt64Array) throws instead of returning a zero-filled buffer"
   expect(Buffer.from(new BigInt64Array(0)).length).toBe(0);
 });
 
+it("Buffer.from(arrayLike) has no unwritten byte when the length getter answers less the next time", () => {
+  for (const make of [x => Buffer.from(x), x => new Buffer(x), x => Buffer(x)]) {
+    let reads = 0;
+    const arrayLike = {
+      0: 97,
+      get length() {
+        return reads++ === 0 ? 100 : 1;
+      },
+    };
+    const buffer = make(arrayLike);
+    expect({ first: buffer[0], rest: buffer.subarray(1).toString("hex") }).toEqual({
+      first: 97,
+      rest: Buffer.alloc(buffer.length - 1).toString("hex"),
+    });
+  }
+});
+
 it("Buffer.from(arrayBuffer)", () => {
   const ab = Buffer.from([10, 11, 12, 13, 14, 15, 16, 17, 18, 19]).buffer;
   const buf = Buffer.from(ab);

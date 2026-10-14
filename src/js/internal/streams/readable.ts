@@ -1631,8 +1631,8 @@ function fromList(n, state) {
           TypedArrayPrototypeSet.$call(ret, data, retLen - n);
           buf[idx++] = null;
         } else {
-          TypedArrayPrototypeSet.$call(ret, new $Buffer(data.buffer, data.byteOffset, n), retLen - n);
-          buf[idx] = new $Buffer(data.buffer, data.byteOffset + n, dataLength - n);
+          TypedArrayPrototypeSet.$call(ret, new $Buffer.$FastBuffer(data.buffer, data.byteOffset, n), retLen - n);
+          buf[idx] = new $Buffer.$FastBuffer(data.buffer, data.byteOffset + n, dataLength - n);
         }
         break;
       }

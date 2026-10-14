@@ -103,7 +103,7 @@ function normalizeData(data, opts) {
   if (isBinary === true && typeof data === "string") {
     data = Buffer.from(data);
   } else if (isBinary === false && $isTypedArrayView(data)) {
-    data = new Buffer(data.buffer, data.byteOffset, data.byteLength).toString("utf-8");
+    data = new $Buffer.$FastBuffer(data.buffer, data.byteOffset, data.byteLength).toString("utf-8");
   }
 
   return data;

@@ -7,20 +7,20 @@ Bun's test runner plays well with existing component and DOM testing libraries, 
 
 ## Test environments
 
-`bun test` sets up [happy-dom](https://github.com/capricorn86/happy-dom) or [jsdom](https://github.com/jsdom/jsdom) for you, with the same globals Vitest gives a test file (`window`, `document`, `HTMLElement`, ...). Install the one you want as a dev dependency.
+`bun test` can set up [happy-dom](https://github.com/capricorn86/happy-dom) or [jsdom](https://github.com/jsdom/jsdom) for you. Test files get the same globals they get in Vitest (`window`, `document`, `HTMLElement`, ...). Install the one you want as a dev dependency.
 
 ```bash terminal icon="terminal"
 bun add -d happy-dom
 ```
 
-Choose it for every test file in `bunfig.toml`, or with `bun test --environment=happy-dom`.
+To use it in every test file, set `environment` in `bunfig.toml` or run `bun test --environment=happy-dom`.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
 environment = "happy-dom" # or "jsdom", or "node" (the default: no DOM)
 ```
 
-Or choose it for one file with the comment Vitest and Jest use, which overrides the project's setting.
+To use it in one file, add the same comment Vitest and Jest use. The comment overrides the project's setting.
 
 ```ts title="dom.test.ts" icon="/icons/typescript.svg"
 // @vitest-environment happy-dom
@@ -33,13 +33,18 @@ test("dom test", () => {
 });
 ```
 
-Bun looks for each comment where its own runner does: `@vitest-environment` anywhere in the text of the file, and `@jest-environment`, which means the same, only in a `/** */` comment that the file starts with (a `//` comment is not read). `// @vitest-environment node` runs a file without a DOM. Other environments, such as `edge-runtime` or a custom one, are not supported.
+Bun looks for each comment in the same place Vitest or Jest does:
 
-If Bun cannot follow a comment, because the package is not installed or the environment is not supported, it prints a warning and runs the file without a DOM. If it cannot set up the environment from `bunfig.toml` or `--environment`, the file fails.
+- `@vitest-environment` can be anywhere in the file.
+- `@jest-environment` means the same thing, but it has to be in a `/** */` comment at the very top of the file. It's ignored in a `//` comment.
+
+`// @vitest-environment node` runs a file without a DOM. Other environments, such as `edge-runtime` or a custom one, aren't supported.
+
+If a comment names a package that isn't installed or an environment that isn't supported, Bun prints a warning and runs the file without a DOM. If Bun can't set up the environment from `bunfig.toml` or `--environment`, the file fails.
 
 ### Options
 
-`@vitest-environment-options` (or `@jest-environment-options`) takes one line of JSON, passed to happy-dom's `Window` or to the `JSDOM` constructor. The URL defaults to `http://localhost:3000`.
+`@vitest-environment-options` (or `@jest-environment-options`) takes one line of JSON. Bun passes it to happy-dom's `Window` constructor or jsdom's `JSDOM` constructor. The default URL is `http://localhost:3000`.
 
 ```ts title="dom.test.ts" icon="/icons/typescript.svg"
 /**
@@ -50,13 +55,13 @@ If Bun cannot follow a comment, because the package is not installed or the envi
 
 ### Windows and test files
 
-Test files share one global object and one module registry by default, so files with the same environment and options also share one window: a module that read `document.body` when it was imported stays right in the next file. After each file Bun puts the globals back, so a file that runs in `node` sees no `document`.
+By default, test files share one global object and one module registry. Files with the same environment and options also share one window, so a module that read `document.body` when it was imported still has the right element in the next file. Bun restores the globals after each file, so a file that runs in `node` doesn't see `document`.
 
-With [`--isolate` or `--parallel`](/test/parallel), every file gets its own window and its own copy of every module. Use them when files in different environments import the same DOM library: a shared module stays bound to the first window it saw.
+With [`--isolate` or `--parallel`](/test/parallel), every file gets its own window and its own copy of every module. Use them when files in different environments import the same DOM library, because a shared module stays bound to the first window it saw.
 
-Preload scripts run in the project's environment. Under `--isolate` they run again for each file, in that file's environment.
+Preload scripts run in the project's environment. With `--isolate`, they run again for each file, in that file's environment.
 
-With jsdom, an error thrown in an event listener or a timer fails the running test, as in Vitest and Jest, unless the file (or a preload script) has added an `error` listener to `window`.
+With jsdom, an error thrown in an event listener or a timer fails the running test, like in Vitest and Jest. If the file or a preload script has added an `error` listener to `window`, the test doesn't fail.
 
 ## Registering happy-dom in a preload
 

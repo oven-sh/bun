@@ -55,7 +55,7 @@ Each worker gets `BUN_TEST_WORKER_ID`, `JEST_WORKER_ID`, `VITEST_POOL_ID` and `V
 const dbName = `app_test_${process.env.BUN_TEST_WORKER_ID ?? "1"}`;
 ```
 
-Without `--parallel`, `VITEST_POOL_ID` and `VITEST_WORKER_ID` are `"1"`, as in Vitest, and the other two are not set.
+Without `--parallel`, `VITEST_POOL_ID` and `VITEST_WORKER_ID` are `"1"`, as in Vitest. The other two aren't set.
 
 Flags that affect how tests execute (`--timeout`, `--preload`, `--define`, `--coverage`, `--update-snapshots`, `-t`, `--retry`, `--rerun-each`, `--concurrent`, `--randomize`/`--seed`, …) are forwarded to workers. The coordinator handles `--bail` at file granularity: once the failure threshold is reached it starts no new files, but files already running finish.
 

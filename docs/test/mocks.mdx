@@ -70,8 +70,8 @@ Mock functions implement the following properties and methods:
 | `mockFn.getMockName()`                    | Returns the mock name                          |
 | `mockFn.mock.calls`                       | Array of call arguments for each invocation    |
 | `mockFn.mock.results`                     | Array of return values for each invocation     |
-| `mockFn.mock.settledResults`              | What each result has settled to                |
-| `mockFn.mock.instances`                   | `this` of each call, the new object for `new`  |
+| `mockFn.mock.settledResults`              | Resolved or rejected value for each invocation |
+| `mockFn.mock.instances`                   | `this` for each call (the instance for `new`)  |
 | `mockFn.mock.contexts`                    | Array of `this` contexts for each invocation   |
 | `mockFn.mock.lastCall`                    | Arguments of the most recent call              |
 | `mockFn.mockClear()`                      | Clears call history                            |
@@ -87,7 +87,7 @@ Mock functions implement the following properties and methods:
 | `mockFn.mockResolvedValueOnce(value)`     | Sets resolved Promise for next call only       |
 | `mockFn.mockRejectedValue(value)`         | Sets a rejected Promise value                  |
 | `mockFn.mockRejectedValueOnce(value)`     | Sets rejected Promise for next call only       |
-| `mockFn.mockThrow(value)`                 | Throws `value`                                 |
+| `mockFn.mockThrow(value)`                 | Throws `value` on every call                   |
 | `mockFn.mockThrowOnce(value)`             | Throws `value` on the next call only           |
 | `mockFn.withImplementation(fn, callback)` | Temporarily changes implementation             |
 
@@ -243,7 +243,7 @@ test("spy with mock implementation", async () => {
 
 ### Getters and Setters
 
-Pass `"get"` or `"set"` as the third argument to spy on the getter or the setter of a property. The spy calls the original accessor until you give it another implementation, and `mockRestore()` puts the property back as it was.
+Pass `"get"` or `"set"` as the third argument to spy on a property's getter or setter. The spy calls the original accessor until you give it another implementation. `mockRestore()` restores the original property.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, spyOn } from "bun:test";
@@ -269,7 +269,7 @@ This also works on plain properties, such as `spyOn(process, "platform", "get")`
 
 ### Classes
 
-`new` on a mock constructs through its implementation, so a class can be mocked or spied on like a function.
+Calling a mock with `new` constructs its implementation, so you can mock or spy on a class the same way as a function.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, mock } from "bun:test";
@@ -297,7 +297,7 @@ test("mock a class", () => {
 
 ## Mock an Object with vi.mockObject()
 
-`vi.mockObject(value)` returns a deep copy of `value` in which every function and class is a mock that returns `undefined`. Arrays become empty. Primitives and builtin objects such as `Date` and `Map` are kept.
+`vi.mockObject(value)` returns a deep copy of `value` with every function and class replaced by a mock that returns `undefined`. Arrays become empty. Primitives and built-in objects like `Date` and `Map` are kept.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -314,7 +314,7 @@ test("mock an object", () => {
 });
 ```
 
-With `{ spy: true }` the functions keep their implementation, and the object is changed in place.
+With `{ spy: true }`, functions keep their implementation, and `value` is modified in place instead of copied.
 
 ## Module Mocks with mock.module()
 
@@ -392,7 +392,7 @@ test("async factory", () => {
 
 ### Keeping Part of the Original Module
 
-The factory receives a function that loads the module being mocked. Spread its result to replace only some exports.
+The factory is passed a function that loads the original module. Spread its result to replace only some exports.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -409,15 +409,15 @@ test("partial mock", () => {
 });
 ```
 
-Outside a factory, `await vi.importActual("./math")` and `jest.requireActual("./math")` load the original of a mocked module.
+Outside a factory, use `await vi.importActual("./math")` or `jest.requireActual("./math")` to load the original module.
 
-This also works when the mocked module is part of an import cycle: the modules that import it get the mock, and the original is evaluated before the factory is called.
+This also works when the mocked module is part of an import cycle. The modules that import it still get the mock.
 
-While a factory runs, what it loads with `import()`, `require()` or `vi.importActual()` gets the original of the module being mocked instead of waiting for the mock. Those instances belong to the factory: the rest of the program loads the same modules again and gets the mock.
+If the factory loads another module with `import()`, `require()` or `vi.importActual()`, and that module imports the one being mocked, it gets the original instead of waiting for the mock. That copy is private to the factory. The rest of the program loads the module again and gets the mock.
 
 ### Getters and Missing Exports
 
-Exports are read from the object the factory returned every time they are used, so a getter stays live.
+Bun reads an export from the object the factory returned every time it's used, so getters stay live.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -438,15 +438,15 @@ test("getter", () => {
 });
 ```
 
-A module that imports a name the factory did not return still loads. With `vi.mock()` and `vi.doMock()`, using that name throws an error that says which export is missing from which mock, as in Vitest. With `mock.module()`, `jest.mock()` and `jest.doMock()` it is `undefined`.
+If a module imports a name the factory didn't return, the module still loads. With `vi.mock()` and `vi.doMock()`, using that name throws an error that says which export is missing from which mock, as in Vitest. With `mock.module()`, `jest.mock()` and `jest.doMock()`, the name is `undefined`.
 
 ### Mocking Without a Factory
 
-`vi.mock(path)` and `jest.mock(path)` work without a factory. `mock.module()` always needs one.
+You can call `vi.mock(path)` and `jest.mock(path)` without a factory. `mock.module()` always needs one.
 
-- If a `__mocks__` directory has a file of the same name, that file is the module: `__mocks__/<file>` next to a file, or `__mocks__/<package>` in the directory `bun test` runs in for a package or a builtin such as `fs`.
-- Otherwise Bun loads the original and mocks its exports. Functions and classes become mock functions that return `undefined`, arrays become empty, and other values are kept.
-- `vi.mock(path, { spy: true })` keeps the implementation of every function and records its calls.
+- If a `__mocks__` directory has a file with the same name, Bun loads that file instead. For a file, that's `__mocks__/<file>` in the same directory. For a package or a builtin like `fs`, it's `__mocks__/<package>` in the directory where `bun test` runs.
+- Otherwise, Bun loads the original module and mocks its exports. Functions and classes become mocks that return `undefined`, arrays become empty, and other values are kept.
+- `vi.mock(path, { spy: true })` keeps every function's implementation and records its calls.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -460,35 +460,33 @@ test("automock", () => {
 });
 ```
 
-`vi.importMock(path)`, `jest.requireMock(path)` and `jest.createMockFromModule(path)` return such a mock without mocking the module.
+`vi.importMock(path)`, `jest.requireMock(path)` and `jest.createMockFromModule(path)` return the same kind of mock without mocking the module.
 
 ### Removing a Mock
 
-| Function                                                   |                                                                   |
-| ---------------------------------------------------------- | ----------------------------------------------------------------- |
-| `vi.unmock`, `vi.doUnmock`, `jest.unmock`, `jest.dontMock` | The module is not mocked any more                                 |
-| `using _ = vi.doMock(path, factory)`                       | The same, at the end of the block                                 |
-| `vi.resetModules`, `jest.resetModules`                     | The next `import()` or `require()` of a module evaluates it again |
+| Function                                                   | What it does                                                   |
+| ---------------------------------------------------------- | -------------------------------------------------------------- |
+| `vi.unmock`, `vi.doUnmock`, `jest.unmock`, `jest.dontMock` | Removes the module's mock                                      |
+| `using _ = vi.doMock(path, factory)`                       | Removes the mock at the end of the block                       |
+| `vi.resetModules`, `jest.resetModules`                     | Re-evaluates each module on its next `import()` or `require()` |
 
-Mocked modules stay mocked after `resetModules()`. `jest.resetModules()` also calls their factories again. What was imported before keeps its values.
+Mocked modules stay mocked after `resetModules()`. After `jest.resetModules()`, the next import also calls the factory again. Existing imports keep their values.
 
-A module that is being loaded at that moment finishes loading, and whoever is waiting for it gets it. The next `import()` or `require()` after that loads it again.
+`mock.restore()` doesn't remove module mocks.
 
-`mock.restore()` does not remove module mocks.
+### Module Mocks Are Removed After Each Test File
 
-### Mocks End with the Test File
-
-When a test file ends, Bun removes the module mocks it made. The next file loads the original, and the modules that imported the mock are evaluated again. Other modules stay cached between files.
+Module mocks are removed when the test file ends. The next file gets the real module, and modules that imported the mock are re-evaluated. Other modules stay cached between files.
 
 Mocks made in a `--preload` script apply to every test file.
 
-A test file can mock the same module again. As in Vitest, `vi.mock()` and `vi.doMock()` leave the modules that the preload script imported as they are: those keep what they imported, and only what the test file imports gets the file's mock. `mock.module()` and `jest.mock()` also change it for the modules that the preload script imported.
+A test file can mock a module that the preload script already mocked. With `vi.mock()` and `vi.doMock()`, only the modules the test file imports get the file's mock. Modules the preload script imported keep what they imported, as in Vitest. With `mock.module()` and `jest.mock()`, the modules the preload script imported get the file's mock too.
 
 ### Hoisting & Preloading
 
-Top-level `vi.mock()`, `vi.unmock()`, `vi.hoisted()`, `jest.mock()` and `jest.unmock()` calls run before the imports of their file, as in Vitest and Jest. A module is then mocked before the file, or anything the file imports, loads it.
+Top-level `vi.mock()`, `vi.unmock()`, `vi.hoisted()`, `jest.mock()` and `jest.unmock()` calls are hoisted above the file's imports, as in Vitest and Jest. This way, a module is mocked before the file or anything it imports loads it.
 
-A factory cannot use a top-level variable of the file, which is not initialized yet. Declare what it needs with `vi.hoisted()`. A `const` or `let` that only holds strings, numbers or other primitive literals moves up with the calls, as in Jest.
+A hoisted factory can't use the file's top-level variables, because they aren't initialized yet. Declare what the factory needs with `vi.hoisted()`. A `const` or `let` that only holds strings, numbers or other primitive literals is hoisted along with the calls, as in Jest.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -504,9 +502,9 @@ test("hoisted", () => {
 });
 ```
 
-`mock.module()`, `vi.doMock()`, `jest.doMock()` and calls inside a block or a function run where they are written.
+`mock.module()`, `vi.doMock()` and `jest.doMock()` aren't hoisted, and neither are calls inside a block or a function. They run where they're written.
 
-In a file with hoisted calls, the other imports become `await import()` and are read through the module namespace, so they stay live. Imports from `bun:test`, `vitest`, `@jest/globals` and `bun`, imports with attributes, `import defer`, `export ... from` and imports that the file re-exports stay static.
+In a file with hoisted calls, Bun turns the other imports into `await import()` and reads them through the module namespace, so they stay live. The exceptions are imports from `bun:test`, `vitest`, `@jest/globals` and `bun`, imports with attributes, `import defer`, `export ... from`, and imports the file re-exports. Those stay static.
 
 To mock a module for every test file, use `--preload` to load your mocks before your tests run.
 
@@ -538,7 +536,7 @@ preload = ["./my-preload"]
 
 Mocking a module that's already been imported updates the module cache, so anything that imports it gets the mocked version. Bun has already evaluated the original module, though, so its side effects have already happened.
 
-To prevent the original module from being evaluated at all, mock it before it is imported: with `vi.mock()` or `jest.mock()`, which are hoisted, or in a `--preload` script.
+To prevent the original module from being evaluated at all, mock it before it's imported. Use `vi.mock()` or `jest.mock()`, which are hoisted, or mock it in a `--preload` script.
 
 #### Practical Module Mock Examples
 
@@ -624,7 +622,7 @@ test("clearing all mocks", () => {
 
 ### Reset All Mocks
 
-`jest.resetAllMocks()` (and its `vi.resetAllMocks()` alias) calls `mockFn.mockReset()` on every mock. On top of what `clearAllMocks()` does, it drops the implementations set by `mockImplementation()`, `mockReturnValue()` and friends. It does not restore the original implementation of a spy. A mock made with `vi.fn(implementation)` goes back to `implementation`, and a `vi.spyOn()` spy to the original method, as in Vitest.
+`jest.resetAllMocks()` (and its `vi.resetAllMocks()` alias) calls `mockFn.mockReset()` on every mock. On top of what `clearAllMocks()` does, it drops the implementations set by `mockImplementation()`, `mockReturnValue()` and friends. It does not restore the original implementation of a spy:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { expect, jest, test } from "bun:test";
@@ -642,6 +640,8 @@ test("resetting all mocks", () => {
   expect(random()).toBeUndefined();
 });
 ```
+
+Mocks made with `vi` follow Vitest instead. A `vi.fn(implementation)` mock goes back to `implementation`, and a `vi.spyOn()` spy goes back to the original method.
 
 ### Restore All Mocks
 
@@ -684,15 +684,19 @@ test("foo, bar, baz", () => {
 
 Call `mock.restore()` in an `afterEach` block, or in your test preload script, instead of repeating cleanup in every test.
 
-### Mock Functions End with the Test File
+### Cleanup After Each Test File
 
-When a test file ends, Bun restores the spies that are left and clears the calls that mocks have recorded. What `mockReturnValue()`, `mockImplementation()` and the like have set stays until the mock is reset: a mock in a module that several test files import keeps it from one file to the next.
+When a test file ends, Bun restores any spies that are still active and clears every mock's recorded calls. Return values and implementations set with `mockReturnValue()`, `mockImplementation()` and similar methods stay until you reset the mock. A mock in a module that several test files import keeps them from one file to the next.
 
-Spies and mocks made in a `--preload` script, or in a `beforeAll()` of it, stay as they are for every test file.
+Spies and mocks made in a `--preload` script, or in one of its `beforeAll()` hooks, aren't restored or cleared. They stay the same for every test file.
 
 ## Vitest Compatibility
 
-For tests written for Vitest, Bun provides the `vi` object. Mocks made with `vi.fn()` and `vi.spyOn()` behave as in Vitest where it differs from Jest: `mockReset()` goes back to the original implementation, `vi.restoreAllMocks()` keeps the calls of the spies it restores, and `fn.mock` stays the same object after `mockClear()`.
+Bun provides the `vi` object for tests written for Vitest. Where Vitest and Jest differ, mocks made with `vi.fn()` and `vi.spyOn()` behave as in Vitest:
+
+- `mockReset()` goes back to the original implementation.
+- `vi.restoreAllMocks()` keeps the recorded calls of the spies it restores.
+- `fn.mock` is still the same object after `mockClear()`.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -706,7 +710,7 @@ test("vitest compatibility", () => {
 });
 ```
 
-`vi.mocked(fn)` returns `fn` typed as a mock, and `vi.isMockFunction(fn)` tells whether it is one.
+`vi.mocked(fn)` returns `fn` typed as a mock. `vi.isMockFunction(fn)` returns whether `fn` is a mock.
 
 For module mocks, `vi` has `mock`, `doMock`, `unmock`, `doUnmock`, `importActual`, `importMock`, `resetModules` and `hoisted`. `jest` has `mock`, `doMock`, `unmock`, `dontMock`, `requireActual`, `requireMock`, `createMockFromModule` and `resetModules`.
 
@@ -742,16 +746,16 @@ test("lazy import", async () => {
 });
 ```
 
-- Stubs that are left are undone at the end of the test file. Every test file starts with the stubs made in a `--preload` script.
-- `vi.waitFor()` and `vi.waitUntil()` wait on the real clock. With fake timers on, they advance them by `interval` before every call.
+- Stubs that are still in place are undone when the test file ends. Stubs made by a `--preload` script apply to every file.
+- `vi.waitFor()` and `vi.waitUntil()` wait in real time. If fake timers are on, they also advance the fake clock by `interval` before each call to the callback.
 
 ### Differences from Vitest
 
-- A module that was imported before it is mocked is updated in place: its existing exports change, exports that only the mock has are not added, and getters are read once.
-- Every module that imports the mocked module gets the mock. In Vitest, one that is first loaded while the factory runs gets the original, and keeps it.
-- A factory that is given the original is called after the original is evaluated, not before.
-- `export * from` a module whose factory is given the original re-exports the names of the original.
-- Two files that both have hoisted calls and import each other wait for each other, and the run fails with an error that names both. Keep the hoisted calls in one of them.
+- Mocking a module that's already imported updates it in place. Its existing exports change, exports that only the mock has aren't added, and getters are read once.
+- Every module that imports the mocked module gets the mock. In Vitest, a module that's first loaded while the factory runs gets the original and keeps it.
+- A factory that uses `importOriginal` is called after the original module is evaluated, not before.
+- `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`.
+- If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
 
 ## Implementation Details
 

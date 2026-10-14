@@ -932,7 +932,7 @@ This outputs:
 
 The class names are unique to each file, so they don't collide.
 
-Importing a CSS module at runtime (`bun run`, `bun test`) gives the same object, so server-rendered markup and component tests see the class names the bundler emits when both run from the same working directory.
+Importing a CSS module at runtime (`bun run`, `bun test`) gives you the same object. Server-rendered markup and component tests see the same class names the bundler emits, as long as both run from the same working directory.
 
 ### Composition
 

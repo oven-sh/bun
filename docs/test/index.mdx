@@ -202,7 +202,7 @@ test.failing.each([1, 2, 3])("chained qualifiers %d", input => {
 });
 ```
 
-`test.sequential` is an alias, for compatibility with Vitest.
+`test.sequential` is an alias for `test.serial`, for Vitest compatibility.
 
 ## Retry failed tests
 
@@ -276,7 +276,7 @@ The `--seed` flag implies `--randomize`, so you don't need to specify both. The 
 
 ### Shuffle one block with `describe.shuffle`
 
-`describe.shuffle()` runs the tests of one block, and of the blocks inside it, in a random order, without `--randomize`. The summary prints the seed, and `--seed` gives that block the same order again.
+`describe.shuffle()` runs the tests in one block, including nested blocks, in random order. You don't need `--randomize`. The summary prints the seed, and running with that `--seed` reproduces the block's order.
 
 ```ts title="cart.test.ts" icon="/icons/typescript.svg"
 import { describe, test } from "bun:test";

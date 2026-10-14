@@ -192,25 +192,28 @@ preload = ["./setup.ts"]
 
 ### `test.environment`
 
-The DOM that test files run with: `"happy-dom"`, `"jsdom"`, or `"node"` for none. Default `"node"`. A `// @vitest-environment <name>` comment in a test file overrides it. See [DOM testing](/test/dom#test-environments).
+The DOM that test files run with. One of `"happy-dom"`, `"jsdom"`, or `"node"` for no DOM. Default `"node"`. A `// @vitest-environment <name>` comment in a test file overrides it. See [DOM testing](/test/dom#test-environments).
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
 environment = "happy-dom"
 ```
 
-Equivalent CLI flag: `--environment`, which overrides the `bunfig.toml` value.
+Equivalent CLI flag: `--environment`. It overrides the `bunfig.toml` value.
 
 ### `test.globals`
 
-Where `test`, `expect` and the other globals of a file come from. With `"bun"`, the default, that is `"vitest"` for a file that imports anything from `"vitest"`, and `"bun:test"` for any other. With `"vitest"` it is `"vitest"` for every file, as in a Vitest project with `globals: true`.
+Which module `test`, `expect` and the other globals come from. Default `"bun"`.
+
+- `"bun"`: a file that imports anything from `"vitest"` gets them from `"vitest"`. Any other file gets them from `"bun:test"`.
+- `"vitest"`: every file gets them from `"vitest"`, like `globals: true` in a Vitest project.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
 globals = "vitest"
 ```
 
-Equivalent CLI flag: `--globals`, which overrides the `bunfig.toml` value.
+Equivalent CLI flag: `--globals`. It overrides the `bunfig.toml` value.
 
 ### `test.pathIgnorePatterns`
 
@@ -366,14 +369,14 @@ The `--retry` CLI flag overrides this setting.
 
 ### `test.clearMocks`
 
-Clear the calls and results of every mock function before each test. Default `false`, and `true` for tests imported from `"vitest"`.
+Clear every mock function's calls and results before each test. Default `false`, or `true` for tests that use `test` from `"vitest"`.
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
 clearMocks = true
 ```
 
-`mockReset`, `restoreMocks`, `unstubEnvs` and `unstubGlobals` do the same with `vi.resetAllMocks()`, `vi.restoreAllMocks()`, `vi.unstubAllEnvs()` and `vi.unstubAllGlobals()`. Default `false`.
+`mockReset`, `restoreMocks`, `unstubEnvs` and `unstubGlobals` work the same way. They call `vi.resetAllMocks()`, `vi.restoreAllMocks()`, `vi.unstubAllEnvs()` and `vi.unstubAllGlobals()` before each test. Default `false`.
 
 ### `test.concurrentTestGlob`
 
@@ -425,7 +428,10 @@ CI systems and other tools can consume the report.
 
 #### `test.reporter.junitSuites`
 
-How the JUnit report represents `describe` blocks. `"nested"` writes a `<testsuite>` for each block inside the `<testsuite>` of its file. `"flat"` writes one `<testsuite>` per file and puts the names of the blocks in front of the name of each test. Default `"nested"`.
+How the JUnit report represents `describe` blocks. Default `"nested"`.
+
+- `"nested"`: each block gets its own `<testsuite>` inside its file's `<testsuite>`.
+- `"flat"`: each file gets one `<testsuite>`, and each test's name is prefixed with the names of its blocks.
 
 ```toml title="bunfig.toml" icon="settings"
 [test.reporter]

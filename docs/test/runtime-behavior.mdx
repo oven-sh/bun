@@ -46,7 +46,7 @@ TZ=America/New_York bun test
 
 ### `import.meta.env`
 
-Under `bun test`, `import.meta.env` also has the variables that [Vite](https://vite.dev/guide/env-and-mode) defines, so code written for Vite runs unchanged.
+In `bun test`, `import.meta.env` also has the variables [Vite](https://vite.dev/guide/env-and-mode) defines, so code written for Vite runs unchanged.
 
 | Variable   | Value                                                                     |
 | ---------- | ------------------------------------------------------------------------- |
@@ -65,13 +65,15 @@ test("Vite's variables", () => {
 });
 ```
 
-Everything else is read from and written to `process.env`. The five variables are not in `process.env`, so child processes don't inherit them. If `process.env` does have one, that value is used: `DEV`, `PROD` and `SSR` are `false` for `""` and `true` for any other string.
+Every other property reads from and writes to `process.env`. These five variables aren't in `process.env`, so child processes don't inherit them.
+
+If you do set one of them in `process.env`, that value is used instead. For `DEV`, `PROD` and `SSR`, `""` becomes `false` and any other string becomes `true`.
 
 ```bash terminal icon="terminal"
 MODE=staging bun test
 ```
 
-`vi.stubEnv()` changes them for a test:
+Use `vi.stubEnv()` to change them in a test:
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -126,7 +128,7 @@ test("test without timeout", async () => {
 
 ### Unhandled Errors
 
-`bun test` tracks unhandled promise rejections and errors that occur between tests. If any occur, `bun test` exits with a non-zero code even when no test failed. In both examples below the error happens while the file is being loaded. The file's tests still run.
+`bun test` tracks unhandled promise rejections and errors that occur between tests. If any occur, `bun test` exits with a non-zero code even when no test failed. In both examples below, the error happens while the file is loading, and the file's tests still run.
 
 This helps catch errors in asynchronous code that might otherwise go unnoticed:
 
@@ -166,11 +168,11 @@ test("test 1", () => {
 Promise.reject(new Error("Unhandled rejection"));
 ```
 
-A file that throws at its top level, or whose top-level `await` rejects, fails to load: none of its tests run.
+If a file throws at the top level, or a top-level `await` rejects, the file fails to load and none of its tests run.
 
 ### Unsettled Top-Level Await
 
-No timeout applies while a test file is loading. When a top-level `await` or `import` is still pending and nothing is left on the event loop that could settle it, `bun test` fails the file, names the modules that are stuck, and moves on to the next file.
+There's no timeout while a test file is loading. If a top-level `await` or `import` is still pending and nothing left on the event loop could settle it, `bun test` fails the file, prints the modules that are stuck, and moves on to the next file.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 await new Promise(() => {});
@@ -182,7 +184,7 @@ note: it is waiting for something that can no longer happen: the event loop has 
 note: unsettled top-level await in "/path/to/test.ts"
 ```
 
-The same goes for a `--preload` script, an async `describe()` callback, and a test or hook whose timeout is `0`. A timer, socket, subprocess or worker that is still open counts as something that could settle it, even after `.unref()`.
+The same applies to `--preload` scripts, async `describe()` callbacks, and tests or hooks with a timeout of `0`. An open timer, socket, subprocess or worker counts as something that could still settle the promise, even after `.unref()`.
 
 ### Custom Error Handling
 
@@ -302,7 +304,7 @@ You can also import them explicitly:
 import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach, jest, vi } from "bun:test";
 ```
 
-A file that imports some of them can still use the others as globals.
+If a file imports only some of them, the rest are still available as globals.
 
 ## Process Integration
 

@@ -487,7 +487,7 @@ import "./styles.css";
 
 The import returns no value; it's only used for its side effects.
 
-Importing a [CSS module](/bundler/css#css-modules) (`.module.css`) returns an object that maps each class name to its unique identifier, in the bundler and at runtime (`bun run`, `bun test`).
+Importing a [CSS module](/bundler/css#css-modules) (`.module.css`) returns an object that maps each class name to its unique identifier. This works in the bundler and at runtime (`bun run`, `bun test`).
 
 ```ts
 import styles from "./styles.module.css";
@@ -495,7 +495,7 @@ import styles from "./styles.module.css";
 console.log(styles.button); // "button_123"
 ```
 
-At runtime, CSS that the bundler would reject does not fail the import: invalid rules and declarations are skipped, as in a browser.
+At runtime, CSS that the bundler would reject doesn't fail the import. Invalid rules and declarations are skipped, like in a browser.
 
 ### `sh` loader
 

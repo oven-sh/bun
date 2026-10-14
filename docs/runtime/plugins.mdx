@@ -164,9 +164,11 @@ The second argument to `onResolve()` is a callback that runs for each module imp
 
 The callback receives the _path_ to the matching module and can return a _new path_ for it. Bun reads the contents of the _new path_ and parses it as a module.
 
-At runtime, the callback runs once for each `import` or `require()` as it executes, whatever the import string looks like: a package (`"react"`), an alias (`"@/utils"`), or a relative path with or without an extension. An import string with a prefix, such as `"virtual:thing"`, first runs the callbacks registered with `namespace: "virtual"` on `"thing"`, then the callbacks without a `namespace` on the whole string.
+At runtime, the callback runs once for each `import` or `require()` as it executes. It runs for any kind of import string, whether that's a package (`"react"`), an alias (`"@/utils"`), or a relative path with or without an extension.
 
-Built-in modules such as `"fs"` and `"node:fs"` do not run callbacks without a `namespace`. Neither do the packages, prefixed strings and extensionless paths that an `onResolve()` callback loads itself while it is running.
+For an import string with a prefix, such as `"virtual:thing"`, Bun first runs the callbacks registered with `namespace: "virtual"` on `"thing"`. If none of them returns a result, it runs the callbacks without a `namespace` on the whole string.
+
+Callbacks without a `namespace` don't run for built-in modules such as `"fs"` and `"node:fs"`. They also don't run for packages, prefixed strings and extensionless paths that an `onResolve()` callback loads while it's running.
 
 A _new path_ without a `namespace` is resolved from the importing module like any other import, without running `onResolve()` callbacks on it: it can be relative, leave out its extension, or name a package. If nothing is found there, the _new path_ is used as it is when an [`onLoad()`](#onload) callback matches it, so it does not have to exist on disk.
 
@@ -216,9 +218,11 @@ The callback receives the matching module's _path_, its _namespace_, the default
 
 The callback can return a new `contents` string for the module as well as a new `loader`.
 
-At runtime, `contents` (a string, or bytes of UTF-8) is loaded like a file of that type: CommonJS stays CommonJS, and `"json"` gives `import` and `require()` what a `.json` file gives them. `loader` can be `"js"`, `"jsx"`, `"ts"`, `"tsx"`, `"json"`, `"jsonc"`, `"json5"`, `"toml"`, `"yaml"`, `"xml"`, `"text"`, `"md"` or `"css"`. Without one, the `type` the module is imported with decides, then its file extension. A `type` that is none of these, such as `"file"`, is an error unless `loader` is set.
+At runtime, `contents` can be a string or UTF-8 bytes, and Bun loads it like a file of that type. CommonJS stays CommonJS, and with `"json"`, `import` and `require()` return what they return for a `.json` file.
 
-To decline a module, return `undefined` (or a promise of it). The next matching `onLoad()` callback runs, and when they all decline Bun loads the module as if no plugin had matched it.
+`loader` can be `"js"`, `"jsx"`, `"ts"`, `"tsx"`, `"json"`, `"jsonc"`, `"json5"`, `"toml"`, `"yaml"`, `"xml"`, `"text"`, `"md"` or `"css"`. If you don't return one, Bun uses the `type` the module was imported with, then its file extension. A `type` that isn't in this list, such as `"file"`, is an error unless you set `loader`.
+
+To skip a module, return `undefined` or a promise that resolves to `undefined`. Bun runs the next matching `onLoad()` callback. If they all skip it, Bun loads the module as if no plugin had matched it.
 
 For example:
 

@@ -75,7 +75,7 @@ junit = "path/to/junit.xml"  # Output path for JUnit XML report
 
 #### Describe Blocks in JUnit Reports
 
-By default, each `describe` block is a `<testsuite>` nested in the `<testsuite>` of its file. Some tools only read the `<testcase>` elements directly inside a file's `<testsuite>`. For those, use `--reporter-junit-suites=flat`:
+By default, each `describe` block becomes a `<testsuite>` nested inside its file's `<testsuite>`. Some tools only read the `<testcase>` elements directly inside a file's `<testsuite>`. For those tools, use `--reporter-junit-suites=flat`:
 
 ```sh terminal icon="terminal"
 bun test --reporter=junit --reporter-outfile=./junit.xml --reporter-junit-suites=flat
@@ -87,7 +87,7 @@ junit = "path/to/junit.xml"
 junitSuites = "flat"  # "nested" (default) or "flat"
 ```
 
-The report then has one `<testsuite>` per file. The names of the `describe` blocks go in front of the name of the test, and `classname` is the file:
+The report then has one `<testsuite>` per file. Each test's name is prefixed with its `describe` block names, and `classname` is the file:
 
 ```xml junit.xml icon="file-code"
 <testsuite name="math.test.ts" file="math.test.ts" tests="1" ...>

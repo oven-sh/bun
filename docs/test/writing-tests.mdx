@@ -206,7 +206,7 @@ test.if(macOS)("runs on macOS", () => {
 });
 ```
 
-`test.runIf()` is an alias, for compatibility with Vitest.
+`test.runIf()` is an alias for `test.if()`, for Vitest compatibility.
 
 ### test.skipIf
 
@@ -254,13 +254,13 @@ test.failing("fixed bug", () => {
 
 Use it to track known bugs you plan to fix later, or for test-driven development.
 
-`test.fails()` is Vitest's version. It passes if anything about the test fails: the callback, a `beforeEach` or `afterEach` hook, the timeout, or `expect.assertions()`. `test.failing()` only accepts an error from the test callback.
+`test.fails()` is Vitest's version. It passes if any part of the test fails: the callback, a `beforeEach` or `afterEach` hook, the timeout, or `expect.assertions()`. `test.failing()` only counts an error from the test callback.
 
-Neither accepts an uncaught exception or an unhandled rejection, which may be left over from an earlier test. Bun reports it as an unhandled error between tests.
+Neither one counts an uncaught exception or an unhandled rejection, because it may have come from an earlier test. Bun reports it as an unhandled error between tests.
 
 ### Combining modifiers
 
-Modifiers chain in any order. Repeating one changes nothing, and `skip` wins over `todo`, which wins over `failing`.
+You can chain modifiers in any order. Repeating a modifier, as in `test.skip.skip`, has no effect. `skip` wins over `todo`, and `todo` wins over `failing`.
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 test.skipIf(isWindows).skipIf(isCI)("skipped on Windows and in CI", () => {});
@@ -362,7 +362,7 @@ test.each([
 });
 ```
 
-A table can also be a tagged template. The first line names the columns, and each row is passed as an object:
+You can also write the table as a tagged template. The first line names the columns, and each row is passed as an object:
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 test.each`
@@ -376,7 +376,7 @@ test.each`
 
 ### `test.for` and `describe.for`
 
-`test.for` is `test.each` without the spreading: a row is always the first argument. The second argument is the [test context](#test-context).
+`test.for` works like `test.each`, but it doesn't spread array rows. The row is always the first argument, and the second argument is the [test context](#test-context).
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 test.for([
@@ -404,9 +404,9 @@ Use these specifiers to format the test title:
 | `%$`       | Number of the test case (index + 1) |
 | `%%`       | Single percent sign (%)             |
 
-Each specifier accepts any value and converts it, as `util.format` does: `%s` prints `1` for `1` and `null` for `null`. Objects and arrays are printed on one line.
+Each specifier accepts any value and converts it the way `util.format` does. For example, `%s` prints `1` for `1` and `null` for `null`. Objects and arrays are printed on one line.
 
-When a row is an object, `$name` and `$user.name` print its properties and `$#` prints the index of the test case. A `$name` the row does not have is left as written.
+When a row is an object, `$name` and `$user.name` print its properties, and `$#` prints the test case's index. If the row has no `name` property, `$name` is left as is.
 
 #### Examples
 
@@ -438,7 +438,7 @@ test.each(["apple", "banana"])("fruit #%# is %s", fruit => {
 
 ## Fixtures
 
-`test.extend()` returns a `test` whose callbacks receive what they need, set up before the test and torn down after it.
+`test.extend()` returns a new `test` function with fixtures. A fixture is a value that's set up before a test and torn down after it. Tests get fixtures by destructuring the callback's first parameter.
 
 ```ts title="server.test.ts" icon="/icons/typescript.svg"
 import { test as base, expect } from "bun:test";
@@ -459,58 +459,60 @@ test("responds", async ({ url }) => {
 });
 ```
 
-- A fixture is only set up for the tests that destructure it, so the first parameter has to be an object destructuring pattern. A fixture names the fixtures it depends on in the same way.
-- `test.beforeEach()` and `test.afterEach()` of the extended `test` receive fixtures like a test does. `beforeEach` and `afterEach` imported from `"bun:test"` do not: their parameter is a `done` callback.
+- By default, a fixture is only set up for tests that destructure it, so the first parameter must be an object destructuring pattern. A fixture declares the fixtures it depends on the same way.
+- `test.beforeEach()` and `test.afterEach()` on the extended `test` receive fixtures, like a test does. `beforeEach` and `afterEach` imported from `"bun:test"` don't. Their parameter is a `done` callback.
 - Fixtures are torn down in reverse order, after the `afterEach` hooks.
-- A value that is not a function is passed as it is.
-- `test.extend()` can be called on an extended `test`. A fixture that replaces one of the same name can destructure the one it replaces.
+- A fixture that isn't a function is passed as is.
+- You can call `test.extend()` on an extended `test`. A fixture that replaces one with the same name can destructure the one it replaces.
 
-| Option                             | Description                                                                                  |
-| ---------------------------------- | -------------------------------------------------------------------------------------------- |
-| `[fixture, { auto: true }]`        | Set up for every test, whether it destructures the fixture or not                            |
-| `[fixture, { scope: "file" }]`     | Set up once, for the first test that needs it, and torn down after the last test of the file |
-| `test.override({ name: fixture })` | Replaces fixtures for the `describe` block it is called in                                   |
-| `test.beforeAll(({ name }) => {})` | `beforeAll` and `afterAll` with the `scope: "file"` fixtures                                 |
+| Option                             | Description                                                                                              |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `[fixture, { auto: true }]`        | Sets up the fixture for every test, even tests that don't destructure it                                 |
+| `[fixture, { scope: "file" }]`     | Sets up the fixture once, for the first test that needs it, and tears it down after the file's last test |
+| `test.override({ name: fixture })` | Replaces fixtures in the `describe` block it's called in                                                 |
+| `test.beforeAll(({ name }) => {})` | `beforeAll` and `afterAll` hooks that receive the `scope: "file"` fixtures                               |
 
 ### Test Context
 
-The object that fixtures are destructured from is the test context. There is one per test: its hooks receive the same object.
+The test context is the object you destructure fixtures from. Each test has one, and its hooks receive the same object.
 
-| Property                                 | Description                                                                                                                         |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `task`                                   | The test: `name`, `fullName`, `suite`, `file.filepath`, `meta`, `result.state`, `result.errors`, ...                                |
-| `expect`                                 | `expect`, with assertion counts and snapshots that belong to this test, also in [concurrent](/test#concurrent-test-execution) tests |
-| `skip(note?)`, `skip(condition, note?)`  | Stops the test and reports it as skipped                                                                                            |
-| `onTestFinished(fn)`, `onTestFailed(fn)` | Runs `fn` after the hooks and the fixtures of the test                                                                              |
-| `signal`                                 | An `AbortSignal`, aborted when the test times out                                                                                   |
-| `annotate(message, type?, attachment?)`  | Adds to `task.annotations`                                                                                                          |
+| Property                                 | Description                                                                                                                       |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `task`                                   | The running test: `name`, `fullName`, `suite`, `file.filepath`, `meta`, `result.state`, `result.errors`, ...                      |
+| `expect`                                 | An `expect` whose assertion counts and snapshots belong to this test, even in [concurrent](/test#concurrent-test-execution) tests |
+| `skip(note?)`, `skip(condition, note?)`  | Stops the test and reports it as skipped                                                                                          |
+| `onTestFinished(fn)`, `onTestFailed(fn)` | Runs `fn` after the test's `afterEach` hooks and fixture teardown. `onTestFailed` only runs it if the test failed                 |
+| `signal`                                 | An `AbortSignal` that's aborted when the test times out                                                                           |
+| `annotate(message, type?, attachment?)`  | Adds an entry to `task.annotations`                                                                                               |
 
-As in Vitest, the context is not a `done` callback: calling it throws `done() callback is deprecated, use promise instead`.
+As in Vitest, the context isn't a `done` callback. Calling it throws an error.
 
 ## Importing from `vitest`
 
-Under `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/globals"`. The functions behave like those of the runner they are named after, so a file (or a helper module) keeps the semantics it was written for:
+In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/globals"`. Each module behaves like the runner it's named after, so a test file or helper module keeps the behavior it was written for:
 
-|                                                           | `"bun:test"`, `"@jest/globals"`        | `"vitest"`                                                   |
-| --------------------------------------------------------- | -------------------------------------- | ------------------------------------------------------------ |
-| Parameter of a test or hook callback                      | a `done` callback, which is waited for | the [test context](#test-context)                            |
-| Extra parameter of a `test.each` callback                 | a `done` callback                      | `undefined`                                                  |
-| A value in a `test.each` title                            | `{ a: "x" }`, whole                    | as Vitest prints it: `{ a: 'x' }`, `[ 0, 1, …(118) ]`        |
-| `beforeAll`, `afterAll` callback                          | `(done)`                               | `({}, suite)`                                                |
-| `afterEach`, `afterAll` of one scope                      | run in the order they were registered  | run last registered first                                    |
-| A function returned by `beforeEach`, `beforeAll`          | ignored                                | runs after the matching `afterEach` / `afterAll` hooks       |
-| `test(name, { skip, only, todo, fails, concurrent }, fn)` | ignored                                | like the modifiers                                           |
-| Options of `describe(name, options, fn)`                  | ignored                                | the defaults of the tests inside it                          |
-| `test(name)` without a callback                           | an error                               | a todo                                                       |
-| Mock functions, before each test                          | left as they are                       | cleared ([`clearMocks`](/test/configuration#test-execution)) |
-| Default timeout of a hook                                 | that of a test                         | 10 seconds, or `--timeout` if that is longer                 |
-| `beforeAll` in a scope with only skipped tests            | runs                                   | does not run                                                 |
+|                                                           | `"bun:test"`, `"@jest/globals"`      | `"vitest"`                                                   |
+| --------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------ |
+| Test or hook callback's parameter                         | a `done` callback that Bun waits for | the [test context](#test-context)                            |
+| `test.each` callback's extra parameter                    | a `done` callback                    | `undefined`                                                  |
+| Values in a `test.each` title                             | printed in full: `{ a: "x" }`        | printed as in Vitest: `{ a: 'x' }`, `[ 0, 1, …(118) ]`       |
+| `beforeAll` and `afterAll` callback parameters            | `(done)`                             | `({}, suite)`                                                |
+| `afterEach` and `afterAll` hooks in the same scope        | run in registration order            | run in reverse registration order                            |
+| Function returned by `beforeEach` or `beforeAll`          | ignored                              | runs after the matching `afterEach` / `afterAll` hooks       |
+| `test(name, { skip, only, todo, fails, concurrent }, fn)` | these options are ignored            | these options work like the modifiers                        |
+| `describe(name, options, fn)`                             | options are ignored                  | options are the defaults for the tests inside                |
+| `test(name)` without a callback                           | an error                             | a todo test                                                  |
+| Mock functions before each test                           | left alone                           | cleared ([`clearMocks`](/test/configuration#test-execution)) |
+| Default hook timeout                                      | same as a test's                     | 10 seconds, or `--timeout` if it's longer                    |
+| `beforeAll` in a scope with only skipped tests            | runs                                 | doesn't run                                                  |
 
-`"vitest"` also exports `suite`, `vitest`, `onTestFailed` and `assertType`. A file that imports from `"vitest"` gets the other globals (`test`, `describe`, `beforeEach`, ...) from `"vitest"` too; [`globals = "vitest"`](/test/configuration#globals) in `bunfig.toml` does that for every file.
+`"vitest"` also exports `suite`, `vitest`, `onTestFailed` and `assertType`.
+
+In a file that imports from `"vitest"`, the globals (`test`, `describe`, `beforeEach`, ...) come from `"vitest"` too. Set [`globals = "vitest"`](/test/configuration#globals) in `bunfig.toml` to do that for every file.
 
 ## Promises
 
-`.resolves` and `.rejects` apply the matcher to what a promise settles with. They also accept a thenable, or a function that returns a promise. The matcher returns a promise, so `await` it:
+`.resolves` and `.rejects` run the matcher on the value a promise resolves to or rejects with. They also accept a thenable or a function that returns a promise. The matcher returns a promise, so `await` it:
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 test("promises", async () => {
@@ -520,13 +522,19 @@ test("promises", async () => {
 });
 ```
 
-A test does not end before the matchers it did not `await` have run, and their failures fail that test. Outside of a test, the file waits for them, and a failure is reported as an error between tests. The rest of the test does not wait for them, though: `await` the matcher when the code after it closes something the promise needs.
+If you don't `await` a matcher, the test still waits for it before ending, and a failure still fails that test. Outside a test, the file waits for the matcher, and a failure is reported as an error between tests. Code after the matcher doesn't wait for it, so `await` the matcher if that code closes something the promise needs.
 
-`toThrow()` on a function that returns a pending promise, a custom matcher that returns a promise, and a matcher that compares a pending promise with `expect.resolvesTo` or `expect.rejectsTo` return a promise in the same way. What such a matcher compares must stay the same while it waits: if it has changed, the matcher fails.
+These matchers also return a promise:
+
+- `toThrow()` on a function that returns a pending promise
+- A custom matcher that returns a promise
+- A matcher that compares a pending promise with `expect.resolvesTo` or `expect.rejectsTo`
+
+Don't change the values being compared while one of these matchers waits. If they change, the matcher fails.
 
 ## Soft Assertions
 
-A matcher of `expect.soft()` that fails does not throw. Bun reports the failure, the test goes on, and it fails when it ends:
+`expect.soft()` doesn't throw when a matcher fails. The test keeps running and is marked as failed at the end:
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 test("response", async () => {
@@ -536,11 +544,11 @@ test("response", async () => {
 });
 ```
 
-`expect.soft()` works with `.not`, `.resolves`, `.rejects`, and custom matchers. Outside of a test, and in a concurrent test after its first `await`, the failure is thrown like any other.
+`expect.soft()` works with `.not`, `.resolves`, `.rejects`, and custom matchers. Outside a test, or in a concurrent test after its first `await`, a failed matcher throws as usual.
 
 ## Polling
 
-`expect.poll()` calls a function, awaits what it returns, and runs the matcher on the result, again and again until the matcher passes. The matcher returns a promise:
+`expect.poll()` calls a function, awaits its result, and runs the matcher on it. It retries until the matcher passes. The matcher returns a promise:
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 test("the queue drains", async () => {
@@ -549,13 +557,14 @@ test("the queue drains", async () => {
 });
 ```
 
-| Option     | Default | Description                                                              |
-| ---------- | ------- | ------------------------------------------------------------------------ |
-| `interval` | `50`    | Milliseconds between two attempts                                        |
-| `timeout`  | `1000`  | Milliseconds after which the promise rejects with the last failure       |
-| `message`  |         | A custom message to display if the matcher fails, as in `expect(x, msg)` |
+| Option     | Default | Description                                                       |
+| ---------- | ------- | ----------------------------------------------------------------- |
+| `interval` | `50`    | Milliseconds between attempts                                     |
+| `timeout`  | `1000`  | Milliseconds before the promise rejects with the last failure     |
+| `message`  |         | Custom message shown if the matcher fails, as in `expect(x, msg)` |
 
-The time is real even under [fake timers](/test/dates-times), which each attempt advances by `interval`. `.resolves`, `.rejects`, `toThrow()`, and the snapshot matchers are not supported: use `vi.waitFor()` for those.
+- `interval` and `timeout` are measured in real time, even with [fake timers](/test/dates-times). Each attempt also advances the fake clock by `interval`.
+- `expect.poll()` doesn't support `.resolves`, `.rejects`, `toThrow()`, or the snapshot matchers. Use `vi.waitFor()` for those.
 
 ## Assertion Counting
 
@@ -593,7 +602,7 @@ test("exactly two assertions", () => {
 
 ## Custom Equality
 
-Use `expect.addEqualityTesters()` to teach `toEqual()`, `toStrictEqual()`, `toMatchObject()`, `toHaveBeenCalledWith()`, and the other deep-equality matchers how to compare your own types. A tester returns `true` or `false`, or `undefined` when it has no opinion on the two values.
+Use `expect.addEqualityTesters()` to teach `toEqual()`, `toStrictEqual()`, `toMatchObject()`, `toHaveBeenCalledWith()`, and the other deep-equality matchers how to compare your own types. A tester returns `true` or `false`, or `undefined` if it doesn't handle the two values.
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 function areVolumesEqual(a: unknown, b: unknown) {
@@ -608,13 +617,13 @@ test("1 L is 1000 mL", () => {
 });
 ```
 
-A tester that a test file registers applies until the end of that file. One that a [preload script](/test/lifecycle#global-setup-and-teardown) or a module that test files import registers applies to every file after it.
+A tester registered in a test file applies until that file ends. A tester registered in a [preload script](/test/lifecycle#global-setup-and-teardown), or in a module that test files import, applies to every file after it.
 
-To compare nested values inside a tester, call `this.equals(a, b, customTesters)` with the third argument the tester receives.
+To compare nested values inside a tester, call `this.equals(a, b, customTesters)`. `customTesters` is the third argument the tester receives.
 
 ## Test State
 
-`expect.getState()` returns what `expect` knows about the running test. Custom matchers find the properties below on `this`.
+`expect.getState()` returns information about the running test. Custom matchers can read the properties below from `this`.
 
 ```ts title="example.test.ts" icon="/icons/typescript.svg"
 describe("math", () => {
@@ -625,15 +634,15 @@ describe("math", () => {
 });
 ```
 
-| Property                   | Description                                                                             |
-| -------------------------- | --------------------------------------------------------------------------------------- |
-| `currentTestName`          | The `describe` names and the test name, joined by a space (by `>` in a `"vitest"` test) |
-| `testPath`                 | The absolute path of the test file                                                      |
-| `assertionCalls`           | How many assertions the test has made                                                   |
-| `expectedAssertionsNumber` | The argument of `expect.assertions()`, or `null`                                        |
-| `isExpectingAssertions`    | `true` after `expect.hasAssertions()`, unless the test also calls `expect.assertions()` |
+| Property                   | Description                                                                               |
+| -------------------------- | ----------------------------------------------------------------------------------------- |
+| `currentTestName`          | The `describe` names and the test name, joined by a space, or by `>` in a `"vitest"` test |
+| `testPath`                 | The test file's absolute path                                                             |
+| `assertionCalls`           | Number of assertions the test has made                                                    |
+| `expectedAssertionsNumber` | The count passed to `expect.assertions()`, or `null`                                      |
+| `isExpectingAssertions`    | `true` after `expect.hasAssertions()`, unless the test also calls `expect.assertions()`   |
 
-`expect.setState(state)` merges your own properties into what `expect.getState()` returns, and can set the three assertion counters. Your own properties are not on the `this` of a custom matcher.
+`expect.setState(state)` merges your own properties into the object `expect.getState()` returns. It can also set the three assertion properties above. Custom matchers don't get your own properties on `this`.
 
 ## Type Testing
 

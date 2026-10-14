@@ -95,11 +95,11 @@ test("get the current mocked time", () => {
 
 Use it to read the mocked time without creating a new `Date` object.
 
-`vi.getMockedSystemTime()` returns the mocked time as a `Date`, or `null` when the time is not mocked. `vi.getRealSystemTime()` and `jest.getRealSystemTime()` return the real timestamp.
+`vi.getMockedSystemTime()` returns the mocked time as a `Date`, or `null` when the time isn't mocked. `vi.getRealSystemTime()` and `jest.getRealSystemTime()` return the real timestamp.
 
 ## Fake timers
 
-`useFakeTimers()` replaces `setTimeout`, `setInterval`, `clearTimeout` and `clearInterval` on `globalThis` with functions that schedule on a fake clock. `Date`, `performance.now()` and `process.hrtime()` read the same clock. The fake clock moves when your test moves it. `jest` and `vi` have the same functions.
+`useFakeTimers()` replaces `setTimeout`, `setInterval`, `clearTimeout` and `clearInterval` on `globalThis` with versions that run on a fake clock. `Date`, `performance.now()` and `process.hrtime()` read the same clock. The fake clock only moves when your test advances it. `jest` and `vi` have the same functions.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, jest } from "bun:test";
@@ -118,28 +118,30 @@ test("fires after a minute", () => {
 });
 ```
 
-| Function                          | What it does                                                               |
-| --------------------------------- | -------------------------------------------------------------------------- |
-| `advanceTimersByTime(ms)`         | Moves the clock forward and runs the timers that become due                |
-| `advanceTimersToNextTimer(steps)` | Moves the clock to the next timer, `steps` times (default 1)               |
-| `advanceTimersToNextFrame()`      | Moves the clock to the next multiple of 16 ms                              |
-| `runOnlyPendingTimers()`          | Moves the clock to the last timer that is pending now                      |
-| `runAllTimers()`                  | Runs timers until none is left                                             |
-| `runAllTicks()`                   | Runs the callbacks of a faked `process.nextTick` or `queueMicrotask`       |
-| `getTimerCount()`                 | Returns the number of pending fake timers                                  |
-| `clearAllTimers()`                | Drops the pending fake timers                                              |
-| `isFakeTimers()`                  | Returns whether fake timers are on                                         |
-| `useRealTimers()`                 | Puts the real functions and clocks back, and drops the pending fake timers |
+| Function                          | What it does                                                            |
+| --------------------------------- | ----------------------------------------------------------------------- |
+| `advanceTimersByTime(ms)`         | Advances the clock by `ms` and runs the timers that come due            |
+| `advanceTimersToNextTimer(steps)` | Advances the clock to the next timer, `steps` times (default 1)         |
+| `advanceTimersToNextFrame()`      | Advances the clock to the next multiple of 16 ms                        |
+| `runOnlyPendingTimers()`          | Advances the clock to the last timer that's pending now                 |
+| `runAllTimers()`                  | Runs timers until none are left                                         |
+| `runAllTicks()`                   | Runs faked `process.nextTick` and `queueMicrotask` callbacks            |
+| `getTimerCount()`                 | Returns the number of pending fake timers                               |
+| `clearAllTimers()`                | Removes all pending fake timers                                         |
+| `isFakeTimers()`                  | Returns whether fake timers are on                                      |
+| `useRealTimers()`                 | Restores the real functions and clocks, and removes pending fake timers |
 
-An error that a timer callback throws comes out of the function that ran the timer. An error that a faked `process.nextTick` or `queueMicrotask` callback throws also ends that function at once: the clock stays where it is, and what has not run stays pending.
+If a timer callback throws, the function that ran the timer rethrows the error. If a faked `process.nextTick` or `queueMicrotask` callback throws, that function also stops right away. The clock stays where it is, and anything that hasn't run yet stays pending.
 
-At the end of each test file, Bun puts the real timers and the real time back. Fake timers and a system time that a [preload](/test/configuration#preload-scripts) sets at its top level stay on from file to file. Without `--isolate` that is one clock for all files: it keeps the time and the pending timers that a file leaves behind, and it ends with the first file that calls `useFakeTimers()`, `useRealTimers()` or `setSystemTime()` itself. To start every test with fake timers, call `useFakeTimers()` in a `beforeEach()` of the preload.
+`runAllTimers()` throws after 10,000 timers with `vi.useFakeTimers()` and after 100,000 with `jest.useFakeTimers()`, so a `setInterval` can't keep it running forever. Every function that advances the clock throws the same error after that many faked `process.nextTick` or `queueMicrotask` callbacks in a row. Change the limit with the `loopLimit` option (`timerLimit` in Jest).
 
-`runAllTimers()` throws after 10,000 timers with `vi.useFakeTimers()` and after 100,000 with `jest.useFakeTimers()`, so a `setInterval` does not run forever. Every function that moves the clock throws the same error after as many faked `process.nextTick` or `queueMicrotask` callbacks in a row. Change the limit with the `loopLimit` option (`timerLimit` in Jest).
+Bun restores the real timers and the real time at the end of each test file.
 
-### Timers armed after an `await`
+Fake timers or a system time set at the top level of a [preload](/test/configuration#preload-scripts) stay on from file to file. Without `--isolate`, every file shares that one clock. It keeps the time and the pending timers that the previous file left behind, and it lasts until a file calls `useFakeTimers()`, `useRealTimers()` or `setSystemTime()` itself. To start every test with fake timers, call `useFakeTimers()` in a `beforeEach()` in the preload.
 
-`advanceTimersByTimeAsync`, `advanceTimersToNextTimerAsync`, `runAllTimersAsync` and `runOnlyPendingTimersAsync` return a promise. Promise jobs and one turn of the real event loop run between two fake timers, so these functions see a timer that a callback schedules after an `await`.
+### Timers scheduled after an `await`
+
+`advanceTimersByTimeAsync`, `advanceTimersToNextTimerAsync`, `runAllTimersAsync` and `runOnlyPendingTimersAsync` return a promise. Between fake timers, they let promise jobs and one turn of the real event loop run, so they pick up timers that a callback schedules after an `await`.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, expect, vi } from "bun:test";
@@ -160,7 +162,7 @@ test("a retry that waits between attempts", async () => {
 
 ### Choose what to fake
 
-`toFake` lists what to fake. `doNotFake` (`toNotFake` in Vitest) takes names out of the default list.
+`toFake` lists the APIs to fake. `doNotFake` (`toNotFake` in Vitest) removes names from the default list.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 vi.useFakeTimers({ toFake: ["Date"] }); // setTimeout stays real
@@ -174,13 +176,13 @@ jest.useFakeTimers({ doNotFake: ["performance"] }); // performance.now() stays r
 | `requestAnimationFrame`, `cancelAnimationFrame`                | Yes, with a DOM  |
 | `setImmediate`, `clearImmediate`, `nextTick`, `queueMicrotask` | No               |
 
-Vitest and Jest fake `setImmediate` by default. In `bun:test` it stays real unless `toFake` lists it. Bun fakes `requestAnimationFrame` only when a DOM library has defined it on `globalThis`.
+Vitest and Jest fake `setImmediate` by default. In `bun:test`, it stays real unless you list it in `toFake`. Bun only fakes `requestAnimationFrame` when a DOM library has defined it on `globalThis`.
 
 `AbortSignal.timeout()`, `Bun.sleep()` and `Bun.cron()` follow the fake clock when `setTimeout` is faked.
 
 ### Wait for real time while fake timers are on
 
-A function that you read before `useFakeTimers()` stays real. So do the exports of `node:timers` and `node:timers/promises`.
+A timer function that you save before calling `useFakeTimers()` stays real. The `node:timers` and `node:timers/promises` exports stay real too.
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, vi } from "bun:test";
@@ -194,9 +196,9 @@ test("waits 10 real milliseconds", async () => {
 });
 ```
 
-### Let the clock move by itself
+### Advance the clock automatically
 
-With `shouldAdvanceTime: true` (`advanceTimers: true` in Jest) the fake clock moves forward by 20 ms every 20 real milliseconds. `advanceTimeDelta` (a number for `advanceTimers` in Jest) changes the 20.
+With `shouldAdvanceTime: true` (`advanceTimers: true` in Jest), the fake clock advances by 20 ms every 20 real milliseconds. To use a different interval, set `advanceTimeDelta` (in Jest, pass a number as `advanceTimers`).
 
 ```ts title="test.ts" icon="/icons/typescript.svg"
 vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -205,13 +207,13 @@ await new Promise(resolve => setTimeout(resolve, 30)); // resolves without an ad
 
 `vi.setTimerTickMode()` changes the mode while fake timers are on:
 
-- `"manual"`: only your test moves the clock. This mode is the default.
-- `"nextTimerAsync"`: every turn of the real event loop runs the next timer, however far away it is.
+- `"manual"`: only your test advances the clock. This is the default.
+- `"nextTimerAsync"`: every turn of the real event loop runs the next timer, no matter how far away it is.
 - `"interval"`: the same as `shouldAdvanceTime`. The second argument is the number of milliseconds.
 
 `jest.setTimerTickMode()` takes `{ mode: "manual" | "nextAsync" | "interval", delta }`.
 
-An error that a timer callback throws while the clock moves by itself is an uncaught error. After an error of a faked `process.nextTick` or `queueMicrotask` callback the mode is `"manual"` again.
+If a timer callback throws while the clock is advancing on its own, it's an uncaught error. If a faked `process.nextTick` or `queueMicrotask` callback throws, the mode goes back to `"manual"`.
 
 ## Set the time zone
 
@@ -240,6 +242,6 @@ test("Welcome to New York!", () => {
 });
 ```
 
-`delete process.env.TZ` goes back to UTC.
+`delete process.env.TZ` resets the time zone to UTC.
 
 <Info>Unlike in Jest, you can change the time zone multiple times at runtime.</Info>

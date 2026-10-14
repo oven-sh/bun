@@ -43,13 +43,14 @@ bun test <patterns>
 </ParamField>
 
 <ParamField path="--environment" type="string" default="node">
-  Globals test files run with: <code>node</code>, <code>jsdom</code> or <code>happy-dom</code>. A{" "}
+  The DOM that test files run with: <code>node</code> (no DOM), <code>jsdom</code> or <code>happy-dom</code>. A{" "}
   <code>@vitest-environment</code> or <code>@jest-environment</code> comment in a file overrides it
 </ParamField>
 
 <ParamField path="--globals" type="string" default="bun">
-  Where the globals <code>test</code>, <code>expect</code>, ... come from: <code>bun</code> (<code>"vitest"</code> in a
-  file that imports from it, else <code>"bun:test"</code>) or <code>vitest</code> (in every file)
+  Where <code>test</code>, <code>expect</code> and the other globals come from. With <code>bun</code>, a file that
+  imports from <code>"vitest"</code> gets them from there and any other file gets them from <code>"bun:test"</code>.
+  With <code>vitest</code>, every file gets them from <code>"vitest"</code>
 </ParamField>
 
 ### Test Filtering
@@ -74,8 +75,8 @@ bun test <patterns>
 </ParamField>
 
 <ParamField path="--reporter-junit-suites" type="string">
-  How --reporter=junit writes describe blocks: <code>nested</code> (default, a testsuite in the file's testsuite) or{" "}
-  <code>flat</code> (a prefix of the test's name)
+  How --reporter=junit writes describe blocks. <code>nested</code> (the default) gives each block its own testsuite
+  inside the file's testsuite. <code>flat</code> prefixes each test's name with its block names
 </ParamField>
 
 <ParamField path="--dots" type="boolean">

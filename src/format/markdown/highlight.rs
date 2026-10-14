@@ -9,8 +9,8 @@
 use super::parse::{self, SpanMemo, Syntax};
 use super::spans::{find_closing_run, find_math_end};
 use crate::highlight::{Language, Spans, Token};
-use crate::js::skim::Skimmer;
-use crate::text::{skip_newline, skip_spaces, skip_spaces_backwards};
+use crate::js::skim::{Searched, Skimmer};
+use crate::text::{has_blank_line, skip_newline, skip_spaces, skip_spaces_backwards};
 use bun_core::strings;
 use bun_md::root::{Options, render_with_extensions};
 use bun_md::types::{
@@ -43,7 +43,7 @@ pub(crate) fn highlight(code: &[u8], language: Language, spans: &mut Spans) {
 /// `is_in_itself`: it's in a code block of the same language that nothing closes. See `Highlighter::embed`.
 fn highlight_at(code: &[u8], language: Language, spans: &mut Spans, at: u32, is_in_itself: bool) {
     let is_mdx = language == Language::Mdx;
-    let front_matter_len = front_matter(code, spans, at);
+    let front_matter_len = crate::front_matter::highlight(code, spans, at);
     let code = code.get(front_matter_len..).unwrap_or_default();
     let mut marked = Vec::new();
     if is_mdx {
@@ -102,51 +102,16 @@ fn highlight_at(code: &[u8], language: Language, spans: &mut Spans, at: u32, is_
     highlighter.flush();
 }
 
-/// Highlights the front matter of `code`, which starts at `at`. Returns where it ends.
-fn front_matter(code: &[u8], spans: &mut Spans, at: u32) -> usize {
-    let Some(delimiter) = code.get(..3).filter(|it| matches!(*it, b"---" | b"+++")) else {
-        return 0;
-    };
-    let (name, value, end) = match crate::front_matter::parse(code) {
-        Some(it) => (it.explicit_language, it.value, Some(it.end)),
-        // It's still being written, unless an empty line follows: then `---` is a thematic break.
-        None => {
-            let Some(line_end) = strings::index_of_char_usize(code, b'\n') else {
-                return 0;
-            };
-            let (first_line, rest) = code.split_at(line_end);
-            if first_line.trim_ascii_end() != delimiter || has_blank_line(rest) {
-                return 0;
-            }
-            ((3, 3), (line_end + 1, code.len()), None)
-        }
-    };
-    let language = match code.get(name.0..name.1).unwrap_or_default() {
-        b"" if delimiter == b"+++" => Language::Toml,
-        b"" => Language::Yaml,
-        name => match Language::from_name(name) {
-            Some(language) => language,
-            None => return 0,
-        },
-    };
-    spans.add(at, at + 3, Token::PunctuationSpecial);
-    spans.add(at + name.0 as u32, at + name.1 as u32, Token::Label);
-    if let Some(value_text) = code.get(value.0..value.1) {
-        spans.embed(language, value_text, at + value.0 as u32);
-    }
-    let Some(end) = end else {
-        return code.len();
-    };
-    let end_in_spans = at + end as u32;
-    spans.add(end_in_spans - 3, end_in_spans, Token::PunctuationSpecial);
-    end
-}
-
 /// Where the next `<` is that can start a tag.
 fn next_tag(code: &[u8], mut from: usize) -> Option<usize> {
     loop {
         let at = strings::index_of_char_pos(code, b'<', from)?;
         from = at + 1;
+        let before = code.get(..at).unwrap_or_default();
+        let backslashes = before.iter().rev().take_while(|&&byte| byte == b'\\');
+        if backslashes.count() % 2 == 1 {
+            continue;
+        }
         let name = name_len(code, from);
         match code.get(from + name..)? {
             // `<https://a.b>` and `<a@b.c>` are left to the parser.
@@ -187,34 +152,23 @@ fn skip_white(text: &[u8], at: usize) -> usize {
     })
 }
 
-/// Whether two line breaks in `text` have nothing but blanks between them.
-fn has_blank_line(text: &[u8]) -> bool {
-    let (mut breaks, mut previous) = (0, 0);
-    for &byte in text {
-        match byte {
-            b'\n' if previous == b'\r' => {}
-            b'\n' | b'\r' => breaks += 1,
-            b' ' | b'\t' => {}
-            _ => breaks = 0,
-        }
-        if breaks == 2 {
-            return true;
-        }
-        previous = byte;
-    }
-    false
-}
-
 // ───────────────────────────── JavaScript in MDX ─────────────────────────────
 
 /// From behind a `{`: where the `}` is that closes it. From the start of an `import` or `export`, with `is_statement`:
 /// where the last token before an empty line ends, if no brace is open there. `None`: a brace is still open at the end of
 /// the text. To the skimmer `TAG_OPEN` is a name, so the `/` of `</a>` starts no regular expression.
-fn js_end(text: &[u8], at: usize, is_statement: bool) -> Option<usize> {
+fn js_end(text: &[u8], at: usize, is_statement: bool, searched: &mut Searched) -> Option<usize> {
     let mut skimmer = match is_statement {
         true => Skimmer::new(text, at),
         false => Skimmer::behind_brace(text, at),
     };
+    skimmer.searched = *searched;
+    let end = js_end_with(&mut skimmer, text, is_statement);
+    *searched = skimmer.searched;
+    end
+}
+
+fn js_end_with(skimmer: &mut Skimmer<'_>, text: &[u8], is_statement: bool) -> Option<usize> {
     loop {
         let (end, is_at_top_level) = (skimmer.at, is_statement && skimmer.braces == 0);
         let next = skimmer.next();
@@ -252,7 +206,7 @@ enum TagEnd {
 }
 
 /// Where the tag ends whose `<` is at `open`.
-fn tag_end(text: &[u8], open: usize) -> TagEnd {
+fn tag_end(text: &[u8], open: usize, searched: &mut Searched) -> TagEnd {
     let is_closing = text.get(open + 1) == Some(&b'/');
     let mut at = open + 1 + usize::from(is_closing);
     at += name_len(text, at);
@@ -277,7 +231,7 @@ fn tag_end(text: &[u8], open: usize) -> TagEnd {
                 };
             }
             // `{...props}`
-            b'{' => js_end(text, at + 1, false).map(|close| close + 1),
+            b'{' => js_end(text, at + 1, false, searched).map(|close| close + 1),
             _ => {
                 let len = name_len(text, at);
                 if len == 0 {
@@ -294,7 +248,7 @@ fn tag_end(text: &[u8], open: usize) -> TagEnd {
                     [quote @ (b'"' | b'\''), ..] => {
                         strings::index_of_char_pos(text, *quote, at + 1).map(|close| close + 1)
                     }
-                    [b'{', ..] => js_end(text, at + 1, false).map(|close| close + 1),
+                    [b'{', ..] => js_end(text, at + 1, false, searched).map(|close| close + 1),
                     // `a=b` is HTML, not JSX.
                     value => {
                         let is_in_value = |byte: u8| !byte.is_ascii_whitespace() && byte != b'>';
@@ -338,6 +292,7 @@ struct LeafMemo {
     is_unclosed: bool,
     /// Where the last line before that empty line ends.
     paragraph_end: usize,
+    searched: Searched,
 }
 
 /// Where the block of MDX ends that starts a line: `import`, `export`, `{expression}` or a tag with nothing behind it.
@@ -359,18 +314,21 @@ fn leaf_end(start: &LeafStart<'_>, memo: &Cell<LeafMemo>) -> Option<OFF> {
         false => start.text.len(),
     };
     let text = start.text.get(..limit)?;
+    let searched = &mut known.searched;
     let end = match text.get(off..)? {
-        [b'{', ..] => js_end(text, off + 1, false).map(|close| close + 1),
-        [TAG_OPEN, ..] => match tag_end(text, off) {
-            TagEnd::At(end) => Some(end),
-            TagEnd::Unclosed => None,
-            TagEnd::NotATag => return None,
+        [b'{', ..] => Some(js_end(text, off + 1, false, searched).map(|close| close + 1)),
+        [TAG_OPEN, ..] => match tag_end(text, off, searched) {
+            TagEnd::At(end) => Some(Some(end)),
+            TagEnd::Unclosed => Some(None),
+            TagEnd::NotATag => None,
         },
         line if is_es_syntax(line) && !start.is_in_container && start.indent == 0 => {
-            js_end(text, off, true).map(|end| line_end(text, end))
+            Some(js_end(text, off, true, searched).map(|end| line_end(text, end)))
         }
         _ => return None,
     };
+    memo.set(known);
+    let end = end?;
     let Some(end) = end else {
         if start.is_in_container {
             return None;
@@ -399,6 +357,7 @@ struct Memo {
     is_math_unclosed: [bool; 2],
     /// Nothing closes a `{` or a tag.
     is_code_unclosed: bool,
+    searched: Searched,
 }
 
 /// The span that starts at a `[`, `$`, `{` or `<`, or that a `@`, `:` or `.` is in.
@@ -458,19 +417,21 @@ fn span_at(
         }
         [b'{' | TAG_OPEN, ..] if known.is_code_unclosed => return None,
         [byte @ (b'{' | TAG_OPEN), ..] => {
+            let searched = &mut known.searched;
             let end = match byte {
-                b'{' => js_end(bytes, index + 1, false).map(|close| (close + 1, tag::EXPRESSION)),
-                _ => match tag_end(bytes, index) {
-                    TagEnd::At(end) => Some((end, tag::JSX)),
-                    TagEnd::Unclosed => None,
-                    TagEnd::NotATag => return None,
+                b'{' => Some(
+                    js_end(bytes, index + 1, false, searched)
+                        .map(|close| (close + 1, tag::EXPRESSION)),
+                ),
+                _ => match tag_end(bytes, index, searched) {
+                    TagEnd::At(end) => Some(Some((end, tag::JSX))),
+                    TagEnd::Unclosed => Some(None),
+                    TagEnd::NotATag => None,
                 },
             };
-            if end.is_none() {
-                known.is_code_unclosed = true;
-                memo.set(known);
-            }
-            end?
+            known.is_code_unclosed = end == Some(None);
+            memo.set(known);
+            end??
         }
         _ => {
             let span = parse::span_at(start, Syntax::Markdown, false, url_memo)?;

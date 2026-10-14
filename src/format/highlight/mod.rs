@@ -158,6 +158,13 @@ impl Spans {
         });
     }
 
+    /// [`Spans::embed`] for TypeScript type parameters, like the value of `generic` in Vue.
+    pub(crate) fn embed_type_parameters(&mut self, code: &[u8], at: u32) {
+        self.within(Language::TypeScript, code, at, |spans| {
+            crate::js::highlight::highlight_type_parameters(code, spans);
+        });
+    }
+
     /// [`Spans::embed`] for the value of a `style` attribute.
     pub(crate) fn embed_declarations(&mut self, code: &[u8], at: u32) {
         self.within(Language::Css, code, at, |spans| {

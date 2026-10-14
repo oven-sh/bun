@@ -26,7 +26,7 @@ use std::sync::OnceLock;
 pub(crate) fn highlight(code: &[u8], language: Language, spans: &mut Spans) {
     let path: &[u8] = match language {
         // A program that starts with `{` would parse as a block.
-        Language::Json => return highlight_in_parentheses(code, true, spans),
+        Language::Json => return highlight_between(b"(", code, b"\n)", true, spans),
         Language::Jsx => b"a.jsx",
         Language::TypeScript => b"a.ts",
         Language::Tsx => b"a.tsx",
@@ -38,17 +38,20 @@ pub(crate) fn highlight(code: &[u8], language: Language, spans: &mut Spans) {
 }
 
 pub(crate) fn highlight_expression(code: &[u8], spans: &mut Spans) {
-    highlight_in_parentheses(code, false, spans);
+    highlight_between(b"(", code, b"\n)", false, spans);
 }
 
-fn highlight_in_parentheses(code: &[u8], is_json: bool, spans: &mut Spans) {
-    let mut in_parentheses = Vec::with_capacity(code.len() + 3);
-    in_parentheses.push(b'(');
-    in_parentheses.extend_from_slice(code);
-    // The `)` goes on its own line in case the code ends with a `//` comment.
-    in_parentheses.extend_from_slice(b"\n)");
-    with_file(b"a.ts", &in_parentheses, |file| {
-        Highlighter::new(file, is_json, 1, 2).run(spans);
+/// `T extends A, U = T`
+pub(crate) fn highlight_type_parameters(code: &[u8], spans: &mut Spans) {
+    highlight_between(b"type a<", code, b"\n> = 0", false, spans);
+}
+
+/// Highlights `code` as the part of a TypeScript file that it is between `before` and `after`. `after` starts with a line
+/// break in case the code ends with a `//` comment.
+fn highlight_between(before: &[u8], code: &[u8], after: &[u8], is_json: bool, spans: &mut Spans) {
+    let file = [before, code, after].concat();
+    with_file(b"a.ts", &file, |file| {
+        Highlighter::new(file, is_json, before.len() as u32, after.len() as u32).run(spans);
     });
 }
 
@@ -903,7 +906,7 @@ fn contextual_keyword(word: &[u8]) -> Option<Token> {
         b"async" | b"get" | b"set" | b"static" | b"readonly" | b"abstract" | b"declare"
         | b"override" | b"accessor" | b"out" => Token::KeywordModifier,
         b"type" | b"namespace" | b"module" | b"global" | b"using" | b"let" | b"interface"
-        | b"enum" | b"assert" => Token::Keyword,
+        | b"enum" | b"assert" | b"const" => Token::Keyword,
         _ => return None,
     })
 }

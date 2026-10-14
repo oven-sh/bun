@@ -3,7 +3,7 @@
 use crate::node::StringOrBuffer;
 use bun_core::output::{ColorDepth, Source as OutputSource};
 use bun_format::highlight::{
-    self, AnsiStyles, Color, Font, Language, PartialStyle, Scratch, Span, Theme, Token,
+    self, AnsiStyles, Color, Font, Language, PartialStyle, Scratch, Span, Token,
 };
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
@@ -16,7 +16,7 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     object.put(
         global,
         b"Theme",
-        bun_jsc::codegen::js::get_constructor::<HighlightTheme>(global),
+        bun_jsc::codegen::js::get_constructor::<Theme>(global),
     );
     object
 }
@@ -29,11 +29,12 @@ fn language_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<
     Ok(Language::from_name(&value.to_utf8(global)?))
 }
 
-/// Highlights `code` and returns what `then` makes of the code and its tokens, as a string.
+/// Highlights `code` and returns what `then` makes of the code and its tokens, as a string. Without a language there are
+/// no tokens.
 fn with_tokens(
     global: &JSGlobalObject,
     code: JSValue,
-    language: Language,
+    language: Option<Language>,
     then: impl FnOnce(&[u8], &[Span]) -> Vec<u8>,
 ) -> JsResult<JSValue> {
     let Some(code) = StringOrBuffer::from_js(global, code)? else {
@@ -55,8 +56,8 @@ fn with_tokens(
         ));
     }
     let mut scratch = Scratch::default();
-    let out = then(code, highlight::highlight(code, language, &mut scratch));
-    bun_string_jsc::owned_utf8_into_js(global, out)
+    let tokens = language.map(|it| highlight::highlight(code, it, &mut scratch));
+    bun_string_jsc::owned_utf8_into_js(global, then(code, tokens.unwrap_or_default()))
 }
 
 /// `Bun.highlight.html(code, language)`
@@ -66,7 +67,7 @@ fn html(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let Some(language) = language_from_js(global, language)? else {
         return Ok(JSValue::NULL);
     };
-    with_tokens(global, code, language, |code, spans| {
+    with_tokens(global, code, Some(language), |code, spans| {
         let mut out = Vec::new();
         highlight::write_html(code, spans, &mut out);
         out
@@ -79,7 +80,11 @@ fn color_from_js(global: &JSGlobalObject, name: &[u8], value: JSValue) -> JsResu
     }
     match bun_css_jsc::color_js::parse_rgb(&value.to_utf8(global)?) {
         Some([r, g, b]) => Ok(Color::Rgb(r, g, b)),
-        None => Err(global.throw_invalid_argument_property_value(name, Some("a CSS color"), value)),
+        None => Err(global.throw_invalid_argument_property_value(
+            name,
+            Some("an opaque CSS color"),
+            value,
+        )),
     }
 }
 
@@ -115,7 +120,7 @@ enum Styles {
     Auto,
     Dark,
     Light,
-    Custom(Box<Theme>),
+    Custom(Box<highlight::Theme>),
 }
 
 fn styles_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Styles> {
@@ -157,7 +162,7 @@ fn styles_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Styles> {
             }
         }
     }
-    Ok(Styles::Custom(Box::new(Theme::new(
+    Ok(Styles::Custom(Box::new(highlight::Theme::new(
         foreground, background, &styles,
     ))))
 }
@@ -182,16 +187,13 @@ fn color_depth_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Colo
 
 /// `new Bun.highlight.Theme(styles?, { colorDepth }?)`
 #[bun_jsc::JsClass]
-pub(crate) struct HighlightTheme {
+pub(crate) struct Theme {
     styles: Styles,
     ansi: AnsiStyles,
 }
 
-impl HighlightTheme {
-    pub(crate) fn constructor(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<Box<HighlightTheme>> {
+impl Theme {
+    pub(crate) fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Theme>> {
         let [styles, options] = frame.arguments_as_array::<2>();
         let styles = styles_from_js(global, styles)?;
         let depth = match options.is_undefined() {
@@ -204,12 +206,14 @@ impl HighlightTheme {
         let depth = color_depth_from_js(global, depth)?;
         let theme = match &styles {
             Styles::Custom(theme) => theme,
-            Styles::Light => Theme::built_in(true, depth),
-            Styles::Dark => Theme::built_in(false, depth),
-            Styles::Auto => Theme::built_in(bun_md::root::detect_light_background(), depth),
+            Styles::Light => highlight::Theme::built_in(true, depth),
+            Styles::Dark => highlight::Theme::built_in(false, depth),
+            Styles::Auto => {
+                highlight::Theme::built_in(bun_md::root::detect_light_background(), depth)
+            }
         };
         let ansi = AnsiStyles::new(theme, depth);
-        Ok(Box::new(HighlightTheme { styles, ansi }))
+        Ok(Box::new(Theme { styles, ansi }))
     }
 
     /// `theme.ansi(code, language)`
@@ -219,6 +223,7 @@ impl HighlightTheme {
         let Some(language) = language_from_js(global, language)? else {
             return Ok(JSValue::NULL);
         };
+        let language = self.ansi.has_colors().then_some(language);
         with_tokens(global, code, language, |code, spans| {
             let mut out = Vec::new();
             highlight::write_ansi(code, spans, &self.ansi, &mut out);
@@ -232,12 +237,12 @@ impl HighlightTheme {
         let mut out = Vec::new();
         match &self.styles {
             Styles::Custom(theme) => highlight::write_css(theme, &mut out),
-            Styles::Dark => highlight::write_css(&Theme::DARK, &mut out),
-            Styles::Light => highlight::write_css(&Theme::LIGHT, &mut out),
+            Styles::Dark => highlight::write_css(&highlight::Theme::DARK, &mut out),
+            Styles::Light => highlight::write_css(&highlight::Theme::LIGHT, &mut out),
             Styles::Auto => {
-                highlight::write_css(&Theme::LIGHT, &mut out);
+                highlight::write_css(&highlight::Theme::LIGHT, &mut out);
                 out.extend_from_slice(b"@media (prefers-color-scheme: dark) {\n");
-                highlight::write_css(&Theme::DARK, &mut out);
+                highlight::write_css(&highlight::Theme::DARK, &mut out);
                 out.extend_from_slice(b"}\n");
             }
         }

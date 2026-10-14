@@ -2178,7 +2178,7 @@ declare module "bun" {
 
     /** How a theme draws one kind of token. */
     interface Style {
-      /** Any CSS color: `"#ff7b72"`, `"rgb(255 123 114)"`, `"tomato"`. */
+      /** Any opaque CSS color: `"#ff7b72"`, `"rgb(255 123 114)"`, `"tomato"`. */
       color?: string | undefined;
       bold?: boolean | undefined;
       italic?: boolean | undefined;

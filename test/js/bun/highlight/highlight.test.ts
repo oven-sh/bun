@@ -1,61 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { Glob } from "bun";
 import { bunEnv, bunExe } from "harness";
 import { basename, join } from "node:path";
-
-const fixturesDir = join(import.meta.dir, "fixtures");
-const fixtures = [...new Glob("*").scanSync(fixturesDir)].sort();
-
-function languageOf(file: string): string {
-  return file.endsWith(".component.html") ? "angular" : file.slice(file.lastIndexOf(".") + 1);
-}
-
-const unescape = (html: string) => html.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
-const stripTags = (html: string) => unescape(html.replace(/<\/?span[^>]*>/g, ""));
-const stripAnsi = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, "");
-
-/** `hl-keyword hl-keyword-control` is `keyword.control`. */
-const nameOf = (classes: string) => classes.split(" ").at(-1)!.slice("hl-".length).replaceAll("-", ".");
-
-/** `[["const", "keyword"], ["a", "variable"], ...]` */
-function tokens(code: string, language: string): [string, string][] {
-  const html = Bun.highlight.html(code, language);
-  if (html === null) throw new Error(`${language} is not highlighted`);
-  return [...html.matchAll(/<span class="([^"]+)">([^<]*)<\/span>/g)].map(([, classes, text]) => [
-    unescape(text),
-    nameOf(classes),
-  ]);
-}
-
-/** What `text` is, each time it occurs. */
-function tokensOf(code: string, language: string, text: string): string[] {
-  return tokens(code, language)
-    .filter(token => token[0] === text)
-    .map(token => token[1]);
-}
-
-/** The code with each token as `⟦name|text⟧`. */
-function annotate(code: string, language: string): string {
-  return unescape(
-    Bun.highlight
-      .html(code, language)!
-      .replace(/<span class="([^"]+)">([^<]*)<\/span>/g, (_, classes, text) => `⟦${nameOf(classes)}|${text}⟧`),
-  );
-}
-
-const { Theme } = Bun.highlight;
-const trueColor = new Theme("dark", { colorDepth: 24 });
-
-/** Whatever the input is, the output is the input plus markup. */
-function expectIntact(code: string, language: string) {
-  const html = Bun.highlight.html(code, language)!;
-  expect(stripTags(html)).toBe(code);
-  for (const line of html.split("\n")) {
-    expect(line.split("<span ").length).toBe(line.split("</span>").length);
-  }
-  const ansi = trueColor.ansi(code, language)!;
-  expect(stripAnsi(ansi)).toBe(code);
-}
+import {
+  annotate,
+  expectIntact,
+  fixtures,
+  fixturesDir,
+  languageOf,
+  stripAnsi,
+  stripTags,
+  Theme,
+  tokens,
+  tokensOf,
+  trueColor,
+} from "./util";
 
 describe("html", () => {
   test("wraps each token in a span", () => {
@@ -133,15 +91,15 @@ describe("languages", () => {
   });
 
   test.each([
-    ["javascript", "js", "mjs", "cjs"],
-    ["typescript", "ts", "mts", "cts"],
-    ["json", "jsonc", "json5"],
-    ["html", "htm"],
-    ["handlebars", "hbs"],
-    ["markdown", "md"],
-    ["yaml", "yml"],
-    ["graphql", "gql"],
-  ])("%s has other names", (name, ...others) => {
+    ["javascript", ["js", "mjs", "cjs"]],
+    ["typescript", ["ts", "mts", "cts"]],
+    ["json", ["jsonc", "json5"]],
+    ["html", ["htm"]],
+    ["handlebars", ["hbs"]],
+    ["markdown", ["md"]],
+    ["yaml", ["yml"]],
+    ["graphql", ["gql"]],
+  ])("%s has other names", (name, others) => {
     const code = `{ "a": [1, true] }`;
     for (const other of others) expect(Bun.highlight.html(code, other)).toBe(Bun.highlight.html(code, name));
   });
@@ -233,6 +191,11 @@ describe("JavaScript and TypeScript", () => {
     expect(tokensOf("a as b", "ts", "as")).toEqual(["keyword.operator"]);
     expect(tokensOf(`import { a as b } from "c";`, "ts", "as")).toEqual(["keyword.import"]);
     expect(tokensOf(`import a from "c";`, "ts", "from")).toEqual(["keyword.import"]);
+    expect(tokensOf("const a = [1] as const, b = <const>[2];", "ts", "const")).toEqual([
+      "keyword",
+      "keyword",
+      "keyword",
+    ]);
   });
 
   test("a reserved word that is a name", () => {
@@ -444,6 +407,54 @@ describe("code in other code", () => {
     expect(tokens(code, "md")).toContainEqual(["string", "type.builtin"]);
     expect(tokens(code, "md")).toContainEqual(["let a", "markup.raw"]);
   });
+
+  test("front matter in HTML, Handlebars and Markdown follows one rule", () => {
+    for (const language of ["html", "vue", "hbs", "md"]) {
+      expect(tokens("---\na: 1\n---\n<p>b</p>", language)).toContainEqual(["a", "property"]);
+      // Still being written.
+      expect(tokens("---\na: 1", language)).toContainEqual(["a", "property"]);
+      // After an empty line it's not front matter.
+      expect(tokens("---\na: 1\n\n<p>b</p>", language)).not.toContainEqual(["a", "property"]);
+    }
+    expect(tokensOf("---\n<div>\n\n<p>b</p>\n</div>", "html", "p")).toEqual(["tag", "tag"]);
+  });
+
+  test("&quot; in the code of an attribute", () => {
+    expect(tokens(`<a onclick="alert(&quot;x&quot;)">`, "html")).toContainEqual(["&quot;x&quot;", "string"]);
+    expect(tokens(`<a :b="c(&apos;it&quot;s&apos;)" />`, "vue")).toContainEqual(["&apos;it&quot;s&apos;", "string"]);
+  });
+
+  test("type parameters in an attribute", () => {
+    const expected = [
+      ["T", "type.parameter"],
+      ["extends", "keyword"],
+      ["string", "type.builtin"],
+    ];
+    expect(tokens(`<script setup lang="ts" generic="T extends string"></script>`, "vue")).toContainValues(expected);
+    expect(tokens(`<script lang="ts" generics="T extends string"></script>`, "svelte")).toContainValues(expected);
+  });
+
+  test.each(["html", "vue", "svelte", "hbs"])("what lang and type say about a script or a style in %s", language => {
+    const inTag = (tag: string, attributes: string, code: string) =>
+      tokens(`<${tag} ${attributes}>${code}</${tag}>`, language);
+    expect(inTag("script", "", "let a")).toContainEqual(["let", "keyword"]);
+    expect(inTag("script", `lang="ts"`, "let a: string")).toContainEqual(["string", "type.builtin"]);
+    expect(inTag("script", `type="module"`, "let a")).toContainEqual(["let", "keyword"]);
+    expect(inTag("script", `type="application/ld+json"`, `{"a":1}`)).toContainEqual(['"a"', "property"]);
+    expect(inTag("script", `type="text/x-handlebars-template"`, "<p>a</p>")).toContainEqual(["p", "tag"]);
+    expect(inTag("script", `type="text/plain"`, "let a")).not.toContainEqual(["let", "keyword"]);
+    expect(inTag("style", "", "a{b:c}")).toContainEqual(["b", "property"]);
+    expect(inTag("style", `lang="scss"`, "a{b:$c}")).toContainEqual(["$c", "variable"]);
+    expect(inTag("style", `lang="postcss"`, "a{b:c}")).toContainEqual(["b", "property"]);
+  });
+
+  test("an escaped < or { in MDX is text", () => {
+    expect(tokens("a \\<b> \\{c}", "mdx")).toEqual([
+      ["\\<", "string.escape"],
+      ["\\{", "string.escape"],
+    ]);
+    expect(tokensOf("a \\\\<b>c</b>", "mdx", "b")).toEqual(["tag", "tag"]);
+  });
 });
 
 describe("Theme", () => {
@@ -470,7 +481,10 @@ describe("Theme", () => {
     });
 
     test("no colors", () => {
-      expect(new Theme(styles, { colorDepth: 1 }).ansi("let a = 1;", "js")).toBe("let a = 1;");
+      const plain = new Theme(styles, { colorDepth: 1 });
+      expect(plain.ansi("let a = 1;", "js")).toBe("let a = 1;");
+      expect(plain.ansi(Buffer.from("let a = 1;"), "js")).toBe("let a = 1;");
+      expect(plain.ansi("let a = 1;", "python")).toBeNull();
     });
 
     test("the color stays on between two tokens that share it", () => {
@@ -588,6 +602,9 @@ describe("Theme", () => {
     [[{ keywrd: "red" }], '"keywrd" is not a token that a theme can style'],
     [[{ keyword: "not a color" }], 'The property "keyword" is invalid'],
     [[{ keyword: "red blue" }], 'The property "keyword" is invalid'],
+    [[{ keyword: "transparent" }], 'The property "keyword" is invalid. Expected an opaque CSS color'],
+    [[{ keyword: "rgb(255 0 0 / 50%)" }], 'The property "keyword" is invalid. Expected an opaque CSS color'],
+    [[{ keyword: "currentColor" }], 'The property "keyword" is invalid. Expected an opaque CSS color'],
     [[{ keyword: 1 }], 'The "keyword" property must be of type string'],
     [[{ keyword: { color: 1 } }], 'The "keyword" property must be of type string'],
     [["dark", 1], 'The "options" argument must be of type object'],
@@ -596,6 +613,11 @@ describe("Theme", () => {
   ])("rejects %j", (args, message) => {
     // @ts-expect-error
     expect(() => new Theme(...args)).toThrow(message);
+  });
+
+  test("is called Theme", () => {
+    expect(Theme.name).toBe("Theme");
+    expect(Object.prototype.toString.call(new Theme())).toBe("[object Theme]");
   });
 
   test("needs new", () => {
@@ -650,138 +672,4 @@ describe("fixtures", () => {
     expectIntact(code, languageOf(file));
     expect(annotate(code, languageOf(file))).toMatchSnapshot(basename(file));
   });
-});
-
-describe("broken code", () => {
-  // Code that is still being typed, or still arriving, stops anywhere.
-  test.each(fixtures)("%s, cut off", async file => {
-    const code = await Bun.file(join(fixturesDir, file)).text();
-    const language = languageOf(file);
-    const step = Math.max(1, Math.floor(code.length / 150));
-    for (let end = 0; end < code.length; end += step) {
-      const cut = code.slice(0, end).toWellFormed();
-      expect(stripTags(Bun.highlight.html(cut, language)!)).toBe(cut);
-    }
-  });
-
-  test.each(fixtures)("%s, with a piece missing", async file => {
-    const code = await Bun.file(join(fixturesDir, file)).text();
-    const language = languageOf(file);
-    const step = Math.max(1, Math.floor(code.length / 60));
-    for (let at = 0; at + 7 < code.length; at += step) {
-      const damaged = (code.slice(0, at) + code.slice(at + 7)).toWellFormed();
-      expect(stripTags(Bun.highlight.html(damaged, language)!)).toBe(damaged);
-    }
-  });
-
-  const languages = [...new Set(fixtures.map(languageOf))];
-  const inputs = [
-    "\0",
-    "\0\0\0 a \0",
-    "\\",
-    '"',
-    "'",
-    "`",
-    "`${",
-    "/*",
-    "<!--",
-    "<",
-    "</",
-    "<a",
-    "<a b=",
-    '<a b="',
-    "{{",
-    "{{#",
-    "{#",
-    "${",
-    "#{",
-    "@",
-    "---",
-    "---\n",
-    "```",
-    "```js\nlet a = `",
-    "[",
-    "[a](",
-    "&",
-    "&amp",
-    "\r",
-    "\r\n\r\n",
-    "a\rb\r\nc",
-    "\u2028\u2029",
-    "\uFEFF",
-    "\uFEFF\uFEFF",
-    "<<<<<<< HEAD\na\n=======\nb\n>>>>>>> c",
-    "...",
-    "a: b: c: d",
-    "}}}}]]]]))))",
-    "😀",
-  ];
-  test.each(languages)("%s: odd inputs", language => {
-    for (const input of inputs) expectIntact(input, language);
-  });
-
-  test.each(languages)("%s: bytes that aren't UTF-8", language => {
-    for (const bytes of [[0xff], [0xc3], [0xe2, 0x82], [0xf0, 0x9f, 0x98], [0x61, 0x80, 0x62], [0xed, 0xa0, 0x80]]) {
-      expect(Bun.highlight.html(new Uint8Array(bytes), language)).toBeString();
-      expect(Bun.highlight.html(new Uint8Array([0x22, ...bytes, 0x22, 0x0a, ...bytes]), language)).toBeString();
-    }
-  });
-
-  test.each(languages)("%s: deep nesting", language => {
-    for (const [open, close] of [
-      ["(", ")"],
-      ["[", "]"],
-      ["{", "}"],
-      ["<a>", "</a>"],
-      ["<", ">"],
-      ["`${", "}`"],
-      ["> ", ""],
-      ["- ", ""],
-      ["{{#a}}", "{{/a}}"],
-      ["{#if a}", "{/if}"],
-      ["a{", "}"],
-      ["a:\n", ""],
-    ]) {
-      const depth = 5_000;
-      const opens = Buffer.alloc(open.length * depth, open).toString();
-      const closed = opens + Buffer.alloc(close.length * depth, close).toString();
-      expect(stripTags(Bun.highlight.html(opens, language)!)).toBe(opens);
-      expect(stripTags(Bun.highlight.html(closed, language)!)).toBe(closed);
-    }
-  });
-
-  test("what comes before an error looks the same as without it", () => {
-    const good = "function f(a: number) { return a; }\nconst b = f(1);\n";
-    const before = annotate(good, "ts");
-    for (const bad of ['const c = "', "const c = `${", "if (", "class {", "@", "/*", "<"]) {
-      expect(annotate(good + bad, "ts")).toStartWith(before);
-    }
-  });
-
-  test("what comes after an error is still highlighted", () => {
-    const after = "\nfunction f(a: number) { return a; }";
-    for (const bad of ['const c = "', "const c = ;", "foo(1, 2", "const = 1;", "...", "}}}"]) {
-      expect(annotate(bad + after, "ts")).toEndWith(
-        "⟦keyword|function⟧ ⟦function|f⟧⟦punctuation.bracket|(⟧⟦variable.parameter|a⟧⟦punctuation.delimiter|:⟧ ⟦type.builtin|number⟧⟦punctuation.bracket|)⟧ " +
-          "⟦punctuation.bracket|{⟧ ⟦keyword.control|return⟧ ⟦variable.parameter|a⟧⟦punctuation.delimiter|;⟧ ⟦punctuation.bracket|}⟧",
-      );
-    }
-  });
-});
-
-test("takes time in proportion to the size of the code", async () => {
-  const code = await Bun.file(join(fixturesDir, "typescript.ts")).text();
-  const time = (copies: number) => {
-    const input = Buffer.alloc(code.length * copies, code).toString();
-    let best = Infinity;
-    for (let i = 0; i < 3; i++) {
-      const start = Bun.nanoseconds();
-      Bun.highlight.html(input, "ts");
-      best = Math.min(best, Bun.nanoseconds() - start);
-    }
-    return best;
-  };
-  time(1);
-  // Twice the code should take about twice as long. Quadratic would be four times.
-  expect(time(64) / time(32)).toBeLessThan(3);
 });

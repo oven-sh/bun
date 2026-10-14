@@ -1,6 +1,8 @@
 //! Front matter, which style sheets, Markdown and HTML can start with: Prettier's
 //! `src/main/front-matter/parse.js`.
 
+use crate::highlight::{Language, Spans, Token};
+
 /// `---`, a language, lines, `---`, with ranges in the text that it is at the start of.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct FrontMatter {
@@ -41,4 +43,44 @@ pub(crate) fn parse(text: &[u8]) -> Option<FrontMatter> {
         explicit_language: (language_start, language_start + language.len()),
         value: ((first_line_break + 1).min(end_delimiter), end_delimiter),
     })
+}
+
+/// Highlights the front matter of `code`, which starts at `at`. Returns where it ends.
+pub(crate) fn highlight(code: &[u8], spans: &mut Spans, at: u32) -> usize {
+    let Some(delimiter) = code.get(..3).filter(|it| matches!(*it, b"---" | b"+++")) else {
+        return 0;
+    };
+    let (name, value, end) = match parse(code) {
+        Some(it) => (it.explicit_language, it.value, Some(it.end)),
+        // It's still being written, unless an empty line follows: then `---` is a thematic break.
+        None => {
+            let Some(line_end) = bun_core::strings::index_of_char_usize(code, b'\n') else {
+                return 0;
+            };
+            let (first_line, rest) = code.split_at(line_end);
+            if first_line.trim_ascii_end() != delimiter || crate::text::has_blank_line(rest) {
+                return 0;
+            }
+            ((3, 3), (line_end + 1, code.len()), None)
+        }
+    };
+    let language = match code.get(name.0..name.1).unwrap_or_default() {
+        b"" if delimiter == b"+++" => Language::Toml,
+        b"" => Language::Yaml,
+        name => match Language::from_name(name) {
+            Some(language) => language,
+            None => return 0,
+        },
+    };
+    spans.add(at, at + 3, Token::PunctuationSpecial);
+    spans.add(at + name.0 as u32, at + name.1 as u32, Token::Label);
+    if let Some(value_text) = code.get(value.0..value.1) {
+        spans.embed(language, value_text, at + value.0 as u32);
+    }
+    let Some(end) = end else {
+        return code.len();
+    };
+    let end_in_spans = at + end as u32;
+    spans.add(end_in_spans - 3, end_in_spans, Token::PunctuationSpecial);
+    end
 }

@@ -10,13 +10,14 @@
 use super::lexer::{self, TokenKind};
 use super::parser::can_start_expression;
 use super::tokenizer::starts_tag_name;
-use crate::highlight::{Language, Spans, Token};
-use crate::svelte::highlight::{add_character_references, embedded_language};
+use crate::highlight::{Spans, Token};
+use crate::html::highlight::language_of_raw_text;
+use crate::svelte::highlight::add_character_references;
 use crate::text::{ByteSet, leading_white_space_len};
 use bun_core::strings;
 
 pub(crate) fn highlight(code: &[u8], spans: &mut Spans) {
-    let start = front_matter(code, spans);
+    let start = crate::front_matter::highlight(code, spans, 0);
     let mut tokens = Vec::new();
     lexer::lex_tolerantly(code, start, &mut tokens);
     let mut highlighter = Highlighter {
@@ -29,31 +30,10 @@ pub(crate) fn highlight(code: &[u8], spans: &mut Spans) {
         tag: b"",
         attribute: b"",
         lang: b"",
+        kind: b"",
         raw_text_end: 0,
     };
     highlighter.run(start);
-}
-
-/// Returns where the front matter ends.
-fn front_matter(code: &[u8], spans: &mut Spans) -> usize {
-    let Some(front_matter) = crate::front_matter::parse(code) else {
-        return 0;
-    };
-    let (name, value) = (front_matter.explicit_language, front_matter.value);
-    let language = match code.get(name.0..name.1).unwrap_or_default() {
-        b"" if code.starts_with(b"+++") => Some(Language::Toml),
-        b"" => Some(Language::Yaml),
-        name => Language::from_name(name),
-    };
-    spans.add(0, 3, Token::PunctuationSpecial);
-    if let (Some(language), Some(text)) = (language, code.get(value.0..value.1)) {
-        spans.embed(language, text, value.0 as u32);
-    }
-    spans.add_range(
-        front_matter.end.saturating_sub(3)..front_matter.end,
-        Token::PunctuationSpecial,
-    );
-    front_matter.end
 }
 
 /// What the next name in a mustache is.
@@ -120,8 +100,9 @@ struct Highlighter<'a, 's> {
     tag: &'a [u8],
     /// The name of its attribute that was read last.
     attribute: &'a [u8],
-    /// The value of its `lang` attribute, or else of `type`.
+    /// The values of its `lang` and `type` attributes.
     lang: &'a [u8],
+    kind: &'a [u8],
     /// Where the end tag is that `Html::RawText` ends at.
     raw_text_end: usize,
 }
@@ -523,7 +504,7 @@ impl<'a> Highlighter<'a, '_> {
             },
         );
         self.tag = if is_end_tag { b"" } else { name };
-        (self.attribute, self.lang) = (b"", b"");
+        (self.attribute, self.lang, self.kind) = (b"", b"", b"");
         self.html = Html::BeforeAttributeName;
         name_end
     }
@@ -572,7 +553,7 @@ impl<'a> Highlighter<'a, '_> {
         let value = self.slice(start, end);
         match self.attribute {
             b"lang" => self.lang = value,
-            b"type" if self.lang.is_empty() => self.lang = value,
+            b"type" => self.kind = value,
             b"style" => self.spans.embed_declarations(value, start as u32),
             _ => {}
         }
@@ -600,7 +581,7 @@ impl<'a> Highlighter<'a, '_> {
                 break;
             }
         }
-        let Some(language) = embedded_language(self.tag, self.lang) else {
+        let Some(language) = language_of_raw_text(self.tag, self.lang, self.kind) else {
             return;
         };
         let text = self.slice(at, self.raw_text_end);

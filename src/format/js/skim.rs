@@ -21,6 +21,16 @@ pub(crate) enum Piece {
     Other,
 }
 
+/// Searches that found nothing, so that they aren't repeated. A caller that makes one `Skimmer` after another for the same
+/// code hands this from each one to the next. Otherwise `{/[}` over and over on one line would read the line every time.
+#[derive(Copy, Clone, Default)]
+pub(crate) struct Searched {
+    /// A `/` before this starts no regular expression: the line was searched for the end of one, and has none.
+    no_regex_before: usize,
+    /// The same for a `'` and a `"` and the end of a string.
+    no_string_before: [usize; 2],
+}
+
 pub(crate) struct Skimmer<'a> {
     code: &'a [u8],
     /// Behind the last piece.
@@ -33,10 +43,7 @@ pub(crate) struct Skimmer<'a> {
     templates: Vec<usize>,
     /// The last piece was a value, so a `/` divides.
     is_after_value: bool,
-    /// A `/` before this starts no regular expression: the line was searched for the end of one, and has none.
-    no_regex_before: usize,
-    /// The same for a `'` and a `"` and the end of a string.
-    no_string_before: [usize; 2],
+    pub(crate) searched: Searched,
 }
 
 /// A character that isn't ASCII counts as part of a name.
@@ -77,8 +84,7 @@ impl<'a> Skimmer<'a> {
             depth: 0,
             templates: Vec::new(),
             is_after_value: false,
-            no_regex_before: 0,
-            no_string_before: [0; 2],
+            searched: Searched::default(),
         }
     }
 
@@ -165,7 +171,7 @@ impl<'a> Skimmer<'a> {
     /// Behind a quote: goes behind the string. `false`: nothing closes it on its line, so the quote is just a character,
     /// like the one in `<p>Don't</p>`.
     fn skip_string(&mut self, quote: u8) -> bool {
-        let no_string_before = &mut self.no_string_before[usize::from(quote == b'"')];
+        let no_string_before = &mut self.searched.no_string_before[usize::from(quote == b'"')];
         let mut at = self.at;
         while at >= *no_string_before {
             let rest = self.code.get(at..).unwrap_or_default();
@@ -209,7 +215,7 @@ impl<'a> Skimmer<'a> {
     /// Behind a `/`: goes behind the regular expression that it starts. `false`: it's an operator, or the `/` of `</a>`.
     fn skip_regex(&mut self) -> bool {
         if self.is_after_value
-            || self.at < self.no_regex_before
+            || self.at < self.searched.no_regex_before
             || self.byte_before(self.at - 1) == Some(b'<')
         {
             return false;
@@ -229,7 +235,7 @@ impl<'a> Skimmer<'a> {
             }
             at += 1;
         }
-        self.no_regex_before = at;
+        self.searched.no_regex_before = at;
         false
     }
 }

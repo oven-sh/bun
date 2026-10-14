@@ -37,36 +37,6 @@ fn normalized(code: &[u8]) -> Cow<'_, [u8]> {
     Cow::Owned(text)
 }
 
-/// Highlights the front matter that `text` starts with. Returns where it ends.
-fn highlight_front_matter(text: &[u8], spans: &mut Spans) -> usize {
-    let Some(delimiter) = text.get(..3).filter(|it| matches!(*it, b"---" | b"+++")) else {
-        return 0;
-    };
-    let first_line_end = strings::index_of_char_usize(text, b'\n').unwrap_or(text.len());
-    let language = match text.get(3..first_line_end).unwrap_or_default().trim_ascii() {
-        b"" if delimiter == b"+++" => Some(Language::Toml),
-        b"" => Some(Language::Yaml),
-        name => Language::from_name(name),
-    };
-    let (value, end, is_closed) = match front_matter::parse(text) {
-        Some(it) => (it.value, it.end, true),
-        // It isn't closed yet, so it runs to the end.
-        None if language.is_some() => {
-            let start = (first_line_end + 1).min(text.len());
-            ((start, text.len()), text.len(), false)
-        }
-        None => return 0,
-    };
-    spans.add(0, 3, Token::PunctuationSpecial);
-    if let (Some(language), Some(code)) = (language, text.get(value.0..value.1)) {
-        spans.embed(language, code, value.0 as u32);
-    }
-    if is_closed {
-        spans.add_range(end.saturating_sub(3)..end, Token::PunctuationSpecial);
-    }
-    end
-}
-
 /// Whether an element of a Vue file is a block in another language, like `<i18n>` or `<template lang="pug">`.
 ///
 /// To Vue everything at the top is a block. A snippet of a template has elements and components there.
@@ -120,6 +90,7 @@ fn language_of_element(mut element: Element<'_>, host: Language) -> Option<Langu
         }),
         Some(b"json-stringify") => Some(Language::Json),
         Some(b"lwc" | b"mjml") => Some(Language::Html),
+        Some(b"glimmer") => Some(Language::Handlebars),
         Some(parser) => Language::from_name(parser),
         None if has_src => None,
         // What the formatter has no parser for.
@@ -128,6 +99,20 @@ fn language_of_element(mut element: Element<'_>, host: Language) -> Option<Langu
             None => (is_vue_block && name == b"i18n").then_some(Language::Json),
         },
     }
+}
+
+/// The language in a `<script>` or a `<style>`, for Svelte and Handlebars. `lang` and `kind` are the values of its `lang`
+/// and `type` attributes, and are empty without one.
+pub(crate) fn language_of_raw_text(name: &[u8], lang: &[u8], kind: &[u8]) -> Option<Language> {
+    let element = Element {
+        name,
+        lang: Some(lang).filter(|it| !it.is_empty()),
+        kind: Some(kind).filter(|it| !it.is_empty()),
+        has_src: false,
+    };
+    matches!(name, b"script" | b"style")
+        .then(|| language_of_element(element, Language::Html))
+        .flatten()
 }
 
 /// Vue takes `a++; b()` for statements, and `function () { a(); }` for an expression.
@@ -518,20 +503,37 @@ impl<'a> Highlighter<'a, '_> {
             }
             return;
         }
-        // The other language gets quotes for `&quot;` and `&apos;`, as in the formatter, and blanks for the rest.
+        // The other language gets quotes for `&quot;` and `&apos;`, as in the formatter, and blanks for the rest. The quote
+        // that opens a string goes at the start of the reference and the one that closes it at the end, so the string
+        // covers both.
         let mut code = value.of(text);
         if entities.clone().next().is_some() {
             self.code.clear();
             self.code.extend_from_slice(code);
+            let mut open = None;
             for entity in entities.clone() {
                 let range = (entity.start - start) as usize..(entity.end - start) as usize;
-                if let Some([first, rest @ ..]) = self.code.get_mut(range) {
-                    *first = match entity.of(text) {
-                        b"&quot;" => b'"',
-                        b"&apos;" => b'\'',
-                        _ => b' ',
-                    };
-                    rest.fill(b' ');
+                let Some(bytes) = self.code.get_mut(range) else {
+                    continue;
+                };
+                bytes.fill(b' ');
+                let quote = match entity.of(text) {
+                    b"&quot;" => b'"',
+                    b"&apos;" => b'\'',
+                    _ => continue,
+                };
+                let closes = open == Some(quote);
+                open = match open {
+                    None => Some(quote),
+                    Some(_) if closes => None,
+                    Some(other) => Some(other),
+                };
+                if let Some(byte) = if closes {
+                    bytes.last_mut()
+                } else {
+                    bytes.first_mut()
+                } {
+                    *byte = quote;
                 }
             }
             code = &self.code;
@@ -562,9 +564,7 @@ impl<'a> Highlighter<'a, '_> {
                 }
                 None => spans.embed_expression(code, start),
             },
-            Value::Vue(Directive::TypeParameters) => {
-                spans.embed(Language::TypeScript, code, start);
-            }
+            Value::Vue(Directive::TypeParameters) => spans.embed_type_parameters(code, start),
             Value::Vue(Directive::On) if has_statements(code) => {
                 spans.embed(Language::TypeScript, code, start);
             }
@@ -580,7 +580,7 @@ impl<'a> Highlighter<'a, '_> {
 
 pub(crate) fn highlight(code: &[u8], language: Language, spans: &mut Spans) {
     let text = &*normalized(code);
-    let start = highlight_front_matter(text, spans);
+    let start = front_matter::highlight(text, spans, 0);
     let options = parse_options(match language {
         Language::Vue => Parser::Vue,
         Language::Angular => Parser::Angular,

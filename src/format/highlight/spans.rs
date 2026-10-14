@@ -83,10 +83,10 @@ impl Spans {
         flat.reserve(list.len());
         open.clear();
         // `open` is the stack of spans around the current position. Each one's `start` moves past the inner spans.
-        let mut emit = |span: Span| {
-            if span.start < span.end {
-                flat.push(span);
-            }
+        let mut emit = |span: Span| match flat.last_mut() {
+            _ if span.start >= span.end => {}
+            Some(last) if last.end == span.start && last.token == span.token => last.end = span.end,
+            _ => flat.push(span),
         };
         for &(mut span) in list.iter() {
             while let Some(&outer) = open.last()

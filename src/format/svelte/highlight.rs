@@ -6,7 +6,8 @@
 
 use super::parser::{ends_unquoted_value, is_valid_component_name, tag_name_len};
 use crate::highlight::{Language, Spans, Token};
-use crate::js::skim::{Piece, Skimmer};
+use crate::html::highlight::language_of_raw_text;
+use crate::js::skim::{Piece, Searched, Skimmer};
 use crate::text::{has_newline_backwards, index_of_from, leading_white_space_len};
 use bun_core::strings;
 
@@ -16,6 +17,7 @@ pub(crate) fn highlight(code: &[u8], spans: &mut Spans) {
         at: 0,
         spans,
         has_unclosed_tag: false,
+        searched: Searched::default(),
     };
     highlighter.run();
 }
@@ -51,29 +53,6 @@ pub(crate) fn add_character_references(code: &[u8], start: usize, end: usize, sp
     }
 }
 
-/// The language in a `<script>` or a `<style>` whose `lang` attribute is `lang`, or else its `type`.
-pub(crate) fn embedded_language(tag: &[u8], lang: &[u8]) -> Option<Language> {
-    // `text/javascript`, `application/ld+json`
-    let name = strings::last_index_of_char(lang, b'/').map_or(lang, |slash| &lang[slash + 1..]);
-    let language = match (tag, name) {
-        (b"script", b"" | b"module" | b"babel") => Language::JavaScript,
-        (b"script", b"importmap" | b"speculationrules") => Language::Json,
-        (b"script", _) if name.ends_with(b"json") => Language::Json,
-        (b"style", b"") => Language::Css,
-        _ => Language::from_name(name)?,
-    };
-    let fits = match language {
-        Language::JavaScript
-        | Language::Jsx
-        | Language::TypeScript
-        | Language::Tsx
-        | Language::Json => tag == b"script",
-        Language::Css | Language::Scss | Language::Less => tag == b"style",
-        _ => false,
-    };
-    fits.then_some(language)
-}
-
 fn is_word_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | 0x80..)
 }
@@ -93,6 +72,7 @@ struct Highlighter<'a, 's> {
     spans: &'s mut Spans,
     /// A `{` before `at` has no `}`. From then on a tag ends where markup starts, without a look at what follows.
     has_unclosed_tag: bool,
+    searched: Searched,
 }
 
 impl<'a> Highlighter<'a, '_> {
@@ -209,6 +189,7 @@ impl<'a> Highlighter<'a, '_> {
                             b"lang" => lang = value,
                             b"type" => kind = value,
                             b"style" => self.spans.embed_declarations(value, start as u32),
+                            b"generics" => self.spans.embed_type_parameters(value, start as u32),
                             _ => {}
                         }
                     }
@@ -216,7 +197,7 @@ impl<'a> Highlighter<'a, '_> {
             }
         }
         if is_raw {
-            self.raw_text(name, if lang.is_empty() { kind } else { lang });
+            self.raw_text(name, lang, kind);
         }
     }
 
@@ -255,7 +236,13 @@ impl<'a> Highlighter<'a, '_> {
                 }
                 let value_end = self.at;
                 self.at += usize::from(found.is_some());
-                self.string(chunk, self.at);
+                if is_static {
+                    // It's code, so only the quotes are a string.
+                    self.string(start, start + 1);
+                    self.string(value_end, self.at);
+                } else {
+                    self.string(chunk, self.at);
+                }
                 return match chunk == start {
                     true => (start + 1, value_end),
                     false => (0, 0),
@@ -279,7 +266,7 @@ impl<'a> Highlighter<'a, '_> {
     }
 
     /// What is in the `<script>` or the `<style>` whose start tag ends here.
-    fn raw_text(&mut self, name: &[u8], lang: &[u8]) {
+    fn raw_text(&mut self, name: &[u8], lang: &[u8], kind: &[u8]) {
         let end_tag: &[u8] = match name {
             b"script" => b"</script",
             _ => b"</style",
@@ -295,7 +282,7 @@ impl<'a> Highlighter<'a, '_> {
                 break found;
             }
         };
-        if let Some(language) = embedded_language(name, lang) {
+        if let Some(language) = language_of_raw_text(name, lang, kind) {
             self.spans
                 .embed(language, self.slice(start, self.at), start as u32);
         }
@@ -369,6 +356,13 @@ impl<'a> Highlighter<'a, '_> {
     /// cut off where markup starts, or else at the end.
     fn end_of_tag(&mut self, from: usize) -> (usize, bool) {
         let mut skimmer = Skimmer::behind_brace(self.code, from);
+        skimmer.searched = self.searched;
+        let end = self.end_of_tag_with(&mut skimmer);
+        self.searched = skimmer.searched;
+        end
+    }
+
+    fn end_of_tag_with(&mut self, skimmer: &mut Skimmer<'_>) -> (usize, bool) {
         let mut markup = None;
         while let Some((piece, at)) = skimmer.next() {
             let is_markup = match (piece, self.slice(at, self.code.len())) {

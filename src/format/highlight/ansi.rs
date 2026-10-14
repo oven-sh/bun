@@ -108,11 +108,16 @@ impl AnsiStyles {
             }),
         }
     }
+
+    /// Without colors [`write_ansi`] copies the code, whatever its spans are.
+    pub fn has_colors(&self) -> bool {
+        self.depth != ColorDepth::None
+    }
 }
 
 /// Appends `code`, colored with `theme`. Every line resets the styles it sets, so callers can split the result on `\n`.
 pub fn write_ansi(code: &[u8], spans: &[Span], theme: &AnsiStyles, out: &mut Vec<u8>) {
-    if theme.depth == ColorDepth::None {
+    if !theme.has_colors() {
         out.extend_from_slice(code);
         return;
     }

@@ -103,7 +103,7 @@ const theme = new Bun.highlight.Theme({
 });
 ```
 
-A style has `color`, `bold`, `italic`, `underline`, and `strikethrough`.
+A style has `color`, `bold`, `italic`, `underline`, and `strikethrough`. Colors must be opaque, because a terminal has no transparency.
 
 A token that you leave out looks like its parent: without `"keyword.control"`, `if` gets the style of `keyword`. A token with no style is plain text.
 

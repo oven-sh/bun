@@ -123,7 +123,7 @@ fn srgb_of(color: &bun_css::CssColor) -> Option<bun_css::values::color::SRGB> {
     })
 }
 
-/// The red, green and blue of a CSS color.
+/// The red, green and blue of a CSS color. `None` if it isn't one, or if it's transparent at all.
 pub fn parse_rgb(input: &[u8]) -> Option<[u8; 3]> {
     let arena = Arena::new();
     let mut parser_input = bun_css::ParserInput::new(input, &arena);
@@ -138,7 +138,7 @@ pub fn parse_rgb(input: &[u8]) -> Option<[u8; 3]> {
         return None;
     }
     let rgba = srgb_of(&color)?.into_rgba();
-    Some([rgba.red, rgba.green, rgba.blue])
+    (rgba.alpha == 255).then_some([rgba.red, rgba.green, rgba.blue])
 }
 
 pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

@@ -229,3 +229,21 @@ pub(crate) fn last_char(text: &[u8]) -> Option<(char, usize)> {
         }
     }
 }
+
+/// Whether two line breaks in `text` have nothing but blanks between them.
+pub(crate) fn has_blank_line(text: &[u8]) -> bool {
+    let (mut breaks, mut previous) = (0, 0);
+    for &byte in text {
+        match byte {
+            b'\n' if previous == b'\r' => {}
+            b'\n' | b'\r' => breaks += 1,
+            b' ' | b'\t' => {}
+            _ => breaks = 0,
+        }
+        if breaks == 2 {
+            return true;
+        }
+        previous = byte;
+    }
+    false
+}

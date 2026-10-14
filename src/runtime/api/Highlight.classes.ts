@@ -2,7 +2,8 @@ import { define } from "../../codegen/class-definitions.ts";
 
 export default [
   define({
-    name: "HighlightTheme",
+    name: "Theme",
+    rustPath: "crate::api::highlight_object::Theme",
     construct: true,
     finalize: true,
     configurable: false,

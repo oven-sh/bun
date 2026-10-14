@@ -337,10 +337,10 @@ describe.concurrent("wss:// after the close event", () => {
   );
 });
 
-// Behind its Close frame the client shuts nothing down: it keeps reading. A shutdown(SHUT_RD) or
-// a FIN there makes the kernel reset the connection on the server's next frame, and the reset
-// drops what the client sent and the kernel had not delivered yet. The client sends its FIN
-// when the server's Close frame is in (RFC 6455 section 7.1.1, and what `ws` does).
+// Behind its Close frame the client shuts nothing down: it keeps reading. A shutdown(SHUT_RD)
+// plus a FIN there makes the kernel reset the connection on the server's next frame, and the
+// reset drops what the client sent and the kernel had not delivered yet. The client sends its
+// FIN when the server's Close frame is in (RFC 6455 section 7.1.1, and what `ws` does).
 describe.concurrent("ws:// after the close event", () => {
   type ClientClose = { code: number; reason: string };
 
@@ -497,14 +497,16 @@ describe.concurrent("ws:// after the close event", () => {
       clientFin = true;
       socket.end();
     });
-    socket.on("data", async chunk => {
-      const answered = frames.closes.length > 0;
-      frames.push(chunk);
-      if (answered || frames.closes.length === 0) return;
+    async function answerTheClose() {
       await roundTrip();
       const finBeforeTheAnswer = clientFin;
       answer(socket);
-      served.resolve({ finBeforeTheAnswer, closes: frames.closes, pongs: frames.pongs, client_left: await departed });
+      return { finBeforeTheAnswer, closes: frames.closes, pongs: frames.pongs, client_left: await departed };
+    }
+    socket.on("data", chunk => {
+      const answered = frames.closes.length > 0;
+      frames.push(chunk);
+      if (!answered && frames.closes.length > 0) served.resolve(answerTheClose());
     });
     return served.promise;
   }
@@ -578,32 +580,39 @@ describe.concurrent("ws:// after the close event", () => {
     expect(await closed).toEqual({ code: 1000, wasClean: true });
   });
 
+  const GREETING = serverFrame(0x1, 2);
+  const inAHandler = (ws: WebSocket) => ws.addEventListener("message", () => ws.close(1000));
+  const inATask = (ws: WebSocket) => ws.addEventListener("message", () => setImmediate(() => ws.close(1000)));
+  const inOnOpen = (ws: WebSocket) => ws.addEventListener("open", () => ws.close(1000));
+
+  // The server's Close frame with code 1000 and a reason of 98 bytes.
+  const LONG_CLOSE_1000 = Buffer.concat([Buffer.from([0x88, 100, 0x03, 0xe8]), Buffer.alloc(98, "r")]);
+
+  // The server sends the first 40 bytes of `inFlight` with its 101, behind `greeting`. The rest
+  // follows the client's Close frame, and then `last`.
   it.each([
-    // The read that dispatches the greeting carries the first half of the next frame.
-    ["a message handler", serverFrame(0x1, 2), (ws: WebSocket) => ws.addEventListener("message", () => ws.close(1000))],
-    // The first half of the frame is parsed by the time close() runs.
-    [
-      "a task after the message",
-      serverFrame(0x1, 2),
-      (ws: WebSocket) => ws.addEventListener("message", () => setImmediate(() => ws.close(1000))),
-    ],
+    // The read that dispatches the greeting carries the first bytes of the next frame.
+    ["a message handler", "a binary frame", GREETING, serverFrame(0x2, 1000), CLOSE_1000, inAHandler],
+    // Those bytes are parsed by the time close() runs.
+    ["a task after the message", "a binary frame", GREETING, serverFrame(0x2, 1000), CLOSE_1000, inATask],
+    ["a task after the message", "a Ping", GREETING, serverFrame(0x9, 100), CLOSE_1000, inATask],
+    ["a task after the message", "the server's Close frame", GREETING, LONG_CLOSE_1000, Buffer.alloc(0), inATask],
     // The bytes that come with the 101 reach the client after the open event.
-    ["onopen", Buffer.alloc(0), (ws: WebSocket) => ws.addEventListener("open", () => ws.close(1000))],
+    ["onopen", "a binary frame", Buffer.alloc(0), serverFrame(0x2, 1000), CLOSE_1000, inOnOpen],
   ] as const)(
-    "close() in %s finds the server's Close frame behind a frame that was in flight",
-    async (_, greeting, arm) => {
-      const inFlight = serverFrame(0x2, 1000);
+    "close() in %s, with %s in flight, sends its FIN when the server's Close frame is in",
+    async (_where, _what, greeting, inFlight, last, arm) => {
       using loopback = await startRoundTrip();
       const served = Promise.withResolvers<Served>();
       using server = await startRawWsServer(
         (socket, frames) => {
           served.resolve(
             serveClose(socket, frames, loopback.roundTrip, socket => {
-              socket.write(Buffer.concat([inFlight.subarray(400), CLOSE_1000]));
+              socket.write(Buffer.concat([inFlight.subarray(40), last]));
             }),
           );
         },
-        Buffer.concat([greeting, inFlight.subarray(0, 400)]),
+        Buffer.concat([greeting, inFlight.subarray(0, 40)]),
       );
       const { ws, closed, failed } = connectClient(server.url);
       arm(ws);
@@ -690,7 +699,8 @@ describe.concurrent("ws:// after the close event", () => {
     expect(await closed).toEqual({ code: 1000, wasClean: true });
   });
 
-  // uSockets sweeps its timeouts every 4 s, so a timeout of 1 s takes 4 to 8 s.
+  // The timeout is the only signal that ends this wait, and uSockets sweeps its timeouts every
+  // 4 s: a timeout of 1 s takes 4 to 8 s. The test runs beside the wss:// ones that wait for it too.
   it("the client closes a connection that its peer keeps open", async () => {
     using loopback = await startRoundTrip();
     const served = Promise.withResolvers<Served>();

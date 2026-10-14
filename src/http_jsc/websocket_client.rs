@@ -610,11 +610,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         Step::Terminated
     }
 
-    /// The close event is out and our Close frame is with the transport.
-    /// Walk what the server still sends by frame length, without buffering
-    /// or dispatching it, up to its Close frame: both Close frames are
-    /// exchanged then, and [`Self::half_close`] sends our FIN. Returns true
-    /// when there is nothing more to look for in the server's bytes.
+    /// The close event is out: skip the server's frames by length up to its Close frame. True when done.
     #[cold]
     fn skip_to_server_close(&self, cursor: &mut RecvCursor<'_>) -> bool {
         if SSL {
@@ -668,7 +664,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                     self.half_close();
                     return true;
                 }
-                // So was a Ping or a Pong, and `clear_data` dropped how much of it is left.
                 ReceiveState::Ping
                 | ReceiveState::Pong
                 | ReceiveState::NeedMask
@@ -678,9 +673,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         false
     }
 
-    /// Take the next frame's 2-byte header (see the diagram on
-    /// [`parse_websocket_header`]) off `cursor`; `None` when only its first
-    /// byte has arrived.
+    /// The next frame's 2-byte header; `None` when only its first byte has arrived.
     #[inline(always)]
     fn next_frame_header(&self, cursor: &mut RecvCursor<'_>) -> Option<ParsedHeader> {
         if cursor.data.len() < 2 {
@@ -703,8 +696,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         Some(parse_websocket_header(header_bytes))
     }
 
-    /// Parse the 2-byte frame header and validate the opcode/fragmentation/
-    /// compression rules before moving to the payload state.
+    /// Validate the opcode/fragmentation/compression rules of the next frame header.
     fn recv_frame_header(&self, cursor: &mut RecvCursor<'_>) -> Step {
         let Some(header) = self.next_frame_header(cursor) else {
             return Step::NeedMoreData;
@@ -789,9 +781,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         Step::Continue
     }
 
-    /// Accumulate the 2- or 8-byte extended payload length (which may itself
-    /// arrive split across reads) into `payload_length_frame_bytes`; `None`
-    /// until all of it has arrived.
+    /// The 2- or 8-byte extended payload length, which can arrive split across reads; `None` until it is whole.
     #[inline(always)]
     fn next_extended_payload_length(
         &self,
@@ -1256,24 +1246,24 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// Our Close frame is with the transport: the close event goes out, and
-    /// the connection stays until the server closes it
-    /// ([`Self::wait_for_server_close`]).
+    /// Our Close frame is with the transport: dispatch the close event and wait for the server to close.
     fn dispatch_close_and_wait(&self, code: u16, reason: bun_core::String) {
         self.wait_for_server_close();
-        // `clear_data` zeroes how much of a frame in flight is still to come,
-        // which `skip_to_server_close` needs.
-        let left_in_frame = self.receive_body_remain.get();
+        // `clear_data` zeroes how much of a frame in flight is left, which `skip_to_server_close` needs.
+        let left_in_frame = match self.receive_state.get() {
+            // A Ping or a Pong in flight counts what it has buffered: the rest is skipped like a body.
+            ReceiveState::Ping | ReceiveState::Pong => {
+                self.receive_state.set(ReceiveState::NeedBody);
+                usize::from(self.ping_len.get()).saturating_sub(self.receive_body_remain.get())
+            }
+            _ => self.receive_body_remain.get(),
+        };
         self.clear_data();
         self.receive_body_remain.set(left_in_frame);
         self.dispatch_close(code, reason);
     }
 
-    /// Nothing is shut down behind our Close frame: a `SHUT_RD` or a FIN
-    /// there makes the kernel reset the connection on the server's next
-    /// frame, and the reset drops what this client sent and the kernel still
-    /// holds. The socket keeps reading (`skip_to_server_close`) until the
-    /// server closes the TCP connection first (RFC 6455 7.1.1), within reason.
+    /// No shutdown behind our Close frame: a FIN plus SHUT_RD there gets the connection reset on the server's next frame.
     fn wait_for_server_close(&self) {
         match self.tunnel() {
             Some(tunnel) => tunnel.set_timeout(close_timeout_seconds()),
@@ -1286,9 +1276,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    /// Both Close frames are exchanged and ours is with the transport: send
-    /// our FIN, as `ws` does, and keep reading until the server's. wss://
-    /// and a proxy tunnel leave the TCP close to the server.
+    /// Both Close frames are exchanged: send our FIN, as `ws` does. wss:// and a tunnel leave that to the server.
     fn half_close(&self) {
         if !SSL && self.tunnel().is_none() {
             self.tcp.get().shutdown();
@@ -1324,9 +1312,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn handle_end(&self, socket: Socket<SSL>) {
         debug_assert!(self.is_same_socket(&socket));
         if self.has_pending_close_dispatch() || self.cpp_websocket().is_none() {
-            // The server's FIN behind our Close frame, flushed or not. uSockets
-            // closes the socket next, with a FIN; terminate() would reset it
-            // and drop what the kernel still has to send.
+            // The server's FIN behind our Close frame: uSockets closes next, with a FIN. terminate() would reset.
             return;
         }
         self.terminate(ErrorCode::Ended);

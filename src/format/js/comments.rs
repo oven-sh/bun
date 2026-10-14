@@ -1628,10 +1628,9 @@ impl<'a> Comments<'a> {
                     && !it.preceded_by_newline()
                     && (it.is_line()
                         || it.followed_by_newline()
-                        || !(self.source_text)
-                            .all_bytes(Span::new(it.span.end, right_start), |b| {
-                                b.is_ascii_whitespace() || b == b'('
-                            }))
+                        || !(self.source_text).all_bytes(Span::after(it.span, right_start), |b| {
+                            b.is_ascii_whitespace() || b == b'('
+                        }))
             })
     }
 

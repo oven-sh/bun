@@ -5589,6 +5589,53 @@ it("a paused socket does not wake the event loop for every segment its peer send
   expect(await child.exited).toBe(0);
 });
 
+it("a socket whose peer refills the receive buffer during data() does not hold the event loop", async () => {
+  const chunk = Buffer.alloc(1024 * 1024);
+  const pump = (socket: Socket) => {
+    while (socket.write(chunk) === chunk.length);
+  };
+  using server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: { open: pump, drain: pump, data() {}, close() {}, error() {} },
+  });
+  await using child = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      let reads = 0, readsThisTurn = 0, mostReadsInOneTurn = 0;
+      (function turn() {
+        readsThisTurn = 0;
+        setImmediate(turn);
+      })();
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: Number(process.env.PORT),
+        socket: {
+          data() {
+            mostReadsInOneTurn = Math.max(mostReadsInOneTurn, ++readsThisTurn);
+            if (++reads === 150) {
+              console.log(mostReadsInOneTurn);
+              process.exit(0);
+            }
+            // The kernel sizes the receive buffer by how fast it is drained, so drain it at full
+            // speed first. From then on, take long enough for the peer to fill it again.
+            if (reads > 50) Bun.sleepSync(1);
+          },
+        },
+      });
+      `,
+    ],
+    env: { ...bunEnv, PORT: String(server.port) },
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
+  expect(Number(stdout)).toBeWithin(1, 12);
+  expect(exitCode).toBe(0);
+});
+
 // A paused socket polls for nothing, but a peer reset still reaches it (epoll reports EPOLLERR
 // regardless of interest; kqueue keeps a read knote registered while reads are off, see
 // epoll_kqueue.c). The reset is the end of the connection, so the pause no longer protects

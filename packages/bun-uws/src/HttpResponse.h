@@ -570,11 +570,18 @@ public:
         return this;
     }
 
-    /* Write a caller-built 1xx informational response line + headers. Shares
-     * the AsyncSocket write path (and buffer) writeStatus/end use, so a
-     * pipelined replay stays ordered ahead of the final response bytes. */
+    /* Write caller-built bytes as they are: a 1xx informational response line +
+     * headers, or the data of node:http's res._send(). Shares the AsyncSocket
+     * write path (and buffer) writeStatus/end use, so a pipelined replay stays
+     * ordered ahead of the final response bytes. */
     HttpResponse *writeRawInformational(std::string_view data) {
-        Super::write(data.data(), (int) data.length());
+        /* uSockets only deals with int sizes, so pass chunks of max signed int size.
+         * A write that is not optional buffers what the socket does not take. */
+        for (size_t written = 0; written < data.length();) {
+            int length = (int) std::min<size_t>(data.length() - written, INT_MAX);
+            Super::write(data.data() + written, length);
+            written += (size_t) length;
+        }
         return this;
     }
 

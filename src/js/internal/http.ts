@@ -59,6 +59,10 @@ const http1ServerPipeline: {
   kMustCloseConnection?: symbol;
 } = {};
 
+// Set by node:_http_server. OutgoingMessage.prototype.write() and end() call them for a ServerResponse with a handle.
+type ServerResponseMethod = (this: unknown, ...args: unknown[]) => unknown;
+const serverResponseMethods: { write?: ServerResponseMethod; end?: ServerResponseMethod } = {};
+
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
@@ -558,6 +562,7 @@ export {
   parseProxyConfigFromEnv,
   parseProxyUrl,
   redactInvalidProxyUrl,
+  serverResponseMethods,
   serverSymbol,
   setMaxHTTPHeaderSize,
   setServerAppFlags,

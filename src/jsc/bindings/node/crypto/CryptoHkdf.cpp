@@ -116,21 +116,21 @@ static BorrowedBytes prepareKey(JSGlobalObject* globalObject, ThrowScope& scope,
         return {};
     }
 
+    JSValue bytes = key;
     if (key.isString()) {
         JSString* keyString = key.toString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
         auto keyView = keyString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        JSValue buffer = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyView, BufferEncodingType::utf8));
+        bytes = JSValue::decode(WebCore::constructFromEncoding(globalObject, keyView, BufferEncodingType::utf8));
         RETURN_IF_EXCEPTION(scope, {});
-        return uncheckedDowncast<JSC::JSArrayBufferView>(buffer);
     }
 
-    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(key))
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(bytes))
         return view;
 
-    if (auto* buf = dynamicDowncast<JSC::JSArrayBuffer>(key))
+    if (auto* buf = dynamicDowncast<JSC::JSArrayBuffer>(bytes))
         return buf;
 
     ERR::INVALID_ARG_TYPE(scope, globalObject, "ikm"_s, "string or an instance of SecretKeyObject, ArrayBuffer, TypedArray, DataView, or Buffer"_s, key);

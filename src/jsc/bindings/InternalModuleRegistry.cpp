@@ -114,14 +114,14 @@ static String internalModuleSource(uint32_t id)
 }
 #endif
 
-static bool isSameMemory(std::span<const uint8_t> a, std::span<const uint8_t> b)
+static bool hasSameAddress(std::span<const uint8_t> a, std::span<const uint8_t> b)
 {
     return a.data() == b.data() && a.size() == b.size();
 }
 
 bool isEmbeddedCode(std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset)
 {
-    if (isSameMemory(source, asByteSpan(WebCore::builtinsSource())))
+    if (hasSameAddress(source, asByteSpan(WebCore::builtinsSource())))
         return bytecode.empty();
 
     std::span internalModulesData { reinterpret_cast<const uint8_t*>(bun_internal_modules_data), bun_internal_modules_header.dataLength };
@@ -130,14 +130,14 @@ bool isEmbeddedCode(std::span<const uint8_t> source, std::span<const uint8_t> by
 
     for (uint32_t id = 0; id < bun_internal_modules_header.moduleCount; id++) {
         const auto& m = internalModuleRecord(id);
-        if (!isSameMemory(source, internalModulesData.subspan(m.codeOffset, m.codeLength)))
+        if (!hasSameAddress(source, internalModulesData.subspan(m.codeOffset, m.codeLength)))
             continue;
         if (bytecode.empty())
             return true;
         const uint8_t* cachedBytes = nullptr;
         size_t cachedSize = 0;
         uint32_t cachedEntryOffset = 0;
-        return Bun__standaloneInternalModuleBytecode(nullptr, id, &cachedBytes, &cachedSize, &cachedEntryOffset) && isSameMemory(bytecode, { cachedBytes, cachedSize }) && cachedEntryOffset == bytecodeEntryOffset;
+        return Bun__standaloneInternalModuleBytecode(nullptr, id, &cachedBytes, &cachedSize, &cachedEntryOffset) && hasSameAddress(bytecode, { cachedBytes, cachedSize }) && cachedEntryOffset == bytecodeEntryOffset;
     }
     return false;
 }

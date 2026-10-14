@@ -107,7 +107,7 @@ struct Migrator<'a> {
     link_entries: DynamicBitSet,
     shadowed: DynamicBitSet,
     skipped_external: DynamicBitSet,
-    /// Targets the root or a workspace depends on directly.
+    /// Targets the root or a workspace declares, or reaches through `file:` packages only.
     local_declared: DynamicBitSet,
     entry_package_ids: Vec<PackageID>,
     queue: Vec<(u32, PackageID)>,
@@ -727,14 +727,13 @@ impl<'a> Migrator<'a> {
                 }
 
                 let version_tag = version.tag;
-                // Trust a `file:` spec only in a `file:` package the root or a workspace
-                // declares, not in a folder a registry package ships (`is_trusted_folder_dependency`).
+                // Same rule as `Lockfile::is_trusted_folder_dependency`.
                 let declares_folder = res_tag == resolution::Tag::Folder
                     && version_tag == DepTag::Folder
                     && self.local_declared.is_set(j as usize);
                 let mut found = self.find_target(key, name);
                 if let Some((t, _)) = found
-                    && is_local
+                    && (is_local || declares_folder)
                 {
                     self.local_declared.set(t as usize);
                 }

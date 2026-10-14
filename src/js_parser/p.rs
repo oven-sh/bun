@@ -653,6 +653,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // Temporary variables used for lowering
     pub(crate) temp_refs_to_declare: List<'a, TempRef>,
     pub(crate) temp_ref_count: i32,
+    /// Plain functions that `visit_stmts` left in a case body for `finish_case_block_fns`.
+    pub(crate) case_block_fns: Vec<Ref>,
 
     // When bundling, hoisted top-level local variables declared with "var" in
     // nested scopes are moved up to be declared in the top-level scope instead.
@@ -3544,7 +3546,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.runtime_imports.put(b"__require", ref_);
     }
 
-    fn will_use_renamer(&self) -> bool {
+    pub(crate) fn will_use_renamer(&self) -> bool {
         self.options.bundle || self.options.features.minify_identifiers
     }
 
@@ -9929,6 +9931,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),
             temp_ref_count: 0,
+            case_block_fns: Vec::new(),
             relocated_top_level_vars: BumpVec::new_in(arena),
             after_arrow_body_loc: bun_ast::Loc::EMPTY,
             const_values: Default::default(),

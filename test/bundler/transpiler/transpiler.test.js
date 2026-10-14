@@ -5802,6 +5802,381 @@ describe("using declarations in switch statements", () => {
   });
 });
 
+// A function declared directly in a case clause is a binding of the whole
+// switch block, and it exists before the first case test runs. It is lowered
+// to a `let` like every block-level function, initialized where the switch is
+// entered. It used to be initialized at the head of its own clause, so every
+// other clause saw it in its TDZ.
+describe("function declarations in switch case clauses", () => {
+  const js = new Bun.Transpiler({ loader: "js" });
+  // An exported function makes the file a module, so the source is strict.
+  const print = body => js.transformSync(`export function f(v) {\n${body}\n}`);
+
+  it("prints the initializer where the switch is entered", () => {
+    const printed = {
+      // Nothing else is declared in the switch block: the `let` goes in front.
+      lifted: print(`switch (v) { case 1: function g() {} break; case 2: g(); }`),
+      literalDiscriminant: print(`switch (true) { case v > 0: function g() {} case v < 0: g(); }`),
+      // The one clause is entered at its head.
+      onlyDefault: print(`switch (v) { default: g(); function g() {} }`),
+      // The function reads `x` of the switch block, so it is created inside it,
+      // by the first case test.
+      closesOverSwitchBlock: print(`switch (v) { case 1: let x = 1; function g() { return x; } break; case 2: g(); }`),
+      // The discriminant is not in the scope of the switch block, so it must
+      // not see the `let` in front of the switch.
+      discriminantCouldSeeTheLet: print(`switch (g) { case 1: function g() {} }`),
+    };
+
+    expect(printed).toEqual({
+      lifted: `export function f(v) {
+  {
+    let g = function() {};
+    switch (v) {
+      case 1:
+        break;
+      case 2:
+        g();
+    }
+  }
+}
+`,
+      literalDiscriminant: `export function f(v) {
+  {
+    let g = function() {};
+    switch (true) {
+      case v > 0:
+      case v < 0:
+        g();
+    }
+  }
+}
+`,
+      onlyDefault: `export function f(v) {
+  switch (v) {
+    default:
+      let g = function() {};
+      g();
+  }
+}
+`,
+      closesOverSwitchBlock: `export function f(v) {
+  {
+    let g;
+    switch (v) {
+      case (g = function() {
+        return x;
+      }, 1):
+        let x = 1;
+        break;
+      case 2:
+        g();
+    }
+  }
+}
+`,
+      discriminantCouldSeeTheLet: `export function f(v) {
+  {
+    const __bun_temp_ref_1$ = g;
+    {
+      let g = function() {};
+      switch (__bun_temp_ref_1$) {
+        case 1:
+      }
+    }
+  }
+}
+`,
+    });
+
+    // Transpiling the output again must not lower anything a second time.
+    for (const text of Object.values(printed)) {
+      expect(js.transformSync(text)).toBe(text);
+    }
+  });
+
+  // Each `body` is the body of a function. `strict` is what node returns for
+  // it with "use strict", `sloppy` what it returns without (when that differs).
+  const rows = {
+    otherClause: {
+      body: `function f(v) { switch (v) { case 1: function g() { return 4 } break; case 2: return [typeof g, g()]; } return "none"; } return [f(1), f(2), f(3)];`,
+      strict: ["none", ["function", 4], "none"],
+    },
+    defaultFirst: {
+      body: `function f(v) { switch (v) { default: return [typeof g, g()]; case 1: function g() { return "d" } } } return [f(0), f(1)];`,
+      strict: [["function", "d"], null],
+    },
+    onlyDefault: {
+      body: `function f(v) { switch (v) { default: return g(); function g() { return "only" } } } return f(0);`,
+      strict: "only",
+    },
+    fallthrough: {
+      body: `function f(v) { switch (v) { case 1: function g() { return "f" } case 2: return g(); } } return [f(1), f(2)];`,
+      strict: ["f", "f"],
+    },
+    literalDiscriminant: {
+      body: `function f(x) { switch (true) { case x > 0: function g() { return "pos" } case x < 0: return g(); } } return [f(1), f(-1)];`,
+      strict: ["pos", "pos"],
+    },
+    caseTest: {
+      body: `function f(v) { switch (v) { case g(): return "matched"; case 1: function g() { return 7 } } return "nomatch"; } return [f(7), f(1)];`,
+      strict: ["matched", "nomatch"],
+    },
+    closesOverCaseLet: {
+      body: `function f(v) { switch (v) { case 2: try { return [typeof g, g()]; } catch (e) { return [typeof g, e.constructor.name]; } case 1: let x = "x1"; function g() { return x } return g(); } } return [f(1), f(2)];`,
+      strict: ["x1", ["function", "ReferenceError"]],
+    },
+    nextToClass: {
+      body: `function f(v) { switch (v) { case 1: class C { static n = "C" } function g() { return C.n } return g(); case 2: try { return g(); } catch (e) { return e.constructor.name; } } } return [f(1), f(2)];`,
+      strict: ["C", "ReferenceError"],
+    },
+    nextToGenerator: {
+      body: `function f(v) { switch (v) { case 1: function* gen() { yield 1 } function g() { return [...gen()] } case 2: return g(); } } return [f(1), f(2)];`,
+      strict: [[1], [1]],
+    },
+    twoFunctions: {
+      body: `function f(v) { switch (v) { case 1: function a() { return b() } case 2: function b() { return "b" } default: return a(); } } return [f(1), f(3)];`,
+      strict: ["b", "b"],
+    },
+    sameClauseBeforeDeclaration: {
+      body: `function f() { switch (1) { case 1: var r = g(); function g() { return "same" } return r; } } return f();`,
+      strict: "same",
+    },
+    reassigned: {
+      body: `function f(v) { switch (v) { case 2: g = 5; return typeof g; case 1: function g() {} } } return f(2);`,
+      strict: "number",
+    },
+    freshPerEntry: {
+      body: `const r = []; for (let i = 0; i < 2; i++) { switch (i) { default: r.push(g); break; case 9: function g() {} } } return r[0] !== r[1];`,
+      strict: true,
+    },
+    nestedSwitch: {
+      body: `function f(v, w) { switch (v) { case 1: function g() { return "outer-switch" } switch (w) { case 1: function g() { return "inner-switch" } break; case 2: return g(); } return g(); case 2: return g(); } } return [f(1, 1), f(1, 2), f(2, 0)];`,
+      strict: ["outer-switch", "inner-switch", "outer-switch"],
+    },
+    labelledAndLoop: {
+      body: `const r = []; outer: for (const x of [1, 2, 3]) { inner: switch (x) { case 1: function g() { return "L" } continue outer; case 2: r.push(g()); break inner; case 3: r.push(g() + "!"); break outer; } r.push("after" + x); } return r;`,
+      strict: ["L", "after2", "L!"],
+    },
+    singleStatementBody: {
+      body: `let r = ""; for (let i = 1; i <= 3; i++) switch (i) { case 1: function g() { return "a" } break; default: r += g() + i; } return r;`,
+      strict: "a2a3",
+    },
+    // With syntax minification the single-use `let` in the clause was inlined
+    // away, and the other clause then called the outer function.
+    outerCallee: {
+      body: `function g() { return "OUTER" } function f(v) { switch (v) { case 1: function g() { return "inner" } return g(); case 2: return g(); } } return [f(1), f(2)];`,
+      strict: ["inner", "inner"],
+    },
+    nameAndLength: {
+      body: `function f(v) { switch (v) { case 2: return [g.name, g.length]; case 1: function g(a, b) {} } } return f(2);`,
+      strict: ["g", 2],
+      printsName: true,
+    },
+    directEvalSees: {
+      body: `function f(v) { switch (v) { case 1: function q() { return "q" } break; case 2: return eval("typeof q + q()"); } } return f(2);`,
+      strict: "functionq",
+      directEval: true,
+    },
+    // The rows below read the name outside the switch block. In strict code
+    // that is whatever is outside. In sloppy code it is the Annex B `var`,
+    // which is assigned when the declaration is evaluated.
+    shadowsFunctionLevel: {
+      body: `function f() { return "outer" } switch (1) { case 1: function f() { return "case" } } return f();`,
+      strict: "outer",
+      sloppy: "case",
+    },
+    readsOuter: {
+      body: `function g() { return "module-level" } function t(v) { switch (v) { case 1: function g() { return "case" } } try { return g(); } catch (e) { return e.constructor.name; } } return [t(0), t(1)];`,
+      strict: ["module-level", "module-level"],
+      sloppy: ["TypeError", "case"],
+    },
+    afterSwitch: {
+      body: `function h(v) { switch (v) { case 1: function g() {} break; } return typeof g; } return [h(1), h(2)];`,
+      strict: ["undefined", "undefined"],
+      sloppy: ["function", "undefined"],
+    },
+    afterSwitchDeclarationNotReached: {
+      body: `function h(v) { switch (v) { case 1: if (v) break; function g() {} } return typeof g; } return h(1);`,
+      strict: "undefined",
+    },
+    discriminantReadsOuter: {
+      body: `function g() { return "outer" } function f() { switch (g()) { case "outer": function g() { return "inner" } return g(); default: return "?"; } } try { return f(); } catch (e) { return e.constructor.name; }`,
+      strict: "inner",
+      sloppy: "TypeError",
+    },
+    directEvalLaterClause: {
+      body: `function f(v) { switch (v) { case 1: function q() { return "q" } break; case 2: eval(""); return q(); } return typeof q; } return [f(1), f(2)];`,
+      strict: ["undefined", "q"],
+      sloppy: ["function", "q"],
+      directEval: true,
+    },
+  };
+
+  // Indirect eval runs the text as it is printed. The printed text does not
+  // say how strict it is: a function's own "use strict" is not printed, and a
+  // module can be bundled into a sloppy script. So the lowered text has to give
+  // the answer of the source both as sloppy and as strict text.
+  function run(text, strictText) {
+    delete globalThis.__switchCaseRow;
+    try {
+      (0, eval)((strictText ? '"use strict";' : "") + text);
+      return JSON.parse(JSON.stringify(globalThis.__switchCaseRow()));
+    } catch (e) {
+      return `${e.constructor.name}: ${e.message}`;
+    } finally {
+      delete globalThis.__switchCaseRow;
+    }
+  }
+
+  describe.each([
+    ["no minification", false],
+    ["syntax minified", { syntax: true }],
+    ["syntax and identifiers minified", { syntax: true, identifiers: true }],
+  ])("%s", (_, minify) => {
+    const transpiler = new Bun.Transpiler({ loader: "js", minify });
+    // A renamer can tell the function and its Annex B `var` apart.
+    const hasRenamer = !!minify && !!minify.identifiers;
+
+    it.each([
+      ["strict", true],
+      ["sloppy", false],
+    ])("%s source gives node's answer in sloppy and in strict text", (_, strictSource) => {
+      const got = {};
+      const want = {};
+      for (const [name, row] of Object.entries(rows)) {
+        if (row.printsName && hasRenamer) continue;
+        // Direct eval in sloppy code: the declaration stays, as in any other
+        // block, and the engine decides by the strictness of the text.
+        const staysDeclaration = !strictSource && row.directEval;
+        // Without a renamer the `var` of sloppy code is not emitted at all.
+        if (!strictSource && "sloppy" in row && !hasRenamer && !staysDeclaration) continue;
+
+        const text = transpiler.transformSync(
+          `globalThis.__switchCaseRow = function () { ${strictSource ? '"use strict";' : ""} ${row.body} };`,
+        );
+        for (const strictText of staysDeclaration ? [false] : [false, true]) {
+          const cell = `${name} as ${strictText ? "strict" : "sloppy"} text`;
+          got[cell] = run(text, strictText);
+          want[cell] = strictSource || !("sloppy" in row) ? row.strict : row.sloppy;
+        }
+      }
+      expect(got).toEqual(want);
+    });
+  });
+
+  // The same answers from files, where the loader decides the strictness.
+  describe("at runtime", () => {
+    const fixture = /* js */ `
+      function outer() { return "outer"; }
+      function otherClause(v) {
+        switch (v) {
+          case 1: function g() { return 4 } break;
+          case 2: return [typeof g, g()];
+        }
+        return "none";
+      }
+      function closesOverCaseLet(v) {
+        switch (v) {
+          case 2: try { return g(); } catch (e) { return [typeof g, e.constructor.name]; }
+          case 1: let x = "x1"; function g() { return x } return g();
+        }
+      }
+      function strictShadow() {
+        "use strict";
+        function f() { return "function-level"; }
+        switch (1) { case 1: function f() { return "case"; } }
+        return f();
+      }
+      function strictOuterRead(v) {
+        "use strict";
+        switch (v) {
+          case 1: function outer() { return "case"; } break;
+          case 2: return outer();
+        }
+        return outer();
+      }
+      console.log(JSON.stringify([
+        otherClause(1), otherClause(2), otherClause(3),
+        closesOverCaseLet(1), closesOverCaseLet(2),
+        strictShadow(), strictOuterRead(0), strictOuterRead(1), strictOuterRead(2),
+      ]));
+    `;
+    const expected = [
+      "none",
+      ["function", 4],
+      "none",
+      "x1",
+      ["function", "ReferenceError"],
+      "function-level",
+      "outer",
+      "outer",
+      "case",
+    ];
+
+    it.concurrent.each([
+      ["a module", "fixture.mjs", fixture + "\nexport {};\n"],
+      ["a sloppy CommonJS file", "fixture.cjs", fixture],
+      ['a CommonJS file with "use strict"', "fixture.cjs", `"use strict";\n${fixture}`],
+    ])("%s", async (_, file, source) => {
+      using dir = tempDir("switch-case-fn", { [file]: source });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), file],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    it.concurrent("bun -e", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(expected);
+      expect(exitCode).toBe(0);
+    });
+
+    // The `using` lowering replaces the whole switch. The initializer of the
+    // function has to stay in front of what it prints.
+    it.concurrent("next to a lowered using declaration", async () => {
+      const lowered = new Bun.Transpiler({ loader: "js", target: "node" }).transformSync(`
+        function f(v, log) {
+          switch (v) {
+            case 1: using r = { [Symbol.dispose]() { log.push("disposed"); } }; function g() { return "g"; } log.push(g()); break;
+            case 2: log.push(g());
+          }
+          return log;
+        }
+        console.log(JSON.stringify([f(1, []), f(2, [])]));
+        export {};
+      `);
+      expect(lowered).toContain("__using");
+
+      using dir = tempDir("switch-case-fn-using", { "lowered.mjs": lowered });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "lowered.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([["g", "disposed"], ["g"]]);
+      expect(exitCode).toBe(0);
+    });
+  });
+});
+
 describe("minifyWhitespace keeps the space before keyword operators", () => {
   const minifier = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
 

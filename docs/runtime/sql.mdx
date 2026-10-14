@@ -1185,17 +1185,15 @@ try {
 
 ### Data Type Errors
 
-| Data Type Errors                                        | Description                           |
-| ------------------------------------------------------- | ------------------------------------- |
-| `ERR_POSTGRES_INVALID_BINARY_DATA`                      | Invalid binary data format            |
-| `ERR_POSTGRES_INVALID_BYTE_SEQUENCE`                    | Invalid byte sequence                 |
-| `ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING`       | Encoding error                        |
-| `ERR_POSTGRES_INVALID_CHARACTER`                        | Invalid character in data             |
-| `ERR_POSTGRES_OVERFLOW`                                 | Numeric overflow                      |
-| `ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT`                 | Unsupported binary format             |
-| `ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE`                 | Integer size not supported            |
-| `ERR_POSTGRES_MULTIDIMENSIONAL_ARRAY_NOT_SUPPORTED_YET` | Multidimensional arrays not supported |
-| `ERR_POSTGRES_NULLS_IN_ARRAY_NOT_SUPPORTED_YET`         | NULL values in arrays not supported   |
+| Data Type Errors                                  | Description                |
+| ------------------------------------------------- | -------------------------- |
+| `ERR_POSTGRES_INVALID_BINARY_DATA`                | Invalid binary data format |
+| `ERR_POSTGRES_INVALID_BYTE_SEQUENCE`              | Invalid byte sequence      |
+| `ERR_POSTGRES_INVALID_BYTE_SEQUENCE_FOR_ENCODING` | Encoding error             |
+| `ERR_POSTGRES_INVALID_CHARACTER`                  | Invalid character in data  |
+| `ERR_POSTGRES_OVERFLOW`                           | Numeric overflow           |
+| `ERR_POSTGRES_UNSUPPORTED_BYTEA_FORMAT`           | Unsupported binary format  |
+| `ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE`           | Integer size not supported |
 
 The client raises these errors while it decodes a result, after the server ran the query. Only that query rejects. The connection stays open, and the other queries on it continue. An `INSERT`, `UPDATE` or `DELETE ... RETURNING` can already be stored at that point, so do not retry a write blindly. To read the value, cast the column to `text` or use `.raw()`.
 

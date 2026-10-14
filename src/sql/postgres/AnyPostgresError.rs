@@ -23,8 +23,6 @@ pub enum AnyPostgresError {
     InvalidServerKey,
     InvalidServerSignature,
     JSError,
-    MultidimensionalArrayNotSupportedYet,
-    NullsInArrayNotSupportedYet,
     OutOfMemory,
     Overflow,
     PBKDFD2,

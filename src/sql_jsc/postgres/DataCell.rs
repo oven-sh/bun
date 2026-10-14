@@ -617,23 +617,173 @@ fn parse_array(
     }
 
     // disarm errdefer
-    let mut array = core::mem::ManuallyDrop::new(scopeguard::ScopeGuard::into_inner(array));
-    let len = array.len() as u32;
-    let cap = array.capacity() as u32;
-    let ptr = array.as_mut_ptr();
-    Ok(SQLDataCell {
+    Ok(make_array_cell(scopeguard::ScopeGuard::into_inner(array)))
+}
+
+/// Hands an owned `Vec<SQLDataCell>` to C++ as a `Tag::Array` cell. `deinit`
+/// rebuilds the Vec from `ptr`/`cap` to free it (`free_value = 1`).
+fn make_array_cell(cells: Vec<SQLDataCell>) -> SQLDataCell {
+    if cells.is_empty() {
+        return SQLDataCell {
+            tag: Tag::Array,
+            value: Value {
+                array: Array::default(),
+            },
+            ..Default::default()
+        };
+    }
+    let mut cells = core::mem::ManuallyDrop::new(cells);
+    let len = cells.len() as u32;
+    let cap = cells.capacity() as u32;
+    let ptr = cells.as_mut_ptr();
+    SQLDataCell {
         tag: Tag::Array,
         value: Value {
             array: Array { ptr, len, cap },
         },
         free_value: 1,
         ..Default::default()
-    })
+    }
+}
+
+/// Element types of the binary `int4[]` / `float4[]` decoders. `into_cell`
+/// builds the cell a NULL-bearing or multi-dimensional array holds per element,
+/// matching what `parse_array` makes for the same column in text format.
+trait BinaryArrayElem: bun_sql::postgres::types::tag::WireByteSwap {
+    fn into_cell(self) -> SQLDataCell;
+}
+
+impl BinaryArrayElem for i32 {
+    fn into_cell(self) -> SQLDataCell {
+        SQLDataCell::int4(self)
+    }
+}
+
+impl BinaryArrayElem for f32 {
+    fn into_cell(self) -> SQLDataCell {
+        SQLDataCell::float8(self as f64)
+    }
+}
+
+/// Reads one element of a binary array at `*cursor`: a 4-byte length (`-1` for
+/// NULL) followed by the payload. Advances `cursor` past it.
+fn decode_binary_array_elem<Elem: BinaryArrayElem>(
+    bytes: &[u8],
+    cursor: &mut usize,
+) -> Result<SQLDataCell> {
+    let len_end = cursor
+        .checked_add(4)
+        .ok_or(AnyPostgresError::InvalidBinaryData)?;
+    if len_end > bytes.len() {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+    let elem_len = i32::from_be_bytes(
+        bytes[*cursor..len_end]
+            .try_into()
+            .expect("infallible: size matches"),
+    );
+    *cursor = len_end;
+    if elem_len == -1 {
+        return Ok(SQLDataCell::null());
+    }
+    let elem_size = size_of::<Elem>();
+    if usize::try_from(elem_len).ok() != Some(elem_size) {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+    let elem_end = len_end + elem_size;
+    if elem_end > bytes.len() {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+    let value = Elem::from_unaligned_ne_bytes(&bytes[len_end..elem_end]).wire_byte_swap();
+    *cursor = elem_end;
+    Ok(value.into_cell())
+}
+
+/// Decodes one dimension of a binary array: `dims[0]` items, each a nested
+/// array for the remaining `dims` or an element when `dims` has one entry.
+/// Elements are stored in row-major order, so a single `cursor` walks them.
+fn decode_binary_array_level<Elem: BinaryArrayElem>(
+    bytes: &[u8],
+    dims: &[usize],
+    cursor: &mut usize,
+) -> Result<SQLDataCell> {
+    let (count, rest) = dims.split_first().expect("dims is never empty here");
+    // errdefer: SQLDataCell has FFI-side resources that Vec::drop won't release.
+    let mut cells = scopeguard::guard(Vec::<SQLDataCell>::with_capacity(*count), |mut a| {
+        for cell in a.iter_mut() {
+            cell.deinit();
+        }
+    });
+    for _ in 0..*count {
+        let cell = if rest.is_empty() {
+            decode_binary_array_elem::<Elem>(bytes, cursor)?
+        } else {
+            decode_binary_array_level::<Elem>(bytes, rest, cursor)?
+        };
+        cells.push(cell);
+    }
+    Ok(make_array_cell(scopeguard::ScopeGuard::into_inner(cells)))
+}
+
+/// Binary `int4[]` / `float4[]` with NULL elements or more than one dimension.
+/// A typed array can hold neither, so this decodes into the same plain
+/// `Tag::Array` shape the text path produces: `null` per NULL element and a
+/// nested array per dimension. `ndim` is the header's dimension count.
+///
+/// Wire layout (`array_send`): ndim(4) flags(4) elemtype(4), then per dimension
+/// size(4) lbound(4), then every element as len(4) + payload.
+/// https://github.com/postgres/postgres/blob/master/src/backend/utils/adt/arrayfuncs.c#L1549-L1645
+fn decode_binary_array_cells<Elem: BinaryArrayElem>(
+    bytes: &[u8],
+    ndim: u32,
+) -> Result<SQLDataCell> {
+    // Every count below comes from the server. Bound each one against the
+    // bytes that actually arrived before it drives an allocation or a loop.
+    let ndim = ndim as usize;
+    if ndim > MAX_ARRAY_NESTING_DEPTH {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+    if ndim == 0 {
+        return Ok(make_array_cell(Vec::new()));
+    }
+    let header_len = 12 + ndim * 8;
+    if bytes.len() < header_len {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+
+    let mut dims: Vec<usize> = Vec::with_capacity(ndim);
+    let mut total: usize = 1;
+    for d in 0..ndim {
+        let off = 12 + d * 8;
+        let dim_len = i32::from_be_bytes(
+            bytes[off..off + 4]
+                .try_into()
+                .expect("infallible: size matches"),
+        );
+        let dim_len = usize::try_from(dim_len).map_err(|_| AnyPostgresError::InvalidBinaryData)?;
+        dims.push(dim_len);
+        total = total
+            .checked_mul(dim_len)
+            .ok_or(AnyPostgresError::InvalidBinaryData)?;
+    }
+    // Postgres sends an empty array as ndim = 0, so a zero dimension never
+    // comes from a real server. Decode it as empty rather than let the other
+    // dimensions size an allocation.
+    if total == 0 {
+        return Ok(make_array_cell(Vec::new()));
+    }
+    // Each element carries at least its 4-byte length prefix.
+    if total > (bytes.len() - header_len) / 4 {
+        return Err(AnyPostgresError::InvalidBinaryData);
+    }
+
+    let mut cursor = header_len;
+    decode_binary_array_level::<Elem>(bytes, &dims, &mut cursor)
 }
 
 // Helper: typed-array binary path shared by .int4_array / .float4_array.
 // Monomorphized over the element type.
-fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
+fn from_bytes_typed_array<Elem: BinaryArrayElem>(
     tag: types::Tag,
     bytes: &[u8],
 ) -> Result<SQLDataCell> {
@@ -647,12 +797,10 @@ fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
         u32::from_ne_bytes(bytes[4..8].try_into().expect("infallible: size matches"));
 
     let dimensions = dimensions_raw.swap_bytes();
-    if dimensions > 1 {
-        return Err(AnyPostgresError::MultidimensionalArrayNotSupportedYet);
-    }
-
-    if contains_nulls != 0 {
-        return Err(AnyPostgresError::NullsInArrayNotSupportedYet);
+    // A typed array has no null holes and no nesting. Those shapes decode
+    // into a plain array, like the text path does.
+    if dimensions > 1 || contains_nulls != 0 {
+        return decode_binary_array_cells::<Elem>(bytes, dimensions);
     }
 
     let js_typed_array_type = crate::postgres::types::tag_jsc::to_js_typed_array_type(tag)

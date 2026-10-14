@@ -4944,6 +4944,47 @@ CREATE TABLE ${table_name} (
         expect(result[0].array_with_nulls).toEqual([1, null, 3, null]);
       });
 
+      // A parameter makes the column arrive in binary format. The values must
+      // read the same as in text format.
+      test("int4[] - null values in binary format", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const [row] = await sql`SELECT ARRAY[1, NULL, 3, NULL]::int4[] as v WHERE ${1} = 1`;
+        expect(row.v).toEqual([1, null, 3, null]);
+      });
+
+      test("int4[] - multidimensional in binary format", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const [row] = await sql`
+          SELECT
+            ARRAY[[1, 2], [3, 4]]::int4[] as two_d,
+            ARRAY[[1, NULL], [NULL, 4]]::int4[] as two_d_with_nulls,
+            ARRAY[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]::int4[] as three_d,
+            ARRAY[1, 2, 3]::int4[] as one_d
+          WHERE ${1} = 1
+        `;
+        expect(row).toEqual({
+          two_d: [
+            [1, 2],
+            [3, 4],
+          ],
+          two_d_with_nulls: [
+            [1, null],
+            [null, 4],
+          ],
+          three_d: [
+            [
+              [1, 2],
+              [3, 4],
+            ],
+            [
+              [5, 6],
+              [7, 8],
+            ],
+          ],
+          one_d: new Int32Array([1, 2, 3]),
+        });
+      });
+
       test("int4[] - null array", async () => {
         await using sql = postgres({ ...options, max: 1 });
         const result = await sql`SELECT NULL::int4[] as null_array`;
@@ -7804,6 +7845,27 @@ CREATE TABLE ${table_name} (
         SELECT ARRAY[1.0, NULL, 3.0, NULL]::float4[] as array_with_nulls
       `;
         expect(result[0].array_with_nulls).toEqual([1.0, null, 3.0, null]);
+      });
+
+      // A parameter makes the column arrive in binary format. The values must
+      // read the same as in text format.
+      test("float4[] - null values and multidimensional in binary format", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const [row] = await sql`
+          SELECT
+            ARRAY[1.5, NULL, 3.5, NULL]::float4[] as with_nulls,
+            ARRAY[[1.5, 2.5], [3.5, 4.5]]::float4[] as two_d,
+            ARRAY[1.5, 2.5]::float4[] as one_d
+          WHERE ${1} = 1
+        `;
+        expect(row).toEqual({
+          with_nulls: [1.5, null, 3.5, null],
+          two_d: [
+            [1.5, 2.5],
+            [3.5, 4.5],
+          ],
+          one_d: new Float32Array([1.5, 2.5]),
+        });
       });
 
       test("float4[] - null array", async () => {

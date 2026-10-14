@@ -185,6 +185,59 @@ describe.concurrent(".resolves and .rejects", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Expected values measured on Vitest 5.0.3.
+  test('in a "vitest" test, a settled promise still gives a promise', async () => {
+    const { stdout, results, exitCode } = await run(["test"], {
+      "a.test.js": `
+        import { expect, test } from "vitest";
+        const kind = call => {
+          try {
+            const result = call();
+            result.catch(() => {});
+            return "returned " + Object.prototype.toString.call(result);
+          } catch (error) {
+            return "threw " + error.constructor.name;
+          }
+        };
+        test("every call returns a promise", async () => {
+          const rejected = Promise.reject(new Error("no"));
+          console.log(kind(() => expect(Promise.resolve(1)).resolves.toBe(1)));
+          console.log(kind(() => expect(Promise.resolve(1)).resolves.toBe(2)));
+          console.log(kind(() => expect(rejected).rejects.toThrow("yes")));
+          console.log(kind(() => expect(rejected).resolves.toBe(1)));
+          console.log(kind(() => expect(Promise.resolve(1)).rejects.toBe(1)));
+          console.log(await expect(Promise.resolve(1)).resolves.toBe(2).then(() => "fulfilled", () => "rejected"));
+          await expect(expect(Promise.resolve(1)).resolves.toBe(2)).rejects.toThrow();
+        });
+        test("code after the call runs first", async () => {
+          let ran = false;
+          const matcher = expect(Promise.resolve({ get value() { return ran; } })).resolves.toEqual({ value: true });
+          ran = true;
+          await matcher;
+        });
+        test("a failure that isn't awaited still fails its test", () => {
+          expect(Promise.resolve(1)).resolves.toBe(2);
+        });
+        test("the next test is not affected", () => {});
+      `,
+    });
+    expect(stdout).toEqual([
+      "returned [object Promise]",
+      "returned [object Promise]",
+      "returned [object Promise]",
+      "returned [object Promise]",
+      "returned [object Promise]",
+      "rejected",
+    ]);
+    expect(results).toEqual([
+      "(pass) every call returns a promise",
+      "(pass) code after the call runs first",
+      "(fail) a failure that isn't awaited still fails its test",
+      "(pass) the next test is not affected",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
   test("a test waits for the matchers it did not await, and their failures are its own", async () => {
     const source = `
       test("passes", () => {

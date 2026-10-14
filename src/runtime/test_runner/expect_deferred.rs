@@ -1091,7 +1091,12 @@ impl Expect {
                 global,
                 promise.map_or(JSValue::NULL, AnyPromise::as_value),
             );
-            if let Some(promise) = promise.filter(|promise| promise.status() == Status::Pending) {
+            // bun:test checks a settled promise right away and throws, as it always has. Vitest always returns a promise.
+            let always_defer =
+                self.bun_test().is_some_and(|buntest| self.is_in_vitest_test(buntest.get()));
+            if let Some(promise) =
+                promise.filter(|promise| always_defer || promise.status() == Status::Pending)
+            {
                 let deferred = ExpectDeferred::waiting(global);
                 js::awaited_set_cached(deferred, global, promise.as_value());
                 let deferred = ExpectDeferred::defer(deferred, self, global, frame);

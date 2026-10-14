@@ -524,6 +524,8 @@ test("promises", async () => {
 
 If you don't `await` a matcher, the test still waits for it before ending, and a failure still fails that test. Outside a test, the file waits for the matcher, and a failure is reported as an error between tests. Code after the matcher doesn't wait for it, so `await` the matcher if that code closes something the promise needs.
 
+In a `"bun:test"` test, a promise that has already settled is checked right away, and a failed matcher throws instead of returning a rejected promise. In a `"vitest"` test, the matcher always returns a promise.
+
 These matchers also return a promise:
 
 - `toThrow()` on a function that returns a pending promise

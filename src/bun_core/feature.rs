@@ -16,6 +16,9 @@
 //!
 //! What it depends on and Bun does not goes with it, or, if several features depend on it, once all of them are excluded.
 //!
+//! Whether this executable has a feature is `feature!(lint)`, and of several, `feature!(lint, fmt)`, whether it has one of them.
+//! It reads a byte that `bun build --compile` clears.
+//!
 //! Bun gets into a feature through a DOOR: a function of Bun's whose body says what to do without the feature.
 //!
 //! ```ignore
@@ -32,69 +35,30 @@
 //! fn exec_lint(ctx: &Context) -> CmdResult { ... }
 //! ```
 //!
-//! A door of several features, `door(lint, fmt)`, is open for as long as one of them is there.
-//!
-//! A door is a no-op and a jump to the feature's function, and `bun build --compile` makes the no-op a jump to the body. So it
-//! costs that much, nothing is inlined through it, and it belongs where a feature is entered, not in a loop.
-//!
-//! [`present!`] is a door with nothing behind it: whether this executable has the feature.
+//! That is `if feature!(lint) { the function behind it } else { the body }`, and the declaration that it takes to call a function
+//! of a crate that this one does not depend on. Nothing is inlined through a door, so it belongs where a feature is entered,
+//! not in a loop.
 
 mod ids;
-pub use bun_core_macros::{behind, door, present};
+pub use bun_core_macros::{behind, door};
 use ids::NAMES;
 
-/// What a door starts with, for [`door`]: a no-op as long as a jump, the jump to `{real}`, and for `bun build --compile`, which
-/// reads these in the file it copies, where the no-op is and where `{absent}` is, as distances from here. [`door`] has how
-/// many features follow, the features, and `.popsection`. A door does not start with the jump, because a linker has what
-/// calls a jump call where that goes.
+/// For each feature, whether it is there: 1, which `bun build --compile` makes 0 in the file it writes.
+#[used(linker)]
+#[cfg_attr(
+    not(any(target_os = "macos", windows)),
+    unsafe(link_section = ".bun_feature_present")
+)]
+#[cfg_attr(target_os = "macos", unsafe(link_section = "__TEXT,__bun_feat_pres"))]
+#[cfg_attr(windows, unsafe(link_section = ".bunfprs"))]
+static PRESENT: [u8; NAMES.len()] = [1; NAMES.len()];
+
+/// For `feature!`. The first feature is number 1.
 #[doc(hidden)]
-#[macro_export]
-#[cfg(all(target_arch = "x86_64", not(any(target_os = "macos", windows))))]
-macro_rules! __door {
-    () => {
-        "2: .byte 0x0f, 0x1f, 0x44, 0x00, 0x00\njmp {real}\n.pushsection .bun_feature_doors,\"aR\",@progbits\n3: .long 2b - 3b\n.long {absent} - 3b"
-    };
-}
-#[doc(hidden)]
-#[macro_export]
-#[cfg(all(target_arch = "aarch64", not(any(target_os = "macos", windows))))]
-macro_rules! __door {
-    () => {
-        "2: nop\nb {real}\n.pushsection .bun_feature_doors,\"aR\",@progbits\n3: .long 2b - 3b\n.long {absent} - 3b"
-    };
-}
-// On x86-64 Mach-O a label can be subtracted only if a symbol the linker sees comes before it in its section.
-#[doc(hidden)]
-#[macro_export]
-#[cfg(all(target_arch = "x86_64", target_os = "macos"))]
-macro_rules! __door {
-    () => {
-        "2: .byte 0x0f, 0x1f, 0x44, 0x00, 0x00\njmp {real}\n.pushsection __TEXT,__bun_feat_door,regular,no_dead_strip\n.ifndef l_bun_feat_door\nl_bun_feat_door:\n.endif\n3: .long 2b - 3b\n.long {absent} - 3b"
-    };
-}
-#[doc(hidden)]
-#[macro_export]
-#[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-macro_rules! __door {
-    () => {
-        "2: nop\nb {real}\n.pushsection __TEXT,__bun_feat_door,regular,no_dead_strip\n.ifndef l_bun_feat_door\nl_bun_feat_door:\n.endif\n3: .long 2b - 3b\n.long {absent} - 3b"
-    };
-}
-#[doc(hidden)]
-#[macro_export]
-#[cfg(all(target_arch = "x86_64", windows))]
-macro_rules! __door {
-    () => {
-        "2: .byte 0x0f, 0x1f, 0x44, 0x00, 0x00\njmp {real}\n.pushsection .bunfdor,\"dr\"\n3: .long 2b - 3b\n.long {absent} - 3b"
-    };
-}
-#[doc(hidden)]
-#[macro_export]
-#[cfg(all(target_arch = "aarch64", windows))]
-macro_rules! __door {
-    () => {
-        "2: nop\nb {real}\n.pushsection .bunfdor,\"dr\"\n3: .long 2b - 3b\n.long {absent} - 3b"
-    };
+#[inline(always)]
+pub fn is_present(number: usize) -> bool {
+    // SAFETY: it is a static. Volatile, because all the compiler sees is a 1 that nothing writes to.
+    unsafe { (&raw const PRESENT[number - 1]).read_volatile() != 0 }
 }
 
 const NAMES_LENGTH: usize = {

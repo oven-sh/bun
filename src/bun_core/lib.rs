@@ -1,8 +1,5 @@
 #![feature(allocator_api)]
-#![cfg_attr(
-    any(target_os = "linux", target_os = "macos", windows),
-    feature(used_with_arg)
-)] // `feature::TABLE` stays though nothing refers to it
+#![feature(used_with_arg)] // what `feature` has for `bun build --compile` to read stays though nothing refers to it
 #![feature(adt_const_params)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
@@ -633,7 +630,7 @@ impl ErrnoNames {
 
 /// Compile-time `<tag>` → ANSI rewrite (proc-macro). Re-exported at crate root
 /// so `$crate::pretty_fmt!` resolves from the wrapper macros in `output.rs`.
-pub use bun_core_macros::{EnumTag, pretty_fmt};
+pub use bun_core_macros::{EnumTag, feature, pretty_fmt};
 
 /// Build-time configuration values. Written at
 /// configure time by `scripts/build/buildOptionsRs.ts` from the resolved

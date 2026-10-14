@@ -2087,7 +2087,7 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
 }
 
 fn exit_if_built_without_check() {
-    if !bun_core::feature::present!(check) {
+    if !bun_core::feature!(check) {
         Output::err_generic(
             "--check: this executable was built without type checking",
             (),

@@ -727,28 +727,10 @@ fn symbol_behind(features: &[u32], door: &syn::Ident) -> String {
     format!("bun_feature_{}_{door}", names.join("_"))
 }
 
-/// A function that goes to `real`, which `bun build --compile` can have go to `absent`.
-fn door_to(
-    function: &syn::ItemFn,
-    features: &[u32],
-    real: &syn::Ident,
-    absent: &syn::Ident,
-) -> proc_macro2::TokenStream {
-    let syn::ItemFn {
-        attrs, vis, sig, ..
-    } = function;
-    let mut rest = format!(".long {}\n", features.len());
-    for feature in features {
-        rest += &format!(".long {feature}\n");
-    }
-    rest += ".popsection";
-    quote! {
-        #(#attrs)*
-        #[unsafe(naked)]
-        #vis #sig {
-            ::core::arch::naked_asm!(::bun_core::__door!(), #rest, real = sym #real, absent = sym #absent)
-        }
-    }
+/// `[2, 3]` → whether one of them is there
+fn is_present(features: &[u32]) -> proc_macro2::TokenStream {
+    let numbers = features.iter().map(|number| *number as usize);
+    quote!((#(::bun_core::feature::is_present(#numbers))||*))
 }
 
 /// See `bun_core::feature`.
@@ -756,33 +738,38 @@ fn door_to(
 pub fn door(features: TokenStream, function: TokenStream) -> TokenStream {
     let parser = syn::punctuated::Punctuated::<syn::Ident, Token![,]>::parse_terminated;
     let features = parse_macro_input!(features with parser);
-    let function = parse_macro_input!(function as syn::ItemFn);
+    let syn::ItemFn {
+        attrs,
+        vis,
+        sig,
+        block,
+    } = parse_macro_input!(function as syn::ItemFn);
     let numbers = match numbers_of(&features) {
         Ok(numbers) => numbers,
         Err(e) => return e.to_compile_error().into(),
     };
-    let name = &function.sig.ident;
-    let symbol = symbol_behind(&numbers, name);
-    let (real, absent) = (
-        syn::Ident::new(&format!("{name}_with_the_feature"), name.span()),
-        syn::Ident::new(&format!("{name}_without_the_feature"), name.span()),
-    );
-    let (mut declared, mut without) = (function.sig.clone(), function.clone());
-    declared.ident = real.clone();
-    let abi = declared.abi.take().and_then(|abi| abi.name);
+    let symbol = symbol_behind(&numbers, &sig.ident);
+    let mut behind = sig.clone();
+    behind.ident = syn::Ident::new("behind", sig.ident.span());
+    let abi = behind.abi.take().and_then(|abi| abi.name);
     let abi = abi.unwrap_or_else(|| LitStr::new("Rust", Span::call_site()));
-    without.sig.ident = absent.clone();
-    without.vis = syn::Visibility::Inherited;
-    without.attrs.clear();
-    let door = door_to(&function, &numbers, &real, &absent);
+    let arguments = sig.inputs.iter().map(|input| match input {
+        syn::FnArg::Typed(argument) => quote::ToTokens::to_token_stream(&argument.pat),
+        syn::FnArg::Receiver(receiver) => quote::ToTokens::to_token_stream(&receiver.self_token),
+    });
+    let is_present = is_present(&numbers);
     quote! {
-        unsafe extern #abi {
-            #[link_name = #symbol]
-            #declared;
+        #(#attrs)*
+        #vis #sig {
+            unsafe extern #abi {
+                #[link_name = #symbol]
+                #behind;
+            }
+            if #is_present {
+                // SAFETY: `#[feature::behind]` has checked that it has the signature of this one, and it is there.
+                unsafe { behind(#(#arguments),*) }
+            } else #block
         }
-        #[allow(unused_variables, non_snake_case, reason = "they are the door's")]
-        #without
-        #door
     }
     .into()
 }
@@ -835,28 +822,13 @@ pub fn behind(door: TokenStream, function: TokenStream) -> TokenStream {
     .into()
 }
 
-/// `present!(lint)`: whether this executable has the feature. See `bun_core::feature`.
+/// `feature!(lint)`: whether this executable has the feature. See `bun_core::feature`.
 #[proc_macro]
-pub fn present(features: TokenStream) -> TokenStream {
+pub fn feature(features: TokenStream) -> TokenStream {
     let parser = syn::punctuated::Punctuated::<syn::Ident, Token![,]>::parse_terminated;
     let features = parse_macro_input!(features with parser);
-    let numbers = match numbers_of(&features) {
-        Ok(numbers) => numbers,
-        Err(e) => return e.to_compile_error().into(),
-    };
-    let function: syn::ItemFn = syn::parse_quote!(
-        fn is_present() -> bool {}
-    );
-    let (yes, no) = (
-        syn::Ident::new("yes", Span::call_site()),
-        syn::Ident::new("no", Span::call_site()),
-    );
-    let door = door_to(&function, &numbers, &yes, &no);
-    quote! {{
-        fn yes() -> bool { true }
-        fn no() -> bool { false }
-        #door
-        is_present()
-    }}
-    .into()
+    match numbers_of(&features) {
+        Ok(numbers) => is_present(&numbers).into(),
+        Err(e) => e.to_compile_error().into(),
+    }
 }

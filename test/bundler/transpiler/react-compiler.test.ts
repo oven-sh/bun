@@ -2709,6 +2709,66 @@ describe("bundler", () => {
     });
   }
 
+  // A read that the linker binds prints the export in a compiled function
+  // too, whether or not the file reads the local outside of it. The local
+  // then needs no namespace object, so an export that nothing reads is not
+  // in the bundle.
+  const boundNamespaceLocalForms = /* jsx */ `
+    function Form() {
+      useEffect(() => {});
+      return [ns.a, ns.who(), (0, ns.who)(), (1 && ns.who)(), ns.inner.deep()].join(" ");
+    }
+    // A component name, but no hook call and no JSX: not compiled.
+    function Helper() {
+      return [ns.b, ns.who(), (0, ns.who)()].join(" ");
+    }
+    // The compiler does not support this assignment.
+    function Rejected() {
+      useEffect(() => {});
+      let x;
+      x ||= 1;
+      return [ns.a, ns.who(), (0, ns.who)(), x].join(" ");
+    }
+  `;
+  const boundNamespaceLocalReads = `console.log([ns.a, ns.topOnly, ns.who(), (0, ns.who)()].join(" "));`;
+  for (const target of ["bun", "browser"] as const) {
+    for (const [order, body] of [
+      ["Below", boundNamespaceLocalForms + boundNamespaceLocalReads],
+      ["Above", boundNamespaceLocalReads + boundNamespaceLocalForms],
+    ] as const) {
+      itBundled(`react-compiler/BoundNamespaceLocalRead${order}Functions-${target}`, {
+        files: {
+          "/entry.jsx": /* jsx */ `
+            import { useEffect } from "react";
+            const ns = require("./lib.js");
+            ${body}
+            console.log([Form(), Helper(), Rejected()].join(" | "));
+          `,
+          "/lib.js": /* js */ `
+            export function who() { return this?.who === who ? "namespace" : "none"; }
+            export const a = "a";
+            export const b = "b";
+            export const topOnly = "topOnly";
+            export * as inner from "./inner.js";
+            export const notRead = "LIB_NOT_READ_SENTINEL";
+          `,
+          "/inner.js": `export function deep() { return "deep"; }`,
+          ...stubReactWithEffect,
+        },
+        reactCompiler: true,
+        backend: "cli",
+        target,
+        run: { stdout: "a topOnly none none\na none none none deep | b none none | a none none 1" },
+        onAfterBundle(api) {
+          const out = api.readFile("/out.js");
+          expect(out).not.toContain("LIB_NOT_READ_SENTINEL");
+          // Only `Rejected` still passes its effect as written.
+          expect(out.match(/useEffect\(\(\) => \{\s*\}\)/g)).toHaveLength(1);
+        },
+      });
+    }
+  }
+
   // The bundler prints an import under the name of the export it links to:
   // `defaultTheme` below prints as `theme`. A compiled function gets new
   // symbols for its parameters, its locals and its temporaries (`t0`, `$`).

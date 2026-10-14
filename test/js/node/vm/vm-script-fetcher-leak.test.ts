@@ -67,7 +67,7 @@ describe("node:vm NodeVMScriptFetcher leak", () => {
     function iteration() {
       const holder: { script?: vm.Script } = {};
       holder.script = new vm.Script("1 + 1", {
-        importModuleDynamically: () => holder.script,
+        importModuleDynamically: () => holder.script as any,
       });
     }
     for (let i = 0; i < 500; i++) iteration();
@@ -96,7 +96,7 @@ describe("node:vm NodeVMScriptFetcher leak", () => {
     function iteration() {
       const holder: { fn?: Function } = {};
       holder.fn = vm.compileFunction("return 1", [], {
-        importModuleDynamically: () => holder.fn,
+        importModuleDynamically: () => holder.fn as any,
       });
     }
     for (let i = 0; i < 500; i++) iteration();

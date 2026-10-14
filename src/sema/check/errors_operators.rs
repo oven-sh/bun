@@ -3,18 +3,16 @@
 //!
 //! Follows `checkAssignmentOperator` for `=`, the pattern grammar part of
 //! `checkDestructuringAssignment`, `checkAssertion`, `checkSatisfiesExpression`,
-//! `checkTemplateExpression`, `resolveTaggedTemplateExpression`, `checkInstanceOfExpression`,
-//! `resolveInstanceofExpression` and `checkYieldExpression` of TypeScript 7.0.2's checker.go, and
+//! `checkTemplateExpression`, `resolveTaggedTemplateExpression`, `checkInstanceOfExpression` and
+//! `checkYieldExpression` of TypeScript 7.0.2's checker.go, and
 //! `checkGrammarBigIntLiteral` and `checkGrammarBindingElement` of its grammarchecks.go.
-//!
-//! Must be called after `check_assignments`: 2412 replaces the 2322 reported there.
 
 use super::*;
 use crate::bind::Parent;
 use crate::resolve::ScriptTarget;
 
 impl Checker<'_, '_> {
-    /// `a = b`. Runs after `check_assignments`, whose diagnostics it replaces.
+    /// `check_plain_assignment` for every `a = b`.
     pub(super) fn check_x_operators(&mut self, file: FileId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if hir.kind == FileKind::Declaration {
@@ -159,7 +157,8 @@ pub(super) fn why_no_reference(
 }
 
 /// `a = b`, as in `checkBinaryLikeExpression`: the reference check of `checkAssignmentOperator`.
-/// `check_assignments` compares the types. A pattern is handled by `checkDestructuringAssignment`.
+/// `check_plain_assignment_operator` compares the types. A pattern is handled by
+/// `checkDestructuringAssignment`.
 fn check_plain_assignment(c: &mut Checker<'_, '_>, file: FileId, target: ExprId) {
     let hir = c.hir(file);
     if !matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
@@ -226,8 +225,8 @@ pub(super) fn check_tagged_template(c: &mut Checker<'_, '_>, file: FileId, call:
 
 // ───────────────────────────── `instanceof` and `in` ─────────────────────────────
 
-/// `checkInstanceOfExpression`, `resolveInstanceofExpression` for `e`, which is `left instanceof
-/// right`: 2358 2359, and 2860 2861 from checking against the signature it resolves to.
+/// `checkInstanceOfExpression` for `e`, which is `left instanceof right`: 2358 2861, and 2359 2860
+/// from `resolveInstanceofExpression`. Only there are the members of the type of `right` asked for.
 pub(super) fn check_instance_of_expression(
     c: &mut Checker<'_, '_>,
     file: FileId,
@@ -235,35 +234,9 @@ pub(super) fn check_instance_of_expression(
     left: ExprId,
     right: ExprId,
 ) {
-    let (l, r) = (c.type_of_expr(file, left), c.type_of_expr(file, right));
+    let l = c.type_of_expr(file, left);
     if !c.is_any(l) && c.is_all_assignable_to_primitives(l) {
         c.error(file, c.hir(file).child(left), 2358, &[]);
-    }
-    if c.is_any(r) {
-        return;
-    }
-    let Some(method) = c.symbol_has_instance_method_of_object_type(r) else {
-        let function = c.global_ref(known::Function, &[]);
-        if c.signatures(r, false).is_empty()
-            && c.signatures(r, true).is_empty()
-            && !c.is_subtype(r, function)
-        {
-            c.error(file, c.hir(file).child(right), 2359, &[]);
-        }
-        return;
-    };
-    // The constraint of a type parameter may not have been resolved.
-    let apparent_right = c.apparent_type(r);
-    if c.is_any(apparent_right) {
-        return;
-    }
-    let apparent = c.apparent_type(method);
-    if c.is_any(method) {
-        return;
-    }
-    let signatures = c.signatures(apparent, false);
-    if signatures.is_empty() {
-        return;
     }
     let resolved = c.resolved_signature(file, e);
     let resolved = c.with_return_type(resolved);

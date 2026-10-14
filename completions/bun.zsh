@@ -764,6 +764,195 @@ _bun_check_completion() {
         ret=0
 }
 
+_bun_lint_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :_files' \
+        '--config[Use this config file instead of looking for one]:config:_files' \
+        '-c[Use this config file instead of looking for one]:config:_files' \
+        '--no-config-lookup[Do not look for a config file]' \
+        '--rule[Set a rule\: --rule '"'"'eqeqeq\: \[error, smart\]'"'"']:rule' \
+        '--rules[List the built-in rules]' \
+        '--explain[Print the documentation of a rule]:explain' \
+        '--init[Add a \[lint\] section to bunfig.toml]' \
+        '--global[Define global variables\: --global a,b\:true]:global' \
+        '--no-inline-config[Ignore eslint-disable and other config comments]' \
+        '--report-unused-disable-directives[Report eslint-disable comments that disable nothing]' \
+        '--print-config[Print the config for a file and exit]:print-config:_files' \
+        '--doctor[Show which rules run natively and which packages you can remove]' \
+        '--allow-unsupported[Warn instead of failing when the config has a rule or file that is not supported]' \
+        '--staged[Only lint files that are staged in git]' \
+        '--changed[Only lint files that differ from a branch or commit (default\: the default branch)]' \
+        '--ignore-pattern[Skip files that match this pattern]:ignore-pattern' \
+        '--ignore-path[Read ignore patterns from this file instead of .eslintignore]:ignore-path:_files' \
+        '--no-ignore[Lint ignored files too]' \
+        '--ext[Also lint files with these extensions]:ext' \
+        '--stdin[Lint code from standard input]' \
+        '--stdin-filename[The file name to use for code from standard input]:stdin-filename:_files' \
+        '--list-files[Print the files that would be linted and exit]' \
+        '--no-error-on-unmatched-pattern[Do not fail when an argument matches no file]' \
+        '--cwd[Set the working directory]:cwd:_files -/' \
+        '--format[pretty (default), stylish, json, json-with-metadata, unix, github, agent, checkstyle, junit, gitlab, sarif]:format' \
+        '-f[pretty (default), stylish, json, json-with-metadata, unix, github, agent, checkstyle, junit, gitlab, sarif]:format' \
+        '--all[Show every problem (pretty and agent group identical problems above 50)]' \
+        '--output-file[Write the report to a file]:output-file:_files' \
+        '-o[Write the report to a file]:output-file:_files' \
+        '--quiet[Report errors only]' \
+        '--max-warnings[Exit with 1 if there are more warnings than this]:max-warnings' \
+        '--color[Always use colors]' \
+        '--no-color[Never use colors]' \
+        '--timing[Print how long each phase took]' \
+        '--fix[Fix problems and write the files]' \
+        '--fix-dry-run[Fix without writing. The json format has the fixed code]' \
+        '--fix-type[Only apply fixes from rules of these types\: directive, problem, suggestion, layout]:fix-type' \
+        '--fix-suggestions[Apply suggestions]' \
+        '--fix-dangerously[Apply every fix and suggestion, even those that can change behavior]' \
+        '--type-aware[Also run the rules that need types]' \
+        '--no-type-aware[Skip the rules that need types]' \
+        '--tsconfig[Use this tsconfig.json for the rules that need types]:tsconfig:_files' \
+        '--type-check[With --type-aware, report type errors too]' \
+        '--infer-globals[Also treat what the project'"'"'s types declare as globals]' \
+        '--no-infer-globals[Do not take globals from the project'"'"'s types]' \
+        '--threads[Number of threads (default\: one per CPU core)]:threads' \
+        '--version[Print the version of Bun]' \
+        '-v[Print the version of Bun]' \
+        '--help[Print the common flags. With --all, every flag]' \
+        '-h[Print the common flags. With --all, every flag]' \
+        '--help-all[The same as --help --all]' \
+        '--flavor[Use the eslint or the oxlint config in a project that has both]:flavor' \
+        '--project[The same as --tsconfig]:project:_files' \
+        '-p[The same as --tsconfig]:project:_files' \
+        '--parser-options[Set parser options\: --parser-options projectService\:true]:parser-options' \
+        '--parser[Parse files with this package]:parser' \
+        '--plugin[Load these plugins]:plugin' \
+        '--native-plugin-rules[Use the built-in rules for these plugins only\: import,react-hooks (default\: all)]:native-plugin-rules' \
+        '--no-native-plugin-rules[Run plugin rules from the installed packages, in JavaScript]' \
+        '--report-unused-disable-directives-severity[Report unused eslint-disable comments as off, warn or error]:report-unused-disable-directives-severity' \
+        '--report-unused-inline-configs[Report config comments that change nothing]:report-unused-inline-configs' \
+        '--no-warn-ignored[Do not warn when an argument names an ignored file]' \
+        '--suppress-all[Record the current errors in eslint-suppressions.json and stop reporting them]' \
+        '--suppress-rule[The same, for the errors of one rule]:suppress-rule' \
+        '--suppressions-location[Use this file instead of eslint-suppressions.json]:suppressions-location:_files' \
+        '--prune-suppressions[Remove recorded errors that no longer occur from that file]' \
+        '--pass-on-unpruned-suppressions[Do not fail when that file has errors that no longer occur]' \
+        '--pass-on-no-patterns[Exit with 0 when there are no arguments, instead of linting .]' \
+        '--exit-on-fatal-error[Exit with 2 if a file cannot be parsed]' \
+        '--concurrency[The same as --threads]:concurrency' \
+        '--env-info[Print the versions of Bun, ESLint and TypeScript]' \
+        '--no-eslintrc[ESLint 8\: do not look for .eslintrc files]' \
+        '--env[ESLint 8\: turn on these environments]:env' \
+        '--rulesdir[ESLint 8\: load rules from these directories]:rulesdir:_files' \
+        '--resolve-plugins-relative-to[ESLint 8\: look for plugins from this directory]:resolve-plugins-relative-to:_files' \
+        '--allow[Turn off a rule or a category]:allow' \
+        '-A[Turn off a rule or a category]:allow' \
+        '--warn[Make a rule or a category a warning]:warn' \
+        '-W[Make a rule or a category a warning]:warn' \
+        '--deny[Make a rule or a category an error]:deny' \
+        '-D[Make a rule or a category an error]:deny' \
+        '--deny-warnings[Exit with 1 if there are warnings]' \
+        '--silent[Print no problems]' \
+        '--disable-nested-config[Use the config file in the working directory for every file]' \
+        '--import-plugin[Turn on the import plugin]' \
+        '--react-plugin[Turn on the react plugin]' \
+        '--jsdoc-plugin[Turn on the jsdoc plugin]' \
+        '--jest-plugin[Turn on the jest plugin]' \
+        '--vitest-plugin[Turn on the vitest plugin]' \
+        '--jsx-a11y-plugin[Turn on the jsx-a11y plugin]' \
+        '--nextjs-plugin[Turn on the nextjs plugin]' \
+        '--react-perf-plugin[Turn on the react-perf plugin]' \
+        '--promise-plugin[Turn on the promise plugin]' \
+        '--node-plugin[Turn on the node plugin]' \
+        '--vue-plugin[Turn on the vue plugin]' \
+        '--disable-unicorn-plugin[Turn off the unicorn plugin]' \
+        '--disable-oxc-plugin[Turn off the oxc plugin]' \
+        '--disable-typescript-plugin[Turn off the typescript plugin]' &&
+        ret=0
+}
+
+_bun_fmt_completion() {
+    _arguments -s -C \
+        '1: :->cmd1' \
+        '*: :_files' \
+        '--config[Use this config file instead of looking for one]:config:_files' \
+        '--no-config[Do not look for a config file]' \
+        '--no-editorconfig[Do not read .editorconfig]' \
+        '--init[Add a \[fmt\] section to bunfig.toml]' \
+        '--doctor[Show which files are formatted natively and which packages you can remove]' \
+        '--print-width[The line length to wrap at (default\: 80)]:print-width' \
+        '--tab-width[Spaces per indentation level (default\: 2)]:tab-width' \
+        '--use-tabs[Indent with tabs]' \
+        '--no-semi[Only print semicolons where they are needed]' \
+        '--single-quote[Use single quotes]' \
+        '--jsx-single-quote[Use single quotes in JSX]' \
+        '--quote-props[as-needed (default), consistent, or preserve]:quote-props' \
+        '--trailing-comma[all (default), es5, or none]:trailing-comma' \
+        '--no-bracket-spacing[No spaces inside the braces of an object literal]' \
+        '--bracket-same-line[Put the closing bracket of a multi-line element at the end of the last line]' \
+        '--arrow-parens[always (default) or avoid]:arrow-parens' \
+        '--object-wrap[preserve (default) or collapse]:object-wrap' \
+        '--single-attribute-per-line[One attribute per line in HTML, Vue, and JSX]' \
+        '--html-whitespace-sensitivity[css (default), strict, or ignore]:html-whitespace-sensitivity' \
+        '--vue-indent-script-and-style[Indent the code in the script and style tags of Vue files]' \
+        '--prose-wrap[preserve (default), always, or never]:prose-wrap' \
+        '--embedded-language-formatting[auto (default) or off]:embedded-language-formatting' \
+        '--end-of-line[lf (default), crlf, cr, or auto]:end-of-line' \
+        '--no-insert-final-newline[Do not end files with a newline]' \
+        '--sort-imports[Sort and group imports]' \
+        '--sort-tailwindcss[Sort Tailwind CSS classes]' \
+        '--sort-package-json[Sort the keys of package.json]' \
+        '--jsdoc[Format JSDoc comments]' \
+        '--svelte[Format Svelte components (default without a Prettier or oxfmt config)]' \
+        '--no-svelte[Do not format Svelte components]' \
+        '--staged[Only format files that are staged in git, and stage them again]' \
+        '--changed[Only format files that differ from a branch or commit (default\: the default branch)]' \
+        '--stdin-filepath[Format standard input as this file and print the result]:stdin-filepath:_files' \
+        '--ignore-path[Read ignore patterns from these files (default\: .gitignore and .prettierignore)]:ignore-path:_files' \
+        '--ignore-pattern[Skip files that match this pattern]:ignore-pattern' \
+        '--with-node-modules[Format files in node_modules too]' \
+        '--no-error-on-unmatched-pattern[Do not fail when an argument matches no file]' \
+        '--ignore-unknown[Ignore files in an unknown language]' \
+        '-u[Ignore files in an unknown language]' \
+        '--allow-unsupported[Warn instead of failing when the language of a file is not supported]' \
+        '--list-files[Print the files that would be formatted and exit]' \
+        '--cwd[Set the working directory]:cwd:_files -/' \
+        '--check[Do not write. Exit with 1 if a file needs formatting]' \
+        '-c[Do not write. Exit with 1 if a file needs formatting]' \
+        '--list-different[Do not write. Print the files that need formatting and exit with 1 if there are any]' \
+        '-l[Do not write. Print the files that need formatting and exit with 1 if there are any]' \
+        '--log-level[silent, error, warn, log (default), or debug]:log-level' \
+        '--format[With --doctor, print the report as json]:format' \
+        '-f[With --doctor, print the report as json]:format' \
+        '--color[Always use colors]' \
+        '--no-color[Never use colors]' \
+        '--timing[Print how long each phase took]' \
+        '--threads[Number of threads (default\: one per CPU core)]:threads' \
+        '--debug-check[Do not write. Fail if formatting a file would change what it means]' \
+        '--version[Print the version of Bun]' \
+        '-v[Print the version of Bun]' \
+        '--help[Print the common flags. With --all, every flag]' \
+        '-h[Print the common flags. With --all, every flag]' \
+        '--all[With --help, print every flag]' \
+        '--help-all[The same as --help --all]' \
+        '--write[Write the files. This is the default]' \
+        '-w[Write the files. This is the default]' \
+        '--config-precedence[cli-override (default), file-override, or prefer-file]:config-precedence' \
+        '--find-config-path[Print the path of the config for a file and exit]:find-config-path:_files' \
+        '--parser[Read every file with this parser]:parser' \
+        '--plugin[Load these plugins]:plugin' \
+        '--require-pragma[Only format files that start with a @format or @prettier comment]' \
+        '--check-ignore-pragma[Skip files that start with a @noformat or @noprettier comment]' \
+        '--insert-pragma[Put a @format comment at the top of formatted files]' \
+        '--range-start[Only format the statements from this offset on]:range-start' \
+        '--range-end[Only format the statements up to this offset]:range-end' \
+        '--cursor-offset[With --stdin-filepath, print on stderr where this offset ends up]:cursor-offset' \
+        '--experimental-ternaries[Put the question mark of a ternary after the condition]' \
+        '--experimental-operator-position[end (default) or start]:experimental-operator-position' \
+        '--jsx-bracket-same-line[The old name of --bracket-same-line]' \
+        '--flavor[Without a config file, format like prettier or like oxfmt]:flavor' \
+        '--disable-nested-config[Use the config file in the working directory for every file]' &&
+        ret=0
+}
+
 _bun_audit_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
@@ -899,6 +1088,8 @@ _bun() {
             'update\:"Update outdated dependencies & save to package.json" '
             'audit\:"Check installed packages for vulnerabilities" '
             'check\:"Type check a TypeScript project" '
+            'lint\:"Lint JavaScript and TypeScript" '
+            'fmt\:"Format code the way Prettier does" '
             'dedupe\:"Remove duplicate versions from the lockfile" '
             'prune\:"Remove packages that are not in the lockfile from node_modules" '
             'outdated\:"Display the latest versions of outdated dependencies" '
@@ -988,6 +1179,14 @@ _bun() {
             ;;
         check)
             _bun_check_completion
+
+            ;;
+        lint)
+            _bun_lint_completion
+
+            ;;
+        fmt)
+            _bun_fmt_completion
 
             ;;
         dedupe)
@@ -1091,6 +1290,14 @@ _bun() {
                     ;;
                 check)
                     _bun_check_completion
+
+                    ;;
+                lint)
+                    _bun_lint_completion
+
+                    ;;
+                fmt)
+                    _bun_fmt_completion
 
                     ;;
                 dedupe)

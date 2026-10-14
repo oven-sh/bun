@@ -404,7 +404,7 @@ describe("bytecode cache portability", () => {
     outputs["builtin corpus"] = fingerprint(builtin.bytecode);
     outputs["builtin corpus strings"] = fingerprint(builtin.strings, false); // the external string table --compile embeds beside it
     outputs["vm.SourceTextModule module.js"] = fingerprint(
-      new vm.SourceTextModule(moduleSource, { identifier: "module.js" }).createCachedData(),
+      (new vm.SourceTextModule(moduleSource, { identifier: "module.js" }) as any).createCachedData(),
     );
     outputs["vm.Script big.js"] = fingerprint(
       new vm.Script(bigSource(), { filename: "big.js", produceCachedData: true }).cachedData!,
@@ -423,7 +423,9 @@ describe("bytecode cache portability", () => {
       }).cachedData!,
     );
     outputs["vm.SourceTextModule acorn.mjs"] = fingerprint(
-      new vm.SourceTextModule(librarySource("acorn/dist/acorn.mjs"), { identifier: "acorn.mjs" }).createCachedData(),
+      (
+        new vm.SourceTextModule(librarySource("acorn/dist/acorn.mjs"), { identifier: "acorn.mjs" }) as any
+      ).createCachedData(),
     );
     for (const [i, { name }] of bundlerBuilds.entries()) {
       const { js, jsc } = (await bundled)[i];
@@ -511,10 +513,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode libraries.js": {
-          "js": "493bab674ff49b287f26be3f356a3ad6681afb0c7eeffaa590f10cdcd8b58724",
+          "js": "cb63dc7b9a0d57183c02aac96e13182312fdefd64d89da2ad4a60a35d63ff2af",
           "jsc": {
-            "bytes": 21212376,
-            "sha256": "deccfd76d81939ab870a750637e77f0f7255df628e2d4c16dbe214df42025535",
+            "bytes": 21179744,
+            "sha256": "eac4173caf1951a6c05ea65274187a08203dc4561bb369df8acfbe42d60244eb",
           },
         },
         "bun build --bytecode lodash/lodash.js": {

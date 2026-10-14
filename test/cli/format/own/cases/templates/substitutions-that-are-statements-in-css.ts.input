@@ -1,0 +1,37 @@
+const A = styled.div`
+  padding: 0;
+  ${transition("box-shadow")}
+
+  &:hover, &:has(input[type="radio"]:focus) {
+    filter: brightness(0.95);
+  }
+`;
+
+const b = css`
+${sanitize} ${fonts}
+html {
+  margin: 0;
+}
+
+${c}:hover {
+  fill: red;
+}
+
+${d}: ${e};
+
+${f}
+/* a comment */
+
+.g {
+  color: red;
+}
+
+${h}
+color   :   red;
+${i};
+${j}
+`;
+
+const k = css`
+  --shadow: 0 0 0 1px ${(p) => p.theme.colors.main}, ${(p) => p.theme.boxShadowSoft}, ${l};
+`;

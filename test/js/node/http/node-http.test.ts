@@ -7492,6 +7492,41 @@ describe("req.headers and req.rawHeaders", () => {
       delete (Object.prototype as any)["x-inherited"];
     }
   });
+
+  it("hold the names of each request, whatever the one before it named", async () => {
+    const long = (length: number) => `X-${Buffer.alloc(length - 2, "n")}`;
+    const shapes = [
+      ["Host", "Accept", "User-Agent"],
+      // Its first names, those and one more, those in another case, in another order, and others as long.
+      ["Host"],
+      ["Host", "Accept"],
+      ["Host", "Accept", "User-Agent", "X-More"],
+      ["host", "accept", "user-agent"],
+      ["HOST", "ACCEPT", "USER-AGENT"],
+      ["Host", "User-Agent", "Accept"],
+      ["Host", "Accepu", "User-Agenu"],
+      ["Host", "X-One", "X-Two"],
+      ["Host", "X-One", "x-one"],
+      ["Host", "Accept", "Accept"],
+      // As long as the longest name with a slot of its own, and longer.
+      ["Host", long(40), long(41), long(256)],
+      ["Host", ...Array.from({ length: 40 }, (_, i) => `X-Header-Number-${i}`)],
+    ];
+    const cases = shapes.map((names, at) => {
+      const headers = new Map<string, string>();
+      names.forEach((name, index) => {
+        const key = name.toLowerCase();
+        headers.set(key, headers.has(key) ? `${headers.get(key)}, ${at}.${index}` : `${at}.${index}`);
+      });
+      return { lines: names.map((name, index) => `${name}: ${at}.${index}`), headers: [...headers] as Entries };
+    });
+    expect(
+      await seenByServer(
+        cases.map(({ lines }) => lines),
+        req => bothOf(req, false),
+      ),
+    ).toEqual(cases.map(expectedOf));
+  });
 });
 
 describe("the head of a response", () => {

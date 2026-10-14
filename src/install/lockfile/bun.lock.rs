@@ -116,11 +116,33 @@ impl<'a> NpmUrlWriter<'a> {
         if url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
             return true;
         }
-        if !url_is_under_registry(url, &self.registry)
-            || self.options.named_scope_for_package_name(name).is_some()
-        {
+        if self.options.named_scope_for_package_name(name).is_some() {
             return false;
         }
+        if url_is_under_registry(url, &self.registry) {
+            return self.is_canonical(url, name, version, buf);
+        }
+        // The registry href is the WHATWG serialization (`Scope::set_url`),
+        // the tarball URL is the manifest's `dist.tarball` verbatim. A
+        // `:443` or an upper-case host only lines up after the same
+        // normalization. Parse only once the verbatim bytes did not match.
+        let normalized = bun_url::whatwg::href_from_string(&bun_core::String::borrow_utf8(url));
+        if normalized.tag() == bun_core::string::Tag::Dead {
+            return false;
+        }
+        let normalized = normalized.to_utf8();
+        url_is_under_registry(&normalized, &self.registry)
+            && self.is_canonical(&normalized, name, version, buf)
+    }
+
+    /// `url` is exactly `ExtractTarball::build_url` for the top-level registry.
+    fn is_canonical(
+        &mut self,
+        url: &[u8],
+        name: &[u8],
+        version: Semver::Version,
+        buf: &[u8],
+    ) -> bool {
         self.scratch.clear();
         let printed = ExtractTarball::build_url_with_printer(
             &self.registry,

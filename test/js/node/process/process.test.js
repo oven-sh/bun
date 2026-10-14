@@ -473,11 +473,8 @@ it("process.env is spreadable and editable", () => {
 });
 
 it("process.env reads are never stale after a write (JIT inline-cache soundness)", async () => {
-  // process.env only sets OverridesPut (not ProhibitsPropertyCaching), so
-  // reads hit the ordinary self-access IC. This test verifies that writes
-  // through the overridden put() still invalidate that IC: same-key Replace,
-  // delete-then-set, and a hot read loop that FTL constant-folds before a
-  // single write. Spawned so the subprocess gets its own tier-up.
+  // Check same-key replacement, delete-then-set, and writes after a hot read loop.
+  // Spawned so the subprocess gets its own tier-up.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

@@ -6,7 +6,7 @@ mod opening_element;
 
 use self::element::AnyJsxTagWithChildren;
 pub(crate) use self::element::ignored_jsx_gets_no_parentheses;
-use crate::js::format::format_node;
+use crate::js::format::{format_name, format_node};
 use crate::js::utils::tailwindcss::{InTailwindContext, context_of_attribute};
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -25,30 +25,25 @@ struct FormatJsxName<'a> {
 impl<'a> Format<'a> for FormatJsxName<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let name = self.name;
-        format_node(
-            name.span(),
-            || self.parent,
-            f,
-            |f| match name.kind() {
-                ExprKind::Dot { .. } if !f.context_mut().has_stack_left() => {}
-                ExprKind::Dot {
-                    obj,
-                    name: property,
-                    ..
-                } => write!(
-                    f,
-                    [
-                        FormatJsxName {
-                            name: obj,
-                            parent: self.parent
-                        },
-                        ".",
-                        source_text(property.span())
-                    ]
-                ),
-                _ => write_jsx_identifier(name.span(), f),
-            },
-        );
+        format_name(name.span(), f, |f| match name.kind() {
+            ExprKind::Dot { .. } if !f.context_mut().has_stack_left() => {}
+            ExprKind::Dot {
+                obj,
+                name: property,
+                ..
+            } => write!(
+                f,
+                [
+                    FormatJsxName {
+                        name: obj,
+                        parent: self.parent
+                    },
+                    ".",
+                    source_text(property.span())
+                ]
+            ),
+            _ => write_jsx_identifier(name.span(), f),
+        });
     }
 }
 
@@ -152,21 +147,15 @@ impl<'a> Format<'a> for FormatJsxChild<'a> {
         };
         match e.kind() {
             ExprKind::Spread(argument) => {
-                format_node(
-                    span,
-                    || AstNodes::JSXSpreadChild(e).parent(),
-                    f,
-                    |f| write_jsx_spread(argument, span, f),
-                );
+                format_node(AstNodes::JSXSpreadChild(e), f, |f| {
+                    write_jsx_spread(argument, span, f)
+                });
             }
             _ => {
                 let node = AstNodes::JSXExpressionContainer(e);
-                format_node(
-                    span,
-                    || node.parent(),
-                    f,
-                    |f| write_jsx_expression_container(e, span, node.parent(), f),
-                );
+                format_node(node, f, |f| {
+                    write_jsx_expression_container(e, span, node.parent(), f)
+                });
             }
         }
     }
@@ -307,12 +296,7 @@ pub(crate) fn write_jsx_attribute<'a>(attribute: Prop<'a>, f: &mut Formatter<'a>
     }
     if let Some(key) = attribute.key() {
         let span = key.span(f.file());
-        format_node(
-            span,
-            || AstNodes::JSXAttribute(attribute),
-            f,
-            |f| write_jsx_identifier(span, f),
-        );
+        format_name(span, f, |f| write_jsx_identifier(span, f));
     }
     if let Some(value) = attribute.value() {
         let context = attribute

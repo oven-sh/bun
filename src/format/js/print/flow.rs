@@ -473,13 +473,7 @@ pub(crate) fn write_parameter_start<'a>(param: Param<'a>, f: &mut Formatter<'a>)
     };
     if let Some(span) = outer_name {
         match f.source_text().text_for(&span).first() {
-            Some(b'"' | b'\'') => write!(
-                f,
-                FormatStringLiteral {
-                    span,
-                    parent: param.as_ast_nodes()
-                }
-            ),
+            Some(b'"' | b'\'') => write!(f, FormatStringLiteral { span }),
             _ => write!(f, source_text(span)),
         }
         match is_unnamed {
@@ -605,7 +599,7 @@ pub(crate) fn write_tuple_element<'a>(element: TupleElem<'a>, f: &mut Formatter<
         write!(f, [source_text(span), (span.len() > 1).then_some(space())]);
     }
     if let Some(label) = label {
-        let label = identifier(label, AstNodes::TSNamedTupleMember(element));
+        let label = identifier(label);
         write!(f, [label, element.is_optional().then_some("?"), ": "]);
     }
     write!(f, element.flow_type());
@@ -729,7 +723,7 @@ pub(crate) fn write_object_type_member<'a>(member: Member<'a>, f: &mut Formatter
             member.key().map(|it| it.kind()),
         ) {
             (Some(slot), _) => {
-                write!(f, ["[[", identifier(slot, node), "]]"]);
+                write!(f, ["[[", identifier(slot), "]]"]);
                 write_ts_call_signature_declaration(func, f);
             }
             (None, Some(KeyKind::Ident(name))) if name.bytes().starts_with(b"@@") => {
@@ -743,7 +737,7 @@ pub(crate) fn write_object_type_member<'a>(member: Member<'a>, f: &mut Formatter
                 return write_mapped_type_property(mapped, f);
             }
             match (member.flow_internal_slot(), member.key()) {
-                (Some(slot), _) => write!(f, ["[[", identifier(slot, node), "]]"]),
+                (Some(slot), _) => write!(f, ["[[", identifier(slot), "]]"]),
                 (None, Some(key)) => match key.kind() {
                     KeyKind::Ident(name) if name.bytes().starts_with(b"@@") => {
                         write!(f, text(name.bytes()));
@@ -768,7 +762,7 @@ pub(crate) fn write_object_type_member<'a>(member: Member<'a>, f: &mut Formatter
 /// `[K in T]?: V`. Prettier's `printFlowMappedTypeProperty`.
 fn write_mapped_type_property<'a>(mapped: Mapped<'a>, f: &mut Formatter<'a>) {
     let param = mapped.param();
-    let name = identifier(param.name(), AstNodes::TSTypeParameter(param));
+    let name = identifier(param.name());
     let key = format_args!(name, " in ", param.constraint());
     let optional = match mapped.optional() {
         MappedModifier::None => "",
@@ -800,13 +794,12 @@ pub(crate) fn write_opaque_type<'a>(
     interface: Interface<'a>,
     f: &mut Formatter<'a>,
 ) {
-    let node = AstNodes::TSInterfaceDeclaration(statement);
     write!(
         f,
         [
             is_declared(statement.modifiers()).then_some("declare "),
             "opaque type ",
-            identifier(interface.name(), node),
+            identifier(interface.name()),
             type_parameters(interface.type_params(), Node::Stmt(statement))
         ]
     );
@@ -891,7 +884,6 @@ pub(crate) fn write_class<'a>(class: Class<'a>, f: &mut Formatter<'a>) -> bool {
 /// `declare class A<T> extends B<T> mixins C implements D { }`, `record A<T> implements B { }`.
 /// Prettier's `printClass`.
 fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut Formatter<'a>) {
-    let node = AstNodes::Class(class);
     let (mixins, implements) = (class.flow_mixins(), class.implements());
     let count = usize::from(class.extends().is_some()) + mixins.len() + implements.len();
     let has_multiple_heritage = count > 1;
@@ -927,7 +919,7 @@ fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut
         }
         write!(f, leftmost);
         for &name in names.iter().rev() {
-            write!(f, [".", identifier(name, node)]);
+            write!(f, [".", identifier(name)]);
         }
         write!(f, type_arguments(class.extends_args(), Node::Class(class)));
     });
@@ -972,7 +964,7 @@ fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut
     });
     let head = format_args!(
         space(),
-        class.name().map(|name| identifier(name, node)),
+        class.name().map(|name| identifier(name)),
         type_parameters(class.type_params(), Node::Class(class))
     );
 
@@ -1062,9 +1054,7 @@ pub(crate) fn write_component_or_keyword<'a>(
         if func.has_body() {
             return Some(keyword);
         }
-        let name = func
-            .name()
-            .map(|name| identifier(name, AstNodes::Function(func)));
+        let name = func.name().map(|name| identifier(name));
         write!(
             f,
             [
@@ -1097,8 +1087,7 @@ pub(crate) fn write_component_or_keyword<'a>(
             is_declared(modifiers).then_some("declare "),
             func.is_async().then_some("async "),
             "component ",
-            func.name()
-                .map(|name| identifier(name, AstNodes::Function(func))),
+            func.name().map(|name| identifier(name)),
             type_parameters(func.type_params(), Node::Func(func))
         ]
     );
@@ -1157,14 +1146,9 @@ pub(crate) fn write_expression_with_braces<'a>(
                 let mut join = f.join_nodes_with_hardline();
                 for case in cases.iter() {
                     let content = format_with(|f| {
-                        format_node(
-                            case.span(),
-                            || AstNodes::ObjectExpression(braces),
-                            f,
-                            |f| {
-                                write_match_expression_case(case, f);
-                            },
-                        );
+                        format_node(case.as_ast_nodes(), f, |f| {
+                            write_match_expression_case(case, f);
+                        });
                     });
                     join.entry(case.span(), &content);
                 }
@@ -1215,23 +1199,18 @@ pub(crate) fn write_match_statement<'a>(
         let mut join = f.join_nodes_with_hardline();
         for case in cases.iter() {
             let content = format_with(|f| {
-                format_node(
-                    case.span(),
-                    || AstNodes::SwitchStatement(statement),
-                    f,
-                    |f| {
-                        write_match_pattern_and_guard(case.test(), f);
-                        let body = case.body().first();
-                        let is_empty = body.is_some_and(|it| {
-                            matches!(it.kind(), StmtKind::Block(statements) if statements.is_empty())
-                                && !f.comments().has_comment_in_span(it.span())
-                        });
-                        match is_empty {
-                            true => write!(f, " => {}"),
-                            false => write!(f, [" => ", body]),
-                        }
-                    },
-                );
+                format_node(AstNodes::SwitchCase(case), f, |f| {
+                    write_match_pattern_and_guard(case.test(), f);
+                    let body = case.body().first();
+                    let is_empty = body.is_some_and(|it| {
+                        matches!(it.kind(), StmtKind::Block(statements) if statements.is_empty())
+                            && !f.comments().has_comment_in_span(it.span())
+                    });
+                    match is_empty {
+                        true => write!(f, " => {}"),
+                        false => write!(f, [" => ", body]),
+                    }
+                });
             });
             join.entry(case.span(), &content);
         }
@@ -1285,12 +1264,9 @@ fn write_match_pattern_and_guard<'a>(pattern: Option<Expr<'a>>, f: &mut Formatte
             write_match_pattern(left, PatternParent::Case, f);
             // It is in no `&&`.
             let guard = format_with(|f| {
-                format_node(
-                    right.span(),
-                    || right.ast_parent(),
-                    f,
-                    |f| write_expression(right, ExprOptions::None, f),
-                );
+                format_node(right.as_ast_nodes(), f, |f| {
+                    write_expression(right, ExprOptions::None, f)
+                });
             });
             write!(
                 f,
@@ -1371,12 +1347,9 @@ fn write_match_pattern<'a>(pattern: Expr<'a>, parent: PatternParent, f: &mut For
     if is_leaf {
         return write!(f, pattern);
     }
-    format_node(
-        pattern.span(),
-        || pattern.ast_parent(),
-        f,
-        |f| write_match_pattern_that_has_parts(pattern, parent, f),
-    );
+    format_node(pattern.as_ast_nodes(), f, |f| {
+        write_match_pattern_that_has_parts(pattern, parent, f)
+    });
 }
 
 fn write_match_pattern_that_has_parts<'a>(
@@ -1444,14 +1417,9 @@ fn write_match_pattern_that_has_parts<'a>(
                     if index > 0 {
                         write!(f, [",", soft_line_break_or_space()]);
                     }
-                    format_node(
-                        property.span(),
-                        || AstNodes::ObjectExpression(pattern),
-                        f,
-                        |f| {
-                            write_match_object_pattern_property(property, f);
-                        },
-                    );
+                    format_node(property.as_ast_nodes(), f, |f| {
+                        write_match_object_pattern_property(property, f);
+                    });
                 }
                 if !has_rest {
                     write!(f, if_group_breaks(&","));
@@ -1483,13 +1451,7 @@ fn write_match_object_pattern_property<'a>(property: Prop<'a>, f: &mut Formatter
     };
     let span = key.span(f.file());
     let format_key = format_with(|f| match key.kind() {
-        KeyKind::String(_) => write!(
-            f,
-            FormatStringLiteral {
-                span,
-                parent: AstNodes::ObjectProperty(property)
-            }
-        ),
+        KeyKind::String(_) => write!(f, FormatStringLiteral { span }),
         _ => write!(f, source_text(span)),
     });
     let format_value = format_with(|f| write_match_pattern(value, PatternParent::Property, f));
@@ -1634,21 +1596,16 @@ impl<'a> Format<'a> for FormatRecordProperty<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let member = self.0;
         let node = member.as_ast_nodes();
-        format_node(
-            member.span(),
-            || node.parent(),
-            f,
-            |f| {
-                write!(f, member.is_static().then_some("static "));
-                if let Some(key) = member.key() {
-                    format_computed_or_property_key(key, node, f);
-                }
-                write!(f, member.ty().map(FormatTypeAnnotation));
-                if let Some(value) = member.init() {
-                    write!(f, [" = ", value]);
-                }
-            },
-        );
+        format_node(node, f, |f| {
+            write!(f, member.is_static().then_some("static "));
+            if let Some(key) = member.key() {
+                format_computed_or_property_key(key, node, f);
+            }
+            write!(f, member.ty().map(FormatTypeAnnotation));
+            if let Some(value) = member.init() {
+                write!(f, [" = ", value]);
+            }
+        });
     }
 }
 

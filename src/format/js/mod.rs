@@ -8,6 +8,7 @@ pub(crate) mod context;
 pub(crate) mod fields;
 pub(crate) mod format;
 pub(crate) mod jsdoc;
+pub(crate) mod owners;
 pub(crate) mod parentheses;
 pub(crate) mod print;
 pub(crate) mod siblings;
@@ -26,8 +27,8 @@ pub(crate) mod prelude {
     pub(crate) use super::source_text::SourceText;
     pub(crate) use super::trivia::{
         DanglingIndentMode, FormatDanglingComments, FormatLeadingComments, FormatTrailingComments,
-        format_dangling_comments, format_leading_comments, format_leading_comments_of_ignored,
-        format_trailing_comments,
+        dangling_comments, format_dangling_comments, format_leading_comments,
+        format_trailing_comments, leading_comments, trailing_comments,
     };
     pub(crate) use super::utils::operators::{BinOpExt, Precedence, UnOpExt};
 }

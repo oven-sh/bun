@@ -47,7 +47,7 @@ pub(crate) fn write_function<'a>(
                 (!is_only_head).then_some(keyword),
                 func.is_generator().then_some("*"),
                 (!is_only_head).then_some(space()),
-                func.name().map(|name| identifier(name, node)),
+                func.name().map(|name| identifier(name)),
                 group(&type_parameters(func.type_params(), Node::Func(func))),
                 FormatCommentsBehindParenthesis(func),
             ]
@@ -181,61 +181,23 @@ pub(crate) fn write_called_function_with_comments<'a>(
     {
         return false;
     }
-    let (span, end) = (e.span(), e.outer_span().end);
-    // Whoever writes the callee may have hidden the comments after it.
-    let view_limit = f.comments_mut().limit_comments_up_to(0);
-    f.comments_mut().restore_view_limit(None);
-    f.comments_mut().limit_comments_up_to(end);
-
-    // On a line of its own, a comment leads what follows: the first argument or the template.
-    let is_followed = match e.ast_parent() {
-        AstNodes::CallExpression(call) => {
-            call.as_call_like().is_some_and(|it| !it.args().is_empty())
-        }
-        _ => true,
-    };
-    let count_trailing = |f: &Formatter<'a>| {
-        let comments = f.comments().comments_in(Span::after(span, end));
-        comments
-            .iter()
-            .take_while(|it| !(is_followed && it.preceded_by_newline()))
-            .count()
-    };
-    let has_comments = f.comments().has_comment_before(span.start) || count_trailing(f) > 0;
-    if has_comments {
-        let trailing = f.comments().comments_in(Span::after(span, end));
-        let is_suppressed = f.comments().is_suppressed(span.start)
-            || (trailing.iter().take(count_trailing(f)))
-                .any(|it| f.comments().is_suppression_comment(it));
-        let content = format_with(|f| {
-            match is_suppressed {
-                true => write!(
-                    f,
-                    [
-                        format_leading_comments_of_ignored(span),
-                        FormatSuppressedNode(span)
-                    ]
-                ),
-                false => {
-                    write!(f, format_leading_comments(span));
-                    write_expression(e, options, f);
-                }
-            }
-            let count = count_trailing(f);
-            write!(
-                f,
-                FormatTrailingComments::Comments(
-                    f.comments()
-                        .comments_before(end)
-                        .get(..count)
-                        .unwrap_or_default()
-                )
-            );
-        });
-        write!(f, ["(", soft_block_indent(&content), ")"]);
+    let owned = f.comments().of_node(e.as_chain_element());
+    if owned.leading.is_empty() && owned.trailing.is_empty() {
+        return false;
     }
-    f.comments_mut().restore_view_limit(view_limit);
-    has_comments
+    let skip_trailing = f.context_mut().take_skip_trailing_comments();
+    let content = format_with(|f| {
+        write!(f, FormatLeadingComments::Comments(owned.leading));
+        match owned.is_ignored {
+            true => write!(f, FormatSuppressedNode(e.span())),
+            false => write_expression(e, options, f),
+        }
+        if !skip_trailing {
+            write!(f, FormatTrailingComments::Comments(owned.trailing));
+        }
+    });
+    write!(f, ["(", soft_block_indent(&content), ")"]);
+    true
 }
 
 /// The `{ .. }` of a function.
@@ -280,7 +242,7 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
                 write!(f, ["{", block_indent(&FormatStatements(statements)), "}"]);
             }
         };
-        format_node_without_comments(self.span(), || func.as_ast_nodes(), f, write);
+        format_node_without_comments(AstNodes::FunctionBody(func), f, write);
     }
 }
 

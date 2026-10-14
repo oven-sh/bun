@@ -10,7 +10,7 @@
 //! `FunctionBody` around the expression of an arrow function, `ChainExpression`), a comment cannot be attached to it:
 //! [`Tree::can_attach_comment`]. A name that is a node for Prettier and a token here is an [`Owner::Name`].
 //!
-//! Most comments are between two statements, members or properties. [`Finder::place`] finds those by a search in the list,
+//! Most comments are between two statements, members or properties. [`NodeLocator::locate`] finds those by a search in the list,
 //! and no handler has anything to say about them. Only for the rest are the nodes around the comment looked at one by one.
 
 use super::ast_nodes::{
@@ -26,7 +26,7 @@ use bun_lint::ast::{
 use bun_lint::span::{Span, Spanned};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum Position {
+pub(crate) enum Placement {
     Leading,
     Trailing,
     Dangling,
@@ -47,8 +47,8 @@ pub(crate) enum Marker {
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct Name<'a> {
     pub(crate) span: Span,
-    /// What it is a name in.
-    of: Node<'a>,
+    /// The node that the name belongs to.
+    parent: Node<'a>,
 }
 
 impl PartialEq for Name<'_> {
@@ -71,7 +71,7 @@ pub(crate) enum Owner<'a> {
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct Attachment<'a> {
     pub(crate) owner: Owner<'a>,
-    pub(crate) position: Position,
+    pub(crate) placement: Placement,
     pub(crate) marker: Marker,
     /// Prettier's `comment.unignore`: it says `prettier-ignore`, and what it is about is not its owner.
     pub(crate) is_unignored: bool,
@@ -83,6 +83,8 @@ pub(crate) struct Attached<'a> {
     pub(crate) attachments: Vec<Attachment<'a>>,
     /// Prettier's `node.prettierIgnore`: nodes that are ignored without owning the comment that says so.
     pub(crate) ignored: Vec<Owner<'a>>,
+    /// Where the nodes start that own a comment which is not next to them or in them. Sorted.
+    pub(crate) relocated_owner_starts: Vec<u32>,
 }
 
 #[derive(Copy, Clone)]
@@ -92,67 +94,67 @@ pub(crate) struct Options {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-enum Placement {
+enum TextPosition {
     OwnLine,
     EndOfLine,
     Remaining,
 }
 
 #[derive(Copy, Clone, Default)]
-struct Decorated<'a> {
-    enclosing: Option<Owner<'a>>,
-    preceding: Option<Owner<'a>>,
-    following: Option<Owner<'a>>,
+struct DecoratedComment<'a> {
+    enclosing_node: Option<Owner<'a>>,
+    preceding_node: Option<Owner<'a>>,
+    following_node: Option<Owner<'a>>,
     /// It is directly in a list of statements, members or properties.
-    is_between_elements: bool,
+    is_between_list_elements: bool,
 }
 
 /// Prettier's `CommentContext`.
 #[derive(Copy, Clone)]
 struct Context<'a> {
     comment: Comment,
-    enclosing: Option<Owner<'a>>,
-    preceding: Option<Owner<'a>>,
-    following: Option<Owner<'a>>,
-    placement: Placement,
+    enclosing_node: Option<Owner<'a>>,
+    preceding_node: Option<Owner<'a>>,
+    following_node: Option<Owner<'a>>,
+    text_position: TextPosition,
     is_last_comment: bool,
 }
 
 impl<'a> Context<'a> {
     /// The node that the comment is in.
     fn enclosing_node(&self) -> Option<N<'a>> {
-        match self.enclosing {
+        match self.enclosing_node {
             Some(Owner::Node(node)) => Some(node),
             _ => None,
         }
     }
 }
 
-type Handled<'a> = Option<(Owner<'a>, Position, Marker)>;
+type Handled<'a> = Option<(Owner<'a>, Placement, Marker)>;
 
 #[expect(clippy::unnecessary_wraps)]
 fn leading(owner: Owner<'_>) -> Handled<'_> {
-    Some((owner, Position::Leading, Marker::None))
+    Some((owner, Placement::Leading, Marker::None))
 }
 
 #[expect(clippy::unnecessary_wraps)]
 fn trailing(owner: Owner<'_>) -> Handled<'_> {
-    Some((owner, Position::Trailing, Marker::None))
+    Some((owner, Placement::Trailing, Marker::None))
 }
 
 #[expect(clippy::unnecessary_wraps)]
 fn dangling(owner: Owner<'_>) -> Handled<'_> {
-    Some((owner, Position::Dangling, Marker::None))
+    Some((owner, Placement::Dangling, Marker::None))
 }
 
 /// The file, its text and its comments: everything that is only read.
-struct Tree<'a, 'c> {
+struct Tree<'a, 'ctx> {
     file: &'a File<'a>,
     text: &'a [u8],
-    comments: &'c [Comment],
+    comments: &'ctx [Comment],
     options: Options,
     /// Where the `(` are that follow a type cast comment, if they are nodes.
-    cast_parentheses: Vec<u32>,
+    cast_paren_starts: Vec<u32>,
     /// There is an `@` somewhere.
     may_have_decorators: bool,
 }
@@ -197,7 +199,7 @@ impl<'a> Tree<'a, '_> {
         strings::contains_char(self.text_between(from, to), b'\n')
     }
 
-    /// `isAllEmptyAndNoLineBreak`. A `\r` is not a line break to it.
+    /// `isAllEmptyAndNoLineBreak`. A `\r` is not a text_position break to it.
     fn is_all_empty_and_no_line_break(&self, from: u32, to: u32) -> bool {
         let between = self.text_between(from, to);
         !strings::contains_char(between, b'\n')
@@ -208,8 +210,12 @@ impl<'a> Tree<'a, '_> {
 
     /// The comment that `at` is in.
     fn comment_around(&self, at: u32) -> Option<&Comment> {
-        let index = self.comments.partition_point(|it| it.span.end <= at);
-        self.comments.get(index).filter(|it| it.span.start <= at)
+        let index = self
+            .comments
+            .partition_point(|comment| comment.span.end <= at);
+        self.comments
+            .get(index)
+            .filter(|comment| comment.span.start <= at)
     }
 
     /// `getNextNonSpaceNonCommentCharacterIndex`
@@ -251,7 +257,7 @@ impl<'a> Tree<'a, '_> {
             let Some(found) = self
                 .text
                 .get(from..)
-                .and_then(|it| strings::index_of(it, needle))
+                .and_then(|text| strings::index_of(text, needle))
             else {
                 return -1;
             };
@@ -269,7 +275,7 @@ impl<'a> Tree<'a, '_> {
             let Some(found) = self
                 .text
                 .get(..until)
-                .and_then(|it| strings::last_index_of(it, needle))
+                .and_then(|text| strings::last_index_of(text, needle))
             else {
                 return -1;
             };
@@ -298,7 +304,7 @@ impl<'a> Tree<'a, '_> {
 // ───────────────────────────── the tree ─────────────────────────────
 
 /// The expression that `node` is, if it is one: what parentheses can be written around.
-fn expression_of(node: N<'_>) -> Option<Expr<'_>> {
+pub(crate) fn as_parenthesizable_expr(node: N<'_>) -> Option<Expr<'_>> {
     match node {
         N::Function(func) | N::ArrowFunctionExpression(func) => func.owner().as_expr(),
         N::Class(class) => class.owner().as_expr(),
@@ -309,174 +315,15 @@ fn expression_of(node: N<'_>) -> Option<Expr<'_>> {
         | N::Decorator(_)
         | N::ChainExpression(_)
         | N::AssignmentTargetRest(_) => None,
-        _ => match node_of(node) {
+        _ => match node.raw() {
             Node::Expr(e) => Some(e),
             _ => None,
         },
     }
 }
 
-/// The node of `bun_lint::ast` that `node` is made of.
-fn node_of(node: N<'_>) -> Node<'_> {
-    // The parent of what is directly in it is itself, so this goes by what the variants hold.
-    match node {
-        N::Program(file) => Node::File(file.0),
-        N::IdentifierReference(e)
-        | N::BooleanLiteral(e)
-        | N::NullLiteral(e)
-        | N::NumericLiteral(e)
-        | N::BigIntLiteral(e)
-        | N::RegExpLiteral(e)
-        | N::StringLiteral(e)
-        | N::TemplateLiteral(e)
-        | N::ThisExpression(e)
-        | N::Super(e)
-        | N::ArrayExpression(e)
-        | N::ObjectExpression(e)
-        | N::StaticMemberExpression(e)
-        | N::ComputedMemberExpression(e)
-        | N::PrivateFieldExpression(e)
-        | N::CallExpression(e)
-        | N::NewExpression(e)
-        | N::ImportExpression(e)
-        | N::MetaProperty(e)
-        | N::TaggedTemplateExpression(e)
-        | N::UnaryExpression(e)
-        | N::UpdateExpression(e)
-        | N::BinaryExpression(e)
-        | N::LogicalExpression(e)
-        | N::PrivateInExpression(e)
-        | N::AssignmentExpression(e)
-        | N::ConditionalExpression(e)
-        | N::AwaitExpression(e)
-        | N::YieldExpression(e)
-        | N::TSAsExpression(e)
-        | N::TSSatisfiesExpression(e)
-        | N::TSTypeAssertion(e)
-        | N::TSNonNullExpression(e)
-        | N::TSInstantiationExpression(e)
-        | N::TypeCastExpression(e)
-        | N::JSXElement(e)
-        | N::JSXFragment(e)
-        | N::JSXText(e)
-        | N::JSXEmptyExpression(e)
-        | N::Elision(e)
-        | N::PrivateIdentifier(e)
-        | N::SequenceExpression(e)
-        | N::ChainExpression(e)
-        | N::JSXExpressionContainer(e)
-        | N::JSXSpreadChild(e)
-        | N::JSXOpeningElement(e)
-        | N::Decorator(e)
-        | N::ArrayAssignmentTarget(e)
-        | N::ObjectAssignmentTarget(e)
-        | N::AssignmentTargetWithDefault(e)
-        | N::AssignmentTargetRest(e) => Node::Expr(e),
-        N::SpreadElement(node)
-        | N::AssignmentPattern(node)
-        | N::BindingRestElement(node)
-        | N::TSTypeParameterInstantiation(node)
-        | N::TSTypeParameterDeclaration(node) => node,
-        N::ExpressionStatement(ExpressionStatement::Stmt(statement)) => Node::Stmt(statement),
-        N::ExpressionStatement(ExpressionStatement::ArrowBody(func))
-        | N::Function(func)
-        | N::ArrowFunctionExpression(func)
-        | N::FunctionBody(func)
-        | N::FormalParameters(func) => Node::Func(func),
-        N::Class(class) | N::ClassBody(class) => Node::Class(class),
-        N::FormalParameter(param) | N::FormalParameterRest(param) | N::TSThisParameter(param) => {
-            Node::Param(param)
-        }
-        N::MethodDefinition(member)
-        | N::PropertyDefinition(member)
-        | N::AccessorProperty(member)
-        | N::StaticBlock(member)
-        | N::TSIndexSignature(member)
-        | N::TSPropertySignature(member)
-        | N::TSMethodSignature(member)
-        | N::TSCallSignatureDeclaration(member)
-        | N::TSConstructSignatureDeclaration(member) => Node::Member(member),
-        N::ObjectProperty(prop)
-        | N::JSXAttribute(prop)
-        | N::JSXSpreadAttribute(prop)
-        | N::AssignmentTargetPropertyIdentifier(prop)
-        | N::AssignmentTargetPropertyProperty(prop) => Node::Prop(prop),
-        N::VariableDeclarator(declaration) | N::CatchParameter(declaration) => {
-            Node::VarDecl(declaration)
-        }
-        N::Directive(statement)
-        | N::BlockStatement(statement)
-        | N::EmptyStatement(statement)
-        | N::DebuggerStatement(statement)
-        | N::VariableDeclaration(statement)
-        | N::ReturnStatement(statement)
-        | N::IfStatement(statement)
-        | N::ForStatement(statement)
-        | N::ForInStatement(statement)
-        | N::ForOfStatement(statement)
-        | N::WhileStatement(statement)
-        | N::DoWhileStatement(statement)
-        | N::WithStatement(statement)
-        | N::SwitchStatement(statement)
-        | N::TryStatement(statement)
-        | N::ThrowStatement(statement)
-        | N::BreakStatement(statement)
-        | N::ContinueStatement(statement)
-        | N::LabeledStatement(statement)
-        | N::ImportDeclaration(statement)
-        | N::ExportAllDeclaration(statement)
-        | N::TSInterfaceDeclaration(statement)
-        | N::TSTypeAliasDeclaration(statement)
-        | N::TSEnumDeclaration(statement)
-        | N::TSModuleDeclaration(statement)
-        | N::TSGlobalDeclaration(statement)
-        | N::TSImportEqualsDeclaration(statement)
-        | N::TSExportAssignment(statement)
-        | N::TSNamespaceExportDeclaration(statement)
-        | N::ExportNamedDeclaration(statement)
-        | N::ExportDefaultDeclaration(statement)
-        | N::CatchClause(statement)
-        | N::TSInterfaceBody(statement)
-        | N::TSEnumBody(statement)
-        | N::TSModuleBlock(statement) => Node::Stmt(statement),
-        N::SwitchCase(case) => Node::Case(case),
-        N::TSEnumMember(member) => Node::EnumMember(member),
-        N::ImportSpecifier(spec) => Node::ImportSpec(spec),
-        N::ExportSpecifier(spec) => Node::ExportSpec(spec),
-        N::BindingIdentifier(pat) | N::ObjectPattern(pat) | N::ArrayPattern(pat) => Node::Pat(pat),
-        N::BindingProperty(prop) => Node::PatProp(prop),
-        N::TSKeywordType(ty)
-        | N::TSThisType(ty)
-        | N::TSTypeReference(ty)
-        | N::TSLiteralType(ty)
-        | N::TSTemplateLiteralType(ty)
-        | N::TSArrayType(ty)
-        | N::TSTupleType(ty)
-        | N::TSUnionType(ty)
-        | N::TSIntersectionType(ty)
-        | N::TSFunctionType(ty)
-        | N::TSConstructorType(ty)
-        | N::TSTypeLiteral(ty)
-        | N::TSConditionalType(ty)
-        | N::TSInferType(ty)
-        | N::TSMappedType(ty)
-        | N::TSIndexedAccessType(ty)
-        | N::TSTypeOperator(ty)
-        | N::TSTypeQuery(ty)
-        | N::TSImportType(ty)
-        | N::TSTypePredicate(ty)
-        | N::TSClassImplements(ty)
-        | N::TSInterfaceHeritage(ty)
-        | N::TSTypeAnnotation(ty) => Node::Type(ty),
-        N::TSNamedTupleMember(element) | N::TSOptionalType(element) | N::TSRestType(element) => {
-            Node::TupleElem(element)
-        }
-        N::TSTypeParameter(param) => Node::TypeParam(param),
-    }
-}
-
 /// The types of a union or an intersection.
-fn types_of(ty: TypeNode<'_>) -> Option<List<'_, TypeNode<'_>>> {
+fn union_members(ty: TypeNode<'_>) -> Option<List<'_, TypeNode<'_>>> {
     match ty.kind() {
         TypeKind::Union(types) | TypeKind::Intersection(types) => Some(types),
         _ => None,
@@ -484,7 +331,7 @@ fn types_of(ty: TypeNode<'_>) -> Option<List<'_, TypeNode<'_>>> {
 }
 
 /// The function that has the parameters and the body of `node`, which is a function, a method or a signature.
-fn function_of(node: N<'_>) -> Option<Func<'_>> {
+fn function_of_node(node: N<'_>) -> Option<Func<'_>> {
     match node {
         N::Function(func) | N::ArrowFunctionExpression(func) => Some(func),
         N::MethodDefinition(member)
@@ -501,7 +348,7 @@ fn function_of(node: N<'_>) -> Option<Func<'_>> {
 }
 
 /// The member or the property that `func` is the function of, if it is a method, a getter or a setter.
-fn method_of(func: Func<'_>) -> Option<Node<'_>> {
+fn method_owning(func: Func<'_>) -> Option<Node<'_>> {
     match func.owner() {
         owner @ Node::Member(_) => Some(owner),
         Node::Expr(e) => match e.parent() {
@@ -513,7 +360,7 @@ fn method_of(func: Func<'_>) -> Option<Node<'_>> {
 }
 
 /// Calls `visit` with the nodes that are made of `node` and can have nothing in them.
-fn for_each_part<'a>(node: Node<'a>, visit: &mut dyn FnMut(N<'a>)) {
+fn for_each_synthetic_child<'a>(node: Node<'a>, visit: &mut dyn FnMut(N<'a>)) {
     match node {
         Node::Func(func)
             if matches!(func.body(), FnBody::Block(_)) && func.kind() != FnKind::StaticBlock =>
@@ -546,34 +393,38 @@ impl<'a> Tree<'a, '_> {
         Owner::Node(node_as_ast_nodes(Node::File(self.file)))
     }
 
-    fn name(&self, span: Span, of: impl Into<Node<'a>>) -> Owner<'a> {
+    fn name(&self, span: Span, parent: impl Into<Node<'a>>) -> Owner<'a> {
         Owner::Name(Name {
             span,
-            of: of.into(),
+            parent: parent.into(),
         })
     }
 
-    fn is_cast(&self, open: u32) -> bool {
-        self.cast_parentheses.binary_search(&open).is_ok()
+    fn is_cast_paren(&self, open: u32) -> bool {
+        self.cast_paren_starts.binary_search(&open).is_ok()
     }
 
     /// What is where the expression `e` is written: with the outermost of the parentheses that are a node.
-    fn of_expr(&self, e: Expr<'a>) -> Owner<'a> {
-        if !self.cast_parentheses.is_empty() && e.is_parenthesized() {
-            if let Some(it) = e.parens().rev().find(|it| self.is_cast(it.start)) {
-                return Owner::CastParentheses(e, it.start);
+    fn owner_of_expr(&self, e: Expr<'a>) -> Owner<'a> {
+        if !self.cast_paren_starts.is_empty() && e.is_parenthesized() {
+            if let Some(paren) = e
+                .parens()
+                .rev()
+                .find(|paren| self.is_cast_paren(paren.start))
+            {
+                return Owner::CastParentheses(e, paren.start);
             }
         }
         Owner::Node(e.as_chain_element())
     }
 
-    fn of_stmt(&self, statement: Stmt<'a>) -> Owner<'a> {
+    fn owner_of_stmt(&self, statement: Stmt<'a>) -> Owner<'a> {
         Owner::Node(statement.as_ast_nodes())
     }
 
     /// What is where the type `ty` is written. `postprocess` takes a union or an intersection of one type out of the tree.
-    fn of_type(&self, mut ty: TypeNode<'a>) -> Owner<'a> {
-        while let Some(types) = types_of(ty)
+    fn owner_of_type(&self, mut ty: TypeNode<'a>) -> Owner<'a> {
+        while let Some(types) = union_members(ty)
             && types.len() == 1
             && let Some(only) = types.first()
         {
@@ -583,23 +434,23 @@ impl<'a> Tree<'a, '_> {
     }
 
     /// The innermost of the nodes that are made of `node`.
-    fn of_raw(&self, node: Node<'a>) -> Owner<'a> {
+    fn owner_of_node(&self, node: Node<'a>) -> Owner<'a> {
         Owner::Node(node_as_ast_nodes(node))
     }
 
     fn parent(&self, owner: Owner<'a>) -> Option<Owner<'a>> {
         let mut node = match owner {
-            Owner::Name(name) => match name.of {
+            Owner::Name(name) => match name.parent {
                 Node::Stmt(statement) => inner_of_stmt(statement),
                 Node::TypeParam(param) if matches!(param.parent(), Node::Type(_)) => {
                     N::TSTypeParameter(param).parent()
                 }
-                of => node_as_ast_nodes(of),
+                parent => node_as_ast_nodes(parent),
             },
             Owner::CastParentheses(e, open) => {
                 let outer = e
                     .parens()
-                    .find(|it| it.start < open && self.is_cast(it.start));
+                    .find(|paren| paren.start < open && self.is_cast_paren(paren.start));
                 match outer {
                     Some(outer) => return Some(Owner::CastParentheses(e, outer.start)),
                     None => e.ast_parent(),
@@ -607,11 +458,11 @@ impl<'a> Tree<'a, '_> {
             }
             Owner::Node(N::Program(_)) => return None,
             Owner::Node(node) => {
-                if !self.cast_parentheses.is_empty()
-                    && let Some(e) = expression_of(node).filter(|e| e.is_parenthesized())
-                    && let Some(it) = e.parens().find(|it| self.is_cast(it.start))
+                if !self.cast_paren_starts.is_empty()
+                    && let Some(e) = as_parenthesizable_expr(node).filter(|e| e.is_parenthesized())
+                    && let Some(paren) = e.parens().find(|paren| self.is_cast_paren(paren.start))
                 {
-                    return Some(Owner::CastParentheses(e, it.start));
+                    return Some(Owner::CastParentheses(e, paren.start));
                 }
                 node.parent()
             }
@@ -630,7 +481,7 @@ impl<'a> Tree<'a, '_> {
             Owner::Node(N::JSXEmptyExpression(e)) => {
                 return e
                     .jsx_container_span()
-                    .map_or_else(|| e.span().start, |it| it.start + 1);
+                    .map_or_else(|| e.span().start, |container| container.start + 1);
             }
             Owner::Node(node) => node,
         };
@@ -649,7 +500,7 @@ impl<'a> Tree<'a, '_> {
             }
             _ => None,
         };
-        match class.and_then(|it| it.decorators().next()) {
+        match class.and_then(|class| class.decorators().next()) {
             Some(first) => N::Decorator(first).span().start.min(start),
             None => start,
         }
@@ -661,13 +512,13 @@ impl<'a> Tree<'a, '_> {
             Owner::CastParentheses(e, open) => {
                 return e
                     .parens()
-                    .find(|it| it.start == open)
-                    .map_or(open, |it| it.end);
+                    .find(|paren| paren.start == open)
+                    .map_or(open, |paren| paren.end);
             }
             Owner::Node(N::JSXEmptyExpression(e)) => {
                 return e
                     .jsx_container_span()
-                    .map_or_else(|| e.span().end, |it| it.end - 1);
+                    .map_or_else(|| e.span().end, |container| container.end - 1);
             }
             Owner::Node(node) => node,
         };
@@ -694,7 +545,8 @@ impl<'a> Tree<'a, '_> {
                 },
                 N::VariableDeclaration(statement) => {
                     let last = statement.as_var().and_then(List::last);
-                    return last.map_or_else(|| node.span().end, |it| it.span().end);
+                    return last
+                        .map_or_else(|| node.span().end, |declarator| declarator.span().end);
                 }
                 N::BreakStatement(statement) | N::ContinueStatement(statement) => {
                     let keyword = if matches!(node, N::BreakStatement(_)) {
@@ -702,7 +554,7 @@ impl<'a> Tree<'a, '_> {
                     } else {
                         8
                     };
-                    let label = statement.label().map(|it| it.span().end);
+                    let label = statement.label().map(|ident| ident.span().end);
                     return label.unwrap_or_else(|| node.span().start + keyword);
                 }
                 N::DebuggerStatement(_) => return node.span().start + 8,
@@ -773,7 +625,7 @@ impl<'a> Tree<'a, '_> {
             N::FunctionBody(func) => matches!(func.body(), FnBody::Block(_)),
             // The function in a method. Babel has none, and typescript-estree's cannot have comments if it has no
             // body, or in a class if it has nothing before the body.
-            N::Function(func) => match method_of(func) {
+            N::Function(func) => match method_owning(func) {
                 Some(_) if self.is_babel() || !func.has_body() => false,
                 Some(Node::Member(_)) => has_parameters(func) || func.return_type().is_some(),
                 _ => true,
@@ -794,7 +646,7 @@ impl<'a> Tree<'a, '_> {
             N::TSTypeAnnotation(ty) => !matches!(ty.parent(), Node::Member(member)
                 if matches!(member.as_ast_nodes(), N::TSPropertySignature(_))),
             N::TSUnionType(ty) | N::TSIntersectionType(ty) => {
-                types_of(ty).is_none_or(|types| types.len() != 1)
+                union_members(ty).is_none_or(|types| types.len() != 1)
             }
             _ => true,
         }
@@ -804,7 +656,7 @@ impl<'a> Tree<'a, '_> {
 // ───────────────────────────── where a comment is ─────────────────────────────
 
 /// Calls `visit` with the names in `node` that are nodes for Prettier.
-fn for_each_name<'a>(node: Node<'a>, visit: &mut dyn FnMut(Span)) {
+fn for_each_name_token<'a>(node: Node<'a>, visit: &mut dyn FnMut(Span)) {
     let file = node.file();
     let mut key = |key: Option<bun_lint::ast::Key<'a>>| {
         if let Some(key) = key.filter(|key| !key.is_computed()) {
@@ -812,8 +664,14 @@ fn for_each_name<'a>(node: Node<'a>, visit: &mut dyn FnMut(Span)) {
         }
     };
     match node {
-        Node::Func(func) => func.name().into_iter().for_each(|it| visit(it.span())),
-        Node::Class(class) => class.name().into_iter().for_each(|it| visit(it.span())),
+        Node::Func(func) => func
+            .name()
+            .into_iter()
+            .for_each(|ident| visit(ident.span())),
+        Node::Class(class) => class
+            .name()
+            .into_iter()
+            .for_each(|ident| visit(ident.span())),
         Node::Member(member) => key(member.key()),
         Node::Prop(prop) if !matches!(prop.kind(), PropKind::Shorthand | PropKind::Spread) => {
             key(prop.key());
@@ -833,7 +691,10 @@ fn for_each_name<'a>(node: Node<'a>, visit: &mut dyn FnMut(Span)) {
             }
         }
         Node::TypeParam(param) => visit(param.name().span()),
-        Node::TupleElem(element) => element.name().into_iter().for_each(|it| visit(it.span())),
+        Node::TupleElem(element) => element
+            .name()
+            .into_iter()
+            .for_each(|ident| visit(ident.span())),
         Node::Expr(e) => {
             if let ExprKind::Dot { name, .. } = e.kind() {
                 visit(name.span());
@@ -844,30 +705,33 @@ fn for_each_name<'a>(node: Node<'a>, visit: &mut dyn FnMut(Span)) {
             TypeKind::Predicate { .. } => {
                 ty.predicate_param()
                     .into_iter()
-                    .for_each(|it| visit(it.span()));
+                    .for_each(|ident| visit(ident.span()));
             }
             _ => {}
         },
         Node::Stmt(statement) => match statement.kind() {
-            StmtKind::Interface(it) => visit(it.name().span()),
-            StmtKind::TypeAlias(it) => visit(it.name().span()),
-            StmtKind::Enum(it) => visit(it.name().span()),
-            StmtKind::Module(it) => visit(it.name_span()),
-            StmtKind::ImportEquals(it) => visit(it.name().span()),
+            StmtKind::Interface(interface) => visit(interface.name().span()),
+            StmtKind::TypeAlias(alias) => visit(alias.name().span()),
+            StmtKind::Enum(enum_decl) => visit(enum_decl.name().span()),
+            StmtKind::Module(module) => visit(module.name_span()),
+            StmtKind::ImportEquals(import) => visit(import.name().span()),
             StmtKind::Labeled { .. } | StmtKind::Break(_) | StmtKind::Continue(_) => {
                 statement
                     .label()
                     .into_iter()
-                    .for_each(|it| visit(it.span()));
+                    .for_each(|ident| visit(ident.span()));
             }
             StmtKind::Import(import) => {
-                import.default().into_iter().for_each(|it| visit(it.span()));
+                import
+                    .default()
+                    .into_iter()
+                    .for_each(|ident| visit(ident.span()));
                 import.namespace_span().into_iter().for_each(&mut *visit);
                 import.spec_span().into_iter().for_each(&mut *visit);
             }
             StmtKind::ExportNamed(export) => export.spec_span().into_iter().for_each(&mut *visit),
             StmtKind::ExportStar { alias, .. } => {
-                alias.into_iter().for_each(|it| visit(it.span()));
+                alias.into_iter().for_each(|ident| visit(ident.span()));
                 statement
                     .module_specifier_span()
                     .into_iter()
@@ -880,34 +744,36 @@ fn for_each_name<'a>(node: Node<'a>, visit: &mut dyn FnMut(Span)) {
 }
 
 /// Where a comment is, as far as the nodes of `bun_lint::ast` tell.
-enum Place<'a> {
+enum Location<'a> {
     /// Directly in `list`, which is a block, the body of a class or the like.
     Between {
         list: N<'a>,
         before: Option<Node<'a>>,
         after: Option<Node<'a>>,
         /// Everything in here is between the same two.
-        gap: Span,
+        same_neighbors_span: Span,
     },
     /// In this node and in none of its children.
     In(Node<'a>),
 }
 
-enum Step<'a> {
-    Into(Node<'a>),
+enum ListSearch<'a> {
+    Inside(Node<'a>),
     Between(Option<Node<'a>>, Option<Node<'a>>),
     Unknown,
 }
 
-fn step<'a, T>(list: List<'a, T>, comment: Span) -> Step<'a>
+fn search_list<'a, T>(list: List<'a, T>, comment: Span) -> ListSearch<'a>
 where
     T: Handle<'a> + Spanned + Into<Node<'a>> + Copy,
 {
     match list.neighbors(comment.start) {
-        None => Step::Unknown,
-        Some((Some(before), _)) if before.span().contains(comment) => Step::Into(before.into()),
-        Some((Some(before), _)) if before.span().end > comment.start => Step::Unknown,
-        Some((before, after)) => Step::Between(before.map(T::into), after.map(T::into)),
+        None => ListSearch::Unknown,
+        Some((Some(before), _)) if before.span().contains(comment) => {
+            ListSearch::Inside(before.into())
+        }
+        Some((Some(before), _)) if before.span().end > comment.start => ListSearch::Unknown,
+        Some((before, after)) => ListSearch::Between(before.map(T::into), after.map(T::into)),
     }
 }
 
@@ -916,15 +782,15 @@ fn is_empty_statement(node: Option<Node<'_>>) -> bool {
 }
 
 /// Finds the node of `bun_lint::ast` that a comment is in.
-struct Finder<'a> {
+struct NodeLocator<'a> {
     file: &'a File<'a>,
     /// The nodes that the last comment was in, each in the one before. The first is the file. The next comment is behind
     /// the last one, so a node that is left is never come back to.
     path: Vec<Node<'a>>,
 }
 
-impl<'a> Finder<'a> {
-    fn place(&mut self, comment: Span) -> Place<'a> {
+impl<'a> NodeLocator<'a> {
+    fn locate(&mut self, comment: Span) -> Location<'a> {
         while self.path.len() > 1
             && let Some(last) = self.path.last()
             && !last.span().contains(comment)
@@ -934,76 +800,80 @@ impl<'a> Finder<'a> {
         loop {
             let node = self.path.last().copied().unwrap_or(Node::File(self.file));
             // The list, the node that is nothing but the list, and where its `{` is if that is not where `node` starts.
-            let (step, list, open) = match node {
+            let (search_list, list, open) = match node {
                 Node::File(file) => (
-                    step(file.body(), comment),
+                    search_list(file.body(), comment),
                     Some(node_as_ast_nodes(node)),
                     None,
                 ),
                 Node::Stmt(statement) => match statement.kind() {
                     StmtKind::Block(statements) => (
-                        step(statements, comment),
+                        search_list(statements, comment),
                         Some(N::BlockStatement(statement)),
                         None,
                     ),
-                    StmtKind::Interface(it) => (
-                        step(it.members(), comment),
+                    StmtKind::Interface(interface) => (
+                        search_list(interface.members(), comment),
                         Some(N::TSInterfaceBody(statement)),
-                        Some(it.body_span().start),
+                        Some(interface.body_span().start),
                     ),
-                    StmtKind::Enum(it) => (
-                        step(it.members(), comment),
+                    StmtKind::Enum(enum_decl) => (
+                        search_list(enum_decl.members(), comment),
                         Some(N::TSEnumBody(statement)),
-                        Some(it.body_span().start),
+                        Some(enum_decl.body_span().start),
                     ),
-                    _ => (Step::Unknown, None, None),
+                    _ => (ListSearch::Unknown, None, None),
                 },
                 Node::Func(func) => match func.body() {
                     FnBody::Block(statements) => (
-                        step(statements, comment),
+                        search_list(statements, comment),
                         Some(match func.kind() {
                             FnKind::StaticBlock => func.as_ast_nodes(),
                             _ => N::FunctionBody(func),
                         }),
-                        func.body_span().map(|it| it.start),
+                        func.body_span().map(|body| body.start),
                     ),
-                    _ => (Step::Unknown, None, None),
+                    _ => (ListSearch::Unknown, None, None),
                 },
                 Node::Class(class) => (
-                    step(class.members(), comment),
+                    search_list(class.members(), comment),
                     Some(N::ClassBody(class)),
                     Some(class.body_span().start),
                 ),
                 Node::Expr(e) => match e.kind() {
-                    ExprKind::Object(properties) => {
-                        (step(properties, comment), Some(e.as_chain_element()), None)
-                    }
-                    _ => (Step::Unknown, None, None),
+                    ExprKind::Object(properties) => (
+                        search_list(properties, comment),
+                        Some(e.as_chain_element()),
+                        None,
+                    ),
+                    _ => (ListSearch::Unknown, None, None),
                 },
                 Node::Type(ty) => match ty.kind() {
-                    TypeKind::Object(members) => {
-                        (step(members, comment), Some(N::TSTypeLiteral(ty)), None)
-                    }
-                    _ => (Step::Unknown, None, None),
+                    TypeKind::Object(members) => (
+                        search_list(members, comment),
+                        Some(N::TSTypeLiteral(ty)),
+                        None,
+                    ),
+                    _ => (ListSearch::Unknown, None, None),
                 },
-                _ => (Step::Unknown, None, None),
+                _ => (ListSearch::Unknown, None, None),
             };
-            let inner = match step {
-                Step::Into(child) => Some(child),
+            let inner = match search_list {
+                ListSearch::Inside(child) => Some(child),
                 // Before the first element it can be in the head.
-                Step::Between(before, after)
+                ListSearch::Between(before, after)
                     if (before.is_some() || open.is_none_or(|open| open < comment.start))
                         && !is_empty_statement(before)
                         && !is_empty_statement(after) =>
                 {
                     if let Some(list) = list {
-                        return Place::Between {
+                        return Location::Between {
                             list,
                             before,
                             after,
-                            gap: Span::new(
-                                before.map_or(comment.start, |it| it.span().end),
-                                after.map_or_else(|| node.span().end, |it| it.span().start),
+                            same_neighbors_span: Span::new(
+                                before.map_or(comment.start, |node| node.span().end),
+                                after.map_or_else(|| node.span().end, |node| node.span().start),
                             ),
                         };
                     }
@@ -1021,7 +891,7 @@ impl<'a> Finder<'a> {
             };
             match inner {
                 Some(child) => self.path.push(child),
-                None => return Place::In(node),
+                None => return Location::In(node),
             }
         }
     }
@@ -1030,16 +900,16 @@ impl<'a> Finder<'a> {
 impl<'a> Tree<'a, '_> {
     /// Calls `visit` with what is in `node`, can have comments and could be next to `comment`, and where it is. Returns
     /// whether something has been left out that cannot have comments, so that what is next to it counts.
-    fn for_each_candidate(
+    fn for_each_attachable_child(
         &self,
         node: Node<'a>,
         comment: Span,
-        is_near: bool,
+        only_nearby: bool,
         visit: &mut dyn FnMut(Owner<'a>, Span),
     ) -> bool {
-        let mut has_skipped = false;
+        let mut skipped_unattachable = false;
         let mut child = |child: Node<'a>| {
-            let owner = self.of_raw(child);
+            let owner = self.owner_of_node(child);
             let span = self.loc(owner);
             // What cannot have comments gives way to what is in it. So does what is one node with `node`: a signature and
             // its function, the operands of commas.
@@ -1047,48 +917,62 @@ impl<'a> Tree<'a, '_> {
                 || span.contains(comment)
                 || matches!(child, Node::Expr(e) if is_inner_comma(e))
             {
-                has_skipped |= matches!(owner, Owner::Node(N::EmptyStatement(_)))
-                    | self.for_each_candidate(child, comment, is_near, visit);
+                skipped_unattachable |= matches!(owner, Owner::Node(N::EmptyStatement(_)))
+                    | self.for_each_attachable_child(child, comment, only_nearby, visit);
             } else {
                 visit(owner, span);
             }
         };
-        match is_near {
+        match only_nearby {
             true => node.for_each_child_around(comment.start, &mut child),
             false => node.for_each_child(&mut child),
         }
-        for_each_part(node, &mut |part| {
+        for_each_synthetic_child(node, &mut |part| {
             let span = part.span();
             if !span.contains(comment) {
                 visit(Owner::Node(part), span);
             }
         });
-        for_each_name(node, &mut |span| visit(self.name(span, node), span));
-        has_skipped
+        for_each_name_token(node, &mut |span| visit(self.name(span, node), span));
+        skipped_unattachable
     }
 
     /// What is in `node` and the closest to `comment` on either side.
-    fn neighbors(&self, node: Node<'a>, comment: Span) -> (Option<Owner<'a>>, Option<Owner<'a>>) {
-        for is_near in [true, false] {
+    fn closest_children(
+        &self,
+        node: Node<'a>,
+        comment: Span,
+    ) -> (Option<Owner<'a>>, Option<Owner<'a>>) {
+        for only_nearby in [true, false] {
             let (mut before, mut after) = (None::<(u32, Owner<'a>)>, None::<(u32, Owner<'a>)>);
-            let has_skipped =
-                self.for_each_candidate(node, comment, is_near, &mut |owner, span| {
-                    if span.end <= comment.start && before.is_none_or(|it| span.end >= it.0) {
+            let skipped_unattachable =
+                self.for_each_attachable_child(node, comment, only_nearby, &mut |owner, span| {
+                    if span.end <= comment.start
+                        && before.is_none_or(|closest| span.end >= closest.0)
+                    {
                         before = Some((span.end, owner));
-                    } else if span.start >= comment.end && after.is_none_or(|it| span.start < it.0)
+                    } else if span.start >= comment.end
+                        && after.is_none_or(|closest| span.start < closest.0)
                     {
                         after = Some((span.start, owner));
                     }
                 });
-            if !has_skipped || !is_near {
-                return (before.map(|it| it.1), after.map(|it| it.1));
+            if !skipped_unattachable || !only_nearby {
+                return (
+                    before.map(|closest| closest.1),
+                    after.map(|closest| closest.1),
+                );
             }
         }
         (None, None)
     }
 
     /// From `owner`, which `comment` is not in, up to the node that `comment` is in: that node, and its child on the way.
-    fn climb(&self, mut owner: Owner<'a>, comment: Span) -> Option<(Owner<'a>, Owner<'a>)> {
+    fn ascend_to_enclosing_node(
+        &self,
+        mut owner: Owner<'a>,
+        comment: Span,
+    ) -> Option<(Owner<'a>, Owner<'a>)> {
         loop {
             let parent = self.parent(owner)?;
             if self.loc(parent).contains(comment) {
@@ -1098,7 +982,7 @@ impl<'a> Tree<'a, '_> {
         }
     }
 
-    fn is_in(&self, mut owner: Owner<'a>, ancestor: Owner<'a>) -> bool {
+    fn is_descendant_of(&self, mut owner: Owner<'a>, ancestor: Owner<'a>) -> bool {
         while let Some(parent) = self.parent(owner) {
             if parent == ancestor {
                 return true;
@@ -1109,15 +993,17 @@ impl<'a> Tree<'a, '_> {
     }
 
     /// `decorateComment`, for a comment that is in `node` and in none of its children.
-    fn decorate_in(&self, mut node: Node<'a>, comment: Span) -> Decorated<'a> {
+    fn decorate_comment_in_node(&self, mut node: Node<'a>, comment: Span) -> DecoratedComment<'a> {
         loop {
             node = match node {
                 // A comment before the `;` of a statement is behind the statement.
-                Node::Stmt(statement) if !self.loc(self.of_stmt(statement)).contains(comment) => {
+                Node::Stmt(statement)
+                    if !self.loc(self.owner_of_stmt(statement)).contains(comment) =>
+                {
                     node.parent()
                 }
                 // A method starts where its function starts.
-                Node::Func(func) => match method_of(func) {
+                Node::Func(func) => match method_owning(func) {
                     Some(method) => method,
                     None => break,
                 },
@@ -1125,26 +1011,26 @@ impl<'a> Tree<'a, '_> {
             };
         }
         // `{/* comment */}` in JSX is left out of the children.
-        if let Some(empty) = self.empty_expression_around(node, comment) {
-            return Decorated {
-                enclosing: Some(empty),
-                ..Decorated::default()
+        if let Some(empty) = self.jsx_empty_expression_containing(node, comment) {
+            return DecoratedComment {
+                enclosing_node: Some(empty),
+                ..DecoratedComment::default()
             };
         }
-        let (before, after) = self.neighbors(node, comment);
-        let before = before.and_then(|it| self.climb(it, comment));
-        let after = after.and_then(|it| self.climb(it, comment));
-        let (enclosing, preceding, following) = match (before, after) {
+        let (before, after) = self.closest_children(node, comment);
+        let before = before.and_then(|node| self.ascend_to_enclosing_node(node, comment));
+        let after = after.and_then(|node| self.ascend_to_enclosing_node(node, comment));
+        let (enclosing_node, preceding_node, following_node) = match (before, after) {
             (Some(before), Some(after)) if before.1 == after.1 => {
                 (before.1, Some(before.0), Some(after.0))
             }
-            (Some(before), Some(after)) if self.is_in(before.1, after.1) => {
+            (Some(before), Some(after)) if self.is_descendant_of(before.1, after.1) => {
                 (before.1, Some(before.0), None)
             }
             (Some(_) | None, Some(after)) => (after.1, None, Some(after.0)),
             (Some(before), None) => (before.1, Some(before.0), None),
             (None, None) => {
-                let mut owner = self.of_raw(node);
+                let mut owner = self.owner_of_node(node);
                 while !self.can_attach_comment(owner) || !self.loc(owner).contains(comment) {
                     match self.parent(owner) {
                         Some(parent) => owner = parent,
@@ -1154,19 +1040,19 @@ impl<'a> Tree<'a, '_> {
                 (owner, None, None)
             }
         };
-        Decorated {
-            enclosing: Some(enclosing),
-            preceding,
-            following,
-            is_between_elements: false,
+        DecoratedComment {
+            enclosing_node: Some(enclosing_node),
+            preceding_node,
+            following_node,
+            is_between_list_elements: false,
         }
     }
 
-    fn empty_expression_around(&self, node: Node<'a>, comment: Span) -> Option<Owner<'a>> {
+    fn jsx_empty_expression_containing(&self, node: Node<'a>, comment: Span) -> Option<Owner<'a>> {
         let is_around = |e: &Expr<'a>| {
             e.is_missing()
                 && e.jsx_container_span()
-                    .is_some_and(|it| it.contains(comment))
+                    .is_some_and(|container| container.contains(comment))
         };
         let empty = match node {
             Node::Expr(e) => match e.kind() {
@@ -1189,10 +1075,10 @@ impl<'a> Tree<'a, '_> {
 
     fn types(&self, owner: Owner<'a>) -> impl DoubleEndedIterator<Item = Owner<'a>> {
         let types = match owner {
-            Owner::Node(N::TSUnionType(ty) | N::TSIntersectionType(ty)) => types_of(ty),
+            Owner::Node(N::TSUnionType(ty) | N::TSIntersectionType(ty)) => union_members(ty),
             _ => None,
         };
-        types.into_iter().flatten().map(|it| self.of_type(it))
+        types.into_iter().flatten().map(|ty| self.owner_of_type(ty))
     }
 
     fn is_conditional(&self, owner: Option<Owner<'a>>) -> bool {
@@ -1273,16 +1159,19 @@ impl<'a> Tree<'a, '_> {
 
     /// The first of the statements of a block or of the members of the body of a class or an interface that is not an
     /// empty statement. Babel has the directives somewhere else.
-    fn first_in(&self, owner: Owner<'a>) -> Option<Owner<'a>> {
+    fn first_child_of_block(&self, owner: Owner<'a>) -> Option<Owner<'a>> {
         let first_statement = |statements: List<'a, Stmt<'a>>| {
             (statements.iter())
-                .find(|it| {
-                    it.tag() != StmtTag::Empty && !(self.is_babel() && it.directive().is_some())
+                .find(|statement| {
+                    statement.tag() != StmtTag::Empty
+                        && !(self.is_babel() && statement.directive().is_some())
                 })
-                .map(|it| self.of_stmt(it))
+                .map(|statement| self.owner_of_stmt(statement))
         };
         let first_member = |members: List<'a, Member<'a>>| {
-            members.first().map(|it| Owner::Node(it.as_ast_nodes()))
+            members
+                .first()
+                .map(|member| Owner::Node(member.as_ast_nodes()))
         };
         match owner {
             Owner::Node(N::BlockStatement(statement)) => first_statement(statement.as_block()?),
@@ -1296,7 +1185,7 @@ impl<'a> Tree<'a, '_> {
     }
 
     fn add_block_statement_first_comment(&self, owner: Owner<'a>) -> Handled<'a> {
-        match self.first_in(owner) {
+        match self.first_child_of_block(owner) {
             Some(first) => leading(first),
             None => dangling(owner),
         }
@@ -1312,16 +1201,16 @@ impl<'a> Tree<'a, '_> {
 
 // ───────────────────────────── attach.js ─────────────────────────────
 
-struct Attacher<'a, 'c> {
-    tree: Tree<'a, 'c>,
-    finder: Finder<'a>,
-    decorated: Vec<Decorated<'a>>,
+struct Attacher<'a, 'ctx> {
+    tree: Tree<'a, 'ctx>,
+    locator: NodeLocator<'a>,
+    decorated_comments: Vec<DecoratedComment<'a>>,
     attached: Attached<'a>,
     is_unignored: bool,
     is_program_empty: bool,
     /// From the end of what precedes the last comment to the start of what follows it. Every comment in there has the same
     /// nodes around it.
-    gap: Span,
+    same_neighbors_span: Span,
 }
 
 /// Attaches `comments`, which are those of `file` in the order of the source.
@@ -1334,7 +1223,7 @@ pub(crate) fn attach<'a>(
         return Attached::default();
     }
     let text = file.text();
-    let cast_parentheses = (comments.iter())
+    let cast_paren_starts = (comments.iter())
         .filter(|comment| comment.is_type_cast())
         .filter_map(|comment| {
             let after = text.get(comment.span.end as usize..)?;
@@ -1348,64 +1237,64 @@ pub(crate) fn attach<'a>(
             text,
             comments,
             options,
-            cast_parentheses,
+            cast_paren_starts,
             may_have_decorators: strings::contains_char(text, b'@'),
         },
-        finder: Finder {
+        locator: NodeLocator {
             file,
             path: vec![Node::File(file)],
         },
-        decorated: Vec::with_capacity(comments.len()),
+        decorated_comments: Vec::with_capacity(comments.len()),
         attached: Attached::default(),
         is_unignored: false,
         is_program_empty: file.body().is_empty(),
-        gap: Span::default(),
+        same_neighbors_span: Span::default(),
     };
     attacher.run();
     attacher.attached
 }
 
 impl<'a> Attacher<'a, '_> {
-    fn decorate_comment(&mut self, comment: Span) -> Decorated<'a> {
-        if self.gap.contains(comment)
-            && let Some(last) = self.decorated.last()
+    fn decorate_comment(&mut self, comment: Span) -> DecoratedComment<'a> {
+        if self.same_neighbors_span.contains(comment)
+            && let Some(last) = self.decorated_comments.last()
         {
             return *last;
         }
         let tree = &self.tree;
-        let mut decorated = match self.finder.place(comment) {
-            Place::Between {
+        let mut decorated_comments = match self.locator.locate(comment) {
+            Location::Between {
                 list,
                 before,
                 after,
-                gap,
+                same_neighbors_span,
             } => {
-                self.gap = gap;
-                Decorated {
-                    enclosing: Some(Owner::Node(list)),
-                    preceding: before.map(|it| tree.of_raw(it)),
-                    following: after.map(|it| tree.of_raw(it)),
-                    is_between_elements: !matches!(list, N::ObjectAssignmentTarget(_)),
+                self.same_neighbors_span = same_neighbors_span;
+                DecoratedComment {
+                    enclosing_node: Some(Owner::Node(list)),
+                    preceding_node: before.map(|closest| tree.owner_of_node(closest)),
+                    following_node: after.map(|closest| tree.owner_of_node(closest)),
+                    is_between_list_elements: !matches!(list, N::ObjectAssignmentTarget(_)),
                 }
             }
-            Place::In(node) => {
-                let decorated = tree.decorate_in(node, comment);
-                self.gap = Span::new(
-                    decorated
-                        .preceding
-                        .map_or(comment.start, |it| tree.loc_end(it)),
-                    decorated
-                        .following
-                        .map_or(comment.end, |it| tree.loc_start(it)),
+            Location::In(node) => {
+                let decorated_comments = tree.decorate_comment_in_node(node, comment);
+                self.same_neighbors_span = Span::new(
+                    decorated_comments
+                        .preceding_node
+                        .map_or(comment.start, |owner| tree.loc_end(owner)),
+                    decorated_comments
+                        .following_node
+                        .map_or(comment.end, |owner| tree.loc_start(owner)),
                 );
-                decorated
+                decorated_comments
             }
         };
         // A comment in one `${}` of a template does not move to another.
-        if let Some(Owner::Node(N::TemplateLiteral(e))) = decorated.enclosing
+        if let Some(Owner::Node(N::TemplateLiteral(e))) = decorated_comments.enclosing_node
             && let ExprKind::Template(template) = e.kind()
         {
-            self.gap = Span::default();
+            self.same_neighbors_span = Span::default();
             let expression_index = |start: u32| {
                 (1..template.quasi_count())
                     .position(|i| start <= template.quasi_span(i).start + 1)
@@ -1414,23 +1303,30 @@ impl<'a> Attacher<'a, '_> {
             let is_in_same = |owner: &Owner<'a>| {
                 expression_index(tree.loc_start(*owner)) == expression_index(comment.start)
             };
-            decorated.preceding = decorated.preceding.filter(is_in_same);
-            decorated.following = decorated.following.filter(is_in_same);
+            decorated_comments.preceding_node =
+                decorated_comments.preceding_node.filter(is_in_same);
+            decorated_comments.following_node =
+                decorated_comments.following_node.filter(is_in_same);
         }
         // With typescript-estree a comment outside of every statement is in nothing.
-        if !tree.is_babel() && matches!(decorated.enclosing, Some(Owner::Node(N::Program(_)))) {
-            decorated.enclosing = None;
+        if !tree.is_babel()
+            && matches!(
+                decorated_comments.enclosing_node,
+                Some(Owner::Node(N::Program(_)))
+            )
+        {
+            decorated_comments.enclosing_node = None;
         }
-        decorated
+        decorated_comments
     }
 
     fn is_own_line_comment(&self, index: usize) -> bool {
         let (comments, tree) = (self.tree.comments, &self.tree);
         let mut start = comments[index].span.start;
-        let preceding = self.decorated[index].preceding;
-        if preceding.is_some() {
+        let preceding_node = self.decorated_comments[index].preceding_node;
+        if preceding_node.is_some() {
             for before in (0..index).rev() {
-                if self.decorated[before].preceding != preceding
+                if self.decorated_comments[before].preceding_node != preceding_node
                     || !tree.is_all_empty_and_no_line_break(comments[before].span.end, start)
                 {
                     break;
@@ -1444,10 +1340,10 @@ impl<'a> Attacher<'a, '_> {
     fn is_end_of_line_comment(&self, index: usize) -> bool {
         let (comments, tree) = (self.tree.comments, &self.tree);
         let mut end = comments[index].span.end;
-        let following = self.decorated[index].following;
-        if following.is_some() {
+        let following_node = self.decorated_comments[index].following_node;
+        if following_node.is_some() {
             for after in index + 1..comments.len() {
-                if self.decorated[after].following != following
+                if self.decorated_comments[after].following_node != following_node
                     || !tree.is_all_empty_and_no_line_break(end, comments[after].span.start)
                 {
                     break;
@@ -1462,76 +1358,86 @@ impl<'a> Attacher<'a, '_> {
         let comments = self.tree.comments;
         let program = self.tree.program();
         for comment in comments {
-            let decorated = self.decorate_comment(comment.span);
-            self.decorated.push(decorated);
+            let decorated_comments = self.decorate_comment(comment.span);
+            self.decorated_comments.push(decorated_comments);
         }
-        let nowhere = Attachment {
+        let unattached = Attachment {
             owner: program,
-            position: Position::Dangling,
+            placement: Placement::Dangling,
             marker: Marker::None,
             is_unignored: false,
         };
-        self.attached.attachments = vec![nowhere; comments.len()];
+        self.attached.attachments = vec![unattached; comments.len()];
 
         let mut ties_to_break: Vec<usize> = Vec::new();
         for (index, comment) in comments.iter().enumerate() {
-            let Decorated {
-                enclosing,
-                preceding,
-                following,
-                is_between_elements,
-            } = self.decorated[index];
-            let placement = if self.is_own_line_comment(index) {
-                Placement::OwnLine
+            let DecoratedComment {
+                enclosing_node,
+                preceding_node,
+                following_node,
+                is_between_list_elements,
+            } = self.decorated_comments[index];
+            let text_position = if self.is_own_line_comment(index) {
+                TextPosition::OwnLine
             } else if self.is_end_of_line_comment(index) {
-                Placement::EndOfLine
+                TextPosition::EndOfLine
             } else {
-                Placement::Remaining
+                TextPosition::Remaining
             };
             let context = Context {
                 comment: *comment,
-                enclosing,
-                preceding,
-                following,
-                placement,
+                enclosing_node,
+                preceding_node,
+                following_node,
+                text_position,
                 is_last_comment: index + 1 == comments.len(),
             };
             self.is_unignored = false;
             // No handler has anything to say about a comment between two elements of a list: each asks for another kind of
             // node around the comment, or for a type next to it.
-            let is_plain =
-                is_between_elements && !comment.looks_like_type_cast() && !self.is_program_empty;
-            let handled = match placement {
-                _ if is_plain => None,
-                Placement::OwnLine => self.handle_own_line_comment(&context),
-                Placement::EndOfLine => self.handle_end_of_line_comment(&context),
-                Placement::Remaining => self.handle_remaining_comment(&context),
+            let skips_handlers = is_between_list_elements
+                && !comment.looks_like_type_cast()
+                && !self.is_program_empty;
+            let handled = match text_position {
+                _ if skips_handlers => None,
+                TextPosition::OwnLine => self.handle_own_line_comment(&context),
+                TextPosition::EndOfLine => self.handle_end_of_line_comment(&context),
+                TextPosition::Remaining => self.handle_remaining_comment(&context),
             };
-            let in_enclosing = || dangling(enclosing.unwrap_or(program));
-            let handled = handled.or_else(|| match placement {
-                Placement::OwnLine => (following.and_then(leading))
-                    .or_else(|| preceding.and_then(trailing))
+            let in_enclosing = || dangling(enclosing_node.unwrap_or(program));
+            let handled = handled.or_else(|| match text_position {
+                TextPosition::OwnLine => (following_node.and_then(leading))
+                    .or_else(|| preceding_node.and_then(trailing))
                     .or_else(in_enclosing),
-                Placement::EndOfLine => (preceding.and_then(trailing))
-                    .or_else(|| following.and_then(leading))
+                TextPosition::EndOfLine => (preceding_node.and_then(trailing))
+                    .or_else(|| following_node.and_then(leading))
                     .or_else(in_enclosing),
-                Placement::Remaining if preceding.is_some() && following.is_some() => None,
-                Placement::Remaining => (preceding.and_then(trailing))
-                    .or_else(|| following.and_then(leading))
+                TextPosition::Remaining if preceding_node.is_some() && following_node.is_some() => {
+                    None
+                }
+                TextPosition::Remaining => (preceding_node.and_then(trailing))
+                    .or_else(|| following_node.and_then(leading))
                     .or_else(in_enclosing),
             });
             match handled {
-                Some((owner, position, marker)) => {
+                Some((owner, placement, marker)) => {
+                    let only_nearby =
+                        [enclosing_node, preceding_node, following_node].contains(&Some(owner));
+                    if !only_nearby && owner != program {
+                        self.attached
+                            .relocated_owner_starts
+                            .push(self.tree.loc_start(owner));
+                    }
                     self.attached.attachments[index] = Attachment {
                         owner,
-                        position,
+                        placement,
                         marker,
                         is_unignored: self.is_unignored,
                     };
                 }
                 None => {
                     if let Some(last) = ties_to_break.last()
-                        && self.decorated[*last].following != following
+                        && self.decorated_comments[*last].following_node != following_node
                     {
                         self.break_ties(&mut ties_to_break);
                     }
@@ -1541,28 +1447,36 @@ impl<'a> Attacher<'a, '_> {
             }
         }
         self.break_ties(&mut ties_to_break);
+        for owner in &self.attached.ignored {
+            self.attached
+                .relocated_owner_starts
+                .push(self.tree.loc_start(*owner));
+        }
+        if !self.attached.relocated_owner_starts.is_sorted() {
+            crate::sort::sort(&mut self.attached.relocated_owner_starts);
+        }
     }
 
     fn break_ties(&mut self, ties_to_break: &mut Vec<usize>) {
         let Some(first) = ties_to_break.first() else {
             return;
         };
-        let Decorated {
-            preceding: Some(preceding),
-            following: Some(following),
+        let DecoratedComment {
+            preceding_node: Some(preceding_node),
+            following_node: Some(following_node),
             ..
-        } = self.decorated[*first]
+        } = self.decorated_comments[*first]
         else {
             ties_to_break.clear();
             return;
         };
-        let mut gap_end = self.tree.loc_start(following);
+        let mut gap_end = self.tree.loc_start(following_node);
         let mut first_leading = ties_to_break.len();
         while first_leading > 0 {
             let comment = self.tree.comments[ties_to_break[first_leading - 1]];
-            let gap = self.tree.text_between(comment.span.end, gap_end);
-            let is_gap = strings::split(gap, b"(")
-                .all(|it| strings::trim_js_whitespace_start(it).is_empty());
+            let same_neighbors_span = self.tree.text_between(comment.span.end, gap_end);
+            let is_gap = strings::split(same_neighbors_span, b"(")
+                .all(|piece| strings::trim_js_whitespace_start(piece).is_empty());
             if !is_gap {
                 break;
             }
@@ -1571,9 +1485,9 @@ impl<'a> Attacher<'a, '_> {
         }
         for (i, index) in ties_to_break.iter().enumerate() {
             let attachment = &mut self.attached.attachments[*index];
-            (attachment.owner, attachment.position) = match i < first_leading {
-                true => (preceding, Position::Trailing),
-                false => (following, Position::Leading),
+            (attachment.owner, attachment.placement) = match i < first_leading {
+                true => (preceding_node, Placement::Trailing),
+                false => (following_node, Placement::Leading),
             };
         }
         ties_to_break.clear();
@@ -1583,83 +1497,83 @@ impl<'a> Attacher<'a, '_> {
 // ───────────────────────────── handle-comments.js ─────────────────────────────
 
 impl<'a> Attacher<'a, '_> {
-    fn handle_own_line_comment(&mut self, c: &Context<'a>) -> Handled<'a> {
-        self.handle_comment_in_empty_parens(c)
-            .or_else(|| self.handle_ignore_comments(c))
-            .or_else(|| self.handle_closure_type_cast_comments(c))
-            .or_else(|| self.handle_conditional_expression_comments(c))
-            .or_else(|| self.handle_last_function_parameter_comments(c))
-            .or_else(|| self.handle_member_expression_comments(c))
-            .or_else(|| self.handle_if_statement_comments(c))
-            .or_else(|| self.handle_while_like_comments(c))
-            .or_else(|| self.handle_switch_statement_comments(c))
-            .or_else(|| self.handle_try_statement_comments(c))
-            .or_else(|| self.handle_class_comments(c))
-            .or_else(|| self.handle_for_x_statement_comments(c))
-            .or_else(|| self.handle_union_type_comments(c))
-            .or_else(|| self.handle_only_comments(c))
-            .or_else(|| self.handle_module_specifiers_comments(c))
-            .or_else(|| self.handle_assignment_pattern_comments(c))
-            .or_else(|| self.handle_method_name_comments(c))
-            .or_else(|| self.handle_labeled_statement_comments(c))
-            .or_else(|| self.handle_nested_conditional_expression_comments(c))
-            .or_else(|| self.handle_comments_in_destructuring_pattern(c))
-            .or_else(|| self.handle_ts_mapped_type_comments(c))
-            .or_else(|| self.handle_binary_cast_expression_comment(c))
-            .or_else(|| self.handle_union_type_leading_comments(c))
-            .or_else(|| self.handle_sequence_expression_leading_comment(c))
+    fn handle_own_line_comment(&mut self, ctx: &Context<'a>) -> Handled<'a> {
+        self.handle_comment_in_empty_parens(ctx)
+            .or_else(|| self.handle_ignore_comments(ctx))
+            .or_else(|| self.handle_closure_type_cast_comments(ctx))
+            .or_else(|| self.handle_conditional_expression_comments(ctx))
+            .or_else(|| self.handle_last_function_parameter_comments(ctx))
+            .or_else(|| self.handle_member_expression_comments(ctx))
+            .or_else(|| self.handle_if_statement_comments(ctx))
+            .or_else(|| self.handle_while_like_comments(ctx))
+            .or_else(|| self.handle_switch_statement_comments(ctx))
+            .or_else(|| self.handle_try_statement_comments(ctx))
+            .or_else(|| self.handle_class_comments(ctx))
+            .or_else(|| self.handle_for_x_statement_comments(ctx))
+            .or_else(|| self.handle_union_type_comments(ctx))
+            .or_else(|| self.handle_only_comments(ctx))
+            .or_else(|| self.handle_module_specifiers_comments(ctx))
+            .or_else(|| self.handle_assignment_pattern_comments(ctx))
+            .or_else(|| self.handle_method_name_comments(ctx))
+            .or_else(|| self.handle_labeled_statement_comments(ctx))
+            .or_else(|| self.handle_nested_conditional_expression_comments(ctx))
+            .or_else(|| self.handle_comments_in_destructuring_pattern(ctx))
+            .or_else(|| self.handle_ts_mapped_type_comments(ctx))
+            .or_else(|| self.handle_binary_cast_expression_comment(ctx))
+            .or_else(|| self.handle_union_type_leading_comments(ctx))
+            .or_else(|| self.handle_sequence_expression_leading_comment(ctx))
     }
 
-    fn handle_end_of_line_comment(&mut self, c: &Context<'a>) -> Handled<'a> {
-        self.handle_comment_in_empty_parens(c)
-            .or_else(|| self.handle_closure_type_cast_comments(c))
-            .or_else(|| self.handle_last_function_parameter_comments(c))
-            .or_else(|| self.handle_conditional_expression_comments(c))
-            .or_else(|| self.handle_module_specifiers_comments(c))
-            .or_else(|| self.handle_if_statement_comments(c))
-            .or_else(|| self.handle_while_like_comments(c))
-            .or_else(|| self.handle_switch_statement_comments(c))
-            .or_else(|| self.handle_try_statement_comments(c))
-            .or_else(|| self.handle_class_comments(c))
-            .or_else(|| self.handle_for_x_statement_comments(c))
-            .or_else(|| self.handle_labeled_statement_comments(c))
-            .or_else(|| self.handle_call_expression_comments(c))
-            .or_else(|| self.handle_property_comments(c))
-            .or_else(|| self.handle_only_comments(c))
-            .or_else(|| self.handle_assignment_like_comments(c))
-            .or_else(|| self.handle_switch_default_case_comments(c))
-            .or_else(|| self.handle_last_union_element_in_expression(c))
-            .or_else(|| self.handle_last_binary_operator_operand(c))
-            .or_else(|| self.handle_comments_in_destructuring_pattern(c))
-            .or_else(|| self.handle_ts_mapped_type_comments(c))
-            .or_else(|| self.handle_arrow_expression_comments(c))
-            .or_else(|| self.handle_parenthesized_expression_trailing_comment(c))
-            .or_else(|| self.handle_property_signature_comments(c))
-            .or_else(|| self.handle_binary_cast_expression_comment(c))
-            .or_else(|| self.handle_tagged_template_expression_comments(c))
-            .or_else(|| self.handle_sequence_expression_leading_comment(c))
+    fn handle_end_of_line_comment(&mut self, ctx: &Context<'a>) -> Handled<'a> {
+        self.handle_comment_in_empty_parens(ctx)
+            .or_else(|| self.handle_closure_type_cast_comments(ctx))
+            .or_else(|| self.handle_last_function_parameter_comments(ctx))
+            .or_else(|| self.handle_conditional_expression_comments(ctx))
+            .or_else(|| self.handle_module_specifiers_comments(ctx))
+            .or_else(|| self.handle_if_statement_comments(ctx))
+            .or_else(|| self.handle_while_like_comments(ctx))
+            .or_else(|| self.handle_switch_statement_comments(ctx))
+            .or_else(|| self.handle_try_statement_comments(ctx))
+            .or_else(|| self.handle_class_comments(ctx))
+            .or_else(|| self.handle_for_x_statement_comments(ctx))
+            .or_else(|| self.handle_labeled_statement_comments(ctx))
+            .or_else(|| self.handle_call_expression_comments(ctx))
+            .or_else(|| self.handle_property_comments(ctx))
+            .or_else(|| self.handle_only_comments(ctx))
+            .or_else(|| self.handle_assignment_like_comments(ctx))
+            .or_else(|| self.handle_switch_default_case_comments(ctx))
+            .or_else(|| self.handle_last_union_element_in_expression(ctx))
+            .or_else(|| self.handle_last_binary_operator_operand(ctx))
+            .or_else(|| self.handle_comments_in_destructuring_pattern(ctx))
+            .or_else(|| self.handle_ts_mapped_type_comments(ctx))
+            .or_else(|| self.handle_arrow_expression_comments(ctx))
+            .or_else(|| self.handle_parenthesized_expression_trailing_comment(ctx))
+            .or_else(|| self.handle_property_signature_comments(ctx))
+            .or_else(|| self.handle_binary_cast_expression_comment(ctx))
+            .or_else(|| self.handle_tagged_template_expression_comments(ctx))
+            .or_else(|| self.handle_sequence_expression_leading_comment(ctx))
     }
 
-    fn handle_remaining_comment(&mut self, c: &Context<'a>) -> Handled<'a> {
-        self.handle_comment_in_empty_parens(c)
-            .or_else(|| self.handle_ignore_comments(c))
-            .or_else(|| self.handle_closure_type_cast_comments(c))
-            .or_else(|| self.handle_if_statement_comments(c))
-            .or_else(|| self.handle_while_like_comments(c))
-            .or_else(|| self.handle_switch_statement_comments(c))
-            .or_else(|| self.handle_for_x_statement_comments(c))
-            .or_else(|| self.handle_method_name_comments(c))
-            .or_else(|| self.handle_only_comments(c))
-            .or_else(|| self.handle_assignment_like_comments(c))
-            .or_else(|| self.handle_ts_mapped_type_comments(c))
-            .or_else(|| self.handle_comment_after_arrow_params(c))
-            .or_else(|| self.handle_function_name_comments(c))
-            .or_else(|| self.handle_ts_function_trailing_comments(c))
-            .or_else(|| self.handle_parenthesized_expression_trailing_comment(c))
-            .or_else(|| self.handle_property_signature_comments(c))
-            .or_else(|| self.handle_binary_cast_expression_comment(c))
-            .or_else(|| self.handle_union_type_leading_comments(c))
-            .or_else(|| self.handle_sequence_expression_leading_comment(c))
+    fn handle_remaining_comment(&mut self, ctx: &Context<'a>) -> Handled<'a> {
+        self.handle_comment_in_empty_parens(ctx)
+            .or_else(|| self.handle_ignore_comments(ctx))
+            .or_else(|| self.handle_closure_type_cast_comments(ctx))
+            .or_else(|| self.handle_if_statement_comments(ctx))
+            .or_else(|| self.handle_while_like_comments(ctx))
+            .or_else(|| self.handle_switch_statement_comments(ctx))
+            .or_else(|| self.handle_for_x_statement_comments(ctx))
+            .or_else(|| self.handle_method_name_comments(ctx))
+            .or_else(|| self.handle_only_comments(ctx))
+            .or_else(|| self.handle_assignment_like_comments(ctx))
+            .or_else(|| self.handle_ts_mapped_type_comments(ctx))
+            .or_else(|| self.handle_comment_after_arrow_params(ctx))
+            .or_else(|| self.handle_function_name_comments(ctx))
+            .or_else(|| self.handle_ts_function_trailing_comments(ctx))
+            .or_else(|| self.handle_parenthesized_expression_trailing_comment(ctx))
+            .or_else(|| self.handle_property_signature_comments(ctx))
+            .or_else(|| self.handle_binary_cast_expression_comment(ctx))
+            .or_else(|| self.handle_union_type_leading_comments(ctx))
+            .or_else(|| self.handle_sequence_expression_leading_comment(ctx))
     }
 
     /// `node.prettierIgnore = true; comment.unignore = true;`
@@ -1668,109 +1582,111 @@ impl<'a> Attacher<'a, '_> {
         self.is_unignored = true;
     }
 
-    fn is_prettier_ignore_comment(&self, c: &Context<'a>) -> bool {
-        c.comment.is_ignore_comment() && !self.is_unignored
+    fn is_prettier_ignore_comment(&self, ctx: &Context<'a>) -> bool {
+        ctx.comment.is_ignore_comment() && !self.is_unignored
     }
 
-    fn handle_closure_type_cast_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
-        let following = c.following.filter(|_| c.comment.looks_like_type_cast())?;
+    fn handle_closure_type_cast_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
+        let following_node = ctx
+            .following_node
+            .filter(|_| ctx.comment.looks_like_type_cast())?;
         if let (Some(N::ConditionalExpression(_)), Owner::Node(N::LogicalExpression(e))) =
-            (c.enclosing_node(), following)
+            (ctx.enclosing_node(), following_node)
             && let ExprKind::Binary {
                 op: BinOp::Nullish,
                 left,
                 ..
             } = e.kind()
         {
-            return leading(self.tree.of_expr(left));
+            return leading(self.tree.owner_of_expr(left));
         }
-        leading(following)
+        leading(following_node)
     }
 
-    fn handle_try_statement_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_try_statement_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let following = c.following?;
-        match c.enclosing_node()? {
+        let following_node = ctx.following_node?;
+        match ctx.enclosing_node()? {
             N::TryStatement(_) => {}
             N::CatchClause(_) => {
-                if let Some(preceding) = c.preceding {
-                    return trailing(preceding);
+                if let Some(preceding_node) = ctx.preceding_node {
+                    return trailing(preceding_node);
                 }
             }
             _ => return None,
         }
-        match following {
-            _ if tree.is_block_statement(following) => {
-                tree.add_block_statement_first_comment(following)
+        match following_node {
+            _ if tree.is_block_statement(following_node) => {
+                tree.add_block_statement_first_comment(following_node)
             }
             Owner::Node(N::CatchClause(statement)) => match statement.kind() {
                 StmtKind::Try {
                     handler: Some(handler),
                     ..
-                } => tree.add_block_or_not_comment(tree.of_stmt(handler)),
+                } => tree.add_block_or_not_comment(tree.owner_of_stmt(handler)),
                 _ => None,
             },
             _ => None,
         }
     }
 
-    fn handle_member_expression_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_member_expression_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let is_member_expression = matches!(
-            c.enclosing_node(),
+            ctx.enclosing_node(),
             Some(
                 N::StaticMemberExpression(_)
                     | N::ComputedMemberExpression(_)
                     | N::PrivateFieldExpression(_)
             )
         );
-        (is_member_expression && self.tree.is_identifier(c.following)).then_some(())?;
-        leading(c.enclosing?)
+        (is_member_expression && self.tree.is_identifier(ctx.following_node)).then_some(())?;
+        leading(ctx.enclosing_node?)
     }
 
-    fn handle_nested_conditional_expression_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_nested_conditional_expression_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
         let is_nested = tree.options.experimental_ternaries
-            && tree.is_conditional(c.enclosing)
-            && tree.is_conditional(c.following);
+            && tree.is_conditional(ctx.enclosing_node)
+            && tree.is_conditional(ctx.following_node);
         is_nested.then_some(())?;
-        dangling(c.enclosing?)
+        dangling(ctx.enclosing_node?)
     }
 
-    fn handle_conditional_expression_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_conditional_expression_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        if !tree.is_conditional(c.enclosing) {
+        if !tree.is_conditional(ctx.enclosing_node) {
             return None;
         }
-        let is_same_line_as_preceding_node = c.preceding.is_some_and(|preceding| {
-            !tree.has_newline_between(tree.loc_end(preceding), c.comment.span.start)
+        let is_same_line_as_preceding_node = ctx.preceding_node.is_some_and(|preceding_node| {
+            !tree.has_newline_between(tree.loc_end(preceding_node), ctx.comment.span.start)
         });
         if is_same_line_as_preceding_node {
             return None;
         }
-        let (enclosing, following) = (c.enclosing?, c.following?);
-        let alternate = match c.enclosing_node()? {
+        let (enclosing_node, following_node) = (ctx.enclosing_node?, ctx.following_node?);
+        let alternate = match ctx.enclosing_node()? {
             N::ConditionalExpression(e) => match e.kind() {
-                ExprKind::Cond { no, .. } => Some(tree.of_expr(no)),
+                ExprKind::Cond { no, .. } => Some(tree.owner_of_expr(no)),
                 _ => None,
             },
             N::TSConditionalType(ty) => match ty.kind() {
-                TypeKind::Cond { no, .. } => Some(tree.of_type(no)),
+                TypeKind::Cond { no, .. } => Some(tree.owner_of_type(no)),
                 _ => None,
             },
             _ => None,
         };
         if tree.options.experimental_ternaries
-            && alternate == Some(following)
-            && !tree.is_single_line_block_comment(c.comment)
+            && alternate == Some(following_node)
+            && !tree.is_single_line_block_comment(ctx.comment)
         {
-            return dangling(enclosing);
+            return dangling(enclosing_node);
         }
-        leading(following)
+        leading(following_node)
     }
 
-    fn handle_class_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_class_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let enclosing = c.enclosing?;
+        let enclosing_node = ctx.enclosing_node?;
         struct Head<'a> {
             last_decorator: Option<Owner<'a>>,
             id: Option<Owner<'a>>,
@@ -1780,21 +1696,21 @@ impl<'a> Attacher<'a, '_> {
             extends: Option<Owner<'a>>,
             body: Owner<'a>,
         }
-        let head = match c.enclosing_node()? {
+        let head = match ctx.enclosing_node()? {
             N::Class(class) => Head {
                 last_decorator: class
                     .decorators()
                     .last()
                     .map(|e| Owner::Node(N::Decorator(e))),
-                id: class.name().map(|it| tree.name(it.span(), class)),
+                id: class.name().map(|ident| tree.name(ident.span(), class)),
                 type_parameters: (!class.type_params().is_empty()).then_some(Owner::Node(
                     N::TSTypeParameterDeclaration(Node::Class(class)),
                 )),
-                super_class: class.extends().map(|e| tree.of_expr(e)),
+                super_class: class.extends().map(|e| tree.owner_of_expr(e)),
                 implements: class
                     .implements()
                     .first()
-                    .map(|it| Owner::Node(it.as_ast_nodes())),
+                    .map(|ty| Owner::Node(ty.as_ast_nodes())),
                 extends: None,
                 body: Owner::Node(N::ClassBody(class)),
             },
@@ -1811,45 +1727,46 @@ impl<'a> Attacher<'a, '_> {
                     extends: interface
                         .extends()
                         .first()
-                        .map(|it| Owner::Node(it.as_ast_nodes())),
+                        .map(|ty| Owner::Node(ty.as_ast_nodes())),
                     body: Owner::Node(N::TSInterfaceBody(statement)),
                 }
             }
             _ => return None,
         };
         if let Some(last) = head.last_decorator
-            && !matches!(c.following, Some(Owner::Node(N::Decorator(_))))
+            && !matches!(ctx.following_node, Some(Owner::Node(N::Decorator(_))))
         {
             return trailing(last);
         }
-        if c.following == Some(head.body) {
+        if ctx.following_node == Some(head.body) {
             return tree.add_block_statement_first_comment(head.body);
         }
-        let (preceding, following) = (c.preceding?, c.following?);
-        let is_head = Some(preceding) == head.id || Some(preceding) == head.type_parameters;
-        if Some(following) == head.super_class && is_head {
-            return trailing(preceding);
+        let (preceding_node, following_node) = (ctx.preceding_node?, ctx.following_node?);
+        let is_head =
+            Some(preceding_node) == head.id || Some(preceding_node) == head.type_parameters;
+        if Some(following_node) == head.super_class && is_head {
+            return trailing(preceding_node);
         }
         let clauses = [
             (head.implements, &b"implements"[..], Marker::Implements),
             (head.extends, b"extends", Marker::Extends),
         ];
         for (first, keyword, marker) in clauses {
-            let Some(first) = first.filter(|it| *it == following) else {
+            let Some(first) = first.filter(|owner| *owner == following_node) else {
                 continue;
             };
-            if !is_head && Some(preceding) != head.super_class {
-                return Some((enclosing, Position::Dangling, marker));
+            if !is_head && Some(preceding_node) != head.super_class {
+                return Some((enclosing_node, Placement::Dangling, marker));
             }
-            if tree.only_code_between(c.comment.span.end, tree.loc_start(first)) == keyword {
-                return trailing(preceding);
+            if tree.only_code_between(ctx.comment.span.end, tree.loc_start(first)) == keyword {
+                return trailing(preceding_node);
             }
         }
         None
     }
 
     /// The `key` of a member or a property.
-    fn key_of(&self, node: N<'a>) -> Option<Owner<'a>> {
+    fn key_owner(&self, node: N<'a>) -> Option<Owner<'a>> {
         let (key, computed, of) = match node {
             N::MethodDefinition(member)
             | N::PropertyDefinition(member)
@@ -1862,62 +1779,62 @@ impl<'a> Attacher<'a, '_> {
             _ => return None,
         };
         match computed {
-            Some(e) => Some(self.tree.of_expr(e)),
+            Some(e) => Some(self.tree.owner_of_expr(e)),
             None => Some(self.tree.name(key?.span(self.tree.file), of)),
         }
     }
 
-    fn handle_method_name_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_method_name_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let next_character = || tree.next_character(c.comment.span.end);
-        let enclosing = c.enclosing_node();
+        let next_character = || tree.next_character(ctx.comment.span.end);
+        let enclosing_node = ctx.enclosing_node();
         // Only the trees of ESTree need this: `obj = { fn /*comment*/() {} };`
-        if let (Some(enclosing), Some(preceding)) = (enclosing, c.preceding)
-            && match enclosing {
+        if let (Some(enclosing_node), Some(preceding_node)) = (enclosing_node, ctx.preceding_node)
+            && match enclosing_node {
                 N::ObjectProperty(_) => !tree.is_babel(),
-                N::MethodDefinition(member) => member.func().is_some_and(|it| !it.has_body()),
+                N::MethodDefinition(member) => member.func().is_some_and(|func| !func.has_body()),
                 _ => false,
             }
-            && tree.is_identifier(Some(preceding))
-            && self.key_of(enclosing) == Some(preceding)
+            && tree.is_identifier(Some(preceding_node))
+            && self.key_owner(enclosing_node) == Some(preceding_node)
             && next_character() == Some(b'(')
-            && tree.next_character(tree.loc_end(preceding)) != Some(b':')
+            && tree.next_character(tree.loc_end(preceding_node)) != Some(b':')
         {
-            return trailing(preceding);
+            return trailing(preceding_node);
         }
-        if tree.is_property_like(enclosing)
-            && c.following.is_none()
-            && c.placement == Placement::Remaining
+        if tree.is_property_like(enclosing_node)
+            && ctx.following_node.is_none()
+            && ctx.text_position == TextPosition::Remaining
         {
             return match next_character() {
-                Some(b'(') => trailing(c.preceding?),
-                _ => trailing(c.enclosing?),
+                Some(b'(') => trailing(ctx.preceding_node?),
+                _ => trailing(ctx.enclosing_node?),
             };
         }
-        if matches!(c.preceding, Some(Owner::Node(N::Decorator(_))))
-            && tree.is_property_like(enclosing)
-            && (c.comment.is_line() || c.placement == Placement::OwnLine)
+        if matches!(ctx.preceding_node, Some(Owner::Node(N::Decorator(_))))
+            && tree.is_property_like(enclosing_node)
+            && (ctx.comment.is_line() || ctx.text_position == TextPosition::OwnLine)
         {
-            return trailing(c.preceding?);
+            return trailing(ctx.preceding_node?);
         }
         None
     }
 
-    fn handle_function_name_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_function_name_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let (enclosing, preceding) = (c.enclosing_node()?, c.preceding?);
-        let is_before_parameters = tree.next_character(c.comment.span.end) == Some(b'(');
-        (is_before_parameters && tree.is_function_like(enclosing)).then_some(())?;
-        trailing(preceding)
+        let (enclosing_node, preceding_node) = (ctx.enclosing_node()?, ctx.preceding_node?);
+        let is_before_parameters = tree.next_character(ctx.comment.span.end) == Some(b'(');
+        (is_before_parameters && tree.is_function_like(enclosing_node)).then_some(())?;
+        trailing(preceding_node)
     }
 
-    fn handle_comment_after_arrow_params(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_comment_after_arrow_params(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        matches!(c.enclosing_node()?, N::ArrowFunctionExpression(_)).then_some(())?;
-        let index = tree.next_character_index(c.comment.span.end);
+        matches!(ctx.enclosing_node()?, N::ArrowFunctionExpression(_)).then_some(())?;
+        let index = tree.next_character_index(ctx.comment.span.end);
         (tree.text_between(index, index + 2) == b"=>").then_some((
-            c.enclosing?,
-            Position::Dangling,
+            ctx.enclosing_node?,
+            Placement::Dangling,
             Marker::CommentBeforeArrow,
         ))
     }
@@ -1932,104 +1849,107 @@ impl<'a> Attacher<'a, '_> {
             && tree.next_character(comment.end) == Some(b')')
     }
 
-    fn handle_comment_in_empty_parens(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_comment_in_empty_parens(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let (enclosing, node) = (c.enclosing?, c.enclosing_node()?);
+        let (enclosing_node, node) = (ctx.enclosing_node?, ctx.enclosing_node()?);
         if let N::CallExpression(e) | N::NewExpression(e) = node
             && let ExprKind::Call(call) | ExprKind::New(call) = e.kind()
             && call.args().is_empty()
-            && self.is_in_argument_or_parameter_parentheses(enclosing, c.comment.span)
+            && self.is_in_argument_or_parameter_parentheses(enclosing_node, ctx.comment.span)
         {
-            return dangling(enclosing);
+            return dangling(enclosing_node);
         }
-        let func = function_of(node).filter(|it| !has_parameters(*it))?;
+        let func = function_of_node(node).filter(|func| !has_parameters(*func))?;
         let function = match tree.is_real_function_like(node) {
-            true => enclosing,
+            true => enclosing_node,
             false if matches!(node, N::MethodDefinition(_)) || tree.is_object_method(node) => {
                 Owner::Node(N::Function(func))
             }
             false => return None,
         };
-        self.is_in_argument_or_parameter_parentheses(function, c.comment.span)
+        self.is_in_argument_or_parameter_parentheses(function, ctx.comment.span)
             .then_some(())?;
         dangling(function)
     }
 
-    fn handle_last_function_parameter_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_last_function_parameter_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let enclosing = c.enclosing_node()?;
-        let has_no_body = || matches!(enclosing, N::MethodDefinition(member) if member.func().is_some_and(|it| !it.has_body()));
-        if let Some(preceding) = c.preceding
+        let enclosing_node = ctx.enclosing_node()?;
+        let has_no_body = || matches!(enclosing_node, N::MethodDefinition(member) if member.func().is_some_and(|func| !func.has_body()));
+        if let Some(preceding_node) = ctx.preceding_node
             && matches!(
-                preceding,
+                preceding_node,
                 Owner::Node(
                     N::FormalParameter(_) | N::FormalParameterRest(_) | N::TSThisParameter(_)
                 )
             )
-            && (tree.is_real_function_like(enclosing) || has_no_body())
-            && tree.next_character(c.comment.span.end) == Some(b')')
+            && (tree.is_real_function_like(enclosing_node) || has_no_body())
+            && tree.next_character(ctx.comment.span.end) == Some(b')')
         {
-            return trailing(preceding);
+            return trailing(preceding_node);
         }
         // Between the `)` of the parameters and the body.
-        let following = c.following?;
-        if !c.comment.is_block()
-            && tree.is_function_like(enclosing)
-            && function_of(enclosing).and_then(|it| tree.body_of_function(it)) == Some(following)
-            && tree.next_character_index(c.comment.span.end) == tree.loc_start(following)
+        let following_node = ctx.following_node?;
+        if !ctx.comment.is_block()
+            && tree.is_function_like(enclosing_node)
+            && function_of_node(enclosing_node).and_then(|func| tree.body_of_function(func))
+                == Some(following_node)
+            && tree.next_character_index(ctx.comment.span.end) == tree.loc_start(following_node)
         {
-            return tree.add_block_statement_first_comment(following);
+            return tree.add_block_statement_first_comment(following_node);
         }
         None
     }
 
-    fn handle_labeled_statement_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
-        matches!(c.enclosing_node()?, N::LabeledStatement(_)).then_some(())?;
-        leading(c.enclosing?)
+    fn handle_labeled_statement_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
+        matches!(ctx.enclosing_node()?, N::LabeledStatement(_)).then_some(())?;
+        leading(ctx.enclosing_node?)
     }
 
-    fn handle_call_expression_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_call_expression_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let (N::CallExpression(e) | N::NewExpression(e)) = c.enclosing_node()? else {
+        let (N::CallExpression(e) | N::NewExpression(e)) = ctx.enclosing_node()? else {
             return None;
         };
         let (ExprKind::Call(call) | ExprKind::New(call)) = e.kind() else {
             return None;
         };
-        if c.preceding != Some(tree.of_expr(call.callee())) {
+        if ctx.preceding_node != Some(tree.owner_of_expr(call.callee())) {
             return None;
         }
         let first = call.args().first()?;
         // `isInsideCallOrNewExpressionParentheses`
         let closing = e.span().end.checked_sub(1)?;
-        if tree.text.get(closing as usize) != Some(&b')') || c.comment.span.end > closing {
+        if tree.text.get(closing as usize) != Some(&b')') || ctx.comment.span.end > closing {
             return None;
         }
-        let before_parenthesis = (call.type_args().angle_brackets_span())
-            .map_or_else(|| tree.loc_end(tree.of_expr(call.callee())), |it| it.end);
+        let before_parenthesis = (call.type_args().angle_brackets_span()).map_or_else(
+            || tree.loc_end(tree.owner_of_expr(call.callee())),
+            |brackets| brackets.end,
+        );
         let opening = tree.index_of(b"(", before_parenthesis);
-        (opening != -1 && i64::from(c.comment.span.start) > opening).then_some(())?;
-        leading(tree.of_expr(first))
+        (opening != -1 && i64::from(ctx.comment.span.start) > opening).then_some(())?;
+        leading(tree.owner_of_expr(first))
     }
 
-    fn handle_union_type_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
-        if self.tree.is_union_type(c.enclosing) {
-            if self.is_prettier_ignore_comment(c)
-                && let Some(following) = c.following
+    fn handle_union_type_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
+        if self.tree.is_union_type(ctx.enclosing_node) {
+            if self.is_prettier_ignore_comment(ctx)
+                && let Some(following_node) = ctx.following_node
             {
-                self.ignore_instead_of_owner(following);
+                self.ignore_instead_of_owner(following_node);
             }
-            return trailing(c.preceding?);
+            return trailing(ctx.preceding_node?);
         }
-        if self.tree.is_union_type(c.following) && self.is_prettier_ignore_comment(c) {
-            let first = self.tree.types(c.following?).next()?;
+        if self.tree.is_union_type(ctx.following_node) && self.is_prettier_ignore_comment(ctx) {
+            let first = self.tree.types(ctx.following_node?).next()?;
             self.ignore_instead_of_owner(first);
         }
         None
     }
 
-    fn handle_property_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
-        let node = c.enclosing_node()?;
+    fn handle_property_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
+        let node = ctx.enclosing_node()?;
         let is_object_property = matches!(
             node,
             N::ObjectProperty(_)
@@ -2038,37 +1958,37 @@ impl<'a> Attacher<'a, '_> {
                 | N::AssignmentTargetPropertyProperty(_)
         ) && !self.tree.is_object_method(node);
         is_object_property.then_some(())?;
-        leading(c.enclosing?)
+        leading(ctx.enclosing_node?)
     }
 
-    fn handle_only_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_only_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         if !self.is_program_empty {
             return None;
         }
         let program = self.tree.program();
-        match c.is_last_comment {
+        match ctx.is_last_comment {
             true => dangling(program),
             false => leading(program),
         }
     }
 
-    fn handle_module_specifiers_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
-        let is_after_specifier = match c.enclosing_node()? {
-            N::ImportSpecifier(_) | N::ExportSpecifier(_) => return leading(c.enclosing?),
+    fn handle_module_specifiers_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
+        let is_after_specifier = match ctx.enclosing_node()? {
+            N::ImportSpecifier(_) | N::ExportSpecifier(_) => return leading(ctx.enclosing_node?),
             N::ImportDeclaration(_) => {
-                matches!(c.preceding, Some(Owner::Node(N::ImportSpecifier(_))))
+                matches!(ctx.preceding_node, Some(Owner::Node(N::ImportSpecifier(_))))
             }
             N::ExportNamedDeclaration(_) => {
-                matches!(c.preceding, Some(Owner::Node(N::ExportSpecifier(_))))
+                matches!(ctx.preceding_node, Some(Owner::Node(N::ExportSpecifier(_))))
             }
             _ => false,
         };
-        (is_after_specifier && self.tree.has_newline_after(c.comment.span.end)).then_some(())?;
-        trailing(c.preceding?)
+        (is_after_specifier && self.tree.has_newline_after(ctx.comment.span.end)).then_some(())?;
+        trailing(ctx.preceding_node?)
     }
 
-    fn handle_assignment_pattern_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
-        let is_assignment_pattern = match c.enclosing_node()? {
+    fn handle_assignment_pattern_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
+        let is_assignment_pattern = match ctx.enclosing_node()? {
             N::AssignmentPattern(_) | N::AssignmentTargetWithDefault(_) => true,
             N::FormalParameter(param) => {
                 param.default().is_some() && !param.is_parameter_property()
@@ -2076,15 +1996,19 @@ impl<'a> Attacher<'a, '_> {
             _ => false,
         };
         is_assignment_pattern.then_some(())?;
-        leading(c.enclosing?)
+        leading(ctx.enclosing_node?)
     }
 
-    fn should_attach_to_union_type_first_element(&self, owner: Owner<'a>, c: &Context<'a>) -> bool {
+    fn should_attach_to_union_type_first_element(
+        &self,
+        owner: Owner<'a>,
+        ctx: &Context<'a>,
+    ) -> bool {
         let tree = &self.tree;
         tree.is_union_type(Some(owner))
-            && tree.is_single_line_block_comment(c.comment)
-            && !self.is_prettier_ignore_comment(c)
-            && (c.comment.span.end..tree.loc_start(owner)).all(|at| {
+            && tree.is_single_line_block_comment(ctx.comment)
+            && !self.is_prettier_ignore_comment(ctx)
+            && (ctx.comment.span.end..tree.loc_start(owner)).all(|at| {
                 tree.comment_around(at).is_some()
                     || tree.text.get(at as usize).is_some_and(|b| is_blank(*b))
             })
@@ -2093,18 +2017,18 @@ impl<'a> Attacher<'a, '_> {
     fn add_leading_comment_to_possible_union_type(
         &self,
         owner: Owner<'a>,
-        c: &Context<'a>,
+        ctx: &Context<'a>,
     ) -> Handled<'a> {
-        match self.should_attach_to_union_type_first_element(owner, c) {
+        match self.should_attach_to_union_type_first_element(owner, ctx) {
             true => leading(self.tree.types(owner).next()?),
             false => leading(owner),
         }
     }
 
-    fn handle_assignment_like_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_assignment_like_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let (enclosing, following) = (c.enclosing_node()?, c.following?);
-        let alias = match enclosing {
+        let (enclosing_node, following_node) = (ctx.enclosing_node()?, ctx.following_node?);
+        let alias = match enclosing_node {
             N::TSTypeAliasDeclaration(statement) => match statement.kind() {
                 StmtKind::TypeAlias(alias) => Some(alias),
                 _ => None,
@@ -2113,7 +2037,7 @@ impl<'a> Attacher<'a, '_> {
             _ => return None,
         };
         let is_complex = matches!(
-            following,
+            following_node,
             Owner::Node(
                 N::ObjectExpression(_)
                     | N::ArrayExpression(_)
@@ -2122,118 +2046,129 @@ impl<'a> Attacher<'a, '_> {
                     | N::TSTypeLiteral(_)
             )
         );
-        if c.placement == Placement::EndOfLine && (is_complex || c.comment.is_block()) {
-            return self.add_leading_comment_to_possible_union_type(following, c);
+        if ctx.text_position == TextPosition::EndOfLine && (is_complex || ctx.comment.is_block()) {
+            return self.add_leading_comment_to_possible_union_type(following_node, ctx);
         }
         let equals = tree.index_of(b"=", alias?.name().span().end);
-        (i64::from(c.comment.span.start) >= equals).then_some(())?;
-        self.add_leading_comment_to_possible_union_type(following, c)
+        (i64::from(ctx.comment.span.start) >= equals).then_some(())?;
+        self.add_leading_comment_to_possible_union_type(following_node, ctx)
     }
 
-    fn handle_tagged_template_expression_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
-        let N::TaggedTemplateExpression(e) = c.enclosing_node()? else {
+    fn handle_tagged_template_expression_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
+        let N::TaggedTemplateExpression(e) = ctx.enclosing_node()? else {
             return None;
         };
         let ExprKind::TaggedTemplate(call) = e.kind() else {
             return None;
         };
-        let quasi = self.tree.of_expr(call.template()?);
-        leading(c.following.filter(|it| *it == quasi)?)
+        let quasi = self.tree.owner_of_expr(call.template()?);
+        leading(ctx.following_node.filter(|owner| *owner == quasi)?)
     }
 
-    fn handle_ts_function_trailing_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_ts_function_trailing_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        if c.following.is_some() {
+        if ctx.following_node.is_some() {
             return None;
         }
-        let node = c.enclosing_node()?;
+        let node = ctx.enclosing_node()?;
         let func = match node {
             N::TSMethodSignature(member) => member.func()?,
-            N::MethodDefinition(member) => member.func().filter(|it| !it.has_body())?,
+            N::MethodDefinition(member) => member.func().filter(|func| !func.has_body())?,
             N::Function(func) if !func.has_body() && matches!(func.owner(), Node::Stmt(_)) => func,
             _ => return None,
         };
         // `TSAbstractMethodDefinition` has no `returnType` of its own.
         let return_type = (func.return_type())
             .filter(|_| !matches!(node, N::MethodDefinition(_)))
-            .map(|it| Owner::Node(N::TSTypeAnnotation(it)));
-        let is_after_head = (c.preceding.is_none() || c.preceding != return_type)
-            && tree.next_character(c.comment.span.end) == Some(b';');
+            .map(|ty| Owner::Node(N::TSTypeAnnotation(ty)));
+        let is_after_head = (ctx.preceding_node.is_none() || ctx.preceding_node != return_type)
+            && tree.next_character(ctx.comment.span.end) == Some(b';');
         is_after_head.then_some(())?;
-        trailing(c.enclosing?)
+        trailing(ctx.enclosing_node?)
     }
 
-    fn handle_ignore_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
-        let N::TSMappedType(ty) = c.enclosing_node()? else {
+    fn handle_ignore_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
+        let N::TSMappedType(ty) = ctx.enclosing_node()? else {
             return None;
         };
         let TypeKind::Mapped(mapped) = ty.kind() else {
             return None;
         };
         let key = self.tree.name(mapped.param().name().span(), mapped.param());
-        if !self.is_prettier_ignore_comment(c) || c.following != Some(key) {
+        if !self.is_prettier_ignore_comment(ctx) || ctx.following_node != Some(key) {
             return None;
         }
-        self.ignore_instead_of_owner(c.enclosing?);
-        Some((c.enclosing?, Position::Dangling, Marker::InIgnoredNode))
+        self.ignore_instead_of_owner(ctx.enclosing_node?);
+        Some((
+            ctx.enclosing_node?,
+            Placement::Dangling,
+            Marker::InIgnoredNode,
+        ))
     }
 
-    fn handle_ts_mapped_type_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_ts_mapped_type_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        matches!(c.enclosing_node()?, N::TSMappedType(_)).then_some(())?;
-        let bracket = tree.index_of(b"[", tree.loc_start(c.enclosing?));
-        (i64::from(c.comment.span.end) < bracket).then_some(())?;
-        dangling(c.enclosing?)
+        matches!(ctx.enclosing_node()?, N::TSMappedType(_)).then_some(())?;
+        let bracket = tree.index_of(b"[", tree.loc_start(ctx.enclosing_node?));
+        (i64::from(ctx.comment.span.end) < bracket).then_some(())?;
+        dangling(ctx.enclosing_node?)
     }
 
-    fn handle_switch_default_case_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_switch_default_case_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let N::SwitchCase(case) = c.enclosing_node()? else {
+        let N::SwitchCase(case) = ctx.enclosing_node()? else {
             return None;
         };
-        let following = c.following?;
+        let following_node = ctx.following_node?;
         if case.test().is_some()
-            || case.body().first().map(|it| tree.of_stmt(it)) != Some(following)
+            || case
+                .body()
+                .first()
+                .map(|statement| tree.owner_of_stmt(statement))
+                != Some(following_node)
         {
             return None;
         }
-        match tree.is_block_statement(following) && c.comment.is_line() {
-            true => tree.add_block_statement_first_comment(following),
-            false => dangling(c.enclosing?),
+        match tree.is_block_statement(following_node) && ctx.comment.is_line() {
+            true => tree.add_block_statement_first_comment(following_node),
+            false => dangling(ctx.enclosing_node?),
         }
     }
 
-    fn handle_last_union_element_in_expression(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_last_union_element_in_expression(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let preceding = c.preceding.filter(|it| tree.is_union_type(Some(*it)))?;
-        match c.enclosing_node()? {
-            N::TSArrayType(_) if c.following.is_none() => {}
+        let preceding_node = ctx
+            .preceding_node
+            .filter(|owner| tree.is_union_type(Some(*owner)))?;
+        match ctx.enclosing_node()? {
+            N::TSArrayType(_) if ctx.following_node.is_none() => {}
             N::TSIntersectionType(_) | N::TSUnionType(_) => {}
             _ => return None,
         }
-        trailing(tree.types(preceding).next_back()?)
+        trailing(tree.types(preceding_node).next_back()?)
     }
 
-    fn handle_comments_in_destructuring_pattern(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_comments_in_destructuring_pattern(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         // Here the type annotation of a pattern is behind the pattern, not in it. So a comment before the `}` is in the
         // pattern alone, and goes where Prettier puts it without a handler.
         let is_between = matches!(
-            c.preceding?,
+            ctx.preceding_node?,
             Owner::Node(N::ObjectPattern(_) | N::ArrayPattern(_))
-        ) && matches!(c.following?, Owner::Node(N::TSTypeAnnotation(_)));
+        ) && matches!(ctx.following_node?, Owner::Node(N::TSTypeAnnotation(_)));
         is_between.then_some(())?;
-        leading(c.following?)
+        leading(ctx.following_node?)
     }
 
-    fn handle_last_binary_operator_operand(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_last_binary_operator_operand(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let N::UnaryExpression(unary) = c.enclosing_node()? else {
+        let N::UnaryExpression(unary) = ctx.enclosing_node()? else {
             return None;
         };
-        let Owner::Node(N::LogicalExpression(e) | N::BinaryExpression(e)) = c.preceding? else {
+        let Owner::Node(N::LogicalExpression(e) | N::BinaryExpression(e)) = ctx.preceding_node?
+        else {
             return None;
         };
-        if c.following.is_some() {
+        if ctx.following_node.is_some() {
             return None;
         }
         let ExprKind::Binary { right, .. } = e.kind() else {
@@ -2242,55 +2177,55 @@ impl<'a> Attacher<'a, '_> {
         let ExprKind::Unary { operand, .. } = unary.kind() else {
             return None;
         };
-        let right = tree.of_expr(right);
+        let right = tree.owner_of_expr(right);
         let right_start = tree.loc_start(right);
-        let argument_start = tree.loc_start(tree.of_expr(operand));
+        let argument_start = tree.loc_start(tree.owner_of_expr(operand));
         let is_on_line_of_right = tree.has_newline_between(argument_start, right_start)
-            && tree.is_single_line_comment(c.comment)
-            && !tree.has_newline_between(right_start, c.comment.span.start);
+            && tree.is_single_line_comment(ctx.comment)
+            && !tree.has_newline_between(right_start, ctx.comment.span.start);
         is_on_line_of_right.then_some(())?;
         trailing(right)
     }
 
-    fn handle_property_signature_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_property_signature_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let (enclosing, following) = (c.enclosing_node()?, c.following?);
-        let (key_end, has_value) = match enclosing {
+        let (enclosing_node, following_node) = (ctx.enclosing_node()?, ctx.following_node?);
+        let (key_end, has_value) = match enclosing_node {
             N::TSPropertySignature(member) => (
-                self.key_of(enclosing).map(|it| tree.loc_end(it)),
+                self.key_owner(enclosing_node).map(|key| tree.loc_end(key)),
                 member.ty().is_some(),
             ),
             N::TSMappedType(ty) => match ty.kind() {
                 TypeKind::Mapped(mapped) => (
                     (mapped.name_type())
                         .or_else(|| mapped.param().constraint())
-                        .map(|it| it.span().end),
+                        .map(|ty| ty.span().end),
                     mapped.ty().is_some(),
                 ),
                 _ => return None,
             },
             _ => return None,
         };
-        if c.placement == Placement::EndOfLine
+        if ctx.text_position == TextPosition::EndOfLine
             && matches!(
-                following,
+                following_node,
                 Owner::Node(N::TSUnionType(_) | N::TSIntersectionType(_))
             )
         {
-            return leading(following);
+            return leading(following_node);
         }
-        if has_value && c.comment.is_block() {
+        if has_value && ctx.comment.is_block() {
             let colon = tree.index_of(b":", key_end?);
-            if colon < i64::from(c.comment.span.start) {
-                return self.add_leading_comment_to_possible_union_type(following, c);
+            if colon < i64::from(ctx.comment.span.start) {
+                return self.add_leading_comment_to_possible_union_type(following_node, ctx);
             }
         }
         None
     }
 
-    fn handle_binary_cast_expression_comment(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_binary_cast_expression_comment(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let (N::TSAsExpression(e) | N::TSSatisfiesExpression(e)) = c.enclosing_node()? else {
+        let (N::TSAsExpression(e) | N::TSSatisfiesExpression(e)) = ctx.enclosing_node()? else {
             return None;
         };
         let (ExprKind::As { expr, .. }
@@ -2299,41 +2234,46 @@ impl<'a> Attacher<'a, '_> {
         else {
             return None;
         };
-        if c.preceding != Some(tree.of_expr(expr)) || tree.is_single_line_comment(c.comment) {
+        if ctx.preceding_node != Some(tree.owner_of_expr(expr))
+            || tree.is_single_line_comment(ctx.comment)
+        {
             return None;
         }
-        match c.following {
-            Some(following) => leading(following),
-            None => trailing(c.enclosing?),
+        match ctx.following_node {
+            Some(following_node) => leading(following_node),
+            None => trailing(ctx.enclosing_node?),
         }
     }
 
     /// The `body` of an arrow function.
     fn body_of_arrow(&self, func: Func<'a>) -> Owner<'a> {
         match func.body() {
-            FnBody::Expr(e) => self.tree.of_expr(e),
+            FnBody::Expr(e) => self.tree.owner_of_expr(e),
             _ => Owner::Node(N::FunctionBody(func)),
         }
     }
 
-    fn handle_arrow_expression_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_arrow_expression_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let N::ArrowFunctionExpression(func) = c.enclosing_node()? else {
+        let N::ArrowFunctionExpression(func) = ctx.enclosing_node()? else {
             return None;
         };
-        let following = c.following.filter(|_| c.preceding.is_some())?;
+        let following_node = ctx
+            .following_node
+            .filter(|_| ctx.preceding_node.is_some())?;
         let body_start = tree.loc_start(self.body_of_arrow(func));
-        let is_before_arrow = i64::from(c.comment.span.end) < tree.last_index_of(b"=>", body_start);
+        let is_before_arrow =
+            i64::from(ctx.comment.span.end) < tree.last_index_of(b"=>", body_start);
         match is_before_arrow {
             true => None,
-            false => tree.add_block_or_not_comment(following),
+            false => tree.add_block_or_not_comment(following_node),
         }
     }
 
     fn right_of_assignment(&self, node: N<'a>) -> Option<Owner<'a>> {
         match node {
             N::AssignmentExpression(e) => match e.kind() {
-                ExprKind::Assign { value, .. } => Some(self.tree.of_expr(value)),
+                ExprKind::Assign { value, .. } => Some(self.tree.owner_of_expr(value)),
                 _ => None,
             },
             _ => None,
@@ -2360,27 +2300,35 @@ impl<'a> Attacher<'a, '_> {
         }
     }
 
-    fn handle_sequence_expression_leading_comment(&mut self, c: &Context<'a>) -> Handled<'a> {
-        matches!(c.enclosing_node()?, N::SequenceExpression(_)).then_some(())?;
-        (c.preceding.is_none() && c.following.is_some()).then_some(())?;
-        leading(c.enclosing?)
+    fn handle_sequence_expression_leading_comment(&mut self, ctx: &Context<'a>) -> Handled<'a> {
+        matches!(ctx.enclosing_node()?, N::SequenceExpression(_)).then_some(())?;
+        (ctx.preceding_node.is_none() && ctx.following_node.is_some()).then_some(())?;
+        leading(ctx.enclosing_node?)
     }
 
-    fn handle_parenthesized_expression_trailing_comment(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_parenthesized_expression_trailing_comment(
+        &mut self,
+        ctx: &Context<'a>,
+    ) -> Handled<'a> {
         let tree = &self.tree;
-        if c.following.is_some() {
+        if ctx.following_node.is_some() {
             return None;
         }
-        let (enclosing, node, preceding) = (c.enclosing?, c.enclosing_node()?, c.preceding?);
+        let (enclosing_node, node, preceding_node) = (
+            ctx.enclosing_node?,
+            ctx.enclosing_node()?,
+            ctx.preceding_node?,
+        );
         if matches!(node, N::ExpressionStatement(ExpressionStatement::Stmt(_))) {
-            return trailing(enclosing);
+            return trailing(enclosing_node);
         }
-        let is_assignment = matches!(preceding, Owner::Node(N::AssignmentExpression(_)));
-        let is_arrow = matches!(preceding, Owner::Node(N::ArrowFunctionExpression(_)));
-        let is_right = self.right_of_assignment(node) == Some(preceding);
-        let is_body = matches!(node, N::ArrowFunctionExpression(func) if self.body_of_arrow(func) == preceding);
+        let is_assignment = matches!(preceding_node, Owner::Node(N::AssignmentExpression(_)));
+        let is_arrow = matches!(preceding_node, Owner::Node(N::ArrowFunctionExpression(_)));
+        let is_right = self.right_of_assignment(node) == Some(preceding_node);
+        let is_body = matches!(node, N::ArrowFunctionExpression(func) if self.body_of_arrow(func) == preceding_node);
         if ((is_assignment && is_right) || (is_arrow && is_body))
-            && let Some(statement) = self.enclosing_assignment_chain_expression_statement(enclosing)
+            && let Some(statement) =
+                self.enclosing_assignment_chain_expression_statement(enclosing_node)
         {
             return trailing(statement);
         }
@@ -2388,7 +2336,7 @@ impl<'a> Attacher<'a, '_> {
             || is_body
             || match node {
                 N::VariableDeclarator(declaration) => {
-                    declaration.init().map(|e| tree.of_expr(e)) == Some(preceding)
+                    declaration.init().map(|e| tree.owner_of_expr(e)) == Some(preceding_node)
                 }
                 N::ReturnStatement(_) => true,
                 _ => false,
@@ -2396,29 +2344,31 @@ impl<'a> Attacher<'a, '_> {
         if !is_whole_right_side {
             return None;
         }
-        match preceding {
+        match preceding_node {
             Owner::Node(N::SequenceExpression(e)) => match e.kind() {
-                ExprKind::Binary { right, .. } => trailing(tree.of_expr(right)),
+                ExprKind::Binary { right, .. } => trailing(tree.owner_of_expr(right)),
                 _ => None,
             },
-            Owner::Node(it @ N::AssignmentExpression(_)) => trailing(self.right_of_assignment(it)?),
+            Owner::Node(assignment @ N::AssignmentExpression(_)) => {
+                trailing(self.right_of_assignment(assignment)?)
+            }
             _ => None,
         }
     }
 
-    fn handle_union_type_leading_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
-        let following = c.following?;
-        (self.should_attach_to_union_type_first_element(following, c)).then_some(())?;
-        leading(self.tree.types(following).next()?)
+    fn handle_union_type_leading_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
+        let following_node = ctx.following_node?;
+        (self.should_attach_to_union_type_first_element(following_node, ctx)).then_some(())?;
+        leading(self.tree.types(following_node).next()?)
     }
 
     // ── attach/*.js ──
 
-    fn handle_for_x_statement_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_for_x_statement_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
         let (N::ForStatement(statement)
         | N::ForInStatement(statement)
-        | N::ForOfStatement(statement)) = c.enclosing_node()?
+        | N::ForOfStatement(statement)) = ctx.enclosing_node()?
         else {
             return None;
         };
@@ -2428,83 +2378,85 @@ impl<'a> Attacher<'a, '_> {
         else {
             return None;
         };
-        let following = c.following.filter(|it| *it == tree.of_stmt(body))?;
-        let closing = tree.last_index_of(b")", tree.loc_start(following));
-        (i64::from(c.comment.span.start) > closing).then_some(())?;
-        leading(following)
+        let following_node = ctx
+            .following_node
+            .filter(|owner| *owner == tree.owner_of_stmt(body))?;
+        let closing = tree.last_index_of(b")", tree.loc_start(following_node));
+        (i64::from(ctx.comment.span.start) > closing).then_some(())?;
+        leading(following_node)
     }
 
-    fn handle_if_statement_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_if_statement_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let N::IfStatement(statement) = c.enclosing_node()? else {
+        let N::IfStatement(statement) = ctx.enclosing_node()? else {
             return None;
         };
         let StmtKind::If { yes, no, .. } = statement.kind() else {
             return None;
         };
-        let following = c.following?;
-        if tree.next_character(c.comment.span.end) == Some(b')') {
-            return trailing(c.preceding?);
+        let following_node = ctx.following_node?;
+        if tree.next_character(ctx.comment.span.end) == Some(b')') {
+            return trailing(ctx.preceding_node?);
         }
-        let consequent = tree.of_stmt(yes);
-        if following == consequent {
-            return leading(following);
+        let consequent = tree.owner_of_stmt(yes);
+        if following_node == consequent {
+            return leading(following_node);
         }
-        let preceding = c.preceding.filter(|it| *it == consequent)?;
-        if Some(following) != no.map(|it| tree.of_stmt(it)) {
+        let preceding_node = ctx.preceding_node.filter(|owner| *owner == consequent)?;
+        if Some(following_node) != no.map(|statement| tree.owner_of_stmt(statement)) {
             return None;
         }
         // `handleCommentsBetween`
-        let else_token = tree.index_of(b"else", tree.loc_end(preceding));
-        if i64::from(c.comment.span.start) >= else_token {
-            return leading(following);
+        let else_token = tree.index_of(b"else", tree.loc_end(preceding_node));
+        if i64::from(ctx.comment.span.start) >= else_token {
+            return leading(following_node);
         }
-        if !tree.is_block_statement(preceding)
-            && tree.is_single_line_comment(c.comment)
-            && !tree.has_newline_between(tree.loc_end(preceding), c.comment.span.start)
+        if !tree.is_block_statement(preceding_node)
+            && tree.is_single_line_comment(ctx.comment)
+            && !tree.has_newline_between(tree.loc_end(preceding_node), ctx.comment.span.start)
         {
-            return trailing(preceding);
+            return trailing(preceding_node);
         }
-        dangling(c.enclosing?)
+        dangling(ctx.enclosing_node?)
     }
 
-    fn handle_switch_statement_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_switch_statement_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let N::SwitchStatement(statement) = c.enclosing_node()? else {
+        let N::SwitchStatement(statement) = ctx.enclosing_node()? else {
             return None;
         };
         let StmtKind::Switch { expr, cases } = statement.kind() else {
             return None;
         };
         let is_in_empty_braces = cases.is_empty()
-            && c.following.is_none()
-            && c.preceding == Some(tree.of_expr(expr))
-            && tree.next_character(c.comment.span.end) == Some(b'}');
+            && ctx.following_node.is_none()
+            && ctx.preceding_node == Some(tree.owner_of_expr(expr))
+            && tree.next_character(ctx.comment.span.end) == Some(b'}');
         is_in_empty_braces.then_some(())?;
-        dangling(c.enclosing?)
+        dangling(ctx.enclosing_node?)
     }
 
-    fn handle_while_like_comments(&mut self, c: &Context<'a>) -> Handled<'a> {
+    fn handle_while_like_comments(&mut self, ctx: &Context<'a>) -> Handled<'a> {
         let tree = &self.tree;
-        let (N::WhileStatement(statement) | N::WithStatement(statement)) = c.enclosing_node()?
+        let (N::WhileStatement(statement) | N::WithStatement(statement)) = ctx.enclosing_node()?
         else {
             return None;
         };
         let (StmtKind::While { body, .. } | StmtKind::With { body, .. }) = statement.kind() else {
             return None;
         };
-        let following = c.following?;
-        if tree.next_character(c.comment.span.end) == Some(b')') {
-            return trailing(c.preceding?);
+        let following_node = ctx.following_node?;
+        if tree.next_character(ctx.comment.span.end) == Some(b')') {
+            return trailing(ctx.preceding_node?);
         }
-        (following == tree.of_stmt(body)).then_some(())?;
-        leading(following)
+        (following_node == tree.owner_of_stmt(body)).then_some(())?;
+        leading(following_node)
     }
 }
 
 // ───────────────────────────── for the tests ─────────────────────────────
 
-/// A line for each comment: where it is, and what it is attached to. And one for each node that is ignored without owning
+/// A text_position for each comment: where it is, and what it is attached to. And one for each node that is ignored without owning
 /// the comment that says so. The tests compare this with what Prettier does.
 pub(crate) fn list<'a>(
     file: &'a File<'a>,
@@ -2519,7 +2471,7 @@ pub(crate) fn list<'a>(
         text: file.text(),
         comments,
         options,
-        cast_parentheses: Vec::new(),
+        cast_paren_starts: Vec::new(),
         may_have_decorators: true,
     };
     let describe = |owner: Owner<'a>| {
@@ -2540,10 +2492,10 @@ pub(crate) fn list<'a>(
             continue;
         }
         let (name, span) = describe(attachment.owner);
-        let position = match attachment.position {
-            Position::Leading => "L",
-            Position::Trailing => "T",
-            Position::Dangling => "D",
+        let placement = match attachment.placement {
+            Placement::Leading => "L",
+            Placement::Trailing => "T",
+            Placement::Dangling => "D",
         };
         let marker = match attachment.marker {
             Marker::None | Marker::InIgnoredNode => "-",
@@ -2551,10 +2503,10 @@ pub(crate) fn list<'a>(
             Marker::Implements => "implements",
             Marker::Extends => "extends",
         };
-        let mut line = Vec::new();
+        let mut text_position = Vec::new();
         let _ = write!(
-            line,
-            "C {} {} {position} {name} {} {} {marker}{}",
+            text_position,
+            "C {} {} {placement} {name} {} {} {marker}{}",
             comment.span.start,
             comment.span.end,
             span.start,
@@ -2565,17 +2517,17 @@ pub(crate) fn list<'a>(
                 ""
             },
         );
-        lines.push((comment.span.start, line));
+        lines.push((comment.span.start, text_position));
     }
     for owner in &attached.ignored {
         let (name, span) = describe(*owner);
-        let mut line = Vec::new();
-        let _ = write!(line, "I {name} {} {}", span.start, span.end);
-        lines.push((span.start, line));
+        let mut text_position = Vec::new();
+        let _ = write!(text_position, "I {name} {} {}", span.start, span.end);
+        lines.push((span.start, text_position));
     }
-    crate::sort::sort_by_key(&mut lines, |it| it.0);
-    for (_, line) in lines {
-        out.extend_from_slice(&line);
+    crate::sort::sort_by_key(&mut lines, |text_position| text_position.0);
+    for (_, text_position) in lines {
+        out.extend_from_slice(&text_position);
         out.push(b'\n');
     }
 }

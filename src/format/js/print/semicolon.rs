@@ -103,23 +103,3 @@ pub(crate) fn start_of_comments_in_dropped_parentheses<'a>(
         && !f.comments().has_trailing_suppression_comment(position))
     .then_some(position)
 }
-
-/// The same for the `;` of `statement`.
-pub(crate) fn start_of_comments_behind_semicolon<'a>(
-    statement: Stmt<'a>,
-    f: &Formatter<'a>,
-) -> Option<u32> {
-    if f.is_quiet() || !comments_in_dropped_parentheses_go_behind_semicolon(f) {
-        return None;
-    }
-    match statement.kind() {
-        StmtKind::Expr(e) => start_of_comments_in_dropped_parentheses(e, Some(false), f),
-        StmtKind::Var(declarations) => (declarations.last())
-            .and_then(VarDecl::init)
-            .and_then(|e| start_of_comments_in_dropped_parentheses(e, Some(true), f)),
-        // Those in the parentheses around all of it stay there.
-        StmtKind::Return(Some(e)) => start_of_comments_in_dropped_parentheses(e, None, f)
-            .filter(|&position| position < e.span().end),
-        _ => None,
-    }
-}

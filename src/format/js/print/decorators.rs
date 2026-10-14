@@ -110,32 +110,27 @@ impl<'a> Format<'a> for FormatDecorator<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let expression = self.0;
         let node = AstNodes::Decorator(expression);
-        format_node(
-            self.span(),
-            || node.parent(),
-            f,
-            |f| {
-                // `@a`, `@a.b`, `@a.b()` are written as they are. Anything else is in parentheses.
-                let needs_parentheses = match expression.as_ast_nodes() {
-                    AstNodes::IdentifierReference(_) => false,
-                    AstNodes::CallExpression(call) => !call
-                        .callee()
-                        .is_some_and(is_identifier_or_static_member_only),
-                    AstNodes::StaticMemberExpression(member) => !member
-                        .object()
-                        .is_some_and(is_identifier_or_static_member_only),
-                    _ => true,
-                };
-                write!(
-                    f,
-                    [
-                        "@",
-                        needs_parentheses.then_some("("),
-                        expression,
-                        needs_parentheses.then_some(")")
-                    ]
-                );
-            },
-        );
+        format_node(node, f, |f| {
+            // `@a`, `@a.b`, `@a.b()` are written as they are. Anything else is in parentheses.
+            let needs_parentheses = match expression.as_ast_nodes() {
+                AstNodes::IdentifierReference(_) => false,
+                AstNodes::CallExpression(call) => !call
+                    .callee()
+                    .is_some_and(is_identifier_or_static_member_only),
+                AstNodes::StaticMemberExpression(member) => !member
+                    .object()
+                    .is_some_and(is_identifier_or_static_member_only),
+                _ => true,
+            };
+            write!(
+                f,
+                [
+                    "@",
+                    needs_parentheses.then_some("("),
+                    expression,
+                    needs_parentheses.then_some(")")
+                ]
+            );
+        });
     }
 }

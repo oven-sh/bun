@@ -50,12 +50,7 @@ pub(crate) fn write_try_statement<'a>(
     if let Some(handler) = handler {
         write!(f, space());
         let node = AstNodes::CatchClause(statement);
-        format_node_without_comments(
-            node.span(),
-            || node.parent(),
-            f,
-            |f| write_catch_clause(node, param, handler, f),
-        );
+        format_node_without_comments(node, f, |f| write_catch_clause(node, param, handler, f));
     }
     if let Some(finalizer) = finalizer {
         // `} /* comment */ finally {`
@@ -134,12 +129,9 @@ fn write_catch_clause<'a>(
     if let Some(param) = param {
         write!(f, space());
         let parameter = format_with(|f| {
-            format_node_without_comments(
-                param.span(),
-                || node,
-                f,
-                |f| write_catch_parameter(param, body, f),
-            );
+            format_node_without_comments(AstNodes::CatchParameter(param), f, |f| {
+                write_catch_parameter(param, body, f)
+            });
         });
         // The parentheses are no part of what is written as it is.
         match !f.is_quiet() && f.comments().is_suppressed(param.span().start) {

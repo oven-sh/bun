@@ -999,10 +999,14 @@ pub fn format_for_tests(
     })
 }
 
-/// What each comment of the file at `path` is attached to, a line for each. `None` if the file has a syntax error.
-pub fn comments_for_tests(path: &[u8], text: &[u8]) -> Option<Vec<u8>> {
+/// A line for each comment of the file at `path`: the node that owns it, or with `only_unprinted` the comments that no
+/// printer has printed. `None` if the file has a syntax error.
+pub fn debug_comments(path: &[u8], text: &[u8], only_unprinted: bool) -> Option<Vec<u8>> {
     let options = FormatOptions {
-        lists_comments: true,
+        debug_comments: match only_unprinted {
+            true => bun_format::options::DebugComments::Unprinted,
+            false => bun_format::options::DebugComments::Owners,
+        },
         ..FormatOptions::default()
     };
     Some(format_for_tests(path, text, &options).ok()?.0)

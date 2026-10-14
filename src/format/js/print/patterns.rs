@@ -77,13 +77,12 @@ pub(crate) fn write_array_pattern_element<'a>(element: PatElem<'a>, f: &mut Form
     let Some(pat) = element.pat() else {
         return;
     };
-    let parent = || crate::js::ast_nodes::node_as_ast_nodes(element.parent());
     if is_rest_element(element) {
-        format_node(element.span(), parent, f, |f| write!(f, ["...", pat]));
+        let node = AstNodes::BindingRestElement(Node::PatElem(element));
+        format_node(node, f, |f| write!(f, ["...", pat]));
     } else if let Some(default) = element.default() {
-        format_node(element.span(), parent, f, |f| {
-            write_assignment_pattern(pat, default, f)
-        });
+        let node = AstNodes::AssignmentPattern(Node::PatElem(element));
+        format_node(node, f, |f| write_assignment_pattern(pat, default, f));
     } else {
         pat.fmt(f);
     }
@@ -126,8 +125,7 @@ impl<'a> Format<'a> for FormatBindingPropertyValue<'a> {
         match property.default() {
             // With the parentheses of the default, as in ESTree.
             Some(default) => format_node(
-                value.span().to(default.outer_span()),
-                || AstNodes::BindingProperty(property),
+                AstNodes::AssignmentPattern(Node::PatProp(property)),
                 f,
                 |f| write_assignment_pattern(value, default, f),
             ),

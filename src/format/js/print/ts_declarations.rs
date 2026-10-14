@@ -6,14 +6,14 @@ use super::import_declaration::FormatStringLiteral;
 use super::intersection_type::lone_type_of_intersection_is_a_group;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
-use super::ts_types::{FormatModuleSpecifier, entity_name, write_ts_interface_signatures};
+use super::ts_types::{entity_name, write_ts_interface_signatures};
 use super::type_parameters::{FormatTSTypeParametersOptions, type_parameters};
 use super::union_type::{
     type_alias_union_breaks_after_operator, union_breaks_one_per_line, union_prints_itself,
     write_ts_union_type_in,
 };
 use crate::cursor::around_node;
-use crate::js::format::{format_node, identifier, write_trailing_comments_of};
+use crate::js::format::{format_name, format_node, identifier, write_trailing_comments_of};
 use crate::js::trivia::{comments_stay_between_head_and_body, write_head_body_separator};
 use crate::js::utils::assignment_like::{
     AssignmentLikeLayout, operator_line_run, write_comments_before_operator,
@@ -40,8 +40,7 @@ pub(crate) fn write_ts_interface_declaration<'a>(
     if f.file().is_flow() && super::flow::is_opaque_type(statement, f) {
         return super::flow::write_opaque_type(statement, interface, f);
     }
-    let node = AstNodes::TSInterfaceDeclaration(statement);
-    let id = identifier(interface.name(), node);
+    let id = identifier(interface.name());
     let type_params = interface.type_params();
     let extends = interface.extends();
     let body_span = interface.body_span();
@@ -195,7 +194,6 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
     if f.file().is_flow() && super::flow::write_what_is_no_type_alias(statement, alias, f) {
         return;
     }
-    let node = AstNodes::TSTypeAliasDeclaration(statement);
     let ty = without_lone_operator(alias.ty());
 
     // The comments before the `;` of an export are behind it: see `Comments::without_semicolon`.
@@ -219,7 +217,7 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
     let outer_group = f.reserve_tag();
     let left_group = f.reserve_tag();
     write!(f, [is_declared(statement).then_some("declare "), "type "]);
-    let id = identifier(alias.name(), node);
+    let id = identifier(alias.name());
     if alias.type_params().angle_brackets_span().is_some() {
         let type_parameters = type_parameters(alias.type_params(), Node::Stmt(statement));
         write!(f, [id, FormatNodeWithoutTrailingComments(&type_parameters)]);
@@ -464,7 +462,6 @@ pub(crate) fn write_ts_enum_declaration<'a>(
     declaration: Enum<'a>,
     f: &mut Formatter<'a>,
 ) {
-    let node = AstNodes::TSEnumDeclaration(statement);
     let is_const = statement
         .modifiers()
         .iter()
@@ -478,7 +475,7 @@ pub(crate) fn write_ts_enum_declaration<'a>(
             space(),
         ]
     );
-    let name = identifier(declaration.name(), node);
+    let name = identifier(declaration.name());
     if !f.is_quiet() && comments_stay_between_head_and_body(f) {
         write!(f, FormatNodeWithoutTrailingComments(&name));
         write_head_body_separator(declaration.body_span().start, f);
@@ -571,7 +568,6 @@ pub(crate) fn write_ts_module_declaration<'a>(
     module: Module<'a>,
     f: &mut Formatter<'a>,
 ) {
-    let node = statement.as_ast_nodes();
     let innermost = module.innermost();
     let body_span = innermost.body_span();
     write!(f, is_declared(statement).then_some("declare "));
@@ -592,14 +588,7 @@ pub(crate) fn write_ts_module_declaration<'a>(
         }
         ModuleName::String(name) => write!(
             f,
-            [
-                "module",
-                space(),
-                FormatStringLiteral {
-                    span: name.span(),
-                    parent: node
-                }
-            ]
+            ["module", space(), FormatStringLiteral { span: name.span() }]
         ),
         ModuleName::Ident(name) => {
             let keyword = if module.uses_module_keyword() {
@@ -607,13 +596,13 @@ pub(crate) fn write_ts_module_declaration<'a>(
             } else {
                 "namespace"
             };
-            write!(f, [keyword, space(), identifier(name, node)]);
+            write!(f, [keyword, space(), identifier(name)]);
         }
     }
     let mut current = module;
     while let Some(nested) = current.nested() {
         if let ModuleName::Ident(name) = nested.name() {
-            write!(f, [".", identifier(name, node)]);
+            write!(f, [".", identifier(name)]);
         }
         current = nested;
     }
@@ -635,26 +624,21 @@ pub(crate) fn write_ts_module_declaration<'a>(
         true => write_head_body_separator(span.start, f),
         false => write!(f, space()),
     }
-    format_node(
-        span,
-        || node,
-        f,
-        |f| {
-            write!(f, "{");
-            match is_empty_block(innermost.body()) {
-                // Prettier's `printBlock` does not know Flow's `declare namespace`.
-                true if f.file().is_flow()
-                    && !module.uses_module_keyword()
-                    && !f.comments().has_comment_in_span(span) =>
-                {
-                    write!(f, hard_line_break());
-                }
-                true => write!(f, format_dangling_comments(span).with_block_indent()),
-                false => write!(f, block_indent(&FormatStatements(innermost.body()))),
+    format_node(AstNodes::TSModuleBlock(statement), f, |f| {
+        write!(f, "{");
+        match is_empty_block(innermost.body()) {
+            // Prettier's `printBlock` does not know Flow's `declare namespace`.
+            true if f.file().is_flow()
+                && !module.uses_module_keyword()
+                && !f.comments().has_comment_in_span(span) =>
+            {
+                write!(f, hard_line_break());
             }
-            write!(f, "}");
-        },
-    );
+            true => write!(f, format_dangling_comments(span).with_block_indent()),
+            false => write!(f, block_indent(&FormatStatements(innermost.body()))),
+        }
+        write!(f, "}");
+    });
 }
 
 /// `require(/* comment */ "a")` is on three lines for oxfmt, whatever the comment is.
@@ -668,14 +652,13 @@ pub(crate) fn write_ts_import_equals_declaration<'a>(
     import: ImportEquals<'a>,
     f: &mut Formatter<'a>,
 ) {
-    let node = AstNodes::TSImportEqualsDeclaration(statement);
     write!(
         f,
         [
             "import",
             space(),
             import.flags().contains(Flags::TYPE_ONLY).then_some("type "),
-            identifier(import.name(), node),
+            identifier(import.name()),
             space(),
             "=",
             space()
@@ -686,34 +669,25 @@ pub(crate) fn write_ts_import_equals_declaration<'a>(
         import.require_span(),
         statement.module_specifier_span(),
     ) {
-        (ImportEqualsTarget::Entity(name), ..) => write!(f, entity_name(name, node)),
+        (ImportEqualsTarget::Entity(name), ..) => write!(f, entity_name(name)),
         (ImportEqualsTarget::Require(_), Some(require_span), Some(span)) => {
-            format_node(
-                require_span,
-                || node,
-                f,
-                |f| {
-                    let expression = FormatModuleSpecifier {
-                        span,
-                        parent: node,
-                        call_span: require_span,
-                    };
-                    match f.comments().has_comment_in_span(require_span) {
-                        true if require_with_comment_breaks(f) => {
-                            write!(f, ["require(", block_indent(&expression), ")"])
-                        }
-                        true => write!(
-                            f,
-                            group(&format_args!(
-                                "require(",
-                                soft_block_indent(&expression),
-                                ")"
-                            ))
-                        ),
-                        false => write!(f, ["require(", expression, ")"]),
+            format_name(require_span, f, |f| {
+                let expression = FormatStringLiteral { span };
+                match f.comments().has_comment_in_span(require_span) {
+                    true if require_with_comment_breaks(f) => {
+                        write!(f, ["require(", block_indent(&expression), ")"])
                     }
-                },
-            );
+                    true => write!(
+                        f,
+                        group(&format_args!(
+                            "require(",
+                            soft_block_indent(&expression),
+                            ")"
+                        ))
+                    ),
+                    false => write!(f, ["require(", expression, ")"]),
+                }
+            });
         }
         _ => {}
     }
@@ -730,8 +704,6 @@ pub(crate) fn write_ts_namespace_export_declaration<'a>(
     statement: Stmt<'a>,
     f: &mut Formatter<'a>,
 ) {
-    let id = statement
-        .namespace_export_name()
-        .map(|it| identifier(it, AstNodes::TSNamespaceExportDeclaration(statement)));
+    let id = statement.namespace_export_name().map(|it| identifier(it));
     write!(f, ["export as namespace ", id, OptionalSemicolon]);
 }

@@ -1,8 +1,5 @@
 use crate::js::comments::inner_of_link;
-use crate::js::format::{
-    FormatNonNullMarks, identifier, no_comment_trails_what_is_before_another,
-    write_trailing_comments_of,
-};
+use crate::js::format::{FormatNonNullMarks, identifier, write_trailing_comments_of};
 use crate::js::print::call_like_expression::FormatTypeArguments;
 use crate::js::print::call_like_expression::arguments::FormatArguments;
 use crate::js::print::member_expression::write_lookup_without_comments;
@@ -79,18 +76,12 @@ pub(super) fn call_of_callee(callee: Expr<'_>) -> Option<Call<'_>> {
     }
 }
 
-/// `a.b⏎// comment⏎.c()`: for oxfmt the comment stays on its line, before `.c`.
-fn comment_that_starts_line_leads_next_link(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt() && no_comment_trails_what_is_before_another(f)
-}
-
 /// The comments behind a link of the chain.
 fn write_trailing_comments_of_member<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
     match call_of_callee(member) {
         Some(call) => {
             write_callee_trailing_comments(call, member.span().end, f);
         }
-        None if comment_that_starts_line_leads_next_link(f) => {}
         None => write_trailing_comments_of(member.as_chain_element(), f),
     }
 }
@@ -136,11 +127,7 @@ impl<'a> ChainMember<'a> {
                 };
                 write!(
                     f,
-                    [
-                        member.is_optional().then_some("?"),
-                        ".",
-                        identifier(name, member.as_chain_element())
-                    ]
+                    [member.is_optional().then_some("?"), ".", identifier(name)]
                 );
             }
             Self::TSNonNullExpression(e) => write!(f, FormatNonNullMarks(e)),

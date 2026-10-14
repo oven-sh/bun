@@ -1,6 +1,6 @@
 use super::program::is_next_line_empty;
 use super::semicolon::OptionalSemicolon;
-use crate::js::format::{format_node, identifier};
+use crate::js::format::{format_name, identifier};
 use crate::js::utils::object::FormatKey;
 use crate::js::utils::string::{
     FormatLiteralStringToken, StringLiteralParentKind, is_name_without_quotes,
@@ -9,41 +9,27 @@ use crate::prelude::*;
 use crate::{format_args, write};
 
 /// A string literal that is not an expression here: a module specifier.
-pub(crate) struct FormatStringLiteral<'a> {
+pub(crate) struct FormatStringLiteral {
     pub(crate) span: Span,
-    pub(crate) parent: AstNodes<'a>,
 }
 
-impl<'a> Format<'a> for FormatStringLiteral<'a> {
+impl<'a> Format<'a> for FormatStringLiteral {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        format_node(
-            self.span,
-            || self.parent,
-            f,
-            |f| {
-                let string = f.source_text().text_for(&self.span);
-                write!(
-                    f,
-                    FormatLiteralStringToken::new(
-                        string,
-                        false,
-                        StringLiteralParentKind::Expression
-                    )
-                );
-            },
-        );
+        format_name(self.span, f, |f| {
+            let string = f.source_text().text_for(&self.span);
+            write!(
+                f,
+                FormatLiteralStringToken::new(string, false, StringLiteralParentKind::Expression)
+            );
+        });
     }
 }
 
 /// ESTree's `ModuleExportName`: `a`, or `"a"`.
-pub(crate) fn module_export_name<'a>(name: Ident<'a>, parent: AstNodes<'a>) -> impl Format<'a> {
+pub(crate) fn module_export_name<'a>(name: Ident<'a>) -> impl Format<'a> {
     format_with(move |f: &mut Formatter<'a>| match name.is_string() {
-        true => FormatStringLiteral {
-            span: name.span(),
-            parent,
-        }
-        .fmt(f),
-        false => identifier(name, parent).fmt(f),
+        true => FormatStringLiteral { span: name.span() }.fmt(f),
+        false => identifier(name).fmt(f),
     })
 }
 
@@ -52,11 +38,10 @@ pub(crate) fn format_import_and_export_source_with_clause<'a>(
     statement: Stmt<'a>,
     f: &mut Formatter<'a>,
 ) {
-    let parent = statement.as_ast_nodes();
     let Some(span) = statement.module_specifier_span() else {
         return;
     };
-    let source = FormatStringLiteral { span, parent };
+    let source = FormatStringLiteral { span };
     let Some(with_clause) = statement.import_attributes() else {
         return write!(f, source);
     };
@@ -114,31 +99,22 @@ pub(crate) fn write_import_declaration<'a>(
 
 /// `a, * as b`, `a, { b, c }`
 fn write_import_specifiers<'a>(statement: Stmt<'a>, import: Import<'a>, f: &mut Formatter<'a>) {
-    let node = AstNodes::ImportDeclaration(statement);
     let named = import.named();
     // `import a, {} from "a"` is `import a from "a"`.
     let has_braces = import.has_named_imports()
         && !(named.is_empty() && (import.default().is_some() || import.namespace().is_some()));
 
     if let Some(default) = import.default() {
-        write!(f, identifier(default, node));
+        write!(f, identifier(default));
         if import.namespace().is_none() && !has_braces {
             return;
         }
         write!(f, [",", space()]);
     }
     if let (Some(namespace), Some(span)) = (import.namespace(), import.namespace_span()) {
-        format_node(
-            span,
-            || node,
-            f,
-            |f| {
-                write!(
-                    f,
-                    ["*", space(), "as", space(), identifier(namespace, node)]
-                )
-            },
-        );
+        format_name(span, f, |f| {
+            write!(f, ["*", space(), "as", space(), identifier(namespace)])
+        });
         if !has_braces {
             return;
         }
@@ -339,17 +315,16 @@ impl<'a> Format<'a> for FormatCommentsInSpecifier {
 
 /// `a`, `a as b`, `type a`
 pub(crate) fn write_import_specifier<'a>(specifier: ImportSpec<'a>, f: &mut Formatter<'a>) {
-    let node = AstNodes::ImportSpecifier(specifier);
     let kind = specifier
         .is_type_only()
         .then(|| super::flow::import_kind(specifier.span().start, f));
     write!(f, [FormatCommentsInSpecifier(specifier.span()), kind]);
-    let local = identifier(specifier.local(), node);
+    let local = identifier(specifier.local());
     match specifier.is_renamed() {
         true => write!(
             f,
             [
-                module_export_name(specifier.imported(), node),
+                module_export_name(specifier.imported()),
                 space(),
                 "as",
                 space(),
@@ -481,7 +456,7 @@ impl<'a> Format<'a> for FormatImportAttribute<'a> {
                     StringLiteralParentKind::ImportAttribute,
                 )
                 .clean_text(f);
-                format_node(span, || node, f, |f| write!(f, format));
+                format_name(span, f, |f| write!(f, format));
             }
             Some(key) => write!(f, FormatKey::new(key, node)),
             None => {}

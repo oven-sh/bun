@@ -49,16 +49,21 @@ impl FormatCommand {
             }
             Global::exit(0);
         }
-        // `--debug-comments <directory> <file> ..`, for the tests: writes what each comment of a file is attached to into
-        // `<directory>/<file>.txt`.
+        // `--debug-comments <directory> <file> ..`, for the tests: writes which node owns each comment of a file into
+        // `<directory>/<file>.txt`. `--debug-unprinted-comments`: the comments that no printer has printed.
         if HAS_TEST_RUNNER
             && let [flag, directory, files @ ..] = args
-            && flag.as_bytes() == b"--debug-comments"
+            && matches!(
+                flag.as_bytes(),
+                b"--debug-comments" | b"--debug-unprinted-comments"
+            )
         {
+            let only_unprinted = flag.as_bytes() == b"--debug-unprinted-comments";
             for file in files {
                 let path = file.as_bytes();
-                let listed = bun_format_conformance::read_file(path)
-                    .and_then(|text| bun_lint_driver::fmt::comments_for_tests(path, &text));
+                let listed = bun_format_conformance::read_file(path).and_then(|text| {
+                    bun_lint_driver::fmt::debug_comments(path, &text, only_unprinted)
+                });
                 let listed = listed.unwrap_or_else(|| b"REFUSED\n".to_vec());
                 let out = [directory.as_bytes(), b"/", path, b".txt"].concat();
                 bun_format_conformance::write_file(&out, &listed);

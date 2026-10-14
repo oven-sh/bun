@@ -448,13 +448,6 @@ impl<'a> Format<'a> for FormatForHead<'a> {
             _ => write!(f, self.0),
         }
     }
-
-    fn as_node(&self) -> Option<Node<'a>> {
-        match self.0.kind() {
-            StmtKind::Expr(expression) => expression.as_node(),
-            _ => None,
-        }
-    }
 }
 
 /// See `comments_stay_between_head_and_body`: `node`, which is before one of the two `;` in the head of
@@ -838,7 +831,7 @@ pub(crate) fn write_if_statement<'a>(
 fn write_jump<'a>(keyword: &'static str, statement: Stmt<'a>, f: &mut Formatter<'a>) {
     write!(f, keyword);
     if let Some(label) = statement.label() {
-        write!(f, [space(), identifier(label, statement.as_ast_nodes())]);
+        write!(f, [space(), identifier(label)]);
     }
     write!(f, OptionalSemicolon);
 }

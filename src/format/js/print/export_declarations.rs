@@ -167,7 +167,7 @@ pub(crate) fn write_export_all_declaration<'a>(statement: Stmt<'a>, f: &mut Form
         format_import_and_export_source_with_clause(statement, f);
         return write!(f, OptionalSemicolon);
     };
-    let format_name = module_export_name(name, AstNodes::ExportAllDeclaration(statement));
+    let format_name = module_export_name(name);
     if f.is_quiet() {
         write!(f, ["*", space(), "as", space(), format_name, space()]);
     } else {
@@ -279,7 +279,6 @@ fn write_export_source<'a>(statement: Stmt<'a>, export: Export<'a>, f: &mut Form
 
 /// `a`, `a as b`, `type a`
 pub(crate) fn write_export_specifier<'a>(specifier: ExportSpec<'a>, f: &mut Formatter<'a>) {
-    let node = AstNodes::ExportSpecifier(specifier);
     write!(
         f,
         [
@@ -287,12 +286,12 @@ pub(crate) fn write_export_specifier<'a>(specifier: ExportSpec<'a>, f: &mut Form
             specifier.is_type_only().then_some("type ")
         ]
     );
-    let exported = module_export_name(specifier.exported(), node);
+    let exported = module_export_name(specifier.exported());
     match specifier.is_renamed() {
         true => write!(
             f,
             [
-                module_export_name(specifier.local(), node),
+                module_export_name(specifier.local()),
                 space(),
                 "as",
                 space(),

@@ -3,8 +3,9 @@
 use super::element::Interned;
 use super::formatter::Formatter;
 use crate::cursor::CursorRegion;
-use crate::js::comments::{ParsedBy, collect};
+use crate::js::comments::{self, ParsedBy};
 use crate::js::context::JsFormatContext;
+use crate::options::DebugComments;
 use crate::{FormatError, FormatOptions};
 use bun_lint::ast::File;
 
@@ -13,6 +14,8 @@ use bun_lint::ast::File;
 pub struct Scratch {
     formatter: super::formatter::FormatterBuffers,
     printer: super::printer::PrinterBuffers,
+    /// A line for each comment of the last file that no printer has printed.
+    unprinted_comments: Vec<u8>,
 }
 
 /// Appends the formatted text of `file` to `out`: the document that `write` writes. Returns where the ends of `cursor` are
@@ -25,18 +28,22 @@ pub(crate) fn format_with_marks<'a>(
     out: &mut Vec<u8>,
     write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
 ) -> Result<[Option<u32>; 2], FormatError> {
-    if options.lists_comments {
+    if options.debug_comments == DebugComments::Owners {
         let mut comments = Vec::new();
-        crate::js::comments::collect_where_they_are(file, options.flavor, &mut comments);
-        let how = crate::js::attach::Options {
+        crate::js::comments::collect_in_source_order(file, options.flavor, &mut comments);
+        let attach_options = crate::js::attach::Options {
             has_tree_of_babel: file.is_javascript(),
             experimental_ternaries: options.experimental_ternaries,
         };
-        crate::js::attach::list(file, &comments, how, out);
+        crate::js::attach::list(file, &comments, attach_options, out);
         return Ok([None; 2]);
     }
-    let root = write_document(file, options, cursor, scratch, write)?;
-    print(root, file.text(), options, scratch, out)?;
+    let root = write_document(file, options, cursor, scratch, write);
+    if options.debug_comments == DebugComments::Unprinted {
+        out.append(&mut scratch.unprinted_comments);
+        return Ok([None; 2]);
+    }
+    print(root?, file.text(), options, scratch, out)?;
     Ok(scratch.printer.marks)
 }
 
@@ -77,20 +84,7 @@ fn write_document<'a>(
     if file.has_parse_errors() {
         return Err(FormatError::SyntaxError);
     }
-    // The file keeps them, so that they live as long as the handles.
-    let comments = file.extension(|| {
-        let mut comments = Vec::new();
-        collect(
-            file,
-            options.flavor,
-            ParsedBy::WhatItsNameSays,
-            &mut comments,
-        );
-        comments
-    });
-    let comments = comments.map_or(&[][..], |comments: &Vec<crate::js::comments::Comment>| {
-        comments
-    });
+    let comments = comments::of_file(file, options, ParsedBy::WhatItsNameSays);
     let mut context = JsFormatContext::new(file, options.clone(), comments);
     context.cursor = cursor;
     write_with(context, file.text(), scratch, |f| write(file, f))
@@ -113,10 +107,26 @@ pub(crate) fn write_with<'a>(
 /// Gives the vectors of `formatter` back to `scratch`. Returns where the document is.
 fn finish(formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, FormatError> {
     let ran_out_of_stack = formatter.context().ran_out_of_stack;
+    scratch.unprinted_comments.clear();
+    for comment in formatter.context().comments().unprinted() {
+        use std::io::Write;
+        let owner = (crate::js::ast_nodes::AST_KIND_NAMES)
+            .get(comment.owner_kind() as usize)
+            .unwrap_or(&"Name");
+        let _ = writeln!(
+            scratch.unprinted_comments,
+            "{} {} {:?} {owner}",
+            comment.span.start, comment.span.end, comment.placement
+        );
+    }
     let (root, buffers) = formatter.finish();
     scratch.formatter = buffers;
     if ran_out_of_stack {
         return Err(FormatError::NestedTooDeeply);
+    }
+    // Prettier's `ensureAllCommentsPrinted`: a file is left alone rather than written without one of its comments.
+    if !scratch.unprinted_comments.is_empty() {
+        return Err(FormatError::InvalidDocument);
     }
     Ok(root)
 }

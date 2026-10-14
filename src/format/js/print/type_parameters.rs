@@ -22,10 +22,7 @@ pub(crate) fn write_ts_type_parameter<'a>(param: TypeParam<'a>, f: &mut Formatte
             }
         }
     }
-    write!(
-        f,
-        identifier(param.name(), AstNodes::TSTypeParameter(param))
-    );
+    write!(f, identifier(param.name()));
 
     match param.constraint() {
         Some(constraint) if is_flow => {
@@ -167,12 +164,7 @@ impl<'a> Format<'a> for FormatTSTypeParameters<'a> {
             return self.write_without_comments(f);
         }
         let node = AstNodes::TSTypeParameterDeclaration(self.owner);
-        format_node(
-            node.span(),
-            || node.parent(),
-            f,
-            |f| self.write_without_comments(f),
-        );
+        format_node(node, f, |f| self.write_without_comments(f));
     }
 }
 
@@ -267,12 +259,7 @@ impl<'a> Format<'a> for FormatTypeArguments<'a> {
             return self.write_without_comments(f);
         }
         let node = AstNodes::TSTypeParameterInstantiation(self.owner);
-        format_node(
-            node.span(),
-            || node.parent(),
-            f,
-            |f| self.write_without_comments(f),
-        );
+        format_node(node, f, |f| self.write_without_comments(f));
     }
 }
 

@@ -22,12 +22,9 @@ impl<'a> Format<'a> for FormatFormalParameters<'a> {
         if f.is_quiet() {
             return write_formal_parameters(func, f);
         }
-        format_node_without_comments(
-            self.span(),
-            || func.as_ast_nodes(),
-            f,
-            |f| write_formal_parameters(func, f),
-        );
+        format_node_without_comments(AstNodes::FormalParameters(func), f, |f| {
+            write_formal_parameters(func, f)
+        });
     }
 }
 

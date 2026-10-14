@@ -19,7 +19,7 @@ impl<'a> Node<'a> {
     pub fn for_each_child_near(self, offset: u32, mut visit: impl FnMut(Node<'a>)) {
         let near = Near {
             offset,
-            with_next: false,
+            include_next: false,
         };
         self.children_into(Some(near), &mut visit);
     }
@@ -28,7 +28,7 @@ impl<'a> Node<'a> {
     pub fn for_each_child_around(self, offset: u32, mut visit: impl FnMut(Node<'a>)) {
         let near = Near {
             offset,
-            with_next: true,
+            include_next: true,
         };
         self.children_into(Some(near), &mut visit);
     }

@@ -386,16 +386,13 @@ impl<'a> AssignmentLike<'a> {
                     return false;
                 };
                 match ty {
-                    // `a: T = // prettier-ignore`: the comment trails the name, which the type is part of.
-                    Some(ty)
-                        if !f.is_quiet()
-                            && f.comments().has_trailing_suppression_comment(ty.span().end) =>
-                    {
+                    // For Prettier the type annotation is part of the name, so both are copied.
+                    Some(ty) if !f.is_quiet() && f.comments().is_ignored(id.as_ast_nodes()) => {
                         let span = Span::new(id.span().start, ty.span().end);
                         write!(
                             f,
                             [
-                                format_leading_comments_of_ignored(span),
+                                leading_comments(id.as_ast_nodes()),
                                 FormatSuppressedNode(span)
                             ]
                         );

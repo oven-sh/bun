@@ -4,7 +4,6 @@
 //! and not what is in it: it asks [`is_cast_target`].
 
 use super::suppressed::FormatSuppressedNode;
-use crate::js::format::write_trailing_comments_of;
 use crate::prelude::*;
 use crate::{format_args, write};
 use smallvec::SmallVec;
@@ -32,13 +31,10 @@ fn cast_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> SmallVec<[Span; 2]> {
         .collect()
 }
 
-/// If `e` is in parentheses that stay, writes them with the comments around them, and `e` in them
-/// with `write_target`. Returns whether it has.
-///
-/// `node`: `e`, or the `ChainExpression` around it.
+/// If `e` is in parentheses that stay, writes them with the comments they own, and `e` in them with `write_target`.
+/// Returns whether it has.
 pub(crate) fn write_type_casts<'a>(
     e: Expr<'a>,
-    node: AstNodes<'a>,
     f: &mut Formatter<'a>,
     write_target: &dyn Fn(&mut Formatter<'a>),
 ) -> bool {
@@ -46,36 +42,19 @@ pub(crate) fn write_type_casts<'a>(
         return false;
     }
     let parentheses = cast_parentheses(e, f);
-    let Some(&outermost) = parentheses.first() else {
+    if parentheses.is_empty() {
         return false;
-    };
-    let is_suppressed = f.comments().is_suppressed(outermost.start)
-        || f.comments().has_trailing_suppression_comment(outermost.end);
-    match is_suppressed {
-        true => write!(
-            f,
-            [
-                format_leading_comments_of_ignored(outermost),
-                FormatSuppressedNode(outermost)
-            ]
-        ),
-        false => write!(
-            f,
-            [
-                format_leading_comments(outermost),
-                FormatParenthesizedExpression {
-                    target: e,
-                    parentheses: &parentheses,
-                    write_target,
-                }
-            ]
-        ),
     }
-    write_trailing_comments_of(node, f);
+    FormatParenthesizedExpression {
+        target: e,
+        parentheses: &parentheses,
+        write_target,
+    }
+    .fmt(f);
     true
 }
 
-/// Prettier's `ParenthesizedExpression`s around `target`, without the comments around the outermost.
+/// Prettier's `ParenthesizedExpression`s around `target`, from the outside in, each with the comments it owns.
 struct FormatParenthesizedExpression<'a, 'b> {
     target: Expr<'a>,
     parentheses: &'b [Span],
@@ -91,31 +70,35 @@ impl<'a> Format<'a> for FormatParenthesizedExpression<'a, '_> {
         if !f.context_mut().has_stack_left() {
             return;
         }
-        // The comments in the parentheses are written in them, also where those after the
-        // expression are left to somebody else.
-        let previous_limit = f.comments_mut().show_comments_up_to(span.end);
+        let skip_trailing = f.context_mut().take_skip_trailing_comments();
+        let owned = f.comments().of_cast_parens(span.start);
+        FormatLeadingComments::Comments(owned.leading).fmt(f);
+        if owned.is_ignored {
+            FormatSuppressedNode(span).fmt(f);
+        } else {
+            self.write_parentheses(span, inner, f);
+        }
+        if !skip_trailing {
+            FormatTrailingComments::Comments(owned.trailing).fmt(f);
+        }
+    }
+}
+
+impl<'a> FormatParenthesizedExpression<'a, '_> {
+    fn write_parentheses(&self, span: Span, inner: &[Span], f: &mut Formatter<'a>) {
         let target = self.target.span();
         let hugs = inner.is_empty()
             && matches!(self.target.kind(), ExprKind::Object(_) | ExprKind::Array(_))
-            && !f
-                .comments()
-                .has_comment_in_span(Span::before(span.start, target))
-            && !f
-                .comments()
-                .has_comment_in_span(Span::after(target, span.end));
-        let content = format_with(|f| {
-            if let Some(&next) = inner.first() {
-                write!(f, format_leading_comments(next));
-            }
-            let expression = FormatParenthesizedExpression {
-                parentheses: inner,
-                ..*self
-            };
-            write!(f, expression);
-            // Nothing follows the expression in here, so whatever is left trails it.
-            let comments = f.comments().comments_before(span.end);
-            write!(f, FormatTrailingComments::Comments(comments));
-        });
+            && f.comments()
+                .comments_in_span(Span::before(span.start, target))
+                .is_empty()
+            && f.comments()
+                .comments_in_span(Span::after(target, span.end))
+                .is_empty();
+        let content = FormatParenthesizedExpression {
+            parentheses: inner,
+            ..*self
+        };
         match hugs {
             true => write!(f, ["(", content, ")"]),
             false => write!(
@@ -123,6 +106,5 @@ impl<'a> Format<'a> for FormatParenthesizedExpression<'a, '_> {
                 group(&format_args!("(", soft_block_indent(&content), ")"))
             ),
         }
-        f.comments_mut().restore_view_limit(previous_limit);
     }
 }

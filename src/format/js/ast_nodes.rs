@@ -65,12 +65,51 @@ impl<'a> ExpressionStatement<'a> {
     }
 }
 
+impl<'a> From<ExpressionStatement<'a>> for Node<'a> {
+    fn from(statement: ExpressionStatement<'a>) -> Node<'a> {
+        match statement {
+            ExpressionStatement::Stmt(statement) => Node::Stmt(statement),
+            ExpressionStatement::ArrowBody(func) => Node::Func(func),
+        }
+    }
+}
+
 macro_rules! ast_nodes {
     ($($payload:ty { $($variant:ident)* })*) => {
         #[derive(Copy, Clone, PartialEq, Eq, Debug)]
         pub(crate) enum AstNodes<'a> {
             Program(Program<'a>),
             $($($variant($payload),)*)*
+        }
+
+        /// Which variant of [`AstNodes`].
+        #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+        #[repr(u8)]
+        pub(crate) enum AstKind {
+            Program,
+            $($($variant,)*)*
+        }
+
+        /// The names of the variants of [`AstKind`], by their number.
+        pub(crate) const AST_KIND_NAMES: &[&str] = &["Program", $($(stringify!($variant),)*)*];
+
+        impl<'a> AstNodes<'a> {
+            #[inline]
+            pub(crate) fn kind(self) -> AstKind {
+                match self {
+                    AstNodes::Program(_) => AstKind::Program,
+                    $($(AstNodes::$variant(_) => AstKind::$variant,)*)*
+                }
+            }
+
+            /// The node of `bun_lint::ast` that it is made of.
+            #[inline]
+            pub(crate) fn raw(self) -> Node<'a> {
+                match self {
+                    AstNodes::Program(file) => Node::File(file.0),
+                    $($(AstNodes::$variant(it) => Node::from(it),)*)*
+                }
+            }
         }
     };
 }

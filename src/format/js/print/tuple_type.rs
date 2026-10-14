@@ -66,7 +66,7 @@ pub(crate) fn write_ts_tuple_element<'a>(element: TupleElem<'a>, f: &mut Formatt
         Some(label) => write!(
             f,
             [
-                identifier(label, AstNodes::TSNamedTupleMember(element)),
+                identifier(label),
                 element.is_optional().then_some("?"),
                 ":",
                 space(),

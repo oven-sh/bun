@@ -48,7 +48,7 @@ fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, f: &mut For
     let property_start = property.start();
     let has_own_line_comment = f.comments().has_leading_own_line_comment(property_start);
     let is_inline = !has_own_line_comment && should_inline(e, object, start, f);
-    let property = identifier(property, e.as_chain_element());
+    let property = identifier(property);
 
     if is_inline {
         return write!(f, [operator, property]);

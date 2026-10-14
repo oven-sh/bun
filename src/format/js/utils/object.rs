@@ -9,7 +9,7 @@ use super::tailwindcss::{
     context_of_string, has_white_space, sorted_string_literal, sorted_template_text,
 };
 use crate::ir::width::string_width;
-use crate::js::format::format_node;
+use crate::js::format::format_name;
 use crate::prelude::*;
 use crate::write;
 use bun_lint::linter::goes_to_flow;
@@ -43,7 +43,7 @@ fn write_key<'a>(key: Key<'a>, parent: impl Fn() -> AstNodes<'a>, f: &mut Format
         };
     }
     let printed = printed_key(key, span, parent(), f);
-    format_node(span, parent, f, |f| match &printed {
+    format_name(span, f, |f| match &printed {
         Cow::Borrowed(_) if is_name => write!(f, source_text(span)),
         _ => write!(f, text(&printed)),
     });

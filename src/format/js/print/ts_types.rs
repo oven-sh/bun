@@ -8,10 +8,7 @@ use super::import_declaration::FormatStringLiteral;
 use super::object_like::ObjectLike;
 use super::type_parameters::type_arguments;
 use crate::cursor::extend_node;
-use crate::js::format::{
-    FormatTypeOfPredicate, identifier, no_comment_trails_what_is_before_another,
-    write_trailing_comments_of,
-};
+use crate::js::format::{FormatTypeOfPredicate, identifier, write_trailing_comments_of};
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::number::format_number_token;
@@ -25,17 +22,17 @@ use smallvec::SmallVec;
 use std::cell::Cell;
 
 /// `A.B.C`. `parent`: what it is a name in.
-pub(crate) fn entity_name<'a>(name: EntityName<'a>, parent: AstNodes<'a>) -> impl Format<'a> {
+pub(crate) fn entity_name<'a>(name: EntityName<'a>) -> impl Format<'a> {
     format_with(move |f: &mut Formatter<'a>| {
         if f.is_quiet() {
             f.join_with(".")
-                .entries(name.parts().map(|part| identifier(part, parent)));
+                .entries(name.parts().map(|part| identifier(part)));
             return;
         }
         // The next name is what follows a name, which `parent` does not tell.
         let mut parts = name.parts().peekable();
         while let Some(part) = parts.next() {
-            let part = identifier(part, parent);
+            let part = identifier(part);
             let Some(next) = parts.peek() else {
                 return write!(f, part);
             };
@@ -72,10 +69,7 @@ pub(crate) fn write_ts_type_reference<'a>(
     {
         return write!(
             f,
-            [
-                heritage_name(name, node),
-                type_arguments(args, Node::Type(ty))
-            ]
+            [heritage_name(name), type_arguments(args, Node::Type(ty))]
         );
     }
     if args.is_empty() && f.file().is_javascript() {
@@ -94,11 +88,8 @@ pub(crate) fn write_ts_type_reference<'a>(
                 .iter()
                 .any(|it| it.is_line());
             match name.len() {
-                1 => write!(
-                    f,
-                    FormatNodeWithoutTrailingComments(&identifier(last, node))
-                ),
-                _ => write!(f, entity_name(name, node)),
+                1 => write!(f, FormatNodeWithoutTrailingComments(&identifier(last))),
+                _ => write!(f, entity_name(name)),
             }
             write!(f, "<");
             match has_line_comment {
@@ -114,7 +105,7 @@ pub(crate) fn write_ts_type_reference<'a>(
         f,
         [
             wrap.then_some("("),
-            entity_name(name, node),
+            entity_name(name),
             type_arguments(args, Node::Type(ty)),
             wrap.then_some(")")
         ]
@@ -128,10 +119,10 @@ fn heritage_name_breaks_before_its_dots(f: &Formatter<'_>) -> bool {
 
 /// `A.B.C` after `extends` or `implements`. There it is a member expression in ESTree, which can
 /// break before its dots (Prettier's `printMemberExpression`).
-fn heritage_name<'a>(name: EntityName<'a>, parent: AstNodes<'a>) -> impl Format<'a> {
+fn heritage_name<'a>(name: EntityName<'a>) -> impl Format<'a> {
     format_with(move |f: &mut Formatter<'a>| {
         for (index, part) in name.parts().enumerate() {
-            let part = identifier(part, parent);
+            let part = identifier(part);
             match index {
                 0 => write!(f, part),
                 _ => write!(
@@ -307,50 +298,18 @@ struct FormatTSSignature<'a> {
     is_interface: bool,
 }
 
-/// A member, with the span that the comments after it are after.
-struct FormatMemberIn<'a>(Member<'a>, Span);
-
-impl<'a> Format<'a> for FormatMemberIn<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        self.0.fmt(f);
-    }
-}
-
-impl Spanned for FormatMemberIn<'_> {
-    fn span(&self) -> Span {
-        self.1
-    }
-}
-
 impl<'a> Format<'a> for FormatTSSignature<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let (signature, mut span) = (self.signature, self.signature.span());
+        let signature = self.signature;
+        let node = signature.as_ast_nodes();
         if !f.is_quiet() {
-            if f.comments().is_suppressed(span.start) {
+            if f.comments().is_ignored(node) {
                 write!(f, signature);
                 // It is not part of a member of Flow's.
                 if f.file().is_flow() {
                     self.write_separator(f);
                 }
                 return;
-            }
-            if f.comments().has_trailing_suppression_comment(span.end) {
-                write!(
-                    f,
-                    [
-                        format_leading_comments_of_ignored(span),
-                        FormatSuppressedNode(span)
-                    ]
-                );
-                return write_trailing_comments_of(signature.as_ast_nodes(), f);
-            }
-            // Prettier's `handleTSFunctionTrailingComments`: `a() /* comment */;`
-            if matches!(signature.as_ast_nodes(), AstNodes::TSMethodSignature(_))
-                && signature
-                    .func()
-                    .is_some_and(|func| func.return_type().is_none())
-            {
-                span = f.comments().without_semicolon(span);
             }
             // The `,` of Flow's is behind the comments that trail the member.
             if (f.file().is_flow() && !self.is_interface) || separator_is_behind_comments(f) {
@@ -359,18 +318,11 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
             }
         }
 
-        // The separator is not part of the member. The comments after the member are behind it.
-        write!(
-            f,
-            FormatNodeWithoutTrailingComments(&FormatMemberIn(signature, span))
-        );
+        // The separator is not part of the member. The comments that trail the member are behind it.
+        write!(f, FormatNodeWithoutTrailingComments(&signature));
         self.write_separator(f);
         extend_node(signature.span(), f);
-        if !f.is_quiet()
-            && !(self.next_signature.is_some() && no_comment_trails_what_is_before_another(f))
-        {
-            write_trailing_comments_of(signature.as_ast_nodes(), f);
-        }
+        write!(f, trailing_comments(node));
     }
 }
 
@@ -518,7 +470,7 @@ pub(crate) fn write_ts_type_query<'a>(
     }
     write!(f, ["typeof ", leftmost]);
     for &name in names.iter().rev() {
-        write!(f, [".", identifier(name, AstNodes::TSTypeQuery(ty))]);
+        write!(f, [".", identifier(name)]);
     }
     write!(f, type_arguments(args, Node::Type(ty)));
 }
@@ -537,11 +489,7 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
     let Some(source) = ty.import_source_span() else {
         return write!(f, FormatSuppressedNode(ty.span()));
     };
-    let node = AstNodes::TSImportType(ty);
-    let format_source = FormatStringLiteral {
-        span: source,
-        parent: node,
-    };
+    let format_source = FormatStringLiteral { span: source };
 
     // Up to what follows the `)`, they lead or trail the module specifier.
     let has_comment = !f.is_quiet() && {
@@ -557,7 +505,7 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
     write!(f, is_typeof.then_some("typeof "));
     match ty.import_attributes() {
         Some(options) => {
-            let arguments = format_with(|f| write_import_type_arguments(ty, source, options, f));
+            let arguments = format_with(|f| write_import_type_arguments(source, options, f));
             write!(f, group(&format_args!("import", arguments)));
         }
         // A long module name does not break.
@@ -573,48 +521,9 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
     }
 
     if !name.is_empty() {
-        write!(f, [".", entity_name(name, node)]);
+        write!(f, [".", entity_name(name)]);
     }
     write!(f, type_arguments(args, Node::Type(ty)));
-}
-
-/// The module specifier in `import("a")` or `require("a")`. Only the comments before the `)` trail it.
-pub(crate) struct FormatModuleSpecifier<'a> {
-    pub(crate) span: Span,
-    pub(crate) parent: AstNodes<'a>,
-    /// From `import` or `require` to the `)`.
-    pub(crate) call_span: Span,
-}
-
-struct FormatModuleSpecifierWithoutComments<'a>(Span, AstNodes<'a>);
-
-impl Spanned for FormatModuleSpecifierWithoutComments<'_> {
-    fn span(&self) -> Span {
-        self.0
-    }
-}
-
-impl<'a> Format<'a> for FormatModuleSpecifierWithoutComments<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        FormatStringLiteral {
-            span: self.0,
-            parent: self.1,
-        }
-        .fmt(f);
-    }
-}
-
-impl<'a> Format<'a> for FormatModuleSpecifier<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        let specifier = FormatModuleSpecifierWithoutComments(self.span, self.parent);
-        write!(
-            f,
-            [
-                FormatNodeWithoutTrailingComments(&specifier),
-                format_trailing_comments(self.call_span, self.span, 0)
-            ]
-        );
-    }
 }
 
 /// ```ts
@@ -631,23 +540,12 @@ fn options_of_import_type_are_on_a_line_of_their_own(f: &Formatter<'_>) -> bool 
 
 /// `("a", { with: { type: "json" } })`. Prettier's `printCallArguments` for a string and an object.
 fn write_import_type_arguments<'a>(
-    ty: TypeNode<'a>,
     source: Span,
     options: ImportAttributes<'a>,
     f: &mut Formatter<'a>,
 ) {
     let span = options.options_span();
-    let format_source = format_with(|f| {
-        let source = FormatModuleSpecifierWithoutComments(source, AstNodes::TSImportType(ty));
-        write!(
-            f,
-            [
-                FormatNodeWithoutTrailingComments(&source),
-                format_trailing_comments(ty.span(), source.span(), span.start)
-            ]
-        );
-    })
-    .memoized();
+    let format_source = FormatStringLiteral { span: source }.memoized();
     let does_source_break = format_source.inspect(f).will_break();
 
     let has_comments = Cell::new(f.comments().has_comment_before(span.start));
@@ -798,9 +696,7 @@ pub(crate) fn write_ts_type_predicate<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a
     if f.file().is_flow() && super::flow::write_checks_predicate(ty, f) {
         return;
     }
-    let parameter = ty
-        .predicate_param()
-        .map(|it| identifier(it, AstNodes::TSTypePredicate(ty)));
+    let parameter = ty.predicate_param().map(|it| identifier(it));
     write!(f, asserts.then(|| super::flow::predicate_prefix(ty)));
     let Some(type_annotation) = type_annotation else {
         return write!(f, parameter);

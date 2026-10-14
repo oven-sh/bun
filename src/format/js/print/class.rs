@@ -5,12 +5,11 @@ use super::function::{
 use super::function_type::write_accessor_keyword;
 use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
-use super::semicolon::{OptionalSemicolon, start_of_comments_in_dropped_parentheses};
+use super::semicolon::OptionalSemicolon;
 use super::type_parameters::{FormatTSTypeParametersOptions, type_arguments, type_parameters};
 use crate::js::format::{
-    FormatMemberBeforeAnother, FormatTypeAnnotation, format_node, format_node_without_comments,
-    identifier, no_comment_trails_what_is_before_another,
-    terminator_of_what_is_ignored_follows_semi, write_trailing_comments_of,
+    FormatTypeAnnotation, format_name, format_node, format_node_without_comments, identifier,
+    terminator_of_what_is_ignored_follows_semi,
 };
 use crate::js::parentheses::expression::needs_parentheses;
 use crate::js::trivia::{comments_stay_between_head_and_body, write_head_body_separator};
@@ -117,7 +116,7 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     );
     let node = AstNodes::MethodDefinition(member);
     match (member.key(), member.constructor_keyword()) {
-        (_, Some(keyword)) => write_constructor_keyword(keyword, node, f),
+        (_, Some(keyword)) => write_constructor_keyword(keyword, f),
         (Some(key), None) => format_computed_or_property_key(key, node, f),
         (None, None) => {}
     }
@@ -140,17 +139,6 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     write!(f, OptionalSemicolon);
 }
 
-/// `#a = 1 /* comment */;` stays as it is in JavaScript: Babel's `ClassPrivateProperty` is not in the list of Prettier's
-/// `handleMethodNameComments`, so the comment trails the value.
-fn is_no_property_to_handle_method_name_comments<'a>(
-    member: Member<'a>,
-    f: &Formatter<'a>,
-) -> bool {
-    f.context().has_tree_of_babel()
-        && !f.options().flavor.is_oxfmt()
-        && (member.key()).is_some_and(|key| matches!(key.kind(), KeyKind::Private(_)))
-}
-
 /// For oxfmt all comments between a member and its `;` are behind the `;`. For Prettier those that end or
 /// start their line are in the member: see `Comments::start_of_comments_before_semicolon`.
 fn all_comments_before_semicolon_go_behind_it(f: &Formatter<'_>) -> bool {
@@ -162,7 +150,7 @@ fn constructor_keeps_override(f: &Formatter<'_>) -> bool {
 }
 
 /// `constructor`, which can be written as a string, and is quoted like any other name.
-fn write_constructor_keyword<'a>(keyword: Ident<'a>, node: AstNodes<'a>, f: &mut Formatter<'a>) {
+fn write_constructor_keyword<'a>(keyword: Ident<'a>, f: &mut Formatter<'a>) {
     let span = keyword.span();
     let source = f.source_text().text_for(&span);
     if source.starts_with(b"\"") || source.starts_with(b"'") {
@@ -174,32 +162,18 @@ fn write_constructor_keyword<'a>(keyword: Ident<'a>, node: AstNodes<'a>, f: &mut
                 QuoteProperties::Preserve => false,
                 QuoteProperties::Consistent => !f.context().is_quote_needed(),
             };
-        format_node(
-            span,
-            || node,
-            f,
-            |f| match is_unquoted {
-                true => write!(f, source_text(span.shrink(1, 1))),
-                false => write!(
-                    f,
-                    FormatLiteralStringToken::new(
-                        source,
-                        false,
-                        StringLiteralParentKind::Expression
-                    )
-                ),
-            },
-        );
+        format_name(span, f, |f| match is_unquoted {
+            true => write!(f, source_text(span.shrink(1, 1))),
+            false => write!(
+                f,
+                FormatLiteralStringToken::new(source, false, StringLiteralParentKind::Expression)
+            ),
+        });
     } else if f.context().is_quote_needed() {
         let quote = f.options().quote_style.as_str();
-        format_node(
-            span,
-            || node,
-            f,
-            |f| write!(f, [quote, source_text(span), quote]),
-        );
+        format_name(span, f, |f| write!(f, [quote, source_text(span), quote]));
     } else {
-        write!(f, identifier(keyword, node));
+        write!(f, identifier(keyword));
     }
 }
 
@@ -281,26 +255,21 @@ impl Spanned for FormatIndexSignatureName<'_> {
 impl<'a> Format<'a> for FormatIndexSignatureName<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let param = self.0;
-        format_node(
-            param.span(),
-            || param.as_ast_nodes().parent(),
-            f,
-            |f| {
-                write!(
-                    f,
-                    [
-                        param.is_rest().then_some("..."),
-                        source_text(param.pat().span()),
-                        param.is_optional().then_some("?"),
-                        param.ty().map(FormatTypeAnnotation)
-                    ]
-                );
-                // An error.
-                if let Some(default) = param.default() {
-                    write!(f, [space(), "=", space(), default]);
-                }
-            },
-        );
+        format_node(param.as_ast_nodes(), f, |f| {
+            write!(
+                f,
+                [
+                    param.is_rest().then_some("..."),
+                    source_text(param.pat().span()),
+                    param.is_optional().then_some("?"),
+                    param.ty().map(FormatTypeAnnotation)
+                ]
+            );
+            // An error.
+            if let Some(default) = param.default() {
+                write!(f, [space(), "=", space(), default]);
+            }
+        });
     }
 }
 
@@ -392,10 +361,7 @@ impl<'a> Format<'a> for FormatClass<'a> {
             if let Some(id) = class.name() {
                 write!(
                     f,
-                    [
-                        space(),
-                        FormatNodeWithoutTrailingComments(&identifier(id, node))
-                    ]
+                    [space(), FormatNodeWithoutTrailingComments(&identifier(id))]
                 );
                 write!(f, indent(&FormatCommentsTrailingInHead(gaps.after_name)));
             }
@@ -566,7 +532,9 @@ impl<'a> Format<'a> for FormatClass<'a> {
                 ]
             );
         } else {
-            format_node_without_comments(body_span, || node, f, |f| write_class_body(class, f));
+            format_node_without_comments(AstNodes::ClassBody(class), f, |f| {
+                write_class_body(class, f)
+            });
         }
     }
 }
@@ -819,7 +787,7 @@ impl FormatClassElementWithSemicolon<'_> {
 
 impl<'a> FormatClassElementWithSemicolon<'a> {
     /// See [`terminator_of_what_is_ignored_follows_semi`]. Returns whether the member is not formatted.
-    fn write_ignored_without_terminator(&self, f: &mut Formatter<'a>) -> bool {
+    fn write_ignored_without_terminator(&self, f: &mut Formatter<'a>) {
         let span = self.element.span();
         let has_terminator = match self.element.kind() {
             MemberKind::Property | MemberKind::IndexSignature => true,
@@ -829,13 +797,6 @@ impl<'a> FormatClassElementWithSemicolon<'a> {
             true => f.comments().without_semicolon(span),
             false => span,
         };
-        let is_suppressed = f.comments().is_suppressed(span.start)
-            || f.comments().has_trailing_suppression_comment(span.end)
-            || (content.end < span.end
-                && f.comments().has_trailing_suppression_comment(content.end));
-        if !is_suppressed {
-            return false;
-        }
         let terminator = has_terminator
             && match f.options().semicolons {
                 Semicolons::Always => true,
@@ -843,88 +804,43 @@ impl<'a> FormatClassElementWithSemicolon<'a> {
                     self.element.kind() == MemberKind::Property && self.needs_semicolon()
                 }
             };
+        let node = self.element.as_ast_nodes();
         write!(
             f,
             [
-                format_leading_comments(span),
+                leading_comments(node),
                 FormatSuppressedNode(content),
-                terminator.then_some(";")
+                terminator.then_some(";"),
+                trailing_comments(node)
             ]
         );
-        write_trailing_comments_of(self.element.as_ast_nodes(), f);
-        true
     }
 }
 
 impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let span = self.element.span();
-        if !f.is_quiet()
-            && terminator_of_what_is_ignored_follows_semi(f)
-            && self.write_ignored_without_terminator(f)
-        {
-            return;
+        let node = self.element.as_ast_nodes();
+        let is_ignored = !f.is_quiet() && f.comments().is_ignored(node);
+        if is_ignored && terminator_of_what_is_ignored_follows_semi(f) {
+            return self.write_ignored_without_terminator(f);
         }
-        let is_suppressed = f.comments().is_suppressed(span.start)
-            || f.comments().has_trailing_suppression_comment(span.end);
         let needs_semi = self.element.kind() == MemberKind::Property
             && match f.options().semicolons {
-                Semicolons::Always => !is_suppressed,
+                Semicolons::Always => !is_ignored,
                 Semicolons::AsNeeded => self.needs_semicolon(),
             };
-
-        if f.is_quiet() {
+        if !needs_semi || f.is_quiet() {
             return write!(f, [self.element, needs_semi.then_some(";")]);
         }
-        if is_suppressed {
-            // The `;` that keeps the next member apart is written in any case.
-            write!(f, [self.element, needs_semi.then_some(";")]);
-        } else if needs_semi {
-            // The comments on the line of the `;` are written behind it. They are in the member:
-            // `a = 1 // prettier-ignore ⏎ ;` is formatted.
-            let limit = match is_no_property_to_handle_method_name_comments(self.element, f) {
-                true => span.end,
-                false => f.comments().start_of_comments_before_semicolon(
-                    self.element.init().map(|it| it.span().end),
-                    span,
-                ),
-            };
-            let limit = match all_comments_before_semicolon_go_behind_it(f) {
-                true => (self.element.init())
-                    .and_then(|it| start_of_comments_in_dropped_parentheses(it, None, f))
-                    .unwrap_or_else(|| f.comments().without_semicolon(span).end)
-                    .min(limit),
-                false => limit,
-            };
-            let previous_limit = f.comments_mut().limit_comments_up_to(limit);
-            write!(f, self.element);
-            // Nothing follows them in the member.
-            write!(
-                f,
-                FormatTrailingComments::Comments(f.comments().comments_before(span.end))
-            );
-            f.comments_mut().restore_view_limit(previous_limit);
-            write!(f, ";");
-            if all_comments_before_semicolon_go_behind_it(f) {
-                write!(
-                    f,
-                    FormatTrailingComments::Comments(f.comments().comments_before(span.end))
-                );
-            }
-            if !(self.next_element.is_some() && no_comment_trails_what_is_before_another(f)) {
-                write_trailing_comments_of(self.element.as_ast_nodes(), f);
-            }
-        } else {
-            match self.next_element {
-                Some(_) => write!(f, FormatMemberBeforeAnother(self.element)),
-                None => write!(f, self.element),
-            }
-            // Those before the `;` of the source, which is the end of the member.
-            write!(
-                f,
-                FormatTrailingComments::Comments(f.comments().comments_before(span.end))
-            );
-        }
+        // The `;` is part of the member, so the comments that trail the member are behind it.
+        write!(
+            f,
+            [
+                FormatNodeWithoutTrailingComments(&self.element),
+                ";",
+                trailing_comments(node)
+            ]
+        );
     }
 }
 

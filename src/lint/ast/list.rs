@@ -126,7 +126,7 @@ pub(super) struct Near {
     /// The last one that starts at or before this.
     pub(super) offset: u32,
     /// And the one behind it.
-    pub(super) with_next: bool,
+    pub(super) include_next: bool,
 }
 
 /// For a list whose elements are in the order of the source and do not overlap. Each takes the logarithm of its length.
@@ -159,7 +159,7 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
         if !all.hides {
             let until = self.count_until(near.offset);
             all.front = until.saturating_sub(1);
-            all.back = (until + u32::from(near.with_next)).min(self.len);
+            all.back = (until + u32::from(near.include_next)).min(self.len);
         }
         all
     }

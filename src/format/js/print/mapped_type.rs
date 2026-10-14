@@ -60,7 +60,7 @@ pub(crate) fn write_ts_mapped_type<'a>(
             write!(
                 f,
                 [
-                    identifier(key, AstNodes::TSMappedType(ty)),
+                    identifier(key),
                     match comment_brings_its_blank {
                         true => " in",
                         false => " in ",
@@ -113,10 +113,10 @@ fn write_comments_before_bracket<'a>(comments: &'a [Comment], f: &mut Formatter<
         return;
     };
     for comment in others {
-        f.comments_mut().increment_printed_count();
+        f.comments_mut().mark_printed(comment);
         write!(f, [comment, hard_line_break()]);
     }
-    f.comments_mut().increment_printed_count();
+    f.comments_mut().mark_printed(last);
     match last.followed_by_newline() {
         true => write!(f, [last, hard_line_break()]),
         false => write!(f, group(&format_args!(last, soft_line_break_or_space()))),

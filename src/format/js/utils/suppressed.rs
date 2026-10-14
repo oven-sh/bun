@@ -15,14 +15,8 @@ fn text_over_several_lines_breaks_groups(f: &Formatter<'_>) -> bool {
 
 impl<'a> Format<'a> for FormatSuppressedNode {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        // What nobody has written yet and is before the text, as in `(/* here */ a)`, would count as printed with those in it.
-        let before = f.comments().comments_before(self.0.start);
-        let count = (before.iter())
-            .take_while(|it| it.span.end <= self.0.start)
-            .count();
-        FormatLeadingComments::Comments(before.get(..count).unwrap_or_default()).fmt(f);
         write_source(self.0, !text_over_several_lines_breaks_groups(f), f);
-        f.comments_mut().skip_comments_in_text_before(self.0.end);
+        f.comments_mut().mark_printed_in(self.0);
     }
 }
 

@@ -14,13 +14,13 @@
 //! 4 to 6 are done. It is set for the time that a node is written which has no comment in it and
 //! none behind it on the same line.
 
-use super::ast_nodes::{AsAstNodes, AstNodes, ChainElement};
+use super::ast_nodes::{AsAstNodes, AstNodes, ChainElement, inner_of_stmt};
+use super::attach::as_parenthesizable_expr;
 use super::parentheses;
 use super::print;
 use super::print::program::ends_before_semicolon;
-use super::siblings::following_span_start_in;
 use super::utils::suppressed::FormatSuppressedNode;
-use super::utils::typecast::{is_cast_target, write_type_casts};
+use super::utils::typecast::write_type_casts;
 use crate::prelude::*;
 use crate::write;
 
@@ -31,28 +31,9 @@ impl<'a> Formatter<'a> {
         self.context().is_quiet
     }
 
-    /// Whether there is no comment to print in `span`, or behind it on the same line.
+    /// Whether printing the node at `span` can skip everything about comments.
     fn has_no_comments_in(&self, span: Span) -> bool {
-        let next = self.comments().next_start();
-        if next < span.end || self.comments().has_type_cast_comments() {
-            return false;
-        }
-        next == u32::MAX || {
-            let rest = self.source_text().text_for(&Span::after(span, next));
-            matches!(rest.first(), Some(b'\n' | b'\r'))
-                || bun_core::strings::index_of_any(rest, b"\n\r").is_some()
-        }
-    }
-
-    /// [`Formatter::in_scope`] for a `span` that is known to have no comments in it.
-    #[inline]
-    fn in_scope_without_comments(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
-        if self.context().cursor.is_active() {
-            return self.in_scope_with_cursor(span, write);
-        }
-        let outer = std::mem::replace(&mut self.context_mut().is_quiet, true);
-        write(self);
-        self.context_mut().is_quiet = outer;
+        !self.comments().has_comment_or_owner_in(span)
     }
 
     /// Calls `write`. If there is no comment in `span`, with [`Formatter::is_quiet`] set.
@@ -143,97 +124,112 @@ fn span_for_comments<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> Span {
     }
 }
 
-/// The comments after the child of `parent` at `span`.
-fn write_trailing_comments_in<'a>(
-    span: Span,
-    parent: impl FnOnce() -> AstNodes<'a>,
-    f: &mut Formatter<'a>,
-) {
-    if f.comments().next_start() != u32::MAX {
-        write_trailing_comments_of_child(span, parent(), f);
-    }
-}
-
-fn write_trailing_comments_of_child<'a>(span: Span, parent: AstNodes<'a>, f: &mut Formatter<'a>) {
-    let enclosing = span_for_comments(parent, f);
-    if f.comments().next_start() < enclosing.end {
-        let following = following_span_start_in(span, parent, f.options().flavor);
-        format_trailing_comments(enclosing, span, following).fmt(f);
-    }
-}
-
-/// Whether no comment trails a node that is followed by another one in the same list, because there
-/// is none, or the next one starts its line: then it leads what follows. This takes no look at what
-/// the node is in.
-#[inline]
-pub(crate) fn no_comment_trails_what_is_before_another(f: &Formatter<'_>) -> bool {
-    f.comments()
-        .unprinted_comments()
-        .first()
-        .is_none_or(|it| it.preceded_by_newline())
-}
-
-/// The comments after `node`.
+/// Writes the trailing comments that `node` owns.
 pub(crate) fn write_trailing_comments_of<'a>(node: AstNodes<'a>, f: &mut Formatter<'a>) {
-    if f.comments().next_start() != u32::MAX {
-        write_trailing_comments_in(span_for_comments(node, f), || node.parent(), f);
-    }
+    FormatTrailingComments::Comments(f.comments().of_node(node).trailing).fmt(f);
 }
 
-/// Writes a node that never needs parentheses, with the comments around it.
-///
-/// `span`: of the node. `parent`: what it is in, which is only asked for if there are comments.
+/// Writes `node` with the comments it owns: Prettier's `printComments`. `write` writes the node itself. If the node is
+/// ignored, its source text is copied instead.
 #[inline]
 pub(crate) fn format_node<'a>(
-    span: Span,
-    parent: impl FnOnce() -> AstNodes<'a>,
+    node: AstNodes<'a>,
     f: &mut Formatter<'a>,
     write: impl FnOnce(&mut Formatter<'a>),
 ) {
-    format_node_in_list(span, false, parent, f, write);
+    match f.is_quiet() {
+        true => write(f),
+        false => format_node_with_comments(node, f, write),
+    }
 }
 
-/// [`format_node`]. `is_before_another`: another node follows it in the same list.
+fn format_node_with_comments<'a>(
+    node: AstNodes<'a>,
+    f: &mut Formatter<'a>,
+    write: impl FnOnce(&mut Formatter<'a>),
+) {
+    let skip_trailing = f.context_mut().take_skip_trailing_comments();
+    let owned = f.comments().of_node(node);
+    FormatLeadingComments::Comments(owned.leading).fmt(f);
+    match owned.is_ignored {
+        true => write_ignored_node(node, f),
+        false => f.in_scope(node.span(), write),
+    }
+    if !skip_trailing {
+        FormatTrailingComments::Comments(owned.trailing).fmt(f);
+    }
+}
+
+/// Writes a node whose printer, or whose parent's printer, writes its comments (Prettier's `willPrintOwnComments`).
+/// This only handles `prettier-ignore`.
 #[inline]
-fn format_node_in_list<'a>(
+pub(crate) fn format_node_without_comments<'a>(
+    node: AstNodes<'a>,
+    f: &mut Formatter<'a>,
+    write: impl FnOnce(&mut Formatter<'a>),
+) {
+    if f.is_quiet() || !f.comments().is_ignored(node) {
+        return write(f);
+    }
+    let owned = f.comments().of_node(node);
+    FormatLeadingComments::Comments(owned.leading).fmt(f);
+    write_ignored_node(node, f);
+    FormatTrailingComments::Comments(owned.trailing).fmt(f);
+}
+
+/// Writes a name or a key, which is a token here and a node for Prettier, with the comments it owns.
+#[inline]
+pub(crate) fn format_name<'a>(
     span: Span,
-    is_before_another: bool,
-    parent: impl FnOnce() -> AstNodes<'a>,
     f: &mut Formatter<'a>,
     write: impl FnOnce(&mut Formatter<'a>),
 ) {
     if f.is_quiet() {
         return write(f);
     }
-    let is_suppressed = f.comments().is_suppressed(span.start)
-        || f.comments().has_trailing_suppression_comment(span.end);
-    if is_suppressed {
-        format_leading_comments_of_ignored(span).fmt(f);
-        f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
-    } else {
-        format_leading_comments(span).fmt(f);
-        f.in_scope(span, write);
-    }
-    if !(is_before_another && no_comment_trails_what_is_before_another(f)) {
-        write_trailing_comments_in(span, parent, f);
-    }
+    let owned = f.comments().of_name(span.start);
+    FormatLeadingComments::Comments(owned.leading).fmt(f);
+    write(f);
+    FormatTrailingComments::Comments(owned.trailing).fmt(f);
 }
 
-/// Writes a node whose comments are written by the code that writes the node itself, or its
-/// parent. Only `prettier-ignore` is dealt with.
-#[inline]
-pub(crate) fn format_node_without_comments<'a>(
-    span: Span,
-    parent: impl FnOnce() -> AstNodes<'a>,
-    f: &mut Formatter<'a>,
-    write: impl FnOnce(&mut Formatter<'a>),
-) {
-    if f.is_quiet() || !f.comments().is_suppressed(span.start) {
-        return write(f);
+/// Prettier's `printIgnored`: copies the source text of `node`, with the parentheses and the `;` that it needs where it
+/// is. This is the only place that writes an ignored node.
+pub(crate) fn write_ignored_node<'a>(node: AstNodes<'a>, f: &mut Formatter<'a>) {
+    if let Some(expr) = as_parenthesizable_expr(node) {
+        return write_suppressed_expression(expr, false, f);
     }
-    format_leading_comments_of_ignored(span).fmt(f);
+    let statement = match (node, node.raw()) {
+        (
+            AstNodes::CatchClause(_)
+            | AstNodes::TSInterfaceBody(_)
+            | AstNodes::TSEnumBody(_)
+            | AstNodes::TSModuleBlock(_),
+            _,
+        ) => None,
+        (_, Node::Stmt(statement)) => Some(statement),
+        (AstNodes::Function(func), _) => func.owner().as_stmt(),
+        (AstNodes::Class(class), _) => class.owner().as_stmt(),
+        _ => None,
+    };
+    if let Some(statement) = statement {
+        let mut span = span_for_comments(node, f);
+        // Prettier's `locStart`: the decorators of a class can be before its `export`.
+        if matches!(
+            node,
+            AstNodes::ExportNamedDeclaration(_) | AstNodes::ExportDefaultDeclaration(_)
+        ) {
+            span.start = span.start.min(statement.span().start);
+        }
+        return write_ignored_statement(statement, span, f);
+    }
+    match (node, node.raw()) {
+        (AstNodes::TSTypeAnnotation(_), _) => {}
+        (_, Node::Type(ty)) => return write_suppressed_type(ty, f),
+        _ => {}
+    }
+    let span = node.span();
     f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
-    write_trailing_comments_in(span, parent, f);
 }
 
 // ───────────────────────────── names ─────────────────────────────
@@ -241,33 +237,24 @@ pub(crate) fn format_node_without_comments<'a>(
 /// A name that is not a node here and is one in ESTree, with the comments around it: the `b` of
 /// `a.b`, the name of a function, a label.
 #[derive(Copy, Clone)]
-pub(crate) struct FormatIdentifier<'a> {
+pub(crate) struct FormatIdentifier {
     span: Span,
-    parent: AstNodes<'a>,
 }
 
-/// `ident` as it is written. `parent`: the node that it is a name in.
+/// `ident` as it is written.
 #[inline]
-pub(crate) fn identifier<'a>(ident: Ident<'a>, parent: AstNodes<'a>) -> FormatIdentifier<'a> {
-    FormatIdentifier {
-        span: ident.span(),
-        parent,
-    }
+pub(crate) fn identifier(ident: Ident<'_>) -> FormatIdentifier {
+    FormatIdentifier { span: ident.span() }
 }
 
-impl<'a> Format<'a> for FormatIdentifier<'a> {
+impl<'a> Format<'a> for FormatIdentifier {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        format_node(
-            self.span,
-            || self.parent,
-            f,
-            |f| write!(f, source_text(self.span)),
-        );
+        format_name(self.span, f, |f| write!(f, source_text(self.span)));
     }
 }
 
-impl Spanned for FormatIdentifier<'_> {
+impl Spanned for FormatIdentifier {
     fn span(&self) -> Span {
         self.span
     }
@@ -328,9 +315,6 @@ impl<'a> FormatExpr<'a> {
         match is_chain_expression {
             true => {
                 print::expressions::write_chain_expression(self.expr, f);
-                if f.comments().has_comments_trailing_links() {
-                    write_comments_trailing_chain_element(self.expr, f);
-                }
             }
             false => write_expression_that_has_asked(self.expr, self.options, f),
         }
@@ -341,141 +325,45 @@ impl<'a> FormatExpr<'a> {
 
     #[cold]
     fn fmt_with_comments(self, is_chain_expression: bool, f: &mut Formatter<'a>) {
-        let node = match is_chain_expression {
-            true => AstNodes::ChainExpression(self.expr),
-            false => self.expr.as_chain_element(),
-        };
         let write_target =
-            |f: &mut Formatter<'a>| self.fmt_in_type_casts(node, is_chain_expression, f);
-        if self.is_in_chain_expression || !write_type_casts(self.expr, node, f, &write_target) {
+            |f: &mut Formatter<'a>| self.fmt_without_type_casts(is_chain_expression, f);
+        if self.is_in_chain_expression || !write_type_casts(self.expr, f, &write_target) {
             write_target(f);
         }
     }
 
-    /// The expression with its comments, in the parentheses of type casts if there are any.
-    fn fmt_in_type_casts(
-        self,
-        node: AstNodes<'a>,
-        is_chain_expression: bool,
-        f: &mut Formatter<'a>,
-    ) {
+    /// The expression with the comments it owns, inside the parentheses of type casts if there are any.
+    fn fmt_without_type_casts(self, is_chain_expression: bool, f: &mut Formatter<'a>) {
         let (expr, span) = (self.expr, self.expr.span());
-
-        // ESTree's `Expression`, as opposed to the `ChainElement` in a `ChainExpression`.
-        let binary = match node.parent() {
-            AstNodes::LogicalExpression(it) | AstNodes::BinaryExpression(it) => Some(it),
-            _ => None,
-        };
-        let is_suppressed = match binary.map(|it| (it.span().end, it.kind())) {
-            // The comment trails `a && b` of `a && b // prettier-ignore ⏎ && c`, which Prettier writes
-            // without looking at its comments.
-            Some((end, _)) if end == span.end => false,
-            // `a && // prettier-ignore ⏎ b`
-            Some((_, ExprKind::Binary { right, .. }))
-                if right != expr && comment_behind_operator_trails_left_side(f) =>
-            {
-                f.comments().has_trailing_suppression_comment(span.end)
-                    || (f.comments())
-                        .has_suppression_comment_trailing_left_operand(span.end, right.span().start)
-            }
-            _ => f.comments().has_trailing_suppression_comment(span.end),
-        };
-        if !self.is_in_chain_expression && is_suppressed {
-            self.write_as_it_is(f);
-            return write_trailing_comments_of(node, f);
+        let node = expr.as_chain_element();
+        // typescript-estree has a `ChainExpression` around an optional chain, which cannot own comments. The comments
+        // belong to the member access or the call in it, so they are printed inside its parentheses. Babel has no such
+        // node, so there they are printed outside.
+        let has_chain_expression_node = !f.context().has_tree_of_babel();
+        if match has_chain_expression_node {
+            true => is_chain_expression,
+            false => self.is_in_chain_expression,
+        } {
+            return self.write_in_parentheses(is_chain_expression, f);
         }
-
-        // The comments of a JSX element are written with its parentheses.
+        // A JSX element prints its comments together with its parentheses.
         if matches!(node, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_)) {
             return f.around_cursor(span, |f| self.write_in_parentheses(false, f));
         }
-
-        let is_suppressed = f.comments().is_suppressed(span.start);
         if print::function::write_called_function_with_comments(expr, self.options, f) {
             return;
         }
-        // Prettier's `canAttachComment`: typescript-estree's `ChainExpression` has no comments. They are
-        // those of what is in it, which is in its parentheses.
-        if is_chain_expression
-            && !is_suppressed
-            && !f.file().is_javascript()
-            && !comments_stay_outside_of_parentheses_of_chain(f)
-            && parentheses::expression::chain_expression_needs_parentheses(expr, f)
-        {
-            write!(f, ["(", format_leading_comments(span)]);
-            f.in_scope(span, |f| {
-                print::expressions::write_chain_expression(expr, f)
-            });
-            write_comments_trailing_chain_element(expr, f);
-            write_trailing_comments_of(node, f);
-            return write!(f, ")");
+        let skip_trailing = f.context_mut().take_skip_trailing_comments();
+        let owned = f.comments().of_node(node);
+        FormatLeadingComments::Comments(owned.leading).fmt(f);
+        match owned.is_ignored {
+            true => write_suppressed_expression(expr, is_chain_expression, f),
+            false => f.in_scope(span, |f| self.write_in_parentheses(is_chain_expression, f)),
         }
-        // `a ? b : /** @type {T} */ (c).d ?? e`
-        if !is_suppressed
-            && cast_comment_goes_into_added_parentheses(f)
-            && f.source_text().byte_at(span.start) == Some(b'(')
-            && f.comments().is_cast_parenthesis(span.start)
-            && let [others @ .., cast_comment] = f.comments().comments_before(span.start)
-            && match is_chain_expression {
-                true => parentheses::expression::chain_expression_needs_parentheses(expr, f),
-                false => parentheses::expression::needs_parentheses(expr, f),
-            }
-        {
-            let cast_comment = FormatLeadingComments::Comments(std::slice::from_ref(cast_comment));
-            write!(
-                f,
-                [FormatLeadingComments::Comments(others), "(", cast_comment]
-            );
-            f.in_scope(span, |f| match is_chain_expression {
-                true => print::expressions::write_chain_expression(expr, f),
-                false => write_expression_that_has_asked(expr, self.options, f),
-            });
-            write!(f, ")");
-            return write_trailing_comments_of(node, f);
+        if !skip_trailing {
+            FormatTrailingComments::Comments(owned.trailing).fmt(f);
         }
-        let leading = print::sequence_expression::span_that_comments_lead(expr, f);
-        if is_suppressed {
-            format_leading_comments_of_ignored(leading).fmt(f);
-            write_suppressed_expression(expr, is_chain_expression, f);
-        } else {
-            format_leading_comments(leading).fmt(f);
-            f.in_scope(span, |f| self.write_in_parentheses(is_chain_expression, f));
-        }
-        write_trailing_comments_of(node, f);
     }
-}
-
-/// `a && // prettier-ignore ⏎ b`: for oxfmt the comment is about `a` only if nothing but `=` is between the two, as in
-/// `a == // prettier-ignore ⏎ b`.
-fn comment_behind_operator_trails_left_side(f: &Formatter<'_>) -> bool {
-    !f.options().flavor.is_oxfmt()
-}
-
-/// `(/* comment */ a?.b).c` is `/* comment */ (a?.b).c` for oxfmt, in TypeScript as in JavaScript.
-fn comments_stay_outside_of_parentheses_of_chain(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
-}
-
-/// `(a?.b /* comment */).c`, `(a?.b) /* comment */.c`: typescript-estree has a `ChainExpression` around `a?.b`, which
-/// Prettier attaches no comment to. So the comment trails `a?.b` in it, and is written in the parentheses. Babel has no
-/// such node.
-#[cold]
-fn write_comments_trailing_chain_element<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
-    if f.context().has_tree_of_babel() {
-        return;
-    }
-    let end = e.span().end;
-    // Whoever writes the comments after `e` has hidden them.
-    let previous_limit = f.comments_mut().show_comments_up_to(end + 1);
-    FormatTrailingComments::Comments(f.comments().comments_trailing_link(end)).fmt(f);
-    f.comments_mut().restore_view_limit(previous_limit);
-}
-
-/// A type cast comment is about the parentheses right behind it. Where these are at the start of
-/// something that gets parentheses of its own, oxfmt writes the comment in them, so that it is still
-/// about the same. Prettier writes it before them.
-fn cast_comment_goes_into_added_parentheses(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
 }
 
 /// `a as B // prettier-ignore ⏎ ? c : d`: Prettier writes `(a as B)`, as it does where it formats. oxfmt writes no
@@ -527,37 +415,6 @@ impl<'a> FormatExpr<'a> {
             )
             && self.expr.is_chain_root()
     }
-
-    /// Prettier's `printIgnored`, and the comments before it.
-    fn write_as_it_is(&self, f: &mut Formatter<'a>) {
-        // In the parentheses of a type cast it needs none of its own.
-        if !is_cast_target(self.expr, f)
-            && print::function::write_called_function_with_comments(self.expr, self.options, f)
-        {
-            return;
-        }
-        format_leading_comments_of_ignored(self.expr.span()).fmt(f);
-        write_suppressed_expression(self.expr, self.is_chain_expression(), f);
-    }
-}
-
-/// What a `prettier-ignore` comment behind it is about, as it is written, and the comments before it. `node`: see
-/// [`Format::as_node`]. `span`: where it is.
-pub(crate) fn write_ignored_node<'a>(node: Option<Node<'a>>, span: Span, f: &mut Formatter<'a>) {
-    match node {
-        Some(Node::Expr(e)) => FormatExpr::with_options(e, ExprOptions::None).write_as_it_is(f),
-        Some(Node::Type(ty)) => {
-            format_leading_comments_of_ignored(span).fmt(f);
-            write_suppressed_type(ty, f);
-        }
-        _ => write!(
-            f,
-            [
-                format_leading_comments_of_ignored(span),
-                FormatSuppressedNode(span)
-            ]
-        ),
-    }
 }
 
 impl<'a> Format<'a> for FormatExpr<'a> {
@@ -572,10 +429,6 @@ impl<'a> Format<'a> for FormatExpr<'a> {
             false => self.fmt_with_comments(is_chain_expression, f),
         }
     }
-
-    fn as_node(&self) -> Option<Node<'a>> {
-        (!self.is_in_chain_expression).then_some(Node::Expr(self.expr))
-    }
 }
 
 impl Spanned for FormatExpr<'_> {
@@ -589,11 +442,6 @@ impl<'a> Format<'a> for Expr<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         format_expression(*self, f);
-    }
-
-    #[inline(always)]
-    fn as_node(&self) -> Option<Node<'a>> {
-        Some(Node::Expr(*self))
     }
 }
 
@@ -858,7 +706,7 @@ fn write_less_common_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
 impl<'a> Format<'a> for Stmt<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        format_statement(*self, false, f);
+        format_statement(*self, f);
     }
 }
 
@@ -869,107 +717,16 @@ pub(crate) struct FormatStatementBeforeAnother<'a>(pub(crate) Stmt<'a>);
 impl<'a> Format<'a> for FormatStatementBeforeAnother<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        format_statement(self.0, true, f);
+        format_statement(self.0, f);
     }
 }
 
-fn format_statement<'a>(statement: Stmt<'a>, is_before_another: bool, f: &mut Formatter<'a>) {
+fn format_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     if !f.context_mut().has_stack_left() {
         return;
     }
-    if f.is_quiet() {
-        return write_statement(statement, f);
-    }
-    let span = statement.span();
-    if f.has_no_comments_in(Span::new(0, span.end)) {
-        // `// prettier-ignore` on a line of its own after the last statement.
-        if !is_before_another && f.comments().has_trailing_suppression_comment(span.end) {
-            return format_statement_with_comments(statement, is_before_another, f);
-        }
-        f.in_scope_without_comments(span, |f| write_statement(statement, f));
-        if is_before_another && no_comment_trails_what_is_before_another(f) {
-            return;
-        }
-        // What the statement is in ends here, and the next comment is behind that.
-        if f.source_text().next_non_whitespace_byte_is(span.end, b'}') {
-            return;
-        }
-        // The comments between the last statement and the end of a block trail that statement.
-        return write_trailing_comments_in(span, || statement.ast_parent(), f);
-    }
-    format_statement_with_comments(statement, is_before_another, f);
-}
-
-#[cold]
-fn format_statement_with_comments<'a>(
-    statement: Stmt<'a>,
-    is_before_another: bool,
-    f: &mut Formatter<'a>,
-) {
-    let node = statement.as_ast_nodes();
-    let mut span = span_for_comments(node, f);
-    // Prettier's `locStart`: the decorators of a class can be before its `export`.
-    span.start = span.start.min(statement.span().start);
-    // The `;` can be behind the comment: `a() // prettier-ignore ⏎ ;`
-    if f.comments()
-        .has_trailing_suppression_comment(node.span().end)
-        || (span.end < node.span().end && f.comments().has_trailing_suppression_comment(span.end))
-    {
-        format_leading_comments_of_ignored(span).fmt(f);
-        write_ignored_statement(statement, span, f);
-        return write_trailing_comments_of(node, f);
-    }
-    match node {
-        // Decorators can be written before `export`, and comments before and after them.
-        AstNodes::ExportNamedDeclaration(_) | AstNodes::ExportDefaultDeclaration(_) => {
-            if f.comments().is_suppressed(span.start) {
-                format_leading_comments_of_ignored(span).fmt(f);
-                write_ignored_statement(statement, span, f);
-                return write_trailing_comments_in(span, || node.parent(), f);
-            }
-            format_node_without_comments(
-                span,
-                || node.parent(),
-                f,
-                |f| write_statement(statement, f),
-            );
-        }
-        _ => format_declaration_with_comments(statement, is_before_another, f),
-    }
-}
-
-/// `statement` without its `export`, with the comments around it. `is_before_another`: it has no
-/// `export`, and another statement follows it in the same list.
-fn format_declaration_with_comments<'a>(
-    statement: Stmt<'a>,
-    is_before_another: bool,
-    f: &mut Formatter<'a>,
-) {
-    let is_exported = statement.is_exported();
-    let span = match is_exported {
-        true => f
-            .comments()
-            .without_semicolon(statement.span_without_export()),
-        false => span_for_comments(statement.as_ast_nodes(), f),
-    };
-    let parent = || match is_exported {
-        true => statement.as_ast_nodes(),
-        false => statement.ast_parent(),
-    };
-    if f.comments().is_suppressed(span.start) {
-        format_leading_comments_of_ignored(span).fmt(f);
-        write_ignored_statement(statement, span, f);
-        return write_trailing_comments_in(span, parent, f);
-    }
-    format_node_in_list(span, is_before_another, parent, f, |f| {
-        let Some(hidden_from) = print::semicolon::start_of_comments_behind_semicolon(statement, f)
-        else {
-            return write_declaration(statement, f);
-        };
-        let previous = f.comments_mut().hide_comments_from(hidden_from);
-        write_declaration(statement, f);
-        f.comments_mut().restore_hidden_comments(previous);
-        FormatTrailingComments::Comments(f.comments().comments_before(span.end)).fmt(f);
+    format_node(statement.as_ast_nodes(), f, |f| {
+        write_statement(statement, f)
     });
 }
 
@@ -1099,10 +856,7 @@ pub(crate) struct FormatDeclaration<'a>(pub(crate) Stmt<'a>);
 
 impl<'a> Format<'a> for FormatDeclaration<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        match f.is_quiet() {
-            true => write_declaration(self.0, f),
-            false => format_declaration_with_comments(self.0, false, f),
-        }
+        format_node(inner_of_stmt(self.0), f, |f| write_declaration(self.0, f));
     }
 }
 
@@ -1240,11 +994,6 @@ impl<'a> Format<'a> for TypeNode<'a> {
             false => format_type_with_comments(*self, f),
         }
     }
-
-    #[inline(always)]
-    fn as_node(&self) -> Option<Node<'a>> {
-        Some(Node::Type(*self))
-    }
 }
 
 #[inline]
@@ -1295,60 +1044,9 @@ fn write_suppressed_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
 
 #[cold]
 fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
-    let span = ty.span();
-    // A union writes the comments before it with its first `|`, and deals with `prettier-ignore`.
-    let is_union = matches!(ty.kind(), TypeKind::Union(_));
-    let is_suppressed =
-        match is_union && !print::union_type::prettier_ignore_before_union_is_about_all_of_it(f) {
-            // On a line of its own it is about the first type only.
-            true => f
-                .comments()
-                .comments_before_iter(span.start)
-                .any(|comment| {
-                    f.comments().is_suppression_comment(comment) && !comment.preceded_by_newline()
-                }),
-            false => f.comments().is_suppressed(span.start),
-        };
-    if !is_union || is_suppressed {
-        format_leading_comments(span).fmt(f);
-    } else if comments_stay_outside_of_parentheses_of_union(f)
-        && parentheses::ts_type::needs_parentheses(ty, f)
-    {
-        // Those before a `(` of the source, and after them those that start their line.
-        let leading = f.comments().comments_before(span.start);
-        let is_before_parenthesis = |(index, comment): (usize, &Comment)| {
-            let end = leading
-                .get(index + 1)
-                .map_or(span.start, |next| next.span.start);
-            f.source_text()
-                .contains_byte(Span::after(comment.span, end), b'(')
-        };
-        let mut count = leading
-            .iter()
-            .enumerate()
-            .rposition(is_before_parenthesis)
-            .map_or(0, |last| last + 1);
-        count += leading[count..]
-            .iter()
-            .take_while(|comment| comment.preceded_by_newline())
-            .count();
-        FormatLeadingComments::Comments(&leading[..count]).fmt(f);
-    }
-    if is_suppressed {
-        write_suppressed_type(ty, f);
-    } else {
-        f.in_scope(span, |f| write_type_in_parentheses(ty, f));
-    }
-    write_trailing_comments_in(span, || ty.ast_parent(), f);
+    format_node_with_comments(ty.as_ast_nodes(), f, |f| write_type_in_parentheses(ty, f));
 }
 
-/// `keyof /* comment */ (A | B)`: for oxfmt the comment stays on the side of the `(` that it is on.
-/// Prettier writes the comments of a union in its parentheses.
-fn comments_stay_outside_of_parentheses_of_union(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
-}
-
-/// Step 5 for a type.
 pub(crate) fn write_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     use print::ts_types;
     match ty.kind() {
@@ -1424,13 +1122,13 @@ fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &
         return write(f);
     }
     let node = AstNodes::TSTypeAnnotation(ty);
-    if f.comments().has_comment_before(node.span().start)
+    if !f.comments().of_node(node).leading.is_empty()
         && !(comment_sticks_to_name_of_variable(f)
             && matches!(node.parent(), AstNodes::VariableDeclarator(_)))
     {
         write!(f, space());
     }
-    format_node(node.span(), || node.parent(), f, write);
+    format_node(node, f, write);
 }
 
 /// `const a /* comment */ : T = 1` is `const a/* comment */ : T = 1` for oxfmt.
@@ -1476,11 +1174,8 @@ macro_rules! format_with_comments {
         $(impl<'a> Format<'a> for $handle<'a> {
             #[inline]
             fn fmt(&self, f: &mut Formatter<'a>) {
-                let it = *self;
-                match f.is_quiet() {
-                    true => $write(it, f),
-                    false => format_node(it.span(), || it.as_ast_nodes().parent(), f, |f| $write(it, f)),
-                }
+                let handle = *self;
+                format_node(handle.as_ast_nodes(), f, |f| $write(handle, f));
             }
         })*
     };
@@ -1493,37 +1188,13 @@ format_with_comments! {
     Param => print::parameters::write_formal_parameter,
 }
 
-/// A member that is followed by another one.
-#[derive(Copy, Clone)]
-pub(crate) struct FormatMemberBeforeAnother<'a>(pub(crate) Member<'a>);
-
-impl<'a> Format<'a> for FormatMemberBeforeAnother<'a> {
-    #[inline]
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        let it = self.0;
-        match f.is_quiet() {
-            true => print::class::write_member(it, f),
-            false => format_node_in_list(
-                it.span(),
-                true,
-                || it.as_ast_nodes().parent(),
-                f,
-                |f| print::class::write_member(it, f),
-            ),
-        }
-    }
-}
-
 macro_rules! format_with_comments_in {
     ($($handle:ident, $node:expr => $write:path,)*) => {
         $(impl<'a> Format<'a> for $handle<'a> {
             #[inline]
             fn fmt(&self, f: &mut Formatter<'a>) {
-                let it = *self;
-                match f.is_quiet() {
-                    true => $write(it, f),
-                    false => format_node(it.span(), || $node(it).parent(), f, |f| $write(it, f)),
-                }
+                let handle = *self;
+                format_node($node(handle), f, |f| $write(handle, f));
             }
         })*
     };
@@ -1542,15 +1213,9 @@ impl<'a> Format<'a> for Pat<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let pat = *self;
-        match f.is_quiet() {
-            true => print::patterns::write_binding_pattern(pat, f),
-            false => format_node(
-                pat.span(),
-                || pat.ast_parent(),
-                f,
-                |f| print::patterns::write_binding_pattern(pat, f),
-            ),
-        }
+        format_node(pat.as_ast_nodes(), f, |f| {
+            print::patterns::write_binding_pattern(pat, f)
+        });
     }
 }
 
@@ -1571,11 +1236,8 @@ impl<'a> Format<'a> for TupleElem<'a> {
         if element.name().is_none() && !element.is_rest() && !element.is_optional() {
             return element.ty().fmt(f);
         }
-        format_node(
-            element.span(),
-            || super::ast_nodes::node_as_ast_nodes(element.parent()),
-            f,
-            |f| print::tuple_type::write_ts_tuple_element(element, f),
-        );
+        format_node(element.as_ast_nodes(), f, |f| {
+            print::tuple_type::write_ts_tuple_element(element, f)
+        });
     }
 }

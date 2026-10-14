@@ -334,7 +334,7 @@ fn write_more_trailing_comments<'a>(
         .zip(&placements)
         .filter(|(_, placement)| !placement.leads())
     {
-        f.comments_mut().increment_printed_count();
+        f.comments_mut().mark_printed(comment);
         if is_after_line_comment {
             write!(f, line_suffix(&format_args!(hard_line_break(), comment)));
         } else if comment.is_line() || has_line_suffix {

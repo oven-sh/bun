@@ -3,6 +3,7 @@
 //! [`Comments`](super::comments::Comments) tells which comments belong where. This writes them,
 //! with the spaces and line breaks around them, and marks them as printed.
 
+use super::ast_nodes::AstNodes;
 use super::comments::{Comment, CommentKind};
 use crate::prelude::*;
 use crate::write;
@@ -31,37 +32,31 @@ pub(crate) const fn format_leading_comments<'a>(span: Span) -> FormatLeadingComm
     FormatLeadingComments::Node(span)
 }
 
-/// The same for a node that is written as it is in the source.
+/// The leading comments that `node` owns.
 #[inline]
-pub(crate) const fn format_leading_comments_of_ignored<'a>(
-    span: Span,
-) -> FormatLeadingComments<'a> {
-    FormatLeadingComments::IgnoredNode(span)
+pub(crate) const fn leading_comments<'a>(node: AstNodes<'a>) -> FormatLeadingComments<'a> {
+    FormatLeadingComments::Owner(node)
 }
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) enum FormatLeadingComments<'a> {
     Node(Span),
-    IgnoredNode(Span),
+    Owner(AstNodes<'a>),
     Comments(&'a [Comment]),
 }
 
 impl<'a> Format<'a> for FormatLeadingComments<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let (comments, node_start) = match *self {
-            Self::Node(span) | Self::IgnoredNode(span)
-                if f.comments().next_start() > span.start =>
-            {
-                return;
-            }
-            Self::Node(span) | Self::IgnoredNode(span) => {
-                (f.comments().comments_leading_node(span), span.start)
-            }
-            Self::Comments(comments) => (comments, u32::MAX),
+        let comments = match *self {
+            Self::Node(span) if f.comments().next_start() > span.start => return,
+            Self::Node(span) => f.comments().comments_leading_node(span),
+            Self::Owner(node) => f.comments().of_node(node).leading,
+            Self::Comments(comments) => comments,
         };
-        let is_ignored = matches!(self, Self::IgnoredNode(_));
-        write_leading_comments(comments, node_start, is_ignored, f);
+        if !comments.is_empty() {
+            write_leading_comments(comments, f);
+        }
     }
 }
 
@@ -88,23 +83,10 @@ fn end_with_semicolon_of_statement_before(comment: &Comment, f: &Formatter<'_>) 
     }
 }
 
-/// `node_start`: where the node starts that they lead. `is_ignored`: it is written as it is in the source. It is too if
-/// one of them says so and has been moved out of it.
 #[cold]
-fn write_leading_comments<'a>(
-    comments: &'a [Comment],
-    node_start: u32,
-    is_ignored: bool,
-    f: &mut Formatter<'a>,
-) {
-    // A comment that has been moved out of a node that is written as it is in the source is in that
-    // text.
-    let is_ignored = is_ignored
-        || (comments.iter())
-            .any(|comment| comment.is_moved() && f.comments().is_suppression_comment(comment));
+fn write_leading_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
     for comment in comments {
-        f.comments_mut().increment_printed_count();
-        if is_ignored && comment.is_moved() && comment.span.start >= node_start {
+        if !f.comments_mut().mark_printed(comment) {
             continue;
         }
         write!(f, comment);
@@ -139,10 +121,17 @@ pub(crate) const fn format_trailing_comments<'a>(
     FormatTrailingComments::Node((enclosing_span, preceding_span, following_span_start))
 }
 
+/// The trailing comments that `node` owns.
+#[inline]
+pub(crate) const fn trailing_comments<'a>(node: AstNodes<'a>) -> FormatTrailingComments<'a> {
+    FormatTrailingComments::Owner(node)
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum FormatTrailingComments<'a> {
     /// `(enclosing_span, preceding_span, following_span_start)`
     Node((Span, Span, u32)),
+    Owner(AstNodes<'a>),
     Comments(&'a [Comment]),
 }
 
@@ -154,6 +143,7 @@ impl<'a> Format<'a> for FormatTrailingComments<'a> {
             Self::Node((enclosing, preceding, following)) => f
                 .comments()
                 .get_trailing_comments(enclosing, preceding, following),
+            Self::Owner(node) => f.comments().of_node(node).trailing,
             Self::Comments(comments) => comments,
         };
         if !comments.is_empty() {
@@ -178,7 +168,9 @@ fn write_trailing_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
     });
 
     for comment in comments {
-        f.comments_mut().increment_printed_count();
+        if !f.comments_mut().mark_printed(comment) {
+            continue;
+        }
 
         let lines_before = lines_before(comment, f);
         total_lines_before += lines_before;
@@ -234,9 +226,22 @@ pub(crate) const fn format_dangling_comments<'a>(span: Span) -> FormatDanglingCo
     }
 }
 
+/// The dangling comments that `node` owns.
+#[inline]
+pub(crate) const fn dangling_comments<'a>(node: AstNodes<'a>) -> FormatDanglingComments<'a> {
+    FormatDanglingComments::Owner {
+        node,
+        indent: DanglingIndentMode::None,
+    }
+}
+
 pub(crate) enum FormatDanglingComments<'a> {
     Node {
         span: Span,
+        indent: DanglingIndentMode,
+    },
+    Owner {
+        node: AstNodes<'a>,
         indent: DanglingIndentMode,
     },
     Comments {
@@ -269,6 +274,7 @@ impl FormatDanglingComments<'_> {
     fn with_indent_mode(mut self, mode: DanglingIndentMode) -> Self {
         match &mut self {
             FormatDanglingComments::Node { indent, .. }
+            | FormatDanglingComments::Owner { indent, .. }
             | FormatDanglingComments::Comments { indent, .. } => *indent = mode,
         }
         self
@@ -281,6 +287,7 @@ impl<'a> Format<'a> for FormatDanglingComments<'a> {
         let (comments, indent) = match *self {
             Self::Node { span, .. } if f.comments().next_start() >= span.end => return,
             Self::Node { span, indent } => (f.comments().comments_before_end_of(span), indent),
+            Self::Owner { node, indent } => (f.comments().of_node(node).dangling, indent),
             Self::Comments { comments, indent } => (comments, indent),
         };
         if !comments.is_empty() {
@@ -298,7 +305,9 @@ fn write_dangling_comments<'a>(
     let content = format_with(|f: &mut Formatter<'a>| {
         let mut previous_comment: Option<&Comment> = None;
         for comment in comments {
-            f.comments_mut().increment_printed_count();
+            if !f.comments_mut().mark_printed(comment) {
+                continue;
+            }
             write!(
                 f,
                 [
@@ -392,11 +401,13 @@ pub(crate) fn write_trailing_comments_before(
     let (same_line, own_line) = comments.split_at(same_line_count);
     FormatTrailingComments::Comments(same_line).fmt(f);
     for comment in own_line {
+        if !f.comments_mut().mark_printed(comment) {
+            continue;
+        }
         match lines_before(comment, f) > 1 {
             true => write!(f, empty_line()),
             false => write!(f, hard_line_break()),
         }
-        f.comments_mut().increment_printed_count();
         write!(f, [comment, comment.is_line().then_some(hard_line_break())]);
     }
     own_line.is_empty() && same_line.last().is_some_and(|comment| comment.is_line())

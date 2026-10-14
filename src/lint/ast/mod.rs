@@ -185,6 +185,8 @@ pub(crate) struct Lazy {
     unicode_escape_range: UnicodeEscapeRange,
     /// A bit for each expression: it is in parentheses.
     parenthesized: OnceCell<Box<[u64]>>,
+    /// [`Node::index`]
+    pub(crate) kind_index_offsets: OnceCell<[u32; node::KINDS + 1]>,
     /// [`Stmt::directive`]
     pub(crate) directives: Cell<Option<(u32, u32)>>,
     /// For each `a, b` that is the start of a long `a, b, c, ..`: all of that.
@@ -709,6 +711,10 @@ pub trait Handle<'a>: Copy {
     #[doc(hidden)]
     fn from_raw(file: &'a File<'a>, id: u32) -> Self;
 
+    /// How many nodes of this kind `file` has.
+    #[doc(hidden)]
+    fn count_in(file: &File<'a>) -> u32;
+
     /// It is synthesized from a JSDoc comment: lists leave it out.
     #[doc(hidden)]
     #[inline]
@@ -785,6 +791,10 @@ macro_rules! handle {
             #[inline]
             fn from_raw(file: &'a $crate::ast::File<'a>, id: u32) -> Self {
                 $name::new(file, ::bun_sema::hir::$id(id))
+            }
+            #[inline]
+            fn count_in(file: &$crate::ast::File<'a>) -> u32 {
+                file.hir.$field.len() as u32
             }
             #[inline]
             fn is_synthetic(self) -> bool {

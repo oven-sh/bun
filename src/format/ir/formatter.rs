@@ -10,7 +10,7 @@ use crate::js::comments::Comments;
 use crate::js::context::JsFormatContext;
 use crate::js::source_text::SourceText;
 use crate::options::{Flavor, FormatOptions};
-use bun_lint::ast::{File, Node};
+use bun_lint::ast::File;
 use bun_lint::span::Span;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -20,12 +20,6 @@ use std::num::NonZeroU32;
 /// Something that can be written as [`FormatElement`]s.
 pub(crate) trait Format<'a> {
     fn fmt(&self, f: &mut Formatter<'a>);
-
-    /// The node, if this is an expression or a type and nothing else.
-    #[inline(always)]
-    fn as_node(&self) -> Option<Node<'a>> {
-        None
-    }
 
     /// The text, if this is a keyword or a punctuator and nothing else.
     #[inline(always)]
@@ -50,11 +44,6 @@ impl<'a, T: ?Sized + Format<'a>> Format<'a> for &T {
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'a>) {
         Format::fmt(&**self, f);
-    }
-
-    #[inline(always)]
-    fn as_node(&self) -> Option<Node<'a>> {
-        Format::as_node(&**self)
     }
 
     #[inline(always)]

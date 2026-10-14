@@ -129,12 +129,7 @@ impl<'a> Format<'a> for FormatObjectMember<'a> {
         };
         match f.is_quiet() {
             true => write(f),
-            false => format_node(
-                property.span(),
-                || property.as_ast_nodes().parent(),
-                f,
-                write,
-            ),
+            false => format_node(property.as_ast_nodes(), f, write),
         }
     }
 }

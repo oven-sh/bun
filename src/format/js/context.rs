@@ -1,6 +1,6 @@
 //! What the code that formats a file can see besides the node it is formatting.
 
-use super::comments::{Comment, Comments};
+use super::comments::{Comments, FileComments};
 use super::source_text::SourceText;
 use super::utils::tailwindcss::TailwindContext;
 use crate::cursor::CursorRegion;
@@ -18,6 +18,9 @@ pub(crate) struct JsFormatContext<'a> {
     has_tree_of_babel: bool,
     options: FormatOptions,
     comments: Comments<'a>,
+    /// The next node that is written leaves its trailing comments to whoever asked for that:
+    /// [`FormatNodeWithoutTrailingComments`](super::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments).
+    skip_trailing_comments: bool,
     /// What has been formatted ahead of its turn, by the span of the node: an argument that was
     /// formatted to decide on the layout of the call. A node whose span is here is not formatted
     /// again, which would print its comments twice.
@@ -45,7 +48,11 @@ pub(crate) struct JsFormatContext<'a> {
 }
 
 impl<'a> JsFormatContext<'a> {
-    pub(crate) fn new(file: &'a File<'a>, options: FormatOptions, comments: &'a [Comment]) -> Self {
+    pub(crate) fn new(
+        file: &'a File<'a>,
+        options: FormatOptions,
+        comments: &'a FileComments,
+    ) -> Self {
         Self {
             file: Some(file),
             has_tree_of_babel: file.is_javascript()
@@ -60,7 +67,7 @@ impl<'a> JsFormatContext<'a> {
     pub(crate) fn without_file(
         source: &'a [u8],
         options: FormatOptions,
-        comments: &'a [Comment],
+        comments: &'a FileComments,
     ) -> Self {
         let tailwind = options.tailwind.as_deref();
         let of_plugin = (tailwind.filter(|it| it.follows_plugin)).map(TailwindContext::of_plugin);
@@ -69,6 +76,7 @@ impl<'a> JsFormatContext<'a> {
             has_tree_of_babel: false,
             options,
             comments: Comments::new(SourceText::new(source), comments),
+            skip_trailing_comments: false,
             cached_elements: FxHashMap::default(),
             quote_needed_stack: Vec::new(),
             tailwind_contexts: of_plugin.into_iter().collect(),
@@ -113,6 +121,17 @@ impl<'a> JsFormatContext<'a> {
     }
 
     #[inline]
+    pub(crate) fn set_skip_trailing_comments(&mut self, skip: bool) {
+        self.skip_trailing_comments = skip;
+    }
+
+    /// Reads the flag and clears it, so that it only applies to one node.
+    #[inline]
+    pub(crate) fn take_skip_trailing_comments(&mut self) -> bool {
+        std::mem::take(&mut self.skip_trailing_comments)
+    }
+
+    #[inline]
     pub(crate) fn comments(&self) -> &Comments<'a> {
         &self.comments
     }
@@ -120,11 +139,6 @@ impl<'a> JsFormatContext<'a> {
     #[inline]
     pub(crate) fn comments_mut(&mut self) -> &mut Comments<'a> {
         &mut self.comments
-    }
-
-    #[inline]
-    pub(crate) fn has_cached_elements(&self) -> bool {
-        !self.cached_elements.is_empty()
     }
 
     pub(crate) fn get_cached_element(&self, key: &impl Spanned) -> Option<FormatElement> {

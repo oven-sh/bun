@@ -5,7 +5,7 @@
 
 use super::map_strings::{MapString, write_mapped};
 use crate::ir::element::{Interned, TextWidth};
-use crate::js::comments::{ParsedBy, collect};
+use crate::js::comments::{self, NO_COMMENTS, ParsedBy};
 use crate::js::context::JsFormatContext;
 use crate::js::print::program::{FormatStatements, write_hashbang};
 use crate::js::sort_imports::{SortImports, sorted_text};
@@ -225,16 +225,11 @@ pub(crate) fn with_file(
                     {
                         return;
                     }
-                    let comments = file.extension(|| {
-                        let mut comments = Vec::new();
-                        let parsed_by = match options.in_html.has_tree_of_babel {
-                            true => ParsedBy::Babel,
-                            false => ParsedBy::WhatItsNameSays,
-                        };
-                        collect(file, options.flavor, parsed_by, &mut comments);
-                        comments
-                    });
-                    let comments = comments.map_or(&[][..], |comments: &Vec<Comment>| comments);
+                    let parsed_by = match options.in_html.has_tree_of_babel {
+                        true => ParsedBy::Babel,
+                        false => ParsedBy::WhatItsNameSays,
+                    };
+                    let comments = comments::of_file(file, &options, parsed_by);
                     // Only in what is known to be a script are `<!--` and `-->` comments to Babel.
                     let is_html_like = |comment: &Comment| {
                         matches!(
@@ -803,7 +798,7 @@ pub(crate) fn write_angular_expression(
             }
             write_rest(f);
         });
-        let context = JsFormatContext::new(file, options.clone(), &[]);
+        let context = JsFormatContext::new(file, options.clone(), &NO_COMMENTS);
         f.write_embedded(context, source, |f| write_hugged(should_hug, &content, f));
         is_written = true;
     });

@@ -21,6 +21,12 @@ impl PartialEq for Signature<'_> {
     }
 }
 impl Eq for Signature<'_> {}
+impl crate::types::Indexed for Signature<'_> {
+    #[inline]
+    fn index(self) -> u32 {
+        self.id.0
+    }
+}
 impl std::hash::Hash for Signature<'_> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

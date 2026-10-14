@@ -66,7 +66,12 @@ fn has_non_awaitable_value_type<'a>(ty: Type<'a>, node: Expr<'a>) -> bool {
     if ty.is_tuple_type() {
         return ty.get_type_arguments().iter().any(|it| contains_non_awaitable_type(it, node));
     }
-    if ty.is_array_like_type() {
+    // tsgolint takes the number index type of any type, and the type argument only without one.
+    if node.file().language().is_oxlint {
+        if let Some(number_index_type) = ty.get_number_index_type() {
+            return contains_non_awaitable_type(number_index_type, node);
+        }
+    } else if ty.is_array_like_type() {
         return ty.get_number_index_type().is_some_and(|it| contains_non_awaitable_type(it, node));
     }
     // `Iterable<...>`
@@ -130,22 +135,28 @@ impl AwaitThenable {
         if !is_promise_aggregator_method(node) {
             return;
         }
-        if let ExprKind::Array(elements) = argument.kind() {
+        // In tsgolint a parenthesized array literal is not an array literal, and a range has the parentheses.
+        let is_oxlint = cx.language().is_oxlint;
+        if let ExprKind::Array(elements) = argument.kind()
+            && !(is_oxlint && argument.is_parenthesized())
+        {
             for element in elements.iter().filter(|element| !element.is_missing()) {
                 if is_always_non_awaitable_type(get_constrained_type_at_location(element), element) {
-                    cx.report(element, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
+                    let place = if is_oxlint { element.outer_span() } else { element.span() };
+                    cx.report(place, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
                         labels.first("This expression is not Promise-like");
                         labels.push(argument.outer_span(), "Promise aggregator input");
-                        labels.push(element, "");
+                        labels.push(place, "");
                     });
                 }
             }
             return;
         }
         if is_invalid_promise_aggregator_input(argument, get_constrained_type_at_location(argument)) {
-            cx.report(argument, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
+            let place = if is_oxlint { argument.outer_span() } else { argument.span() };
+            cx.report(place, INVALID_PROMISE_AGGREGATOR_INPUT).labels_with(|labels| {
                 labels.first("This expression is not Promise-like");
-                labels.push(argument, "");
+                labels.push(place, "");
             });
         }
     }

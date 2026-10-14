@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashSet;
+use bun_lint::types::IdSet;
 
 /// Enforce that class methods utilize `this`.
 pub struct ClassMethodsUseThis {
@@ -39,7 +39,7 @@ pub struct State<'a> {
     /// The other methods, accessors and constructors.
     others: Vec<Func<'a>>,
     /// The functions of class members with a `this` or a `super` of their own that is written elsewhere.
-    uses_this: FxHashSet<Func<'a>>,
+    uses_this: IdSet<Func<'a>>,
     /// The function of a class member that a `this` in a node belongs to. `None`: it belongs to
     /// something else.
     owners_of_this: AncestorMemo<'a, Option<Func<'a>>>,
@@ -54,7 +54,7 @@ impl<'a> State<'a> {
             .filter(|it| !it.1);
         unused
             .map(|it| *it.0)
-            .filter(|func| !self.uses_this.contains(func))
+            .filter(|func| !self.uses_this.contains(*func))
     }
 }
 

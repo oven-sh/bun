@@ -60,6 +60,8 @@ pub(crate) mod ctx {
     pub(crate) const IN_SWITCH: u32 = 1 << 13;
     /// The node is in the body of a namespace.
     pub(crate) const IN_NAMESPACE: u32 = 1 << 14;
+    /// The body of no function encloses the node. The parameters of one can, its return type, or a class.
+    pub(crate) const OUTSIDE_BODIES: u32 = 1 << 15;
 }
 
 macro_rules! stacks {
@@ -224,6 +226,8 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     /// The private names that the classes around the token have declared so far.
     pub(crate) declared_private_names: Vec<Atom>,
     pub(crate) declared: Declared,
+    /// See [`Parsed::end`].
+    pub(crate) end: (u32, u32),
     pub(crate) has_top_level_await: bool,
     /// One of them can be nothing else: `await a`, `for await`, `await using`. Not `await (a)`, which calls `await` in a script.
     pub(crate) has_plain_top_level_await: bool,
@@ -313,6 +317,7 @@ struct Harvest<'a> {
     lx: Lexer<'a>,
     stacks: Stacks,
     declared: Declared,
+    end: (u32, u32),
     has_top_level_await: bool,
     has_plain_top_level_await: bool,
 }
@@ -326,9 +331,14 @@ pub(crate) fn run<'a>(
     if text.len() >= 1 << 30 {
         return Err(Refused::new(Refusal::TooLarge));
     }
-    match atoms {
-        Some(atoms) => scratch.names.belong_to(atoms),
-        None => scratch.names.begin_own(text.len()),
+    match (atoms, options.part) {
+        (Some(atoms), _) => scratch.names.belong_to(atoms),
+        (None, None) => scratch.names.begin_own(text.len()),
+        // What follows the part is not paid for.
+        (None, Some(part)) => {
+            let len = part.until.saturating_sub(part.from) as usize;
+            scratch.names.begin_own(len.min(1 << 12));
+        }
     }
     let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
     let atoms = atoms.unwrap_or(&crate::names::NoInterner);
@@ -345,6 +355,10 @@ pub(crate) fn run<'a>(
     );
     let stops = scratch.stops.find_again(text);
     let mut lx = Lexer::new(text, stops, atoms, &mut scratch.names);
+    if let Some(part) = options.part {
+        lx.start_at(part.from);
+        lx.set_src(text.get(..part.until as usize).unwrap_or(text));
+    }
     lx.is_jsx = options.is_jsx;
     lx.recovers = options.recovers;
     lx.comments = std::mem::take(&mut file.comments);
@@ -368,6 +382,7 @@ pub(crate) fn run<'a>(
         lx,
         stacks,
         declared,
+        end,
         has_top_level_await,
         has_plain_top_level_await,
     } = match is_general {
@@ -415,6 +430,7 @@ pub(crate) fn run<'a>(
     Ok(Parsed {
         file: f,
         has_top_level_await,
+        end,
     })
 }
 
@@ -432,7 +448,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         let is_script = options.is_javascript && !options.is_json;
         let is_ecmascript = options.dialect.ecmascript && is_script;
         let is_flow = options.dialect.flow && is_script;
-        let mut context = ctx::TOP_LEVEL;
+        let mut context = ctx::TOP_LEVEL | ctx::OUTSIDE_BODIES;
         if options.is_declaration_file {
             context |= ctx::AMBIENT;
         }
@@ -476,6 +492,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             odd_parameters: 0,
             declared_private_names: Vec::new(),
             declared,
+            end: (0, 0),
             has_top_level_await: false,
             has_plain_top_level_await: false,
             has_await_in_statement: false,
@@ -513,6 +530,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             lx: self.lx,
             stacks: self.s,
             declared: self.declared,
+            end: self.end,
             has_top_level_await: self.has_top_level_await,
             has_plain_top_level_await: self.has_plain_top_level_await,
         }
@@ -539,6 +557,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     /// `parseSourceFileWorker`
     fn source_file(&mut self) {
         self.f.source_len = self.lx.src.len() as u32;
+        self.end = (self.f.source_len, self.f.source_len);
         self.f.kind = if self.options.is_json {
             FileKind::Json
         } else if self.options.is_declaration_file {
@@ -557,6 +576,10 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             let value = self.json_text();
             self.f.has_module_syntax = true;
             self.s.ids.push(value.0);
+        }
+        if let Some(part) = self.options.part {
+            let part = self.part(part.goal);
+            self.s.ids.push(part.0);
         }
         let reparsed = self.jsdoc.reparsed.len();
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {

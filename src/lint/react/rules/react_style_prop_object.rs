@@ -7,7 +7,7 @@ use crate::util_variable::{Found, find_variable_by_name};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use rustc_hash::FxHashMap;
+use bun_lint::types::IdMap;
 use smallvec::SmallVec;
 use std::cell::OnceCell;
 
@@ -22,7 +22,7 @@ const STYLE_PROP_OBJECT: Message = Message::new("", "`style` prop value must be 
 #[derive(Default)]
 pub struct State<'a> {
     /// For oxlint: whether a variable is declared with something that is not an object.
-    invalid_variables: FxHashMap<Symbol<'a>, bool>,
+    invalid_variables: IdMap<Symbol<'a>, bool>,
     /// The pragma. oxlint knows none.
     pragma: OnceCell<&'a [u8]>,
 }
@@ -206,7 +206,7 @@ fn is_invalid_expression<'a>(expression: Expr<'a>, state: &mut State<'a>) -> boo
             break false;
         };
         // Until it is known, a variable that is declared with itself is valid.
-        if let Some(&known) = state.invalid_variables.get(&symbol) {
+        if let Some(&known) = state.invalid_variables.get(symbol) {
             break known;
         }
         state.invalid_variables.insert(symbol, false);

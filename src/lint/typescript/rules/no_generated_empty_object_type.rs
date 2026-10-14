@@ -51,10 +51,13 @@ impl Rule for NoGeneratedEmptyObjectType {
         match node.tag() {
             TypeTag::Intersection => check_node(node, cx),
             TypeTag::Ref => {
-                let TypeKind::Ref { args, .. } = node.kind() else {
+                let TypeKind::Ref { name, args } = node.kind() else {
                     return;
                 };
-                if args.is_empty() {
+                // tsgolint also checks the empty list of `Box<>`: the reference ends after its name.
+                let has_empty_type_arguments = node.file().language().is_oxlint
+                    && name.last().is_some_and(|last| last.span().end < node.span().end);
+                if args.is_empty() && !has_empty_type_arguments {
                     return;
                 }
                 let is_checked = match node.parent() {

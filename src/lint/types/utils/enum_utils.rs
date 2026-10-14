@@ -2,7 +2,7 @@
 
 use super::{is_number_like, is_string_like};
 use crate::types::tsutils::union_constituents;
-use crate::types::{Literal, SymbolFlags, SyntaxKind, Type, TypeFlags};
+use crate::types::{IdSet, Literal, SymbolFlags, SyntaxKind, Type, TypeFlags};
 use smallvec::SmallVec;
 
 /// The enum for a member of an enum, any other type as it is: `Fruit` for `Fruit.Apple`.
@@ -36,24 +36,27 @@ pub fn get_enum_types(ty: Type<'_>) -> SmallVec<[Type<'_>; 4]> {
 /// compared with a value of the same primitive kind that is not of that enum.
 pub fn is_mismatched_enum_comparison_types<'a>(left_type: Type<'a>, right_type: Type<'a>) -> bool {
     // Comparisons that have nothing to do with enums.
-    let (left_enum_types, right_enum_types) =
-        (get_enum_types(left_type), get_enum_types(right_type));
+    let left_enum_types = get_enum_types(left_type);
+    let mut right_enum_types = IdSet::new();
+    for right_enum_type in get_enum_types(right_type) {
+        right_enum_types.insert(right_enum_type);
+    }
     if left_enum_types.is_empty() && right_enum_types.is_empty() {
         return false;
     }
     // Comparisons that share an enum: `Fruit.Apple === Fruit.Banana`.
     if left_enum_types
         .iter()
-        .any(|left_enum_type| right_enum_types.contains(left_enum_type))
+        .any(|left_enum_type| right_enum_types.contains(*left_enum_type))
     {
         return false;
     }
     // A type on both sides: `fruit === 0` for a `Fruit.Apple | 0`.
-    let (left_type_parts, right_type_parts) = (
-        union_constituents(left_type),
-        union_constituents(right_type),
-    );
-    if left_type_parts
+    let mut right_type_parts = IdSet::new();
+    for right_type_part in union_constituents(right_type).iter() {
+        right_type_parts.insert(right_type_part);
+    }
+    if union_constituents(left_type)
         .iter()
         .any(|left_type_part| right_type_parts.contains(left_type_part))
     {

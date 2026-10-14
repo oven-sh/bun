@@ -1394,6 +1394,9 @@ impl<'p, 's> Checker<'p, 's> {
         match hir[index].kind {
             ExprKind::String(s) => Some(s),
             ExprKind::Number(n) => Some(self.number_name(hir.numbers[n as usize])),
+            ExprKind::Template { exprs } if exprs.is_empty() => {
+                Some(hir.id_at(hir.template_texts(exprs), 0))
+            }
             ExprKind::Ident(_) | ExprKind::Dot { .. } => {
                 self.name_from_entity_name_expression(file, index)
             }

@@ -14,22 +14,22 @@ mod angular_print;
 mod ast;
 mod cursor;
 mod data;
-mod embed;
+pub(crate) mod embed;
 mod error;
 pub(crate) mod in_js;
-mod js;
+pub(crate) mod js;
 mod lexer;
 mod map_strings;
 mod parse;
 mod parser;
-mod preprocess;
+pub(crate) mod preprocess;
 mod printer;
 mod tag;
 mod tailwind;
 mod utilities;
-mod verify;
+pub(crate) mod verify;
 mod vue;
-mod writer;
+pub(crate) mod writer;
 
 pub use js::is_probably_jsx;
 

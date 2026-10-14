@@ -80,7 +80,14 @@ impl NoUnsafeTypeAssertion {
             return;
         }
 
-        if let Some(unsafe_expression_any) = is_unsafe_assignment(expression_type, asserted_type, expression) {
+        // tsgolint has a node for parentheses: `(new Map())` and `new (Map)()` are not the `new Map()` that is safe.
+        let sender_node = match expression.kind() {
+            _ if !cx.language().is_oxlint => Some(expression),
+            _ if expression.is_parenthesized() => None,
+            ExprKind::New(call) if call.callee().is_parenthesized() => None,
+            _ => Some(expression),
+        };
+        if let Some(unsafe_expression_any) = is_unsafe_assignment(expression_type, asserted_type, sender_node) {
             cx.report(place, UNSAFE_OF_ANY_TYPE_ASSERTION)
                 .comments_apply_at(assertion)
                 .data("type", get_any_type_name(unsafe_expression_any.sender))

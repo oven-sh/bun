@@ -1,10 +1,9 @@
 use bun_lint::prelude::*;
 use bun_lint::types::utils::{
-    TypeOrValueSpecifier, get_constrained_type_at_location, get_type_name, matches_type_or_base_type,
-    parse_type_or_value_specifiers, type_matches_some_specifier,
+    TypeOrValueSpecifier, get_constrained_type_at_location, get_type_name, is_global_reg_exp_type,
+    matches_type_or_base_type, parse_type_or_value_specifiers, type_matches_some_specifier,
 };
-use bun_lint::types::{Type, TypeFlags};
-use rustc_hash::{FxHashMap, FxHashSet};
+use bun_lint::types::{IdMap, IdSet, Type, TypeFlags};
 
 /// Enforce template literal expressions to be of `string` type.
 pub struct RestrictTemplateExpressions {
@@ -21,7 +20,7 @@ const INVALID_TYPE: Message =
 
 impl RestrictTemplateExpressions {
     /// `on_the_way`: the arrays that `inner_type` is in. `type A = A[]` has no end.
-    fn recursively_check_type<'a>(&self, inner_type: Type<'a>, on_the_way: &mut FxHashSet<Type<'a>>) -> bool {
+    fn recursively_check_type<'a>(&self, inner_type: Type<'a>, on_the_way: &mut IdSet<Type<'a>>) -> bool {
         if inner_type.is_unresolved() || !bun_core::StackCheck::init().is_safe_to_recurse() {
             return true;
         }
@@ -41,10 +40,14 @@ impl RestrictTemplateExpressions {
                         return true;
                     }
                     let is_allowed = self.recursively_check_type(it, on_the_way);
-                    on_the_way.remove(&inner_type);
+                    on_the_way.remove(inner_type);
                     is_allowed
                 })
-            || self.allow_reg_exp && get_type_name(inner_type) == b"RegExp"
+            || self.allow_reg_exp
+                && match inner_type.file().language().is_oxlint {
+                    true => is_global_reg_exp_type(inner_type),
+                    false => get_type_name(inner_type) == b"RegExp",
+                }
     }
 }
 
@@ -54,7 +57,7 @@ impl Rule for RestrictTemplateExpressions {
         .requires_types();
     const ON: On = On::new().exprs(&[ExprTag::Template]);
     /// Whether a type is allowed. Each constituent of a union is looked at, and many expressions have the same type.
-    type State<'a> = FxHashMap<Type<'a>, bool>;
+    type State<'a> = IdMap<Type<'a>, bool>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -83,26 +86,35 @@ impl Rule for RestrictTemplateExpressions {
         }
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<FxHashMap<Type<'a>, bool>> {
-        Some(FxHashMap::default())
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<IdMap<Type<'a>, bool>> {
+        Some(IdMap::new())
     }
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Template(template) = node.kind() else {
             return;
         };
+        // tsgolint asks the parent, which is the ParenthesizedExpression of a tag in parentheses.
         if template.exprs().is_empty()
             || matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate)
+                && !(cx.language().is_oxlint && node.is_parenthesized())
         {
             return;
         }
         for expression in template.exprs() {
             let expression_type = get_constrained_type_at_location(expression);
-            let is_allowed = || self.recursively_check_type(expression_type, &mut FxHashSet::default());
-            if !*cx.state.entry(expression_type).or_insert_with(is_allowed) {
-                cx.report(expression, INVALID_TYPE).data("type", expression_type.to_text()).labels_with(|labels| {
+            let is_allowed = *cx.state.get_or_insert_with(expression_type, || {
+                self.recursively_check_type(expression_type, &mut IdSet::new())
+            });
+            if !is_allowed {
+                // tsgolint reports the ParenthesizedExpression.
+                let report = match cx.language().is_oxlint {
+                    true => cx.report(expression.outer_span(), INVALID_TYPE),
+                    false => cx.report(expression, INVALID_TYPE),
+                };
+                report.data("type", expression_type.to_text()).labels_with(|labels| {
                     labels.first(format!("Type: {}", bstr::BStr::new(&expression_type.to_text())));
-                    labels.push(expression, "");
+                    labels.push(expression.outer_span(), "");
                 });
             }
         }

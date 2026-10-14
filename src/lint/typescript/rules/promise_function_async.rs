@@ -1,5 +1,7 @@
 use bun_lint::prelude::*;
-use bun_lint::types::utils::{contains_all_types_by_name, is_type_flag_set};
+use bun_lint::types::utils::{
+    contains_all_types_by_name, contains_all_types_by_name_as_tsgolint, is_type_flag_set,
+};
 use bun_lint::types::{Type, TypeFlags};
 use bun_lint::utils::ts_utils::get_function_head_loc;
 use smallvec::SmallVec;
@@ -103,7 +105,9 @@ impl PromiseFunctionAsync {
                         && !member.is_constructor()
                         && !member.flags().contains(Flags::ABSTRACT)
                 }
-                // In an object literal it is a `FunctionExpression` in a `Property`.
+                // In an object literal it is a `MethodDeclaration` for tsgolint.
+                _ if cx.language().is_oxlint => self.check_method_declarations,
+                // For typescript-eslint a `FunctionExpression` in a `Property`.
                 _ => self.check_function_expressions,
             },
             _ => false,
@@ -133,14 +137,29 @@ impl PromiseFunctionAsync {
         }
 
         let names = &self.all_allowed_promise_names;
-        // Without an explicit return type, one part of the return type that is a Promise is enough.
-        let match_any_instead = node.return_type().is_none();
-        if !return_types.iter().all(|ty| contains_all_types_by_name(*ty, true, names, match_any_instead)) {
+        let has_explicit_return_type = node.return_type().is_some();
+        let is_oxlint = cx.language().is_oxlint;
+        let every_signature_returns_promise = return_types.iter().all(|ty| match is_oxlint {
+            // tsgolint passes `hasExplicitReturnType` as `matchAnyInstead`.
+            true => contains_all_types_by_name_as_tsgolint(*ty, names, has_explicit_return_type),
+            // Without an explicit return type, one part of the return type that is a Promise is enough.
+            false => contains_all_types_by_name(*ty, true, names, !has_explicit_return_type),
+        });
+        if !every_signature_returns_promise {
             return;
         }
-        let is_hybrid_return_type = return_types.iter().any(|ty| {
-            ty.is_union() && !ty.types().iter().all(|part| contains_all_types_by_name(part, true, names, false))
-        });
+        let is_hybrid_return_type = match is_oxlint {
+            true => {
+                !has_explicit_return_type
+                    && return_types.iter().any(|ty| {
+                        ty.is_union()
+                            && !ty.types().iter().all(|part| contains_all_types_by_name_as_tsgolint(part, names, true))
+                    })
+            }
+            false => return_types.iter().any(|ty| {
+                ty.is_union() && !ty.types().iter().all(|part| contains_all_types_by_name(part, true, names, false))
+            }),
+        };
         let message = match is_hybrid_return_type {
             true => MISSING_ASYNC_HYBRID_RETURN,
             false => MISSING_ASYNC,

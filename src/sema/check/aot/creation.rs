@@ -652,6 +652,10 @@ impl<'p, 's> Checker<'p, 's> {
     fn follow_store(&mut self, file: FileId, e: ExprId, root: Root, is_on_every_path: bool, fresh: &mut Fresh, followed: &mut FxHashSet<ExprId>) -> bool {
         let hir = self.hir(file);
         let ExprKind::Assign { op, target, value } = hir[e].kind else { return true };
+        let stored = unwrapped(hir, value);
+        if matches!(hir[stored].kind, ExprKind::Assign { .. }) && !self.follow_store(file, stored, root, is_on_every_path, fresh, followed) {
+            return false;
+        }
         let target = unwrapped(hir, target);
         if matches!(hir[target].kind, ExprKind::Ident(_)) {
             return !self.is_root(file, target, root);

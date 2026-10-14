@@ -270,8 +270,9 @@ impl Records<'_, '_> {
             instantiation_expression,
             instantiation_target,
             default_of,
-            spread_of,
+            created_from,
             spread_rank,
+            properties_of,
             single_signature_arguments,
             has_no_instantiable_symbol,
             pattern_at,
@@ -280,8 +281,9 @@ impl Records<'_, '_> {
         symbol_declared_at.visit(it);
         symbol.visit(it);
         it.plain(&props.len());
-        for Prop { name, flags, source, mapper } in props.iter() {
+        for Prop { name, flags, source, mapper, name_type } in props.iter() {
             name.visit(it);
+            name_type.visit(it);
             if let PropSource::Copy(ty, ..) = source
                 && (*ty == TypeId::UNDEFINED || *ty == TypeId::MISSING)
                 && flags.contains(PropFlags::OPTIONAL)
@@ -312,8 +314,9 @@ impl Records<'_, '_> {
         instantiation_expression.visit(it);
         instantiation_target.visit(it);
         default_of.visit(it);
-        spread_of.visit(it);
+        created_from.visit(it);
         spread_rank.visit(it);
+        properties_of.visit(it);
         single_signature_arguments.visit(it);
         has_no_instantiable_symbol.visit(it);
         pattern_at.visit(it);

@@ -1,6 +1,6 @@
 //! A constant that holds a built-in: `const hasOwnProperty = Object.prototype.hasOwnProperty`, `const ObjectKeys = Object.keys`.
 
-use super::builtins_generated::{BUILTIN_ENTRIES, BuiltinKind, REPLACEABLE_GLOBALS};
+use super::builtins_generated::{BUILTIN_ENTRIES, BuiltinKind, Pattern, REPLACEABLE_GLOBALS};
 use crate::bind::{Decl, Parent, PatParent, SymFlags};
 use crate::check::Checker;
 use crate::check::errors_names_and_exports::root_declaration;
@@ -49,6 +49,28 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let path = self.path_that_initializer_comes_to(file, hir[d].init)?;
         Some((file, path))
+    }
+
+    pub fn is_number_taken_by_builtin_at(&self, file: FileId, path: ExprId) -> Vec<Option<bool>> {
+        let hir = self.hir(file);
+        let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[path].kind else { return Vec::new() };
+        let ExprKind::Ident(holder) = hir[obj].kind else { return Vec::new() };
+        let (holder, name) = (self.atoms().bytes(holder), self.atoms().bytes(name));
+        let mut taken: Vec<Option<bool>> = Vec::new();
+        for entry in BUILTIN_ENTRIES.iter().filter(|entry| entry.kind == BuiltinKind::Static && entry.holder.as_bytes() == holder && entry.name.as_bytes() == name) {
+            for (index, parameter) in entry.parameters.iter().enumerate() {
+                let is_number = match parameter.0 {
+                    Pattern::Number | Pattern::Integer | Pattern::ToNumber => Some(true),
+                    Pattern::ToString => Some(false),
+                    _ => None,
+                };
+                match taken.get_mut(index) {
+                    Some(known) => *known = known.or(is_number),
+                    None => taken.push(is_number),
+                }
+            }
+        }
+        taken
     }
 
     fn path_that_initializer_comes_to(&mut self, file: FileId, init: ExprId) -> Option<ExprId> {

@@ -85,7 +85,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
         // With a spread the object is filled as it goes. Else it is made once the values of its properties are there.
         let has_spread = element.attrs.iter().any(|p| hir[p].kind == PropKind::Spread);
-        let is_cloned = has_spread && is_component && automatic.is_some() && self.is_jsx_props_cloned(fx, e, jsx);
+        let cloned_as = if has_spread && is_component && automatic.is_some() { self.layout_of_cloned_jsx_props(fx, e, jsx) } else { None };
+        let is_cloned = cloned_as.is_some();
         let mut filled = if has_spread && !is_cloned { self.emit(fx, Op::NewObject) } else { V::NONE };
         let mut copied = TypeId::UNRESOLVED;
         let (mut names, mut values): (Vec<StrId>, Vec<V>) = (Vec::new(), Vec::new());
@@ -102,9 +103,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             if attr.kind == PropKind::Spread {
                 let source = self.expr(fx, attr.value);
-                if is_cloned {
+                if let Some(layout) = cloned_as {
                     copied = self.c.type_of_expr(fx.file, attr.value);
-                    filled = self.operation(fx, "CloneObject", &[source]);
+                    if self.record_layout(copied) == Some(layout) {
+                        filled = self.operation(fx, "CloneObject", &[source]);
+                    } else {
+                        copied = self.layout_types.get(&layout).copied().unwrap_or(copied);
+                        let mut operands = vec![source];
+                        for later in element.attrs.iter().skip_while(|&later| later != p).skip(1) {
+                            if let PropKey::Name(name) = hir[later].key {
+                                let name = self.str(name);
+                                operands.push(self.emit(fx, Op::Str(name)));
+                            }
+                        }
+                        if self.has_jsx_children(fx, jsx) {
+                            let name = self.out.strs.intern(b"children");
+                            operands.push(self.emit(fx, Op::Str(name)));
+                        }
+                        self.note_allocation(layout);
+                        filled = self.operation(fx, "CloneObjectWith", &operands);
+                    }
                     fx.checked.insert(filled, copied);
                     fx.b.func.values[filled.idx()].prediction = Prediction::Ty(self.ty_of(copied));
                 } else {
@@ -222,30 +240,40 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.record_layout(props)
     }
 
-    /// Whether the attributes but a `key` ahead of them start with their only spread, of an object of the layout of `layout_of_jsx_props`, and the others and the children are fields of it.
-    /// The checker has held them to the types of those properties.
-    fn is_jsx_props_cloned(&mut self, fx: &Fx, e: ExprId, jsx: JsxId) -> bool {
+    /// The layout of `layout_of_jsx_props`, if the attributes but a `key` ahead of them start with their only spread, of an object whose properties are all fields of it, and the others and the children
+    /// are fields of it. The checker has held them to the types of those properties.
+    fn layout_of_cloned_jsx_props(&mut self, fx: &Fx, e: ExprId, jsx: JsxId) -> Option<LayoutId> {
         let hir = self.hir(fx.file);
         let element = &hir[jsx];
         let keys_ahead = element.attrs.iter().take_while(|&p| matches!(hir[p].key, PropKey::Name(name) if hir[p].kind != PropKind::Spread && self.c.atoms().bytes(name) == b"key")).count();
         let mut written = element.attrs.iter().skip(keys_ahead);
-        let Some(spread) = written.next().filter(|&first| hir[first].kind == PropKind::Spread) else { return false };
+        let spread = written.next().filter(|&first| hir[first].kind == PropKind::Spread)?;
         let copied = self.c.type_of_expr(fx.file, hir[spread].value);
         if !fx.is_typed || !self.is_object_type_of_program(copied) {
-            return false;
+            return None;
         }
-        let (Some(layout), Some(declared)) = (self.record_layout(copied), self.layout_of_jsx_props(fx, e)) else { return false };
+        let (layout, declared) = (self.record_layout(copied)?, self.layout_of_jsx_props(fx, e)?);
+        let base = *self.layout_types.get(&declared)?;
         let is_field = |this: &mut Self, name: Atom| {
             let field = this.str(name);
-            this.out.layouts[layout.idx()].field(field).is_some() && !this.c.is_immutable_discriminant(copied, name)
+            this.out.layouts[declared.idx()].field(field).is_some() && !this.c.is_immutable_discriminant(base, name)
         };
-        let has_children = hir.ids(element.children).any(|child| !matches!(hir[child].kind, ExprKind::Missing));
-        layout == declared
+        let is_filled = (layout == declared || (self.ty_of(copied) != self.out.tys.anything && self.is_spread_held_by_but(declared, base, copied, &[])))
             && written.all(|p| match hir[p].key {
                 PropKey::Name(name) if hir[p].kind != PropKind::Spread => is_field(self, name),
                 _ => false,
             })
-            && (!has_children || self.c.atoms().lookup(b"children").is_some_and(|children| is_field(self, children)))
+            && (!self.has_jsx_children(fx, jsx) || self.c.atoms().lookup(b"children").is_some_and(|children| is_field(self, children)));
+        is_filled.then_some(declared)
+    }
+
+    fn has_jsx_children(&self, fx: &Fx, jsx: JsxId) -> bool {
+        let hir = self.hir(fx.file);
+        hir.ids(hir[jsx].children).any(|child| match hir[child].kind {
+            ExprKind::Missing => false,
+            ExprKind::String(_) if self.is_jsx_text(fx, child) => !jsx_text(&hir.text[hir[child].pos as usize..hir[child].end as usize]).is_empty(),
+            _ => true,
+        })
     }
 
     /// The object with the properties of an element: of the layout if it fits, else an ordinary one.

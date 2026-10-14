@@ -86,6 +86,7 @@ pub(super) struct Adapter<'a, 'c, 'p, 's> {
     unbound: FxHashMap<Atom, Ref>,
     labels: FxHashMap<Atom, Ref>,
     private_names: FxHashMap<Atom, Ref>,
+    under_a_suppression: Vec<u32>,
 }
 
 fn leak<T>(items: Vec<T>) -> StoreSlice<T> {
@@ -208,7 +209,12 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
             unbound: FxHashMap::default(),
             labels: FxHashMap::default(),
             private_names: FxHashMap::default(),
+            under_a_suppression: super::super::comments::functions_under_a_suppression_of_react_hooks(hir, bound),
         }
+    }
+
+    pub(super) fn is_under_a_suppression(&self, func: FnId) -> bool {
+        self.under_a_suppression.binary_search(&func.0).is_ok()
     }
 
     /// Where the node of a token starts in the source.
@@ -890,7 +896,7 @@ impl<'a, 'c, 'p, 's> Adapter<'a, 'c, 'p, 's> {
             (flags::Function::IsAsync, declared.contains(Flags::ASYNC)),
             (flags::Function::IsGenerator, declared.contains(Flags::GENERATOR)),
             (flags::Function::HasRestArg, has_rest_arg),
-            (flags::Function::HasReactHooksSuppression, declared.contains(Flags::REACT_HOOKS_SUPPRESSION)),
+            (flags::Function::HasReactHooksSuppression, self.is_under_a_suppression(func)),
         ] {
             if is_set {
                 flags.insert(flag);

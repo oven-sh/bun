@@ -81,6 +81,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         })
     }
 
+    pub(crate) fn type_attribute(&self, file: FileId, stmt: StmtId) -> Option<Atom> {
+        let hir = self.hir(file);
+        let (start, end) = (hir[stmt].start, hir[stmt].loc.end);
+        hir.import_attributes.iter().find_map(|&(pos, attributes)| {
+            let hir::ExprKind::Object(props) = hir[attributes].kind else { return None };
+            if pos < start || end <= pos {
+                return None;
+            }
+            props.iter().find_map(|p| {
+                let hir::PropKey::Name(key) = hir[p].key else { return None };
+                let hir::ExprKind::String(value) = hir[hir[p].value].kind else { return None };
+                (self.c.atoms().bytes(key) == b"type").then_some(value)
+            })
+        })
+    }
+
     /// `symbol.ValueDeclaration`, also of `const a = require("a")` in JavaScript, which the type checker takes for an import.
     pub(crate) fn value_declaration(&self, sym: Sym) -> Option<(FileId, Decl)> {
         self.files.value_declaration(sym).or_else(|| {
@@ -204,14 +220,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             declared.id = self.out.tys.intern(or_nil);
         }
         let g = self.add_global(name, sym.file, declared, GlobalKey::Symbol(sym.file, sym.id));
-        self.places.insert(sym, Place::Global(g));
+        let was = self.places.insert(sym, Place::Global(g));
+        if let Some(undo) = &mut self.undo {
+            undo.places.push((sym, was));
+        }
         if is_lazy {
             self.lazy_globals.insert(g, sym);
         }
         if is_var || is_lazy {
             self.out.globals[g.idx()].initialization = if is_lazy { ir::Initialization::Lazy } else { ir::Initialization::Undefined };
         } else if self.c.is_never_seen_uninitialized(sym) {
-            self.out.globals[g.idx()].initialization = if self.c.is_constant(sym) { ir::Initialization::NeverSeenAndStoredOnce } else { ir::Initialization::NeverSeen };
+            let is_stored_once = self.c.is_constant(sym) && !self.is_evaluated_when_touched(sym.file);
+            self.out.globals[g.idx()].initialization = if is_stored_once { ir::Initialization::NeverSeenAndStoredOnce } else { ir::Initialization::NeverSeen };
         }
         let (only_function, only_function_flags) = self.only_function_of(sym, declared.id);
         self.out.globals[g.idx()].only_function = only_function;
@@ -293,7 +313,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let key = self.key_of_next_environment();
         let layout = self.add_layout(LayoutKind::Environment, StrId::NONE, key);
-        self.activation_layouts.insert(activation, layout);
+        let was = self.activation_layouts.insert(activation, layout);
+        if let Some(undo) = &mut self.undo {
+            undo.activation_layouts.push((activation, was));
+        }
         self.activations.insert(layout, activation);
         let mut fields = Vec::new();
         for (index, &sym) in self.c.environment_of(self.file, activation).iter().enumerate() {
@@ -317,7 +340,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let (only_function, only_function_flags) = self.only_function_of(sym, declared.id);
             fields.push(Field { only_function, only_function_flags, ..Field::new(name, declared.id, flags) });
             self.checked_fields.insert((layout, index), declared.checked);
-            self.places.insert(sym, Place::Env(layout, index));
+            let was = self.places.insert(sym, Place::Env(layout, index));
+            if let Some(undo) = &mut self.undo {
+                undo.places.push((sym, was));
+            }
         }
         for func in self.c.function_expressions_kept_in(self.file, activation) {
             let declared = self.or_undefined(self.known.function);
@@ -331,11 +357,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let (name, declared, index) = (self.str(self.files.symbol(sym).name), self.ty_of_symbol(sym), fields.len() as u32);
                     fields.push(Field::new(name, declared.id, 0));
                     self.checked_fields.insert((layout, index), declared.checked);
-                    self.parameter_places.insert(sym, (Place::Env(layout, index), start, end));
+                    let was = self.parameter_places.insert(sym, (Place::Env(layout, index), start, end));
+                    if let Some(undo) = &mut self.undo {
+                        undo.parameter_places.push((sym, was));
+                    }
                 }
             }
         }
         self.out.layouts[layout.idx()].fields = fields;
+        if matches!(activation, Activation::Call(_)) {
+            self.out.layouts[layout.idx()].class_flags |= ir::class_flags::MAY_BE_REUSED;
+        }
         layout
     }
 
@@ -466,7 +498,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// What a closure of the function holds and a direct call passes ahead of `this`, as seen from the code being built.
     pub(crate) fn capture_values(&mut self, fx: &mut Fx, func: FuncId, pos: u32) -> ir::Args {
         let captures = self.captures.get(&func).cloned().unwrap_or_default();
-        captures.into_iter().map(|capture| self.capture_value(fx, capture, pos)).collect()
+        let held_to = self.out.funcs[func.idx()].captures.clone();
+        let anything = self.out.tys.anything;
+        (captures.into_iter().zip(held_to))
+            .map(|(capture, to)| {
+                let value = self.capture_value(fx, capture, pos);
+                if matches!(capture, Capture::Variable(_)) && to != anything && self.ty(fx, value) == anything {
+                    self.emit_throwing(fx, Op::Coerce { value, to, why: Why::Claim })
+                } else {
+                    value
+                }
+            })
+            .collect()
     }
 
     pub(crate) fn ty_of_capture(&mut self, capture: Capture) -> Ty {
@@ -497,7 +540,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let layout = self.add_layout(LayoutKind::Environment, StrId::NONE, key);
         let names = [self.out.strs.intern(b"this"), self.out.strs.intern(b"new.target")];
         self.out.layouts[layout.idx()].fields = names.into_iter().map(|name| Field::new(name, TyId::NONE, 0)).collect();
-        self.this_bindings.insert(func, layout);
+        let was = self.this_bindings.insert(func, layout);
+        if let Some(undo) = &mut self.undo {
+            undo.this_bindings.push((func, was));
+        }
         Some(layout)
     }
 
@@ -539,8 +585,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn add_captures(&mut self, fx: &mut Fx) {
         let is_arrow = fx.func.is_some() && self.hir(fx.file)[fx.func].kind == hir::FnKind::Arrow;
         let seen = if is_arrow { self.c.receiver_of_arrow(fx.file, fx.func) } else { Receiver::None };
-        for capture in self.captures.get(&fx.id).cloned().unwrap_or_default() {
-            let ty = self.ty_of_capture(capture);
+        let declared = self.out.funcs[fx.id.idx()].captures.clone();
+        for (capture, declared) in self.captures.get(&fx.id).cloned().unwrap_or_default().into_iter().zip(declared) {
+            let mut ty = self.ty_of_capture(capture);
+            if matches!(capture, Capture::Variable(_)) && declared != self.out.tys.anything && self.or_anything(ty.id) == self.out.tys.anything {
+                ty.id = declared;
+            }
             let value = self.add_entry_param(fx, ty);
             match capture {
                 Capture::Environment(activation) => {
@@ -625,7 +675,59 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         false
     }
 
+    pub(crate) fn override_of(&mut self, sym: Sym) -> Option<GlobalId> {
+        let file = sym.file;
+        if !self.shared.constants.has_test_globals || self.is_builtin_file(file) || self.shared.is_prelude(file) || self.is_commonjs(file) || !self.files.module(file).is_module() {
+            return None;
+        }
+        if !self.exported_bindings.contains_key(&file) {
+            let exported: Vec<Sym> = (self.exports_of_file(file).into_iter())
+                .filter_map(|export| match export.1 {
+                    ImportSource::Declaration(member) => Some(member),
+                    _ => None,
+                })
+                .collect();
+            let bindings = exported.into_iter().map(|member| self.value_symbol_of_export(member)).collect();
+            self.exported_bindings.insert(file, bindings);
+        }
+        if !self.exported_bindings[&file].contains(&sym) {
+            return None;
+        }
+        let name = self.files.symbol(sym).name;
+        Some(self.export_variable(file, name))
+    }
+
+    pub(crate) fn unless_overridden(&mut self, fx: &mut Fx, global: GlobalId, e: ExprId, overridden: impl FnOnce(&mut Self, &mut Fx, V) -> V, compiled: impl FnOnce(&mut Self, &mut Fx) -> V) -> V {
+        let known = self.emit(fx, Op::GlobalGet(global));
+        let undefined = self.emit(fx, Op::Undefined);
+        let is_unset = self.emit(fx, Op::StrictEq { a: known, b: undefined });
+        let (unset, set, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
+        let result = self.new_temporary(fx);
+        self.branch(fx, is_unset, unset, set);
+        fx.b.seal(unset);
+        fx.b.seal(set);
+        fx.b.switch_to(set);
+        let value = overridden(self, fx, known);
+        self.write(fx, result, value);
+        fx.b.jump(join);
+        fx.b.switch_to(unset);
+        let value = compiled(self, fx);
+        self.write(fx, result, value);
+        fx.b.jump(join);
+        fx.b.seal(join);
+        fx.b.switch_to(join);
+        let value = self.read(fx, result);
+        if e.is_some() { self.fit_to_expression(fx, value, e) } else { value }
+    }
+
     fn read_sym_at(&mut self, fx: &mut Fx, sym: Sym, e: ExprId, pos: u32) -> V {
+        match self.override_of(sym) {
+            Some(global) => self.unless_overridden(fx, global, e, |_, _, known| known, |this, fx| this.read_sym_as_compiled(fx, sym, e, pos)),
+            None => self.read_sym_as_compiled(fx, sym, e, pos),
+        }
+    }
+
+    fn read_sym_as_compiled(&mut self, fx: &mut Fx, sym: Sym, e: ExprId, pos: u32) -> V {
         if e.is_some()
             && self.files.flags(sym).contains(SymFlags::CLASS)
             && let Some((file, Decl::Class(class))) = self.value_declaration(sym)
@@ -746,7 +848,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let may_be_early = self.may_be_in_dead_zone(fx, sym, e);
             return self.read_lazy_variable(fx, global, sym, may_be_early);
         }
-        if self.may_be_in_dead_zone(fx, sym, e) { self.emit_throwing(fx, read) } else { self.emit(fx, read) }
+        if self.may_be_in_dead_zone(fx, sym, e) {
+            return self.emit_throwing(fx, read);
+        }
+        let found = self.emit(fx, read);
+        fx.b.func.values[found.idx()].finds_initialized = matches!(fx.b.func.op(found), Some(Op::GlobalGet(_)));
+        found
     }
 
     /// Whether the reference `e` may find what it refers to in its temporal dead zone. `NONE`: a reference that is not in the source.
@@ -892,9 +999,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let env = self.env_of(fx, layout);
                 self.emit(fx, Op::FieldSet { obj: env, layout, field, value });
             }
-            None => {
-                self.unsupported(fx, pos, "an assignment to this kind of declaration");
-            }
+            None => match self.value_declaration(sym) {
+                Some((file, Decl::Class(class))) if self.class_info(file, class).facts.is_evaluated_once => {
+                    let own = self.class_as_value(fx, file, class);
+                    let is_same = self.emit(fx, Op::StrictEq { a: value, b: own });
+                    let (same, other) = (fx.b.new_block(), fx.b.new_block());
+                    self.branch(fx, is_same, same, other);
+                    fx.b.seal(same);
+                    fx.b.seal(other);
+                    fx.b.switch_to(other);
+                    self.throw_error(fx, b"TypeError", b"Cannot assign another value to the name of a class declaration: in a compiled program the name stands for the class");
+                    fx.b.switch_to(same);
+                }
+                _ => {
+                    self.unsupported(fx, pos, "an assignment to this kind of declaration");
+                }
+            },
         }
     }
 
@@ -1173,6 +1293,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let name = self.str(name);
                 arguments.push(self.emit(fx, Op::Str(name)));
             }
+            if let Some((importer, object)) = self.only_object_behind_stars(sym.file) {
+                arguments.push(self.namespace_of_exported_object(fx, importer, object));
+            }
+            if self.shared.constants.own_paths.is_some() {
+                arguments.push(self.emit(fx, Op::Bool(true)));
+            }
             let obj = self.operation(fx, "MakeModuleNamespace", &arguments);
             self.emit(fx, Op::GlobalSet(global, obj));
             return self.terminate_with_return(fx, obj);
@@ -1260,22 +1386,39 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.is_written_in_second_body(file, func) {
             return self.declare_function_as(file, func, class, Role::Second);
         }
-        if class.is_some() || !self.has_two_bodies(file, func) {
-            return self.declare_function_as(file, func, class, Role::Whole);
+        if !self.has_two_bodies(file, func) {
+            let whole = self.declare_function_as(file, func, class, Role::Whole);
+            if class.is_none() && self.c.has_second_body_for_the_log(file, func) && self.holds_an_annotated_parameter(file, func) {
+                let entry = self.declare_function_as(file, func, class, Role::Beside);
+                if file == self.file {
+                    let second = self.declare_function_as(file, func, class, Role::Second);
+                    self.typed_bodies.insert(entry, whole);
+                    self.second_bodies.insert(entry, second);
+                }
+                self.entries_beside.insert(whole, entry);
+            }
+            return whole;
         }
-        let entry = self.declare_function_as(file, func, None, Role::Entry);
-        let typed = self.declare_function_as(file, func, None, Role::Typed);
+        let entry = self.declare_function_as(file, func, class, Role::Entry);
+        let typed = self.declare_function_as(file, func, class, Role::Typed);
         self.typed_bodies.insert(entry, typed);
         if file == self.file {
-            let second = self.declare_function_as(file, func, None, Role::Second);
+            let second = self.declare_function_as(file, func, class, Role::Second);
             self.second_bodies.insert(entry, second);
         }
         entry
     }
 
     fn has_two_bodies(&mut self, file: FileId, func: FnId) -> bool {
+        if !self.c.has_second_body(file, func) {
+            return false;
+        }
+        self.holds_an_annotated_parameter(file, func)
+    }
+
+    fn holds_an_annotated_parameter(&mut self, file: FileId, func: FnId) -> bool {
         let using = self.using_arguments(file);
-        if using.functions.contains(&func) || using.arrows.contains(&func) || self.shared.builtin_functions.declared_as(file, func).is_some() || !self.c.has_second_body(file, func) {
+        if using.functions.contains(&func) || using.arrows.contains(&func) || self.shared.builtin_functions.declared_as(file, func).is_some() {
             return false;
         }
         let parameters: Vec<hir::ParamId> = self.hir(file)[func].params.iter().collect();
@@ -1285,9 +1428,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         })
     }
 
-    fn declare_function_as(&mut self, file: FileId, func: FnId, class: Option<(FileId, hir::ClassId)>, role: Role) -> FuncId {
+    pub(crate) fn declare_function_as(&mut self, file: FileId, func: FnId, class: Option<(FileId, hir::ClassId)>, role: Role) -> FuncId {
         let is_root_of_second_body = role == Role::Second && !self.is_written_in_second_body(file, func);
-        let says_nothing = matches!(role, Role::Entry | Role::Second);
+        let says_nothing = matches!(role, Role::Entry | Role::Beside | Role::Second);
         let hir = self.hir(file);
         let f = &hir[func];
         let builtin = self.shared.builtin_functions.declared_as(file, func).copied();
@@ -1318,7 +1461,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             _ => ir::FuncKind::Plain,
         };
         let module = self.module_of(file);
-        let source = super::Source::Function { file, func, class, role };
+        let root_of_second_body = match role {
+            Role::Second if is_root_of_second_body => func,
+            Role::Second => self.second_root.unwrap_or(func),
+            _ => FnId::NONE,
+        };
+        let source = super::Source::Function { file, func, class, role, root_of_second_body };
         let id = if is_root_of_second_body {
             let id = self.add_header(name, module, f.start, kind, source);
             self.second_work.push_back(id);
@@ -1326,10 +1474,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         } else {
             self.add_func(name, module, f.start, kind, source)
         };
-        if role != Role::Typed && !is_root_of_second_body {
-            self.funcs.insert((file, func), id);
+        if !matches!(role, Role::Typed | Role::Beside) && !is_root_of_second_body {
+            let was = self.funcs.insert((file, func), id);
+            if let Some(undo) = &mut self.undo {
+                undo.funcs.push(((file, func), was));
+            }
         }
         let uses_arguments = self.uses_arguments(file, func);
+        let is_sloppy = self.c.is_sloppy_function(file, func);
         let mut signature = Signature::default();
         let (mut params, mut annotated) = (Vec::new(), Vec::new());
         for p in f.params.iter() {
@@ -1347,10 +1499,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if builtin.is_none() && f.name.is_none() && self.given_function_names.contains_key(&(file, func)) {
             flags |= func_flags::NAME_IS_GIVEN;
         }
-        if role == Role::Entry {
+        if matches!(role, Role::Entry | Role::Beside) {
             flags |= func_flags::IS_HIDDEN_IN_STACK_TRACES;
         }
-        if f.flags.contains(Flags::ASYNC) {
+        if role == Role::Beside {
+            flags |= func_flags::IS_GENERAL_ENTRY;
+        }
+        if f.flags.contains(Flags::ASYNC) && role != Role::Beside {
             flags |= func_flags::ASYNC;
         }
         if f.flags.contains(Flags::GENERATOR) {
@@ -1370,6 +1525,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         if kind == ir::FuncKind::Plain && flags & (func_flags::ASYNC | func_flags::GENERATOR) == 0 && self.c.mentions_new_target(file, func) {
             flags |= func_flags::HAS_NEW_TARGET;
+        }
+        if kind == ir::FuncKind::Plain && self.c.keeps_field_names_off_its_prototype(file, func) {
+            flags |= func_flags::KEEPS_FIELD_NAMES_OFF_ITS_PROTOTYPE;
         }
         // For a method, an object of its class. For another function, what it declares `this` to be, or what it is a member of.
         let this_declared = if has_this && !self.is_untyped_file(file) && !says_nothing {
@@ -1402,7 +1560,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             } else {
                 signature.result = Some(result);
                 signature.is_result_annotated = is_annotated;
-                self.declared(result)
+                let described = self.declared(result);
+                let written = self.c.integers_written_for_result(file, func);
+                self.with_integers(described, written)
             }
         };
         self.set_signature(id, signature);
@@ -1411,7 +1571,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         out.annotated = annotated;
         out.this_declared = this_declared;
         out.result = result;
-        out.flags = flags;
+        out.flags = flags | if is_sloppy { func_flags::IS_SLOPPY } else { 0 };
         out.length = f.params.iter().take_while(|&p| hir[p].default.is_none() && !hir[p].flags.contains(Flags::REST)).count() as u16;
         // What another file declares is at the level of its module.
         if file == self.file {

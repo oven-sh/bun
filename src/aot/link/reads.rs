@@ -6,50 +6,54 @@
 
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{LayoutId, StrId, TyId, V};
-use crate::ir::{Def, Func, Layout, LayoutKind, Op, Prediction, Program, Why, class_flags, field_flags};
+use crate::ir::{Def, Func, Layout, LayoutKind, Op, Prediction, Program, Strs, Why, class_flags, field_flags};
+use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-/// What the members of the view hold under the name. `NONE`: that says nothing, a member lacks the field, or an object that is not laid out may be looked at through the view.
+const FUNCTIONS_OF_A_SLICE: usize = 256;
+const KEYS_OF_A_SLICE: usize = 16;
+
+/// What the members of the view hold under the name. `None`: that says nothing, a member lacks the field, or an object that is not laid out may be looked at through the view.
 /// `looked_at_as`: of each layout, the views that have it for a member. `stored_through`: the views through which the program stores to which name: a view that is only read through puts nothing
 /// into a field, whatever it says of it.
-fn held_by_the_members(
-    tys: &mut DeclaredTable,
+fn described_by_the_members(
+    tys: &DeclaredTable,
     layouts: &[Layout],
     looked_at_as: &[Vec<LayoutId>],
     stored_through: &FxHashSet<(LayoutId, StrId)>,
     view: LayoutId,
     name: StrId,
     is_on_object_prototype: bool,
-) -> TyId {
+) -> Option<Declared> {
     let looked_at = &layouts[view.idx()];
     if looked_at.admits_foreign || looked_at.field(name).is_none() {
-        return TyId::NONE;
+        return None;
     }
     let mut held = Declared::never();
     for &member in looked_at.members.iter().chain(looked_at.members.is_empty().then_some(&view)) {
         let of_member = &layouts[member.idx()];
         // One that lacks the field may have been given a property of that name by untyped code: anything.
-        let Some(own) = of_member.field(name) else { return TyId::NONE };
+        let own = of_member.field(name)?;
         // What is absent is read from the prototype chain, and there anything may be found.
         let is_always_there = of_member.fields[own as usize].flags & (field_flags::OPTIONAL | field_flags::ABSENT_AT_BIRTH | field_flags::NEVER_SEEN_ABSENT) == field_flags::NEVER_SEEN_ABSENT;
         if !is_always_there && (is_on_object_prototype || of_member.kind != LayoutKind::Record || of_member.class_flags & class_flags::MAY_HAVE_OTHER_PROTOTYPE != 0) {
-            return TyId::NONE;
+            return None;
         }
         for &through in looked_at_as[member.idx()].iter().filter(|&&through| stored_through.contains(&(through, name))).chain([&member]) {
             let through = &layouts[through.idx()];
             let Some(field) = through.field(name) else { continue };
             let declared = through.fields[field as usize].declared;
             if declared.is_none() || declared == tys.anything {
-                return TyId::NONE;
+                return None;
             }
             held = held.or(tys.get(declared));
         }
     }
-    tys.intern(held)
+    Some(held)
 }
 
 /// How many reads were given a type, and how many coercions were left with nothing to do.
-pub(super) fn type_by_the_members(program: &mut Program) -> (usize, usize) {
+pub(super) fn type_by_the_members(program: &mut Program, in_parallel: InParallel<'_>) -> (usize, usize) {
     let Program { tys, funcs, layouts, strs, .. } = program;
     let mut looked_at_as: Vec<Vec<LayoutId>> = vec![Vec::new(); layouts.len()];
     for (view, layout) in layouts.iter().enumerate() {
@@ -59,25 +63,63 @@ pub(super) fn type_by_the_members(program: &mut Program) -> (usize, usize) {
     }
     let initialize = strs.intern(b"Initialize");
     let mut stored_through: FxHashSet<(LayoutId, StrId)> = FxHashSet::default();
-    for func in funcs.iter() {
-        let mut note = |obj: V, name: StrId| {
-            if func.ty(obj).is_some() {
-                stored_through.extend(tys.get(func.ty(obj)).parts.iter().filter_map(|part| if let Part::Class(layout) = part { Some((*layout, name)) } else { None }));
-            }
-        };
-        for value in &func.values {
-            match &value.def {
-                Def::Op(Op::PropSet { obj, name, .. }) => note(*obj, *name),
-                // `Initialize this, "a", x, "b", 0, ..`: the first stores of a constructor function.
-                Def::Op(Op::Operation { name, args }) if *name == initialize => {
-                    for store in args[1..].chunks_exact(2) {
-                        if let Some(&Op::Str(name)) = func.op(store[0]) {
-                            note(args[0], name);
+    let is_on_object_prototype = |strs: &Strs, name: StrId| super::NAMES_ON_OBJECT_PROTOTYPE.contains(&std::str::from_utf8(strs.get(name)).unwrap_or_default());
+    let mut described: FxHashMap<(LayoutId, StrId), Option<Declared>> = FxHashMap::default();
+    {
+        let (tys, layouts, strs) = (&*tys, &layouts[..], &*strs);
+        let mut stores: Vec<(&[Func], FxHashSet<(LayoutId, StrId)>)> = funcs.chunks(FUNCTIONS_OF_A_SLICE).map(|funcs| (funcs, FxHashSet::default())).collect();
+        for_each_mut(&mut stores, in_parallel, &|(funcs, stored_through)| {
+            for func in funcs.iter() {
+                let mut note = |obj: V, name: StrId| {
+                    if func.ty(obj).is_some() {
+                        stored_through.extend(tys.get(func.ty(obj)).parts.iter().filter_map(|part| if let Part::Class(layout) = part { Some((*layout, name)) } else { None }));
+                    }
+                };
+                for value in &func.values {
+                    match &value.def {
+                        Def::Op(Op::PropSet { obj, name, .. }) => note(*obj, *name),
+                        // `Initialize this, "a", x, "b", 0, ..`: the first stores of a constructor function.
+                        Def::Op(Op::Operation { name, args }) if *name == initialize => {
+                            for store in args[1..].chunks_exact(2) {
+                                if let Some(&Op::Str(name)) = func.op(store[0]) {
+                                    note(args[0], name);
+                                }
+                            }
                         }
+                        _ => {}
                     }
                 }
-                _ => {}
             }
+        });
+        for slice in stores {
+            stored_through.extend(slice.1);
+        }
+        let mut asked: Vec<(&[Func], Vec<(LayoutId, StrId)>)> = funcs.chunks(FUNCTIONS_OF_A_SLICE).map(|funcs| (funcs, Vec::new())).collect();
+        for_each_mut(&mut asked, in_parallel, &|(funcs, keys)| {
+            let mut seen = FxHashSet::default();
+            for func in funcs.iter() {
+                for value in &func.values {
+                    let Def::Op(Op::PropGet { obj, name }) = value.def else { continue };
+                    if value.ty != tys.anything && value.prediction == Prediction::None {
+                        continue;
+                    }
+                    let receiver = func.ty(obj);
+                    if let Some(view) = (if receiver.is_some() { tys.get(receiver).only_layout() } else { None })
+                        && seen.insert((view, name))
+                    {
+                        keys.push((view, name));
+                    }
+                }
+            }
+        });
+        let mut seen = FxHashSet::default();
+        let all: Vec<(LayoutId, StrId)> = asked.into_iter().flat_map(|slice| slice.1).filter(|&key| seen.insert(key)).collect();
+        let mut made: Vec<(&[(LayoutId, StrId)], Vec<Option<Declared>>)> = all.chunks(KEYS_OF_A_SLICE).map(|keys| (keys, Vec::new())).collect();
+        for_each_mut(&mut made, in_parallel, &|(keys, found)| {
+            found.extend(keys.iter().map(|&(view, name)| described_by_the_members(tys, layouts, &looked_at_as, &stored_through, view, name, is_on_object_prototype(strs, name))));
+        });
+        for (keys, found) in made {
+            described.extend(keys.iter().copied().zip(found));
         }
     }
     let mut known: FxHashMap<(LayoutId, StrId), TyId> = FxHashMap::default();
@@ -91,7 +133,11 @@ pub(super) fn type_by_the_members(program: &mut Program) -> (usize, usize) {
                     let held = match known.get(&(view, name)) {
                         Some(&held) => held,
                         None => {
-                            let held = held_by_the_members(tys, layouts, &looked_at_as, &stored_through, view, name, super::NAMES_ON_OBJECT_PROTOTYPE.contains(&std::str::from_utf8(strs.get(name)).unwrap_or_default()));
+                            let held = match described.remove(&(view, name)) {
+                                Some(held) => held,
+                                None => described_by_the_members(tys, layouts, &looked_at_as, &stored_through, view, name, is_on_object_prototype(strs, name)),
+                            };
+                            let held = held.map_or(TyId::NONE, |held| tys.intern(held));
                             known.insert((view, name), held);
                             held
                         }
@@ -116,8 +162,11 @@ pub(super) fn type_by_the_members(program: &mut Program) -> (usize, usize) {
                 _ => {}
             }
         }
-        coercions += leave_it_to_the_cast_behind(tys, func);
     }
+    let tys = &*tys;
+    let mut left: Vec<(&mut Func, usize)> = funcs.iter_mut().map(|func| (func, 0)).collect();
+    for_each_mut(&mut left, in_parallel, &|(func, left)| *left = leave_it_to_the_cast_behind(tys, func));
+    coercions += left.iter().map(|it| it.1).sum::<usize>();
     (reads, coercions)
 }
 

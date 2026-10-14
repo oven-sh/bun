@@ -5,7 +5,7 @@ import EventEmitter, { EventEmitterAsyncResource } from "events";
 
 describe("EventEmitterAsyncResource", () => {
   test("is an EventEmitter", () => {
-    const ee = new EventEmitterAsyncResource("test");
+    const ee = new EventEmitterAsyncResource("test" as any);
     expect(ee).toBeInstanceOf(EventEmitterAsyncResource);
     expect(ee).toBeInstanceOf(EventEmitter);
   });
@@ -28,7 +28,7 @@ describe("EventEmitterAsyncResource", () => {
     let ee;
     const asl = new AsyncLocalStorage();
     asl.run(123, () => {
-      ee = new EventEmitterAsyncResource("test");
+      ee = new EventEmitterAsyncResource("test" as any);
     });
 
     let val;
@@ -57,7 +57,7 @@ describe("EventEmitterAsyncResource", () => {
       throw new Error("boom");
     });
 
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<{ err: Error; event: string }>();
     let rejectionStore;
     ee[Symbol.for("nodejs.rejection")] = (err, event) => {
       rejectionStore = asl.getStore();
@@ -88,7 +88,7 @@ describe("EventEmitterAsyncResource", () => {
         calls++;
         return original.apply(this, args);
       };
-      const ee = new EventEmitterAsyncResource("test");
+      const ee = new EventEmitterAsyncResource("test" as any);
       let fired = false;
       ee.on("x", () => {
         fired = true;

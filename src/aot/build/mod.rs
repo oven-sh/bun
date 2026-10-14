@@ -14,6 +14,7 @@
 mod class;
 mod expr;
 mod commonjs;
+mod comments;
 mod constants;
 mod fit;
 mod imports;
@@ -41,11 +42,15 @@ use bun_sema::check::{Activation, Capture, Checker, Evaluates, FirstStore, Ident
 use bun_sema::hir::{self, ClassId, FileKind, FnId, StmtKind};
 use bun_sema::program::{Builtin, FileId, Files, Sym};
 use bun_sema::types::TypeId;
+use bun_sema::util::InParallel;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::OnceLock;
+
+const FILES_OF_A_CHECKER: usize = 32;
+const IMPORTS_OF_A_CHECKER: usize = 256;
 
 /// Something the compiler cannot translate yet.
 pub struct Problem {
@@ -55,6 +60,27 @@ pub struct Problem {
 }
 
 /// Where a variable that is not a local of one function lives.
+#[derive(Default)]
+pub(crate) struct Undo {
+    pub(crate) funcs: Vec<((FileId, FnId), Option<FuncId>)>,
+    pub(crate) named_functions: Vec<((FileId, FnId), Option<FuncId>)>,
+    pub(crate) activation_layouts: Vec<(Activation, Option<LayoutId>)>,
+    pub(crate) this_bindings: Vec<(FnId, Option<LayoutId>)>,
+    pub(crate) places: Vec<(Sym, Option<Place>)>,
+    pub(crate) parameter_places: Vec<(Sym, Option<(Place, u32, u32)>)>,
+}
+
+fn put_back<K: Copy + Eq + std::hash::Hash, T>(map: &mut FxHashMap<K, T>, noted: Vec<(K, Option<T>)>) {
+    let mut seen = FxHashSet::default();
+    for (key, was) in noted {
+        if seen.insert(key)
+            && let Some(was) = was
+        {
+            map.insert(key, was);
+        }
+    }
+}
+
 #[derive(Copy, Clone)]
 pub(crate) enum Place {
     Global(GlobalId),
@@ -73,6 +99,7 @@ enum Dependency {
 pub(crate) enum Role {
     Whole,
     Entry,
+    Beside,
     Typed,
     Second,
 }
@@ -81,7 +108,7 @@ pub(crate) enum Role {
 #[derive(Copy, Clone)]
 pub(crate) enum Source {
     Module(FileId),
-    Function { file: FileId, func: FnId, class: Option<(FileId, ClassId)>, role: Role },
+    Function { file: FileId, func: FnId, class: Option<(FileId, ClassId)>, role: Role, root_of_second_body: FnId },
     /// The constructor of a class that declares none.
     DefaultConstructor { file: FileId, class: ClassId },
     /// Yields the object an enum is as a value.
@@ -92,13 +119,22 @@ pub(crate) enum Source {
     ModuleNamespaceReader(FileId),
     /// `import("./file")`: an async function that evaluates the module and returns its namespace object.
     DynamicImport(FileId, bool),
+    Required(FileId),
+    DynamicImportBody(FileId, bool),
     /// `FileBuild::body_of`
     ModuleBody(FileId),
+    ModuleTouch(FileId),
+    ModuleSettling(FileId),
+    ModuleDriver(FileId),
+    ModuleInner(FileId),
     /// `FileBuild::initializer_of`
     Initializer(Sym),
     /// `FileBuild::member_of_exported_object`, as long as nothing is remembered: of a name it is handed; of `default`, as Node.js has it or not.
     MemberOfExportedObject(FileId),
     DefaultOfExportedObject(FileId, bool),
+    FilesByPath(FileId),
+    EvaluationByNumber(FileId),
+    ExportVariablesReader(FileId),
 }
 
 impl Source {
@@ -106,17 +142,27 @@ impl Source {
         match self {
             Source::Module(file) => FuncKey::Module(file),
             Source::Function { file, func, role: Role::Typed, .. } => FuncKey::TypedBody(file, func),
-            Source::Function { file, func, role: Role::Second, .. } => FuncKey::SecondBody(file, func),
+            Source::Function { file, func, role: Role::Beside, .. } => FuncKey::EntryBeside(file, func),
+            Source::Function { file, func, role: Role::Second, root_of_second_body, .. } => FuncKey::SecondBody(file, func, root_of_second_body),
             Source::Function { file, func, .. } => FuncKey::Function(file, func),
             Source::DefaultConstructor { file, class } => FuncKey::DefaultConstructor(file, class),
             Source::EnumObject(sym) => FuncKey::EnumObject(sym.file, sym.id),
             Source::NamespaceObject(sym) => FuncKey::NamespaceObject(sym.file, sym.id),
             Source::ModuleNamespaceReader(file) => FuncKey::ModuleNamespaceReader(file),
             Source::DynamicImport(file, is_node_mode) => FuncKey::DynamicImport(file, is_node_mode),
+            Source::Required(file) => FuncKey::Required(file),
+            Source::DynamicImportBody(file, is_node_mode) => FuncKey::DynamicImportBody(file, is_node_mode),
             Source::ModuleBody(file) => FuncKey::ModuleBody(file),
+            Source::ModuleTouch(file) => FuncKey::ModuleTouch(file),
+            Source::ModuleSettling(file) => FuncKey::ModuleSettling(file),
+            Source::ModuleDriver(file) => FuncKey::ModuleDriver(file),
+            Source::ModuleInner(file) => FuncKey::ModuleInner(file),
             Source::Initializer(sym) => FuncKey::Initializer(sym.file, sym.id),
             Source::MemberOfExportedObject(file) => FuncKey::MemberOfExportedObject(file),
             Source::DefaultOfExportedObject(file, is_node_mode) => FuncKey::DefaultOfExportedObject(file, is_node_mode),
+            Source::FilesByPath(file) => FuncKey::FilesByPath(file),
+            Source::EvaluationByNumber(file) => FuncKey::EvaluationByNumber(file),
+            Source::ExportVariablesReader(file) => FuncKey::ExportVariablesReader(file),
         }
     }
 }
@@ -153,8 +199,9 @@ pub(crate) struct FinallyContext {
     pub(crate) entry: BlockId,
     /// 0: on to what follows. 1: an exception goes on. From 2 on: `exits`.
     pub(crate) completion_type: Var,
-    /// The exception, or what is returned.
+    /// What was thrown, if the finalizer looks at it, or what is returned.
     pub(crate) value: Var,
+    pub(crate) exception: Var,
     /// The statements still to leave afterwards, from which index on, and where to go then.
     pub(crate) exits: Vec<(usize, Exit)>,
 }
@@ -184,6 +231,7 @@ pub(crate) struct Fx {
     pub(crate) found_initialized: FxHashMap<GlobalId, Var>,
     /// Those of which that was seen to before the loops around the code that is being translated.
     pub(crate) initialized_before_loops: Vec<GlobalId>,
+    pub(crate) modules_asked_for_before_loops: Vec<FileId>,
     /// `true` and `false`, in the entry block. `NONE`: not made yet.
     pub(crate) true_value: V,
     pub(crate) false_value: V,
@@ -251,6 +299,9 @@ pub(crate) struct Fx {
     pub(crate) first_stores: Vec<FirstStore>,
     /// What is being stored to a variable is what it has room for besides its type: `let a;`, `a = undefined!`. See `ty_held_by_symbol`.
     pub(crate) is_clearing: bool,
+    pub(crate) first_spans: FxHashMap<V, crate::audit::Noted>,
+    pub(crate) last_spans: FxHashMap<V, crate::audit::Noted>,
+    pub(crate) operand_spans: Vec<ir::Span>,
 }
 
 /// What is replaced by constants, by its text.
@@ -292,11 +343,15 @@ pub struct Shared<'a> {
     async_modules: FxHashSet<FileId>,
     /// By file. It follows from the tree, and is made by whoever asks first.
     pub(crate) using_arguments: Vec<OnceLock<UsingArguments>>,
+    pub(crate) calls_marked_pure: Vec<OnceLock<Vec<u32>>>,
     pub(crate) stars: Vec<OnceLock<imports::Stars>>,
     /// `Explain::literals`
     pub(crate) counts_literals: bool,
     /// `Explain::literal_at`
     pub(crate) literal_at: Option<(&'static str, u32)>,
+    modules_put_off: FxHashSet<FileId>,
+    modules_that_wait_for_their_place: FxHashSet<FileId>,
+    behind_put_off: Vec<OnceLock<Vec<(FileId, Dependency)>>>,
 }
 
 /// The functions of a file that refer to their `arguments` object, and the arrow functions that refer to that of a function around
@@ -316,7 +371,8 @@ impl<'a> Shared<'a> {
 
     /// Once the program is loaded, before any of it is translated. It goes by the trees and the symbols alone. The checker is told what
     /// is for the bundler to say: where the code of the imports is, and which module evaluates which.
-    pub fn new(program: &Checked<'_>, entry_points: &[Vec<FileId>], constants: &'a crate::Constants) -> Shared<'a> {
+    pub fn new(program: &Checked<'_>, entry_points: &[Vec<FileId>], constants: &'a crate::Constants, in_parallel: InParallel<'_>) -> Shared<'a> {
+        let entry_points: Vec<Vec<FileId>> = entry_points.iter().map(|run| run.iter().map(|&file| imports::written_in_the_place_of(program.files, file)).collect()).collect();
         let mut roots: Vec<FileId> = Vec::new();
         for &root in entry_points.iter().flatten() {
             if !roots.contains(&root) {
@@ -349,17 +405,48 @@ impl<'a> Shared<'a> {
             modules: Vec::new(),
             async_modules: FxHashSet::default(),
             using_arguments: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
+            calls_marked_pure: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
             stars: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
             counts_literals: false,
             literal_at: None,
+            modules_put_off: FxHashSet::default(),
+            modules_that_wait_for_their_place: FxHashSet::default(),
+            behind_put_off: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
         };
         let mut c = program.checker();
+        c.set_logs_type_errors(constants.logs_type_errors);
         c.set_files_that_only_declare(shared.bundle.iter().flat_map(|bundle| bundle.declaring()));
+        if !constants.ignores_dce_annotations && constants.own_paths.is_none() {
+            let marked = (0..program.files.modules.len() as u32).map(FileId).map(|file| (file, shared.calls_marked_pure[file.idx()].get_or_init(|| comments::calls_marked_pure(c.hir(file)))));
+            c.set_calls_marked_pure(marked.filter(|(_, calls)| !calls.is_empty()).map(|(file, calls)| (file, calls.clone())).collect());
+        }
         let (modules, async_modules) = FileBuild::new(&mut c, &shared, NO_FILE).tell_module_graph();
         (shared.modules, shared.async_modules) = (modules, async_modules);
+        let fits = |file: FileId| constants.own_paths.is_none() && program.files.module(file).builtin.is_none() && !shared.roots.contains(&file) && !shared.prelude.contains(&file) && !shared.async_modules.contains(&file);
+        let is_bundled = shared.bundle.is_some();
+        let mut is_licensed = |file: FileId| if is_bundled { constants.without_side_effects.contains(program.files.module(file).file_name()) } else { c.is_in_package_without_side_effects(file) } && !c.is_wholly_inert(file);
+        let licensed: Vec<FileId> = shared.modules.iter().copied().filter(|&file| fits(file) && is_licensed(file)).collect();
+        let would_wait: Vec<FileId> = licensed.iter().copied().filter(|&file| !c.runs_before_whoever_imports_it(file) && !program.files.module(file).is_commonjs()).collect();
+        let waiting: FxHashSet<FileId> = would_wait.iter().copied().filter(|&file| !c.is_in_a_cycle_of_imports(file)).collect();
+        let in_cycles = would_wait.len() - waiting.len();
+        let put_off: FxHashSet<FileId> = licensed.iter().copied().filter(|&file| waiting.contains(&file) || c.runs_before_whoever_imports_it(file)).collect();
+        shared.modules_put_off = put_off;
+        shared.modules_that_wait_for_their_place = waiting;
+        c.set_modules_put_off(&shared.modules_put_off);
+        if std::env::var_os("BUN_AOT_COUNT_MODULES_PUT_OFF").is_some() {
+            eprintln!("aot: {} of {} modules are put off; {} more are licensed and may be touched ahead of their place", shared.modules_put_off.len(), shared.modules.len(), licensed.len() - shared.modules_put_off.len());
+            eprintln!("aot: {} of the modules that are put off wait for their place; {in_cycles} more would, and stand in a cycle of imports", shared.modules_that_wait_for_their_place.len());
+        }
         // It asks which declarations are ambient, which goes by the modules.
-        FileBuild::new(&mut c, &shared, NO_FILE).tell_code_of_imports();
-        FileBuild::new(&mut c, &shared, NO_FILE).tell_resolved_imports();
+        let called = c.imports_that_are_called(in_parallel);
+        let code = c.in_slices(called, IMPORTS_OF_A_CHECKER, Some(in_parallel), &|c, imports| FileBuild::new(c, &shared, NO_FILE).code_of_imports(imports));
+        c.set_code_of_imports(code.into_iter().flatten());
+        let resolved = c.in_slices(&shared.modules, FILES_OF_A_CHECKER, Some(in_parallel), &|c, files| FileBuild::new(c, &shared, NO_FILE).resolved_imports_of(files));
+        FileBuild::new(&mut c, &shared, NO_FILE).tell_resolved_imports(resolved.into_iter(), in_parallel);
+        if std::env::var_os("BUN_AOT_COUNT_MODULES_PUT_OFF").is_some() {
+            let (marked, lazy) = shared.modules.iter().map(|&file| c.marked_initializers_of(file)).fold((0, 0), |sum, of_file| (sum.0 + of_file.0, sum.1 + of_file.1));
+            eprintln!("aot: {lazy} of {marked} constants whose initializer is marked pure are initialized when first read");
+        }
         shared
     }
 
@@ -425,6 +512,7 @@ pub(crate) struct FileBuild<'c, 'p, 's> {
     declares: Vec<LayoutId>,
     classes_as_values: Vec<LayoutId>,
     checked_default_exports_of: Option<(FuncId, hir::ExprId)>,
+    modules_touched: (FuncId, BlockId, Vec<FileId>),
     stored_besides: Vec<StrId>,
     cut: Vec<(u32, u32)>,
     /// An expression of another body is evaluated: nothing of this one is cut by that.
@@ -445,16 +533,21 @@ pub(crate) struct FileBuild<'c, 'p, 's> {
     evaluations: FxHashMap<FileId, FuncId>,
     /// `body_of`
     module_bodies: FxHashMap<FileId, FuncId>,
+    made_for_modules_that_wait: FxHashMap<FuncKey, FuncId>,
+    module_drivers: FxHashMap<FileId, FuncId>,
+    module_inners: FxHashMap<FileId, FuncId>,
     /// `is_lazy`
     lazy: FxHashMap<Sym, bool>,
     /// `initializer_of`
     initializers: FxHashMap<Sym, FuncId>,
     /// The module variables that are lazy, as far as they have come up.
     pub(crate) lazy_globals: FxHashMap<GlobalId, Sym>,
+    states_of_lazy_variables: FxHashMap<Sym, Option<GlobalId>>,
     /// `lazy_declarations_of`
     lazy_declarations: FxHashMap<FileId, Rc<Vec<(u32, u32, Sym)>>>,
     /// `uses_of_lazy_variables`
     lazy_uses: Option<Rc<Vec<(u32, FnId, Sym)>>>,
+    uses_of_modules_put_off: Option<Rc<Vec<(u32, FnId, FileId, u32)>>>,
     pub(crate) funcs: FxHashMap<(FileId, FnId), FuncId>,
     /// The functions of the source that closures are expected of and that are not declared: see `name_function`.
     named_functions: FxHashMap<(FileId, FnId), FuncId>,
@@ -475,10 +568,13 @@ pub(crate) struct FileBuild<'c, 'p, 's> {
     /// `global_of_namespace`
     pub(crate) namespace_globals: FxHashMap<Sym, GlobalId>,
     pub(crate) dynamic_imports: FxHashMap<(FileId, bool), FuncId>,
+    pub(crate) evaluations_by_require: FxHashMap<FileId, FuncId>,
+    pub(crate) dynamic_import_bodies: FxHashMap<(FileId, bool), FuncId>,
     /// `export_variable`
     pub(crate) export_variables: FxHashMap<(FileId, Atom), GlobalId>,
     /// `import_of_exported_object`
     pub(crate) imports_of_exported_objects: FxHashMap<(FileId, u8), FuncId>,
+    pub(crate) exported_bindings: FxHashMap<FileId, Vec<Sym>>,
     /// By specifier: the global that holds the namespace object of an external module.
     pub(crate) external_modules: Vec<(StrId, GlobalId)>,
     pub(crate) globals_of_modules: FxHashMap<(FileId, &'static str), GlobalId>,
@@ -509,6 +605,7 @@ pub(crate) struct FileBuild<'c, 'p, 's> {
     pub(crate) known: fit::Known,
     /// The checker's type that a layout is the layout of, and its types of the places of the program.
     pub(crate) layout_types: FxHashMap<LayoutId, TypeId>,
+    pub(crate) parts_within: FxHashMap<(TyId, TyId), Option<(Rc<[(LayoutId, LayoutId)]>, bool)>>,
     pub(crate) checked_globals: FxHashMap<GlobalId, TypeId>,
     pub(crate) checked_fields: FxHashMap<(LayoutId, u32), TypeId>,
     /// `Fragment::literals`
@@ -520,6 +617,8 @@ pub(crate) struct FileBuild<'c, 'p, 's> {
     pub(crate) laid_out_classes: FxHashMap<LayoutId, (FileId, ClassId)>,
     /// By the layout of what the parts of a union have in common, where that stands for the union: the layouts of the parts.
     pub(crate) parts_of_views: FxHashMap<LayoutId, Vec<LayoutId>>,
+    pub(crate) views_grown: u32,
+    pub(crate) cast_targets: FxHashMap<TyId, (u32, TyId)>,
     pub(crate) signatures: FxHashMap<FuncId, fit::Signature>,
     /// The layouts whose fields have their names and not their types: see `type_fields_of`.
     untyped_layouts: FxHashMap<LayoutId, types::FieldTypes>,
@@ -527,8 +626,10 @@ pub(crate) struct FileBuild<'c, 'p, 's> {
     work: VecDeque<FuncId>,
     pub(crate) typed_bodies: FxHashMap<FuncId, FuncId>,
     pub(crate) second_bodies: FxHashMap<FuncId, FuncId>,
+    pub(crate) entries_beside: FxHashMap<FuncId, FuncId>,
     pub(crate) second_work: VecDeque<FuncId>,
     pub(crate) second_root: Option<FnId>,
+    pub(crate) undo: Option<Box<Undo>>,
 }
 
 /// Translates the file, which is compiled with the program, and which the checker has checked or visited.
@@ -644,6 +745,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             declares: Vec::new(),
             classes_as_values: Vec::new(),
             checked_default_exports_of: None,
+            modules_touched: (FuncId::NONE, BlockId::NONE, Vec::new()),
             stored_besides: Vec::new(),
             cut: Vec::new(),
             only_asks: false,
@@ -657,11 +759,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             files_of_modules: Vec::new(),
             evaluations: FxHashMap::default(),
             module_bodies: FxHashMap::default(),
+            made_for_modules_that_wait: FxHashMap::default(),
+            module_drivers: FxHashMap::default(),
+            module_inners: FxHashMap::default(),
             lazy: FxHashMap::default(),
             initializers: FxHashMap::default(),
             lazy_globals: FxHashMap::default(),
+            states_of_lazy_variables: FxHashMap::default(),
             lazy_declarations: FxHashMap::default(),
             lazy_uses: None,
+            uses_of_modules_put_off: None,
             funcs: FxHashMap::default(),
             named_functions: FxHashMap::default(),
             named_default_constructors: FxHashMap::default(),
@@ -676,8 +783,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             namespace_objects: FxHashMap::default(),
             namespace_globals: FxHashMap::default(),
             dynamic_imports: FxHashMap::default(),
+            evaluations_by_require: FxHashMap::default(),
+            dynamic_import_bodies: FxHashMap::default(),
             export_variables: FxHashMap::default(),
             imports_of_exported_objects: FxHashMap::default(),
+            exported_bindings: FxHashMap::default(),
             external_modules: Vec::new(),
             globals_of_modules: FxHashMap::default(),
             given_function_names: FxHashMap::default(),
@@ -698,6 +808,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             records: FxHashMap::default(),
             known,
             layout_types: FxHashMap::default(),
+            parts_within: FxHashMap::default(),
             checked_globals: FxHashMap::default(),
             checked_fields: FxHashMap::default(),
             literals: Vec::new(),
@@ -705,14 +816,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             annotated_fields: FxHashSet::default(),
             laid_out_classes: FxHashMap::default(),
             parts_of_views: FxHashMap::default(),
+            views_grown: 0,
+            cast_targets: FxHashMap::default(),
             signatures: FxHashMap::default(),
             untyped_layouts: FxHashMap::default(),
             expected_of_composed: FxHashMap::default(),
             work: VecDeque::new(),
             typed_bodies: FxHashMap::default(),
             second_bodies: FxHashMap::default(),
+            entries_beside: FxHashMap::default(),
             second_work: VecDeque::new(),
             second_root: None,
+            undo: None,
         }
     }
 
@@ -746,12 +861,140 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.seal(dead);
             fx.b.switch_to(dead);
         }
+        if !self.shared.modules_put_off.is_empty() {
+            self.touch_module_named_by(fx, &op);
+        }
         if let Op::GlobalGet(global) = op
             && let Some(&sym) = self.lazy_globals.get(&global)
         {
             return self.read_lazy_variable(fx, global, sym, true);
         }
         self.emit_as_it_is(fx, op)
+    }
+
+    pub(crate) fn is_evaluated_when_touched(&self, file: FileId) -> bool {
+        self.shared.modules_put_off.contains(&file) && !self.only_declares(file)
+    }
+
+    fn waits_for_its_place(&self, file: FileId) -> bool {
+        self.shared.modules_that_wait_for_their_place.contains(&file) && !self.only_declares(file)
+    }
+
+    fn made_for_module_that_waits(&mut self, file: FileId, source: Source) -> FuncId {
+        if let Some(&known) = self.made_for_modules_that_wait.get(&source.key()) {
+            return known;
+        }
+        let name = self.name_after_file("module", file);
+        let module = self.module_of(file);
+        let made = self.add_func(name, module, 0, FuncKind::Module, source);
+        self.out.funcs[made.idx()].flags |= ir::func_flags::IS_HIDDEN_IN_STACK_TRACES;
+        self.made_for_modules_that_wait.insert(source.key(), made);
+        made
+    }
+
+    fn state_of_module_that_waits(&mut self, file: FileId) -> (GlobalId, GlobalId) {
+        let name = self.out.strs.intern(b"ran");
+        let ran = self.add_global(name, file, Ty::NONE, GlobalKey::OfModule(file, "ran"));
+        self.out.globals[ran.idx()].initialization = ir::Initialization::Undefined;
+        let name = self.out.strs.intern(b"thrown");
+        let thrown = self.add_global(name, file, Ty::NONE, GlobalKey::OfModule(file, "thrown"));
+        self.out.globals[thrown.idx()].initialization = ir::Initialization::Undefined;
+        (ran, thrown)
+    }
+
+    pub(crate) fn touch_module(&mut self, fx: &mut Fx, file: FileId) {
+        if file == fx.file || self.is_builtin_file(fx.file) || !self.is_evaluated_when_touched(file) || fx.modules_asked_for_before_loops.contains(&file) {
+            return;
+        }
+        if (self.modules_touched.0, self.modules_touched.1) != (fx.id, fx.b.block) {
+            self.modules_touched = (fx.id, fx.b.block, Vec::new());
+        }
+        if self.modules_touched.2.contains(&file) {
+            return;
+        }
+        self.modules_touched.2.push(file);
+        if self.waits_for_its_place(file) {
+            let (ran, _) = self.state_of_module_that_waits(file);
+            let yes = self.emit(fx, Op::Bool(true));
+            let known = self.emit_as_it_is(fx, Op::GlobalGet(ran));
+            let has_run = self.emit(fx, Op::StrictEq { a: known, b: yes });
+            let (asks, goes_on) = (fx.b.new_block(), fx.b.new_block());
+            self.branch(fx, has_run, goes_on, asks);
+            fx.b.seal(asks);
+            fx.b.switch_to(asks);
+            let func = self.made_for_module_that_waits(file, Source::ModuleTouch(file));
+            self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
+            fx.b.jump(goes_on);
+            fx.b.seal(goes_on);
+            fx.b.switch_to(goes_on);
+        } else {
+            self.emit_module_evaluation(fx, file);
+        }
+        self.modules_touched.1 = fx.b.block;
+    }
+
+    fn touch_module_named_by(&mut self, fx: &mut Fx, op: &Op) {
+        if matches!(self.sources[fx.id.idx()], Source::FilesByPath(_) | Source::EvaluationByNumber(_)) {
+            return;
+        }
+        let file = match *op {
+            Op::GlobalGet(global) | Op::GlobalSet(global, _) => {
+                let module = self.out.globals[global.idx()].module;
+                module.is_some().then(|| self.files_of_modules[module.idx()])
+            }
+            Op::FuncRef(func) | Op::Closure { func, .. } | Op::ClosureOnce { func, .. } | Op::CallDirect { func, .. } => match self.sources[func.idx()] {
+                Source::Function { file, .. } | Source::DefaultConstructor { file, .. } | Source::ModuleNamespaceReader(file) | Source::MemberOfExportedObject(file) | Source::DefaultOfExportedObject(file, _) | Source::ExportVariablesReader(file) => Some(file),
+                Source::EnumObject(sym) | Source::NamespaceObject(sym) | Source::Initializer(sym) => Some(sym.file),
+                Source::Module(_) | Source::DynamicImport(..) | Source::Required(_) | Source::DynamicImportBody(..) | Source::ModuleBody(_) | Source::ModuleDriver(_) | Source::ModuleInner(_) | Source::ModuleTouch(_) | Source::ModuleSettling(_) | Source::FilesByPath(_) | Source::EvaluationByNumber(_) => None,
+            },
+            _ => None,
+        };
+        if let Some(file) = file {
+            self.touch_module(fx, file);
+        }
+    }
+
+    fn is_walked_through(&self, file: FileId, imported: FileId) -> bool {
+        self.is_evaluated_when_touched(imported) && !self.waits_for_its_place(imported) && !self.is_imported_for_its_effects(file, imported)
+    }
+
+    fn what_stands_behind(&self, put_off: FileId) -> &'c [(FileId, Dependency)] {
+        let shared = self.shared;
+        shared.behind_put_off[put_off.idx()].get_or_init(|| {
+            let (mut found, mut walked) = (Vec::new(), FxHashSet::default());
+            walked.insert(put_off);
+            self.walk_through(put_off, &mut walked, &mut found);
+            let (mut seen, mut asked): (FxHashSet<FileId>, FxHashSet<Atom>) = Default::default();
+            found.retain(|&(owner, dependency)| match dependency {
+                Dependency::Module(imported) => seen.insert(imported),
+                Dependency::External(specifier) => asked.insert(self.as_the_host_finds_it(owner, specifier)),
+            });
+            found
+        })
+    }
+
+    fn walk_through(&self, file: FileId, walked: &mut FxHashSet<FileId>, found: &mut Vec<(FileId, Dependency)>) {
+        for dependency in self.dependencies_of(file) {
+            match dependency {
+                Dependency::Module(imported) if self.is_walked_through(file, imported) => {
+                    if walked.insert(imported) {
+                        self.walk_through(imported, walked, found);
+                    }
+                }
+                _ => found.push((file, dependency)),
+            }
+        }
+    }
+
+    fn is_imported_for_its_effects(&self, file: FileId, imported: FileId) -> bool {
+        let hir = self.hir(file);
+        hir.ids(hir.body).any(|stmt| match hir[stmt].kind {
+            StmtKind::Import(import) => {
+                let import = &hir[import];
+                import.default.is_none() && import.namespace.is_none() && import.named.is_empty() && self.imported_file(file, import.spec) == Some(imported)
+            }
+            _ => false,
+        })
     }
 
     fn emit_as_it_is(&mut self, fx: &mut Fx, op: Op) -> V {
@@ -769,6 +1012,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let made_as = if fx.is_typed { None } else { self.made_as(&op, ty.id) };
         let value = fx.b.emit(op, if made_as.is_some() { self.out.tys.anything } else { ty.id });
+        if self.shared.constants.notes_spans
+            && let Some(&(Op::Coerce { value: held, .. } | Op::IterOpen(held))) = fx.b.func.op(value)
+            && let Some(&span) = fx.last_spans.get(&held)
+        {
+            fx.first_spans.insert(value, span);
+            fx.last_spans.insert(value, span);
+        }
+        if self.shared.constants.notes_spans {
+            let (receiver, stored) = match fx.b.func.op(value) {
+                Some(&Op::PropSet { obj, value: stored, .. }) => (obj, stored),
+                Some(&Op::PropDelete { obj, .. }) => (obj, V::NONE),
+                Some(Op::Call { args, .. } | Op::CallMethod { args, .. }) => (args.first().copied().unwrap_or(V::NONE), V::NONE),
+                _ => (V::NONE, V::NONE),
+            };
+            for (operand, step) in [(receiver, crate::audit::RECEIVER), (stored, crate::audit::STORED)] {
+                if let Some(&span) = fx.last_spans.get(&operand) {
+                    fx.operand_spans.push(ir::Span { value, start: span.start, end: span.end, step });
+                }
+            }
+        }
         if let Some(made_as) = made_as {
             fx.b.func.values[value.idx()].prediction = made_as;
         }
@@ -813,19 +1076,36 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let name = self.name_after_file("module", file);
         let module = self.module_of(file);
-        let kind = if self.builtin_id(file).is_some() { FuncKind::Plain } else { FuncKind::Module };
+        let kind = if self.builtin_id(file).is_some() || self.is_async_module(file) { FuncKind::Plain } else { FuncKind::Module };
         let evaluation = self.add_func(name, module, 0, kind, Source::Module(file));
         // It has none of the code of the module. Whoever imports the module says the same of it.
-        if kind == FuncKind::Module {
+        if kind == FuncKind::Module || self.is_async_module(file) {
             self.out.funcs[evaluation.idx()].flags |= ir::func_flags::IS_HIDDEN_IN_STACK_TRACES;
         }
         self.evaluations.insert(file, evaluation);
         Some(evaluation)
     }
 
+    pub(crate) fn evaluation_by_require_of(&mut self, file: FileId) -> Option<FuncId> {
+        let evaluation = self.evaluation_of(file)?;
+        let path = self.files.module(file).file_name();
+        if self.builtin_id(file).is_some() || self.is_async_module(file) || !(self.is_commonjs(file) || path.ends_with(b".cjs") || path.ends_with(b".cts")) {
+            return Some(evaluation);
+        }
+        if let Some(&known) = self.evaluations_by_require.get(&file) {
+            return Some(known);
+        }
+        let name = self.name_after_file("module", file);
+        let module = self.module_of(file);
+        let by_require = self.add_func(name, module, 0, FuncKind::Plain, Source::Required(file));
+        self.out.funcs[by_require.idx()].flags |= ir::func_flags::IS_HIDDEN_IN_STACK_TRACES;
+        self.evaluations_by_require.insert(file, by_require);
+        Some(by_require)
+    }
+
     /// The function that has the statements of a module that is not one of the runtime's. It takes nothing, and sets and tests nothing: that it
-    /// runs once, after what the module imports, is seen to by `evaluation_of`, which calls it. An async function if the module has a
-    /// top-level `await` or imports one that has: then it evaluates and awaits what the module imports itself.
+    /// runs once, after what the module imports, is seen to by `evaluation_of`, which calls it, or by the engine where a top-level `await`
+    /// is reached from the module (`driver_of`). An async function if the module has a top-level `await` of its own.
     pub(crate) fn body_of(&mut self, file: FileId) -> FuncId {
         if let Some(&known) = self.module_bodies.get(&file) {
             return known;
@@ -835,10 +1115,39 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let is_async = self.is_async_module(file);
         let body = self.add_func(name, module, 0, if is_async { FuncKind::Plain } else { FuncKind::Module }, Source::ModuleBody(file));
         if is_async {
-            self.out.funcs[body.idx()].flags |= ir::func_flags::ASYNC | ir::func_flags::IS_CODE_OF_MODULE;
+            let has_await = self.has_top_level_await(file);
+            self.out.funcs[body.idx()].flags |= ir::func_flags::IS_CODE_OF_MODULE | if has_await { ir::func_flags::ASYNC } else { 0 };
+        }
+        if self.c.is_sloppy_function(file, bun_sema::hir::FnId::NONE) {
+            self.out.funcs[body.idx()].flags |= ir::func_flags::IS_SLOPPY;
         }
         self.module_bodies.insert(file, body);
         body
+    }
+
+    fn inner_of(&mut self, file: FileId) -> FuncId {
+        if let Some(&known) = self.module_inners.get(&file) {
+            return known;
+        }
+        let name = self.name_after_file("module", file);
+        let module = self.module_of(file);
+        let inner = self.add_func(name, module, 0, FuncKind::Plain, Source::ModuleInner(file));
+        self.out.funcs[inner.idx()].flags |= ir::func_flags::IS_HIDDEN_IN_STACK_TRACES;
+        self.module_inners.insert(file, inner);
+        inner
+    }
+
+    fn driver_of(&mut self, file: FileId) -> FuncId {
+        if let Some(&known) = self.module_drivers.get(&file) {
+            return known;
+        }
+        let name = self.name_after_file("module", file);
+        let module = self.module_of(file);
+        let driver = self.add_func(name, module, 0, FuncKind::Plain, Source::ModuleDriver(file));
+        let is_async = self.has_top_level_await(file);
+        self.out.funcs[driver.idx()].flags |= ir::func_flags::IS_HIDDEN_IN_STACK_TRACES | if is_async { ir::func_flags::ASYNC } else { 0 };
+        self.module_drivers.insert(file, driver);
+        driver
     }
 
     /// What the module evaluates before its body, in order.
@@ -850,6 +1159,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && hir.exprs.iter().any(|e| matches!(e.kind, hir::ExprKind::Jsx(_)))
         {
             specifiers.push((runtime, false));
+        }
+        if self.files.lowers_decorators(file) {
+            specifiers.push((self.c.atoms().intern(b"bun:wrap"), false));
         }
         for stmt in hir.ids(hir.body) {
             let specifier = match hir[stmt].kind {
@@ -901,21 +1213,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 Dependency::Module(imported) => Some((imported, Evaluates::First)),
                 Dependency::External(_) => None,
             });
-            let text_of = |e: hir::ExprId| match hir[e].kind {
-                hir::ExprKind::String(specifier) => Some(specifier),
-                _ => None,
+            let texts_of = |e: hir::ExprId| {
+                let mut found = Vec::new();
+                hir.choice_of_specifiers(e, &mut found).then_some(found)
             };
             let on_demand = hir.exprs.iter().enumerate().filter_map(|(i, e)| match e.kind {
                 hir::ExprKind::ImportCall { args } => {
                     let is_in_function = self.c.enclosing_fn_of_expr(file, hir::ExprId(i as u32)).is_some();
-                    Some((text_of(hir.ids(args).next()?)?, if is_in_function { Evaluates::Later } else { Evaluates::LaterFromItsBody }))
+                    Some((texts_of(hir.ids(args).next()?)?, if is_in_function { Evaluates::Later } else { Evaluates::LaterFromItsBody }))
                 }
                 hir::ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, hir::ExprKind::Ident(name) if self.c.atoms().bytes(name) == b"require") => {
                     let is_in_function = self.c.enclosing_fn_of_expr(file, hir::ExprId(i as u32)).is_some();
-                    Some((text_of(hir.ids(hir[call].args).next()?)?, if is_in_function { Evaluates::AtOnce } else { Evaluates::InItsBody }))
+                    Some((texts_of(hir.ids(hir[call].args).next()?)?, if is_in_function { Evaluates::AtOnce } else { Evaluates::InItsBody }))
                 }
                 _ => None,
             });
+            let on_demand = on_demand.flat_map(|(specifiers, how)| specifiers.into_iter().map(move |specifier| (specifier, how)));
             let required = hir.ids(hir.body).filter_map(|stmt| match hir[stmt].kind {
                 StmtKind::ImportEquals(import) => match hir[import].target {
                     hir::ImportEqualsTarget::Require(specifier) if specifier.is_some() => Some((specifier, Evaluates::InItsBody)),
@@ -970,6 +1283,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         is_lazy
     }
 
+    fn state_of_lazy_variable(&mut self, sym: Sym) -> Option<GlobalId> {
+        if let Some(&known) = self.states_of_lazy_variables.get(&sym) {
+            return known;
+        }
+        let state = self.c.keeps_its_state_apart(sym).then(|| {
+            let name = [self.c.atoms().bytes(self.files.symbol(sym).name), b" is initialized"].concat();
+            let name = self.out.strs.intern(&name);
+            let state = self.add_global(name, sym.file, Ty::NONE, GlobalKey::StateOfLazyVariable(sym.file, sym.id));
+            self.out.globals[state.idx()].initialization = ir::Initialization::Undefined;
+            state
+        });
+        self.states_of_lazy_variables.insert(sym, state);
+        state
+    }
+
     /// The function that evaluates the initializer of a lazy variable and stores it. It takes nothing and yields nothing.
     fn initializer_of(&mut self, sym: Sym) -> FuncId {
         if let Some(&known) = self.initializers.get(&sym) {
@@ -1015,8 +1343,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// The slot holds `undefined` while the variable is in its dead zone, `null` once its turn has come, which the declaration stores,
     /// and then the value, which is neither. Where no read can be early the declaration stores nothing, and `undefined` says that its
-    /// turn has come. `may_be_early`: this read.
+    /// turn has come. `may_be_early`: this read. Where the initializer is a call marked pure the slot has the value alone, which may be either, and `state_of_lazy_variable` the rest.
     pub(crate) fn read_lazy_variable(&mut self, fx: &mut Fx, global: GlobalId, sym: Sym, may_be_early: bool) -> V {
+        self.touch_module(fx, sym.file);
         let found = self.emit_as_it_is(fx, Op::GlobalGet(global));
         if self.initializers.get(&sym) == Some(&fx.id) || fx.initialized_before_loops.contains(&global) {
             return found;
@@ -1044,7 +1373,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.branch(fx, is_missing, initialize, done);
         fx.b.seal(initialize);
         fx.b.switch_to(initialize);
-        if may_be_early && !self.c.is_never_seen_uninitialized(sym) {
+        let state = self.state_of_lazy_variable(sym);
+        if let Some(state) = state {
+            let state = self.emit_as_it_is(fx, Op::GlobalGet(state));
+            let is_there = self.emit(fx, Op::StrictEq { a: state, b: fx.true_value });
+            let is_not = fx.b.new_block();
+            self.branch(fx, is_there, done, is_not);
+            fx.b.seal(is_not);
+            fx.b.switch_to(is_not);
+            self.throw_if_in_dead_zone(fx, sym, state);
+        } else if may_be_early && !self.c.is_never_seen_uninitialized(sym) {
             self.throw_if_in_dead_zone(fx, sym, found);
         }
         let func = self.initializer_of(sym);
@@ -1052,7 +1390,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let mut stored = self.emit_as_it_is(fx, Op::GlobalGet(global));
         let read_as = self.ty(fx, stored);
         let not_nil = self.not_nil(read_as);
-        if not_nil != read_as {
+        if not_nil != read_as && state.is_none() {
             stored = self.emit_throwing(fx, Op::Coerce { value: stored, to: not_nil, why: ir::Why::NonNull(StrId::NONE) });
         }
         fx.b.write(value, stored);
@@ -1094,7 +1432,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.c.is_never_seen_uninitialized(sym) || !self.may_be_in_dead_zone(fx, sym, e) {
             return;
         }
-        let global = self.global_of(sym);
+        let global = match self.state_of_lazy_variable(sym) {
+            Some(state) => state,
+            None => self.global_of(sym),
+        };
+        self.touch_module(fx, sym.file);
         let found = self.emit_as_it_is(fx, Op::GlobalGet(global));
         self.throw_if_in_dead_zone(fx, sym, found);
     }
@@ -1107,7 +1449,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(early);
         fx.b.seal(due);
         fx.b.switch_to(early);
-        let message = [b"Cannot access '", self.c.atoms().bytes(self.files.symbol(sym).name), b"' before initialization"].concat();
+        let message = [b"Cannot access '", self.c.atoms().bytes(self.files.symbol(sym).name), b"' before initialization."].concat();
         self.throw_error(fx, b"ReferenceError", &message);
         fx.b.switch_to(due);
     }
@@ -1132,9 +1474,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let global = self.global_of(sym);
         // The fragment of the file is the one that has it, whoever reads the variable.
         self.initializer_of(sym);
-        if !self.c.is_never_seen_uninitialized(sym) {
+        for &named in self.c.names_found_initialized_where_declared(sym).iter() {
+            self.find_initialized(fx, named);
+        }
+        if let Some(state) = self.state_of_lazy_variable(sym) {
+            let due = self.emit(fx, Op::Bool(false));
+            self.emit(fx, Op::GlobalSet(state, due));
+        } else if !self.c.is_never_seen_uninitialized(sym) {
             let due = self.emit(fx, Op::Null);
             self.emit(fx, Op::GlobalSet(global, due));
+        }
+    }
+
+    fn find_initialized(&mut self, fx: &mut Fx, named: Sym) {
+        let named = self.value_symbol(named);
+        if self.is_lazy(named) {
+            self.check_turn_of_lazy_variable(fx, named, hir::ExprId::NONE);
+        } else if let Some((file, bun_sema::bind::Decl::Class(class))) = self.value_declaration(named) {
+            self.check_class_is_declared(fx, file, class, hir::ExprId::NONE);
+        } else if self.may_be_in_dead_zone(fx, named, hir::ExprId::NONE) {
+            let pos = fx.b.pos;
+            self.read_sym(fx, named, pos);
         }
     }
 
@@ -1143,8 +1503,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let decl = self.hir(file)[d];
         fx.b.pos = decl.loc.pos;
         self.global_of(sym);
+        let state = self.state_of_lazy_variable(sym);
+        if let Some(state) = state {
+            let under_way = self.emit(fx, Op::Undefined);
+            self.emit(fx, Op::GlobalSet(state, under_way));
+        }
         let value = self.initial_value(fx, &decl);
         self.bind_pat(fx, decl.pat, value);
+        if let Some(state) = state {
+            let there = self.emit(fx, Op::Bool(true));
+            self.emit(fx, Op::GlobalSet(state, there));
+        }
     }
 
     /// Where the code of the file names a lazy variable: the position, the function that runs the code, the variable. Ascending.
@@ -1175,14 +1544,63 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// Before a loop: what its code would test each time round is seen to once. Nobody can tell that an initializer ran early. Not for a
     /// variable that may be in its dead zone: the read that finds it there has to throw, and no other.
+    fn uses_of_modules_put_off(&mut self) -> Rc<Vec<(u32, FnId, FileId, u32)>> {
+        if let Some(known) = &self.uses_of_modules_put_off {
+            return known.clone();
+        }
+        let file = self.file;
+        let (hir, bound) = (self.hir(file), self.c.bound(file));
+        let mut uses = Vec::new();
+        for (i, e) in hir.exprs.iter().enumerate() {
+            let hir::ExprKind::Ident(name) = e.kind else { continue };
+            let (e, pos) = (hir::ExprId(i as u32), e.pos);
+            if matches!(bound.expr_parent[e.idx()], bun_sema::bind::Parent::None) || bound.is_in_type_query(e) {
+                continue;
+            }
+            let Some(sym) = self.c.binding_of_identifier(file, e, name) else { continue };
+            let sym = self.value_symbol(sym);
+            if sym.file != file && self.is_evaluated_when_touched(sym.file) {
+                uses.push((pos, self.function_running(file, e), sym.file, 0));
+            }
+        }
+        uses.sort_unstable_by_key(|&(pos, ..)| pos);
+        let mut tries: Vec<(u32, u32)> = hir.stmts.iter().filter(|stmt| matches!(stmt.kind, StmtKind::Try { .. })).map(|stmt| (stmt.start, stmt.loc.end)).collect();
+        tries.sort_unstable();
+        let (mut next, mut open): (usize, Vec<(u32, u32)>) = (0, Vec::new());
+        for (pos, .., innermost) in uses.iter_mut() {
+            while next < tries.len() && tries[next].0 <= *pos {
+                open.push(tries[next]);
+                next += 1;
+            }
+            open.retain(|&(_, end)| *pos < end);
+            *innermost = open.last().map_or(0, |&(start, _)| start + 1);
+        }
+        let uses = Rc::new(uses);
+        self.uses_of_modules_put_off = Some(uses.clone());
+        uses
+    }
+
     pub(crate) fn initialize_before_loop(&mut self, fx: &mut Fx, start: u32, end: u32) {
         if fx.file != self.file {
             return;
         }
+        if !self.shared.modules_put_off.is_empty() {
+            let uses = self.uses_of_modules_put_off();
+            let first = uses.partition_point(|&(pos, ..)| pos < start);
+            let running = fx.func;
+            let in_loop = || uses[first..].iter().take_while(|&&(pos, ..)| pos < end).filter(move |&&(_, by, ..)| by == running);
+            let under_a_try: Vec<FileId> = in_loop().filter(|&&(.., innermost_try)| innermost_try > start).map(|&(_, _, module, _)| module).collect();
+            for &(_, _, module, _) in in_loop() {
+                if !under_a_try.contains(&module) && !fx.modules_asked_for_before_loops.contains(&module) {
+                    self.touch_module(fx, module);
+                    fx.modules_asked_for_before_loops.push(module);
+                }
+            }
+        }
         let uses = self.uses_of_lazy_variables();
         let first = uses.partition_point(|&(pos, ..)| pos < start);
         for &(_, by, sym) in uses[first..].iter().take_while(|&&(pos, ..)| pos < end) {
-            if by != fx.func || !self.c.is_never_seen_uninitialized(sym) {
+            if by != fx.func || !self.c.is_never_seen_uninitialized(sym) || self.c.runs_code_when_initialized(sym) {
                 continue;
             }
             let global = self.global_of(sym);
@@ -1207,11 +1625,41 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.dropped.push((hir[stmt].start, hir[stmt].loc.end));
             }
         }
-        for dependency in self.dependencies_of(file) {
+        let importer = file;
+        let mut in_order: Vec<(FileId, Dependency)> = Vec::new();
+        for dependency in self.dependencies_of(importer) {
+            match dependency {
+                Dependency::Module(imported) if self.is_walked_through(importer, imported) => in_order.extend_from_slice(self.what_stands_behind(imported)),
+                _ => in_order.push((importer, dependency)),
+            }
+        }
+        let (mut seen, mut asked): (FxHashSet<FileId>, FxHashSet<Atom>) = Default::default();
+        in_order.retain(|&(owner, dependency)| match dependency {
+            Dependency::Module(imported) => seen.insert(imported) || owner == importer,
+            Dependency::External(specifier) => asked.insert(self.as_the_host_finds_it(owner, specifier)) || owner == importer,
+        });
+        for (file, dependency) in in_order {
+            let is_the_importer = file == importer;
             match dependency {
                 Dependency::Module(imported) => {
                     if let Some(func) = self.evaluation_of(imported) {
+                        let func = if self.is_async_module(imported) { self.inner_of(imported) } else { func };
                         self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
+                        if self.is_async_module(imported) {
+                            let (module, required) = (self.module_record_of(file), self.module_record_of(imported));
+                            let (module, required) = (self.emit(fx, Op::GlobalGet(module)), self.emit(fx, Op::GlobalGet(required)));
+                            self.operation(fx, "DidEvaluateRequiredModule", &[module, required]);
+                        }
+                    }
+                    if self.waits_for_its_place(imported) && self.is_imported_for_its_effects(file, imported) {
+                        let func = self.made_for_module_that_waits(imported, Source::ModuleTouch(imported));
+                        self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
+                    }
+                    if is_the_importer && self.shared.constants.own_paths.is_none() && !self.has_export_variables(imported) && self.is_namespace_used_as_a_value(file, imported) {
+                        self.namespace_of_exported_object(fx, file, imported);
+                    }
+                    if self.is_seen_through_the_host(imported) {
+                        self.namespace_by_the_host(fx, imported);
                     }
                 }
                 // The host evaluates it the first time it is asked for.
@@ -1225,14 +1673,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     };
                     let stmt = hir.ids(hir.body).find(is_the_import);
                     let pos = stmt.map_or(0, |stmt| hir[stmt].start);
-                    if self.is_in_the_bundle_only(file, specifier) {
+                    if !is_the_importer {
+                    } else if self.is_in_the_bundle_only(file, specifier) {
                         self.problem(file, pos, "an import of a file that is neither code nor a constant");
                     } else if self.shared.bundle.is_some() && stmt.is_some_and(|stmt| self.is_import_of_asset(file, stmt)) {
                         // The host is asked by the specifier alone.
                         self.problem(file, pos, "an import `with { type: .. }` of what the bundle has not");
                     }
                     // Once for the program: every module that imports it sees the same.
-                    let global = self.external_module_global(file, specifier);
+                    let global = self.external_module_global_kept_in(importer, file, specifier);
+                    let specifier = self.as_the_host_finds_it(file, specifier);
                     let specifier = self.str(specifier);
                     let known = self.emit(fx, Op::GlobalGet(global));
                     let undefined = self.emit(fx, Op::Undefined);
@@ -1251,55 +1701,143 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    fn emit_wait_for_dependencies(&mut self, fx: &mut Fx, file: FileId) {
-        let name = self.out.strs.intern(b"evaluated");
-        let flag = self.add_global(name, file, Ty::NONE, GlobalKey::OfModule(file, "evaluated"));
-        self.out.globals[flag.idx()].initialization = ir::Initialization::Undefined;
+    fn module_record_of(&mut self, file: FileId) -> GlobalId {
+        let name = self.out.strs.intern(b"record");
+        let record = self.add_global(name, file, Ty::NONE, GlobalKey::OfModule(file, "record"));
+        self.out.globals[record.idx()].initialization = ir::Initialization::Undefined;
+        record
+    }
+
+    fn emit_module_record(&mut self, fx: &mut Fx, file: FileId) -> V {
+        let record = self.module_record_of(file);
+        let known = self.emit(fx, Op::GlobalGet(record));
+        let undefined = self.emit(fx, Op::Undefined);
+        let is_missing = self.emit(fx, Op::StrictEq { a: known, b: undefined });
+        let (first, there) = (fx.b.new_block(), fx.b.new_block());
+        self.branch(fx, is_missing, first, there);
+        fx.b.seal(first);
+        fx.b.switch_to(first);
+        let has_await = self.has_top_level_await(file);
+        let has_await = self.emit(fx, Op::Bool(has_await));
+        let driver = self.driver_of(file);
+        let driver = self.emit(fx, Op::FuncRef(driver));
+        let made = self.operation(fx, "NewModuleRecord", &[has_await, driver]);
+        self.emit(fx, Op::GlobalSet(record, made));
+        fx.b.jump(there);
+        fx.b.seal(there);
+        fx.b.switch_to(there);
+        self.emit(fx, Op::GlobalGet(record))
+    }
+
+    fn emit_evaluate(&mut self, fx: &mut Fx, file: FileId, ticket: V) -> V {
+        let record = self.emit_module_record(fx, file);
+        let inner = self.inner_of(file);
+        let inner = self.emit(fx, Op::FuncRef(inner));
+        let ticket = if ticket.is_none() { self.emit(fx, Op::Undefined) } else { ticket };
+        let promise = self.operation(fx, "EvaluateModule", &[record, inner, ticket]);
         let name = self.out.strs.intern(b"evaluation");
         let evaluation = self.add_global(name, file, Ty::NONE, GlobalKey::OfModule(file, "evaluation"));
         self.out.globals[evaluation.idx()].initialization = ir::Initialization::Undefined;
-        let known = self.emit(fx, Op::GlobalGet(flag));
-        let no = self.emit(fx, Op::Bool(false));
-        let has_thrown = self.emit(fx, Op::StrictEq { a: known, b: no });
-        let (thrown, started) = (fx.b.new_block(), fx.b.new_block());
-        self.branch(fx, has_thrown, thrown, started);
-        fx.b.seal(thrown);
-        fx.b.seal(started);
-        fx.b.switch_to(thrown);
-        let yes = self.emit(fx, Op::Bool(true));
-        self.emit(fx, Op::GlobalSet(flag, yes));
-        let error = self.emit(fx, Op::GlobalGet(evaluation));
-        fx.b.terminate(Term::Throw { value: error, unwind: None });
-        fx.b.switch_to(started);
-        // All of them have started, in order. The body runs once all are done.
-        let importer = self.variable_of_program("importer");
-        let importer = self.emit(fx, Op::GlobalGet(importer));
-        let mut pending = Vec::new();
-        for dependency in self.dependencies_of(file) {
-            if let Dependency::Module(imported) = dependency
-                && self.is_async_module(imported)
-                && self.evaluation_of(imported).is_some()
-            {
-                let evaluation = self.add_global(name, imported, Ty::NONE, GlobalKey::OfModule(imported, "evaluation"));
-                self.out.globals[evaluation.idx()].initialization = ir::Initialization::Undefined;
-                let promise = self.emit(fx, Op::GlobalGet(evaluation));
-                let number = self.emit(fx, Op::Int(imported.0 as i64));
-                pending.push((promise, self.emit(fx, Op::StrictEq { a: importer, b: number })));
-            }
+        self.emit(fx, Op::GlobalSet(evaluation, promise));
+        promise
+    }
+
+    fn emit_inner_module_evaluation(&mut self, fx: &mut Fx, file: FileId) {
+        let record = self.emit_module_record(fx, file);
+        let enters = self.operation(fx, "EnterModule", &[record]);
+        let (evaluate, done) = (fx.b.new_block(), fx.b.new_block());
+        self.branch(fx, enters, evaluate, done);
+        fx.b.seal(evaluate);
+        fx.b.seal(done);
+        fx.b.switch_to(done);
+        self.terminate_with_return(fx, V::NONE);
+        fx.b.switch_to(evaluate);
+        self.emit_dependencies(fx, file);
+        self.operation(fx, "LeaveModule", &[record]);
+    }
+
+    fn emit_module_driver(&mut self, fx: &mut Fx, file: FileId) {
+        let body = self.body_of(file);
+        if !self.has_top_level_await(file) {
+            self.emit_throwing(fx, Op::CallDirect { func: body, args: ir::Args::new() });
+            return;
         }
-        for (promise, is_importer) in pending {
-            let (waits, next) = (fx.b.new_block(), fx.b.new_block());
-            self.branch(fx, is_importer, next, waits);
-            fx.b.seal(waits);
-            fx.b.switch_to(waits);
+        let record = self.module_record_of(file);
+        let rejected = fx.b.new_block();
+        fx.handlers.push(rejected);
+        let promise = self.emit_throwing(fx, Op::CallDirect { func: body, args: ir::Args::new() });
+        let module = self.emit(fx, Op::GlobalGet(record));
+        self.operation(fx, "DidStartModuleBody", &[module, promise]);
+        self.emit_throwing(fx, Op::Await(promise));
+        fx.handlers.pop();
+        let module = self.emit(fx, Op::GlobalGet(record));
+        self.operation(fx, "AsyncModuleExecutionFulfilled", &[module]);
+        self.terminate_with_return(fx, V::NONE);
+        fx.b.seal(rejected);
+        fx.b.switch_to(rejected);
+        let error = self.emit(fx, Op::Caught);
+        let module = self.emit(fx, Op::GlobalGet(record));
+        self.operation(fx, "AsyncModuleExecutionRejected", &[module, error]);
+    }
+
+    fn emit_dynamic_import(&mut self, fx: &mut Fx, file: FileId, is_node_mode: bool, ticket: V) {
+        let undefined = self.emit(fx, Op::Undefined);
+        self.emit_throwing(fx, Op::Await(undefined));
+        let later_roots: Vec<FileId> = self.shared.entry_points().iter().filter(|roots| roots.first() == Some(&file)).flat_map(|roots| roots[1..].iter().rev().copied()).collect();
+        for root in later_roots.into_iter().filter(|&root| root != file) {
+            if !self.is_async_module(root) {
+                continue;
+            }
+            let name = self.out.strs.intern(b"evaluation");
+            let evaluation = self.add_global(name, root, Ty::NONE, GlobalKey::OfModule(root, "evaluation"));
+            self.out.globals[evaluation.idx()].initialization = ir::Initialization::Undefined;
+            let promise = self.emit(fx, Op::GlobalGet(evaluation));
+            let undefined = self.emit(fx, Op::Undefined);
+            let is_not_started = self.emit(fx, Op::StrictEq { a: promise, b: undefined });
+            let (started, next) = (fx.b.new_block(), fx.b.new_block());
+            self.branch(fx, is_not_started, next, started);
+            fx.b.seal(started);
+            fx.b.switch_to(started);
             self.emit_throwing(fx, Op::Await(promise));
             fx.b.jump(next);
             fx.b.seal(next);
             fx.b.switch_to(next);
         }
+        if let Some(func) = self.evaluation_of(file) {
+            if self.is_async_module(file) {
+                let promise = self.emit_evaluate(fx, file, ticket);
+                self.emit_throwing(fx, Op::Await(promise));
+            } else {
+                self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
+            }
+        }
+        if self.waits_for_its_place(file) {
+            let func = self.made_for_module_that_waits(file, Source::ModuleTouch(file));
+            self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
+        }
+        let namespace = if self.c.module_with_export_variables(file).is_some() {
+            self.emit(fx, Op::Bool(true))
+        } else if self.exports_an_object(file) {
+            self.namespace_of_exported_object_as(fx, is_node_mode, file)
+        } else {
+            self.read_sym(fx, self.files.file_symbol(file), 0)
+        };
+        self.terminate_with_return(fx, namespace);
     }
 
-    fn variable_of_program(&mut self, name: &'static str) -> GlobalId {
+    fn emit_dynamic_import_with_ticket(&mut self, fx: &mut Fx, file: FileId, is_node_mode: bool) {
+        let importing = self.variable_of_program("importing");
+        let importer = self.emit(fx, Op::GlobalGet(importing));
+        let undefined = self.emit(fx, Op::Undefined);
+        self.emit(fx, Op::GlobalSet(importing, undefined));
+        let ticket = self.operation(fx, "NewImportTicket", &[importer]);
+        let func = self.dynamic_import_body_of(file, is_node_mode);
+        let promise = self.emit_throwing(fx, Op::CallDirect { func, args: [ticket].into_iter().collect() });
+        self.operation(fx, "SetImportPromise", &[ticket, promise]);
+        self.terminate_with_return(fx, promise);
+    }
+
+    pub(crate) fn variable_of_program(&mut self, name: &'static str) -> GlobalId {
         let root = self.shared.roots()[0];
         let interned = self.out.strs.intern(name.as_bytes());
         let variable = self.add_global(interned, root, Ty::NONE, GlobalKey::OfModule(root, name));
@@ -1310,8 +1848,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn emit_importer(&mut self, fx: &mut Fx, imported: FileId, is_importing: bool) {
         if self.is_async_module(fx.file) && self.is_async_module(imported) {
             let importing = self.variable_of_program("importing");
-            let number = self.emit(fx, if is_importing { Op::Int(fx.file.0 as i64) } else { Op::Undefined });
-            self.emit(fx, Op::GlobalSet(importing, number));
+            let record = self.module_record_of(fx.file);
+            let record = self.emit(fx, if is_importing { Op::GlobalGet(record) } else { Op::Undefined });
+            self.emit(fx, Op::GlobalSet(importing, record));
         }
     }
 
@@ -1325,22 +1864,25 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             self.enters_module_body = !self.is_async_module(file);
             self.block_body(fx, body);
         }
+        if self.is_commonjs(file) {
+            self.emit_commonjs_epilogue(fx, file);
+        }
     }
 
     /// `await`, `for await` or `await using` outside of functions.
     fn has_top_level_await(&self, file: FileId) -> bool {
-        let hir = self.hir(file);
+        let (hir, bound) = (self.hir(file), self.c.bound(file));
         let in_expressions = hir.exprs.iter().enumerate().any(|(i, e)| {
-            matches!(e.kind, hir::ExprKind::Await(_)) && self.c.enclosing_fn_of_expr(file, hir::ExprId(i as u32)).is_none()
+            matches!(e.kind, hir::ExprKind::Await(_)) && bound.expr_parent[i] != bun_sema::bind::Parent::None && self.c.enclosing_fn_of_expr(file, hir::ExprId(i as u32)).is_none()
         });
-        let stmt_parent = &self.c.bound(file).stmt_parent;
+        let stmt_parent = &bound.stmt_parent;
         let in_statements = hir.stmts.iter().enumerate().any(|(i, stmt)| {
             let awaits = match stmt.kind {
                 StmtKind::ForOf { is_await, .. } => is_await,
                 StmtKind::Var(decls) => decls.iter().any(|d| hir[d].kind == hir::VarKind::AwaitUsing),
                 _ => false,
             };
-            awaits && self.c.enclosing_fn(file, stmt_parent[i]).is_none()
+            awaits && stmt_parent[i] != bun_sema::bind::Parent::None && self.c.enclosing_fn(file, stmt_parent[i]).is_none()
         });
         in_expressions || in_statements
     }
@@ -1384,18 +1926,39 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// a declaration is built by whoever asks for it, and is the same whoever does.
     fn builds(&self, source: Source) -> bool {
         match source {
-            Source::Module(file) | Source::ModuleBody(file) | Source::Function { file, .. } | Source::DefaultConstructor { file, .. } => file == self.file,
+            Source::Module(file) | Source::ModuleBody(file) | Source::ModuleDriver(file) | Source::ModuleInner(file) | Source::ModuleTouch(file) | Source::ModuleSettling(file) | Source::Function { file, .. } | Source::DefaultConstructor { file, .. } => file == self.file,
             Source::Initializer(sym) => sym.file == self.file,
-            Source::EnumObject(_) | Source::NamespaceObject(_) | Source::ModuleNamespaceReader(_) | Source::DynamicImport(..) | Source::MemberOfExportedObject(_) | Source::DefaultOfExportedObject(..) => true,
+            Source::EnumObject(_) | Source::NamespaceObject(_) | Source::ModuleNamespaceReader(_) | Source::DynamicImport(..) | Source::Required(_) | Source::DynamicImportBody(..) | Source::MemberOfExportedObject(_) | Source::DefaultOfExportedObject(..) | Source::FilesByPath(_) | Source::EvaluationByNumber(_) | Source::ExportVariablesReader(_) => true,
         }
     }
 
     pub(crate) fn add_header(&mut self, name: StrId, module: ModuleId, pos: u32, kind: FuncKind, source: Source) -> FuncId {
         let id = FuncId::new(self.out.funcs.len());
-        self.out.funcs.push(Func { name, module, pos, kind, flags: 0, length: 0, captures: Vec::new(), this_declared: TyId::NONE, params: Vec::new(), annotated: Vec::new(), result: TyId::NONE, blocks: Vec::new(), values: Vec::new() });
+        let place_of_text = self.place_of_text(source);
+        self.out.funcs.push(Func { name, module, pos, place_of_text, end_of_text: 0, kind, flags: 0, length: 0, captures: Vec::new(), this_declared: TyId::NONE, params: Vec::new(), annotated: Vec::new(), result: TyId::NONE, blocks: Vec::new(), values: Vec::new(), spans: Vec::new() });
         self.sources.push(source);
         self.bodies.push(None);
         id
+    }
+
+    fn place_of_text(&self, source: Source) -> u32 {
+        if self.shared.constants.own_paths.is_none() && self.shared.constants.function_texts.is_none() {
+            return 0;
+        }
+        let place = match source {
+            Source::Function { file, func, class, .. } => {
+                let f = &self.hir(file)[func];
+                match (f.kind, class) {
+                    (hir::FnKind::Constructor, Some((file, class))) => self.hir(file)[class].body_pos,
+                    (hir::FnKind::Constructor, None) => return 0,
+                    (hir::FnKind::Arrow, _) => f.start,
+                    _ => f.anchor,
+                }
+            }
+            Source::DefaultConstructor { file, class } => self.hir(file)[class].body_pos,
+            _ => return 0,
+        };
+        place + 1
     }
 
     /// A function without a body, which is built later if it is built here.
@@ -1413,8 +1976,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return known;
         }
         let role = if self.is_written_in_second_body(file, func) { Role::Second } else { Role::Whole };
-        let id = self.add_header(StrId::NONE, ModuleId::NONE, 0, FuncKind::Plain, Source::Function { file, func, class: None, role });
-        self.named_functions.insert((file, func), id);
+        let root_of_second_body = self.second_root.filter(|_| role == Role::Second).unwrap_or(FnId::NONE);
+        let id = self.add_header(StrId::NONE, ModuleId::NONE, 0, FuncKind::Plain, Source::Function { file, func, class: None, role, root_of_second_body });
+        let was = self.named_functions.insert((file, func), id);
+        if let Some(undo) = &mut self.undo {
+            undo.named_functions.push(((file, func), was));
+        }
         id
     }
 
@@ -1424,6 +1991,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             name: func.name,
             module: func.module,
             pos: func.pos,
+            place_of_text: func.place_of_text,
+            end_of_text: func.end_of_text,
             kind: func.kind,
             flags: func.flags,
             length: func.length,
@@ -1434,6 +2003,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             result: func.result,
             blocks: Vec::new(),
             values: Vec::new(),
+            spans: Vec::new(),
         }
     }
 
@@ -1458,7 +2028,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn build_second_body(&mut self, id: FuncId) {
-        let Source::Function { file, func: root, .. } = self.sources[id.idx()] else { return };
+        let Source::Function { file, func: root, class, .. } = self.sources[id.idx()] else { return };
         let hir = self.hir(file);
         let (start, end) = (hir[root].start, self.c.end_of_fn(file, root));
         let is_within = |pos: u32| start <= pos && pos < end;
@@ -1468,12 +2038,24 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Activation::Class(class) => is_within(hir[class].start),
         };
         let is_inner = |key: &(FileId, FnId)| key.0 == file && key.1 != root && is_within(hir[key.1].start);
-        let saved = (self.funcs.clone(), self.named_functions.clone(), self.activation_layouts.clone(), self.this_bindings.clone(), self.places.clone(), self.parameter_places.clone());
-        self.funcs.retain(|key, _| !is_inner(key));
-        self.named_functions.retain(|key, _| !is_inner(key));
-        self.activation_layouts.retain(|activation, _| !is_of_nest(activation));
-        self.this_bindings.retain(|&func, _| !is_within(hir[func].start));
+        let mut undo = Box::<Undo>::default();
+        for key in self.funcs.keys().copied().filter(is_inner).collect::<Vec<_>>() {
+            undo.funcs.push((key, self.funcs.remove(&key)));
+        }
+        for key in self.named_functions.keys().copied().filter(is_inner).collect::<Vec<_>>() {
+            undo.named_functions.push((key, self.named_functions.remove(&key)));
+        }
+        for key in self.activation_layouts.keys().copied().filter(is_of_nest).collect::<Vec<_>>() {
+            undo.activation_layouts.push((key, self.activation_layouts.remove(&key)));
+        }
+        for key in self.this_bindings.keys().copied().filter(|&func| is_within(hir[func].start)).collect::<Vec<_>>() {
+            undo.this_bindings.push((key, self.this_bindings.remove(&key)));
+        }
         self.second_root = Some(root);
+        if class.is_some() {
+            undo.funcs.push(((file, root), self.funcs.insert((file, root), id)));
+        }
+        self.undo = Some(undo);
         self.work.push_back(id);
         while let Some(func) = self.work.pop_front() {
             match self.class_awaited_by(func) {
@@ -1482,15 +2064,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         }
         self.second_root = None;
-        let (funcs, named_functions, activation_layouts, this_bindings, places, parameter_places) = saved;
-        self.funcs.retain(|key, _| !is_inner(key));
-        self.named_functions.retain(|key, _| !is_inner(key));
-        self.funcs.extend(funcs);
-        self.named_functions.extend(named_functions);
-        self.activation_layouts.extend(activation_layouts);
-        self.this_bindings.extend(this_bindings);
-        self.places.extend(places);
-        self.parameter_places.extend(parameter_places);
+        let undo = *self.undo.take().unwrap_or_default();
+        for (key, _) in undo.funcs.iter().filter(|noted| is_inner(&noted.0)) {
+            self.funcs.remove(key);
+        }
+        for (key, _) in undo.named_functions.iter().filter(|noted| is_inner(&noted.0)) {
+            self.named_functions.remove(key);
+        }
+        put_back(&mut self.funcs, undo.funcs);
+        put_back(&mut self.named_functions, undo.named_functions);
+        put_back(&mut self.activation_layouts, undo.activation_layouts);
+        put_back(&mut self.this_bindings, undo.this_bindings);
+        put_back(&mut self.places, undo.places);
+        put_back(&mut self.parameter_places, undo.parameter_places);
     }
 
     /// Every class that the file declares is defined by its fragment, also one that is declared in code that the build leaves out: a type
@@ -1578,6 +2164,24 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             body.notes.absorb(notes);
             body.problems.append(&mut problems);
         }
+        if file != NO_FILE {
+            for (by, mut expressions) in self.c.code_whose_escapes_are_noted(file) {
+                let func = match by {
+                    RunBy::Module => self.evaluations.get(&file).copied(),
+                    RunBy::Function(func) => self.funcs.get(&(file, func)).map(|id| self.typed_bodies.get(id).unwrap_or(id)).copied(),
+                    RunBy::ConstructorOf(class) => self.classes.get(&(file, class)).map(|info| info.ctor),
+                };
+                let Some(func) = func.filter(|func| func.is_some()) else { continue };
+                let Some(body) = &self.bodies[func.idx()] else { continue };
+                let hir = self.hir(file);
+                expressions.retain(|&e| !body.cut.iter().any(|&(start, end)| start <= hir[e].pos && hir[e].pos < end));
+                self.c.note_escapes_of(file, &expressions);
+                let notes = self.take_notes();
+                if let Some(body) = &mut self.bodies[func.idx()] {
+                    body.notes.absorb(notes);
+                }
+            }
+        }
         for i in 0..self.out.funcs.len() {
             if self.bodies[i].is_none() {
                 continue;
@@ -1610,7 +2214,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
         let of_file = self.shared.builtin_functions.list.iter().filter(|function| function.file == file);
         let builtin_functions = of_file.filter_map(|function| Some((function.id?, FuncKey::Function(file, function.func), function.visibility))).collect();
-        let FileBuild { out, sources, layout_keys, global_keys, bodies, mut problems_of_layouts, constructs, files_of_modules, named_functions, named_default_constructors, literals, literals_shown, .. } = self;
+        let FileBuild { out, sources, layout_keys, global_keys, bodies, mut problems_of_layouts, constructs, files_of_modules, named_functions, named_default_constructors, literals, literals_shown, parts_of_views, .. } = self;
         let only_named: FxHashSet<FuncId> = named_functions.into_values().chain(named_default_constructors.into_values()).collect();
         let mut mentioning = Mentioning::default();
         let funcs = (out.funcs.into_iter().zip(sources).zip(bodies).enumerate())
@@ -1620,6 +2224,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         true => mentioning.of_func(&mut func),
                         false => parts::mentions_apart(&mut mentioning, &mut func, &mut body.parts),
                     };
+                    for &param in func.params.iter().filter(|param| param.is_some()) {
+                        for part in &out.tys.get(param).parts {
+                            let &crate::declared::Part::Class(view) = part else { continue };
+                            for &of_union in parts_of_views.get(&view).into_iter().flatten() {
+                                body.mentions.add_layout(of_union);
+                            }
+                        }
+                    }
                 }
                 Function { key: source.key(), func: (!only_named.contains(&FuncId::new(i))).then_some(func), body }
             })
@@ -1646,11 +2258,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn build_func(&mut self, id: FuncId) {
         let source = self.sources[id.idx()];
         let (file, func, class) = match source {
-            Source::Module(file) => (file, FnId::NONE, None),
+            Source::Module(file) | Source::ModuleTouch(file) | Source::ModuleSettling(file) => (file, FnId::NONE, None),
             Source::Function { file, func, class, .. } => (file, func, class),
             Source::DefaultConstructor { file, class } => (file, FnId::NONE, Some((file, class))),
             Source::EnumObject(sym) | Source::NamespaceObject(sym) | Source::Initializer(sym) => (sym.file, FnId::NONE, None),
-            Source::DynamicImport(file, _) | Source::ModuleBody(file) | Source::ModuleNamespaceReader(file) | Source::MemberOfExportedObject(file) | Source::DefaultOfExportedObject(file, _) => (file, FnId::NONE, None),
+            Source::DynamicImport(file, _) | Source::Required(file) | Source::DynamicImportBody(file, _) | Source::ModuleBody(file) | Source::ModuleDriver(file) | Source::ModuleInner(file) | Source::ModuleNamespaceReader(file) | Source::MemberOfExportedObject(file) | Source::DefaultOfExportedObject(file, _) | Source::FilesByPath(file) | Source::EvaluationByNumber(file) | Source::ExportVariablesReader(file) => (file, FnId::NONE, None),
         };
         let role = match source {
             Source::Function { role, .. } => role,
@@ -1668,6 +2280,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             initialized: FxHashMap::default(),
             found_initialized: FxHashMap::default(),
             initialized_before_loops: Vec::new(),
+            modules_asked_for_before_loops: Vec::new(),
             true_value: V::NONE,
             false_value: V::NONE,
             envs: Vec::new(),
@@ -1721,6 +2334,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             expected: FxHashMap::default(),
             first_stores: Vec::new(),
             is_clearing: false,
+            first_spans: FxHashMap::default(),
+            last_spans: FxHashMap::default(),
+            operand_spans: Vec::new(),
         };
         // What comes before its first statement.
         fx.b.pos = fx.b.func.pos;
@@ -1745,7 +2361,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         match source {
             Source::Module(file) if self.builtin_id(file).is_some() => self.emit_builtin_module(&mut fx, file),
+            Source::Module(file) if self.is_async_module(file) => {
+                if self.may_be_asked_by_the_host() && self.shared.entry_points().iter().any(|files| files.first() == Some(&file)) {
+                    self.files_by_path(file);
+                }
+                self.emit_evaluate(&mut fx, file, V::NONE);
+            }
+            Source::ModuleInner(file) => self.emit_inner_module_evaluation(&mut fx, file),
             Source::Module(file) => {
+                if self.may_be_asked_by_the_host() && self.shared.entry_points().iter().any(|files| files.first() == Some(&file)) {
+                    self.files_by_path(file);
+                }
                 // Evaluated once, after its dependencies, by whichever importer comes first.
                 let name = self.out.strs.intern(b"evaluated");
                 let flag = self.add_global(name, file, Ty::NONE, GlobalKey::OfModule(file, "evaluated"));
@@ -1757,124 +2383,157 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.branch(&mut fx, is_first, evaluate, done);
                 fx.b.seal(evaluate);
                 fx.b.seal(done);
-                let is_async = self.is_async_module(file);
                 let name = self.out.strs.intern(b"evaluation");
                 let evaluation = self.add_global(name, file, Ty::NONE, GlobalKey::OfModule(file, "evaluation"));
                 self.out.globals[evaluation.idx()].initialization = ir::Initialization::Undefined;
                 fx.b.switch_to(done);
-                if !is_async {
-                    // `false`: evaluation threw, and `evaluation` holds the value.
-                    let no = self.emit(&mut fx, Op::Bool(false));
-                    let has_thrown = self.emit(&mut fx, Op::StrictEq { a: known, b: no });
-                    let (thrown, evaluated) = (fx.b.new_block(), fx.b.new_block());
-                    self.branch(&mut fx, has_thrown, thrown, evaluated);
-                    fx.b.seal(thrown);
-                    fx.b.seal(evaluated);
-                    fx.b.switch_to(thrown);
-                    let error = self.emit(&mut fx, Op::GlobalGet(evaluation));
-                    fx.b.terminate(Term::Throw { value: error, unwind: None });
-                    fx.b.switch_to(evaluated);
-                }
-                // The promise importers wait for. None yet in a cycle of imports, which does not wait for itself.
-                let promise = if is_async { self.emit(&mut fx, Op::GlobalGet(evaluation)) } else { V::NONE };
-                self.terminate_with_return(&mut fx, promise);
+                // `false`: evaluation threw, and `evaluation` holds the value.
+                let no = self.emit(&mut fx, Op::Bool(false));
+                let has_thrown = self.emit(&mut fx, Op::StrictEq { a: known, b: no });
+                let (thrown, evaluated) = (fx.b.new_block(), fx.b.new_block());
+                self.branch(&mut fx, has_thrown, thrown, evaluated);
+                fx.b.seal(thrown);
+                fx.b.seal(evaluated);
+                fx.b.switch_to(thrown);
+                let error = self.emit(&mut fx, Op::GlobalGet(evaluation));
+                fx.b.terminate(Term::Throw { value: error, unwind: None });
+                fx.b.switch_to(evaluated);
+                self.terminate_with_return(&mut fx, V::NONE);
                 fx.b.switch_to(evaluate);
                 let yes = self.emit(&mut fx, Op::Bool(true));
                 self.emit(&mut fx, Op::GlobalSet(flag, yes));
+                let body = if self.waits_for_its_place(file) { self.made_for_module_that_waits(file, Source::ModuleSettling(file)) } else { self.body_of(file) };
+                // The handler watches calls, and the code of the module is under none: under a handler a block ends at whatever may throw.
+                let throwing = fx.b.new_block();
+                fx.handlers.push(throwing);
+                self.emit_dependencies(&mut fx, file);
+                self.emit_throwing(&mut fx, Op::CallDirect { func: body, args: ir::Args::new() });
+                fx.handlers.pop();
+                self.terminate_with_return(&mut fx, V::NONE);
+                fx.b.seal(throwing);
+                fx.b.switch_to(throwing);
+                let error = self.emit(&mut fx, Op::Caught);
+                let no = self.emit(&mut fx, Op::Bool(false));
+                self.emit(&mut fx, Op::GlobalSet(flag, no));
+                self.emit(&mut fx, Op::GlobalSet(evaluation, error));
+                fx.b.terminate(Term::Throw { value: error, unwind: None });
+            }
+            Source::ModuleTouch(file) => {
+                let (ran, thrown) = self.state_of_module_that_waits(file);
+                let known = self.emit(&mut fx, Op::GlobalGet(ran));
+                let yes = self.emit(&mut fx, Op::Bool(true));
+                let has_run = self.emit(&mut fx, Op::StrictEq { a: known, b: yes });
+                let (done, other) = (fx.b.new_block(), fx.b.new_block());
+                self.branch(&mut fx, has_run, done, other);
+                fx.b.seal(done);
+                fx.b.seal(other);
+                fx.b.switch_to(done);
+                self.terminate_with_return(&mut fx, V::NONE);
+                fx.b.switch_to(other);
+                let null = self.emit(&mut fx, Op::Null);
+                let is_due = self.emit(&mut fx, Op::StrictEq { a: known, b: null });
+                let (evaluate, waits) = (fx.b.new_block(), fx.b.new_block());
+                self.branch(&mut fx, is_due, evaluate, waits);
+                fx.b.seal(evaluate);
+                fx.b.seal(waits);
+                fx.b.switch_to(waits);
+                let no = self.emit(&mut fx, Op::Bool(false));
+                let has_thrown = self.emit(&mut fx, Op::StrictEq { a: known, b: no });
+                let (rethrows, early) = (fx.b.new_block(), fx.b.new_block());
+                self.branch(&mut fx, has_thrown, rethrows, early);
+                fx.b.seal(rethrows);
+                fx.b.seal(early);
+                fx.b.switch_to(rethrows);
+                let error = self.emit(&mut fx, Op::GlobalGet(thrown));
+                fx.b.terminate(Term::Throw { value: error, unwind: None });
+                fx.b.switch_to(early);
+                let wanted = self.emit(&mut fx, Op::Int(0));
+                self.emit(&mut fx, Op::GlobalSet(ran, wanted));
+                self.terminate_with_return(&mut fx, V::NONE);
+                fx.b.switch_to(evaluate);
+                self.emit(&mut fx, Op::GlobalSet(ran, yes));
                 let body = self.body_of(file);
-                if is_async {
-                    let (throwing, started) = (fx.b.new_block(), fx.b.new_block());
-                    fx.handlers.push(throwing);
-                    self.emit_dependencies(&mut fx, file);
-                    fx.handlers.pop();
-                    fx.b.jump(started);
-                    fx.b.seal(throwing);
-                    if fx.b.has_preds(throwing) {
-                        fx.b.switch_to(throwing);
-                        let error = self.emit(&mut fx, Op::Caught);
-                        let no = self.emit(&mut fx, Op::Bool(false));
-                        self.emit(&mut fx, Op::GlobalSet(flag, no));
-                        self.emit(&mut fx, Op::GlobalSet(evaluation, error));
-                        fx.b.jump(started);
-                    }
-                    fx.b.seal(started);
-                    fx.b.switch_to(started);
-                    let promise = self.emit_throwing(&mut fx, Op::CallDirect { func: body, args: ir::Args::new() });
-                    self.emit(&mut fx, Op::GlobalSet(evaluation, promise));
-                    self.terminate_with_return(&mut fx, promise);
-                } else {
-                    // The handler watches calls, and the code of the module is under none: under a handler a block ends at whatever may throw.
-                    let throwing = fx.b.new_block();
-                    fx.handlers.push(throwing);
-                    self.emit_dependencies(&mut fx, file);
-                    self.emit_throwing(&mut fx, Op::CallDirect { func: body, args: ir::Args::new() });
-                    fx.handlers.pop();
-                    self.terminate_with_return(&mut fx, V::NONE);
-                    fx.b.seal(throwing);
-                    fx.b.switch_to(throwing);
-                    let error = self.emit(&mut fx, Op::Caught);
-                    let no = self.emit(&mut fx, Op::Bool(false));
-                    self.emit(&mut fx, Op::GlobalSet(flag, no));
-                    self.emit(&mut fx, Op::GlobalSet(evaluation, error));
-                    fx.b.terminate(Term::Throw { value: error, unwind: None });
-                }
+                let throwing = fx.b.new_block();
+                fx.handlers.push(throwing);
+                self.emit_throwing(&mut fx, Op::CallDirect { func: body, args: ir::Args::new() });
+                fx.handlers.pop();
+                self.terminate_with_return(&mut fx, V::NONE);
+                fx.b.seal(throwing);
+                fx.b.switch_to(throwing);
+                let error = self.emit(&mut fx, Op::Caught);
+                let no = self.emit(&mut fx, Op::Bool(false));
+                self.emit(&mut fx, Op::GlobalSet(ran, no));
+                self.emit(&mut fx, Op::GlobalSet(thrown, error));
+                fx.b.terminate(Term::Throw { value: error, unwind: None });
             }
-            Source::ModuleBody(file) => {
-                if self.is_async_module(file) {
-                    self.emit_wait_for_dependencies(&mut fx, file);
-                }
-                self.emit_statements(&mut fx, file);
+            Source::ModuleSettling(file) => {
+                let (ran, _) = self.state_of_module_that_waits(file);
+                let known = self.emit(&mut fx, Op::GlobalGet(ran));
+                let null = self.emit(&mut fx, Op::Null);
+                self.emit(&mut fx, Op::GlobalSet(ran, null));
+                let wanted = self.emit(&mut fx, Op::Int(0));
+                let is_wanted = self.emit(&mut fx, Op::StrictEq { a: known, b: wanted });
+                let (now, later) = (fx.b.new_block(), fx.b.new_block());
+                self.branch(&mut fx, is_wanted, now, later);
+                fx.b.seal(now);
+                fx.b.seal(later);
+                fx.b.switch_to(now);
+                let touch = self.made_for_module_that_waits(file, Source::ModuleTouch(file));
+                self.emit_throwing(&mut fx, Op::CallDirect { func: touch, args: ir::Args::new() });
+                self.terminate_with_return(&mut fx, V::NONE);
+                fx.b.switch_to(later);
+                self.terminate_with_return(&mut fx, V::NONE);
             }
-            Source::DynamicImport(file, is_node_mode) => {
+            Source::ModuleBody(file) => self.emit_statements(&mut fx, file),
+            Source::Required(file) => {
+                let name = self.out.strs.intern(b"evaluated");
+                let flag = self.add_global(name, file, Ty::NONE, GlobalKey::OfModule(file, "evaluated"));
+                self.out.globals[flag.idx()].initialization = ir::Initialization::Undefined;
+                let known = self.emit(&mut fx, Op::GlobalGet(flag));
+                let yes = self.emit(&mut fx, Op::Bool(true));
+                let is_done = self.emit(&mut fx, Op::StrictEq { a: known, b: yes });
+                let (done, due) = (fx.b.new_block(), fx.b.new_block());
+                self.branch(&mut fx, is_done, done, due);
+                fx.b.seal(done);
+                fx.b.seal(due);
+                fx.b.switch_to(done);
+                self.terminate_with_return(&mut fx, V::NONE);
+                fx.b.switch_to(due);
                 let undefined = self.emit(&mut fx, Op::Undefined);
-                let mut from = undefined;
-                if self.is_async_module(file) {
-                    let importing = self.variable_of_program("importing");
-                    from = self.emit(&mut fx, Op::GlobalGet(importing));
-                    self.emit(&mut fx, Op::GlobalSet(importing, undefined));
+                let is_first = self.emit(&mut fx, Op::StrictEq { a: known, b: undefined });
+                let (first, kept) = (fx.b.new_block(), fx.b.new_block());
+                self.branch(&mut fx, is_first, first, kept);
+                fx.b.seal(first);
+                fx.b.seal(kept);
+                let evaluation = self.evaluation_of(file);
+                fx.b.switch_to(kept);
+                if let Some(func) = evaluation {
+                    self.emit_throwing(&mut fx, Op::CallDirect { func, args: ir::Args::new() });
                 }
-                self.emit_throwing(&mut fx, Op::Await(undefined));
-                let later_roots: Vec<FileId> = self.shared.entry_points().iter().filter(|roots| roots.first() == Some(&file)).flat_map(|roots| roots[1..].iter().rev().copied()).collect();
-                for root in later_roots.into_iter().filter(|&root| root != file) {
-                    if !self.is_async_module(root) {
-                        continue;
-                    }
-                    let name = self.out.strs.intern(b"evaluation");
-                    let evaluation = self.add_global(name, root, Ty::NONE, GlobalKey::OfModule(root, "evaluation"));
-                    self.out.globals[evaluation.idx()].initialization = ir::Initialization::Undefined;
-                    let promise = self.emit(&mut fx, Op::GlobalGet(evaluation));
-                    let undefined = self.emit(&mut fx, Op::Undefined);
-                    let is_not_started = self.emit(&mut fx, Op::StrictEq { a: promise, b: undefined });
-                    let (started, next) = (fx.b.new_block(), fx.b.new_block());
-                    self.branch(&mut fx, is_not_started, next, started);
-                    fx.b.seal(started);
-                    fx.b.switch_to(started);
-                    self.emit_throwing(&mut fx, Op::Await(promise));
-                    fx.b.jump(next);
-                    fx.b.seal(next);
-                    fx.b.switch_to(next);
+                self.terminate_with_return(&mut fx, V::NONE);
+                fx.b.switch_to(first);
+                let throwing = fx.b.new_block();
+                fx.handlers.push(throwing);
+                if let Some(func) = evaluation {
+                    self.emit_throwing(&mut fx, Op::CallDirect { func, args: ir::Args::new() });
                 }
-                if let Some(func) = self.evaluation_of(file) {
-                    if self.is_async_module(file) {
-                        let importer = self.variable_of_program("importer");
-                        self.emit(&mut fx, Op::GlobalSet(importer, from));
-                        let evaluation = self.emit_throwing(&mut fx, Op::CallDirect { func, args: ir::Args::new() });
-                        self.emit(&mut fx, Op::GlobalSet(importer, undefined));
-                        self.emit_throwing(&mut fx, Op::Await(evaluation));
-                    } else {
-                        self.emit_throwing(&mut fx, Op::CallDirect { func, args: ir::Args::new() });
-                    }
-                }
-                let namespace = if self.c.module_with_export_variables(file).is_some() {
-                    self.emit(&mut fx, Op::Bool(true))
-                } else if self.exports_an_object(file) {
-                    self.namespace_of_exported_object_as(&mut fx, is_node_mode, file)
-                } else {
-                    self.read_sym(&mut fx, self.files.file_symbol(file), 0)
-                };
-                self.terminate_with_return(&mut fx, namespace);
+                fx.handlers.pop();
+                self.terminate_with_return(&mut fx, V::NONE);
+                fx.b.seal(throwing);
+                fx.b.switch_to(throwing);
+                let error = self.emit(&mut fx, Op::Caught);
+                let undefined = self.emit(&mut fx, Op::Undefined);
+                self.emit(&mut fx, Op::GlobalSet(flag, undefined));
+                fx.b.terminate(Term::Throw { value: error, unwind: None });
             }
-            Source::Function { role: Role::Entry, .. } => self.emit_entry_of_two_bodies(&mut fx),
+            Source::ModuleDriver(file) => self.emit_module_driver(&mut fx, file),
+            Source::DynamicImport(file, is_node_mode) if self.is_async_module(file) => self.emit_dynamic_import_with_ticket(&mut fx, file, is_node_mode),
+            Source::DynamicImport(file, is_node_mode) => self.emit_dynamic_import(&mut fx, file, is_node_mode, V::NONE),
+            Source::DynamicImportBody(file, is_node_mode) => {
+                let ticket = self.add_entry_param(&mut fx, Ty::NONE);
+                self.emit_dynamic_import(&mut fx, file, is_node_mode, ticket);
+            }
+            Source::Function { role: Role::Entry | Role::Beside, .. } => self.emit_entry_of_two_bodies(&mut fx),
             Source::Function { .. } if self.out.funcs[id.idx()].kind == FuncKind::Constructor => self.emit_constructor(&mut fx),
             Source::Function { .. } => self.function_body(&mut fx),
             Source::DefaultConstructor { .. } => self.emit_constructor(&mut fx),
@@ -1884,13 +2543,25 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             Source::ModuleNamespaceReader(file) => self.emit_module_namespace_reader(&mut fx, file),
             Source::MemberOfExportedObject(file) => self.emit_member_of_exported_object(&mut fx, file),
             Source::DefaultOfExportedObject(file, is_node_mode) => self.emit_default_of_exported_object(&mut fx, file, is_node_mode),
+            Source::FilesByPath(file) => self.emit_files_by_path(&mut fx, file),
+            Source::EvaluationByNumber(_) => self.emit_evaluation_by_number(&mut fx),
+            Source::ExportVariablesReader(file) => self.emit_export_variables_reader(&mut fx, file),
         }
         self.terminate_with_return(&mut fx, V::NONE);
         let flags = self.out.funcs[id.idx()].flags
             | if fx.is_typed { ir::func_flags::IS_TYPED } else { 0 }
             | if self.shared.is_prelude(fx.file) { ir::func_flags::IS_BUILTIN } else { 0 }
             | if self.is_builtin_file(fx.file) { ir::func_flags::IS_OF_BUILTIN_MODULE } else { 0 };
+        let noted = std::mem::take(&mut fx.first_spans);
+        let mut of_operands = std::mem::take(&mut fx.operand_spans);
         let mut built = fx.b.finish();
+        if !noted.is_empty() {
+            built.spans = crate::audit::settle(&built, &noted);
+            built.spans.append(&mut of_operands);
+        }
+        if role == Role::Second {
+            built.values.iter_mut().for_each(|value| value.prediction = ir::Prediction::None);
+        }
         built.flags |= flags;
         self.out.funcs[id.idx()] = built;
         let class = match source {
@@ -1998,6 +2669,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         function_values.insert(sym);
                     }
                 }
+            }
+        }
+        for sym in self.c.values_named_by_decorators(file) {
+            let sym = self.value_symbol(sym);
+            if sym.file != file {
+                continue;
+            }
+            captured.insert(sym);
+            if self.files.flags(sym).contains(bun_sema::bind::SymFlags::FUNCTION) {
+                function_values.insert(sym);
             }
         }
         for &(.., sym) in self.lazy_declarations_of(file).iter() {

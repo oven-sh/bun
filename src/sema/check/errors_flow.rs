@@ -102,7 +102,7 @@ impl Checker<'_, '_> {
             self.reported_unreachable_nodes.push(next);
         }
         let end = self.end_of_stmt(file, last);
-        let is_error = self.p.files.options.allow_unreachable_code == Some(false);
+        let is_error = self.p.files.options.allow_unreachable_code == Some(false) && !self.is_held_to_the_fixed_set(file);
         let diagnostic = self.new_diagnostic((file, hir[s].start, end), 7027, &[]);
         self.add_error_or_suggestion(is_error, diagnostic);
         true
@@ -168,8 +168,23 @@ impl Checker<'_, '_> {
         } else {
             hir.jsdoc_type(JsDocTypeOwner::Fn(func))
         };
+        // `checkAccessorDeclaration` passes `getTypeOfAccessors(symbol)`, which is `any` after a circularity.
+        let type_of_accessors = match bound.fns[func.idx()].owner {
+            _ if f.kind != FnKind::Getter => None,
+            FnOwner::Member(m) if bound.member_symbol[m.idx()].is_some() => {
+                let symbol = self.symbol_of_member(file, m);
+                Some(self.type_of_symbol(symbol))
+            }
+            FnOwner::Expr(e) => match bound.expr_parent[e.idx()] {
+                Parent::Prop(p) => Some(self.type_of_literal_prop(file, p)),
+                _ => None,
+            },
+            _ => None,
+        };
         // `getReturnTypeFromAnnotation`
-        let annotated = if f.ret.is_some() {
+        let annotated = if type_of_accessors.is_some() {
+            type_of_accessors
+        } else if f.ret.is_some() {
             Some(self.type_from_node(file, f.ret))
         } else {
             self.return_type_of_full_signature(file, func)
@@ -177,10 +192,10 @@ impl Checker<'_, '_> {
         let declared = if let Some(declared) = annotated {
             Some(self.unwrap_return_type(file, func, declared))
         } else if f.kind == FnKind::Getter {
-            // `checkAccessorDeclaration` passes `getTypeOfAccessors`: the setter's parameter
-            // annotation, or else the type inferred from the body.
+            // A getter without a symbol: the setter's parameter annotation, or else the type
+            // inferred from the body.
             Some(self.return_type_of_fn(file, func))
-        } else if self.p.files.options.no_implicit_returns {
+        } else if self.p.files.options.no_implicit_returns && !self.is_held_to_the_fixed_set(file) {
             None
         } else {
             return;
@@ -209,7 +224,7 @@ impl Checker<'_, '_> {
             {
                 2366
             }
-            _ if self.p.files.options.no_implicit_returns => {
+            _ if self.p.files.options.no_implicit_returns && !self.is_held_to_the_fixed_set(file) => {
                 if declared.is_none() {
                     if !has_explicit_return {
                         return;

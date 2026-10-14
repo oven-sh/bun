@@ -69,6 +69,7 @@ bun_core::comptime_string_map! {
         b"forceconsistentcasinginfilenames" => (b"forceConsistentCasingInFileNames", Kind::Boolean),
         b"generatecpuprofile" => (b"generateCpuProfile", Kind::String),
         b"generatetrace" => (b"generateTrace", Kind::String),
+        b"ignoreconfig" => (b"ignoreConfig", Kind::Boolean),
         b"ignoredeprecations" => (b"ignoreDeprecations", Kind::String),
         b"importhelpers" => (b"importHelpers", Kind::Boolean),
         b"incremental" => (b"incremental", Kind::Boolean),

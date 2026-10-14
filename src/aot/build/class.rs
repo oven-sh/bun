@@ -87,6 +87,125 @@ pub(crate) enum StaticMemberKind {
     Accessor { getter: FuncId, setter: FuncId },
 }
 
+#[derive(Clone, PartialEq)]
+enum TypeMetadata {
+    None,
+    Never,
+    Unknown,
+    Any,
+    Void,
+    Null,
+    Undefined,
+    Function,
+    Array,
+    Boolean,
+    String,
+    Object,
+    Number,
+    Bigint,
+    Symbol,
+    Promise,
+    Identifier(Atom),
+    Dot(Vec<Atom>),
+}
+
+impl TypeMetadata {
+    fn names_another_than(&self, other: &TypeMetadata) -> bool {
+        matches!((self, other), (TypeMetadata::Identifier(own), TypeMetadata::Identifier(other)) if own != other)
+    }
+
+    fn finish_union(&mut self, object: Atom) -> Option<TypeMetadata> {
+        match self {
+            TypeMetadata::Identifier(name) => (*name == object).then_some(TypeMetadata::Object),
+            TypeMetadata::Unknown | TypeMetadata::Any | TypeMetadata::Object => Some(TypeMetadata::Object),
+            TypeMetadata::Never | TypeMetadata::Null | TypeMetadata::Undefined => {
+                *self = TypeMetadata::None;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn merge_union(&mut self, left: TypeMetadata) {
+        if left == TypeMetadata::None {
+            return;
+        }
+        if core::mem::discriminant(self) != core::mem::discriminant(&left) {
+            *self = match self {
+                TypeMetadata::Never | TypeMetadata::Undefined | TypeMetadata::Null => left,
+                _ => TypeMetadata::Object,
+            };
+        } else if self.names_another_than(&left) {
+            *self = TypeMetadata::Object;
+        }
+    }
+
+    fn finish_intersection(&mut self, object: Atom) -> Option<TypeMetadata> {
+        match self {
+            TypeMetadata::Identifier(name) => (*name == object).then_some(TypeMetadata::Object),
+            TypeMetadata::Never => Some(TypeMetadata::Never),
+            TypeMetadata::Any | TypeMetadata::Object => Some(TypeMetadata::Object),
+            TypeMetadata::Unknown | TypeMetadata::Null | TypeMetadata::Undefined => {
+                *self = TypeMetadata::None;
+                None
+            }
+            _ => None,
+        }
+    }
+
+    fn merge_intersection(&mut self, left: TypeMetadata) {
+        if left == TypeMetadata::None {
+            if *self == TypeMetadata::Unknown {
+                *self = TypeMetadata::Undefined;
+            }
+            return;
+        }
+        if core::mem::discriminant(self) != core::mem::discriminant(&left) {
+            *self = match self {
+                TypeMetadata::Unknown | TypeMetadata::Undefined | TypeMetadata::Null => left,
+                TypeMetadata::Never => TypeMetadata::Never,
+                _ => TypeMetadata::Object,
+            };
+        } else if self.names_another_than(&left) {
+            *self = TypeMetadata::Object;
+        }
+    }
+
+    fn of_union(members: Vec<TypeMetadata>, object: Atom) -> TypeMetadata {
+        let mut result = TypeMetadata::None;
+        for (i, member) in members.into_iter().enumerate() {
+            let mut left = result;
+            match left.finish_union(object).filter(|_| i > 0) {
+                Some(finished) => result = finished,
+                None => {
+                    result = member;
+                    if i > 0 {
+                        result.merge_union(left);
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    fn of_intersection(members: Vec<TypeMetadata>, object: Atom) -> TypeMetadata {
+        let mut result = TypeMetadata::None;
+        for (i, member) in members.into_iter().enumerate() {
+            let mut left = result;
+            match left.finish_intersection(object).filter(|_| i > 0) {
+                Some(finished) => result = finished,
+                None => {
+                    result = member;
+                    if i > 0 {
+                        result.merge_intersection(left);
+                    }
+                }
+            }
+        }
+        result
+    }
+}
+
 /// Where the variables of a class that is being defined go.
 struct ClassScope {
     /// `NONE`: they are module variables.
@@ -291,7 +410,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             scope.env = self.add_layout(LayoutKind::Environment, StrId::NONE, LayoutKey::ClassEnvironment(file, class));
             // What is in a function or a loop is not seen from another file.
             debug_assert!(file == self.file);
-            self.activation_layouts.insert(Activation::Class(class), scope.env);
+            let was = self.activation_layouts.insert(Activation::Class(class), scope.env);
+            if let Some(undo) = &mut self.undo {
+                undo.activation_layouts.push((Activation::Class(class), was));
+            }
             self.activations.insert(scope.env, Activation::Class(class));
             // What the members need from outside the class: `emit_class` stores it before anything of the class runs.
             let imports = self.c.imports_of_class(file, class);
@@ -347,6 +469,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         self.name_by_well_known_symbol(file, m.func, written, prefix);
                     }
                     let func = self.declare_member_function(file, class, m.func, is_static);
+                    if !is_static && facts.is_laid_out {
+                        self.declare_entry_beside(file, class, m.func, func);
+                    }
                     let mut method = Method {
                         name: StrId::NONE,
                         func,
@@ -492,7 +617,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.c.is_annotated(sym) {
             self.annotated_fields.insert((scope.env, index));
         }
-        self.places.insert(sym, Place::Env(scope.env, index));
+        let was = self.places.insert(sym, Place::Env(scope.env, index));
+        if let Some(undo) = &mut self.undo {
+            undo.places.push((sym, was));
+        }
         index
     }
 
@@ -512,6 +640,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         }
         id
+    }
+
+    fn declare_entry_beside(&mut self, file: FileId, class: ClassId, func: FnId, whole: FuncId) {
+        if file != self.file || self.entries_beside.contains_key(&whole) || !self.c.may_be_served_by_second_bodies(file, class) || self.uses_arguments(file, func) || !self.c.method_has_second_body(file, func) || !self.c.captures_of_fn(file, func).is_empty() {
+            return;
+        }
+        let entry = self.declare_function_as(file, func, Some((file, class)), super::Role::Beside);
+        let second = self.declare_function_as(file, func, Some((file, class)), super::Role::Second);
+        self.typed_bodies.insert(entry, whole);
+        self.second_bodies.insert(entry, second);
+        self.entries_beside.insert(whole, entry);
     }
 
     /// The constructor of the class, declared or not, of which nothing need be known: as `name_function`. The class need not be defined.
@@ -721,7 +860,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 ExprKind::Ident(name) => name,
                 _ => self.files.symbol(self.class_symbol(file, class)).name,
             };
-            let message = [b"Cannot access '", self.c.atoms().bytes(name), b"' before initialization"].concat();
+            let message = [b"Cannot access '", self.c.atoms().bytes(name), b"' before initialization."].concat();
             return self.throw_error(fx, b"ReferenceError", &message);
         }
         // `const Links = class { .. }`: the reference is to the variable, which holds nothing until the static members are evaluated.
@@ -763,7 +902,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             DecoratorOwner::Member(member) => bound.member_owner[member.idx()] == MemberOwner::Class(class),
             DecoratorOwner::Param(p) => matches!(bound.fns.get(bound.param_fn[p.idx()].idx()).map(|func| func.owner), Some(FnOwner::Member(member)) if bound.member_owner[member.idx()] == MemberOwner::Class(class)),
         });
-        if is_decorated {
+        let lowers_decorators = is_decorated && self.files.lowers_decorators(file);
+        if is_decorated && !lowers_decorators {
             self.problem(file, c.start, "a decorator");
         }
         let named_by_key = std::mem::replace(&mut self.name_by_key, V::NONE);
@@ -877,7 +1017,258 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if environment.is_some() {
             fx.envs.pop();
         }
+        if lowers_decorators {
+            self.emit_legacy_decorators(fx, class, binding, class_object);
+        }
         class_object
+    }
+
+    fn metadata_of_type(&self, file: FileId, ty: bun_sema::hir::TypeNodeId) -> TypeMetadata {
+        use bun_sema::hir::{Keyword, TypeNodeKind as Kind};
+        if ty.is_none() {
+            return TypeMetadata::None;
+        }
+        let hir = self.hir(file);
+        let object = self.c.atoms().intern(b"Object");
+        match hir[ty].kind {
+            Kind::Keyword(keyword) => match keyword {
+                Keyword::Any => TypeMetadata::Any,
+                Keyword::Unknown => TypeMetadata::Unknown,
+                Keyword::Never => TypeMetadata::Never,
+                Keyword::Void => TypeMetadata::Void,
+                Keyword::Undefined => TypeMetadata::Undefined,
+                Keyword::Null => TypeMetadata::Null,
+                Keyword::String => TypeMetadata::String,
+                Keyword::Number => TypeMetadata::Number,
+                Keyword::Boolean => TypeMetadata::Boolean,
+                Keyword::BigInt => TypeMetadata::Bigint,
+                Keyword::Symbol => TypeMetadata::Symbol,
+                Keyword::Object | Keyword::This | Keyword::Intrinsic => TypeMetadata::Object,
+            },
+            Kind::Ref { name, .. } => {
+                let names: Vec<Atom> = name.iter().map(|part| hir[part].text).collect();
+                if names.len() == 1 { TypeMetadata::Identifier(names[0]) } else { TypeMetadata::Dot(names) }
+            }
+            Kind::StringLit(_) | Kind::Template { .. } => TypeMetadata::String,
+            Kind::NumberLit(_) => TypeMetadata::Number,
+            Kind::BigIntLit { .. } => TypeMetadata::Bigint,
+            Kind::BoolLit(_) => TypeMetadata::Boolean,
+            Kind::Array(_) | Kind::Tuple(_) | Kind::Readonly(_) => TypeMetadata::Array,
+            Kind::Fn(_) => TypeMetadata::Function,
+            Kind::Union(members) => TypeMetadata::of_union(hir.ids(members).map(|member| self.metadata_of_type(file, member)).collect(), object),
+            Kind::Intersection(members) => TypeMetadata::of_intersection(hir.ids(members).map(|member| self.metadata_of_type(file, member)).collect(), object),
+            _ => TypeMetadata::Object,
+        }
+    }
+
+    fn metadata_of_parameters(&self, file: FileId, func: FnId, has_decorators: bool) -> Vec<TypeMetadata> {
+        let hir = self.hir(file);
+        let mut is_gathered = has_decorators;
+        let mut found = Vec::new();
+        for p in hir[func].params.iter() {
+            is_gathered |= hir.decorators.iter().any(|&(owner, _)| owner == DecoratorOwner::Param(p));
+            found.push(if is_gathered && !hir[p].flags.contains(Flags::REST) { self.metadata_of_type(file, hir[p].ty) } else { TypeMetadata::None });
+        }
+        found
+    }
+
+    fn metadata_of_result(&self, file: FileId, func: FnId, has_decorators: bool) -> TypeMetadata {
+        let f = &self.hir(file)[func];
+        if !has_decorators {
+            TypeMetadata::None
+        } else if f.ret.is_some() {
+            self.metadata_of_type(file, f.ret)
+        } else if f.flags.contains(Flags::ASYNC) {
+            TypeMetadata::Promise
+        } else {
+            TypeMetadata::Undefined
+        }
+    }
+
+    fn read_name_at(&mut self, fx: &mut Fx, class: ClassId, name: Atom, is_typeof: bool) -> V {
+        let pos = self.hir(fx.file)[class].start;
+        let found = self.c.value_named_at(fx.file, class, name);
+        self.read_binding(fx, found, name, None, pos, is_typeof)
+    }
+
+    fn read_names_or_object(&mut self, fx: &mut Fx, class: ClassId, names: &[Atom]) -> V {
+        let anything = self.out.tys.anything;
+        let found = fx.b.new_var(anything);
+        let (absent, done) = (fx.b.new_block(), fx.b.new_block());
+        let mut value = self.read_name_at(fx, class, names[0], true);
+        for (i, &name) in names.iter().enumerate() {
+            if i > 0 {
+                let name = self.str(name);
+                value = self.emit_throwing(fx, Op::PropGet { obj: value, name });
+            }
+            let undefined = self.emit(fx, Op::Undefined);
+            let is_undefined = self.emit(fx, Op::StrictEq { a: value, b: undefined });
+            let present = fx.b.new_block();
+            self.branch(fx, is_undefined, absent, present);
+            fx.b.seal(present);
+            fx.b.switch_to(present);
+        }
+        let value = if self.ty(fx, value) == anything { value } else { self.emit(fx, Op::Coerce { value, to: anything, why: Why::Upcast }) };
+        fx.b.write(found, value);
+        fx.b.jump(done);
+        fx.b.seal(absent);
+        fx.b.switch_to(absent);
+        let object = self.c.atoms().intern(b"Object");
+        let object = self.read_name_at(fx, class, object, false);
+        let object = if self.ty(fx, object) == anything { object } else { self.emit(fx, Op::Coerce { value: object, to: anything, why: Why::Upcast }) };
+        fx.b.write(found, object);
+        fx.b.jump(done);
+        fx.b.seal(done);
+        fx.b.switch_to(done);
+        fx.b.read(found)
+    }
+
+    fn emit_type_metadata(&mut self, fx: &mut Fx, class: ClassId, metadata: &TypeMetadata) -> V {
+        let name: &[u8] = match metadata {
+            TypeMetadata::None | TypeMetadata::Any | TypeMetadata::Unknown | TypeMetadata::Object => b"Object",
+            TypeMetadata::Never | TypeMetadata::Undefined | TypeMetadata::Null | TypeMetadata::Void => return self.emit(fx, Op::Undefined),
+            TypeMetadata::String => b"String",
+            TypeMetadata::Number => b"Number",
+            TypeMetadata::Function => b"Function",
+            TypeMetadata::Boolean => b"Boolean",
+            TypeMetadata::Array => b"Array",
+            TypeMetadata::Promise => b"Promise",
+            TypeMetadata::Bigint => {
+                let name = self.c.atoms().intern(b"BigInt");
+                return self.read_names_or_object(fx, class, &[name]);
+            }
+            TypeMetadata::Symbol => {
+                let name = self.c.atoms().intern(b"Symbol");
+                return self.read_names_or_object(fx, class, &[name]);
+            }
+            TypeMetadata::Identifier(name) => return self.read_names_or_object(fx, class, &[*name]),
+            TypeMetadata::Dot(names) => return self.read_names_or_object(fx, class, names),
+        };
+        let name = self.c.atoms().intern(name);
+        self.read_name_at(fx, class, name, false)
+    }
+
+    fn call_decorator_helper(&mut self, fx: &mut Fx, at: ExprId, helper: &[u8], args: &[V]) -> V {
+        let pos = self.hir(fx.file)[at].pos;
+        let runtime = self.c.atoms().intern(b"bun:wrap");
+        let callee = self.module_binding(fx, runtime, helper, pos);
+        let this = self.emit(fx, Op::Undefined);
+        self.emit_throwing(fx, Op::Call { callee, this, args: args.iter().copied().collect() })
+    }
+
+    fn emit_design_metadata(&mut self, fx: &mut Fx, at: ExprId, label: &[u8], value: V) -> V {
+        let label = self.out.strs.intern(label);
+        let label = self.emit(fx, Op::Str(label));
+        self.call_decorator_helper(fx, at, b"__legacyMetadataTS", &[label, value])
+    }
+
+    fn emit_design_paramtypes(&mut self, fx: &mut Fx, class: ClassId, at: ExprId, of_parameters: &[TypeMetadata]) -> V {
+        let mut types: Args = Args::new();
+        for metadata in of_parameters {
+            types.push(self.emit_type_metadata(fx, class, metadata));
+        }
+        let types = self.emit_throwing(fx, Op::NewArray(types));
+        self.emit_design_metadata(fx, at, b"design:paramtypes", types)
+    }
+
+    fn emit_legacy_decorators(&mut self, fx: &mut Fx, class: ClassId, binding: Option<Sym>, class_object: V) {
+        let file = fx.file;
+        let hir = self.hir(file);
+        let c = &hir[class];
+        let emits_metadata = self.files.options.emit_decorator_metadata;
+        let written_on = |owner: DecoratorOwner| -> Vec<ExprId> { hir.decorators.iter().filter(|written| written.0 == owner).map(|written| written.1).collect() };
+        let target = if class_object.is_some() { class_object } else { self.class_as_value(fx, file, class) };
+        let mut constructor = FnId::NONE;
+        let mut of_constructor: Vec<(usize, ExprId)> = Vec::new();
+        for member in c.members.iter() {
+            let m = &hir[member];
+            let has_body = m.func.is_some() && !matches!(hir[m.func].body, FnBody::None);
+            let mut of_parameters: Vec<(usize, ExprId)> = Vec::new();
+            if has_body {
+                for (i, p) in hir[m.func].params.iter().enumerate() {
+                    of_parameters.extend(written_on(DecoratorOwner::Param(p)).into_iter().map(|written| (i, written)));
+                }
+            }
+            if m.kind == MemberKind::Constructor {
+                if has_body {
+                    (constructor, of_constructor) = (m.func, of_parameters);
+                }
+                continue;
+            }
+            let own = written_on(DecoratorOwner::Member(member));
+            let PropKey::Name(key) = m.key else { continue };
+            let Some(at) = own.first().copied().or(of_parameters.first().map(|written| written.1)) else { continue };
+            let mut elements: Args = Args::new();
+            for &written in &own {
+                elements.push(self.expr(fx, written));
+            }
+            for &(i, written) in &of_parameters {
+                let index = self.emit(fx, Op::Int(i as i64));
+                let decorator = self.expr(fx, written);
+                elements.push(self.call_decorator_helper(fx, written, b"__legacyDecorateParamTS", &[index, decorator]));
+            }
+            if emits_metadata {
+                let has_decorators = !own.is_empty();
+                match m.kind {
+                    MemberKind::Property => {
+                        let of_type = self.metadata_of_type(file, m.ty);
+                        let of_type = self.emit_type_metadata(fx, class, &of_type);
+                        elements.push(self.emit_design_metadata(fx, at, b"design:type", of_type));
+                    }
+                    MemberKind::Method if has_body => {
+                        let of_type = self.emit_type_metadata(fx, class, &TypeMetadata::Function);
+                        elements.push(self.emit_design_metadata(fx, at, b"design:type", of_type));
+                        let of_parameters = self.metadata_of_parameters(file, m.func, has_decorators);
+                        elements.push(self.emit_design_paramtypes(fx, class, at, &of_parameters));
+                        let of_result = self.metadata_of_result(file, m.func, has_decorators);
+                        let of_result = self.emit_type_metadata(fx, class, &of_result);
+                        elements.push(self.emit_design_metadata(fx, at, b"design:returntype", of_result));
+                    }
+                    MemberKind::Getter if has_body => {
+                        let of_result = self.metadata_of_result(file, m.func, has_decorators);
+                        let of_result = self.emit_type_metadata(fx, class, &of_result);
+                        elements.push(self.emit_design_metadata(fx, at, b"design:type", of_result));
+                        elements.push(self.emit_design_paramtypes(fx, class, at, &[]));
+                    }
+                    MemberKind::Setter if has_body => {
+                        let of_parameters = self.metadata_of_parameters(file, m.func, has_decorators);
+                        elements.push(self.emit_design_paramtypes(fx, class, at, &of_parameters));
+                        if let Some(first) = of_parameters.first() {
+                            let of_type = self.emit_type_metadata(fx, class, first);
+                            elements.push(self.emit_design_metadata(fx, at, b"design:type", of_type));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let elements = self.emit_throwing(fx, Op::NewArray(elements));
+            let prototype = self.out.strs.intern(b"prototype");
+            let prototype = self.emit_throwing(fx, Op::PropGet { obj: target, name: prototype });
+            let key = self.str(key);
+            let key = self.emit(fx, Op::Str(key));
+            let descriptor = self.emit(fx, if m.kind == MemberKind::Property { Op::Undefined } else { Op::Null });
+            self.call_decorator_helper(fx, at, b"__legacyDecorateClassTS", &[elements, prototype, key, descriptor]);
+        }
+        let own = written_on(DecoratorOwner::Class(class));
+        let Some(at) = own.first().copied().or(of_constructor.first().map(|written| written.1)) else { return };
+        let mut elements: Args = Args::new();
+        for &written in &own {
+            elements.push(self.expr(fx, written));
+        }
+        for &(i, written) in &of_constructor {
+            let index = self.emit(fx, Op::Int(i as i64));
+            let decorator = self.expr(fx, written);
+            elements.push(self.call_decorator_helper(fx, written, b"__legacyDecorateParamTS", &[index, decorator]));
+        }
+        if emits_metadata && constructor.is_some() {
+            let of_parameters = self.metadata_of_parameters(file, constructor, !own.is_empty());
+            elements.push(self.emit_design_paramtypes(fx, class, at, &of_parameters));
+        }
+        let elements = self.emit_throwing(fx, Op::NewArray(elements));
+        let decorated = self.call_decorator_helper(fx, at, b"__legacyDecorateClassTS", &[elements, target]);
+        if let Some(sym) = binding {
+            self.write_sym(fx, sym, decorated, c.start);
+        }
     }
 
     fn read_heritage(&mut self, fx: &mut Fx, base: V, written: ExprId) -> V {
@@ -1318,6 +1709,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if !info.facts.is_laid_out || is_spread || !self.has_captures_at_hand(fx, info.ctor) {
             return None;
         }
+        self.touch_module(fx, file);
         let mut class_object = V::NONE;
         if info.facts.is_evaluated_once {
             self.check_class_is_declared(fx, file, class, callee);
@@ -1396,6 +1788,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         if fx.func.is_some() {
             let params = self.add_parameters(fx);
+            self.note_span_of_body(fx);
             self.open_activation(fx, Activation::Call(fx.func));
             let defines_fields = !info.is_derived && fx.class.is_some_and(|(file, class)| !self.c.assigns_fields(file, class));
             if defines_fields {
@@ -1403,6 +1796,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             fx.constructor_params = self.bind_parameters(fx, &params);
             if defines_fields {
+                self.assign_decorated_fields(fx, pos);
                 self.store_parameter_properties(fx, pos);
             } else if !info.is_derived {
                 self.did_bind_this(fx, pos);
@@ -1428,9 +1822,33 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// What follows once `this` is there: at the start of the constructor of a class that extends nothing, else after `super()`.
     fn did_bind_this(&mut self, fx: &mut Fx, pos: u32) {
         self.initialize_instance_elements(fx, pos);
+        self.assign_decorated_fields(fx, pos);
         if fx.class.is_some_and(|(file, class)| !self.c.assigns_fields(file, class)) {
             self.store_parameter_properties(fx, pos);
         }
+    }
+
+    fn assign_decorated_fields(&mut self, fx: &mut Fx, pos: u32) {
+        let Some((file, class)) = fx.class else { return };
+        if self.c.assigns_fields(file, class) {
+            return;
+        }
+        let was_in_field_initializer = std::mem::replace(&mut fx.is_in_field_initializer, true);
+        let hir = self.hir(file);
+        for member in hir[class].members.iter() {
+            let m = &hir[member];
+            if m.kind == MemberKind::Property
+                && m.init.is_some()
+                && !m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT)
+                && self.files.is_decorated_member(file, member)
+                && let PropKey::Name(name) = m.key
+            {
+                let value = self.expr_named(fx, m.init, Atom::NONE);
+                let (name, this) = (self.str(name), self.this(fx, pos));
+                self.emit_throwing(fx, Op::PropSet { obj: this, name, value });
+            }
+        }
+        fx.is_in_field_initializer = was_in_field_initializer;
     }
 
     /// InitializeInstanceElements: the private methods and accessors come before the fields.
@@ -1494,7 +1912,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let assigns = self.c.assigns_fields(file, class);
         for member in hir[class].members.iter() {
             let m = &hir[member];
-            if m.kind != MemberKind::Property || m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT) || self.c.is_field_left_out(file, member) {
+            if m.kind != MemberKind::Property || m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT) || self.c.is_field_left_out(file, member) || !assigns && self.files.is_decorated_member(file, member) {
                 continue;
             }
             let name = match m.key {
@@ -1617,8 +2035,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return self.unsupported(fx, pos, "`super()` in a class that extends nothing");
         }
         let Some(base) = info.base else {
+            let written = args;
+            if self.hir(fx.file).ids(written).all(|e| self.argument_of_super_runs_no_code(fx, written, e)) {
+                let args = self.emit_array_with_spread(fx, args);
+                self.emit_super_construct(fx, args, pos);
+                return self.this(fx, pos);
+            }
+            let class_object = self.class_object(fx, file, class);
+            let parent = self.operation(fx, "GetSuperConstructor", &[class_object]);
             let args = self.emit_array_with_spread(fx, args);
-            self.emit_super_construct(fx, args, pos);
+            let this = self.operation(fx, "SuperConstruct", &[class_object, fx.new_target, args, parent]);
+            self.bind_this(fx, this);
+            self.did_bind_this(fx, pos);
             return self.this(fx, pos);
         };
         let ctor = self.classes[&base].ctor;
@@ -1635,6 +2063,35 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         };
         self.did_call_base_constructor(fx, base, result, pos);
         self.this(fx, pos)
+    }
+
+    fn argument_of_super_runs_no_code(&mut self, fx: &Fx, args: IdList<ExprId>, e: ExprId) -> bool {
+        use bun_sema::bind::SymFlags;
+        let hir = self.hir(fx.file);
+        let mut names_own_variable = |e: ExprId| match hir[e].kind {
+            ExprKind::Ident(name) => self.c.binding_of_identifier(fx.file, e, name).is_some_and(|found| {
+                found.file == fx.file && !self.files.flags(found).contains(SymFlags::ALIAS) && self.function_declaring(found).is_some() && !self.is_ambient(found)
+            }),
+            _ => false,
+        };
+        match hir[e].kind {
+            ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_) | ExprKind::Fn(_) => true,
+            ExprKind::Ident(_) => names_own_variable(e),
+            ExprKind::Spread(inner) => {
+                let ExprKind::Ident(name) = hir[inner].kind else { return false };
+                if fx.func.is_none() || hir[fx.func].kind != FnKind::Constructor {
+                    return false;
+                }
+                let is_rest = hir[fx.func].params.iter().any(|p| hir[p].flags.contains(Flags::REST) && matches!(hir[hir[p].pat].kind, PatKind::Ident(rest) if rest == name));
+                let FnBody::Block(body) = hir[fx.func].body else { return false };
+                let is_first_statement = hir.ids(body).next().is_some_and(|first| match hir[first].kind {
+                    bun_sema::hir::StmtKind::Expr(call) => matches!(hir[call].kind, ExprKind::Call(call) if hir[call].args.start == args.start && hir[call].args.len == args.len),
+                    _ => false,
+                });
+                is_rest && is_first_statement && names_own_variable(inner)
+            }
+            _ => false,
+        }
     }
 
     /// The same of a constructor that is not declared: it hands on what it was handed, as the constructor of the class it extends takes it.
@@ -1784,6 +2241,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// `super.name`
     pub(crate) fn super_get(&mut self, fx: &mut Fx, name: StrId, pos: u32) -> V {
+        if self.is_builtin_file(fx.file) && self.out.strs.get(name).starts_with(b"$") {
+            self.problem(fx.file, pos, "a `$` name behind `super`");
+        }
         let key = self.emit(fx, Op::Str(name));
         self.super_get_by_key(fx, key, pos)
     }
@@ -1797,6 +2257,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// `super.name = value`
     pub(crate) fn super_set(&mut self, fx: &mut Fx, name: StrId, value: V, pos: u32) {
+        if self.is_builtin_file(fx.file) && self.out.strs.get(name).starts_with(b"$") {
+            self.problem(fx.file, pos, "a `$` name behind `super`");
+        }
         let key = self.emit(fx, Op::Str(name));
         self.super_set_by_key(fx, key, value, pos);
     }

@@ -373,6 +373,7 @@ impl RuntimeTranspilerStore {
                 },
                 poll_ref: KeepAlive::default(),
                 resolved_source,
+                audited: None,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
                 parse_error: None,
                 work_task: WorkPoolTask {
@@ -435,6 +436,7 @@ pub struct TranspilerJob {
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
     pub(crate) resolved_source: ResolvedSource,
+    pub(crate) audited: Option<Box<bun_ast::audited::Finished>>,
     pub(crate) work_task: WorkPoolTask,
     /// INTRUSIVE — `UnboundedQueue<TranspilerJob>` link.
     pub(crate) next: unbounded_queue::Link<TranspilerJob>,
@@ -539,6 +541,7 @@ impl TranspilerJob {
 
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
+        let audited = self.audited.take();
         let (specifier, result) = match self.parse_error {
             Some(e) => (String::clone_utf8(self.path.text), Err(e)),
             None => {
@@ -561,6 +564,22 @@ impl TranspilerJob {
                 .store
                 .put(std::ptr::from_mut::<TranspilerJob>(self))
         };
+
+        if bun_ast::audited::is_on() {
+            unsafe extern "C" {
+                fn Bun__AOTAudit__setPendingSites(
+                    length_of_source: usize,
+                    expressions: *const [u32; 6],
+                    number_of_expressions: usize,
+                    parameters: *const [u32; 6],
+                    number_of_parameters: usize,
+                );
+            }
+            match audited {
+                Some(it) => unsafe { Bun__AOTAudit__setPendingSites(it.length_of_what_is_written, it.expressions.as_ptr(), it.expressions.len(), it.parameters.as_ptr(), it.parameters.len()) },
+                None => unsafe { Bun__AOTAudit__setPendingSites(0, core::ptr::null(), 0, core::ptr::null(), 0) },
+            }
+        }
 
         AsyncModule::fulfill(
             &global_this,
@@ -830,7 +849,7 @@ impl TranspilerJob {
                 .unwrap_or(false)
                 && is_main
                 && set_break_point_on_first_line(),
-            runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() {
+            runtime_transpiler_cache: if !JscRuntimeTranspilerCache::is_disabled() && !bun_ast::audited::is_on() {
                 // SAFETY: `cache` is a stack local declared above and outlives
                 // `parse_options`; `addr_of_mut!` avoids an intermediate `&mut`
                 // so the post-parse `cache.entry.take()` reborrow stays sound.
@@ -1134,6 +1153,7 @@ impl TranspilerJob {
 
         let source_code = 'brk: {
             let written = source_code_printer.ctx.get_written();
+            self.audited = bun_ast::audited::finish(written);
 
             // The `Jsc` vtable bridge `put()` does not write
             // `cache.output_code` (only the `r#impl == None` fallback does,

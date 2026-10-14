@@ -36,8 +36,8 @@ pub enum ElfError {
     BunSectionAlreadyWritten,
 }
 
-pub struct ElfFile {
-    pub data: Vec<u8>,
+pub struct ElfFile<D = Vec<u8>> {
+    pub data: D,
 }
 
 impl ElfFile {
@@ -45,7 +45,9 @@ impl ElfFile {
         validate_elf64_le(&data)?;
         Ok(Box::new(ElfFile { data }))
     }
+}
 
+impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
     /// If PT_INTERP points into a Nix/Guix store path, rewrite it to the
     /// standard FHS path so `bun build --compile` output stays portable when
     /// the bun binary itself was patchelf'd (NixOS autoPatchelfHook). See #24742.
@@ -192,6 +194,9 @@ impl ElfFile {
         }
     }
 
+}
+
+impl ElfFile {
     /// Find the `.bun` section and write `payload` so the kernel `mmap`s it at
     /// exec time alongside the rest of the binary. Stores the data's vaddr at
     /// the original BUN_COMPILED location so the runtime can dereference it
@@ -450,6 +455,9 @@ impl ElfFile {
 
     // --- Internal helpers ---
 
+}
+
+impl<D: core::ops::DerefMut<Target = [u8]>> ElfFile<D> {
     /// Whether `.bun` is a payload that an earlier `write_bun_section` appended, in the layout that it produces.
     fn bun_section_is_payload(
         &self,
@@ -577,6 +585,117 @@ impl ElfFile {
             EM_AARCH64 | EM_PPC64 => 0x10000, // 64KB
             _ => 0x1000,                      // 4KB
         }
+    }
+}
+
+pub enum Piece<'a> {
+    Bytes(&'a [u8]),
+    Zeros(u64),
+    Length([u8; 8]),
+}
+
+impl<'a> ElfFile<&'a mut [u8]> {
+    pub fn over(data: &'a mut [u8]) -> Result<ElfFile<&'a mut [u8]>, ElfError> {
+        validate_elf64_le(data)?;
+        Ok(ElfFile { data })
+    }
+
+    pub fn bun_section_in_pieces(mut self, payload: &'a [u8]) -> Result<Option<[Piece<'a>; 6]>, ElfError> {
+        let ehdr = read_ehdr(&self.data);
+        let bun_section = self.find_bun_section(ehdr)?;
+        let bun_section_offset = bun_section.file_offset;
+        let bun_section_vaddr = bun_section.vaddr;
+        let page_size = Self::page_size(ehdr);
+        let header_size: u64 = size_of::<u64>() as u64;
+        let new_content_size: u64 = header_size + payload.len() as u64;
+        let aligned_new_size = align_up(new_content_size, page_size);
+        let phdr_size = size_of::<Elf64_Phdr>();
+        let mut rw_phdr_index: Option<usize> = None;
+        let mut rw_phdr: Elf64_Phdr = Elf64_Phdr::ZEROED;
+        let mut max_vaddr_end: u64 = 0;
+        for i in 0..ehdr.e_phnum as usize {
+            let phdr_offset = usize::try_from(ehdr.e_phoff).expect("int cast") + i * phdr_size;
+            let phdr: Elf64_Phdr = read_struct(&self.data[phdr_offset..][..phdr_size]);
+            if phdr.p_type != PT_LOAD {
+                continue;
+            }
+            let vaddr_end = phdr.p_vaddr + phdr.p_memsz;
+            if vaddr_end > max_vaddr_end {
+                max_vaddr_end = vaddr_end;
+            }
+            if (phdr.p_flags & PF_W) != 0
+                && phdr.p_vaddr <= bun_section_vaddr
+                && bun_section_vaddr < vaddr_end
+            {
+                rw_phdr_index = Some(i);
+                rw_phdr = phdr;
+            }
+        }
+        let Some(rw_index) = rw_phdr_index else {
+            return Err(ElfError::NoWritableLoadSegment);
+        };
+        let replaces_payload =
+            self.bun_section_is_payload(ehdr, &bun_section, &rw_phdr, max_vaddr_end, page_size)?;
+        let new_vaddr = if replaces_payload {
+            bun_section_vaddr
+        } else {
+            align_up(max_vaddr_end, page_size)
+        };
+        if !replaces_payload && new_vaddr < rw_phdr.p_vaddr + rw_phdr.p_memsz {
+            return Err(ElfError::NewVaddrCollides);
+        }
+        let offset_in_segment = new_vaddr - rw_phdr.p_vaddr;
+        let new_file_offset = rw_phdr.p_offset + offset_in_segment;
+        let old_rw_file_end = rw_phdr.p_offset + rw_phdr.p_filesz;
+        let old_file_size: u64 = self.data.len() as u64;
+        if old_rw_file_end > old_file_size {
+            return Err(ElfError::InvalidElfFile);
+        }
+        let move_src_start: u64 = old_rw_file_end;
+        let move_src_end: u64 = old_file_size;
+        let moved_tail_size: u64 = move_src_end - move_src_start;
+        let move_dst_start: u64 = new_file_offset + aligned_new_size;
+        let move_dst_end: u64 = move_dst_start + moved_tail_size;
+        debug_assert!(moved_tail_size == move_dst_end - move_dst_start);
+        let old_shdr_offset: u64 = ehdr.e_shoff;
+        let shdr_table_size = ehdr.e_shnum as u64 * size_of::<Elf64_Shdr>() as u64;
+        if old_shdr_offset < move_src_start || old_shdr_offset + shdr_table_size > move_src_end {
+            return Err(ElfError::InvalidElfFile);
+        }
+        let head_end = if replaces_payload { new_file_offset } else { move_src_start };
+        let phdr_offset = ehdr.e_phoff + rw_index as u64 * phdr_size as u64;
+        let is_in_head = |offset: u64, size: usize| offset.checked_add(size as u64).is_some_and(|end| end <= head_end);
+        if head_end > new_file_offset || !is_in_head(0, size_of::<Elf64_Ehdr>()) || !is_in_head(phdr_offset, phdr_size) || (!replaces_payload && !is_in_head(bun_section_offset, size_of::<u64>())) {
+            return Ok(None);
+        }
+        if !replaces_payload {
+            write_u64_le(&mut self.data[usize::try_from(bun_section_offset).expect("int cast")..][..8], new_vaddr);
+        }
+        self.write_ehdr_shoff(old_shdr_offset - move_src_start + move_dst_start);
+        for i in 0..ehdr.e_shnum as usize {
+            let at = usize::try_from(old_shdr_offset).expect("int cast") + i * size_of::<Elf64_Shdr>();
+            let mut shdr: Elf64_Shdr = read_struct(&self.data[at..][..size_of::<Elf64_Shdr>()]);
+            if i == bun_section.section_index as usize {
+                shdr.sh_offset = new_file_offset;
+                shdr.sh_size = new_content_size;
+                shdr.sh_addr = new_vaddr;
+            } else if shdr.sh_type != SHT_NOBITS && shdr.sh_offset >= move_src_start && shdr.sh_offset < move_src_end {
+                shdr.sh_offset = shdr.sh_offset - move_src_start + move_dst_start;
+            }
+            write_struct(&mut self.data[at..][..size_of::<Elf64_Shdr>()], &shdr);
+        }
+        let new_segment_size = offset_in_segment + aligned_new_size;
+        let extended = Elf64_Phdr { p_filesz: new_segment_size, p_memsz: new_segment_size, ..rw_phdr };
+        write_struct(&mut self.data[usize::try_from(phdr_offset).expect("int cast")..][..phdr_size], &extended);
+        let data: &'a [u8] = self.data;
+        Ok(Some([
+            Piece::Bytes(&data[..usize::try_from(head_end).expect("int cast")]),
+            Piece::Zeros(new_file_offset - head_end),
+            Piece::Length((payload.len() as u64).to_le_bytes()),
+            Piece::Bytes(payload),
+            Piece::Zeros(move_dst_start - (new_file_offset + new_content_size)),
+            Piece::Bytes(&data[usize::try_from(move_src_start).expect("int cast")..usize::try_from(move_src_end).expect("int cast")]),
+        ]))
     }
 }
 

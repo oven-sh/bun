@@ -28,15 +28,22 @@ use std::sync::Mutex;
 pub enum FuncKey {
     /// Evaluates the module once, after what it imports.
     Module(FileId),
-    /// The statements of the module. `Module` calls it. Of a module with top-level `await`, or that imports one: what it imports too.
+    /// The statements of the module. `Module` calls it, or `ModuleDriver` where a top-level `await` is reached from the module.
     ModuleBody(FileId),
+    ModuleTouch(FileId),
+    ModuleSettling(FileId),
+    ModuleDriver(FileId),
+    ModuleInner(FileId),
     /// `import("./file")`; of a CommonJS module: whether as Node.js has it.
     DynamicImport(FileId, bool),
+    Required(FileId),
+    DynamicImportBody(FileId, bool),
     /// Evaluates the initializer of a variable of a module and stores it, when the variable is first read.
     Initializer(FileId, SymbolId),
     Function(FileId, FnId),
     TypedBody(FileId, FnId),
-    SecondBody(FileId, FnId),
+    EntryBeside(FileId, FnId),
+    SecondBody(FileId, FnId, FnId),
     /// The constructor of a class that declares none.
     DefaultConstructor(FileId, ClassId),
     /// Yields the object an enum is as a value.
@@ -48,6 +55,9 @@ pub enum FuncKey {
     /// What an ES module reads from a CommonJS module, as long as what that exports is not remembered: a name it is handed; `default`, as Node.js has it or not.
     MemberOfExportedObject(FileId),
     DefaultOfExportedObject(FileId, bool),
+    FilesByPath(FileId),
+    EvaluationByNumber(FileId),
+    ExportVariablesReader(FileId),
 }
 
 impl FuncKey {
@@ -56,17 +66,27 @@ impl FuncKey {
         match self {
             FuncKey::Module(file)
             | FuncKey::ModuleBody(file)
+            | FuncKey::ModuleTouch(file)
+            | FuncKey::ModuleSettling(file)
+            | FuncKey::ModuleDriver(file)
+            | FuncKey::ModuleInner(file)
             | FuncKey::DynamicImport(file, _)
+            | FuncKey::Required(file)
+            | FuncKey::DynamicImportBody(file, _)
             | FuncKey::Initializer(file, _)
             | FuncKey::Function(file, _)
             | FuncKey::TypedBody(file, _)
-            | FuncKey::SecondBody(file, _)
+            | FuncKey::EntryBeside(file, _)
+            | FuncKey::SecondBody(file, _, _)
             | FuncKey::DefaultConstructor(file, _)
             | FuncKey::EnumObject(file, _)
             | FuncKey::NamespaceObject(file, _)
             | FuncKey::ModuleNamespaceReader(file)
             | FuncKey::MemberOfExportedObject(file)
-            | FuncKey::DefaultOfExportedObject(file, _) => file,
+            | FuncKey::DefaultOfExportedObject(file, _)
+            | FuncKey::FilesByPath(file)
+            | FuncKey::EvaluationByNumber(file)
+            | FuncKey::ExportVariablesReader(file) => file,
         }
     }
 }
@@ -112,6 +132,7 @@ pub enum GlobalKey {
     /// What the compiler keeps for one place in the code of the file, by its number among those of the file: a template object. Only
     /// the fragment of the file mentions it.
     Hidden(FileId, u32),
+    StateOfLazyVariable(FileId, SymbolId),
     /// The namespace object of a module that is not compiled with the program, by its specifier.
     ExternalModule(Box<[u8]>),
 }
@@ -120,7 +141,7 @@ impl GlobalKey {
     /// As `LayoutKey::file`.
     pub fn file(&self) -> Option<FileId> {
         match *self {
-            GlobalKey::Symbol(file, _) | GlobalKey::Enum(file, _) | GlobalKey::Namespace(file, _) | GlobalKey::ClassVariable(file, ..) | GlobalKey::OfModule(file, _) | GlobalKey::Export(file, _) | GlobalKey::Hidden(file, _) => Some(file),
+            GlobalKey::Symbol(file, _) | GlobalKey::Enum(file, _) | GlobalKey::Namespace(file, _) | GlobalKey::ClassVariable(file, ..) | GlobalKey::OfModule(file, _) | GlobalKey::Export(file, _) | GlobalKey::Hidden(file, _) | GlobalKey::StateOfLazyVariable(file, _) => Some(file),
             GlobalKey::ExternalModule(_) => None,
         }
     }
@@ -138,14 +159,45 @@ pub type Notes = Noted<Identity>;
 /// The numbers in a function or a layout that count in the tables of its fragment, each once, in the order they are first come by.
 #[derive(Default)]
 pub struct Mentions {
-    pub strs: Vec<StrId>,
-    pub tys: Vec<TyId>,
-    pub layouts: Vec<LayoutId>,
-    pub globals: Vec<GlobalId>,
+    all: Vec<u32>,
+    ends: [u32; 5],
+}
+
+impl Mentions {
+    #[inline]
+    fn part(&self, index: usize) -> &[u32] {
+        let start = if index == 0 { 0 } else { self.ends[index - 1] as usize };
+        let end = self.ends.get(index).map_or(self.all.len(), |&end| end as usize);
+        &self.all[start..end]
+    }
+    pub fn strs(&self) -> impl Iterator<Item = StrId> + '_ {
+        self.part(0).iter().map(|&id| StrId(id))
+    }
+    pub fn tys(&self) -> impl Iterator<Item = TyId> + '_ {
+        self.part(1).iter().map(|&id| TyId(id))
+    }
+    pub fn layouts(&self) -> impl Iterator<Item = LayoutId> + '_ {
+        self.part(2).iter().map(|&id| LayoutId(id))
+    }
+    pub fn globals(&self) -> impl Iterator<Item = GlobalId> + '_ {
+        self.part(3).iter().map(|&id| GlobalId(id))
+    }
     /// The functions that are called directly. Of a layout: the constructor, the methods and the accessors.
-    pub called: Vec<FuncId>,
+    pub fn called(&self) -> impl Iterator<Item = FuncId> + '_ {
+        self.part(4).iter().map(|&id| FuncId(id))
+    }
     /// The functions that closures are made of.
-    pub values: Vec<FuncId>,
+    pub fn values(&self) -> impl Iterator<Item = FuncId> + '_ {
+        self.part(5).iter().map(|&id| FuncId(id))
+    }
+    pub fn add_layout(&mut self, layout: LayoutId) {
+        if !self.part(2).contains(&layout.0) {
+            self.all.insert(self.ends[2] as usize, layout.0);
+            for end in &mut self.ends[2..] {
+                *end += 1;
+            }
+        }
+    }
 }
 
 /// A statement of the body of a module that need not run unless code that is reached mentions a variable it stores to: see `build::parts`.
@@ -436,6 +488,7 @@ pub fn for_each_id_of_op(op: &mut Op, ids: &mut impl Ids) {
         | Op::Call { .. }
         | Op::Construct { .. }
         | Op::Caught
+        | Op::CaughtException
         | Op::Poll
         | Op::Yield(_)
         | Op::ResumeMode
@@ -452,7 +505,7 @@ pub fn for_each_id_of_func(func: &mut Func, ids: &mut impl Ids) {
 }
 
 fn for_each_id_of_header(func: &mut Func, ids: &mut impl Ids) {
-    let Func { name, module, pos: _, kind: _, flags: _, length: _, captures, this_declared, params, annotated: _, result, blocks: _, values: _ } = func;
+    let Func { name, module, pos: _, place_of_text: _, end_of_text: _, kind: _, flags: _, length: _, captures, this_declared, params, annotated: _, result, blocks: _, values: _, spans: _ } = func;
     pass!(ids.str(name));
     pass!(ids.module(module));
     for capture in captures {
@@ -466,10 +519,10 @@ fn for_each_id_of_header(func: &mut Func, ids: &mut impl Ids) {
 }
 
 fn for_each_id_of_value(value: &mut Value, ids: &mut impl Ids) {
-    let Value { def, pos: _, ty, prediction } = value;
+    let Value { def, pos: _, ty, prediction, finds_initialized: _ } = value;
     pass!(ids.ty(ty));
     match prediction {
-        Prediction::None => {}
+        Prediction::None | Prediction::Stores => {}
         Prediction::Ty(expected) | Prediction::Field(expected) => pass!(ids.ty(expected)),
         Prediction::Closure(func) => pass!(ids.func(func, Used::Expected)),
         Prediction::ByKey(property) => pass!(ids.str(property)),
@@ -566,7 +619,7 @@ pub struct Mentioning {
     globals: Vec<u32>,
     called: Vec<u32>,
     values: Vec<u32>,
-    found: Mentions,
+    found: [Vec<u32>; 6],
 }
 
 /// Whether the round comes by the number for the first time.
@@ -580,22 +633,22 @@ fn is_first(seen: &mut Vec<u32>, number: usize, round: u32) -> bool {
 impl Ids for Mentioning {
     fn str(&mut self, id: &mut StrId) {
         if is_first(&mut self.strs, id.idx(), self.round) {
-            self.found.strs.push(*id);
+            self.found[0].push(id.0);
         }
     }
     fn ty(&mut self, id: &mut TyId) {
         if is_first(&mut self.tys, id.idx(), self.round) {
-            self.found.tys.push(*id);
+            self.found[1].push(id.0);
         }
     }
     fn layout(&mut self, id: &mut LayoutId) {
         if is_first(&mut self.layouts, id.idx(), self.round) {
-            self.found.layouts.push(*id);
+            self.found[2].push(id.0);
         }
     }
     fn global(&mut self, id: &mut GlobalId) {
         if is_first(&mut self.globals, id.idx(), self.round) {
-            self.found.globals.push(*id);
+            self.found[3].push(id.0);
         }
     }
     /// The link has the module from the function or the variable itself.
@@ -604,12 +657,12 @@ impl Ids for Mentioning {
         match used {
             Used::Called | Used::AsMember => {
                 if is_first(&mut self.called, id.idx(), self.round) {
-                    self.found.called.push(*id);
+                    self.found[4].push(id.0);
                 }
             }
             Used::AsValue => {
                 if is_first(&mut self.values, id.idx(), self.round) {
-                    self.found.values.push(*id);
+                    self.found[5].push(id.0);
                 }
             }
             Used::Expected => {}
@@ -618,11 +671,23 @@ impl Ids for Mentioning {
 }
 
 impl Mentioning {
+    fn take_found(&mut self) -> Mentions {
+        let mut mentions = Mentions { all: Vec::with_capacity(self.found.iter().map(Vec::len).sum()), ends: [0; 5] };
+        for (index, part) in self.found.iter_mut().enumerate() {
+            mentions.all.extend_from_slice(part);
+            part.clear();
+            if let Some(end) = mentions.ends.get_mut(index) {
+                *end = mentions.all.len() as u32;
+            }
+        }
+        mentions
+    }
+
     /// Nothing of the function is changed.
     pub fn of_func(&mut self, func: &mut Func) -> Mentions {
         self.round += 1;
         for_each_id_of_func(func, self);
-        std::mem::take(&mut self.found)
+        self.take_found()
     }
 
     /// The same for the values that are meant, by their numbers. `with_header`: and for what whoever calls the function has to know.
@@ -636,14 +701,14 @@ impl Mentioning {
                 for_each_id_of_value(value, self);
             }
         }
-        std::mem::take(&mut self.found)
+        self.take_found()
     }
 
     /// Nothing of the layout is changed.
     pub fn of_layout(&mut self, layout: &mut Layout) -> Mentions {
         self.round += 1;
         for_each_id_of_layout(layout, self);
-        std::mem::take(&mut self.found)
+        self.take_found()
     }
 }
 

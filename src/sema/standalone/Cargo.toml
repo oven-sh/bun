@@ -16,6 +16,7 @@ default = ["mimalloc"]
 mimalloc = []
 
 [dependencies]
+bun_sema_parser.workspace = true
 bun_sema = { workspace = true, features = ["baselines"] }
 bun_sema_driver.workspace = true
 bun_sema_baselines.workspace = true

@@ -62,6 +62,12 @@ impl BuildCommand {
             long_running: true,
             ..Default::default()
         });
+        if ctx.bundler_options.compile && ctx.bundler_options.aot {
+            bun_alloc::mimalloc::mi_option_set_default(
+                bun_alloc::mimalloc::Option::hand_out_last_freed,
+                1,
+            );
+        }
         let log = ctx.log;
         // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
         // and never freed for the duration of the command body.
@@ -158,6 +164,7 @@ impl BuildCommand {
                 defines: &[],
                 features: &mut std::iter::empty(),
                 dropped_imports: &mut std::iter::empty(),
+                without_side_effects: &mut std::iter::empty(),
                 statements: &mut std::iter::empty(),
                 texts: &mut std::iter::empty(),
                 assets: &mut std::iter::empty(),
@@ -176,6 +183,10 @@ impl BuildCommand {
                 preserve_source_paths: false,
                 react_compiler_outputs: &mut core::iter::empty(),
                 jsx: &mut core::iter::empty(),
+                function_texts: None,
+                explain: &[],
+                explains_into_log: false,
+                logs_type_errors: false,
             };
             if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
@@ -293,11 +304,17 @@ impl BuildCommand {
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
         this_transpiler.options.aot = ctx.bundler_options.aot;
+        this_transpiler.options.aot_explain = ctx.bundler_options.aot_explain.clone();
+        this_transpiler.options.aot_logs_type_errors = ctx.bundler_options.aot_logs_type_errors;
         this_transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
+        this_transpiler.options.typed_package = Some(bun_sema_driver::typed_packages::typed_package);
         this_transpiler.options.preserve_source_paths = ctx.bundler_options.compile_run;
+        this_transpiler.options.compile_function_source =
+            ctx.bundler_options.compile_function_source;
         // What is run from its sources finds out that a module is missing when it asks for it, if it ever does.
         if ctx.bundler_options.compile_run {
             this_transpiler.options.ignore_module_resolution_errors = true;
+            this_transpiler.resolver.prefer_module_field = false;
         }
         this_transpiler.options.rewrite_jest_for_tests = ctx.bundler_options.rewrite_jest_for_tests;
         this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
@@ -498,7 +515,11 @@ impl BuildCommand {
         this_transpiler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_transpiler.options.transform_only = ctx.bundler_options.transform_only;
 
-        this_transpiler.options.env.behavior = ctx.bundler_options.env_behavior;
+        this_transpiler.options.env.behavior = if ctx.bundler_options.compile_run {
+            api::DotEnvBehavior::LoadAllWithoutInlining
+        } else {
+            ctx.bundler_options.env_behavior
+        };
         this_transpiler
             .options
             .env
@@ -516,6 +537,7 @@ impl BuildCommand {
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         this_transpiler.options.compile_target_builtins = if ctx.bundler_options.compile
             && ctx.bundler_options.bytecode
+            && !this_transpiler.options.compiles_ahead_of_time()
             && (!ctx.bundler_options.compile_target.is_default()
                 || ctx.bundler_options.compile_executable_path.is_some())
         {
@@ -536,7 +558,7 @@ impl BuildCommand {
             options::CompileTargetBuiltins::Host
         };
 
-        if !this_transpiler.options.production {
+        if !this_transpiler.options.production && !ctx.bundler_options.compile_run {
             this_transpiler
                 .options
                 .conditions

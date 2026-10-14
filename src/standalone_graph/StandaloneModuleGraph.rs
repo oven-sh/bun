@@ -371,6 +371,10 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
         let &file = self.prelinked_module_files.get(index as usize)?;
         self.files.values().get(file as usize).map(|file| file.name)
     }
+    fn sources_of_compiled_program(&self) -> &'static [u8] {
+        let name = const_format::concatcp!(BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, "sources-of-the-compiled-program");
+        self.find_ref(name.as_bytes()).map_or(&[][..], |file| file.contents.as_bytes())
+    }
     fn is_compiled_module(&self, name: &[u8]) -> bool {
         !self.aot_image.is_empty()
             && !self.prelinked_module_graph.is_empty()
@@ -701,6 +705,18 @@ mod elf {
         Some((unsafe { target.add(8) }, payload_len as usize))
     }
 
+    pub(super) fn make_read_only(base: *mut u8, len: usize) -> crate::Result<()> {
+        let header = core::mem::size_of::<u64>();
+        let size = (header + len).next_multiple_of(bun_alloc::page_size());
+        if unsafe { libc::mprotect(base.sub(header).cast(), size, libc::PROT_READ) } != 0 {
+            let errno = bun_errno::SystemErrno::init(i64::from(bun_sys::last_errno()));
+            return Err(crate::Error::Sys(
+                errno.unwrap_or(bun_errno::SystemErrno::EUNKNOWN),
+            ));
+        }
+        Ok(())
+    }
+
     /// `MADV_WILLNEED` over `[lo, hi)`: queues page-cache readahead for the
     /// file bytes backing the mapping and returns once the I/O is submitted.
     /// Issued in 128 KiB pieces because one call reads at most
@@ -771,6 +787,7 @@ impl File {
     pub fn appears_in_embedded_files_array(&self) -> bool {
         // A text module's bytes are not the file's UTF-8.
         !self.is_text_module()
+            && !self.name.ends_with(b"/sources-of-the-compiled-program")
             && (self.side == FileSide::Client || !self.loader.is_javascript_like())
     }
 
@@ -2246,8 +2263,52 @@ impl<'a> Injected<'a> {
     }
 }
 
+#[cfg(not(windows))]
+fn map_privately(fd: Fd) -> Option<&'static mut [u8]> {
+    let size = usize::try_from(Syscall::fstat(fd).ok()?.st_size).ok().filter(|&size| size > 0)?;
+    let map = Syscall::mmap(core::ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE, fd, 0).ok()?;
+    // SAFETY: `mmap` has returned `size` bytes that are readable, writable and private to this process, nobody else has their address, and the caller unmaps them.
+    Some(unsafe { core::slice::from_raw_parts_mut(map, size) })
+}
+
+#[cfg(not(windows))]
+fn write_elf_in_pieces(original: &mut [u8], payload: &[u8], fd: Fd) -> Result<bool, String> {
+    let mut elf_file = bun_elf::ElfFile::over(original).map_err(|error| error.to_string())?;
+    elf_file.normalize_interpreter();
+    let pieces = elf_file.bun_section_in_pieces(payload).map_err(|error| error.to_string())?;
+    let Some(pieces) = pieces else {
+        bun_core::scoped_log!(StandaloneModuleGraph, "inject: ELF: no pieces: copied");
+        return Ok(false);
+    };
+    let file = bun_sys::File::borrow(&fd);
+    let mut offset: i64 = 0;
+    for piece in &pieces {
+        let bytes: &[u8] = match piece {
+            bun_elf::Piece::Bytes(bytes) => bytes,
+            bun_elf::Piece::Length(length) => length,
+            bun_elf::Piece::Zeros(count) => {
+                let zeros = vec![0u8; usize::try_from((*count).min(1 << 16)).expect("int cast")];
+                let mut left = *count;
+                while left > 0 {
+                    let now = left.min(zeros.len() as u64);
+                    file.pwrite_all(&zeros[..now as usize], offset).map_err(|error| error.to_string())?;
+                    offset += now as i64;
+                    left -= now;
+                }
+                continue;
+            }
+        };
+        file.pwrite_all(bytes, offset).map_err(|error| error.to_string())?;
+        offset += i64::try_from(bytes.len()).expect("int cast");
+    }
+    Syscall::ftruncate(fd, offset).map_err(|error| error.to_string())?;
+    bun_core::scoped_log!(StandaloneModuleGraph, "inject: ELF written in pieces: {} bytes", offset);
+    Ok(true)
+}
+
 pub(crate) fn inject<'a>(
     bytes: &[u8],
+    has_aot_image: bool,
     self_exe: &ZStr,
     inject_options: &InjectOptions,
     target: &CompileTarget,
@@ -2300,6 +2361,8 @@ pub(crate) fn inject<'a>(
         let _ = Syscall::unlink(name);
     };
 
+    #[cfg(not(windows))]
+    let mut mapped_executable: Option<&'static mut [u8]> = None;
     let cloned_executable_fd: Fd = 'brk: {
         #[cfg(windows)]
         {
@@ -2459,6 +2522,15 @@ pub(crate) fn inject<'a>(
         {
             let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
 
+            if matches!(target.os, CompileTargetOs::Linux | CompileTargetOs::Freebsd) {
+                mapped_executable = map_privately(self_fd);
+                if mapped_executable.is_none() {
+                    bun_core::scoped_log!(StandaloneModuleGraph, "inject: ELF: not mapped: copied");
+                }
+            }
+            if mapped_executable.is_some() {
+                break 'brk fd;
+            }
             if let Err(e) = bun_sys::copy_file(self_fd, fd) {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
@@ -2491,7 +2563,7 @@ pub(crate) fn inject<'a>(
                     return None;
                 }
             };
-            if let Err(e) = macho_file.write_section(bytes) {
+            if let Err(e) = macho_file.write_section(bytes, has_aot_image) {
                 bun_core::pretty_errorln!("Error writing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return None;
@@ -2613,7 +2685,38 @@ pub(crate) fn inject<'a>(
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
-            let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
+            #[cfg(windows)]
+            let from_the_mapping: Option<Vec<u8>> = None;
+            #[cfg(not(windows))]
+            let mut from_the_mapping: Option<Vec<u8>> = None;
+            #[cfg(not(windows))]
+            if let Some(original) = mapped_executable.take() {
+                let (pointer, length) = (original.as_mut_ptr(), original.len());
+                let written = write_elf_in_pieces(&mut *original, bytes, cloned_executable_fd);
+                if matches!(written, Ok(false)) {
+                    from_the_mapping = Some(original.to_vec());
+                }
+                let _ = Syscall::munmap(pointer, length);
+                match written {
+                    Err(message) => {
+                        bun_core::pretty_errorln!("Error writing ELF file in pieces: {}", message);
+                        cleanup(zname, cloned_executable_fd);
+                        return None;
+                    }
+                    Ok(true) => {
+                        // SAFETY: libc fchmod on a valid native fd.
+                        unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
+                        return Some(Injected::new(
+                            cloned_executable_fd,
+                            cwd,
+                            zname,
+                            temp_path_buf,
+                        ));
+                    }
+                    Ok(false) => {}
+                }
+            }
+            let input_bytes = match from_the_mapping.map_or_else(|| bun_sys::File::borrow(&cloned_executable_fd).read_to_end(), Ok) {
                 Ok(b) => b,
                 Err(err) => {
                     bun_core::pretty_errorln!("Error reading executable: {}", err);
@@ -2995,18 +3098,41 @@ pub fn target_builtins(
     env: &mut bun_dotenv::Loader,
     self_exe_path: Option<&[u8]>,
 ) -> Result<Option<std::sync::Arc<[u8]>>, CompileError> {
-    use bun_exe_format::builtins::{Builtins, BuiltinsError, find_section};
+    use bun_exe_format::builtins::{Builtins, BuiltinsError, Image, find_section};
     let exe = target_executable(target, env, self_exe_path)?;
-    let file = match bun_sys::File::read_from(Fd::cwd(), exe.as_bytes()) {
-        Ok(bytes) => bytes,
+    let cannot_read = |e: bun_sys::Error| {
+        CompileError::fmt(format_args!(
+            "failed to read executable for '{}': {}",
+            target, e
+        ))
+    };
+    let file = bun_sys::File::openat(Fd::cwd(), exe.as_bytes(), bun_sys::O::RDONLY, 0)
+        .map_err(cannot_read)?;
+    let len = file.get_end_pos().map_err(cannot_read)?;
+    let mut failure: Option<bun_sys::Error> = None;
+    let mut read = |offset: usize, bytes: &mut [u8]| match file.pread_all(bytes, offset as u64) {
+        Ok(count) => count == bytes.len(),
         Err(e) => {
-            return Err(CompileError::fmt(format_args!(
-                "failed to read executable for '{}': {}",
-                target, e
-            )));
+            failure = Some(e);
+            false
         }
     };
-    match find_section(&file).and_then(|section| Builtins::parse(section).map(|_| section)) {
+    let place = find_section(&mut Image {
+        len,
+        read: &mut read,
+    });
+    let found = place.and_then(|(offset, len)| {
+        let mut section = vec![0; len];
+        if !read(offset, &mut section) {
+            return Err(BuiltinsError::Invalid);
+        }
+        Builtins::parse(&section)?;
+        Ok(section)
+    });
+    if let Some(e) = failure {
+        return Err(cannot_read(e));
+    }
+    match found {
         Ok(section) => Ok(Some(std::sync::Arc::from(section))),
         // No section (a bun from before there was one), a newer layout than this bun reads, or a container this reader
         // doesn't handle: its internal modules load from source. A section that is there but malformed is an error.
@@ -3120,6 +3246,9 @@ pub fn to_executable(
     let mut temp_path_buf = bun_paths::path_buffer_pool::get();
     let Some(injected) = inject(
         &bytes,
+        output_files
+            .iter()
+            .any(|file| file.output_kind == options::OutputKind::AotImage),
         &self_exe,
         windows_options,
         target,
@@ -3297,7 +3426,12 @@ impl StandaloneModuleGraph {
         let Some((base, len)) = data else {
             return Ok(None);
         };
-        Self::from_mapped(base, len)
+        let graph = Self::from_mapped(base, len)?;
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        if graph.is_some_and(|graph| !unsafe { &*graph }.aot_image.is_empty()) {
+            elf::make_read_only(base, len)?;
+        }
+        Ok(graph)
     }
 
     #[cfg(unix)]
@@ -3311,7 +3445,7 @@ impl StandaloneModuleGraph {
         let map = Syscall::mmap(
             core::ptr::null_mut(),
             size,
-            libc::PROT_READ | libc::PROT_WRITE,
+            libc::PROT_READ,
             libc::MAP_PRIVATE,
             fd,
             0,

@@ -50,7 +50,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     rc: "/fake/llvm/bin/llvm-rc",
     nasm: "/fake/bin/nasm",
     ...overrides,
-  };
+  } as Toolchain;
 }
 
 /**

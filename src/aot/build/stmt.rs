@@ -57,6 +57,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let undefined = self.emit(fx, Op::Undefined);
             self.emit_yield(fx, undefined, f.flags.contains(Flags::ASYNC));
         }
+        self.note_span_of_body(fx);
         match f.body {
             FnBody::None => {}
             FnBody::Block(stmts) => self.block_body(fx, stmts),
@@ -70,10 +71,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     pub(crate) fn emit_entry_of_two_bodies(&mut self, fx: &mut Fx) {
         let (Some(&typed), Some(&second)) = (self.typed_bodies.get(&fx.id), self.second_bodies.get(&fx.id)) else { return };
         self.add_captures(fx);
+        let takes_this = self.out.funcs[typed.idx()].has(func_flags::HAS_THIS);
+        let this_given = if takes_this { self.add_entry_param(fx, Ty::NONE) } else { V::NONE };
         let count = self.out.funcs[fx.id.idx()].params.len();
         let given: Vec<V> = (0..count).map(|_| self.add_entry_param(fx, Ty::NONE)).collect();
         let misfit = fx.b.new_block();
         fx.handlers.push(misfit);
+        let this_wanted = self.out.funcs[typed.idx()].this_declared;
+        let this_held = if takes_this && this_wanted.is_some() && this_wanted != self.out.tys.anything {
+            self.emit_throwing(fx, Op::Coerce { value: this_given, to: this_wanted, why: Why::Claim })
+        } else {
+            this_given
+        };
         let mut held = Vec::with_capacity(count);
         let written: Vec<_> = self.hir(fx.file)[fx.func].params.iter().collect();
         for (index, &value) in given.iter().enumerate() {
@@ -100,12 +109,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             held.push(self.emit_throwing(fx, Op::Coerce { value, to, why: Why::Claim }));
         }
         fx.handlers.pop();
-        let result = self.emit_direct_call(fx, typed, V::NONE, &held);
+        let result = self.emit_direct_call(fx, typed, this_held, &held);
         self.terminate_with_return(fx, result);
         fx.b.seal(misfit);
         fx.b.switch_to(misfit);
         self.emit(fx, Op::Caught);
-        let result = self.emit_direct_call(fx, second, V::NONE, &given);
+        let result = self.emit_direct_call(fx, second, this_given, &given);
         self.terminate_with_return(fx, result);
     }
 
@@ -133,6 +142,25 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
+    pub(crate) fn note_span_of_body(&mut self, fx: &mut Fx) {
+        if !self.shared.constants.notes_spans {
+            return;
+        }
+        let hir = self.hir(fx.file);
+        let f = &hir[fx.func];
+        let key = if f.kind == bun_sema::hir::FnKind::Arrow { f.start } else { f.anchor } as i32;
+        match f.body {
+            FnBody::None => {}
+            FnBody::Block(stmts) => {
+                let start = hir.ids(stmts).next().map_or(0, |first| hir[first].start);
+                fx.first_spans.insert(V::NONE, crate::audit::Noted { start, end: 0, step: key, block: fx.b.block });
+            }
+            FnBody::Expr(e) => {
+                fx.first_spans.insert(V::NONE, crate::audit::Noted { start: hir[e].pos, end: hir[e].end, step: key, block: fx.b.block });
+            }
+        }
+    }
+
     /// The arguments as they arrive, one for each parameter of the source.
     pub(crate) fn add_parameters(&mut self, fx: &mut Fx) -> Vec<V> {
         let hir = self.hir(fx.file);
@@ -143,6 +171,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let declared = self.ty_of_param(fx.file, p);
                     let value = self.add_entry_param(fx, declared);
                     self.predict_parameter(fx, value, p);
+                    if self.shared.constants.notes_spans && matches!(hir[hir[p].pat].kind, PatKind::Ident(_)) {
+                        fx.first_spans.insert(value, crate::audit::Noted { start: hir[hir[p].pat].pos, end: hir[hir[p].pat].end, step: 0, block: fx.b.block });
+                    }
                     value
                 })
                 .collect();
@@ -392,6 +423,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return self.cut_stmt(fx, stmt);
         }
         let outer = fx.initialized_before_loops.len();
+        let outer_modules = fx.modules_asked_for_before_loops.len();
         if matches!(s.kind, StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. } | StmtKind::While { .. } | StmtKind::DoWhile { .. }) {
             self.initialize_before_loop(fx, s.start, s.loc.end);
         }
@@ -404,6 +436,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             None => self.stmt_itself(fx, stmt),
         }
         fx.initialized_before_loops.truncate(outer);
+        fx.modules_asked_for_before_loops.truncate(outer_modules);
     }
 
     fn stmt_itself(&mut self, fx: &mut Fx, stmt: StmtId) {
@@ -712,10 +745,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     StmtKind::Expr(e) => target = e,
                     _ => {}
                 }
+                let said_by_the_stores = if fx.is_typed { self.c.what_the_stores_say_of_array(fx.file, expr) } else { 0 };
+                let before = self.c.know_by_the_stores(said_by_the_stores != 0);
+                let is_just_read = table.is_none() && {
+                    let of_iterable = self.c.type_of_expr(fx.file, expr);
+                    self.c.parts(of_iterable).iter().all(|&part| self.c.is_array_or_tuple(part))
+                };
+                let value = if is_just_read && value.is_some() { self.claim_iteration_value(fx, value, expr, false) } else { value };
                 // An exception in the binding or in the body closes the iterator.
                 let closing = fx.b.new_block();
                 fx.handlers.push(closing);
-                let value = if value.is_some() { self.claim_iteration_value(fx, value, expr, false) } else { value };
+                let value = if !is_just_read && value.is_some() { self.claim_iteration_value(fx, value, expr, false) } else { value };
+                self.c.know_by_the_stores(before);
+                if said_by_the_stores != 0 && value.is_some() {
+                    self.mark_read_known_by_the_stores(fx, value);
+                }
                 let opened = self.open_activation(fx, Activation::Iteration(stmt));
                 self.declare(fx, &names);
                 let head_unwind_depth = fx.handlers.len() - 1;
@@ -738,7 +782,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     fx.b.seal(bound);
                     fx.b.switch_to(bound);
                 } else if pat.is_some() {
+                    let before = self.c.know_by_the_stores(said_by_the_stores == 3);
                     self.bind_pat(fx, pat, value);
+                    self.c.know_by_the_stores(before);
                 } else if target.is_some() {
                     // `for (list[0] of items)`: an element is no place of the translated program.
                     if fx.is_typed {
@@ -758,7 +804,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 fx.b.jump(next);
                 fx.b.seal(closing);
                 fx.b.switch_to(closing);
-                let caught = self.emit(fx, Op::Caught);
+                let caught = self.emit(fx, Op::CaughtException);
                 self.close_iterator_of_loop(fx, iter, true);
                 let unwind = fx.handlers.last().map(|&handler| Target::new(handler));
                 fx.b.terminate(Term::Throw { value: caught, unwind });
@@ -924,6 +970,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 }
                 self.try_finally(
                     fx,
+                    false,
                     |this, fx| this.try_catch(fx, block, param, handler),
                     |this, fx, _, _| this.scoped_stmt(fx, finalizer),
                 );
@@ -1257,11 +1304,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             let Some(context) = &mut fx.jumps[i].finally_context else { continue };
             context.exits.push((from, exit));
-            let (entry, completion_type, value, number) = (context.entry, context.completion_type, context.value, context.exits.len() as i64 + 1);
+            let (entry, completion_type, value, exception, number) = (context.entry, context.completion_type, context.value, context.exception, context.exits.len() as i64 + 1);
             let number = self.emit(fx, Op::Int(number));
             self.write(fx, completion_type, number);
+            let undefined = self.emit(fx, Op::Undefined);
+            fx.b.write(exception, undefined);
             if let Exit::Return(returned) = exit {
-                let returned = if returned.is_some() { returned } else { self.emit(fx, Op::Undefined) };
+                let returned = if returned.is_some() { returned } else { undefined };
                 self.write(fx, value, returned);
             }
             return fx.b.jump(entry);
@@ -1280,15 +1329,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// `try { body } finally { finalizer }`. The finalizer is emitted once. It is given the completion it interrupts: whether that is a
-    /// throw completion, and the completion value.
+    /// throw completion, and the completion value: what was thrown only if it `looks_at_what_is_thrown`. The exception itself is passed on.
     pub(crate) fn try_finally(
         &mut self,
         fx: &mut Fx,
+        looks_at_what_is_thrown: bool,
         body: impl FnOnce(&mut Self, &mut Fx),
         finalizer: impl FnOnce(&mut Self, &mut Fx, V, V),
     ) {
         let (entry, thrown, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
-        let (completion_type, value) = (self.new_selector(fx), self.new_temporary(fx));
+        let (completion_type, value, exception) = (self.new_selector(fx), self.new_temporary(fx), self.new_temporary(fx));
         fx.jumps.push(Jump {
             label: Atom::NONE,
             break_to: BlockId::NONE,
@@ -1296,7 +1346,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             iter: V::NONE,
             unwind_depth: 0,
             is_unlabeled_break_target: false,
-            finally_context: Some(FinallyContext { entry, completion_type, value, exits: Vec::new() }),
+            finally_context: Some(FinallyContext { entry, completion_type, value, exception, exits: Vec::new() }),
         });
         fx.handlers.push(thrown);
         body(self, fx);
@@ -1306,17 +1356,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let zero = self.emit(fx, Op::Int(0));
         self.write(fx, completion_type, zero);
         self.write(fx, value, undefined);
+        fx.b.write(exception, undefined);
         fx.b.jump(entry);
         fx.b.seal(thrown);
         fx.b.switch_to(thrown);
-        let caught = self.emit(fx, Op::Caught);
+        let caught = self.emit(fx, Op::CaughtException);
+        let what_is_thrown = self.emit(fx, if looks_at_what_is_thrown { Op::Caught } else { Op::Undefined });
         let one = self.emit(fx, Op::Int(1));
         self.write(fx, completion_type, one);
-        self.write(fx, value, caught);
+        self.write(fx, value, what_is_thrown);
+        fx.b.write(exception, caught);
         fx.b.jump(entry);
         fx.b.seal(entry);
         fx.b.switch_to(entry);
-        let (chosen, carried) = (self.read(fx, completion_type), self.read(fx, value));
+        let (chosen, carried, caught) = (self.read(fx, completion_type), self.read(fx, value), fx.b.read(exception));
         let one = self.emit(fx, Op::Int(1));
         let is_throw = self.emit(fx, Op::StrictEq { a: chosen, b: one });
         finalizer(self, fx, is_throw, carried);
@@ -1328,7 +1381,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(rethrow);
         fx.b.switch_to(rethrow);
         let unwind = fx.handlers.last().map(|&handler| Target::new(handler));
-        fx.b.terminate(Term::Throw { value: carried, unwind });
+        fx.b.terminate(Term::Throw { value: caught, unwind });
         for (&block, &(from, exit)) in after.iter().zip(&exits) {
             fx.b.seal(block);
             fx.b.switch_to(block);
@@ -1410,6 +1463,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.write(fx, needs_close, no);
         self.try_finally(
             fx,
+            false,
             |this, fx| {
                 let (header, inside, next, exit) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
                 fx.b.jump(header);
@@ -1556,7 +1610,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     fn with_disposable_stack(&mut self, fx: &mut Fx, has_await: bool, body: impl FnOnce(&mut Self, &mut Fx)) {
         let stack = self.operation(fx, "NewDisposableStack", &[]);
         let outer = std::mem::replace(&mut fx.disposable_stack, stack);
-        self.try_finally(fx, body, |this, fx, is_throw, value| this.dispose_resources(fx, stack, has_await, is_throw, value));
+        self.try_finally(fx, true, body, |this, fx, is_throw, value| this.dispose_resources(fx, stack, has_await, is_throw, value));
         fx.disposable_stack = outer;
     }
 

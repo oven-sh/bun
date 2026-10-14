@@ -18,22 +18,22 @@
 //! ways that control takes. A variable that is stored to where that matters, or by other code than the code that declares it, is only
 //! known for what it holds over its whole life: `runs_off_the_flow`, `Place::is_stored_elsewhere`.
 
-use super::ByFile;
+use super::{ByFile, Primitive};
 use super::kinds::kind;
 use crate::atom::{Atom, known};
 use crate::bind::{Decl, Flow, FlowId, FlowTarget, FnOwner, MemberOwner, Parent, PatParent, SymFlags, SymbolId, UNREACHABLE};
 use crate::check::Checker;
 use crate::check::errors::Container;
 use crate::hir::{
-    BinOp, CallId, Chain, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, IdList, MemberId, MemberKind, PatId, PropKey, StmtId, StmtKind, UnOp,
-    VarKind,
+    BinOp, CallId, Chain, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, IdList, Keyword, MemberId, MemberKind, PatId, PropKey, StmtId, StmtKind,
+    TypeNodeId, TypeNodeKind, UnOp, VarKind,
 };
 use crate::program::{FileId, Sym};
-use crate::types::{EnumValue, TypeData, TypeId};
+use crate::types::{EnumValue, Prop, PropSource, TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::rc::Rc;
-use std::sync::OnceLock;
+use super::OnceLock;
 
 /// Up to here a double stands for every integer.
 const MOST_EXACT: i64 = 1 << 53;
@@ -69,6 +69,7 @@ struct Numbers {
     least: i64,
     most: i64,
     nil: bool,
+    nil_left_out: bool,
 }
 
 /// `None`: it can be anything.
@@ -76,11 +77,11 @@ type Found = Option<Numbers>;
 
 impl Numbers {
     /// No value gets there.
-    const NOTHING: Numbers = Numbers { least: 1, most: 0, nil: false };
-    const NIL: Numbers = Numbers { least: 1, most: 0, nil: true };
+    const NOTHING: Numbers = Numbers { least: 1, most: 0, nil: false, nil_left_out: false };
+    const NIL: Numbers = Numbers { least: 1, most: 0, nil: true, nil_left_out: false };
 
     fn integers(least: i64, most: i64) -> Numbers {
-        if least > most { Numbers::NOTHING } else { Numbers { least, most, nil: false } }
+        if least > most { Numbers::NOTHING } else { Numbers { least, most, nil: false, nil_left_out: false } }
     }
 
     fn has_no_number(self) -> bool {
@@ -99,24 +100,25 @@ impl Numbers {
 
     /// The one or the other.
     fn or(self, other: Numbers) -> Numbers {
-        let nil = self.nil || other.nil;
+        let (nil, nil_left_out) = (self.nil || other.nil, self.nil_left_out || other.nil_left_out);
         if self.has_no_number() {
-            return Numbers { nil, ..other };
+            return Numbers { nil, nil_left_out, ..other };
         }
         if other.has_no_number() {
-            return Numbers { nil, ..self };
+            return Numbers { nil, nil_left_out, ..self };
         }
-        Numbers { least: self.least.min(other.least), most: self.most.max(other.most), nil }
+        Numbers { least: self.least.min(other.least), most: self.most.max(other.most), nil, nil_left_out }
     }
 
     /// What is both.
     fn and(self, other: Numbers) -> Numbers {
-        Numbers { nil: self.nil && other.nil, ..self.within(other.least, other.most) }
+        let nil_left_out = self.nil_left_out || other.nil_left_out;
+        Numbers { nil: self.nil && other.nil || nil_left_out, nil_left_out, ..self.within(other.least, other.most) }
     }
 
     /// Without the numbers below `least` or above `most`.
     fn within(self, least: i64, most: i64) -> Numbers {
-        Numbers { nil: self.nil, ..Numbers::integers(self.least.max(least), self.most.min(most)) }
+        Numbers { nil: self.nil, nil_left_out: self.nil_left_out, ..Numbers::integers(self.least.max(least), self.most.min(most)) }
     }
 
     /// What is truthy of it. Zero in the middle of the range stays.
@@ -126,7 +128,7 @@ impl Numbers {
 
     /// As an operator on 32 bits takes it: `undefined` and `null` become zero.
     fn with_nil_as_zero(self) -> Numbers {
-        if self.nil { Numbers { nil: false, ..self.or(Numbers::integers(0, 0)) } } else { self }
+        if self.nil { Numbers { nil: false, nil_left_out: false, ..self.or(Numbers::integers(0, 0)) } } else { self }
     }
 
     /// With the least and the most moved outward to one of a few numbers.
@@ -148,7 +150,7 @@ impl Numbers {
         } else {
             MOST_EXACT
         };
-        Numbers { least, most, nil: self.nil }
+        Numbers { least, most, nil: self.nil, nil_left_out: self.nil_left_out }
     }
 }
 
@@ -201,6 +203,7 @@ pub(super) struct Place {
     /// It holds `undefined` before anything is stored to it.
     pub(super) starts_nil: bool,
     is_parameter: bool,
+    defaulted: std::ops::Range<usize>,
     /// Something is stored to it after its declaration.
     is_assigned: bool,
     /// The code that declares it, as far as one control flow goes.
@@ -276,6 +279,7 @@ pub(super) struct State {
     values: FxHashMap<(FileId, ExprId, View, Basis), (Found, u32)>,
     /// By place and head of a loop: whether the loop stores to the place.
     loops: FxHashMap<(Sym, FlowId), bool>,
+    leaving: FxHashMap<(FileId, u32), Rc<[(u32, ExprId, bool)]>>,
 }
 
 // ───────────────────────────── operators ─────────────────────────────
@@ -419,7 +423,7 @@ fn chosen(op: BinOp, a: Found, b: Found, view: View) -> Found {
         BinOp::And if view == View::Here => a.within(0, 0),
         BinOp::And => a,
         BinOp::Or if view == View::Here => a.truthy(),
-        _ => Numbers { nil: false, ..a },
+        _ => Numbers { nil: false, nil_left_out: false, ..a },
     };
     if op == BinOp::Nullish && !a.nil {
         return Some(stays);
@@ -451,10 +455,68 @@ impl<'p, 's> Checker<'p, 's> {
     /// call of the function is: a function declaration that is not exported and only ever called by its name. Of any other field it is
     /// not: whoever gets hold of the object can store to it.
     pub fn integers_of_symbol(&mut self, sym: Sym) -> Option<(i64, i64)> {
+        let written = self.integers_written_for_symbol(sym);
         if !self.place_of_integers(sym).is_followed {
-            return None;
+            return written;
         }
-        self.numbers_held_by(sym, Basis::Exact)?.range()
+        let found = self.numbers_held_by(sym, Basis::Exact).and_then(|found| found.range());
+        match (found, written) {
+            (Some(found), Some(written)) if found.0.max(written.0) <= found.1.min(written.1) => Some((found.0.max(written.0), found.1.min(written.1))),
+            (found, written) => written.or(found),
+        }
+    }
+
+    fn writes_int32(&mut self, file: FileId, node: TypeNodeId, depth: u8) -> bool {
+        if node.is_none() || depth == 8 || depth == 0 && self.is_untyped_file(file) {
+            return false;
+        }
+        let TypeNodeKind::Ref { name, args } = self.hir(file)[node].kind else { return false };
+        if !args.is_empty() {
+            return false;
+        }
+        let scope = self.bound(file).type_scope[node.idx()];
+        let Some(sym) = self.resolve_type_reference_name(file, scope, name, true) else { return false };
+        let declared = self.files().decls(sym).into_iter().find_map(|(file, decl)| match decl {
+            Decl::Alias(alias) => Some((file, alias)),
+            _ => None,
+        });
+        let Some((file, alias)) = declared else { return false };
+        let alias = self.hir(file)[alias];
+        if !alias.type_params.is_empty() {
+            return false;
+        }
+        if self.atoms().bytes(alias.name) == b"int32" && matches!(self.hir(file)[alias.ty].kind, TypeNodeKind::Keyword(Keyword::Number)) {
+            return true;
+        }
+        self.writes_int32(file, alias.ty, depth + 1)
+    }
+
+    fn integers_written_for_symbol(&mut self, sym: Sym) -> Option<(i64, i64)> {
+        let (file, decl) = self.files().value_declaration(sym)?;
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let node = match decl {
+            Decl::Var(pat) | Decl::Param(pat) => match bound.pat_parent[pat.idx()] {
+                PatParent::Var(d) => hir[d].ty,
+                PatParent::Param(p) => hir[p].ty,
+                _ => return None,
+            },
+            Decl::Member(m) => hir[m].ty,
+            Decl::ParameterProperty(p) => hir[p].ty,
+            _ => return None,
+        };
+        self.writes_int32(file, node, 0).then_some((i32::MIN as i64, i32::MAX as i64))
+    }
+
+    pub fn integers_written_for_prop(&mut self, prop: &Prop) -> Option<(i64, i64)> {
+        match &prop.source {
+            PropSource::Symbol(sym) => self.integers_written_for_symbol(*sym),
+            _ => None,
+        }
+    }
+
+    pub fn integers_written_for_result(&mut self, file: FileId, func: FnId) -> Option<(i64, i64)> {
+        let node = self.hir(file)[func].ret;
+        self.writes_int32(file, node, 0).then_some((i32::MIN as i64, i32::MAX as i64))
     }
 
     /// The same for every number of the type: what is held to the type is one of them. The type `0` is also that of `-0`. A value of the
@@ -613,11 +675,19 @@ impl<'p, 's> Checker<'p, 's> {
             let by_type = self.numbers_by_type(ty);
             if let ExprKind::Index { obj, index, .. } = kind {
                 // Outside the array, or where the object has no such key, it yields `undefined`, whatever the type says.
-                found = both(by_type, self.numbers_of_element(file, obj, index)).map(|it| Numbers { nil: true, ..it });
+                let nil_left_out = self.is_type_of_numbers(ty);
+                found = both(by_type, self.numbers_of_element(file, obj, index)).map(|it| Numbers { nil: true, nil_left_out, ..it });
             } else {
+                let is_by_type_alone = found.is_none() && by_type.is_some() && !matches!(kind, ExprKind::NonNull(_));
+                let is_left_out = may_be_undefined || is_by_type_alone && !matches!(self.constant_value_of(file, e), Some(Primitive::Number(_)));
                 found = both(found, by_type);
                 if let Some(found) = &mut found {
-                    found.nil = if self.is_type_of_numbers(ty) { may_be_undefined } else { found.nil || may_be_undefined };
+                    if self.is_type_of_numbers(ty) {
+                        found.nil_left_out |= is_left_out;
+                        found.nil = found.nil_left_out;
+                    } else {
+                        found.nil |= may_be_undefined;
+                    }
                 }
             }
         }
@@ -682,7 +752,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let stays_itself = operand == Numbers::NOTHING || self.says_nothing(target) || !operand.nil && self.some_type(target, |c, part| c.is_number_like(part));
                 stays_itself.then_some(operand)
             }
-            ExprKind::NonNull(expr) => self.numbers_in(file, expr, view, basis).map(|it| Numbers { nil: false, ..it }),
+            ExprKind::NonNull(expr) => self.numbers_in(file, expr, view, basis).map(|it| Numbers { nil: false, nil_left_out: false, ..it }),
             ExprKind::Dot { obj, name, chain: Chain::No, .. } => self.numbers_of_property(file, e, obj, name, basis),
             ExprKind::Call(call) => self.numbers_of_call(file, e, call, basis),
             _ => None,
@@ -873,7 +943,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         match name {
-            b"codePointAt" => Some(Numbers { least: 0, most: 0x10FFFF, nil: true }),
+            b"codePointAt" => Some(Numbers { least: 0, most: 0x10FFFF, nil: true, nil_left_out: false }),
             // It hands over to `Symbol.search` of what it is given, which yields what it likes. A string is made a RegExp of the engine.
             b"search" if !hir.ids(call.args).next().is_some_and(|pattern| is_string(self, pattern)) => None,
             _ => Some(Numbers::integers(-1, MOST_STRING_LENGTH)),
@@ -1072,6 +1142,11 @@ impl<'p, 's> Checker<'p, 's> {
                         uses.calls.insert(named.id, None);
                     }
                 }
+            }
+        }
+        for named in self.values_named_by_decorators(file) {
+            if named.file == file {
+                uses.calls.insert(named.id, None);
             }
         }
         if !bound.private_class.is_empty() {
@@ -1292,12 +1367,16 @@ impl<'p, 's> Checker<'p, 's> {
         let index = f.params.iter().position(|it| it == p)?;
         place.is_parameter = true;
         place.stores.extend(param.default.some().map(Store::Value));
+        let first_argument = place.stores.len();
         for &call in uses.calls.get(&id).map_or(Some(&[][..]), |calls| calls.as_deref())? {
             let args = hir[call].args;
             if hir.ids(args).any(|arg| matches!(hir[arg].kind, ExprKind::Spread(_) | ExprKind::Missing)) {
                 return None;
             }
             place.stores.push(hir.ids(args).nth(index).map_or(Store::Nil, Store::Value));
+        }
+        if param.default.is_some() {
+            place.defaulted = first_argument..place.stores.len();
         }
         Some(Container::Fn(func))
     }
@@ -1369,16 +1448,20 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         // A type that says which integers is gone by: that is how the place is described.
-        if let Some(by_type) = place.by_type
-            && !by_type.has_no_number()
-        {
-            return Some(Numbers { nil: by_type.nil || place.starts_nil, ..by_type });
-        }
+        let by_type = place.by_type.filter(|by_type| !by_type.has_no_number());
         let mut all = if place.starts_nil { Numbers::NIL } else { Numbers::NOTHING };
-        for &store in &place.stores {
-            all = all.or(self.numbers_stored_by(at.file, store, View::Kept, Basis::Rough)?);
+        for (index, &store) in place.stores.iter().enumerate() {
+            let stored = match (self.numbers_stored_by(at.file, store, View::Kept, Basis::Rough), by_type) {
+                (Some(stored), _) => stored,
+                (None, Some(_)) => Numbers { nil: true, nil_left_out: true, ..Numbers::NOTHING },
+                (None, None) => return None,
+            };
+            all = all.or(if place.defaulted.contains(&index) { Numbers { nil_left_out: false, ..stored } } else { stored });
         }
-        Some(all)
+        Some(match by_type {
+            Some(by_type) => Numbers { nil: by_type.nil || place.starts_nil || all.nil_left_out, nil_left_out: all.nil_left_out, ..by_type },
+            None => all,
+        })
     }
 
     fn numbers_stored_by(&mut self, file: FileId, store: Store, view: View, basis: Basis) -> Found {
@@ -1411,6 +1494,7 @@ impl<'p, 's> Checker<'p, 's> {
                     break if walk.is_parameter { self.numbers_held_by(walk.at, walk.basis) } else { Some(Numbers::NIL) };
                 }
                 Flow::Assign { before, target } => match self.numbers_stored_at(walk, target) {
+                    Some(None) if walk.by_type.is_some() => break walk.by_type.map(|by_type| Numbers { nil: true, nil_left_out: true, ..by_type }),
                     Some(stored) => break both(stored, walk.by_type),
                     None => flow = before,
                 },
@@ -1571,15 +1655,26 @@ impl<'p, 's> Checker<'p, 's> {
                 Parent::None | Parent::ParamDefault(_) | Parent::MemberInit(_) => is_outermost = true,
                 _ => {}
             }
-            if let Child::Stmt(child) = child {
-                for before in hir.ids(siblings).take_while(|&it| it != child) {
-                    let StmtKind::If { test, yes, no } = hir[before].kind else { continue };
-                    if never_completes(hir, yes) {
-                        passed.push((test, false));
+            if let Child::Stmt(child) = child
+                && !siblings.is_empty()
+            {
+                let leaving = Rc::clone(self.aot.integers.leaving.entry((file, siblings.start)).or_insert_with(|| {
+                    let mut leaving = Vec::new();
+                    for (place, before) in hir.ids(siblings).enumerate() {
+                        let StmtKind::If { test, yes, no } = hir[before].kind else { continue };
+                        if never_completes(hir, yes) {
+                            leaving.push((place as u32, test, false));
+                        }
+                        if no.is_some() && never_completes(hir, no) {
+                            leaving.push((place as u32, test, true));
+                        }
                     }
-                    if no.is_some() && never_completes(hir, no) {
-                        passed.push((test, true));
-                    }
+                    leaving.into()
+                }));
+                if !leaving.is_empty() {
+                    let ids = &hir.ids[siblings.range()];
+                    let place = ids.binary_search(&child.0).ok().or_else(|| ids.iter().position(|&it| it == child.0)).unwrap_or(ids.len());
+                    passed.extend(leaving.iter().take_while(|it| (it.0 as usize) < place).map(|it| (it.1, it.2)));
                 }
             }
             if is_outermost {

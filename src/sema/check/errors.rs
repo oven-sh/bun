@@ -13,6 +13,7 @@ use super::sink::{MAX_SERIALIZATION_LEVEL, NO_DIRECTIVE, held};
 use super::*;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, ScopeId, ScopeKind};
 use crate::program::SymbolTable;
+use crate::util::SharedSort;
 use bun_core::strings;
 
 /// The diagnostics `check_file` passes to `Program::finish_file`, finalized. Diagnostics reported
@@ -63,7 +64,7 @@ impl Program<'_> {
         (self.files.modules.iter().enumerate())
             .filter(|(_, module)| {
                 let mut reported = module.hir.diagnostics.iter().filter(|found| found.kind == crate::hir::DiagnosticKind::Parse).peekable();
-                let is_what_its_text_says = module.hir.is_js && reported.peek().is_some() && reported.all(|found| found.code == 18030);
+                let is_what_its_text_says = module.hir.is_js && reported.peek().is_some() && reported.all(|found| matches!(found.code, 18030 | 1121 | 1487 | 1488 | 1489));
                 module.hir.has_parse_diagnostics && !is_what_its_text_says || module.hir.has_errors || module.hir.ran_out_of_stack
             })
             .map(|(i, _)| FileId(i as u32))
@@ -107,7 +108,7 @@ impl Program<'_> {
             // `getDiagnosticsWithPrecedingDirectives`
             let used = out.iter().map(|d| d.directive);
             let mut used: Vec<u32> = used.filter(|&start| start != NO_DIRECTIVE).collect();
-            used.sort_unstable();
+            used.shared_sort_unstable();
             // `FilterNoEmitSemanticDiagnostics` comes after the directives.
             let no_emit = self.files.options.no_emit;
             out.retain(|d| d.directive == NO_DIRECTIVE && !(no_emit && d.skipped_on_no_emit));
@@ -194,8 +195,13 @@ impl Checker<'_, '_> {
             .begin_file(file, !self.files().module(file).is_leaf);
         self.provisional.clear();
         self.refused_expressions.clear();
+        self.side_effect_free.get_mut().clear();
+        self.context_sensitive_functions.get_mut().clear();
         self.work_trap = WORK_TRAP_DISARMED;
         self.limits = 0;
+        // tsgo never resets it, so each of its checkers reports nothing that needs the type of a
+        // reference in the files after one whose module body got 2563.
+        self.flow_analysis_disabled.clear();
         self.outermost_comparison = None;
         self.checked_type_references.0 = None;
         self.instantiation_limit_hits = 0;
@@ -898,6 +904,9 @@ impl Checker<'_, '_> {
         mode: ResolutionMode,
         at: (FileId, u32, u32),
     ) {
+        if self.is_held_to_the_fixed_set(file) {
+            return;
+        }
         let module = self.files().module(file);
         let mut untyped = module.untyped_imports.iter();
         let Some(index) = untyped.position(|&u| u == (spec, mode)) else {
@@ -1307,7 +1316,7 @@ impl Checker<'_, '_> {
         while !self.unresolved_identifiers.is_empty() {
             let mut unresolved = std::mem::take(&mut self.unresolved_identifiers);
             unresolved.retain(|u| Some(u.0) == self.task.file);
-            unresolved.sort_unstable_by_key(|u| (u.0, u.1));
+            unresolved.shared_sort_unstable_by_key(|u| (u.0, u.1));
             unresolved.dedup_by_key(|u| (u.0, u.1));
             for (file, e, name) in unresolved {
                 self.report_unresolved_identifier(file, e, name);

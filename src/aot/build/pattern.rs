@@ -131,7 +131,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.b.switch_to(after);
             return;
         }
-        let caught = self.emit(fx, Op::Caught);
+        let caught = self.emit(fx, Op::CaughtException);
         let (close, throw) = (fx.b.new_block(), fx.b.new_block());
         let done = self.read(fx, it.done);
         self.branch(fx, done, throw, close);

@@ -6,7 +6,7 @@ use bstr::BStr;
 
 use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
-use bun_core::{Global, Output, UnwrapOrOom, ZStr, env_var};
+use bun_core::{Global, Output, ZStr, env_var};
 use bun_sema_driver::format::{self, Layout, Style};
 use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
 use bun_sema_driver::{
@@ -28,6 +28,8 @@ struct Options {
     /// `--all`: never group identical errors.
     all: bool,
     timing: bool,
+    aot: bool,
+    aot_explain: Vec<Box<[u8]>>,
 }
 
 fn usage_error(args: core::fmt::Arguments<'_>) -> ! {
@@ -55,6 +57,10 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     ),
     clap::param!("--threads <n>      Number of threads <d>(default: one per CPU core)<r>"),
     clap::param!("--timing           Print load and check times"),
+    clap::param!(
+        "--aot              Check the entry points as <b>bun build --compile --aot<r> does"
+    ),
+    clap::param!("--aot-explain <word>...  With <b>--aot<r>: print what the compiler has decided, e.g. <b>throws<r>"),
     clap::param!("--cwd <path>       Set the working directory"),
     clap::param!("-h, --help         Print this help menu"),
     // Nothing is ever emitted. `--noEmit` is a compiler option like any other, which the driver sets last.
@@ -119,8 +125,16 @@ fn parse(args: &[&ZStr]) -> Options {
     let mut options = Options {
         all: parsed.flag(b"--all"),
         timing: parsed.flag(b"--timing"),
+        aot: parsed.flag(b"--aot"),
+        aot_explain: parsed.options(b"--aot-explain").iter().map(|word| Box::<[u8]>::from(*word)).collect(),
         ..Default::default()
     };
+    if let Some(word) = options.aot_explain.iter().find(|word| !bun_aot::Explain::default().set(word)) {
+        usage_error(format_args!("--aot-explain does not take \"{}\": it is one of {}", BStr::new(word), bun_aot::Explain::WORDS.join(", ")));
+    }
+    if !options.aot && !options.aot_explain.is_empty() {
+        usage_error(format_args!("--aot-explain requires --aot"));
+    }
     if let Some(threads) = parsed.option(b"--threads") {
         match bun_core::fmt::parse_decimal::<usize>(threads) {
             Some(n) if n > 0 => options.threads = n,
@@ -179,7 +193,7 @@ fn reject(rejected: &RejectedFlag) -> ! {
     }
 }
 
-fn working_directory() -> Vec<u8> {
+pub(crate) fn working_directory() -> Vec<u8> {
     let mut buf = bun_paths::path_buffer_pool::get();
     match bun_core::getcwd(&mut buf) {
         Ok(cwd) => cwd.as_bytes().to_vec(),
@@ -188,156 +202,6 @@ fn working_directory() -> Vec<u8> {
             Global::exit(1);
         }
     }
-}
-
-/// Whether `check` is a script of the project: `scripts.check` of the nearest `package.json`, which
-/// is where `bun run` looks. `bun check` ran it before there was a type checker, so it still does.
-/// The type checker is also `bun --check`.
-#[cold]
-#[inline(never)]
-pub(crate) fn is_package_script() -> bool {
-    use bun_paths::platform::Auto;
-    use bun_paths::resolve_path::join_abs_string;
-    let mut cwd = working_directory();
-    let mut args = bun_core::argv().into_iter();
-    while let Some(arg) = args.next() {
-        // What follows the name of a script is for the script.
-        if arg == b"check" {
-            break;
-        }
-        // These are about scripts: those of several packages, whatever this one has, or none.
-        if matches!(
-            arg,
-            b"--workspaces" | b"--parallel" | b"--sequential" | b"--if-present"
-        ) || arg.starts_with(b"--filter")
-            || arg.starts_with(b"-F")
-        {
-            return true;
-        }
-        let given = match arg.strip_prefix(b"--cwd") {
-            Some(b"") => args.next(),
-            Some(rest) => rest.strip_prefix(b"="),
-            None => None,
-        };
-        if let Some(given) = given {
-            cwd = join_abs_string::<Auto>(&cwd, &[given]).to_vec();
-        }
-    }
-    let Some((dir, path, contents)) = nearest_package_json(&cwd) else {
-        return false;
-    };
-    // In that script, and in what it runs, it is the type checker: `"check": "bun check"`.
-    let running = env_var::BUN_INTERNAL_CHECK_SCRIPTS::get();
-    if running.is_some_and(|running| running_package_scripts(running).any(|it| it == dir)) {
-        return false;
-    }
-    if package_of_inherited_check_script().is_some_and(|it| it == dir) {
-        return false;
-    }
-    // Most have no such word in them.
-    if !bun_core::strings::contains(&contents, b"\"check\"") {
-        return false;
-    }
-    bun_ast::initialize_store();
-    let source = bun_ast::Source::init_path_string(&path[..], &contents[..]);
-    let (mut log, bump) = (bun_ast::Log::init(), bun_alloc::Arena::new());
-    let Ok(json) = bun_parsers::json::parse_package_json_utf8(&source, &mut log, &bump) else {
-        return false;
-    };
-    (json.as_property(b"scripts"))
-        .and_then(|scripts| scripts.expr.as_property(b"check"))
-        .is_some_and(|script| matches!(script.expr.data, bun_ast::ExprData::EString(_)))
-}
-
-/// The `package.json` nearest to `dir`, which is where `bun run` looks: its directory, its path and
-/// its text.
-fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Vec<u8>)> {
-    use bun_paths::platform::Auto;
-    use bun_paths::resolve_path::{dirname, join_abs_string};
-    loop {
-        let path = join_abs_string::<Auto>(dir, &[b"package.json"]).to_vec();
-        if let Ok(contents) = bun_sys::File::read_from(bun_core::Fd::cwd(), &path) {
-            let dir = bun_core::strings::without_trailing_slash(dir);
-            return Some((dir, path, contents));
-        }
-        let parent = dirname::<Auto>(dir);
-        if parent.is_empty() || parent.len() >= dir.len() {
-            return None;
-        }
-        dir = parent;
-    }
-}
-
-/// The entries of `BUN_INTERNAL_CHECK_SCRIPTS`. Each is a length, `:` and as many bytes, since a
-/// path can have any byte in it.
-fn running_package_scripts(mut running: &[u8]) -> impl Iterator<Item = &[u8]> {
-    core::iter::from_fn(move || {
-        let colon = bun_core::strings::index_of_char_usize(running, b':')?;
-        let len: usize = core::str::from_utf8(&running[..colon]).ok()?.parse().ok()?;
-        let (entry, rest) = running[colon + 1..].split_at_checked(len)?;
-        running = rest;
-        Some(entry)
-    })
-}
-
-/// `bun run check` runs all three.
-fn is_check_script(name: &[u8]) -> bool {
-    matches!(name, b"check" | b"precheck" | b"postcheck")
-}
-
-/// The directory of the package whose `check` script another package manager has started, with
-/// this process in it. npm, pnpm and yarn say which script they run. Not all say of which package:
-/// then it is the one that this process is started in, not each one whose scripts it runs.
-fn package_of_inherited_check_script() -> Option<Vec<u8>> {
-    use bun_paths::{platform::Auto, resolve_path::dirname};
-    if !env_var::npm_lifecycle_event::get().is_some_and(is_check_script) {
-        return None;
-    }
-    match env_var::npm_package_json::get() {
-        Some(of) => Some(bun_core::strings::without_trailing_slash(dirname::<Auto>(of)).to_vec()),
-        None if env_var::BUN_INTERNAL_CHECK_SCRIPTS::get().is_some() => None,
-        None => Some(nearest_package_json(&working_directory())?.0.to_vec()),
-    }
-}
-
-/// Makes `env` that of the script `name` of the package that has `dir`. See `is_package_script`.
-pub(crate) fn note_package_script(env: &mut bun_dotenv::Loader, name: &[u8], dir: &[u8]) {
-    use std::io::Write;
-    let key = b"BUN_INTERNAL_CHECK_SCRIPTS";
-    // As `is_package_script` finds it, wherever in the package the script is started.
-    let Some((dir, ..)) = nearest_package_json(dir) else {
-        return;
-    };
-    // `name` takes the place of what another package manager has said, for what the script runs.
-    let inherited = package_of_inherited_check_script();
-    let mut running = env.get(key).unwrap_or_default().to_vec();
-    for dir in (inherited.as_deref().into_iter()).chain(is_check_script(name).then_some(dir)) {
-        if !running_package_scripts(&running).any(|it| it == dir) {
-            let _ = write!(running, "{}:", dir.len());
-            running.extend_from_slice(dir);
-        }
-    }
-    if !running.is_empty() {
-        env.map.put(key, &running).unwrap_or_oom();
-    }
-}
-
-/// `note_package_script` for as long as `with` takes: `env` is that of other scripts too.
-pub(crate) fn with_package_script<R>(
-    env: &mut bun_dotenv::Loader,
-    name: &[u8],
-    dir: &[u8],
-    with: impl FnOnce(&mut bun_dotenv::Loader) -> R,
-) -> R {
-    let key = b"BUN_INTERNAL_CHECK_SCRIPTS";
-    let before = env.get(key).map(<[u8]>::to_vec);
-    note_package_script(env, name, dir);
-    let result = with(env);
-    match before {
-        Some(before) => env.map.put(key, &before).unwrap_or_oom(),
-        None => env.map.remove(key),
-    }
-    result
 }
 
 /// Displays `progress` on stderr until `is_done`, starting once the check has run long enough for a
@@ -484,6 +348,7 @@ fn request<'a>(
     Request {
         cwd,
         project,
+        listed_projects: None,
         build: command_line.is_some_and(|it| it.build),
         errors: command_line.map_or(&[][..], |it| &it.errors[..]),
         paths: entries.paths,
@@ -600,7 +465,62 @@ impl CheckCommand {
         })
     }
 
+    fn exec_aot(options: &Options) -> ! {
+        use bun_sema_driver::host::{from_argument, from_native};
+        let (cwd, command_line) = (working_directory(), &options.command_line);
+        if command_line.paths.is_empty() || command_line.build {
+            usage_error(format_args!("--aot takes the entry points of a program"));
+        }
+        let constants = bun_aot::Constants { root: from_native(&cwd), ..Default::default() };
+        let (mut code, mut provided) = (Vec::new(), Provided::default());
+        for &(name, text) in bun_aot::prelude::FILES {
+            let path = bun_aot::prelude::path_of(&cwd, name);
+            provided.already_read.insert(from_native(&path), text.as_bytes().to_vec());
+            code.push(path);
+        }
+        let said: bun_threading::Guarded<(Vec<String>, Vec<String>)> = bun_threading::Guarded::new(Default::default());
+        let translation = bun_aot::Translation::new(&constants).explaining(explaining(&options.aot_explain));
+        let begin = |program: &bun_sema_driver::Program, in_parallel: bun_sema_driver::InParallel<'_>| {
+            let roots = command_line.paths.iter().filter_map(|path| program.files.by_path.get(&from_argument(&from_native(&cwd), path)));
+            let entry_points: Vec<Vec<_>> = roots.map(|root| vec![root]).collect();
+            translation.begin(program, &entry_points, in_parallel);
+        };
+        let translate_file = |checker: &mut bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| translation.translate_file(checker, file);
+        let note_file = |checker: &mut bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| translation.note_file(checker, file);
+        let merge_notes = |program: &bun_sema_driver::Program| translation.merge_notes(program);
+        let analyze = |program: &bun_sema_driver::Program, in_parallel: bun_sema_driver::InParallel<'_>, errors: &[(bun_sema_driver::FileId, u32)]| {
+            let translated = translation.finish(program, in_parallel, errors);
+            *said.lock() = (translated.explained, translated.problems);
+            bun_aot::release(translated.program, in_parallel);
+            translated.errors_that_stand
+        };
+        let paths = Paths::EntryPoints(Entries { paths: &command_line.paths, ..Default::default() });
+        let request = Request {
+            is_one_program: true,
+            code: &code,
+            loaded: Some(&begin),
+            after_file: Some(&translate_file),
+            before_visits: Some(&note_file),
+            all_visited_once: Some(&merge_notes),
+            compile: Some(&analyze),
+            ..request(&cwd, command_line.project.as_deref(), &paths, &command_line.compiler_options, options.threads, None)
+        };
+        let report = bun_sema_driver::check_provided_then(&request, with_pages(&cwd, provided), |report| report);
+        let said = said.lock();
+        print_explained(&said.0);
+        for problem in &said.1 {
+            Output::err_generic("{}", (problem,));
+        }
+        if report.is_ok() && !said.1.is_empty() {
+            Global::exit(1);
+        }
+        report_and_exit(&report, options, &cwd)
+    }
+
     fn exec_with(options: &Options) -> ! {
+        if options.aot {
+            Self::exec_aot(options);
+        }
         let (cwd, command_line) = (working_directory(), &options.command_line);
         let report = run(
             &cwd,
@@ -665,6 +585,13 @@ fn report_and_exit(report: &Report, options: &Options, cwd: &[u8]) -> ! {
             report.check_time.as_secs_f64() * 1000.0,
             report.deepest_stack / 1024,
         );
+        if report.files_parsed_for_all > 0 {
+            let _ = writeln!(
+                summary,
+                "  {} files parsed for all projects",
+                report.files_parsed_for_all,
+            );
+        }
     }
     let _ = Output::error_writer().write_all(&summary);
     Output::flush();
@@ -841,6 +768,7 @@ fn analyze_on_this_thread(
         sources,
         imports,
         dropped_imports,
+        without_side_effects,
         statements,
         texts,
         assets,
@@ -853,9 +781,15 @@ fn analyze_on_this_thread(
         preserve_source_paths,
         react_compiler_outputs,
         jsx,
+        function_texts,
+        explain,
+        explains_into_log,
+        logs_type_errors,
     } = checked;
     let file_url = |path: &[u8]| format!("{}", bun_url::file_url_from_string(&bun_core::String::from_bytes(path))).into_bytes();
     let mut constants = bun_aot::Constants {
+        logs_type_errors,
+        notes_spans: false,
         own_paths: preserve_source_paths.then_some(file_url as fn(&[u8]) -> Vec<u8>),
         has_test_globals: rewrite_jest_for_tests,
         ignores_dce_annotations: ignore_dce_annotations,
@@ -866,9 +800,15 @@ fn analyze_on_this_thread(
         features: features.map(<[u8]>::to_vec).collect(),
         resolved: Some((imports.map(|(from, spec, to)| ((from_native(from), spec.to_vec()), from_native(to)))).collect()),
         dropped_imports: dropped_imports.map(|(from, spec)| (from_native(from), spec.to_vec())).collect(),
+        without_side_effects: without_side_effects.map(from_native).collect(),
         statements: bun_aot::Constants::statements_by_file(statements.map(|(path, start, verdict)| (from_native(path), start, verdict))),
         texts: texts.map(|(path, text)| (from_native(path), text.to_vec())).collect(),
         assets: assets.map(|(path, key)| (from_native(path), key.to_vec())).collect(),
+        function_texts: function_texts.map(|texts| {
+            (texts.iter())
+                .map(|(path, printed, ranges)| (from_native(path), (printed.to_vec(), ranges.iter().map(|it| (it.key as u32, it.start as u32, it.end as u32)).collect())))
+                .collect()
+        }),
     };
     let by_extension = script_kinds_by_extension(loaders);
     let mut script_kinds: Vec<(Vec<u8>, ScriptKind)> = Vec::new();
@@ -979,6 +919,7 @@ fn analyze_on_this_thread(
             already_read: provided.already_read.clone(),
             resolved: constants.resolved.clone().unwrap_or_default(),
             dropped_imports: constants.dropped_imports.iter().cloned().collect(),
+            without_side_effects: constants.without_side_effects.iter().cloned().collect(),
             statements: constants.statements.iter().flat_map(|(path, list)| list.iter().map(move |&(start, verdict)| (path.clone(), start, verdict))).collect(),
             texts: constants.texts.iter().map(|(path, text)| (path.clone(), text.clone())).collect(),
             assets: constants.assets.iter().map(|(path, key)| (path.clone(), key.clone())).collect(),
@@ -992,13 +933,14 @@ fn analyze_on_this_thread(
     let found: bun_threading::Guarded<Option<bun_ast::type_tags::ProgramFacts>> =
         bun_threading::Guarded::new(None);
     let not_compiled: bun_threading::Guarded<Vec<String>> = bun_threading::Guarded::new(Vec::new());
-    let translation = bun_aot::Translation::new(&constants);
-    let begin = |program: &bun_sema_driver::Program| {
+    let explained: bun_threading::Guarded<Vec<String>> = bun_threading::Guarded::new(Vec::new());
+    let translation = bun_aot::Translation::new(&constants).explaining(explaining(explain));
+    let begin = |program: &bun_sema_driver::Program, in_parallel: bun_sema_driver::InParallel<'_>| {
         // The executable runs its first entry point. The others are what it starts workers with.
         let entry_points: Vec<Vec<_>> = (entry_functions.iter())
             .map(|roots| roots.iter().filter_map(|path| program.files.by_path.get(&from_native(path))).collect())
             .collect();
-        translation.begin(program, &entry_points);
+        translation.begin(program, &entry_points, in_parallel);
     };
     let translate_file = |checker: &mut bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| {
         translation.translate_file(checker, file);
@@ -1021,7 +963,8 @@ fn analyze_on_this_thread(
             }
             return vec![false; errors.len()];
         }
-        let (typed, errors_that_stand) = translation.finish_for_engine(program, in_parallel, errors);
+        let bun_aot::ForEngine { written: typed, errors_that_stand, explained: lines } = translation.finish_for_engine(program, in_parallel, errors);
+        *explained.lock() = lines;
         match typed {
             Ok(typed) => {
                 *found.lock() = Some(bun_ast::type_tags::ProgramFacts {
@@ -1051,10 +994,34 @@ fn analyze_on_this_thread(
     };
     let report = bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), |report| report);
     add_to_log(&report, log);
+    if explains_into_log {
+        for line in std::mem::take(&mut *explained.lock()) {
+            log.add_msg(bun_ast::Msg { kind: bun_ast::Kind::Verbose, data: bun_ast::Data { text: std::borrow::Cow::Owned(line.into_bytes()), location: None }, ..Default::default() });
+        }
+    }
+    print_explained(&explained.lock());
     for problem in not_compiled.lock().iter() {
         log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{problem}"));
     }
     found.lock().take().filter(|_| report.is_ok())
+}
+
+fn explaining(words: &[Box<[u8]>]) -> bun_aot::Explain {
+    let mut explain = bun_aot::Explain::default();
+    for word in words {
+        explain.set(word);
+    }
+    explain
+}
+
+fn print_explained(lines: &[String]) {
+    for line in lines {
+        let (writer, prefix) = if line.starts_with('{') { (Output::writer(), "") } else { (Output::error_writer(), "aot: ") };
+        let _ = writer.write_all(prefix.as_bytes());
+        let _ = writer.write_all(line.as_bytes());
+        let _ = writer.write_all(b"\n");
+    }
+    Output::flush();
 }
 
 /// The files of the bundle, `sources`, are not read again. The errors are added to `log`, which the
@@ -1070,6 +1037,7 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         sources,
         imports: _,
         dropped_imports: _,
+        without_side_effects: _,
         statements: _,
         texts: _,
         assets: _,
@@ -1082,6 +1050,10 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         preserve_source_paths: _,
         react_compiler_outputs: _,
         jsx: _,
+        function_texts: _,
+        explain: _,
+        explains_into_log: _,
+        logs_type_errors: _,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows what it loads each file with. What is installed is what its name says.
@@ -1152,14 +1124,12 @@ fn add_to_log(report: &Report, log: &mut bun_ast::Log) {
             ..Default::default()
         });
     }
-    for path in &report.incomplete {
+    for file in &report.incomplete {
+        let path = bun_sema_driver::host::to_native(&file.path);
         log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
-            format_args!(
-                "ran out of stack in {}. This is a bug in Bun: errors in this file may be missing.",
-                BStr::new(bun_sema_driver::host::to_native(path))
-            ),
+            format_args!("{}", BStr::new(&file.message(path))),
         );
     }
 }
@@ -1175,7 +1145,9 @@ fn log_data_of(reported: &Diagnostic) -> bun_ast::Data {
     text.extend_from_slice(&reported.text);
     let line_text = || {
         let index = reported.line.checked_sub(reported.source_line)?;
-        Some(Cow::Owned(reported.source.get(index as usize)?.clone()))
+        let line = reported.source.get(index as usize)?;
+        // Of a longer one only the beginning is kept, which the column need not be in.
+        (line.len() <= bun_sema_driver::MAX_SHOWN_LINE).then(|| Cow::Owned(line.clone()))
     };
     bun_ast::Data {
         text: Cow::Owned(text),
@@ -1280,6 +1252,178 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
         .filter(|path| !is_url(path))
         .map(|path| resolve_path::join_abs_string::<Auto>(directory, &[path]).to_vec())
         .collect()
+}
+
+#[derive(Default)]
+pub(crate) struct AuditFound {
+    pub(crate) modules: Vec<(bun_aot::audit::Module, Vec<u8>)>,
+    pub(crate) shapes: Vec<(String, String)>,
+    pub(crate) has_errors: bool,
+    pub(crate) never_visited: Vec<Vec<u8>>,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum Audited<'a> {
+    Whole,
+    WholeInTheBackground,
+    Alone { path: &'a [u8], text: &'a [u8], is_quiet: bool },
+}
+
+pub(crate) fn audit_before(
+    entry_points: &[EntryPoint],
+    before_read: Option<BeforeRead>,
+    is_for_tests: bool,
+    audited: Audited<'_>,
+    more_code: &[Vec<u8>],
+    as_soon_as_found: Option<&(dyn Fn(AuditFound) + Sync)>,
+) -> Option<AuditFound> {
+    use bun_paths::{platform::Auto, resolve_path::join_abs_string};
+    use bun_sema_driver::host::from_native;
+    let cwd = working_directory();
+    let args = bun_options_types::context::try_get().map(|ctx| &ctx.args);
+    let loaders = args.and_then(|args| args.loaders.as_ref());
+    let loaders = loaders_from_transform_options(loaders, bun_ast::Target::Bun);
+    let by_extension = script_kinds_by_extension(&loaders.unwrap_or_default());
+    let (paths, script_kinds) = what_to_check(&cwd, entry_points, &by_extension)?;
+    let mut in_memory = (entry_points.iter()).filter_map(|it| Some((it.path, it.text?)));
+    let mut provided = Provided {
+        already_read: already_read(&cwd, &mut in_memory),
+        before_read,
+        without_builtin_modules: true,
+        ..Default::default()
+    };
+    let mut code: Vec<Vec<u8>> = Vec::new();
+    for &(name, text) in bun_aot::prelude::FILES {
+        let path = bun_aot::prelude::path_of(&cwd, name);
+        provided.already_read.insert(from_native(&path), text.as_bytes().to_vec());
+        code.push(path);
+    }
+    code.extend(more_code.iter().cloned());
+    let alone = match audited {
+        Audited::Whole | Audited::WholeInTheBackground => None,
+        Audited::Alone { path, text, .. } => {
+            provided.already_read.insert(from_native(path), bun_core::strings::without_utf8_bom(text).to_vec());
+            Some(from_native(path))
+        }
+    };
+    let is_left_out = |checker: &bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| {
+        alone.as_ref().is_some_and(|alone| checker.p.files.modules[file.idx()].file_name() != &alone[..])
+    };
+    let constants = bun_aot::Constants {
+        root: from_native(&cwd),
+        has_test_globals: is_for_tests,
+        notes_spans: true,
+        ..Default::default()
+    };
+    let translation = bun_aot::Translation::new(&constants);
+    let begin = |program: &bun_sema_driver::Program, in_parallel: bun_sema_driver::InParallel<'_>| {
+        let entry_points: Vec<Vec<_>> = (paths.iter())
+            .filter_map(|path| program.files.by_path.get(&from_native(join_abs_string::<Auto>(&cwd, &[path]))))
+            .map(|file| vec![file])
+            .collect();
+        translation.begin(program, &entry_points, in_parallel);
+    };
+    let visited: bun_threading::Guarded<std::collections::HashSet<usize>> = bun_threading::Guarded::new(Default::default());
+    let translate_file = |checker: &mut bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| {
+        if !is_left_out(checker, file) {
+            visited.lock().insert(file.idx());
+            translation.translate_file(checker, file);
+        }
+    };
+    let note_file = |checker: &mut bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| {
+        if !is_left_out(checker, file) {
+            translation.note_file(checker, file);
+        }
+    };
+    let merge_notes = |program: &bun_sema_driver::Program| translation.merge_notes(program);
+    let found: bun_threading::Guarded<AuditFound> = bun_threading::Guarded::new(AuditFound::default());
+    let list = |program: &bun_sema_driver::Program,
+                in_parallel: bun_sema_driver::InParallel<'_>,
+                errors: &[(bun_sema_driver::FileId, u32)]|
+     -> Vec<bool> {
+        let text_of = |path: &[u8]| {
+            let path = join_abs_string::<Auto>(&cwd, &[bun_sema_driver::host::to_native(path)]);
+            program.files.by_path.get(&from_native(path)).map(|file| &program.files.hir(file).text[..])
+        };
+        let with_texts = |modules: Vec<bun_aot::audit::Module>| -> Vec<(bun_aot::audit::Module, Vec<u8>)> {
+            (modules.into_iter())
+                .filter_map(|module| {
+                    let text = text_of(&module.path)?.to_vec();
+                    Some((module, text))
+                })
+                .collect()
+        };
+        if alone.is_some() {
+            for of_fragment in translation.take_programs_of_fragments(program) {
+                found.lock().modules.extend(with_texts(bun_aot::audit::table(&of_fragment, false, &text_of)));
+            }
+            found.lock().has_errors = !errors.is_empty();
+            if let Some(as_soon_as_found) = as_soon_as_found {
+                as_soon_as_found(core::mem::take(&mut *found.lock()));
+            }
+            return vec![false; errors.len()];
+        }
+        let translated = translation.finish(program, in_parallel, errors);
+        let modules = with_texts(bun_aot::audit::table(&translated.program, true, &text_of));
+        let never_visited = (modules.iter())
+            .filter(|(module, _)| matches!(bun_paths::extension(&module.path), b".ts" | b".tsx" | b".mts" | b".cts"))
+            .filter_map(|(module, _)| {
+                let path = join_abs_string::<Auto>(&cwd, &[bun_sema_driver::host::to_native(&module.path)]).to_vec();
+                let file = program.files.by_path.get(&from_native(&path))?;
+                (!visited.lock().contains(&file.idx()) && !more_code.contains(&path)).then_some(path)
+            })
+            .collect();
+        *found.lock() = AuditFound {
+            modules,
+            shapes: bun_aot::audit::shapes(&translated.program),
+            has_errors: translated.errors_that_stand.contains(&true),
+            never_visited,
+        };
+        bun_aot::release(translated.program, in_parallel);
+        translated.errors_that_stand
+    };
+    let entries = Paths::EntryPoints(Entries {
+        paths: &paths,
+        script_kinds: &script_kinds,
+        script_kinds_by_extension: &by_extension,
+        conditions: args.map_or(&[][..], |args| &args.conditions[..]),
+    });
+    let request = Request {
+        is_one_program: true,
+        code: &code,
+        loaded: Some(&begin),
+        after_file: Some(&translate_file),
+        before_visits: Some(&note_file),
+        all_visited_once: Some(&merge_notes),
+        compile: Some(&list),
+        only: alone.as_deref(),
+        threads: match audited {
+            Audited::Whole => 0,
+            Audited::WholeInTheBackground => usize::from(bun_core::get_thread_count()).div_ceil(2),
+            Audited::Alone { .. } => usize::from(bun_core::get_thread_count()).min(8),
+        },
+        ..request(&cwd, tsconfig_override(), &entries, &[], 0, None)
+    };
+    let report = bun_sema_driver::check_provided_then(&request, with_pages(&cwd, provided), |report| report);
+    let is_looked_at_again = report.is_ok() && !found.lock().never_visited.is_empty();
+    if !is_looked_at_again && !matches!(audited, Audited::WholeInTheBackground | Audited::Alone { is_quiet: true, .. }) && (!report.diagnostics.is_empty() || !report.incomplete.is_empty()) {
+        let shown_from = from_native(&cwd);
+        let style = Style {
+            is_case_sensitive: report.is_case_sensitive,
+            ..style_for(&shown_from, None, Destination::stderr(), false)
+        };
+        let mut out = Vec::new();
+        format::write_diagnostics(&mut out, &report, &style);
+        if matches!(audited, Audited::Whole) && !report.is_ok() {
+            out.extend_from_slice(b"[aot] note: a build with --aot stops at these errors: nothing is checked until they are mended\n");
+        }
+        let _ = Output::error_writer().write_all(&out);
+        Output::flush();
+    }
+    if !is_looked_at_again {
+        found.lock().never_visited.clear();
+    }
+    Some(core::mem::take(&mut *found.lock()))
 }
 
 /// Type checks the project that contains the working directory, as `bun check` does, before one of

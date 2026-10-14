@@ -110,6 +110,9 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
     if ctx.bundler_options.ignore_dce_annotations {
         args.push(b"--ignore-dce-annotations".to_vec());
     }
+    if ctx.runtime_options.aot_logs_type_errors {
+        args.push(b"--aot-type-errors=log".to_vec());
+    }
     if ctx.args.jsx.as_ref().is_some_and(|jsx| jsx.side_effects) {
         args.push(b"--jsx-side-effects".to_vec());
     }
@@ -119,6 +122,16 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
     }
     if bun_resolve_builtins::stream_iter_enabled() {
         args.push(b"--experimental-stream-iter".to_vec());
+    }
+    for (name, is_given) in [
+        (&b"--preserve-symlinks"[..], ctx.args.preserve_symlinks.unwrap_or(false)),
+        (b"--preserve-symlinks-main", ctx.runtime_options.preserve_symlinks_main),
+        (b"--no-macros", matches!(ctx.debug.macros, bun_options_types::context::MacroOptions::Disable)),
+        (b"--no-compile-autoload-dotenv", ctx.args.disable_default_env_files && ctx.args.env_files.is_empty()),
+    ] {
+        if is_given {
+            args.push(name.to_vec());
+        }
     }
 
     let mut option = |name: &[u8], value: &[u8]| args.push([name, b"=", value].concat());
@@ -158,13 +171,29 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
             option(name, value);
         }
     }
+    if let Some(loaders) = &ctx.args.loaders {
+        for (extension, loader) in loaders.extensions.iter().zip(loaders.loaders.iter()) {
+            let name = match crate::cli::test::parallel::runner::api_loader_tag_name(*loader) {
+                "bunsh" => "sh",
+                name => name,
+            };
+            option(b"--loader", &[&**extension, b":", name.as_bytes()].concat());
+        }
+    }
 
     let mut has_replaced_option = false;
-    for arg in bun_core::argv()
+    let end_of_options = bun_core::argv().len().saturating_sub(ctx.passthrough.len());
+    let mut is_value_of_cwd = false;
+    for (index, arg) in bun_core::argv()
         .iter()
+        .enumerate()
         .skip(1 + bun_core::bun_options_argc())
     {
         let arg: &[u8] = arg;
+        if index < end_of_options && (is_value_of_cwd || arg == b"--cwd" || arg.starts_with(b"--cwd=")) {
+            is_value_of_cwd = !is_value_of_cwd && arg == b"--cwd";
+            continue;
+        }
         if !has_replaced_option && arg == b"--aot" {
             has_replaced_option = true;
             option(b"--compile-run-arg", b"--aot-graph-fd=");

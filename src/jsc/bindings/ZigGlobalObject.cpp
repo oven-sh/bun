@@ -314,7 +314,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         Bun__installCompilers();
         Bun__AOT__setImageCodec();
         JSC::initialize([&] {
+#if defined(BUN_DISABLE_WEBASSEMBLY)
+            JSC::Options::useWasm() = false;
+#else
             JSC::Options::useWasm() = true;
+#endif
             JSC::Options::useJIT() = true;
             JSC::Options::useBBQJIT() = true;
             JSC::Options::useConcurrentJIT() = true;
@@ -407,6 +411,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // that are not Bun's, where eval is on. After the loop: BUN_JSC_useDollarVM does not bring it back.
             if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
                 JSC::Options::useDollarVM() = false;
+#if defined(BUN_DISABLE_WEBASSEMBLY)
+            // After the loop: BUN_JSC_useWasm=1 does not bring it back, and BUN_JSC_useWasm=0 stays a valid name.
+            JSC::Options::useWasm() = false;
+#endif
             JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
 
@@ -421,6 +429,20 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
     }); // end std::call_once lambda
 
     // NOLINTEND
+}
+
+// As many VMs as cores, each busy on its own thread: there is no core left for threads that compile beside them. With 16 VMs on
+// 16 cores these took 10 % more time and 2.3 times the memory.
+// After JSCInitialize and before the first VM: nothing reads the option before it, and its constructor freezes the options.
+extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc)
+{
+    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
+    JSC::Options::useConcurrentJIT() = false;
+    // BUN_JSC_useConcurrentJIT wins, as in JSCInitialize.
+    for (size_t i = 0; i < envc; i++) {
+        if (WTF::StringView::fromLatin1(envp[i]).startsWithIgnoringASCIICase("BUN_JSC_useConcurrentJIT="_s))
+            JSC::Options::setOption(envp[i] + 8, false);
+    }
 }
 
 extern "C" void* Bun__getVM();
@@ -507,6 +529,10 @@ Zig::GlobalObject* defaultGlobalObject(JSC::VM& vm)
     return defaultGlobalObject();
 }
 
+extern "C" bool Bun__AOTAudit__isWanted();
+extern "C" void Bun__AOTAudit__installFor(JSC::JSGlobalObject*);
+void Bun__AOTAudit__reportRefusedChange(JSC::JSGlobalObject*, ASCIILiteral kind, const WTF::String& message, const WTF::String& functionName, const WTF::String& sourceURL, unsigned line, unsigned column);
+
 extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
@@ -516,6 +542,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     }
     vmPtr->refSuppressingSaferCPPChecking();
     JSC::VM& vm = *vmPtr;
+    if (Bun__AOTAudit__isWanted()) [[unlikely]]
+        vm.setImmutableIntrinsicsAuditReporter(Bun__AOTAudit__reportRefusedChange);
     // This must happen before JSVMClientData::create
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
@@ -676,6 +704,9 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         }
     }
 
+    if (Bun__AOTAudit__isWanted()) [[unlikely]]
+        Bun__AOTAudit__installFor(globalObject);
+
     return globalObject;
 }
 
@@ -754,6 +785,9 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     }
     oldGlobal->isThreadLocalDefaultGlobalObject = false;
     JSC::gcUnprotect(oldGlobal);
+
+    if (Bun__AOTAudit__isWanted()) [[unlikely]]
+        Bun__AOTAudit__installFor(globalObject);
 
     return globalObject;
 }
@@ -2302,6 +2336,9 @@ void GlobalObject::finishCreation(VM& vm)
              auto* prototype = WebCore::createBufferPrototype(init.vm, init.global);
              auto* structure = WebCore::createBufferStructure(init.vm, init.global, JSValue(prototype));
              auto* constructor = WebCore::createBufferConstructor(init.vm, init.global, prototype);
+#if ENABLE(AOT)
+             JSC::AOT::Typed::didCreateReplaceableGlobal(init.global, "Buffer"_s, constructor);
+#endif
              init.setPrototype(prototype);
              init.setStructure(structure);
              init.setConstructor(constructor);
@@ -3723,6 +3760,14 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         sourceOriginStringHolder = sourceURL.path().toString();
     }
 
+    if (Bun::hasFilesOfCompiledProgram(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
+        JSC::JSPromise* imported = Bun::importFileOfCompiledProgram(globalObject, loader, moduleName, sourceOriginStringHolder);
+        if (scope.exception()) [[unlikely]]
+            return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+        if (imported)
+            return imported;
+    }
+
     auto result = loader->requestImportModule(globalObject, JSC::Identifier::fromString(vm, moduleName),
         JSC::Identifier::fromString(vm, sourceOriginStringHolder), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {
@@ -3766,6 +3811,13 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
 
     if (moduleKey.endsWith(".node"_s)) {
         return rejectedInternalPromise(globalObject, createTypeError(globalObject, "To load Node-API modules, use require() or process.dlopen instead of import."_s));
+    }
+
+    if (Bun::hasFilesOfCompiledProgram(globalObject) && !parameters && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
+        JSC::JSSourceCode* compiled = Bun::sourceOfFileOfCompiledProgram(static_cast<Zig::GlobalObject*>(globalObject), moduleKey);
+        RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
+        if (compiled)
+            return resolvedInternalPromise(globalObject, compiled);
     }
 
     auto moduleKeyBun = Bun::toString(moduleKey);

@@ -8,8 +8,11 @@ use crate::hir::{
     Diagnostic, DiagnosticKind, ExprId, ExprKind, File, PropId, PropKind, StmtKind, UnOp,
     is_bigint_literal_at, is_parenthesized, is_private_name_at, start_of,
 };
-use crate::resolve::{Host, Options};
+use crate::resolve::Host;
 use crate::session::Session;
+use crate::util::FxHashMap;
+use std::cell::RefCell;
+use std::collections::hash_map::Entry;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Json {
@@ -49,6 +52,17 @@ fn append_quote(out: &mut Vec<u8>, text: &[u8]) {
 }
 
 impl Json {
+    /// `Boolean(value)`
+    pub fn is_truthy(&self) -> bool {
+        match self {
+            Json::Null => false,
+            Json::Bool(value) => *value,
+            Json::Number(value) => *value != 0.0 && !value.is_nan(),
+            Json::String(value) => !value.is_empty(),
+            Json::Array(_) | Json::Object(_) => true,
+        }
+    }
+
     /// `core.StringifyJson` without indentation.
     pub fn stringify(&self, out: &mut Vec<u8>) {
         match self {
@@ -286,6 +300,9 @@ pub struct TsConfigSourceFile<'s> {
     /// `convertConfigFileToObject`: the object that is converted. `None`: the root is not an
     /// object, nor an array that contains one.
     pub root: Option<ExprId>,
+    /// For an object with many properties that `property` has been asked about: the first with
+    /// each name. It is asked about each of thousands of `paths`.
+    first_with_name: RefCell<FxHashMap<ExprId, FxHashMap<Box<[u8]>, PropId>>>,
 }
 
 impl<'s> TsConfigSourceFile<'s> {
@@ -297,7 +314,7 @@ impl<'s> TsConfigSourceFile<'s> {
     ) -> Option<Self> {
         let atoms = Interner::new_in(session);
         let path = b"/tsconfig.json";
-        let mut hir = host.parse(session.arena(), path, &text, &atoms, &Options::default());
+        let mut hir = host.parse(session.arena(), path, &text, &atoms, Default::default());
         hir.text = text;
         let is_object =
             |e: &ExprId| matches!(hir[*e].kind, ExprKind::Object(_)) && !is_parenthesized(&hir, *e);
@@ -306,7 +323,12 @@ impl<'s> TsConfigSourceFile<'s> {
             ExprKind::Array(items) => hir.ids(items).find(is_object),
             _ => Some(root).filter(is_object),
         };
-        Some(TsConfigSourceFile { hir, atoms, root })
+        Some(TsConfigSourceFile {
+            hir,
+            atoms,
+            root,
+            first_with_name: Default::default(),
+        })
     }
 
     /// `SourceFile.Diagnostics`
@@ -371,6 +393,20 @@ impl<'s> TsConfigSourceFile<'s> {
             _ => return None,
         };
         let mut assignments = props.iter().filter(|&p| self.hir[p].kind == PropKind::Init);
+        if props.len() > 32 {
+            let mut first_with_name = self.first_with_name.borrow_mut();
+            let of_object = first_with_name.entry(object).or_insert_with(|| {
+                let mut of_object = FxHashMap::default();
+                for p in assignments {
+                    if let Some(prop_name) = self.try_get_text_of_property_name(p) {
+                        of_object.entry(prop_name.into()).or_insert(p);
+                    }
+                }
+                of_object
+            });
+            let keys = [Some(key), key2].into_iter().flatten();
+            return (keys.filter_map(|key| of_object.get(key).copied())).min_by_key(|p| p.idx());
+        }
         assignments.find(|&p| {
             let prop_name = self.try_get_text_of_property_name(p);
             prop_name.is_some_and(|prop_name| prop_name == key || key2 == Some(prop_name))
@@ -499,11 +535,16 @@ impl<'s> TsConfigSourceFile<'s> {
             // `convertObjectLiteralExpressionToJson`
             ExprKind::Object(_) => {
                 let mut result: Vec<(Vec<u8>, Json)> = Vec::new();
+                // `paths` can have thousands of keys.
+                let mut positions: FxHashMap<&[u8], usize> = Default::default();
                 for (p, key) in self.properties(e) {
                     let value = self.convert_property_value_to_json(hir[p].value);
-                    match result.iter_mut().find(|entry| entry.0 == key) {
-                        Some(entry) => entry.1 = value,
-                        None => result.push((key.to_vec(), value)),
+                    match positions.entry(key) {
+                        Entry::Occupied(at) => result[*at.get()].1 = value,
+                        Entry::Vacant(at) => {
+                            at.insert(result.len());
+                            result.push((key.to_vec(), value));
+                        }
                     }
                 }
                 Json::Object(result)

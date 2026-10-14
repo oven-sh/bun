@@ -19,6 +19,10 @@
 #include <JavaScriptCore/InitializeThreading.h>
 #include <JavaScriptCore/AOTProgramData.h>
 #include <JavaScriptCore/AOTFunction.h>
+#include <JavaScriptCore/AuditSites.h>
+#include <JavaScriptCore/PrivateName.h>
+#include <JavaScriptCore/ProxyObject.h>
+#include <JavaScriptCore/StrongInlines.h>
 #include <zstd.h>
 #include "BunBuiltinNames.h"
 
@@ -45,6 +49,9 @@
 #include <limits.h>
 #endif
 #include <wtf/PageBlock.h>
+
+static thread_local JSC::AuditSites* s_pendingAuditSites = nullptr;
+static thread_local size_t s_lengthOfSourceOfPendingAuditSites = 0;
 
 namespace Zig {
 
@@ -165,6 +172,12 @@ Ref<SourceProvider> SourceProvider::create(
     };
 
     auto provider = getProvider();
+
+    if (s_pendingAuditSites) [[unlikely]] {
+        RefPtr<JSC::AuditSites> sites = adoptRef(std::exchange(s_pendingAuditSites, nullptr));
+        if (provider->source().length() == s_lengthOfSourceOfPendingAuditSites)
+            provider->setAuditSites(WTF::move(sites));
+    }
 
     if (shouldGenerateCodeCoverage) {
         BunString providerURL = Bun::toString(provider->sourceURL());
@@ -477,9 +490,16 @@ static std::optional<off_t> offsetInExecutableFile(const void* address)
 }
 #endif
 
+extern "C" bool Bun__AOT__textOfFunctionInFile(JSC::JSGlobalObject*, const BunString* path, uint32_t place, BunString* text);
+
 extern "C" void Bun__AOT__setImageCodec()
 {
 #if ENABLE(AOT)
+    JSC::AOT::setTextOfFunctionInFile([](JSC::JSGlobalObject* globalObject, const WTF::String& path, uint32_t place) -> WTF::String {
+        BunString pathOfFile = Bun::toString(path);
+        BunString text = BunStringEmpty;
+        return Bun__AOT__textOfFunctionInFile(globalObject, &pathOfFile, place, &text) ? text.transferToWTFString() : WTF::String();
+    });
     JSC::AOT::setCodec(
         [](const uint8_t* source, size_t sourceSize, uint8_t* destination, size_t capacity) -> size_t {
             size_t size = ZSTD_compress(destination, capacity, source, sourceSize, 19);
@@ -491,7 +511,7 @@ extern "C" void Bun__AOT__setImageCodec()
 #endif
 }
 
-extern "C" void Bun__AOT__buildProgramData(const uint8_t* strings, size_t stringsSize, void* ctx, void (*append)(void* ctx, const uint8_t* bytes, size_t size),
+extern "C" void Bun__AOT__buildProgramData(const uint8_t* strings, size_t stringsSize, void* ctx, void (*reserve)(void* ctx, size_t size), void (*append)(void* ctx, const uint8_t* bytes, size_t size),
     void* findCtx, bool (*find)(void* ctx, uint32_t moduleEntryOffset, uint32_t line, uint32_t column, const uint8_t** name, size_t* nameLength, uint32_t* lineInSource, uint32_t* columnInSource))
 {
     Vector<JSC::FunctionReportableSites> reportableSites = std::exchange(s_lastLinkReportableSites, { });
@@ -514,6 +534,11 @@ extern "C" void Bun__AOT__buildProgramData(const uint8_t* strings, size_t string
     } };
     Vector<uint8_t> image = JSC::AOT::ProgramData::build(vm, { strings, stringsSize }, payload ? payload->span() : std::span<const uint8_t> { }, modules.span(), codeImage.span(), positions, reportableSites.span(), variablesExportedByModules.span());
     JSC::AOT::ProgramData::release(reportableSites);
+    if (image.isEmpty())
+        return;
+    size_t codeImageSize = JSC::aotImageSize(codeImage.span()).value_or(codeImage.size());
+    reserve(ctx, codeImageSize + image.size());
+    append(ctx, codeImage.span().data(), codeImageSize);
     append(ctx, image.span().data(), image.size());
 }
 
@@ -701,4 +726,230 @@ extern "C" uint32_t Bun__WTFStringHashLatin1(const Latin1Character* characters, 
 extern "C" uint32_t Bun__WTFStringHashUTF16(const char16_t* characters, size_t length)
 {
     return StringHasher::computeHashAndMaskTop8Bits(std::span { characters, length });
+}
+
+extern "C" void Bun__AOTAudit__describe(uint32_t id, BunString* out);
+extern "C" void Bun__AOTAudit__describeShape(const BunString* key, BunString* out);
+
+extern "C" void Bun__AOTAudit__setPendingSites(size_t lengthOfSource, const uint32_t* expressions, size_t numberOfExpressions, const uint32_t* parameters, size_t numberOfParameters)
+{
+    if (auto* stale = std::exchange(s_pendingAuditSites, nullptr))
+        stale->deref();
+    if (!numberOfExpressions && !numberOfParameters)
+        return;
+    Vector<JSC::AuditedExpression> listedExpressions;
+    listedExpressions.reserveInitialCapacity(numberOfExpressions);
+    for (size_t i = 0; i < numberOfExpressions; ++i)
+        listedExpressions.append(JSC::AuditedExpression { expressions[6 * i], expressions[6 * i + 1], expressions[6 * i + 2], expressions[6 * i + 3], static_cast<int32_t>(expressions[6 * i + 4]), static_cast<int32_t>(expressions[6 * i + 5]) });
+    Vector<JSC::AuditedParameter> listedParameters;
+    listedParameters.reserveInitialCapacity(numberOfParameters);
+    for (size_t i = 0; i < numberOfParameters; ++i)
+        listedParameters.append(JSC::AuditedParameter { parameters[6 * i], parameters[6 * i + 1], parameters[6 * i + 2], parameters[6 * i + 3], static_cast<int32_t>(parameters[6 * i + 4]), static_cast<int32_t>(parameters[6 * i + 5]) });
+    s_pendingAuditSites = &JSC::AuditSites::create(WTF::move(listedExpressions), WTF::move(listedParameters)).leakRef();
+    s_lengthOfSourceOfPendingAuditSites = lengthOfSource;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditDescribe, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    BunString described;
+    JSC::JSValue asked = callFrame->argument(0);
+    if (asked.isString()) {
+        WTF::String key = asked.getString(globalObject);
+        BunString borrowed = Bun::toString(key);
+        Bun__AOTAudit__describeShape(&borrowed, &described);
+    } else
+        Bun__AOTAudit__describe(asked.asUInt32(), &described);
+    return JSC::JSValue::encode(JSC::jsString(globalObject->vm(), described.transferToWTFString()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditWrite, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto line = makeString(callFrame->argument(0).getString(globalObject), '\n').utf8();
+    fwrite(line.data(), 1, line.length(), stderr);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditIsProxy, (JSC::JSGlobalObject*, JSC::CallFrame* callFrame))
+{
+    return JSC::JSValue::encode(JSC::jsBoolean(!!dynamicDowncast<JSC::ProxyObject>(callFrame->argument(0))));
+}
+
+struct AOTAuditShortcut {
+    int32_t least { 1 };
+    int32_t most { 0 };
+    JSC::StructureID passing[4] {};
+    uint32_t asleepIn { 0 };
+    uint32_t madeIn { 0 };
+    bool tags { false };
+};
+
+static std::atomic<uint32_t> s_auditGeneration { 1 };
+
+extern "C" void Bun__AOTAudit__setGeneration(uint32_t generation)
+{
+    s_auditGeneration.store(generation, std::memory_order_release);
+}
+
+static thread_local Vector<AOTAuditShortcut>* s_auditShortcuts = nullptr;
+static thread_local UncheckedKeyHashMap<JSC::JSGlobalObject*, JSC::Strong<JSC::JSObject>>* s_auditHelpers = nullptr;
+static thread_local JSC::PrivateName* s_auditTag = nullptr;
+
+static AOTAuditShortcut& auditShortcut(uint32_t id)
+{
+    if (!s_auditShortcuts)
+        s_auditShortcuts = new Vector<AOTAuditShortcut>();
+    if (id >= s_auditShortcuts->size())
+        s_auditShortcuts->grow(std::max<size_t>(id + 1, s_auditShortcuts->size() * 2));
+    auto& shortcut = s_auditShortcuts->at(id);
+    uint32_t generation = s_auditGeneration.load(std::memory_order_acquire);
+    if (shortcut.madeIn != generation) {
+        shortcut = AOTAuditShortcut {};
+        shortcut.madeIn = generation;
+    }
+    return shortcut;
+}
+
+static void tagForAudit(JSC::VM& vm, JSC::JSValue value, uint32_t id)
+{
+    if (!value.isCell() || value.asCell()->type() != JSC::FinalObjectType)
+        return;
+    if (!s_auditTag)
+        s_auditTag = new JSC::PrivateName(JSC::PrivateName::PrivateSymbol, "aotAuditShape"_s);
+    JSC::asObject(value)->putDirect(vm, JSC::PropertyName(*s_auditTag), JSC::jsNumber(id), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditCheck, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::JSValue value = callFrame->argument(0);
+    JSC::JSValue number = callFrame->argument(1);
+    if (!number.isUInt32()) [[unlikely]]
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    uint32_t id = number.asUInt32();
+    auto& vm = JSC::getVM(globalObject);
+    uint32_t generation = s_auditGeneration.load(std::memory_order_acquire);
+    if (s_auditShortcuts && id < s_auditShortcuts->size()) [[likely]] {
+        auto& shortcut = s_auditShortcuts->at(id);
+        if (shortcut.madeIn != generation) [[unlikely]] {
+            shortcut = AOTAuditShortcut {};
+            shortcut.madeIn = generation;
+        }
+        if (shortcut.asleepIn == generation)
+            return JSC::JSValue::encode(JSC::jsUndefined());
+        if (value.isInt32()) {
+            if (value.asInt32() >= shortcut.least && value.asInt32() <= shortcut.most)
+                return JSC::JSValue::encode(JSC::jsUndefined());
+        } else if (value.isCell()) {
+            JSC::StructureID structure = value.asCell()->structureID();
+            if (structure == shortcut.passing[0] || structure == shortcut.passing[1] || structure == shortcut.passing[2] || structure == shortcut.passing[3])
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            if (shortcut.tags) {
+                tagForAudit(vm, value, id);
+                return JSC::JSValue::encode(JSC::jsUndefined());
+            }
+        }
+    }
+    if (!s_auditHelpers) [[unlikely]]
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    auto found = s_auditHelpers->find(globalObject);
+    if (found == s_auditHelpers->end()) [[unlikely]]
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    JSC::JSObject* helper = found->value.get();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(value);
+    arguments.append(number);
+    arguments.append(JSC::jsNumber(generation));
+    JSC::JSValue answer = JSC::call(globalObject, helper, arguments, "bun:aot-audit"_s);
+    if (scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    }
+    if (answer.isInt32() && answer.asInt32() == 4)
+        auditShortcut(id).asleepIn = generation;
+    else if (answer.isInt32() && value.isCell()) {
+        auto& shortcut = auditShortcut(id);
+        if (answer.asInt32() == 1 && !JSC::hasAnyArrayStorage(value.asCell()->indexingType())) {
+            shortcut.passing[3] = shortcut.passing[2];
+            shortcut.passing[2] = shortcut.passing[1];
+            shortcut.passing[1] = shortcut.passing[0];
+            shortcut.passing[0] = value.asCell()->structureID();
+        } else if (answer.asInt32() == 3) {
+            shortcut.tags = true;
+            tagForAudit(vm, value, id);
+        }
+    }
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditRemember, (JSC::JSGlobalObject*, JSC::CallFrame* callFrame))
+{
+    if (callFrame->argument(0).isUInt32() && callFrame->argument(1).isInt32() && callFrame->argument(2).isInt32()) {
+        auto& shortcut = auditShortcut(callFrame->argument(0).asUInt32());
+        shortcut.least = callFrame->argument(1).asInt32();
+        shortcut.most = callFrame->argument(2).asInt32();
+    }
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditTag, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    if (callFrame->argument(1).isUInt32())
+        tagForAudit(JSC::getVM(globalObject), callFrame->argument(0), callFrame->argument(1).asUInt32());
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsAOTAuditTagOf, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::JSValue value = callFrame->argument(0);
+    if (!s_auditTag || !value.isObject())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    JSC::JSValue tag = JSC::asObject(value)->getDirect(JSC::getVM(globalObject), JSC::PropertyName(*s_auditTag));
+    return JSC::JSValue::encode(tag ? tag : JSC::jsUndefined());
+}
+
+extern "C" void Bun__AOTAudit__install(Zig::GlobalObject* globalObject, const uint8_t* source, size_t length, const uint8_t* workingDirectory, size_t lengthOfWorkingDirectory)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::SourceCode code = JSC::makeSource(WTF::String::fromUTF8(std::span { source, length }), JSC::SourceOrigin(), JSC::SourceTaintedOrigin::Untainted, "bun:aot-audit"_s);
+    NakedPtr<JSC::Exception> exception;
+    JSC::JSValue makeCheck = JSC::evaluate(globalObject, code, globalObject->globalThis(), exception);
+    if (exception || !makeCheck.isCallable()) [[unlikely]] {
+        (void)scope.tryClearException();
+        fputs("[aot] note: the audit could not start: nothing is checked\n", stderr);
+        return;
+    }
+    JSC::MarkedArgumentBuffer arguments;
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "describe"_s, jsAOTAuditDescribe, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "write"_s, jsAOTAuditWrite, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "isProxy"_s, jsAOTAuditIsProxy, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::jsString(vm, WTF::String::fromUTF8(std::span { workingDirectory, lengthOfWorkingDirectory })));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 3, "remember"_s, jsAOTAuditRemember, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 2, "tag"_s, jsAOTAuditTag, JSC::ImplementationVisibility::Private));
+    arguments.append(JSC::JSFunction::create(vm, globalObject, 1, "tagOf"_s, jsAOTAuditTagOf, JSC::ImplementationVisibility::Private));
+    JSC::JSValue check = JSC::call(globalObject, makeCheck, arguments, "bun:aot-audit"_s);
+    if (scope.exception() || !check.isCallable()) [[unlikely]] {
+        (void)scope.tryClearException();
+        fputs("[aot] note: the audit could not start: nothing is checked\n", stderr);
+        return;
+    }
+    if (!s_auditHelpers)
+        s_auditHelpers = new UncheckedKeyHashMap<JSC::JSGlobalObject*, JSC::Strong<JSC::JSObject>>();
+    s_auditHelpers->set(globalObject, JSC::Strong<JSC::JSObject>(vm, asObject(check)));
+    globalObject->setAuditFunction(vm, JSC::JSFunction::create(vm, globalObject, 2, "check"_s, jsAOTAuditCheck, JSC::ImplementationVisibility::Private));
+}
+
+extern "C" void Bun__AOTAudit__writeRefusedChange(const uint8_t* kind, size_t lengthOfKind, const BunString* message, const BunString* functionName, const BunString* sourceURL, int32_t line, int32_t column);
+
+void Bun__AOTAudit__reportRefusedChange(JSC::JSGlobalObject* globalObject, ASCIILiteral kind, const WTF::String& message, const WTF::String& functionName, const WTF::String& sourceURL, unsigned line, unsigned column)
+{
+    Bun::OwnedZigStackFrames frames(1);
+    frames[0].function_name = Bun::toStringRef(functionName);
+    frames[0].source_url = Bun::toStringRef(sourceURL);
+    frames[0].position.line_zero_based = static_cast<int32_t>(line) - 1;
+    frames[0].position.column_zero_based = static_cast<int32_t>(column) - 1;
+    frames[0].position.byte_position = -1;
+    frames.remap(defaultGlobalObject(globalObject)->bunVM());
+    BunString text = Bun::toString(message);
+    Bun__AOTAudit__writeRefusedChange(byteCast<uint8_t>(kind.characters()), kind.length(), &text, &frames[0].function_name, &frames[0].source_url, frames[0].position.line_zero_based + 1, frames[0].position.column_zero_based + 1);
 }

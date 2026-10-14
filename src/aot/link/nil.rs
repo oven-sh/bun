@@ -8,8 +8,8 @@
 
 use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{FuncId, LayoutId, StrId, TyId, V};
-use crate::ir::{Def, Func, Layout, MethodKind, Op, Prediction, Program, Strs, Target, Term, Why, class_flags, func_flags, method_flags, only_function_flags};
-use bun_sema::check::given::{Jump, NO_JUMP, parameters_handed_elements, NULL, NilEdges, STRANGER, NilFlowsInFunction, Origin, PlaceEvent, UNDEFINED, Use, add_nil_flows_in, nil_reaching, stored_values_read};
+use crate::ir::{Def, Func, Layout, LayoutKind, MethodKind, Op, Prediction, Program, Strs, Target, Term, Why, class_flags, func_flags, method_flags, only_function_flags};
+use bun_sema::check::given::{Jump, NO_JUMP, parameters_handed_elements, NULL, EdgesByNode, NilEdges, STRANGER, NilFlowsInFunction, Origin, PlaceEvent, UNDEFINED, Use, add_nil_flows_in, edges_by_node, nil_reaching, stored_values_read};
 use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -26,6 +26,7 @@ pub(super) struct Nodes {
     pub(super) globals: u32,
     /// By layout: its first field.
     fields: Vec<u32>,
+    yielded: u32,
     pub(super) count: u32,
 }
 
@@ -41,7 +42,8 @@ impl Nodes {
         let results = take(program.funcs.len());
         let globals = take(program.globals.len());
         let fields = program.layouts.iter().map(|layout| take(layout.fields.len())).collect();
-        Nodes { values, results, globals, fields, count }
+        let yielded = take(2);
+        Nodes { values, results, globals, fields, yielded, count }
     }
     pub(super) fn value(&self, func: usize, v: V) -> u32 {
         self.values[func] + v.idx() as u32
@@ -73,6 +75,156 @@ pub(super) fn targets_of(term: Option<&Term>) -> SmallVec<[&Target; 2]> {
         Some(Term::Invoke { normal, unwind }) => SmallVec::from_iter([normal, unwind]),
         Some(Term::Return(_) | Term::Unreachable) | None => SmallVec::new(),
     }
+}
+
+fn is_kept_unboxed(program: &Program, ty: TyId) -> bool {
+    ty.is_some() && ty != program.tys.anything && !program.tys.get(ty).has_objects() && program.tys.get(ty).prims & prim::CELLS == 0 && !program.tys.get(ty).is_never()
+}
+
+fn kinds_kept_unboxed(program: &Program, ty: TyId) -> impl Iterator<Item = u32> {
+    let is_unboxed = is_kept_unboxed(program, ty);
+    let has_numbers = is_unboxed && (program.tys.get(ty).prims & prim::NUMBER != 0 || program.tys.get(ty).ints.is_some());
+    let has_booleans = is_unboxed && program.tys.get(ty).prims & prim::BOOLEAN != 0;
+    has_numbers.then_some(0).into_iter().chain(has_booleans.then_some(1))
+}
+
+fn may_reach_the_program(program: &Program, func: &Func, v: V) -> bool {
+    let may_be_of_the_program = |obj: V| {
+        let ty = func.ty(obj);
+        !matches!(func.op(before_casts(func, obj)), Some(Op::FreeGet { .. }))
+            && (ty.is_none() || ty == program.tys.anything || program.tys.get(ty).any_object || program.tys.get(ty).parts.iter().any(|part| matches!(part, Part::Class(_))))
+    };
+    match func.op(v) {
+        Some(&Op::Call { callee, .. }) => match func.op(before_casts(func, callee)) {
+            Some(Op::FreeGet { .. }) => false,
+            Some(&Op::PropGet { obj, .. }) => may_be_of_the_program(obj),
+            _ => true,
+        },
+        Some(&Op::CallMethod { obj, .. }) => may_be_of_the_program(obj),
+        _ => false,
+    }
+}
+
+struct Site {
+    callees: SmallVec<[u32; 1]>,
+    args: SmallVec<[(u32, TyId); 4]>,
+    result: Option<u32>,
+    is_of_the_engine: bool,
+}
+
+#[derive(Default)]
+struct FunctionsAsValues {
+    births: Vec<(u32, FuncId)>,
+    moves: Vec<(u32, u32)>,
+    sites: Vec<Site>,
+    leaks: Vec<u32>,
+    left_out: Vec<u32>,
+    handed: Vec<u32>,
+}
+
+fn enter_where_functions_get(program: &Program, nodes: &Nodes, leaving: &EdgesByNode, found: Vec<FunctionsAsValues>) -> NilEdges {
+    let mut more = NilEdges::default();
+    let mut leaks = vec![false; nodes.count as usize];
+    let mut sites: Vec<&Site> = Vec::new();
+    let mut sites_at: FxHashMap<u32, SmallVec<[u32; 1]>> = FxHashMap::default();
+    let mut pending: Vec<(FuncId, u32)> = Vec::new();
+    let mut escaped: FxHashSet<FuncId> = FxHashSet::default();
+    for part in &found {
+        for &node in &part.leaks {
+            leaks[node as usize] = true;
+        }
+        for site in &part.sites {
+            for &callee in &site.callees {
+                sites_at.entry(callee).or_default().push(sites.len() as u32);
+            }
+            sites.push(site);
+        }
+        pending.extend(part.births.iter().map(|&(node, function)| (function, node)));
+    }
+    let mut reached: FxHashMap<u32, SmallVec<[FuncId; 1]>> = FxHashMap::default();
+    let mut added: FxHashMap<u32, SmallVec<[u32; 2]>> = FxHashMap::default();
+    let mut joined: FxHashSet<(u32, FuncId)> = FxHashSet::default();
+    let mut joins: Vec<(u32, u32)> = Vec::new();
+    let mut is_joined = vec![false; sites.len()];
+    let may_bring = |given: TyId, taken: TyId| {
+        if !is_kept_unboxed(program, taken) || given.is_none() || given == program.tys.anything {
+            return true;
+        }
+        let (given, taken) = (program.tys.get(given), program.tys.get(taken));
+        let has_numbers = |it: &Declared| it.prims & prim::NUMBER != 0 || it.ints.is_some();
+        given.prims & !prim::NULLISH == 0 && given.ints.is_none() && !given.has_objects() || has_numbers(given) && has_numbers(taken) || given.prims & taken.prims & prim::BOOLEAN != 0
+    };
+    loop {
+        while let Some((function, node)) = pending.pop() {
+            let here = reached.entry(node).or_default();
+            if here.contains(&function) {
+                continue;
+            }
+            here.push(function);
+            let mut gone: SmallVec<[FuncId; 1]> = leaks[node as usize].then_some(function).into_iter().collect();
+            while let Some(function) = gone.pop() {
+                if escaped.insert(function) {
+                    let result = nodes.result(function.idx());
+                    leaks[result as usize] = true;
+                    gone.extend(reached.get(&result).into_iter().flatten().copied());
+                }
+            }
+            for &number in sites_at.get(&node).into_iter().flatten() {
+                if !joined.insert((number, function)) {
+                    continue;
+                }
+                is_joined[number as usize] = true;
+                let (site, called) = (sites[number as usize], &program.funcs[function.idx()]);
+                let Some(entered) = called.blocks.first() else { continue };
+                let ahead = entered.params.len().saturating_sub(called.params.len());
+                for (number, &parameter) in entered.params.iter().skip(ahead).enumerate() {
+                    let to = nodes.value(function.idx(), parameter);
+                    match site.args.get(number) {
+                        Some(&(u32::MAX, _)) => {}
+                        Some(&(from, given)) if may_bring(given, called.params[number]) => joins.push((from, to)),
+                        Some(_) => {}
+                        None => more.origins.push((to, UNDEFINED)),
+                    }
+                }
+                if let Some(result) = site.result.filter(|_| !called.has(func_flags::ASYNC | func_flags::GENERATOR)) {
+                    joins.push((nodes.result(function.idx()), result));
+                }
+            }
+            for (from, to) in joins.drain(..) {
+                more.edges.push((from, to, UNDEFINED));
+                added.entry(from).or_default().push(to);
+                pending.extend(reached.get(&from).into_iter().flatten().map(|&carried| (carried, to)));
+            }
+            pending.extend(leaving.other[leaving.at(node)].iter().map(|&to| (function, to)));
+            pending.extend(added.get(&node).into_iter().flatten().map(|&to| (function, to)));
+        }
+        for (number, site) in sites.iter().enumerate() {
+            if is_joined[number] || site.is_of_the_engine {
+                continue;
+            }
+            is_joined[number] = true;
+            for &(argument, _) in &site.args {
+                if argument == u32::MAX || leaks[argument as usize] {
+                    continue;
+                }
+                leaks[argument as usize] = true;
+                let carried: SmallVec<[FuncId; 1]> = reached.remove(&argument).unwrap_or_default();
+                pending.extend(carried.into_iter().map(|function| (function, argument)));
+            }
+        }
+        if pending.is_empty() {
+            break;
+        }
+    }
+    let mut gone: Vec<FuncId> = escaped.into_iter().collect();
+    gone.sort_unstable();
+    for function in gone {
+        let called = &program.funcs[function.idx()];
+        if !called.has(func_flags::ASYNC | func_flags::GENERATOR) {
+            more.edges.extend(kinds_kept_unboxed(program, called.result).map(|kind| (nodes.result(function.idx()), nodes.yielded + kind, UNDEFINED)));
+        }
+    }
+    more
 }
 
 /// An operation that may throw ends its block there. So nothing that may throw is put into such a function afterwards, and no test counts in it.
@@ -153,6 +305,96 @@ pub(super) fn fields_named(program: &Program, ty: TyId, name: StrId) -> SmallVec
     }
     let layouts = program.tys.get(ty).parts.iter().filter_map(|part| if let Part::Class(layout) = part { layout.is_some().then_some(*layout) } else { None });
     layouts.filter_map(|layout| Some((layout, program.layouts[layout.idx()].field(name)?))).collect()
+}
+
+fn property_deleted_by(func: &Func, op: &Op) -> Option<(V, StrId)> {
+    match *op {
+        Op::PropDelete { obj, name } => Some((obj, name)),
+        Op::ElemDelete { obj, key } => match func.op(before_casts(func, key)) {
+            Some(&Op::Str(name)) => Some((obj, name)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn fields_of_any_object(program: &Program, ty: TyId, name: StrId) -> Vec<(LayoutId, u32)> {
+    let takes_strangers = |part: &Part| matches!(part, Part::Class(view) if view.is_some() && program.layouts[view.idx()].admits_foreign);
+    if ty.is_none() || ty == program.tys.anything || !program.tys.get(ty).any_object && !program.tys.get(ty).parts.iter().any(takes_strangers) {
+        return Vec::new();
+    }
+    let of_objects = program.layouts.iter().enumerate().filter(|of| of.1.kind != crate::ir::LayoutKind::Environment);
+    of_objects.filter_map(|(index, layout)| Some((LayoutId::new(index), layout.field(name)?))).collect()
+}
+
+#[derive(Default)]
+pub(super) struct Deleted {
+    pub(super) places: usize,
+    pub(super) places_by_name: usize,
+    pub(super) turned_by_name: usize,
+    pub(super) never_seen_absent: usize,
+    pub(super) turned: Vec<(LayoutId, StrId)>,
+}
+
+pub(super) fn make_room_for_deletions(program: &mut Program, in_parallel: InParallel<'_>) -> Deleted {
+    let mut deleted = Deleted::default();
+    let (mut through, mut by_name): (Vec<(LayoutId, StrId)>, Vec<(LayoutId, StrId)>) = (Vec::new(), Vec::new());
+    {
+        let program: &Program = program;
+        type Fields = Vec<(LayoutId, StrId)>;
+        let mut runs: Vec<(&[Func], Deleted, Fields, Fields)> = program.funcs.chunks(FUNCTIONS_OF_A_TASK).map(|funcs| (funcs, Deleted::default(), Vec::new(), Vec::new())).collect();
+        for_each_mut(&mut runs, in_parallel, &|(funcs, deleted, through, by_name)| {
+            for func in funcs.iter() {
+                for value in &func.values {
+                    let Def::Op(op) = &value.def else { continue };
+                    let Some((obj, name)) = property_deleted_by(func, op) else { continue };
+                    let (of_views, of_any_object) = (fields_named(program, func.ty(obj), name), fields_of_any_object(program, func.ty(obj), name));
+                    deleted.places += usize::from(!of_views.is_empty());
+                    deleted.places_by_name += usize::from(!of_any_object.is_empty());
+                    through.extend(of_views.into_iter().map(|(view, _)| (view, name)));
+                    by_name.extend(of_any_object.into_iter().map(|(layout, _)| (layout, name)));
+                }
+            }
+        });
+        for (_, of_run, mut through_in_run, mut by_name_in_run) in runs {
+            deleted.places += of_run.places;
+            deleted.places_by_name += of_run.places_by_name;
+            through.append(&mut through_in_run);
+            by_name.append(&mut by_name_in_run);
+        }
+    }
+    let through_views = through.len();
+    let mut seen: FxHashSet<(LayoutId, StrId)> = FxHashSet::default();
+    for (number, (view, name)) in through.into_iter().chain(by_name).enumerate() {
+        let mut pending = vec![view];
+        while let Some(layout) = pending.pop() {
+            if !seen.insert((layout, name)) {
+                continue;
+            }
+            let own = &mut program.layouts[layout.idx()];
+            pending.extend(own.members.iter().chain(&own.specializations).copied());
+            let Some(field) = own.field(name) else { continue };
+            let flags = &mut own.fields[field as usize].flags;
+            if *flags & (crate::ir::field_flags::OPTIONAL | crate::ir::field_flags::METHOD) == 0 {
+                deleted.never_seen_absent += usize::from(*flags & crate::ir::field_flags::NEVER_SEEN_ABSENT != 0);
+                *flags &= !crate::ir::field_flags::NEVER_SEEN_ABSENT;
+                *flags |= crate::ir::field_flags::OPTIONAL;
+                deleted.turned.push((layout, name));
+                deleted.turned_by_name += usize::from(number >= through_views);
+            }
+        }
+    }
+    deleted
+}
+
+pub(super) fn reads_that_may_find_deleted(program: &Program, deleted: &Deleted) -> usize {
+    let turned: FxHashSet<(LayoutId, StrId)> = deleted.turned.iter().copied().collect();
+    let may_find = |view: LayoutId, name: StrId| {
+        let looked_at = &program.layouts[view.idx()];
+        looked_at.members.iter().chain(&looked_at.specializations).chain([&view]).any(|&member| turned.contains(&(member, name)))
+    };
+    let is_such = |func: &Func, def: &Def| matches!(*def, Def::Op(Op::PropGet { obj, name }) if fields_named(program, func.ty(obj), name).into_iter().any(|(view, _)| may_find(view, name)));
+    if turned.is_empty() { 0 } else { program.funcs.iter().map(|func| func.values.iter().filter(|value| is_such(func, &value.def)).count()).sum() }
 }
 
 /// The function that an object of the layout finds by the name and calls, if that is a fact.
@@ -329,6 +571,7 @@ struct Report<'a> {
     origins: Vec<(u32, u8)>,
     /// The fields that are connected with those that share their place.
     connected: FxHashSet<(LayoutId, u32)>,
+    as_values: FunctionsAsValues,
 }
 
 impl Report<'_> {
@@ -361,13 +604,20 @@ impl Report<'_> {
     }
 
     /// `list.map(n => ..)`: the function is called with an element. `elements`: `parameters_handed_elements`.
-    fn hand_elements_to_functions(&mut self, func: &Func, handed: &[V], elements: &[usize]) {
+    fn hand_elements_to_functions(&mut self, func: &Func, handed: &[V], elements: &[usize], is_as_today: bool) {
         for &argument in handed {
             let (Some(&Op::FuncRef(function)) | Some(&Op::Closure { func: function, .. }) | Some(&Op::ClosureOnce { func: function, .. })) = func.op(before_casts(func, argument)) else { continue };
             let called = &self.program.funcs[function.idx()];
             let Some(entered) = called.blocks.first() else { continue };
             let ahead = entered.params.len().saturating_sub(called.params.len());
-            self.origins.extend(elements.iter().filter_map(|&number| entered.params.get(ahead + number)).map(|&parameter| (self.nodes.value(function.idx(), parameter), UNDEFINED)));
+            for &parameter in elements.iter().filter_map(|&number| entered.params.get(ahead + number)) {
+                if is_as_today {
+                    self.origins.push((self.nodes.value(function.idx(), parameter), UNDEFINED));
+                    self.as_values.left_out.push(self.nodes.value(function.idx(), parameter));
+                } else {
+                    self.as_values.handed.push(self.nodes.value(function.idx(), parameter));
+                }
+            }
         }
     }
 
@@ -403,6 +653,27 @@ impl Report<'_> {
         } else {
             FxHashMap::default()
         };
+        let mut local_arrays: FxHashSet<V> = func.blocks.iter().flat_map(|block| &block.ops).copied().filter(|&v| matches!(func.op(v), Some(Op::NewArray(_)))).collect();
+        if !local_arrays.is_empty() {
+            let mut is_used_otherwise = |operand: V| {
+                if operand.is_some() {
+                    local_arrays.remove(&before_casts(func, operand));
+                }
+            };
+            for block in &func.blocks {
+                for &v in &block.ops {
+                    match func.op(v) {
+                        Some(Op::Coerce { .. } | Op::IterOpen(_)) | None => {}
+                        Some(&Op::ElemGet { key, .. } | &Op::ElemHas { key, .. }) => is_used_otherwise(key),
+                        Some(&Op::PropGet { name, .. }) if program.strs.get(name) == b"length" => {}
+                        Some(op) => op.for_each_operand(&mut is_used_otherwise),
+                    }
+                }
+                if let Some(term) = &block.term {
+                    term.for_each_operand(&mut is_used_otherwise);
+                }
+            }
+        }
         let mut jump = 0;
         for (number, block) in func.blocks.iter().enumerate() {
             let at = number as u32;
@@ -412,18 +683,32 @@ impl Report<'_> {
                         flows.uses.push(Use { value: key(value), from: node(value), to, block: at, jump: NO_JUMP });
                     }
                 };
+                let seen = |value: V| value.is_some().then(|| node(value));
+                let typed = |value: V| if value.is_some() { (node(value), func.ty(value)) } else { (u32::MAX, TyId::NONE) };
                 match func.op(v) {
                     // There need be no element, and an element that is there may be `undefined`: nothing is known of what a container holds.
-                    Some(Op::ElemGet { .. } | Op::IterGet { .. }) => flows.origins.push(Origin { node: node(v), nil: UNDEFINED, block: at, unless: Vec::new() }),
+                    Some(&Op::ElemGet { obj: held, .. } | &Op::IterGet { iter: held, .. }) => {
+                        let array = before_casts(func, if let Some(&Op::IterOpen(opened)) = func.op(held) { opened } else { held });
+                        if let Some(Op::NewArray(elements)) = func.op(array).filter(|_| local_arrays.contains(&array)) {
+                            self.as_values.moves.extend(elements.iter().filter_map(|&element| seen(element)).map(|element| (element, node(v))));
+                        }
+                        self.as_values.left_out.push(node(v));
+                        flows.origins.push(Origin { node: node(v), nil: UNDEFINED, block: at, unless: Vec::new() });
+                    }
+                    Some(Op::NewArray(_)) if local_arrays.contains(&v) => {}
+                    Some(Op::NewArray(elements)) => self.as_values.leaks.extend(elements.iter().filter_map(|&element| seen(element))),
+                    Some(&Op::ElemSet { value, .. }) => self.as_values.leaks.extend(seen(value)),
+                    Some(Op::IterOpen(_) | Op::IterClose(_) | Op::IterCloseForThrow(_)) => {}
                     Some(&Op::Coerce { value, to, why })
                         if why == Why::Forced
-                            || matches!(why, Why::Flow | Why::Claim | Why::Store | Why::Cast) && !func.has(func_flags::IS_HIDDEN_IN_STACK_TRACES) && has_only_empty_views(&program.tys, &program.layouts, to) =>
+                            || matches!(why, Why::Flow | Why::Claim | Why::Store | Why::Cast | Why::CastFresh) && !func.has(func_flags::IS_HIDDEN_IN_STACK_TRACES) && has_only_empty_views(&program.tys, &program.layouts, to) =>
                     {
                         hand_on(&mut flows, value, node(v));
                         flows.origins.push(Origin { node: node(v), nil: STRANGER, block: at, unless: Vec::new() });
                     }
                     Some(&Op::Coerce { value, to, why }) => {
                         if matches!(why, Why::NonNull(_) | Why::Coerce) {
+                            self.as_values.moves.push((node(value), node(v)));
                             continue;
                         }
                         // `if (!node.id) { node.id = next } return node.id`: what the function has stored there itself.
@@ -435,7 +720,7 @@ impl Report<'_> {
                         }
                         hand_on(&mut flows, value, node(v));
                         // All that the type takes away is what need not be there.
-                        if matches!(why, Why::Store | Why::Cast) && func.ty(value) != program.tys.anything && func.ty(value).is_some() && to.is_some() {
+                        if matches!(why, Why::Store | Why::Cast | Why::CastFresh) && func.ty(value) != program.tys.anything && func.ty(value).is_some() && to.is_some() {
                             let (have, want) = (program.tys.get(func.ty(value)), program.tys.get(to));
                             let taken = have.prims & prim::NULLISH & !want.prims;
                             if taken != 0 && (Declared { prims: have.prims & !taken, ..have.clone() }).is_described_within(want) {
@@ -447,12 +732,21 @@ impl Report<'_> {
                     // A promise is a container too, and whoever resumes a generator sends what he likes, or nothing.
                     Some(&Op::Await(value)) => {
                         hand_on(&mut flows, value, node(v));
+                        self.as_values.left_out.push(node(v));
                         flows.origins.push(Origin { node: node(v), nil: UNDEFINED, block: at, unless: Vec::new() });
                     }
-                    Some(Op::Yield(_)) => flows.origins.push(Origin { node: node(v), nil: UNDEFINED, block: at, unless: Vec::new() }),
-                    Some(&Op::GlobalGet(global)) => self.edges.push((nodes.globals + global.idx() as u32, node(v))),
+                    Some(&Op::Yield(value)) => {
+                        self.as_values.leaks.extend(seen(value));
+                        self.as_values.left_out.push(node(v));
+                        flows.origins.push(Origin { node: node(v), nil: UNDEFINED, block: at, unless: Vec::new() });
+                    }
+                    Some(&Op::GlobalGet(global)) => {
+                        self.as_values.births.extend(Some(program.globals[global.idx()].only_function).filter(|function| function.is_some()).map(|function| (node(v), function)));
+                        self.edges.push((nodes.globals + global.idx() as u32, node(v)));
+                    }
                     Some(&Op::GlobalSet(global, value)) => hand_on(&mut flows, value, nodes.globals + global.idx() as u32),
                     Some(&Op::FieldGet { layout, field, .. }) => {
+                        self.as_values.births.extend(Some(program.layouts[layout.idx()].fields[field as usize].only_function).filter(|function| function.is_some()).map(|function| (node(v), function)));
                         let from = self.field(layout, field);
                         self.edges.push((from, node(v)));
                     }
@@ -464,12 +758,29 @@ impl Report<'_> {
                         if let Some(field) = program.layouts[layout.idx()].field(name) {
                             let to = self.field(layout, field);
                             hand_on(&mut flows, value, to);
+                        } else {
+                            self.as_values.leaks.extend(seen(value));
                         }
                     }
                     Some(&Op::PropGet { obj, name }) => {
+                        match program.strs.get(name) {
+                            b"call" | b"apply" | b"bind" => self.as_values.leaks.extend(seen(obj)),
+                            _ => {}
+                        }
+                        if let Some(view) = if func.ty(obj).is_some() { program.tys.get(func.ty(obj)).only_layout() } else { None } {
+                            let looked_at = &program.layouts[view.idx()];
+                            for &member in looked_at.members.iter().chain(looked_at.members.is_empty().then_some(&view)) {
+                                self.as_values.births.extend(function_found_in(program, member, name).map(|function| (node(v), function)));
+                            }
+                        }
+                        if let Some(&Op::FuncRef(class)) | Some(&Op::Closure { func: class, .. }) = func.op(before_casts(func, obj)) {
+                            let statics = program.layouts.iter().filter(|layout| layout.constructor == class).flat_map(|layout| &layout.methods);
+                            self.as_values.births.extend(statics.filter(|method| method.name == name && method.flags & method_flags::STATIC != 0).map(|method| (node(v), method.func)));
+                        }
                         let fields = fields_named(program, func.ty(obj), name);
                         // `table.key`, found by an index signature; a property of what is not typed: no layout vouches for it, and there need be none.
                         if fields.is_empty() && func.ty(obj).is_some() && program.tys.get(func.ty(obj)).any_object {
+                            self.as_values.left_out.push(node(v));
                             flows.origins.push(Origin { node: node(v), nil: UNDEFINED, block: at, unless: Vec::new() });
                         }
                         for (layout, field) in fields {
@@ -478,15 +789,29 @@ impl Report<'_> {
                         }
                     }
                     Some(&Op::PropSet { obj, name, value }) => {
+                        if fields_named(program, func.ty(obj), name).is_empty() {
+                            self.as_values.leaks.extend(seen(value));
+                        }
                         for (layout, field) in fields_named(program, func.ty(obj), name) {
                             let to = self.field(layout, field);
                             hand_on(&mut flows, value, to);
                         }
                     }
+                    Some(op @ (Op::PropDelete { .. } | Op::ElemDelete { .. })) => {
+                        let Some((obj, name)) = property_deleted_by(func, op) else { continue };
+                        for (layout, field) in fields_named(program, func.ty(obj), name).into_iter().chain(fields_of_any_object(program, func.ty(obj), name)) {
+                            let emptied = self.field(layout, field);
+                            self.origins.push((emptied, UNDEFINED));
+                        }
+                    }
+                    Some(&Op::FuncRef(function)) => self.as_values.births.push((node(v), function)),
                     Some(Op::Closure { func: made, captures } | Op::ClosureOnce { func: made, captures, .. }) => {
+                        self.as_values.births.push((node(v), *made));
                         for (number, &capture) in captures.iter().enumerate() {
                             if let Some(to) = parameter_of(*made, number) {
                                 hand_on(&mut flows, capture, to);
+                            } else {
+                                self.as_values.leaks.extend(seen(capture));
                             }
                         }
                     }
@@ -494,6 +819,8 @@ impl Report<'_> {
                         for (number, &argument) in args.iter().enumerate() {
                             if let Some(to) = parameter_of(*callee, number) {
                                 hand_on(&mut flows, argument, to);
+                            } else {
+                                self.as_values.leaks.extend(seen(argument));
                             }
                         }
                         if returns_what_it_yields(*callee) {
@@ -503,7 +830,13 @@ impl Report<'_> {
                     // `Initialize this, "a", x, "b", 0, ..`: the first stores of a constructor function.
                     Some(Op::Operation { name, args }) if *name == self.initialize => {
                         for store in args[1..].chunks_exact(2) {
-                            let Some(&Op::Str(name)) = func.op(store[0]) else { continue };
+                            let Some(&Op::Str(name)) = func.op(store[0]) else {
+                                self.as_values.leaks.extend(seen(store[1]));
+                                continue;
+                            };
+                            if fields_named(program, func.ty(args[0]), name).is_empty() {
+                                self.as_values.leaks.extend(seen(store[1]));
+                            }
                             for (layout, field) in fields_named(program, func.ty(args[0]), name) {
                                 let to = self.field(layout, field);
                                 hand_on(&mut flows, store[1], to);
@@ -512,19 +845,53 @@ impl Report<'_> {
                     }
                     Some(Op::Call { .. } | Op::CallMethod { .. }) => {
                         let Some((callees, args)) = functions_called(program, func, v) else {
-                            if let Some(&Op::CallMethod { obj, name, args: ref handed }) = func.op(v) {
+                            let mut is_of_the_engine = false;
+                            let by_name = match func.op(v) {
+                                Some(&Op::CallMethod { obj, name, ref args }) => Some((obj, name, &args[..])),
+                                Some(&Op::Call { callee, this, ref args }) => match func.op(before_casts(func, callee)) {
+                                    Some(&Op::PropGet { obj, name }) if this.is_some() && before_casts(func, obj) == before_casts(func, this) => Some((obj, name, &args[..])),
+                                    _ => None,
+                                },
+                                _ => None,
+                            };
+                            if let Some((obj, name, handed)) = by_name {
                                 let receiver = func.ty(obj);
                                 let is_array = receiver.is_some() && !program.tys.get(receiver).any_object && program.tys.get(receiver).parts.iter().all(|part| matches!(part, Part::Array(_)));
-                                self.hand_elements_to_functions(func, handed, parameters_handed_elements(program.strs.get(name), is_array));
+                                self.hand_elements_to_functions(func, handed, parameters_handed_elements(program.strs.get(name), is_array), matches!(func.op(v), Some(Op::CallMethod { .. })));
+                                is_of_the_engine = !parameters_handed_elements(program.strs.get(name), is_array).is_empty() && !may_reach_the_program(program, func, v);
+                            }
+                            let (callees, handed): (SmallVec<[u32; 1]>, &[V]) = match func.op(v) {
+                                Some(&Op::Call { callee, this, ref args }) => {
+                                    self.as_values.leaks.extend(seen(this));
+                                    (SmallVec::from_iter([node(callee)]), &args[..])
+                                }
+                                Some(&Op::CallMethod { obj, name, ref args }) => {
+                                    if matches!(program.strs.get(name), b"call" | b"apply" | b"bind") {
+                                        self.as_values.leaks.extend(seen(obj));
+                                    }
+                                    (fields_named(program, func.ty(obj), name).into_iter().map(|(layout, field)| self.field(layout, field)).collect(), &args[..])
+                                }
+                                _ => continue,
+                            };
+                            if !is_of_the_engine && !may_reach_the_program(program, func, v) {
+                                self.as_values.leaks.extend(handed.iter().filter_map(|&argument| seen(argument)));
+                            }
+                            let is_of_the_engine = is_of_the_engine || !may_reach_the_program(program, func, v);
+                            self.as_values.sites.push(Site { callees, args: handed.iter().map(|&argument| typed(argument)).collect(), result: Some(node(v)), is_of_the_engine });
+                            if may_reach_the_program(program, func, v) {
+                                self.edges.extend(kinds_kept_unboxed(program, func.ty(v)).map(|kind| (nodes.yielded + kind, node(v))));
                             }
                             continue;
                         };
                         for callee in callees {
                             let called = &program.funcs[callee.idx()];
                             let ahead = called.blocks.first().map_or(0, |entered| entered.params.len()).saturating_sub(called.params.len());
+                            self.as_values.leaks.extend(args.iter().skip(called.params.len()).filter_map(|&argument| seen(argument)));
                             for (number, &argument) in args.iter().enumerate().take(called.params.len()) {
                                 if let Some(to) = parameter_of(callee, ahead + number) {
                                     hand_on(&mut flows, argument, to);
+                                } else {
+                                    self.as_values.leaks.extend(seen(argument));
                                 }
                             }
                             if returns_what_it_yields(callee) {
@@ -532,8 +899,43 @@ impl Report<'_> {
                             }
                         }
                     }
-                    _ => {}
+                    Some(Op::Operation { name, args }) if program.strs.get(*name) == b"ConstructWith" && args.len() >= 2 => {
+                        self.as_values.sites.push(Site { callees: SmallVec::from_iter([node(args[0])]), args: args[2..].iter().map(|&argument| typed(argument)).collect(), result: None, is_of_the_engine: false });
+                    }
+                    Some(Op::Operation { name, args }) if program.strs.get(*name) == b"SuperConstruct" => {
+                        self.as_values.leaks.extend(args.get(3).and_then(|&parent| seen(parent)));
+                    }
+                    Some(Op::Operation { name, .. }) if matches!(program.strs.get(*name), b"MakeClass" | b"SetFunctionName" | b"IsCallable" | b"IsConstructor") => {}
+                    Some(Op::Construct { callee, args }) => {
+                        self.as_values.sites.push(Site { callees: SmallVec::from_iter([node(*callee)]), args: args.iter().map(|&argument| typed(argument)).collect(), result: None, is_of_the_engine: matches!(func.op(before_casts(func, *callee)), Some(Op::FreeGet { .. })) });
+                    }
+                    Some(
+                        Op::StrictEq { .. }
+                        | Op::LooseEq { .. }
+                        | Op::Not(_)
+                        | Op::Truthy(_)
+                        | Op::TypeOf(_)
+                        | Op::IsNullish(_)
+                        | Op::IsInstance { .. }
+                        | Op::InstanceOf { .. }
+                        | Op::Relational { .. }
+                        | Op::Binary { .. }
+                        | Op::Unary { .. }
+                        | Op::ToStr(_)
+                        | Op::ToKey(_)
+                        | Op::StrConcat(_)
+                        | Op::PropHas { .. }
+                        | Op::ElemHas { .. }
+                        | Op::IterHas { .. },
+                    ) => {}
+                    Some(op) => op.for_each_operand(|operand| self.as_values.leaks.extend(seen(operand))),
+                    None => {}
                 }
+            }
+            match block.term.as_ref() {
+                Some(&Term::Return(value)) if value.is_some() && func.has(func_flags::ASYNC | func_flags::GENERATOR) => self.as_values.leaks.push(node(value)),
+                Some(&Term::Throw { value, .. }) if value.is_some() => self.as_values.leaks.push(node(value)),
+                _ => {}
             }
             if let Some(&Term::Return(value)) = block.term.as_ref()
                 && value.is_some()
@@ -713,13 +1115,14 @@ fn has_only_empty_views(tys: &DeclaredTable, layouts: &[Layout], ty: TyId) -> bo
 }
 
 const FUNCTIONS_OF_A_TASK: usize = 256;
+const NODES_OF_A_RUN: usize = 1 << 14;
 
 pub(super) fn make_room_for_nil(program: &mut Program, in_parallel: InParallel<'_>) -> Roomier {
     let nodes = Nodes::of(program);
     let initialize = program.strs.intern(b"Initialize");
     let reaching = {
         let program: &Program = program;
-        let report = || Report { program, nodes: &nodes, initialize, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default() };
+        let report = || Report { program, nodes: &nodes, initialize, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default(), as_values: FunctionsAsValues::default() };
         let mut slices: Vec<(usize, Report<'_>, NilEdges)> = (0..program.funcs.len()).step_by(FUNCTIONS_OF_A_TASK).map(|first| (first, report(), NilEdges::default())).collect();
         for_each_mut(&mut slices, in_parallel, &|(first, report, found)| {
             for index in (*first..program.funcs.len()).take(FUNCTIONS_OF_A_TASK) {
@@ -727,6 +1130,7 @@ pub(super) fn make_room_for_nil(program: &mut Program, in_parallel: InParallel<'
                 add_nil_flows_in(&flows, found);
             }
             found.edges.extend(report.edges.drain(..).map(|(from, to)| (from, to, NIL | STRANGER)));
+            found.edges.extend(report.as_values.moves.drain(..).map(|(from, to)| (from, to, 0)));
             found.origins.append(&mut report.origins);
         });
         let mut connecting = report();
@@ -737,7 +1141,44 @@ pub(super) fn make_room_for_nil(program: &mut Program, in_parallel: InParallel<'
             connecting.connect(layout, field);
         }
         let between_fields = NilEdges { edges: connecting.edges.into_iter().map(|(from, to)| (from, to, NIL | STRANGER)).collect(), origins: connecting.origins };
-        nil_reaching(nodes.count, slices.iter().map(|slice| &slice.2).chain([&between_fields]))
+        let mut found: Vec<FunctionsAsValues> = slices.iter_mut().map(|slice| std::mem::take(&mut slice.1.as_values)).collect();
+        let left_out: FxHashSet<u32> = found.iter_mut().flat_map(|part| std::mem::take(&mut part.left_out)).collect();
+        let handed: Vec<u32> = found.iter_mut().flat_map(|part| std::mem::take(&mut part.handed)).collect();
+        let from_containers = NilEdges { edges: Vec::new(), origins: slices.iter().flat_map(|slice| &slice.2.origins).filter(|origin| left_out.contains(&origin.0)).map(|origin| (origin.0, origin.1 & UNDEFINED)).collect() };
+        let runs: Vec<u32> = slices.iter().map(|slice| nodes.values[slice.0]).chain((nodes.results..nodes.count).step_by(NODES_OF_A_RUN)).collect();
+        let parts: Vec<&[(u32, u32, u8)]> = slices.iter().map(|slice| &slice.2).chain([&between_fields]).map(|part| &part.edges[..]).collect();
+        let leaving = edges_by_node(nodes.count, &runs, &parts, |edge| Some((edge.0, edge.1)), in_parallel);
+        let mut entered = enter_where_functions_get(program, &nodes, &leaving, found);
+        let mut reaching = nil_reaching(&leaving, &[], slices.iter().map(|slice| &slice.2).chain([&between_fields]).flat_map(|part| part.origins.iter().copied()), |_, _| false);
+        entered.origins.extend(handed.into_iter().map(|node| (node, UNDEFINED)));
+        let mut leads_into_a_field = vec![false; nodes.count as usize];
+        {
+            let entering = edges_by_node(nodes.count, &runs, &parts, |edge| (edge.2 & UNDEFINED != 0 && edge.0 < nodes.yielded).then_some((edge.1, edge.0)), in_parallel);
+            let mut pending: Vec<u32> = Vec::new();
+            for (index, layout) in program.layouts.iter().enumerate().filter(|it| it.1.kind != LayoutKind::Environment) {
+                for (number, field) in layout.fields.iter().enumerate() {
+                    let node = nodes.field(LayoutId::new(index), number as u32);
+                    if reaching[node as usize] & UNDEFINED == 0 && field.declared.is_some() && field.declared != program.tys.anything && program.tys.get(field.declared).prims & prim::UNDEFINED == 0 {
+                        leads_into_a_field[node as usize] = true;
+                        pending.push(node);
+                    }
+                }
+            }
+            while let Some(node) = pending.pop() {
+                for &from in &entering.other[entering.at(node)] {
+                    if !std::mem::replace(&mut leads_into_a_field[from as usize], true) {
+                        pending.push(from);
+                    }
+                }
+            }
+        }
+        entered.edges.retain(|edge| !leads_into_a_field[edge.1 as usize]);
+        entered.origins.retain(|origin| !leads_into_a_field[origin.0 as usize]);
+        let further = nil_reaching(&leaving, &entered.edges, entered.origins.iter().chain(&from_containers.origins).copied(), |from, to| from >= nodes.yielded && leads_into_a_field[to as usize]);
+        for (all, more) in reaching.iter_mut().zip(further) {
+            *all |= more;
+        }
+        reaching
     };
     let mut roomier = Roomier::default();
     let is_unboxed = |tys: &Overlay<'_>, ty: TyId| ty.is_some() && ty != tys.anything && !tys.get(ty).has_objects() && tys.get(ty).prims & prim::CELLS == 0 && !tys.get(ty).is_never();
@@ -780,7 +1221,7 @@ pub(super) fn make_room_for_nil(program: &mut Program, in_parallel: InParallel<'
             }
             value.ty = with_room(tys, value.ty, nil);
             if let Def::Op(Op::Coerce { to, why, .. }) = &mut value.def {
-                if nil & STRANGER != 0 && matches!(why, Why::Flow | Why::Claim | Why::Store | Why::Cast) && has_only_empty_views(tys.known, layouts, *to) {
+                if nil & STRANGER != 0 && matches!(why, Why::Flow | Why::Claim | Why::Store | Why::Cast | Why::CastFresh) && has_only_empty_views(tys.known, layouts, *to) {
                     roomier.casts_to_empty_views.push((index as u32, number as u32, *to));
                 }
                 *to = with_room(tys, *to, nil);

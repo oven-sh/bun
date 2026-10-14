@@ -709,6 +709,10 @@ const binaryTypes = {
 } as const;
 if (expect.extend)
   expect.extend({
+    toMatchNodeModulesAt,
+    toHaveBins,
+    toBeValidBin,
+    toBeWorkspaceLink,
     toHaveTestTimedOutAfter(actual: any, expected: number) {
       if (typeof actual !== "string") {
         return {
@@ -822,7 +826,7 @@ if (expect.extend)
         if (!(e instanceof cls)) {
           return {
             pass: false,
-            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${(e as any).__proto__.constructor.name}`,
           };
         }
 
@@ -859,7 +863,7 @@ if (expect.extend)
         if (!(e instanceof cls)) {
           return {
             pass: false,
-            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${(e as any).__proto__.constructor.name}`,
           };
         }
 
@@ -1049,10 +1053,12 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
   };
 }
 
-export function toHaveBins(actual: string[], expectedBins: string[]) {
+export function toHaveBins(actual: any, expectedBins: string[]) {
   const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
 
   if (isWindows) {
+    // Each bin is a pair of files, `name.exe` and `name.bunx`.
+    if (actual.length !== expectedBins.length * 2) return { pass: false, message };
     for (var i = 0; i < actual.length; i += 2) {
       if (!actual[i].includes(expectedBins[i / 2]) || !actual[i + 1].includes(expectedBins[i / 2])) {
         return { pass: false, message };
@@ -1061,10 +1067,10 @@ export function toHaveBins(actual: string[], expectedBins: string[]) {
     return { pass: true, message };
   }
 
-  return { pass: actual.every((bin, i) => bin === expectedBins[i]), message };
+  return { pass: actual.length === expectedBins.length && actual.every((bin, i) => bin === expectedBins[i]), message };
 }
 
-export function toBeValidBin(actual: string, expectedLinkPath: string) {
+export function toBeValidBin(actual: any, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
@@ -1076,7 +1082,7 @@ export function toBeValidBin(actual: string, expectedLinkPath: string) {
   return { pass: fs.readlinkSync(actual) === expectedLinkPath, message };
 }
 
-export function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
+export function toBeWorkspaceLink(actual: any, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
@@ -1658,6 +1664,10 @@ interface BunHarnessTestMatchers {
   toSpawn(expectedStdout?: string): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
   toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
+  toMatchNodeModulesAt(root: string): Promise<void>;
+  toHaveBins(expectedBins: string[]): void;
+  toBeValidBin(expectedLinkPath: string): void;
+  toBeWorkspaceLink(expectedLinkPath: string): void;
 }
 
 declare module "bun:test" {
@@ -2017,7 +2027,7 @@ export class VerdaccioRegistry {
       return data.token;
     }
 
-    throw new Error("Failed to create user: " + response.statusText);
+    throw new Error(`Failed to create user: ${response.status} ${response.statusText}`);
   }
 
   async authBunfig(user: string) {

@@ -34,7 +34,7 @@ use crate::id::{FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
 use crate::ir::{self, Def, Func, FuncKind, Layout, LayoutKind, Literal, NO_VARIABLE, Op, Prediction, Program, Strs, Term, class_flags, field_flags, func_flags, method_flags};
 use bun_sema::atom::Atom;
 use bun_sema::check::task::Finished;
-use bun_sema::check::{Answer, Checker, Identity, Int32Verdict, MethodStore, Noted, NumberFlow, Program as Checked, Question, compute_ecma_line_starts, expected_int32};
+use bun_sema::check::{Answer, Checker, CompilerDiagnostic, Identity, Int32Verdict, MethodStore, Noted, NumberFlow, Program as Checked, Question, compute_ecma_line_starts, expected_int32};
 use bun_sema::hir::{self, ClassId, Flags, StmtKind};
 use bun_sema::program::{Builtin, FileId};
 use bun_sema::resolve::get_relative_path_from_directory;
@@ -47,10 +47,13 @@ use std::collections::hash_map::Entry;
 use std::hash::Hash;
 use std::time::{Duration, Instant};
 
+mod boundary;
 mod disagreement;
 mod nil;
 mod reads;
+mod reuse;
 mod strangers;
+mod throws;
 
 #[derive(Default)]
 pub struct Linked {
@@ -68,6 +71,7 @@ pub struct Linked {
     pub builtin_modules_left_out: Vec<(u32, Problem)>,
     /// The same for the builtin functions.
     pub builtin_functions_left_out: Vec<(u32, Problem)>,
+    pub found: Vec<CompilerDiagnostic>,
     pub times: Times,
 }
 
@@ -116,6 +120,49 @@ pub struct Explain {
     pub literal_at: Option<(&'static str, u32)>,
     /// How many of the places and of the reads of typed code go by a fact: `explain_given`.
     pub given: bool,
+    pub boundary: bool,
+    pub throws: bool,
+    pub throws_json: bool,
+    pub throws_all: bool,
+}
+
+impl Explain {
+    pub const WORDS: [&'static str; 25] = ["alterations", "arguments", "boundary", "callees", "captures", "deferred", "disagreements", "fields", "firsts", "foreign", "given", "integers", "keys", "kinds", "literals", "members", "parsed", "predictions", "rows", "strangers", "throws", "throws-all", "throws-all-json", "throws-json", "uninitialized"];
+
+    pub fn set(&mut self, word: &[u8]) -> bool {
+        let asked = match word {
+            b"alterations" => &mut self.alterations,
+            b"arguments" => &mut self.arguments,
+            b"boundary" => &mut self.boundary,
+            b"callees" => &mut self.callees,
+            b"captures" => &mut self.captures,
+            b"deferred" => &mut self.deferred,
+            b"disagreements" => &mut self.disagreements,
+            b"fields" => &mut self.fields,
+            b"firsts" => &mut self.firsts,
+            b"foreign" => &mut self.foreign,
+            b"given" => &mut self.given,
+            b"integers" => &mut self.integers,
+            b"keys" => &mut self.keys,
+            b"kinds" => &mut self.kinds,
+            b"literals" => &mut self.literals,
+            b"members" => &mut self.members,
+            b"parsed" => &mut self.parsed,
+            b"predictions" => &mut self.predictions,
+            b"rows" => &mut self.rows,
+            b"strangers" => &mut self.strangers,
+            b"throws" => &mut self.throws,
+            b"throws-json" => &mut self.throws_json,
+            b"throws-all" | b"throws-all-json" => {
+                self.throws_all = true;
+                if word == b"throws-all" { &mut self.throws } else { &mut self.throws_json }
+            }
+            b"uninitialized" => &mut self.uninitialized,
+            _ => return false,
+        };
+        *asked = true;
+        true
+    }
 }
 
 /// Where the time of the link goes.
@@ -306,6 +353,7 @@ struct Reach {
     /// By the name of a built-in: the functions of the prelude that the engine may call in its place. A function that is reached and
     /// calls or reads something by the name, a global too, reaches them.
     prelude: FxHashMap<Vec<u8>, Vec<FuncKey>>,
+    names_left_in: Vec<(usize, Vec<StrId>)>,
     /// What is being gone through.
     by: By,
     /// The object types whose layouts are reached and that no fragment defines, with the shape that names each and what mentions it.
@@ -320,6 +368,7 @@ impl Reach {
     fn grow(&mut self, fragments: &[Fragment]) {
         for fragment in &fragments[self.seen_tys.len()..] {
             self.seen_tys.push(vec![false; fragment.tys.list.len()]);
+            self.names_left_in.push((usize::MAX, Vec::new()));
         }
     }
 
@@ -443,13 +492,13 @@ impl Reach {
 
     /// `only_stored`: the variables among them that are stored to and not read: what else is stored to them nobody can tell by that.
     fn mention(&mut self, fragments: &[Fragment], index: &Index, from: u32, mentions: &Mentions, only_stored: &[GlobalId], is_layout: bool) {
-        for &ty in &mentions.tys {
+        for ty in mentions.tys() {
             self.ty(fragments, index, from, ty);
         }
-        for &layout in &mentions.layouts {
+        for layout in mentions.layouts() {
             self.layout(fragments, index, from, layout);
         }
-        for &global in &mentions.globals {
+        for global in mentions.globals() {
             if only_stored.binary_search(&global).is_ok() {
                 let at = index.globals[&fragments[from as usize].globals[global.idx()].key].at;
                 self.ty(fragments, index, at.fragment, fragments[at.fragment as usize].globals[at.index as usize].global.declared);
@@ -457,13 +506,13 @@ impl Reach {
                 self.global(fragments, index, from, global);
             }
         }
-        for &func in &mentions.called {
+        for func in mentions.called() {
             let key = self.func(fragments, index, from, func, !is_layout);
             if is_layout {
                 self.members.insert(key);
             }
         }
-        for &func in &mentions.values {
+        for func in mentions.values() {
             let key = self.func(fragments, index, from, func, true);
             self.values.insert(key);
         }
@@ -491,13 +540,25 @@ impl Reach {
                     if !self.prelude.is_empty()
                         && let Some(func) = &fragment.funcs[at.index as usize].func
                     {
-                        let named = func.values.iter().filter_map(|value| match &value.def {
-                            Def::Op(Op::CallMethod { name, .. } | Op::PropGet { name, .. } | Op::FreeGet { name, .. }) => self.prelude.get(fragment.strs.get(*name)),
-                            _ => None,
-                        });
-                        let bound: Vec<FuncKey> = named.flatten().copied().collect();
-                        for key in bound {
-                            self.key(fragments, index, key, true);
+                        let left = &mut self.names_left_in[at.fragment as usize];
+                        if left.0 != self.prelude.len() {
+                            *left = (self.prelude.len(), self.prelude.keys().filter_map(|name| fragment.strs.find(name)).collect());
+                        }
+                        let mut named: Vec<StrId> = Vec::new();
+                        if !left.1.is_empty() {
+                            for value in &func.values {
+                                if let Def::Op(Op::CallMethod { name, .. } | Op::PropGet { name, .. } | Op::FreeGet { name, .. }) = &value.def
+                                    && left.1.contains(name)
+                                    && !named.contains(name)
+                                {
+                                    named.push(*name);
+                                }
+                            }
+                        }
+                        for name in named {
+                            for key in self.prelude.remove(fragment.strs.get(name)).unwrap_or_default() {
+                                self.key(fragments, index, key, true);
+                            }
                         }
                     }
                     for &class in &body.classes_as_values {
@@ -528,10 +589,45 @@ impl Reach {
     }
 }
 
+fn classes_served_by_second_bodies(checked: &Checked<'_>, fragments: &[Fragment], index: &Index, reach: &Reach, types: &FxHashMap<Identity, TypeId>) -> Vec<LayoutKey> {
+    let mut evidence: Notes = Noted::default();
+    for (number, fragment) in fragments.iter().enumerate() {
+        if fragment.file != NO_FILE && checked.files.module(fragment.file).is_opaque() {
+            continue;
+        }
+        for (i, function) in fragment.funcs.iter().enumerate() {
+            if let Some(body) = &function.body
+                && reach.bodies.contains(&function.key)
+                && index.funcs.get(&function.key).is_some_and(|found| found.at == At::new(number, i))
+            {
+                evidence.absorb_evidence_of_strangers(&body.notes);
+            }
+        }
+    }
+    let (let_out, entered, entered_if_let_out) = evidence.evidence_of_strangers();
+    if let_out.is_empty() && entered.is_empty() {
+        return Vec::new();
+    }
+    let kept = |list: Vec<Identity>| -> Vec<TypeId> { list.into_iter().filter_map(|identity| types.get(&identity).copied()).collect() };
+    let mut classes: Vec<(LayoutKey, TypeId)> = Vec::new();
+    for &key in reach.layouts.iter().filter(|key| matches!(key, LayoutKey::Instance(..))) {
+        let Some(found) = index.layouts.get(&key) else { continue };
+        let shape = &fragments[found.at.fragment as usize].layouts[found.at.index as usize];
+        if let Some(&ty) = shape.ty.as_ref().and_then(|identity| types.get(identity)) {
+            classes.push((key, ty));
+        }
+    }
+    let of_classes: Vec<TypeId> = classes.iter().map(|class| class.1).collect();
+    let served = checked.checker().classes_served_by_second_bodies(&kept(let_out), &kept(entered), &kept(entered_if_let_out), &of_classes);
+    let mut served: Vec<LayoutKey> = classes.into_iter().zip(served).filter(|class| class.1).map(|class| class.0.0).collect();
+    served.sort_unstable_by_key(|key| if let LayoutKey::Instance(file, class) = *key { (file.idx(), class.idx()) } else { (0, 0) });
+    served
+}
+
 /// Takes the part out of the function. Those behind it have been seen to.
 fn take_out(func: &mut Func, part: &ModulePart, anything: TyId) {
     for v in part.values(func) {
-        func.values[v.idx()] = ir::Value { def: Def::Op(Op::Undefined), pos: 0, ty: anything, prediction: Prediction::None };
+        func.values[v.idx()] = ir::Value { def: Def::Op(Op::Undefined), pos: 0, ty: anything, prediction: Prediction::None, finds_initialized: false };
     }
     let ((from, start), (to, end)) = (part.from, part.to);
     if from == to {
@@ -647,7 +743,8 @@ impl<'a> Numbering<'a> {
         if known.is_some() {
             return known;
         }
-        let id = self.strs.intern(self.fragments[from as usize].strs.get(local));
+        let of_fragment = &self.fragments[from as usize].strs;
+        let id = self.strs.intern_hashed(of_fragment.hash(local), of_fragment.get(local));
         self.maps[from as usize].strs[local.idx()] = id;
         id
     }
@@ -796,19 +893,19 @@ impl<'a> Numbering<'a> {
     }
 
     fn mention(&mut self, from: u32, mentions: &Mentions) {
-        for &text in &mentions.strs {
+        for text in mentions.strs() {
             self.str(from, text);
         }
-        for &ty in &mentions.tys {
+        for ty in mentions.tys() {
             self.ty(from, ty);
         }
-        for &layout in &mentions.layouts {
+        for layout in mentions.layouts() {
             self.layout(from, layout);
         }
-        for &global in &mentions.globals {
+        for global in mentions.globals() {
             self.global(from, global);
         }
-        for func in mentions.called.iter().chain(&mentions.values) {
+        for func in mentions.called().chain(mentions.values()) {
             self.maps[from as usize].uses_func[func.idx()] = true;
         }
     }
@@ -846,6 +943,8 @@ impl<'a> Numbering<'a> {
             name: self.str(from, func.name),
             module: self.module(from, func.module),
             pos: func.pos,
+            place_of_text: func.place_of_text,
+            end_of_text: func.end_of_text,
             kind: func.kind,
             flags: func.flags & !COROUTINE,
             length: func.length,
@@ -856,6 +955,7 @@ impl<'a> Numbering<'a> {
             result: self.ty(from, func.result),
             blocks: Vec::new(),
             values: Vec::new(),
+            spans: Vec::new(),
         };
         let entry = stub.add_block();
         for capture in stub.captures.clone() {
@@ -955,6 +1055,8 @@ fn entry_function(name: StrId, anything: TyId, roots: &[FuncId], import: Option<
         name,
         module: ModuleId::NONE,
         pos: 0,
+        place_of_text: 0,
+        end_of_text: 0,
         kind: FuncKind::Module,
         flags: 0,
         length: 0,
@@ -965,6 +1067,7 @@ fn entry_function(name: StrId, anything: TyId, roots: &[FuncId], import: Option<
         result: TyId::NONE,
         blocks: Vec::new(),
         values: Vec::new(),
+        spans: Vec::new(),
     };
     let entry = func.add_block();
     for &root in roots {
@@ -1249,14 +1352,15 @@ fn describe_in_tasks<'s>(
     (described, ran_out_of_stack)
 }
 
-/// How many questions a checker is made for. A checker finds again what another has found, and one that is cut short holds up all behind it. The number
-/// does not show in the answers.
+/// How many questions a checker is made for, at the least, and how many checkers are made for the questions of a round, at the most. A checker finds again what another has found, and one that is cut
+/// short holds up all behind it. The numbers do not show in the answers.
 const QUESTIONS_OF_A_CHECKER: usize = 64;
+const CHECKERS_OF_A_ROUND: usize = 64;
 
 /// `Checker::answer`, shared out, and whether the stack has run out for one of the checkers.
 fn answers_to(program: &Checked<'_>, questions: &[Question], stored: &FxHashSet<Atom>, cut_short: &mut Vec<(TypeId, TypeId, u8)>, in_parallel: InParallel<'_>) -> (Vec<Answer>, bool) {
     let known: &[(TypeId, TypeId, u8)] = cut_short;
-    let mut slices: Vec<(&[Question], Vec<Answer>, bool, Vec<(TypeId, TypeId, u8)>)> = questions.chunks(QUESTIONS_OF_A_CHECKER).map(|slice| (slice, Vec::new(), false, Vec::new())).collect();
+    let mut slices: Vec<(&[Question], Vec<Answer>, bool, Vec<(TypeId, TypeId, u8)>)> = questions.chunks(questions.len().div_ceil(CHECKERS_OF_A_ROUND).max(QUESTIONS_OF_A_CHECKER)).map(|slice| (slice, Vec::new(), false, Vec::new())).collect();
     for_each_mut(&mut slices, in_parallel, &|(slice, answers, ran_out_of_stack, cut_now)| {
         let mut c = program.checker();
         c.begin_stack_budget();
@@ -1598,7 +1702,7 @@ fn place_of_error(checked: &Checked<'_>, fragments: &[Fragment], index: &Index, 
         }
         return body.cut.iter().find(holds).map(|cut| Elsewhere::Cut(cut.0));
     }
-    let of_module = bodies.filter(|(function, _)| matches!(function.key, FuncKey::Module(_) | FuncKey::ModuleBody(_)));
+    let of_module = bodies.filter(|(function, _)| matches!(function.key, FuncKey::Module(_) | FuncKey::ModuleBody(_) | FuncKey::ModuleInner(_)));
     if !reach.bodies.contains(&FuncKey::Module(file)) {
         let name = of_module.map(|(function, _)| name_of(function)).next().unwrap_or_default();
         return (!is_imported_for_types(file)).then_some(Elsewhere::NotReached(name));
@@ -1626,6 +1730,7 @@ pub fn link(
     prelude: &[FileId],
     shown_from: &[u8],
     shows_whole_paths: bool,
+    function_texts: Option<&crate::FunctionTexts>,
     errors: Errors<'_>,
     in_parallel: InParallel<'_>,
     explain: Explain,
@@ -1687,6 +1792,10 @@ pub fn link(
             }
         }
     }
+    if let Some(files) = entry_points.iter().filter_map(|files| files.first()).map(|&first| FuncKey::FilesByPath(first)).find(|files| index.funcs.contains_key(files)) {
+        builtin_roots.push((0x7fff_ffff, files));
+        reach.key(&fragments, &index, files, true);
+    }
     // Native code asks for a builtin function by its number, whatever the program does. A file that cannot be translated is left out whole.
     let mut builtin_functions: Vec<(u32, FuncKey, u32)> = Vec::new();
     for fragment in fragments.iter().filter(|fragment| !fragment.builtin_functions.is_empty()) {
@@ -1700,6 +1809,34 @@ pub fn link(
     for function in &builtin_functions {
         reach.key(&fragments, &index, function.1, true);
     }
+    let mut entries_beside: FxHashMap<LayoutKey, Vec<FuncKey>> = FxHashMap::default();
+    let mut entries_beside_functions: Vec<(FuncKey, FuncKey)> = Vec::new();
+    let mut not_translated: FxHashSet<(FileId, hir::FnId)> = FxHashSet::default();
+    for function in fragments.iter().flat_map(|fragment| &fragment.funcs) {
+        if let (FuncKey::EntryBeside(file, root) | FuncKey::SecondBody(file, _, root), Some(body)) = (function.key, &function.body)
+            && !body.problems.is_empty()
+        {
+            not_translated.insert((file, root));
+        }
+    }
+    for fragment in &fragments {
+        for function in &fragment.funcs {
+            if let (FuncKey::EntryBeside(file, root), Some(body)) = (function.key, &function.body)
+                && body.class.is_some()
+                && !not_translated.contains(&(file, root))
+            {
+                entries_beside.entry(fragment.layouts[body.class.idx()].key).or_default().push(function.key);
+            }
+            if let (FuncKey::EntryBeside(file, root), Some(body)) = (function.key, &function.body)
+                && body.class.is_none()
+                && !not_translated.contains(&(file, root))
+            {
+                entries_beside_functions.push((FuncKey::Function(file, root), function.key));
+            }
+        }
+    }
+    let entries_translated: usize = entries_beside.values().map(Vec::len).sum();
+    let mut not_foreseen: FxHashSet<LayoutKey> = FxHashSet::default();
     loop {
         reach.run(&fragments, &index);
         let named = std::mem::take(&mut reach.missing);
@@ -1712,7 +1849,37 @@ pub fn link(
         }
         times.add("reach", &mut since);
         if missing.is_empty() {
-            break;
+            let mut is_more_reached = false;
+            let served = classes_served_by_second_bodies(checked, &fragments, &index, &reach, &types);
+            let mut c = checked.checker();
+            for &class in &served {
+                if let LayoutKey::Instance(file, of) = class
+                    && !c.may_be_served_by_second_bodies(file, of)
+                    && not_foreseen.insert(class)
+                {
+                    problems.push(Problem { file, pos: 0, what: "a class that objects come to which its constructor has not made, and of which the text of the program showed no evidence ahead of the translation".into() });
+                }
+            }
+            drop(c);
+            for &(whole, entry) in &entries_beside_functions {
+                if reach.values.contains(&whole) && !reach.funcs.contains(&entry) {
+                    reach.key(&fragments, &index, entry, false);
+                    is_more_reached = true;
+                }
+            }
+            for class in served {
+                for &entry in entries_beside.get(&class).into_iter().flatten() {
+                    if !reach.funcs.contains(&entry) {
+                        reach.key(&fragments, &index, entry, false);
+                        reach.members.insert(entry);
+                        is_more_reached = true;
+                    }
+                }
+            }
+            if !is_more_reached {
+                break;
+            }
+            continue;
         }
         if times.rounds == MOST_ROUNDS {
             let (_, at, by) = named[0];
@@ -1808,7 +1975,7 @@ pub fn link(
     // What runs when the program starts comes first, in the order it runs in: the image places code by these numbers, and whatever is numbered as it is first mentioned follows.
     let key_at = |at: At| fragments[at.fragment as usize].funcs[at.index as usize].key;
     let of_the_runtime: FxHashSet<FileId> = builtin_modules.iter().map(|module| module.1).collect();
-    let evaluates_module = |key: FuncKey| matches!(key, FuncKey::Module(file) | FuncKey::ModuleBody(file) if !of_the_runtime.contains(&file));
+    let evaluates_module = |key: FuncKey| matches!(key, FuncKey::Module(file) | FuncKey::ModuleBody(file) | FuncKey::ModuleSettling(file) if !of_the_runtime.contains(&file));
     included.sort_by_key(|&(at, _)| !evaluates_module(key_at(at)));
     let func_ids: FxHashMap<FuncKey, FuncId> = included.iter().enumerate().map(|(i, &(at, _))| (key_at(at), FuncId::new(entry_points.len() + i))).collect();
     let evaluating: Vec<(FuncId, FuncKey)> = included
@@ -1816,7 +1983,7 @@ pub fn link(
         .enumerate()
         .filter(|found| explain.deferred && found.1.1)
         .map(|(i, &(at, _))| (FuncId::new(entry_points.len() + i), key_at(at)))
-        .filter(|found| matches!(found.1, FuncKey::Module(file) | FuncKey::ModuleBody(file) | FuncKey::Initializer(file, _) if !of_the_runtime.contains(&file)))
+        .filter(|found| matches!(found.1, FuncKey::Module(file) | FuncKey::ModuleBody(file) | FuncKey::ModuleSettling(file) | FuncKey::Initializer(file, _) if !of_the_runtime.contains(&file)))
         .collect();
 
     let mut numbering = Numbering::new(&fragments, &index, func_ids);
@@ -1881,6 +2048,51 @@ pub fn link(
     // them. A type that does not come back would be a member or a view the less, and nobody would know.
     let mut noted: Noted = Noted::default();
     let mut lost: Vec<(Identity, Problem)> = Vec::new();
+    let mut with_notes: Vec<[Vec<u32>; 2]> = vec![Default::default(); fragments.len()];
+    for &(at, has_body) in &included {
+        let key = key_at(at);
+        if has_body && !is_opaque(key.file()) {
+            with_notes[at.fragment as usize][usize::from(!evaluates_module(key))].push(at.index);
+        }
+    }
+    struct NotesOf<'a> {
+        fragment: &'a mut Fragment,
+        functions: &'a [Vec<u32>; 2],
+        noted: [Noted; 2],
+        lost: [Vec<(Identity, Problem)>; 2],
+    }
+    let mut notes_of: Vec<NotesOf<'_>> = (fragments.iter_mut().zip(&with_notes))
+        .filter(|(_, functions)| functions.iter().any(|group| !group.is_empty()))
+        .map(|(fragment, functions)| NotesOf { fragment, functions, noted: Default::default(), lost: Default::default() })
+        .collect();
+    for_each_mut(&mut notes_of, in_parallel, &|of| {
+        for (group, functions) in of.functions.iter().enumerate() {
+            let (noted, lost) = (&mut of.noted[group], &mut of.lost[group]);
+            for &index in functions {
+                let function = &mut of.fragment.funcs[index as usize];
+                let (key, pos) = (function.key, function.func.as_ref().map_or(0, |func| func.pos));
+                let Some(body) = &mut function.body else { continue };
+                let is_called_unknown = reach.values.contains(&key) || reach.members.contains(&key);
+                let if_called_unknown = is_called_unknown.then(|| std::mem::take(&mut body.notes_if_called_unknown));
+                for notes in std::iter::once(std::mem::take(&mut body.notes)).chain(if_called_unknown) {
+                    noted.absorb(notes.renamed(|identity| {
+                        let ty = types.get(&identity).copied();
+                        if ty.is_none() {
+                            lost.push((identity, Problem { file: key.file(), pos, what: format!("a type ({identity:x?}) that is noted for the function {key:?} and that no task has kept").into() }));
+                        }
+                        ty
+                    }));
+                }
+            }
+        }
+    });
+    for group in 0..2 {
+        for of in &mut notes_of {
+            noted.absorb(std::mem::take(&mut of.noted[group]));
+            lost.append(&mut of.lost[group]);
+        }
+    }
+    drop(notes_of);
     let mut absorb = |notes: Notes, file: FileId, pos: u32, of: &dyn Fn() -> String| {
         noted.absorb(notes.renamed(|identity| {
             let ty = types.get(&identity).copied();
@@ -1901,20 +2113,15 @@ pub fn link(
     for (&(at, has_body), stub) in included.iter().zip(stubs) {
         let Fragment { funcs: of_fragment, strs: strs_of_fragment, .. } = &mut fragments[at.fragment as usize];
         let function = &mut of_fragment[at.index as usize];
-        let (key, pos) = (function.key, function.func.as_ref().map_or(0, |func| func.pos));
-        let name = || format!("the function {key:?}");
+        let key = function.key;
         if let Some(body) = &mut function.body {
             if has_body {
                 problems.append(&mut body.problems);
                 classes_as_values.extend(body.classes_as_values.iter().map(|class| maps[at.fragment as usize].layouts[class.idx()]));
             }
             if has_body && !is_opaque(key.file()) {
-                absorb(std::mem::take(&mut body.notes), key.file(), pos, &name);
                 stored_besides.extend(body.stored_besides.iter().map(|&name| (at.fragment, name)));
                 number_flows.extend(body.number_flows.drain(..).map(|flow| (key.file(), flow.renamed(|name| names_of_flows.intern(strs_of_fragment.get(name))))));
-            }
-            if has_body && !is_opaque(key.file()) && (reach.values.contains(&key) || reach.members.contains(&key)) {
-                absorb(std::mem::take(&mut body.notes_if_called_unknown), key.file(), pos, &name);
             }
         }
         is_stub.push(stub.is_some());
@@ -1961,7 +2168,20 @@ pub fn link(
             None => get_relative_path_from_directory(shown_from, checked.files.module(file).file_name(), checked.files.is_case_sensitive),
         };
         let display_path = program.strs.intern(&shown);
-        program.modules.push(ir::Module { path: display_path, init: init_of(file), display_path, line_table });
+        program.modules.push(ir::Module { path: display_path, init: init_of(file), display_path, line_table, printed: Vec::new() });
+    }
+    if let Some(function_texts) = function_texts {
+        for func in program.funcs.iter_mut().filter(|func| func.place_of_text != 0) {
+            let printed = modules.get(func.module.idx()).and_then(|&file| function_texts.get(checked.files.module(file).file_name()));
+            let found = printed.and_then(|(_, texts)| Some(texts[texts.binary_search_by_key(&(func.place_of_text - 1), |text| text.0).ok()?]));
+            (func.place_of_text, func.end_of_text) = found.map_or((0, 0), |(_, start, end)| (start, end));
+            if let Some((text, _)) = printed.filter(|_| found.is_some()) {
+                let module = &mut program.modules[func.module.idx()];
+                if module.printed.is_empty() {
+                    module.printed.clone_from(text);
+                }
+            }
+        }
     }
     for &at in &globals {
         let ir::Global { name, module, declared, initialization, only_function, only_function_flags } = fragments[at.fragment as usize].globals[at.index as usize].global;
@@ -2052,6 +2272,12 @@ pub fn link(
     c.begin_stack_budget();
 
     // Which methods the modules of the program are seen to put something else in the place of. No fragment says so of any.
+    let beside: FxHashMap<FuncId, FuncId> = (func_ids.iter())
+        .filter_map(|(key, &entry)| match *key {
+            FuncKey::EntryBeside(file, func) => Some((*func_ids.get(&FuncKey::Function(file, func))?, entry)),
+            _ => None,
+        })
+        .collect();
     let replaced = c.methods_replaced_by(stores_to_methods);
     for (layout, class) in program.layouts.iter_mut().zip(&classes) {
         let Some((file, class)) = *class else { continue };
@@ -2090,8 +2316,10 @@ pub fn link(
     let extending: Vec<(FileId, ClassId)> = (0..program.layouts.len()).map(LayoutId::new).filter(is_extending).filter_map(|layout| class_of(&layout)).collect();
     let candidates: Vec<(LayoutId, (FileId, ClassId))> = classes_as_values.iter().filter_map(|layout| Some((*layout, class_of(layout)?))).collect();
     let asked: Vec<(FileId, ClassId)> = candidates.iter().map(|candidate| candidate.1).collect();
+    let mut extended_by_value = 0usize;
     for (candidate, may_be_extended) in candidates.iter().zip(c.may_be_extended_by_value(&extending, &asked)) {
         if may_be_extended {
+            extended_by_value += 1;
             program.layouts[candidate.0.idx()].class_flags |= class_flags::MAY_HAVE_OTHER_PROTOTYPE;
             // `super()` there makes an object of this layout, be the class abstract.
             if let Some(&(_, ty)) = views.iter().find(|view| view.0 == candidate.0) {
@@ -2099,7 +2327,12 @@ pub fn link(
             }
         }
     }
+    let given_and_lost = c.note_what_is_given(&|identity| types.get(identity).copied());
+    if explain.progress {
+        eprintln!("aot: progress: the link: {given_and_lost} given types that no task has kept");
+    }
     noted.absorb(c.take_noted());
+    let classes_that_are_values = candidates.len();
 
     times.add("classes", &mut since);
 
@@ -2150,7 +2383,7 @@ pub fn link(
         }
     };
     say("the types of the fields");
-    let field_types = crate::field_types::field_types(&program, &views);
+    let field_types = crate::field_types::field_types(&program, &views, in_parallel);
     let mut subtypes = c.begin_subtypes(noted, &asked, field_types, stored, explain.progress);
     times.add("flows", &mut since);
     let mut has_run_out = false;
@@ -2325,7 +2558,8 @@ pub fn link(
         }
     }
     times.add("answers", &mut since);
-    reads::type_by_the_members(&mut program);
+    let deleted = nil::make_room_for_deletions(&mut program, in_parallel);
+    reads::type_by_the_members(&mut program, in_parallel);
     let roomier = nil::make_room_for_nil(&mut program, in_parallel);
     times.add("nil", &mut since);
     say("the subtypes are in the program");
@@ -2422,6 +2656,21 @@ pub fn link(
     }
     if explain.alterations {
         explained.append(&mut c.explain_alterations(&membership));
+        let classes_laid_out = || program.layouts.iter().filter(|layout| layout.kind == LayoutKind::Instance && layout.class_flags & class_flags::IS_LAID_OUT != 0);
+        explained.push(format!("alterations: classes: {} methods of laid-out classes have an entry that hands a stranger to a second body, of {entries_translated} for which one was translated", beside.len()));
+        explained.push(format!("alterations: classes: {} of the {} laid-out classes take objects that their constructor has not made", classes_laid_out().filter(|layout| layout.admits_foreign).count(), classes_laid_out().count()));
+        let layouts_turned: FxHashSet<LayoutId> = deleted.turned.iter().map(|turned| turned.0).collect();
+        explained.push(format!(
+            "alterations: deleted through a view: {} places; by the name alone, from any object: {} places; {} required fields of {} layouts may be absent for it, {} of them by the name alone, {} were never seen absent; {} reads may find one absent",
+            deleted.places,
+            deleted.places_by_name,
+            deleted.turned.len(),
+            layouts_turned.len(),
+            deleted.turned_by_name,
+            deleted.never_seen_absent,
+            nil::reads_that_may_find_deleted(&program, &deleted)
+        ));
+        explained.push(format!("alterations: classes: {extended_by_value} of the {classes_that_are_values} laid-out classes that are used as values may be extended by their value"));
         let is_tested: Vec<bool> = program.layouts.iter().map(|view| view.members.iter().any(|member| program.layouts[member.idx()].may_be_frozen)).collect();
         let stores = || program.funcs.iter().flat_map(|func| func.blocks.iter().flat_map(|block| block.ops.iter().map(|v| crate::format::record(&func.values[v.idx()].def)))).filter(|r| r.opcode == crate::format::Opcode::PutField);
         explained.push(format!("alterations: {} of {} stores to fields test the integrity level", stores().filter(|r| is_tested[r.immediates[0] as usize]).count(), stores().count()));
@@ -2441,14 +2690,19 @@ pub fn link(
         }
     }
     program.functions_by_key.sort_unstable_by_key(|entry| (entry.0.0, entry.1.0));
-    for func in &mut program.funcs {
-        for value in &mut func.values {
-            if let Prediction::ByKey(property) = value.prediction
-                && program.functions_by_key.binary_search_by_key(&property.0, |entry| entry.0.0).is_err()
-            {
-                value.prediction = Prediction::None;
+    {
+        let Program { funcs, functions_by_key, .. } = &mut program;
+        let functions_by_key = &*functions_by_key;
+        let mut runs: Vec<&mut [Func]> = funcs.chunks_mut(FUNCTIONS_OF_A_SLICE).collect();
+        for_each_mut(&mut runs, in_parallel, &|funcs| {
+            for value in funcs.iter_mut().flat_map(|func| &mut func.values) {
+                if let Prediction::ByKey(property) = value.prediction
+                    && functions_by_key.binary_search_by_key(&property.0, |entry| entry.0.0).is_err()
+                {
+                    value.prediction = Prediction::None;
+                }
             }
-        }
+        });
     }
     times.add("by key", &mut since);
     if explain.predictions {
@@ -2480,6 +2734,9 @@ pub fn link(
     if explain.fields {
         explained.append(&mut explain_fields(&program, &names));
     }
+    if explain.boundary {
+        explained.append(&mut boundary::explain(&program));
+    }
     if explain.given {
         explained.append(&mut explain_given(&program));
         let (in_part, by_looks, all) = checked.checker().count_unions_given_in_part();
@@ -2487,6 +2744,20 @@ pub fn link(
     }
     if explain.strangers {
         explained.append(&mut strangers::explain(&program));
+    }
+    if explain.throws || explain.throws_json {
+        let mut starts: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
+        for (module, &file) in modules.iter().enumerate() {
+            starts.insert(module as u32, compute_ecma_line_starts(&checked.files.hir(file).text));
+        }
+        let line_and_column = |module: u32, pos: u32| {
+            let Some(starts) = starts.get(&module) else { return (0, 0) };
+            let line = starts.partition_point(|&start| start <= pos).max(1) - 1;
+            let text = &checked.files.hir(modules[module as usize]).text;
+            let before = &text[(starts[line] as usize).min(text.len())..(pos as usize).min(text.len())];
+            (line as u32 + 1, String::from_utf8_lossy(before).encode_utf16().count() as u32 + 1)
+        };
+        explained.append(&mut throws::explain(&program, explain.throws_json, explain.throws_all, &line_and_column));
     }
     if explain.literals {
         explained.append(&mut literals);
@@ -2515,13 +2786,13 @@ pub fn link(
         explained.push(format!("integers: under {} of the {} names of fields that numbers are seen to get to, they are expected to be int32s", by_text.iter().filter(|verdict| verdict.is_expected_int32()).count(), by_text.len()));
         explained.append(&mut c.explain_int32_fields(&by_text));
     }
-    let (marked_values, mut remarks_on_collections) = crate::build::literals::sizes_of_sets_of_strings(&program);
+    let (marked_values, mut remarks_on_collections) = crate::build::literals::sizes_of_sets_of_strings(&program, in_parallel);
     program.marked_values = marked_values;
     if explain.literals {
         explained.append(&mut remarks_on_collections);
     }
     times.add("collections", &mut since);
-    let mut rows = strangers::label_receivers_of_one_row(&mut program);
+    let mut rows = strangers::label_receivers_of_one_row(&mut program, in_parallel);
     times.add("rows", &mut since);
     let mut firsts = strangers::find_first_stores(&mut program, in_parallel);
     times.add("firsts", &mut since);
@@ -2531,10 +2802,29 @@ pub fn link(
     if explain.rows {
         explained.append(&mut rows);
     }
+    reuse::mark_releases_of_environments(&mut program, in_parallel);
+    times.add("releases of environments", &mut since);
+    let logs_type_errors = checked.checker().logs_type_errors();
+    let found = throws::always_fail(&program).iter().map(|site| {
+        let span = |module: u32, pos: u32| {
+            let file = modules[module as usize];
+            let hir = checked.files.hir(file);
+            (file, pos, bun_sema::check::spans::token_end(&hir.text, pos as usize, hir.kind == hir::FileKind::Tsx) as u32)
+        };
+        let (file, start, end) = span(site.module, site.pos);
+        let (code, args) = site.message();
+        let code = if code == 100013 && logs_type_errors && site.goes_on_when_logged() { 100019 } else { code };
+        let related = site.origin.iter().filter(|origin| origin.0 != u32::MAX && origin.1 != 0 && (origin.0, origin.1) != (site.module, site.pos)).map(|(module, pos, what)| {
+            let (file, start, end) = span(*module, *pos);
+            CompilerDiagnostic { file, start, end, code: 100018, args: vec![what.clone().into_bytes()], related: Vec::new() }
+        });
+        CompilerDiagnostic { file, start, end, code, args, related: related.collect() }
+    }).collect();
+    times.add("what always fails", &mut since);
     let members = membership.sizes.line();
     since = Instant::now();
     std::thread::spawn(move || drop((fragments, index, reach, maps, types, seen, func_ids, layout_ids, global_ids)));
     drop((membership, names));
     times.add("free", &mut since);
-    Linked { program, problems, members, explained, errors, builtin_modules_left_out, builtin_functions_left_out, times }
+    Linked { program, problems, members, explained, errors, builtin_modules_left_out, builtin_functions_left_out, found, times }
 }

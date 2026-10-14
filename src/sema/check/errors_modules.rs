@@ -31,6 +31,7 @@
 use super::*;
 use crate::bind::{Decl, Parent, ScopeId, SymbolId};
 use crate::resolve::{ModuleKind, is_relative, normalize_path};
+use crate::util::SharedSort;
 use bun_collections::ArrayHashMap;
 
 /// State that is constant for a whole file.
@@ -98,7 +99,7 @@ impl Checker<'_, '_> {
         } else {
             let mut uses = hir.specifier_uses.to_vec();
             uses.retain(|u| !u.kind.is_call());
-            uses.sort_unstable_by_key(|u| u.pos);
+            uses.shared_sort_unstable_by_key(|u| u.pos);
             sorted = uses;
             &sorted
         };
@@ -306,6 +307,9 @@ impl Checker<'_, '_> {
 
     /// `bindModuleDeclaration`, `checkModuleDeclaration`
     fn modules_declaration(&mut self, cx: &Cx<'_>, s: StmtId, m: ModuleId, around: Around) {
+        if self.is_stack_low() {
+            return;
+        }
         let (hir, files) = (self.hir(cx.file), self.files());
         let module = hir[m];
         let name_pos = module.name_pos;
@@ -1722,6 +1726,7 @@ impl Checker<'_, '_> {
                 flags: PropFlags::empty(),
                 source: PropSource::Type(ty),
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             });
         }
         Some(self.synth(Shape {

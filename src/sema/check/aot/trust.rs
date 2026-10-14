@@ -20,7 +20,7 @@ use super::flows::Place;
 use super::storage::Query;
 use crate::hir::{ExprId, ExprKind, FnBody, MemberKind, VarKind};
 use crate::program::{FileId, Sym};
-use crate::types::{Prop, PropSource, TypeData, TypeId};
+use crate::types::{MapperId, Prop, PropFlags, PropSource, TypeData, TypeId};
 use crate::util::FxHashMap;
 
 /// Globals of the language that are no functions.
@@ -72,6 +72,14 @@ fn names_of(holder: &[u8]) -> Option<&'static str> {
 
 fn has_entry(holder: &[u8], name: &[u8]) -> bool {
     names_of(holder).is_some_and(|names| names.split(' ').any(|known| known.as_bytes() == name))
+}
+
+pub fn is_builtin_of_the_engine(holder: &[u8], name: &[u8]) -> bool {
+    has_entry(holder, name) || TYPED_ARRAYS.iter().any(|known| known.as_bytes() == holder) && has_entry(b"TypedArray", name)
+}
+
+pub fn is_locked_global_of_the_engine(name: &[u8]) -> bool {
+    !name.starts_with(b"$") && !super::builtins_generated::REPLACEABLE_GLOBALS.iter().any(|known| known.as_bytes() == name) && (has_entry(b"", name) || names_of(name).is_some() || GLOBAL_VALUES.iter().chain(TYPED_ARRAYS).any(|known| known.as_bytes() == name))
 }
 
 /// What a declaration without a body claimed.
@@ -129,7 +137,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn unvouched_claim(&mut self, file: FileId, e: ExprId) -> Option<Claim> {
         if !matches!(
             self.hir(file)[e].kind,
-            ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) | ExprKind::TaggedTemplate(_) | ExprKind::New(_) | ExprKind::Await(_)
+            ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) | ExprKind::TaggedTemplate(_) | ExprKind::New(_) | ExprKind::Await(_) | ExprKind::ImportCall { .. }
         ) {
             return None;
         }
@@ -191,7 +199,10 @@ impl<'p, 's> Checker<'p, 's> {
                     return Some(Claim::Call);
                 }
                 // The type of the call is that of its first argument, and more.
-                if self.redefines_literal(file, e) || self.argument_handed_back_by(file, e).is_some_and(|first| self.is_predicted(file, first)) {
+                if self.redefines_literal(file, e)
+                    || self.argument_handed_back_by(file, e).is_some_and(|first| self.is_predicted(file, first))
+                    || self.argument_handed_back_by_function(file, e).is_some_and(|handed| self.is_handed_back_by_the_call_it_is_handed_to(file, handed) && self.is_taken_as_what_the_arguments_say(file, handed) && self.is_predicted(file, handed))
+                {
                     return Some(Claim::Call);
                 }
                 if matches!(hir[callee].kind, ExprKind::Super) {
@@ -215,6 +226,11 @@ impl<'p, 's> Checker<'p, 's> {
             }
             ExprKind::New(call) => self.is_predicted(file, hir[call].callee).then_some(Claim::New),
             ExprKind::Await(operand) => self.is_predicted(file, operand).then_some(Claim::Await),
+            ExprKind::ImportCall { args } => {
+                let ExprKind::String(specifier) = hir[hir.id_at(args, 0)].kind else { return None };
+                let module = self.files.module_of_specifier_as(file, specifier, self.files.mode_of_import_call(file))?;
+                self.is_ambient_value(module).then_some(Claim::Call)
+            }
             _ => None,
         }
     }
@@ -355,7 +371,16 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn is_prop_predicted(&mut self, prop: &Prop) -> bool {
         let PropSource::Literal(file, declared) = prop.source else { return false };
         let value = self.hir(file)[declared].value;
-        value.is_some() && self.is_predicted(file, value)
+        value.is_some() && self.is_predicted(file, value) || self.says_its_first_value_alone(prop)
+    }
+
+    fn says_its_first_value_alone(&mut self, prop: &Prop) -> bool {
+        if prop.flags.intersects(PropFlags::READONLY | PropFlags::METHOD | PropFlags::ACCESSOR) {
+            return false;
+        }
+        let held = self.type_of_prop(prop, MapperId::IDENTITY);
+        let parts: Vec<TypeId> = self.parts(held).to_vec();
+        parts.iter().all(|&part| self.is_nullish(part)) || parts.len() == 1 && matches!(self.data(parts[0]), TypeData::BoolLit { .. } | TypeData::NumberLit { .. } | TypeData::StringLit { .. } | TypeData::BigIntLit { .. })
     }
 
     /// Whether some object of the type has such a property by the name.
@@ -364,26 +389,57 @@ impl<'p, 's> Checker<'p, 's> {
         let parts: Vec<TypeId> = self.parts(ty).to_vec();
         parts.into_iter().any(|part| {
             let Some(members) = self.members(part) else { return false };
-            members.resolved.prop(name).is_some_and(|prop| self.is_prop_predicted(prop))
+            members.resolved.prop(name).is_some_and(|prop| self.is_prop_predicted(prop)) || self.is_predicted_through_spread(part, name)
         })
+    }
+
+    pub fn is_predicted_through_spread(&mut self, ty: TypeId, name: Atom) -> bool {
+        let TypeData::Synth(shape) = self.data(ty) else { return false };
+        let Some((left, right)) = shape.created_from.filter(|_| shape.spread_rank < u32::MAX - 1 && !shape.is_object_rest_type) else { return false };
+        let is_optional_in = |c: &mut Self, operand: TypeId| {
+            let members = c.members(operand)?;
+            Some(members.resolved.prop(name)?.flags.contains(crate::types::PropFlags::OPTIONAL))
+        };
+        match is_optional_in(self, right) {
+            None => self.has_predicted_prop(left, name),
+            Some(false) => self.has_predicted_prop(right, name),
+            Some(true) => is_optional_in(self, left) == Some(false) || self.has_predicted_prop(right, name) || self.has_predicted_prop(left, name),
+        }
     }
 
     /// Whether some object of the type has the property from a class without a body: `this.props` and `this.state` where `class App extends
     /// Component<Props, State>` of `@types/react`. The code behind that class stores to it, and nobody has held that code to what is declared.
-    fn has_member_of_class_without_body(&mut self, ty: TypeId, name: Atom) -> bool {
+    pub(super) fn has_member_of_class_without_body(&mut self, ty: TypeId, name: Atom) -> bool {
         let ty = self.non_nullable(ty);
         let parts: Vec<TypeId> = self.parts(ty).to_vec();
         parts.into_iter().any(|part| {
             // `this` is of a type parameter.
             let apparent = self.apparent_type(part);
-            self.is_declared_by_class_without_body(apparent, name, 0)
+            self.is_type_of_module_without_code(part) || self.is_declared_by_class_without_body(apparent, name, 0)
         })
+    }
+
+    fn is_type_of_module_without_code(&mut self, ty: TypeId) -> bool {
+        let TypeData::Anon { origin: crate::types::Origin::Module(module) | crate::types::Origin::Namespace { module, .. }, .. } = self.data(ty) else { return false };
+        let module = *module;
+        self.is_ambient_value(module) && !self.is_builtin_global(module)
+    }
+
+    fn is_member_without_code(&self, declared: Sym) -> bool {
+        !self.files.module(declared.file).is_lib
+            && self.files.decls(declared).iter().all(|&(file, decl)| matches!(decl, Decl::Member(_)) && (self.only_declares(file) || self.hir(file).is_ambient(self.hir(file).parent(self.hir(file).node(decl)))))
     }
 
     fn is_declared_by_class_without_body(&mut self, class: TypeId, name: Atom, depth: u32) -> bool {
         let Some(members) = self.members(class) else { return false };
         let Some(prop) = members.resolved.prop(name) else { return false };
-        let PropSource::Symbol(declared) = prop.source else { return false };
+        let declared = match &prop.source {
+            &PropSource::Symbol(declared) => declared,
+            PropSource::Intersected(_, parts) | PropSource::Mapped(_, _, Some(parts)) | PropSource::Copy(_, parts, _) | PropSource::ReverseMapped(_, parts) => {
+                return parts.iter().any(|part| matches!(part.source, PropSource::Symbol(declared) if self.is_member_without_code(declared)));
+            }
+            _ => return false,
+        };
         if self.files.module(declared.file).is_lib {
             return false;
         }
@@ -393,11 +449,16 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let decls = self.files.decls(declared);
         // Also of an interface or a type literal there: `element.props`, where `interface ReactElement<P> { props: P }`.
-        if decls.iter().all(|&(file, decl)| matches!(decl, Decl::Member(_)) && (self.only_declares(file) || self.hir(file).is_ambient(self.hir(file).node(decl)))) {
+        if decls.iter().all(|&(file, decl)| matches!(decl, Decl::Member(_)) && (self.only_declares(file) || self.hir(file).is_ambient(self.hir(file).parent(self.hir(file).node(decl))))) {
             return true;
         }
         // A field that the program declares again, `state = { seen: 0 }`: the code behind the class that it extends stores to it all the same.
         let TypeData::Ref { target, .. } = *self.data(class) else { return false };
+        if decls.iter().all(|&(file, decl)| matches!(decl, Decl::Member(_)) && self.hir(file).is_ambient(self.hir(file).node(decl)))
+            && self.base_types(target).into_vec().into_iter().any(|base| self.members(base).is_some_and(|members| members.resolved.prop(name).is_some()))
+        {
+            return true;
+        }
         depth < 16
             && decls.iter().all(|&(file, decl)| member_of_class(self, file, decl) == Some(MemberKind::Property))
             && self.base_types(target).into_vec().into_iter().any(|base| self.is_declared_by_class_without_body(base, name, depth + 1))

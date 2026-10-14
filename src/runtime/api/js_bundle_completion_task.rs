@@ -1043,7 +1043,14 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
         transpiler.options.aot = config.compile.as_ref().is_some_and(|compile| compile.aot);
+        transpiler.options.aot_explain = (config.compile.as_ref()).map_or_else(Vec::new, |compile| compile.aot_explain.clone());
+        transpiler.options.aot_explains_into_log = true;
+        transpiler.options.aot_logs_type_errors =
+            (config.compile.as_ref()).is_some_and(|compile| compile.aot && compile.logs_type_errors);
+        transpiler.options.compile_function_source =
+            (config.compile.as_ref()).is_none_or(|compile| compile.function_source);
         transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
+        transpiler.options.typed_package = Some(bun_sema_driver::typed_packages::typed_package);
         transpiler.options.bytecode_depth = config.bytecode_depth;
         transpiler.options.optimize_bytecode = config.optimize_bytecode;
         if let Some(compile) = &config.compile {
@@ -1164,6 +1171,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.compile_target_builtins = match &config.compile {
             Some(compile)
                 if config.bytecode
+                    && !transpiler.options.compiles_ahead_of_time()
                     && (!compile.compile_target.is_default()
                         || !compile.executable_path.list.is_empty()) =>
             {

@@ -88,7 +88,7 @@ impl MachoFile {
         }))
     }
 
-    pub fn write_section(&mut self, data: &[u8]) -> Result<(), MachoError> {
+    pub fn write_section(&mut self, data: &[u8], is_read_only: bool) -> Result<(), MachoError> {
         let blob_alignment: u64 = 16 * 1024;
         const PAGE_SIZE: u64 = 1 << 12;
         const HASH_SIZE: usize = 32; // SHA256 = 32 bytes
@@ -156,8 +156,13 @@ impl MachoFile {
                                     self.segment.vmsize =
                                         align_vmsize(aligned_size, blob_alignment);
                                     self.segment.filesize = aligned_size;
-                                    self.segment.maxprot = macho::PROT::READ | macho::PROT::WRITE;
-                                    self.segment.initprot = macho::PROT::READ | macho::PROT::WRITE;
+                                    let protection = if is_read_only {
+                                        macho::PROT::READ
+                                    } else {
+                                        macho::PROT::READ | macho::PROT::WRITE
+                                    };
+                                    self.segment.maxprot = protection;
+                                    self.segment.initprot = protection;
 
                                     self.section = macho::section_64 {
                                         sectname: SECTNAME,

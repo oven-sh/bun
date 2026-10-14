@@ -31,6 +31,8 @@ import {
   isIPv6,
   Server,
   Socket,
+  SocketAddress,
+  // @ts-expect-error legacy alias
   Stream,
 } from "node:net";
 import { join } from "node:path";
@@ -124,6 +126,41 @@ describe("net.BlockList subnet rules", () => {
     v6.addSubnet("::", 0, "ipv6");
     expect(v6.check("8592:757c:efae:4e45::f", "ipv6")).toBe(true);
     expect(v6.check("1.2.3.4", "ipv4")).toBe(true);
+  });
+});
+
+describe("net.BlockList and an IPv6 zone id", () => {
+  it("check() matches on the address alone", () => {
+    const blockList = new BlockList();
+    blockList.addAddress("fe80::1", "ipv6");
+    blockList.addAddress("1.2.3.4");
+    expect(blockList.check("fe80::1%eth0", "ipv6")).toBe(true);
+    expect(blockList.check("fe80::1%", "ipv6")).toBe(true);
+    expect(blockList.check("::ffff:1.2.3.4%lo", "ipv6")).toBe(true);
+    expect(blockList.check(new SocketAddress({ address: "fe80::1%eth0", family: "ipv6" }))).toBe(true);
+    expect(blockList.check("fe80::2%eth0", "ipv6")).toBe(false);
+    expect(blockList.check("1.2.3.4%lo")).toBe(false);
+  });
+
+  it("a rule drops it", () => {
+    const blockList = new BlockList();
+    blockList.addAddress("fe80::9%eth0", "ipv6");
+    blockList.addRange("fe80::10%eth0", "fe80::20%eth1", "ipv6");
+    blockList.addSubnet("fd00::%eth0", 64, "ipv6");
+    expect(blockList.rules).toEqual([
+      "Subnet: IPv6 fd00::/64",
+      "Range: IPv6 fe80::10-fe80::20",
+      "Address: IPv6 fe80::9",
+    ]);
+    expect(new SocketAddress({ address: "fe80::9%eth0", family: "ipv6" }).address).toBe("fe80::9");
+  });
+
+  it("connect() refuses a blocked address", async () => {
+    const blockList = new BlockList();
+    blockList.addAddress("::1", "ipv6");
+    const socket = connect({ host: "::1%lo", port: 1, blockList });
+    const [error] = await once(socket, "error");
+    expect(error.code).toBe("ERR_IP_BLOCKED");
   });
 });
 
@@ -358,7 +395,7 @@ describe("net.Socket read", () => {
             port: server.port,
             onread: {
               buffer: Buffer.alloc(4096),
-              callback: (size, buf) => {
+              callback: (size, buf): any => {
                 data += buf.slice(0, size).toString("utf8");
               },
             },
@@ -482,8 +519,8 @@ describe("net.Socket write", () => {
 
   it("should allow reconnecting after end()", async () => {
     const server = new Server(socket => socket.end());
-    const port = await new Promise(resolve => {
-      server.once("listening", () => resolve(server.address().port));
+    const port = await new Promise<number>(resolve => {
+      server.once("listening", () => resolve((server.address() as import("node:net").AddressInfo).port));
       server.listen();
     });
 
@@ -730,7 +767,7 @@ it.concurrent.each(["s.unref()", "s.pause()"])("%s survives an autoSelectFamily 
           const net = require("net");
           const lookup = (host, opts, cb) =>
             setTimeout(() => cb(null, [{ address: "::1", family: 6 }, { address: "127.0.0.1", family: 4 }]), 10);
-          const s = net.connect({ host: "localhost", port: ${server.address().port}, autoSelectFamily: true, lookup });
+          const s = net.connect({ host: "localhost", port: ${(server.address() as import("node:net").AddressInfo).port}, autoSelectFamily: true, lookup });
           s.on("error", e => process.stdout.write("error " + e.code + "\\n"));
           s.on("connect", () => process.stdout.write("connected " + s.remoteAddress + "\\n"));
           ${call};
@@ -870,7 +907,7 @@ it("a connected socket is not flowing until the user reads from it", async () =>
   try {
     // events.once rejects these awaits if 'error' is emitted instead.
     await once(server.listen(0, "127.0.0.1"), "listening");
-    client = createConnection(server.address().port, "127.0.0.1");
+    client = createConnection((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
     await once(client, "connect");
     client.on("error", reject);
     expect(client.readableFlowing).toBeNull();
@@ -1093,7 +1130,7 @@ it.if(isWindows)(
     await test(`\\\\.\\pipe\\test\\${randomUUID()}`);
     gc(true);
     const before = heapStats().objectTypeCounts.TCPSocket || 0;
-    const batch = [];
+    const batch: Promise<void>[] = [];
     for (let i = 0; i < 100; i++) {
       batch.push(test(`\\\\.\\pipe\\test\\${randomUUID()}`));
       batch.push(test(`\\\\?\\pipe\\test\\${randomUUID()}`));
@@ -1334,7 +1371,7 @@ it("an onread client dialed with readable: false still reads into its buffer", a
       readable: false,
       onread: {
         buffer: Buffer.alloc(64),
-        callback(n: number, buf: Buffer) {
+        callback(n: number, buf: Buffer): any {
           got += buf.toString("latin1", 0, n);
           if (got === "banner") done.resolve(got);
         },
@@ -1355,7 +1392,7 @@ it("passes readable / writable through to the Duplex like node (a TLSSocket is a
   // Values observed under node v26.3.0.
   const a = new Socket({ readable: false });
   const b = new Socket({ writable: false });
-  const c = new TLSSocket(undefined, { readable: false, writable: false });
+  const c = new TLSSocket(undefined as any, { readable: false, writable: false } as any);
   expect({
     a: [a.readable, a.writable, a.readableEnded],
     b: [b.readable, b.writable, b.writableEnded, b.writableFinished],
@@ -1415,7 +1452,7 @@ describe("Socket fd adoption", () => {
       });
       expect(drain(rfd)).toBe("hello");
       // Sync fd writes must feed the byte counters (no native handle to do it).
-      expect(socket._bytesDispatched).toBe(5);
+      expect((socket as any)._bytesDispatched).toBe(5);
       // The adopted fd must be released on destroy (node closes the wrapping
       // libuv handle in the equivalent path).
       expect(fstatCode(wfd)).toBe("EBADF");
@@ -1960,7 +1997,7 @@ describe("paused socket whose peer sends RST", () => {
     try {
       await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
       const port = (server.address() as import("node:net").AddressInfo).port;
-      const c = connect({ port, host: "127.0.0.1", onread: { buffer: Buffer.alloc(16), callback: () => {} } });
+      const c = connect({ port, host: "127.0.0.1", onread: { buffer: Buffer.alloc(16), callback: (): any => {} } });
       c.on("error", e => errors.push(e));
       c.on("close", () => resolve());
       await once(c, "connect");
@@ -2077,7 +2114,7 @@ describe.concurrent("pauseOnConnect", () => {
     server.on("connection", accepted.resolve);
     await once(server.listen(0, "127.0.0.1"), "listening");
     // Set after listen(): the listener was created without it, so this connection is stopped from JS.
-    server.pauseOnConnect = true;
+    (server as any).pauseOnConnect = true;
     try {
       const client = connect((server.address() as import("node:net").AddressInfo).port, "127.0.0.1");
       const [socket] = await Promise.all([accepted.promise, once(client, "connect")]);
@@ -2147,7 +2184,9 @@ describe("net.Server accepted-socket buffering", () => {
       await listening.promise;
       client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
       client.on("error", received.reject);
-      await new Promise<void>((resolve, reject) => client!.end("hello", err => (err ? reject(err) : resolve())));
+      await new Promise<void>((resolve, reject) =>
+        client!.end("hello", (err?: Error) => (err ? reject(err) : resolve())),
+      );
       const buf = await received.promise;
       expect({ flowingAtConnection, data: buf?.toString() }).toEqual({ flowingAtConnection: null, data: "hello" });
     } finally {
@@ -2171,7 +2210,7 @@ describe("net.Server accepted-socket buffering", () => {
       await listening.promise;
       client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
       client.on("error", received.reject);
-      while (!client._readableState?.ended && !client.destroyed) await new Promise<void>(r => setImmediate(r));
+      while (!(client as any)._readableState?.ended && !client.destroyed) await new Promise<void>(r => setImmediate(r));
       await new Promise<void>(r => setImmediate(r));
       await new Promise<void>(r => setImmediate(r));
       expect(client.destroyed).toBe(false);
@@ -2201,7 +2240,9 @@ describe("net.Server accepted-socket buffering", () => {
       await listening.promise;
       client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
       client.on("error", received.reject);
-      await new Promise<void>((resolve, reject) => client!.end("hello", err => (err ? reject(err) : resolve())));
+      await new Promise<void>((resolve, reject) =>
+        client!.end("hello", (err?: Error) => (err ? reject(err) : resolve())),
+      );
       const data = await received.promise;
       expect(data).toBe("hello");
     } finally {
@@ -2237,7 +2278,7 @@ describe("net.Server accepted-socket buffering", () => {
       sock.on("close", hadError => events.push("close:" + hadError));
       // Wait for the peer FIN to mark the readable side ended, then let any
       // FIN-time lifecycle work settle before asserting the socket stayed open.
-      while (!sock._readableState?.ended && !sock.destroyed) await new Promise<void>(r => setImmediate(r));
+      while (!(sock as any)._readableState?.ended && !sock.destroyed) await new Promise<void>(r => setImmediate(r));
       await new Promise<void>(r => setImmediate(r));
       await new Promise<void>(r => setImmediate(r));
       expect({
@@ -2326,7 +2367,7 @@ describe("net.Socket onread with a zero-length buffer", () => {
         host: "127.0.0.1",
         onread: {
           buffer: kind === "static buffer" ? Buffer.alloc(0) : () => Buffer.alloc(0),
-          callback: () => reject(new Error("onread callback must not be invoked")),
+          callback: (): any => reject(new Error("onread callback must not be invoked")),
         },
       });
       socket.on("error", resolve);
@@ -2890,7 +2931,7 @@ it.skipIf(isWindows)("a write after the peer reset the connection fails with a w
     };
     conn.on("connect", pump);
     const err = await promise;
-    expect(["EPIPE", "ECONNRESET", "ENOTCONN"]).toContain(err.code);
+    expect(["EPIPE", "ECONNRESET", "ENOTCONN"]).toContain(err.code!);
     expect(typeof err.errno).toBe("number");
   } finally {
     server.close();
@@ -3348,7 +3389,7 @@ describe.skipIf(!isWindows)("connect() error codes on Windows", () => {
       });
 
     const regularErr = await errFor(regular);
-    expect(["ENOTSOCK", "ECONNREFUSED"]).toContain(regularErr.code);
+    expect(["ENOTSOCK", "ECONNREFUSED"]).toContain(regularErr.code!);
 
     const missingErr = await errFor(missing);
     expect(missingErr.code).toBe("ENOENT");

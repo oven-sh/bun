@@ -12,7 +12,7 @@
 //! g`, `o[key] = g`, `Object.assign`) is not among them, so what comes of them is a PREDICTION: the call tests for it.
 
 use super::flows::Place;
-use crate::bind::{Decl, FnOwner, Parent, PatParent, SymFlags};
+use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeKind, SymFlags};
 use crate::check::Checker;
 use crate::check::errors_names_and_exports::root_declaration;
 use crate::atom::Atom;
@@ -112,6 +112,10 @@ impl Yielded {
 
     fn join(self, other: Yielded) -> Yielded {
         Yielded { callee: self.callee.join(other.callee), may_be_nil: self.may_be_nil || other.may_be_nil, is_predicted: self.is_predicted || other.is_predicted }
+    }
+
+    fn is_not_seen_through(self) -> bool {
+        matches!(self.callee, Callee::Unknown(_))
     }
 }
 
@@ -265,7 +269,51 @@ impl<'p, 's> Checker<'p, 's> {
             stored = stored.join(self.callee_yielded_by(file, value, 0));
         }
         let Callee::One(file, func) = stored.callee else { return Err(Hole::Stored(stored.callee)) };
-        Ok(OnlyFunction { file, func, may_be_nil: stored.may_be_nil || self.starts_undefined(sym), outermost: sym, is_predicted: stored.is_predicted })
+        let is_predicted = stored.is_predicted || self.is_made_anew_by_a_second_body(file, func, sym);
+        Ok(OnlyFunction { file, func, may_be_nil: stored.may_be_nil || self.starts_undefined(sym), outermost: sym, is_predicted })
+    }
+
+    fn is_made_anew_by_a_second_body(&self, file: FileId, func: FnId, sym: Sym) -> bool {
+        if self.is_untyped_file(file) {
+            return false;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut around_the_variable: Vec<FnId> = Vec::new();
+        if let Some((of, decl)) = self.files().value_declaration(sym)
+            && of == file
+        {
+            let mut scope = bound.scope_of_declaration(hir, decl);
+            while scope.is_some() {
+                if let ScopeKind::Fn(around) | ScopeKind::Param(around) = bound.scopes[scope.idx()].kind {
+                    around_the_variable.push(around);
+                }
+                scope = bound.scopes[scope.idx()].parent;
+            }
+        }
+        self.is_written_in_what_may_have_a_second_body(file, func, &around_the_variable)
+    }
+
+    pub(super) fn is_written_in_what_may_have_a_second_body(&self, file: FileId, func: FnId, around_the_variable: &[FnId]) -> bool {
+        if self.is_untyped_file(file) {
+            return false;
+        }
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut around = bound.fns[func.idx()].enclosing;
+        while around.is_some() && !around_the_variable.contains(&around) {
+            let f = &hir[around];
+            let may_have_a_second_body = !matches!(f.body, FnBody::None)
+                && !f.flags.contains(Flags::GENERATOR)
+                && match f.kind {
+                    FnKind::Method | FnKind::Getter | FnKind::Setter => true,
+                    FnKind::Decl | FnKind::Expr | FnKind::Arrow => !f.flags.contains(Flags::ASYNC) && f.params.iter().any(|p| hir[p].ty.is_some()),
+                    _ => false,
+                };
+            if may_have_a_second_body {
+                return true;
+            }
+            around = bound.fns[around.idx()].enclosing;
+        }
+        false
     }
 
     /// The parameter, by its number, that every call of the function hands back: `function setTextRange<T extends TextRange>(range: T, location) { return
@@ -369,7 +417,19 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `e`: a call. If it names a function of the program that hands back a parameter: the argument for that.
-    fn argument_handed_back_by_function(&mut self, file: FileId, e: ExprId) -> Option<ExprId> {
+    pub fn is_handed_back_by_the_call_it_is_handed_to(&mut self, file: FileId, e: ExprId) -> bool {
+        let Parent::Expr(call) = self.bound(file).expr_parent[e.idx()] else { return false };
+        if call.is_none() || self.argument_handed_back_by_function(file, call) != Some(e) {
+            return false;
+        }
+        let Some((of, func, _)) = self.resolved_signature(file, call).sig.and_then(|sig| self.sig_decl(sig)) else { return false };
+        let Some(number) = self.parameter_handed_back_by(of, func) else { return false };
+        let Some(parameter) = self.hir(of)[func].params.iter().nth(number as usize) else { return false };
+        let declared = self.type_of_param(of, parameter);
+        self.base_constraint_of(declared).is_none_or(|bound| self.says_nothing(bound))
+    }
+
+    pub(super) fn argument_handed_back_by_function(&mut self, file: FileId, e: ExprId) -> Option<ExprId> {
         let hir = self.hir(file);
         let ExprKind::Call(call) = hir[e].kind else { return None };
         let ExprKind::Ident(name) = hir[hir[call].callee].kind else { return None };
@@ -499,7 +559,10 @@ impl<'p, 's> Checker<'p, 's> {
                     None => unknown,
                 }
             }
-            ExprKind::Cond { yes, no, .. } => self.callee_yielded_by(file, yes, depth + 1).join(self.callee_yielded_by(file, no, depth + 1)),
+            ExprKind::Cond { yes, no, .. } => {
+                let yes = self.callee_yielded_by(file, yes, depth + 1);
+                if yes.is_not_seen_through() { yes } else { yes.join(self.callee_yielded_by(file, no, depth + 1)) }
+            }
             // What the module exports. Whoever requires it while it is evaluated finds something else: then it is a prediction.
             ExprKind::Call(_) if self.function_required_by(file, e).is_some() => match self.function_required_by(file, e) {
                 Some((of, func, is_sure)) => Yielded { is_predicted: !is_sure, ..Yielded::of(Callee::One(of, func), false) },
@@ -517,18 +580,30 @@ impl<'p, 's> Checker<'p, 's> {
                     FnBody::None => return unknown,
                     FnBody::Expr(body) => self.callee_yielded_by(of, body, depth + 1),
                     FnBody::Block(_) => bound.ids(bound.fns[func.idx()].returns).fold(Yielded::of(Callee::Nothing, false), |so_far, stmt: StmtId| match declaring[stmt].kind {
+                        _ if so_far.is_not_seen_through() => so_far,
                         StmtKind::Return(value) if value.is_some() => so_far.join(self.callee_yielded_by(of, value, depth + 1)),
                         _ => so_far.join(Yielded::of(Callee::Nothing, true)),
                     }),
                 };
                 Yielded { is_predicted: true, ..returned }
             }
+            ExprKind::Dot { .. } | ExprKind::Index { .. } if self.export_variable_named_by(file, e).is_some() => {
+                let held = self.export_variable_named_by(file, e).and_then(|(module, name)| self.apart_from_the_variable_asked_about(|this| this.function_held_by_export_variable(module, name, depth + 1)));
+                match held {
+                    Some((of, func, is_predicted)) => Yielded { is_predicted, ..Yielded::of(Callee::One(of, func), true) },
+                    None => unknown,
+                }
+            }
             // What the literal has by the name, which may have been replaced since.
             ExprKind::Dot { obj, name, .. } => Yielded { is_predicted: true, ..Yielded::of(self.callee_in_literal_held_by(file, obj, name, depth + 1), false) },
             ExprKind::Binary { op: BinOp::Comma, right, .. } | ExprKind::Assign { op: None, value: right, .. } => self.callee_yielded_by(file, right, depth + 1),
             // A function is truthy, and nil is neither.
             ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, left, right } | ExprKind::Assign { op: Some(BinOp::Or | BinOp::Nullish), target: left, value: right } => {
-                let (left, right) = (self.callee_yielded_by(file, left, depth + 1), self.callee_yielded_by(file, right, depth + 1));
+                let left = self.callee_yielded_by(file, left, depth + 1);
+                if left.is_not_seen_through() {
+                    return left;
+                }
+                let right = self.callee_yielded_by(file, right, depth + 1);
                 Yielded { may_be_nil: right.may_be_nil, ..left.join(right) }
             }
             _ => unknown,

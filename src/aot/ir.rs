@@ -3,39 +3,55 @@
 
 use crate::declared::DeclaredTable;
 use crate::id::{BlockId, FuncId, GlobalId, LayoutId, ModuleId, StrId, TyId, V};
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 pub type Args = SmallVec<[V; 4]>;
 
 #[derive(Default)]
 pub struct Strs {
-    list: Vec<Box<[u8]>>,
-    ids: FxHashMap<Box<[u8]>, StrId>,
+    bytes: Vec<u8>,
+    ends: Vec<u32>,
+    hashes: Vec<u64>,
+    ids: hashbrown::HashTable<StrId>,
 }
 
 impl Strs {
+    fn hash_of(bytes: &[u8]) -> u64 {
+        std::hash::BuildHasher::hash_one(&rustc_hash::FxBuildHasher, bytes)
+    }
     pub fn intern(&mut self, bytes: &[u8]) -> StrId {
-        if let Some(&id) = self.ids.get(bytes) {
+        self.intern_hashed(Strs::hash_of(bytes), bytes)
+    }
+    /// `hash`: `hash(id)` of a table that has the string.
+    pub fn intern_hashed(&mut self, hash: u64, bytes: &[u8]) -> StrId {
+        if let Some(&id) = self.ids.find(hash, |&id| self.get(id) == bytes) {
             return id;
         }
-        let id = StrId::new(self.list.len());
-        self.list.push(bytes.into());
-        self.ids.insert(bytes.into(), id);
+        let id = StrId::new(self.ends.len());
+        self.bytes.extend_from_slice(bytes);
+        self.ends.push(u32::try_from(self.bytes.len()).expect("the strings of a program are under 4 GB"));
+        self.hashes.push(hash);
+        let hashes = &self.hashes;
+        self.ids.insert_unique(hash, id, |&id| hashes[id.idx()]);
         id
     }
     pub fn find(&self, bytes: &[u8]) -> Option<StrId> {
-        self.ids.get(bytes).copied()
+        self.ids.find(Strs::hash_of(bytes), |&id| self.get(id) == bytes).copied()
+    }
+    #[inline]
+    pub fn hash(&self, id: StrId) -> u64 {
+        self.hashes[id.idx()]
     }
     #[inline]
     pub fn get(&self, id: StrId) -> &[u8] {
-        &self.list[id.idx()]
+        let start = if id.0 == 0 { 0 } else { self.ends[id.idx() - 1] as usize };
+        &self.bytes[start..self.ends[id.idx()] as usize]
     }
     pub fn len(&self) -> usize {
-        self.list.len()
+        self.ends.len()
     }
     pub fn is_empty(&self) -> bool {
-        self.list.is_empty()
+        self.ends.is_empty()
     }
 }
 
@@ -181,6 +197,7 @@ pub mod class_flags {
     pub const MAY_HAVE_OTHER_PROTOTYPE: u32 = 1 << 6;
     /// It declares a static member whose name is computed and may be any string. A field of that kind is in no list of the layout.
     pub const HAS_STATIC_MEMBER_OF_UNKNOWN_NAME: u32 = 1 << 8;
+    pub const MAY_BE_REUSED: u32 = 1 << 10;
 }
 
 pub struct Layout {
@@ -259,6 +276,7 @@ pub struct Module {
     pub display_path: StrId,
     /// `format::line_table` of its text: from the positions in it to lines and columns.
     pub line_table: Vec<u8>,
+    pub printed: Vec<u8>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -296,6 +314,9 @@ pub mod func_flags {
     pub const IS_HIDDEN_IN_STACK_TRACES: u16 = 1 << 10;
     pub const NAME_IS_GIVEN: u16 = 1 << 11;
     pub const IS_CODE_OF_MODULE: u16 = 1 << 12;
+    pub const IS_SLOPPY: u16 = 1 << 13;
+    pub const IS_GENERAL_ENTRY: u16 = 1 << 14;
+    pub const KEEPS_FIELD_NAMES_OFF_ITS_PROTOTYPE: u16 = 1 << 15;
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -358,6 +379,7 @@ pub enum Why {
     Forced,
     /// The same of what nobody else can hold, nor anything below it: `JSON.parse(text) as T`: plain data is made what `T` says, all the way down. `Checker::is_fresh_graph_by_text`.
     CoerceFreshGraph,
+    CastFresh,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -443,8 +465,9 @@ pub enum Op {
 
     /// The value, held to a type.
     Coerce { value: V, to: TyId, why: Why },
-    /// The exception being handled. First in a handler.
+    /// What was thrown and is being handled; or the exception itself, which nothing looks at but the `Throw` that passes it on. The first in a handler that catches.
     Caught,
+    CaughtException,
     /// Once around a loop.
     Poll,
     /// What the language does without having syntax for it, by the name the compiler behind the front end knows it by.
@@ -506,6 +529,7 @@ pub enum Prediction {
     /// Of the type that the view it is read through gives the property. Only until the link: where the view takes no foreign object that is a
     /// fact, and becomes the type of the value. Where it does, it becomes a `Ty`.
     Field(TyId),
+    Stores,
 }
 
 #[derive(Clone, Debug)]
@@ -516,6 +540,7 @@ pub struct Value {
     /// What it is.
     pub ty: TyId,
     pub prediction: Prediction,
+    pub finds_initialized: bool,
 }
 
 #[derive(Default, Clone)]
@@ -525,10 +550,20 @@ pub struct Block {
     pub term: Option<Term>,
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Span {
+    pub value: V,
+    pub start: u32,
+    pub end: u32,
+    pub step: i32,
+}
+
 pub struct Func {
     pub name: StrId,
     pub module: ModuleId,
     pub pos: u32,
+    pub place_of_text: u32,
+    pub end_of_text: u32,
     pub kind: FuncKind,
     pub flags: u16,
     /// Its `length` property: the parameters before the first one with an initializer or the rest parameter.
@@ -546,6 +581,7 @@ pub struct Func {
     pub result: TyId,
     pub blocks: Vec<Block>,
     pub values: Vec<Value>,
+    pub spans: Vec<Span>,
 }
 
 impl Func {
@@ -580,13 +616,13 @@ impl Func {
     pub fn add_param(&mut self, block: BlockId, ty: TyId) -> V {
         let index = self.blocks[block.idx()].params.len() as u32;
         let v = V::new(self.values.len());
-        self.values.push(Value { def: Def::Param(block, index), pos: 0, ty, prediction: Prediction::None });
+        self.values.push(Value { def: Def::Param(block, index), pos: 0, ty, prediction: Prediction::None, finds_initialized: false });
         self.blocks[block.idx()].params.push(v);
         v
     }
     pub fn add_value(&mut self, op: Op, pos: u32, ty: TyId) -> V {
         let v = V::new(self.values.len());
-        self.values.push(Value { def: Def::Op(op), pos, ty, prediction: Prediction::None });
+        self.values.push(Value { def: Def::Op(op), pos, ty, prediction: Prediction::None, finds_initialized: false });
         v
     }
     pub fn append(&mut self, block: BlockId, op: Op, pos: u32, ty: TyId) -> V {
@@ -613,6 +649,7 @@ impl Op {
             | Op::New(_)
             | Op::NewObject
             | Op::Caught
+            | Op::CaughtException
             | Op::Poll
             | Op::ResumeMode
             | Op::ExternalModule(_) => {}
@@ -752,6 +789,7 @@ pub struct Program {
     /// The run time lets no other name of a field be defined on the `prototype` object of a function. Sorted.
     pub prototype_property_names: Vec<StrId>,
     pub regexp_literals: Vec<(StrId, StrId)>,
+    pub logs_type_errors: bool,
     pub marked_values: Vec<Vec<V>>,
     /// By registry id, ascending: the function that evaluates a builtin module and returns its value.
     pub builtin_modules: Vec<(u32, FuncId)>,

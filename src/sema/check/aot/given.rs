@@ -10,7 +10,7 @@
 //! A value is not handed on from where a test has shown that it is there: `x && ..`, `if (!x) return`, `x !== undefined`. A test holds for all that
 //! the way it has gone dominates: a value of the program as it is linked never changes.
 
-use crate::util::FxHashMap;
+use crate::util::{FxHashMap, InParallel, for_each_mut};
 
 /// What may be in a place beyond its type, and what a test shows a value not to be.
 pub const UNDEFINED: u8 = 1;
@@ -222,32 +222,116 @@ pub fn add_nil_flows_in(function: &NilFlowsInFunction, found: &mut NilEdges) {
     add_edges_in(function, edges, &mut |node, nil| origins.push((node, nil)));
 }
 
-pub fn nil_reaching<'a>(nodes: u32, parts: impl Iterator<Item = &'a NilEdges> + Clone) -> Vec<u8> {
-    let mut reaching = vec![0u8; nodes as usize];
+pub struct EdgesByNode {
+    first: Vec<u32>,
+    pub other: Vec<u32>,
+    pub nil: Vec<u8>,
+}
+
+impl EdgesByNode {
+    pub fn at(&self, node: u32) -> std::ops::Range<usize> {
+        self.first[node as usize] as usize..self.first[node as usize + 1] as usize
+    }
+}
+
+pub fn edges_by_node(nodes: u32, runs: &[u32], parts: &[&[(u32, u32, u8)]], pick: impl Fn(&(u32, u32, u8)) -> Option<(u32, u32)> + Sync, in_parallel: InParallel<'_>) -> EdgesByNode {
+    const NODES_OF_A_BLOCK: u32 = 1 << 12;
+    let end_of = |run: usize| runs.get(run + 1).copied().unwrap_or(nodes);
+    let mut split: Vec<(usize, usize, Vec<(u32, u32, u8)>)> = (0..parts.len()).map(|part| (part, 0, Vec::new())).collect();
+    for_each_mut(&mut split, in_parallel, &|(part, own, strays)| {
+        let (low, high) = if *part < runs.len() { (runs[*part], end_of(*part)) } else { (0, 0) };
+        for edge in parts[*part] {
+            let Some((node, other)) = pick(edge) else { continue };
+            if low <= node && node < high {
+                *own += 1;
+            } else {
+                strays.push((node, other, edge.2));
+            }
+        }
+    });
+    let mut run = 0;
+    let run_of_block: Vec<u32> = (0..=nodes / NODES_OF_A_BLOCK)
+        .map(|block| {
+            while end_of(run) <= block * NODES_OF_A_BLOCK && run + 1 < runs.len() {
+                run += 1;
+            }
+            run as u32
+        })
+        .collect();
+    let mut handed: Vec<Vec<(u32, u32, u8)>> = vec![Vec::new(); runs.len()];
+    for stray in split.iter().flat_map(|part| &part.2) {
+        let mut run = run_of_block[(stray.0 / NODES_OF_A_BLOCK) as usize] as usize;
+        while end_of(run) <= stray.0 {
+            run += 1;
+        }
+        handed[run].push(*stray);
+    }
+    let many: Vec<usize> = handed.iter().enumerate().map(|(run, handed)| handed.len() + split.get(run).map_or(0, |part| part.1)).collect();
+    let all: usize = many.iter().sum();
+    let (mut first, mut other, mut nil) = (vec![0u32; nodes as usize + 1], vec![0u32; all], vec![0u8; all]);
+    first[nodes as usize] = all as u32;
+    struct Run<'a> {
+        number: usize,
+        ahead: u32,
+        first: &'a mut [u32],
+        other: &'a mut [u32],
+        nil: &'a mut [u8],
+    }
+    let (mut first_left, mut other_left, mut nil_left, mut ahead) = (&mut first[..nodes as usize], &mut other[..], &mut nil[..], 0);
+    let mut tasks: Vec<Run<'_>> = Vec::with_capacity(runs.len());
+    for (number, &many) in many.iter().enumerate() {
+        let (first, left) = first_left.split_at_mut((end_of(number) - runs[number]) as usize);
+        first_left = left;
+        let (other, left) = other_left.split_at_mut(many);
+        other_left = left;
+        let (nil, left) = nil_left.split_at_mut(many);
+        nil_left = left;
+        tasks.push(Run { number, ahead, first, other, nil });
+        ahead += many as u32;
+    }
+    for_each_mut(&mut tasks, in_parallel, &|Run { number, ahead, first, other, nil }| {
+        let (low, high) = (runs[*number], end_of(*number));
+        let own = parts.get(*number).copied().unwrap_or_default();
+        let edges = || own.iter().filter_map(|edge| pick(edge).filter(|picked| low <= picked.0 && picked.0 < high).map(|picked| (picked.0, picked.1, edge.2))).chain(handed[*number].iter().copied());
+        for edge in edges() {
+            first[(edge.0 - low) as usize] += 1;
+        }
+        let mut sum = 0;
+        for slot in first.iter_mut() {
+            sum += std::mem::replace(slot, sum);
+        }
+        for edge in edges() {
+            let at = &mut first[(edge.0 - low) as usize];
+            other[*at as usize] = edge.1;
+            nil[*at as usize] = edge.2;
+            *at += 1;
+        }
+        let mut begins = *ahead;
+        for slot in first.iter_mut() {
+            begins = std::mem::replace(slot, begins) + *ahead;
+        }
+    });
+    EdgesByNode { first, other, nil }
+}
+
+pub fn nil_reaching(leaving: &EdgesByNode, more: &[(u32, u32, u8)], origins: impl Iterator<Item = (u32, u8)>, is_cut: impl Fn(u32, u32) -> bool) -> Vec<u8> {
+    let mut reaching = vec![0u8; leaving.first.len() - 1];
     let mut pending: Vec<u32> = Vec::new();
-    for &(node, nil) in parts.clone().flat_map(|part| &part.origins) {
+    for (node, nil) in origins {
         if reaching[node as usize] | nil != reaching[node as usize] {
             reaching[node as usize] |= nil;
             pending.push(node);
         }
     }
-    // The edges by the node they leave.
-    let mut first = vec![0u32; nodes as usize + 1];
-    for edge in parts.clone().flat_map(|part| &part.edges) {
-        first[edge.0 as usize + 1] += 1;
-    }
-    for node in 0..nodes as usize {
-        first[node + 1] += first[node];
-    }
-    let mut at = first.clone();
-    let mut leaving = vec![(0u32, 0u8); first[nodes as usize] as usize];
-    for &(from, to, nil) in parts.flat_map(|part| &part.edges) {
-        leaving[at[from as usize] as usize] = (to, nil);
-        at[from as usize] += 1;
+    let mut leaving_too: FxHashMap<u32, Vec<(u32, u8)>> = FxHashMap::default();
+    for &(from, to, nil) in more {
+        leaving_too.entry(from).or_default().push((to, nil));
     }
     while let Some(node) = pending.pop() {
         let here = reaching[node as usize];
-        for &(to, nil) in &leaving[first[node as usize] as usize..first[node as usize + 1] as usize] {
+        let at = leaving.at(node);
+        let known = leaving.other[at.clone()].iter().copied().zip(leaving.nil[at].iter().copied()).filter(|edge| !is_cut(node, edge.0));
+        for (to, nil) in known.chain(leaving_too.get(&node).into_iter().flatten().copied()) {
             let there = reaching[to as usize] | here & nil;
             if there != reaching[to as usize] {
                 reaching[to as usize] = there;

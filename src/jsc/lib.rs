@@ -514,6 +514,14 @@ pub fn initialize(options: InitializeOptions) {
     };
 }
 
+/// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
+/// first VM, which freezes JSC's options.
+pub fn expect_vm_per_thread() {
+    let env = bun_sys::environ();
+    // SAFETY: `env` borrows the libc `environ` global for the duration of the call.
+    unsafe { JSC__useOptionsForVMPerThread(env.as_ptr(), env.len()) };
+}
+
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /
 /// `bun -p <code>` / `bun --print <code>` — i.e. an inline-eval one-shot that
 /// runs a trivial script and exits without entering a long-running event loop.
@@ -1566,6 +1574,7 @@ unsafe extern "C" {
         short_lived_globals: bool,
         use_aot: bool,
     );
+    fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
 }
 
 // Hand-stubbed in `generated.rs` until `src/codegen/generate-classes.ts`

@@ -54,14 +54,13 @@ const needsShell = new RegExp(
   "m",
 );
 
-type Kind = "reference" | "aot" | "validated";
+type Kind = "reference" | "aot";
 const kinds: Record<Kind, { build: Record<string, string>; run: Record<string, string> }> = {
   "reference": {
     build: { BUN_AOT: "0" },
     run: { BUN_JSC_useImmutableIntrinsics: "1", BUN_JSC_hideFunctionSourceForTesting: "1" },
   },
   "aot": { build: {}, run: {} },
-  "validated": { build: { BUN_AOT_OPTIONS: "validateAOTInferredTypes=1" }, run: {} },
 };
 
 const environment = { ...process.env, BUN_ENABLE_CRASH_REPORTING: "0", NO_COLOR: "1" } as Record<string, string>;
@@ -171,7 +170,7 @@ async function runBatch(number: number, batch: string[]) {
       rmSync(executable);
     }
     const differing = new Set<string>();
-    for (const kind of ["aot", "validated"] as const) {
+    for (const kind of ["aot"] as const) {
       for (const { executable, batch: built } of await buildable([...reference.keys()], kind, join(directory, kind))) {
         for (const test of built) {
           const outcome = await run([executable, test], kinds[kind].run, 120);
@@ -229,7 +228,7 @@ if (existsSync(results)) {
 }
 const isDone = (verdicts: string[]) =>
   verdicts.some(verdict => verdict === "excluded" || verdict === "unbuildable-reference") ||
-  (verdicts.some(verdict => verdict.endsWith("-aot")) && verdicts.some(verdict => verdict.endsWith("-validated")));
+  verdicts.some(verdict => verdict.endsWith("-aot"));
 
 const only = args.only ? new RegExp(args.only) : undefined;
 let skipped = 0;

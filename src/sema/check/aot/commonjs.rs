@@ -50,10 +50,12 @@ use super::flows::Place;
 use crate::atom::{Atom, known};
 use crate::bind::{Decl, Parent, PatParent, SymFlags, is_module_exports, is_module_exports_inside_parentheses, required_specifier, string_literal_text};
 use crate::check::Checker;
-use crate::hir::{BinOp, Chain, ExprId, ExprKind, ExprTag, FileKind, Flags, FnBody, FnId, FnKind, ImportEqualsTarget, PatKind, PropKey, PropKind, ResolutionMode, StmtId, StmtKind, UnOp, VarDeclId};
+use crate::hir::{BinOp, Chain, ExprId, ExprKind, ExprTag, FileKind, Flags, FnBody, FnId, FnKind, ImportEqualsTarget, PatKind, PropKey, PropKind, ResolutionMode, SpecifierKind, StmtId, StmtKind, UnOp, VarDeclId};
 use crate::program::{FileId, Sym};
-use crate::util::{FxHashMap, FxHashSet};
-use std::sync::OnceLock;
+use crate::util::{FxHashMap, FxHashSet, InParallel};
+use super::OnceLock;
+
+const FILES_OF_A_CHECKER: usize = 32;
 
 /// How a CommonJS module of the program keeps what it exports.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -93,6 +95,8 @@ const CREATE_BINDING: [&[u8]; 2] = [
     b"(Object.create?(function(o,m,k,k2){if(k2===undefined)k2=k;vardesc=Object.getOwnPropertyDescriptor(m,k);if(!desc||(\"get\"indesc?!m.__esModule:desc.writable||desc.configurable)){desc={enumerable:true,get:function(){returnm[k];}};}Object.defineProperty(o,k2,desc);}):(function(o,m,k,k2){if(k2===undefined)k2=k;o[k2]=m[k];}))",
     b"(Object.create?(function(o,m,k,k2){if(k2===undefined)k2=k;Object.defineProperty(o,k2,{enumerable:true,get:function(){returnm[k];}});}):(function(o,m,k,k2){if(k2===undefined)k2=k;o[k2]=m[k];}))",
 ];
+const START_OF_TSLIB: &[u8] = b"function(factory){varroot=typeofglobal===\"object\"?global:typeofself===\"object\"?self:typeofthis===\"object\"?this:{};if(typeofdefine===\"function\"&&define.amd){define(\"tslib\",[\"exports\"],function(exports){factory(createExporter(root,createExporter(exports)));});}elseif(typeofmodule===\"object\"&&typeofmodule.exports===\"object\"){factory(createExporter(root,createExporter(module.exports)));}else{factory(createExporter(root));}functioncreateExporter(exports,previous){if(exports!==root){if(typeofObject.create===\"function\"){Object.defineProperty(exports,\"__esModule\",{value:true});}else{exports.__esModule=true;}}returnfunction(id,v){returnexports[id]=previous?previous(id,v):v;};}}";
+const EXPORT_STAR_OF_TSLIB: &[u8] = b"function(m,o){for(varpinm)if(p!==\"default\"&&!Object.prototype.hasOwnProperty.call(o,p))__createBinding(o,m,p);}";
 
 const NAMES_OF_OBJECT_PROTOTYPE: [&[u8]; 12] = [
     b"constructor",
@@ -119,19 +123,24 @@ struct Graph {
     folded: FxHashMap<(FileId, StmtId), bool>,
     /// Who imports what without saying so: the JSX runtime.
     implicit: Vec<(FileId, FileId)>,
+    is_run_from_its_sources: bool,
 }
 
 /// What has been asked so far. It belongs to a checker.
 #[derive(Default)]
 pub(super) struct State {
+    tslibs: FxHashMap<FileId, bool>,
+    stars_by_tslib: Vec<(FileId, FileId)>,
     /// `function_exported_whole`. `None` also while it is being found.
     exported_whole: FxHashMap<FileId, Option<(FileId, FnId, bool)>>,
+    names_of_export_variables: Option<FxHashMap<FileId, Vec<Atom>>>,
 }
 
 #[derive(Default)]
 pub(super) struct Shared {
     graph: OnceLock<Graph>,
     found: OnceLock<Found>,
+    reached_by_import: OnceLock<FxHashSet<FileId>>,
 }
 
 #[derive(Default)]
@@ -285,14 +294,141 @@ struct Uses {
     /// Who hands which module to `__exportStar`, by which call.
     starred: Vec<(FileId, ExprId, FileId)>,
     awaited: Vec<FileId>,
+    is_cache_read: bool,
+}
+
+impl Uses {
+    fn append(&mut self, mut more: Uses) {
+        self.mentions.append(&mut more.mentions);
+        self.looked_at.append(&mut more.looked_at);
+        self.methods.append(&mut more.methods);
+        self.required_by_functions.extend(more.required_by_functions);
+        self.finding_evaluated.extend(more.finding_evaluated);
+        self.read_by.extend(more.read_by);
+        self.imported_by_es_modules.extend(more.imported_by_es_modules);
+        self.starred.append(&mut more.starred);
+        self.awaited.append(&mut more.awaited);
+        self.is_cache_read |= more.is_cache_read;
+    }
 }
 
 impl<'p, 's> Checker<'p, 's> {
     /// Once for the program, whichever checker is told, before anything is asked. `modules`: all that are compiled with the program.
     /// `resolved`: by file and specifier, the file whose code an `import`, an `import()` or a `require()` runs. `folded`: the `if` statements at the
     /// top level of CommonJS modules whose condition the build replaces by a constant. `implicit`: who imports which JSX runtime.
-    pub fn set_resolved_imports(&self, modules: &[FileId], resolved: Vec<((FileId, Atom), FileId)>, folded: Vec<((FileId, StmtId), bool)>, implicit: Vec<(FileId, FileId)>) {
-        self.p.aot.commonjs.graph.get_or_init(|| Graph { modules: modules.to_vec(), resolved: resolved.into_iter().collect(), folded: folded.into_iter().collect(), implicit });
+    pub fn set_resolved_imports(&self, modules: &[FileId], resolved: Vec<((FileId, Atom), FileId)>, folded: Vec<((FileId, StmtId), bool)>, implicit: Vec<(FileId, FileId)>, is_run_from_its_sources: bool) {
+        self.p.aot.commonjs.graph.get_or_init(|| Graph { modules: modules.to_vec(), resolved: resolved.into_iter().collect(), folded: folded.into_iter().collect(), implicit, is_run_from_its_sources });
+    }
+
+    pub fn names_of_export_variables(&mut self, module: FileId) -> Vec<Atom> {
+        if self.aot.commonjs.names_of_export_variables.is_none() {
+            let found = self.commonjs();
+            let mut names: FxHashMap<FileId, Vec<Atom>> = FxHashMap::default();
+            for &(of, name) in found.stores.keys().chain(found.aliases.keys()) {
+                names.entry(of).or_default().push(name);
+            }
+            for &of in found.marked.keys() {
+                names.entry(of).or_default().push(known::__esModule);
+            }
+            self.aot.commonjs.names_of_export_variables = Some(names);
+        }
+        self.aot.commonjs.names_of_export_variables.as_ref().and_then(|names| names.get(&module)).cloned().unwrap_or_default()
+    }
+
+    pub fn export_variable_behind(&mut self, module: FileId, name: Atom) -> (FileId, Atom) {
+        self.commonjs().aliases.get(&(module, name)).copied().unwrap_or((module, name))
+    }
+
+    pub(super) fn importers_that_see_other_declarations(&self) -> FxHashMap<FileId, Place> {
+        let mut first_of: FxHashMap<FileId, Place> = FxHashMap::default();
+        let Some(graph) = self.p.aot.commonjs.graph.get() else { return first_of };
+        for (&(importer, specifier), &code) in &graph.resolved {
+            if self.is_untyped_file(code) || self.is_untyped_file(importer) || matches!(self.hir(code).kind, FileKind::Declaration | FileKind::Json) {
+                continue;
+            }
+            if self.files.module_of_specifier(importer, specifier).is_some_and(|seen| seen.file == code) {
+                continue;
+            }
+            let pos = self.hir(importer).specifier_uses.iter().find(|used| used.spec == specifier).map_or(0, |used| used.pos);
+            let (at, first) = (Place { file: importer, pos }, first_of.entry(code).or_insert(Place { file: importer, pos }));
+            if at < *first {
+                *first = at;
+            }
+        }
+        first_of
+    }
+
+    pub(super) fn is_reached_by_import(&self, file: FileId) -> bool {
+        let Some(graph) = self.p.aot.commonjs.graph.get() else { return false };
+        let reached = self.p.aot.commonjs.reached_by_import.get_or_init(|| {
+            let mut reached = FxHashSet::default();
+            for &importer in &graph.modules {
+                for used in self.hir(importer).specifier_uses.iter() {
+                    if matches!(used.kind, SpecifierKind::Import | SpecifierKind::SideEffect | SpecifierKind::ImportCall)
+                        && let Some(&imported) = graph.resolved.get(&(importer, used.spec))
+                    {
+                        reached.insert(imported);
+                    }
+                }
+            }
+            reached
+        });
+        reached.contains(&file)
+    }
+
+    pub(super) fn is_in_commonjs_package(&self, file: FileId) -> bool {
+        let directory = self.files().module(file).package_json_directory;
+        directory.is_some() && self.files().package_jsons.get(self.atoms().bytes(directory)).and_then(|json| json.get(b"type")).and_then(|kind| kind.as_str()) == Some(&b"commonjs"[..])
+    }
+
+    pub fn is_in_module_package(&self, file: FileId) -> bool {
+        let directory = self.files().module(file).package_json_directory;
+        directory.is_some() && self.files().package_jsons.get(self.atoms().bytes(directory)).and_then(|json| json.get(b"type")).and_then(|kind| kind.as_str()) == Some(&b"module"[..])
+    }
+
+    pub fn is_in_package_without_side_effects(&self, file: FileId) -> bool {
+        let module = self.files().module(file);
+        if module.package_json_directory.is_none() {
+            return false;
+        }
+        let says = |directory: &[u8]| {
+            let json = self.files().package_jsons.get(directory)?;
+            let has_name = json.get(b"name").and_then(|name| name.as_str()).is_some_and(|name| !name.is_empty());
+            Some((has_name, matches!(json.get(b"sideEffects"), Some(crate::json::Json::Bool(false)))))
+        };
+        let nearest = self.atoms().bytes(module.package_json_directory);
+        let path = module.file_name();
+        let root = crate::resolve::node_module_path_parts(path).map(|(_, _, end)| &path[..end]);
+        if root.is_some_and(|root| !matches!(says(root), Some((_, true)))) {
+            return false;
+        }
+        match says(nearest) {
+            Some((true, is_licensed)) => is_licensed,
+            Some((false, _)) => {
+                let Some(root) = root else { return false };
+                if says(root) != Some((true, true)) || !nearest.starts_with(root) {
+                    return false;
+                }
+                let mut between = nearest;
+                loop {
+                    between = &between[..between.iter().rposition(|&byte| byte == b'/').unwrap_or(0)];
+                    if between.len() <= root.len() {
+                        return between == root;
+                    }
+                    if std::fs::metadata(String::from_utf8_lossy(&[between, b"/package.json"].concat()).as_ref()).is_ok() {
+                        return false;
+                    }
+                }
+            }
+            None => false,
+        }
+    }
+
+    fn ignores_es_module_marker(&self, importer: FileId, module: FileId) -> bool {
+        match self.p.aot.commonjs.graph.get() {
+            Some(graph) if graph.is_run_from_its_sources => self.is_in_module_package(module),
+            _ => self.files().module(importer).implied_format == ResolutionMode::Import,
+        }
     }
 
     pub fn commonjs_exports(&mut self, file: FileId) -> CommonJsExports {
@@ -379,29 +515,33 @@ impl<'p, 's> Checker<'p, 's> {
     /// object, or `name` is `default` and stands for all that the module exports.
     pub fn export_variable_imported_as(&mut self, importer: FileId, module: FileId, name: Atom) -> Option<(FileId, Atom)> {
         let keeper = self.module_with_export_variables(module)?;
-        (name != known::default || self.has_default_of_its_own(importer, keeper)).then(|| self.commonjs().aliases.get(&(keeper, name)).copied().unwrap_or((keeper, name)))
+        (name != known::default || self.has_default_of_its_own(importer, module, keeper)).then(|| self.commonjs().aliases.get(&(keeper, name)).copied().unwrap_or((keeper, name)))
     }
 
     /// Whether `default` is the property of that name. Else it is `module.exports`.
-    fn has_default_of_its_own(&mut self, importer: FileId, keeper: FileId) -> bool {
+    fn has_default_of_its_own(&mut self, importer: FileId, module: FileId, keeper: FileId) -> bool {
         let found = self.commonjs();
-        self.files().module(importer).implied_format != ResolutionMode::Import && found.marked.contains_key(&keeper) && (found.stores.contains_key(&(keeper, known::default)) || found.aliases.contains_key(&(keeper, known::default)))
+        !self.ignores_es_module_marker(importer, module) && found.marked.contains_key(&keeper) && (found.stores.contains_key(&(keeper, known::default)) || found.aliases.contains_key(&(keeper, known::default)))
     }
 
     /// The function that every function the export variable ever holds is a closure of, and whether that is only expected. A read may find `undefined`.
     pub fn only_function_of_export_variable(&mut self, module: FileId, name: Atom) -> Option<(FileId, FnId, bool)> {
+        self.function_held_by_export_variable(module, name, 0)
+    }
+
+    pub(super) fn function_held_by_export_variable(&mut self, module: FileId, name: Atom, depth: u32) -> Option<(FileId, FnId, bool)> {
         let stores = self.commonjs().stores.get(&(module, name))?;
         let (mut callee, mut is_predicted) = (Callee::Nothing, false);
         for &value in stores {
             if value.is_none() {
                 return None;
             }
-            let yielded = self.callee_yielded_by(module, value, 0);
+            let yielded = self.callee_yielded_by(module, value, depth);
             callee = callee.join(yielded.callee);
             is_predicted |= yielded.is_predicted;
         }
         match callee {
-            Callee::One(file, func) => Some((file, func, is_predicted)),
+            Callee::One(file, func) => Some((file, func, is_predicted || self.is_written_in_what_may_have_a_second_body(file, func, &[]))),
             _ => None,
         }
     }
@@ -478,19 +618,26 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(found) = program.aot.commonjs.found.get() {
             return found;
         }
-        program.aot.commonjs.found.get_or_init(|| self.find_commonjs())
+        program.aot.commonjs.found.get_or_init(|| self.find_commonjs(None))
     }
 
-    fn find_commonjs(&mut self) -> Found {
+    pub fn settle_commonjs(&mut self, in_parallel: InParallel<'_>) {
+        let program = self.p;
+        program.aot.commonjs.found.get_or_init(|| self.find_commonjs(Some(in_parallel)));
+    }
+
+    fn find_commonjs(&mut self, in_parallel: Option<InParallel<'_>>) -> Found {
         let program = self.p;
         let Some(graph) = program.aot.commonjs.graph.get() else { return Found::default() };
+        let is_looked_into = |file: &FileId| {
+            let module = self.files().module(*file);
+            module.is_commonjs() && module.builtin.is_none() && self.hir(*file).kind != FileKind::Json
+        };
+        let looked_into: Vec<FileId> = graph.modules.iter().copied().filter(is_looked_into).collect();
+        let found = self.in_slices(&looked_into, FILES_OF_A_CHECKER, in_parallel, &|c, files| files.iter().map(|&file| c.find_commonjs_module(file, graph)).collect::<Vec<Module>>());
         let mut modules: FxHashMap<FileId, Module> = FxHashMap::default();
-        for &file in &graph.modules {
-            let module = self.files().module(file);
-            if module.is_commonjs() && module.builtin.is_none() && self.hir(file).kind != FileKind::Json {
-                let found = self.find_commonjs_module(file, graph);
-                modules.insert(file, found);
-            }
+        for (&file, found) in looked_into.iter().zip(found.into_iter().flatten()) {
+            modules.insert(file, found);
         }
         for &file in &graph.modules {
             if let Some(other) = modules.get(&file).and_then(|module| module.re_exports)
@@ -514,10 +661,17 @@ impl<'p, 's> Checker<'p, 's> {
         };
         let in_cycles = modules_in_cycles(graph);
         let is_in_cycle_with = |a: FileId, b: FileId| in_cycles.get(&a).is_some_and(|cycle| in_cycles.get(&b) == Some(cycle));
-        let exposed = self.modules_exposed(graph);
+        let exposed = self.modules_exposed(graph, in_parallel);
+        let found = self.in_slices(&graph.modules, FILES_OF_A_CHECKER, in_parallel, &|c, files| {
+            let mut uses = Uses::default();
+            for &file in files {
+                c.note_uses_of_commonjs_modules(file, graph, &modules, &keeper_of, &in_cycles, &exposed, &mut uses);
+            }
+            uses
+        });
         let mut uses = Uses::default();
-        for &file in &graph.modules {
-            self.note_uses_of_commonjs_modules(file, graph, &modules, &keeper_of, &in_cycles, &exposed, &mut uses);
+        for more in found {
+            uses.append(more);
         }
         uses.imported_by_es_modules.extend(graph.implicit.iter().copied());
         // The modules that somebody may get at while they are evaluated.
@@ -538,6 +692,12 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for &(module, why) in &uses.looked_at {
             with_object.entry(keeper_of(&modules, module)).or_insert(why);
+        }
+        for (file, tslib) in std::mem::take(&mut self.aot.commonjs.stars_by_tslib) {
+            if uses.looked_at.iter().any(|looked_at| looked_at.0 == tslib) {
+                with_object.entry(file).or_insert("__exportStar of a tslib that is stored to from outside, or used as a value");
+                self.aot.commonjs.tslibs.insert(tslib, false);
+            }
         }
         let standing_for: FxHashMap<(FileId, ExprId), ExportsMention> = uses.mentions.iter().map(|&(file, e, mention)| ((file, e), mention)).collect();
         let mut aliases: FxHashMap<(FileId, Atom), (FileId, Atom)> = FxHashMap::default();
@@ -758,7 +918,9 @@ impl<'p, 's> Checker<'p, 's> {
                 found.aliases.extend(variable_of(&modules, file, name).map(|other| ((file, name), other)));
             }
         }
-        found.finding_evaluated = std::mem::take(&mut uses.finding_evaluated);
+        if !uses.is_cache_read {
+            found.finding_evaluated = std::mem::take(&mut uses.finding_evaluated);
+        }
         for (file, e, mention) in uses.mentions {
             if !with_object.contains_key(&keeper_of(&modules, mention.module)) {
                 found.mentions.insert((file, e), mention);
@@ -1068,6 +1230,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether the identifier names TypeScript's `__exportStar`.
     fn is_export_star(&mut self, file: FileId, callee: ExprId) -> bool {
         let hir = self.hir(file);
+        if let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[callee].kind {
+            return self.atoms().bytes(name) == b"__exportStar" && self.is_export_star_of_tslib(file, callee, obj);
+        }
         if !matches!(hir[callee].kind, ExprKind::Ident(_)) {
             return false;
         }
@@ -1078,6 +1243,137 @@ impl<'p, 's> Checker<'p, 's> {
         let within = hir[function].pos..hir[function].end;
         let binding = self.exprs_by_kind_of(file).of(ExprTag::Ident).iter().copied().find(|&e| within.contains(&hir[e].pos) && matches!(hir[e].kind, ExprKind::Ident(name) if self.atoms().bytes(name) == b"__createBinding"));
         binding.and_then(|binding| self.text_of_helper(file, binding)).is_some_and(|(_, text)| CREATE_BINDING.contains(&&text[..]))
+    }
+
+    fn is_export_star_of_tslib(&mut self, file: FileId, callee: ExprId, holder: ExprId) -> bool {
+        let program = self.p;
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (Some(graph), ExprKind::Ident(_)) = (program.aot.commonjs.graph.get(), hir[holder].kind) else { return false };
+        let local = bound.expr_symbol[holder.idx()];
+        let Some(symbol) = bound.symbols.get(local.idx()) else { return false };
+        if symbol.decls.len() != 1 || symbol.flags.contains(SymFlags::MERGED) || !bound.assignments_to(local).is_empty() || self.is_stored_through_casts(file, local) || self.has_direct_eval(file) {
+            return false;
+        }
+        let (Decl::Var(pat) | Decl::Require(pat)) = symbol.decls[0] else { return false };
+        let PatParent::Var(declaration) = bound.pat_parent[pat.idx()] else { return false };
+        let Some(init) = hir[declaration].init.some() else { return false };
+        let (Some(specifier), ExprKind::Call(call)) = (required_specifier(hir, init), hir[init].kind) else { return false };
+        let Some(&tslib) = graph.resolved.get(&(file, specifier)) else { return false };
+        let is_at_the_top = self.enclosing_fn_of_expr(file, init).is_none() && self.enclosing_fn_of_expr(file, callee).is_none();
+        if !is_at_the_top
+            || hir[init].end > hir[callee].pos
+            || !matches!(hir[pat].kind, PatKind::Ident(_))
+            || !self.names_commonjs_variable(file, hir[call].callee, known::require)
+            || self.runs(file, graph, init) != Runs::Always
+            || !self.is_tslib(tslib)
+        {
+            return false;
+        }
+        if !self.aot.commonjs.stars_by_tslib.contains(&(file, tslib)) {
+            self.aot.commonjs.stars_by_tslib.push((file, tslib));
+        }
+        true
+    }
+
+    fn is_tslib(&mut self, module: FileId) -> bool {
+        if let Some(&known) = self.aot.commonjs.tslibs.get(&module) {
+            return known;
+        }
+        let found = self.exports_known_export_star(module).is_some();
+        self.aot.commonjs.tslibs.insert(module, found);
+        found
+    }
+
+    fn exports_known_export_star(&mut self, module: FileId) -> Option<()> {
+        let (hir, bound, by_kind) = (self.hir(module), self.bound(module), self.exprs_by_kind_of(module));
+        if !self.files().module(module).is_commonjs() || self.has_direct_eval(module) {
+            return None;
+        }
+        let text_of = |e: ExprId| -> Vec<u8> { hir.text[hir[e].pos as usize..hir[e].end as usize].iter().copied().filter(|byte| !byte.is_ascii_whitespace()).collect() };
+        let (mut whole, mut never_run) = (None, 0..0);
+        for stmt in hir.ids(hir.body) {
+            match hir[stmt].kind {
+                StmtKind::Var(declarations) if declarations.iter().all(|declaration| hir[declaration].init.is_none()) => {}
+                StmtKind::Expr(e) => match hir[e].kind {
+                    ExprKind::Binary { op: BinOp::And, left, .. } if whole.is_some() && never_run.is_empty() && text_of(left) == b"0" => never_run = hir[e].pos..hir[e].end,
+                    _ if whole.is_none() => whole = Some(e),
+                    _ => return None,
+                },
+                _ => return None,
+            }
+        }
+        let ExprKind::Call(call) = hir[whole?].kind else { return None };
+        if hir[call].args.len() != 1 || hir[call].chain != Chain::No {
+            return None;
+        }
+        let start = hir[call].callee;
+        let (ExprKind::Fn(_), ExprKind::Fn(rest)) = (hir[start].kind, hir[hir.id_at(hir[call].args, 0)].kind) else { return None };
+        let FnBody::Block(body) = hir[rest].body else { return None };
+        let mut params = hir[rest].params.iter();
+        let (Some(param), None) = (params.next(), params.next()) else { return None };
+        let exporter = bound.pat_symbol[hir[param].pat.idx()];
+        if text_of(start) != START_OF_TSLIB
+            || !matches!(hir[hir[param].pat].kind, PatKind::Ident(_))
+            || hir[param].default.is_some()
+            || !bound.assignments_to(exporter).is_empty()
+            || hir[rest].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
+        {
+            return None;
+        }
+        let is_statement_of_body = |e: ExprId| matches!(bound.expr_parent[e.idx()], Parent::Stmt(stmt) if matches!(hir[stmt].kind, StmtKind::Expr(_)) && hir.ids(body).any(|of_body: StmtId| of_body == stmt));
+        let (mut star, mut binding) = (None, None);
+        for &e in by_kind.of(ExprTag::Ident) {
+            if bound.expr_symbol[e.idx()] != exporter {
+                continue;
+            }
+            let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { return None };
+            let ExprKind::Call(call) = hir[parent].kind else { return None };
+            if hir[call].callee != e || hir[call].args.len() != 2 || hir[call].chain != Chain::No {
+                return None;
+            }
+            let ExprKind::String(name) = hir[hir.id_at(hir[call].args, 0)].kind else { return None };
+            let exported = match self.atoms().bytes(name) {
+                b"__exportStar" => &mut star,
+                b"__createBinding" => &mut binding,
+                _ => continue,
+            };
+            if exported.replace((parent, hir.id_at(hir[call].args, 1))).is_some() || !is_statement_of_body(parent) {
+                return None;
+            }
+        }
+        let stored_once = |(handed_over_by, named): (ExprId, ExprId)| {
+            let ExprKind::Ident(_) = hir[named].kind else { return None };
+            let local = bound.expr_symbol[named.idx()];
+            let symbol = bound.symbols.get(local.idx()).filter(|symbol| symbol.decls.len() == 1 && !symbol.flags.contains(SymFlags::MERGED))?;
+            let &[(_, target)] = bound.assignments_to(local) else { return None };
+            let Parent::Expr(store) = bound.expr_parent[target.idx()] else { return None };
+            let ExprKind::Assign { op: None, target: stored_to, value } = hir[store].kind else { return None };
+            let Decl::Var(pat) = symbol.decls[0] else { return None };
+            let PatParent::Var(declaration) = bound.pat_parent[pat.idx()] else { return None };
+            let is_plain = hir[declaration].init.is_none() && !self.is_stored_through_casts(module, local);
+            (is_plain && stored_to == target && is_statement_of_body(store) && hir[store].end <= hir[handed_over_by].pos).then_some((local, value))
+        };
+        let ((_, star), (binding, made_by)) = (stored_once(star?)?, stored_once(binding?)?);
+        let within = hir[star].pos..hir[star].end;
+        let in_parentheses = [&b"("[..], &text_of(made_by)[..], &b")"[..]].concat();
+        if text_of(star) != EXPORT_STAR_OF_TSLIB || !CREATE_BINDING.contains(&&in_parentheses[..]) || !by_kind.of(ExprTag::Ident).iter().any(|&e| within.contains(&hir[e].pos) && bound.expr_symbol[e.idx()] == binding) {
+            return None;
+        }
+        let is_run_by_the_rest = |e: ExprId| !(hir[start].pos..hir[start].end).contains(&hir[e].pos) && !never_run.contains(&hir[e].pos);
+        for &e in by_kind.of(ExprTag::Ident) {
+            if matches!(hir[e].kind, ExprKind::Ident(known::arguments)) && matches!(self.this_container(module, e), Some(Ok(function)) if function == rest) {
+                return None;
+            }
+            if let ExprKind::Ident(name @ (known::module | known::exports | known::require)) = hir[e].kind
+                && is_run_by_the_rest(e)
+                && self.names_commonjs_variable(module, e, name)
+            {
+                return None;
+            }
+        }
+        let returns_early = |stmt: &StmtId| matches!(hir[*stmt].kind, StmtKind::Return(_)) && self.enclosing_fn(module, bound.stmt_parent[stmt.idx()]) == Some(rest);
+        let is_exports = |e: ExprId| self.this_container(module, e).is_none() && self.enclosing_fn_of_expr(module, e).is_none();
+        (!(0..hir.stmts.len() as u32).map(StmtId).any(|stmt| returns_early(&stmt)) && !by_kind.of(ExprTag::This).iter().any(|&e| is_exports(e))).then_some(())
     }
 
     /// Whether evaluating the expression runs no function of the module and hands none to anybody: it makes functions and literals, reads variables and its own exports, and
@@ -1479,21 +1775,31 @@ impl<'p, 's> Checker<'p, 's> {
         module
     }
 
+    fn required_by_folded_specifier(&self, file: FileId, graph: &Graph, e: ExprId) -> Vec<FileId> {
+        let specifiers = self.hir(file).specifiers_of_folded_require(e);
+        specifiers.into_iter().filter_map(|specifier| graph.resolved.get(&(file, specifier)).copied()).collect()
+    }
+
     /// The modules that a `require` in a function evaluates, and all that those evaluate. Their bodies may run while any other module is being evaluated.
-    fn modules_exposed(&mut self, graph: &Graph) -> FxHashSet<FileId> {
-        let mut pending: Vec<FileId> = Vec::new();
-        for &file in &graph.modules {
-            let (hir, by_kind) = (self.hir(file), self.exprs_by_kind_of(file));
-            for &e in by_kind.of(ExprTag::Call) {
-                let (Some(specifier), ExprKind::Call(call)) = (required_specifier(hir, e), hir[e].kind) else { continue };
-                if let Some(&module) = graph.resolved.get(&(file, specifier))
-                    && self.names_commonjs_variable(file, hir[call].callee, known::require)
-                    && self.runs(file, graph, e) == Runs::Later
-                {
-                    pending.push(module);
+    fn modules_exposed(&mut self, graph: &Graph, in_parallel: Option<InParallel<'_>>) -> FxHashSet<FileId> {
+        let found = self.in_slices(&graph.modules, FILES_OF_A_CHECKER, in_parallel, &|c, files| {
+            let mut pending: Vec<FileId> = Vec::new();
+            for &file in files {
+                let (hir, by_kind) = (c.hir(file), c.exprs_by_kind_of(file));
+                for &e in by_kind.of(ExprTag::Call) {
+                    pending.extend(c.required_by_folded_specifier(file, graph, e));
+                    let (Some(specifier), ExprKind::Call(call)) = (required_specifier(hir, e), hir[e].kind) else { continue };
+                    if let Some(&module) = graph.resolved.get(&(file, specifier))
+                        && c.names_commonjs_variable(file, hir[call].callee, known::require)
+                        && c.runs(file, graph, e) == Runs::Later
+                    {
+                        pending.push(module);
+                    }
                 }
             }
-        }
+            pending
+        });
+        let mut pending: Vec<FileId> = found.into_iter().flatten().collect();
         let mut evaluates: FxHashMap<FileId, Vec<FileId>> = FxHashMap::default();
         for (from, &to) in graph.resolved.iter().map(|(from, to)| (from.0, to)).chain(graph.implicit.iter().map(|import| (import.0, &import.1))) {
             evaluates.entry(from).or_default().push(to);
@@ -1512,7 +1818,23 @@ impl<'p, 's> Checker<'p, 's> {
         let commonjs = |specifier: Atom| graph.resolved.get(&(file, specifier)).copied().filter(|module| modules.contains_key(module));
         let mut pending: Vec<(ExprId, ExportsMention)> = Vec::new();
         let mut held: Vec<(Atom, Holder, ExportsMention)> = Vec::new();
+        let is_cache_of_require = |&e: &ExprId| match hir[e].kind {
+            ExprKind::Dot { obj, name, .. } => matches!(hir[obj].kind, ExprKind::Ident(of) if of == known::require) && self.atoms().bytes(name) == b"cache",
+            _ => false,
+        };
+        if graph.is_run_from_its_sources && by_kind.of(ExprTag::Dot).iter().any(is_cache_of_require) {
+            let mut all: Vec<FileId> = modules.keys().copied().collect();
+            all.sort_unstable();
+            uses.looked_at.extend(all.into_iter().map(|module| (module, "require.cache is read")));
+            uses.is_cache_read = true;
+        }
         for &e in by_kind.of(ExprTag::Call) {
+            for module in self.required_by_folded_specifier(file, graph, e) {
+                if modules.contains_key(&module) {
+                    uses.required_by_functions.insert(module);
+                    uses.looked_at.push((module, "require() of a specifier that is folded"));
+                }
+            }
             let (Some(specifier), ExprKind::Call(call)) = (required_specifier(hir, e), hir[e].kind) else { continue };
             if let Some(module) = commonjs(specifier)
                 && self.names_commonjs_variable(file, hir[call].callee, known::require)
@@ -1528,6 +1850,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
         for &e in by_kind.of(ExprTag::ImportCall) {
             if let ExprKind::ImportCall { args } = hir[e].kind
+                && let Some(specifier) = hir.ids(args).next()
+            {
+                for module in hir.folded_choice_of_specifiers(specifier).into_iter().filter_map(commonjs) {
+                    uses.imported_by_es_modules.insert((file, module));
+                    uses.looked_at.push((module, "import() of a specifier that is folded"));
+                }
+            }
+            if let ExprKind::ImportCall { args } = hir[e].kind
                 && let Some(ExprKind::String(specifier)) = hir.ids(args).next().map(|specifier: ExprId| hir[specifier].kind)
                 && let Some(module) = commonjs(specifier)
             {
@@ -1541,14 +1871,13 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        let is_node_mode = self.files().module(file).implied_format == ResolutionMode::Import;
         for stmt in hir.ids(hir.body) {
             match hir[stmt].kind {
                 StmtKind::Import(import) if !hir[import].type_only => {
                     let Some(module) = commonjs(hir[import].spec) else { continue };
                     uses.imported_by_es_modules.insert((file, module));
                     let kept = &modules[&keeper_of(modules, module)];
-                    let has_default_of_its_own = !is_node_mode && kept.is_marked() && kept.has(known::default);
+                    let has_default_of_its_own = !self.ignores_es_module_marker(file, module) && kept.is_marked() && kept.has(known::default);
                     let mut bindings = Vec::new();
                     if hir[import].default.is_some() && !has_default_of_its_own {
                         bindings.push((hir[import].default, Decl::ImportDefault(import), false));
@@ -1605,7 +1934,7 @@ impl<'p, 's> Checker<'p, 's> {
                         if mention.is_namespace && (name == known::__esModule || name == known::default && !kept.is_marked() && kept.has(known::default)) {
                             uses.looked_at.push((module, "ns.__esModule, or ns.default of a module that is not marked and has one"));
                         }
-                        if mention.is_namespace && name == known::default && (is_node_mode || !kept.is_marked() || !kept.has(known::default)) {
+                        if mention.is_namespace && name == known::default && (self.ignores_es_module_marker(file, module) || !kept.is_marked() || !kept.has(known::default)) {
                             pending.push((member, ExportsMention::of(module)));
                             continue;
                         }
@@ -1639,6 +1968,7 @@ impl<'p, 's> Checker<'p, 's> {
                             }
                             PatKind::Object(props) if !mention.is_boxed && hir[declaration].ty.is_none() => {
                                 let kept = &modules[&keeper_of(modules, module)];
+                                let is_node_mode = self.ignores_es_module_marker(file, module);
                                 let is_whole = |name: Atom| mention.is_namespace && (name == known::__esModule || name == known::default && (is_node_mode || !kept.is_marked() || !kept.has(known::default)));
                                 for prop in props.iter() {
                                     let name = match (hir[prop].key, hir[hir[prop].value].kind) {
@@ -1703,6 +2033,15 @@ impl<'p, 's> Checker<'p, 's> {
                             uses.looked_at.push((binding.2.module, "the classic JSX runtime reads its factory from it"));
                         }
                     }
+                }
+            }
+            for found in self.values_named_by_decorators(file) {
+                let is_held_by = |holder: Holder| match holder {
+                    Holder::Variable(sym) => sym == found,
+                    Holder::Import(decl) => self.files().decls(found).contains(&(file, decl)),
+                };
+                for binding in names.iter().filter(|binding| is_held_by(binding.1)) {
+                    uses.looked_at.push((binding.2.module, "the metadata of a decorator reads a type from it"));
                 }
             }
             followed = held.len();

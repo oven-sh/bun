@@ -25,9 +25,7 @@ use js_ast::OpCode as Op;
 // The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
     // through `e` can be cached in registers across child recursion. The by-value
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
@@ -1890,6 +1888,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
+        if matches!(e_.target.data, Data::EMissing(..)) {
+            p.visit_expr_in_out(&mut e_.args[0], in_);
+            return;
+        }
         p.call_target = e_.target.data;
 
         p.then_catch_chain = ThenCatchChain {

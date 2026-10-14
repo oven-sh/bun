@@ -421,7 +421,7 @@ test.skipIf(isWindows)("Bun.udpSocket({ fd }) rejects a descriptor a live socket
   socket.bind({ fd: wrap.fd });
   await listening;
 
-  await expect(() => Bun.udpSocket({ fd: wrap.fd })).toThrowWithCodeAsync(Error, "EEXIST");
+  await expect(() => Bun.udpSocket({ fd: wrap.fd } as any)).toThrowWithCodeAsync(Error, "EEXIST");
 
   socket.close();
   wrap.close();
@@ -478,7 +478,7 @@ test("connect() with a custom lookup that yields a name that cannot be a hostnam
   socket.bind(0, "127.0.0.1", onBound);
   await bound;
 
-  const err: any = await new Promise(resolve => socket.connect(1234, hostname, resolve));
+  const err: any = await new Promise(resolve => socket.connect(1234, hostname, resolve as () => void));
   let connected = true;
   try {
     socket.remoteAddress();
@@ -778,11 +778,11 @@ test("handleDrain resumes after renewed backpressure and steps past a throwing e
     handle.sendQueue = [];
 
     const lengths = [10, 20, 30, 40];
-    const fired: { i: number; err: any; sent: number }[] = [];
+    const fired: { i: number; err: any; sent: number | undefined }[] = [];
     const done = lengths.map((n, i) => {
       const { promise, resolve } = Promise.withResolvers<void>();
       socket.send(Buffer.alloc(n), (err, sent) => {
-        fired.push({ i, err: err?.code ?? err, sent });
+        fired.push({ i, err: (err as NodeJS.ErrnoException | null)?.code ?? err, sent });
         resolve();
       });
       return promise;

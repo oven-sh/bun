@@ -46,7 +46,7 @@ test("Response with streaming body can be cloned", async () => {
 
 test("Request with large streaming body can be cloned", async () => {
   let largeData = "x".repeat(1024 * 1024); // 1MB of data
-  let chunks = [];
+  let chunks: string[] = [];
   for (let chunkSize = 1024; chunkSize <= 1024 * 1024; chunkSize *= 2) {
     chunks.push(largeData.slice(0, chunkSize));
   }
@@ -72,7 +72,7 @@ test("Request with large streaming body can be cloned", async () => {
 
 test("Request with large streaming body can be cloned (pull)", async () => {
   let largeData = "x".repeat(1024 * 1024); // 1MB of data
-  let chunks = [];
+  let chunks: string[] = [];
   for (let chunkSize = 1024; chunkSize <= 1024 * 1024; chunkSize *= 2) {
     chunks.push(largeData.slice(0, chunkSize));
   }
@@ -886,7 +886,7 @@ describe.concurrent("clone() after `.body` was observed returns a fresh tee bran
     expect(before.locked).toBe(false);
     expect(target.bodyUsed).toBe(false);
 
-    const cloned = target.clone();
+    const cloned = target.clone() as Request | Response;
     const after = target.body!;
 
     // Spec: .body is a new tee branch; the pre-clone stream is the tee
@@ -969,7 +969,6 @@ describe.concurrent("clone() after `.body` was observed returns a fresh tee bran
               controller.close();
             },
           }),
-          // @ts-expect-error duplex
           duplex: "half",
         }),
     ],
@@ -1043,7 +1042,6 @@ test("new Request(src, init) with a user ReadableStream body: both derived and s
         controller.close();
       },
     });
-  // @ts-expect-error duplex
   const make = () => new Request("http://example.com/", { method: "POST", body: stream(), duplex: "half" });
   const bytes = async (r: Request | Response) => [...new Uint8Array(await r.arrayBuffer())];
 
@@ -1054,7 +1052,7 @@ test("new Request(src, init) with a user ReadableStream body: both derived and s
   // Bun extension: a Response as the second argument contributes its body via
   // the sibling Response-source branch in construct_into.
   const responseSrc = new Response(stream());
-  // @ts-expect-error Bun accepts a Response as init
+  // Bun accepts a Response as init
   const fromResponse = new Request("http://example.com/", responseSrc);
   expect({
     twoArg: { derived: await bytes(twoArg), src: await bytes(twoArgSrc) },
@@ -1122,7 +1120,9 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     await using server = Bun.serve({
       port: 0,
       fetch: req =>
-        new URL(req.url).pathname === "/clone" ? new Response(file().stream()).clone() : new Response(file().stream()),
+        new URL(req.url).pathname === "/clone"
+          ? (new Response(file().stream()).clone() as Response)
+          : new Response(file().stream()),
     });
     const results: Record<string, [string | null, string]> = {};
     for (const path of ["/direct", "/clone"]) {
@@ -1218,7 +1218,7 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
       ["Request.clone()", file => post(file).clone()],
       ["new Request(request)", file => new Request(post(file))],
       ["new Request(request, init)", file => new Request(post(file), { headers: { "x-test": "1" } })],
-      // @ts-expect-error Bun takes a Response as init and clones its body.
+      // Bun takes a Response as init and clones its body.
       ["new Request(url, response)", file => new Request("http://example.com/", new Response(file))],
     ];
 
@@ -1538,7 +1538,7 @@ describe("Bun.serve: clone() of an incoming request whose body nobody reads", ()
     let data = "";
     const socket = await Bun.connect({
       hostname: "127.0.0.1",
-      port: server.port,
+      port: server.port!,
       socket: {
         data(_socket, chunk) {
           data += chunk.toString();
@@ -1633,7 +1633,7 @@ describe("clone() of a body that fails mid-stream", () => {
         return new Response("handler threw", { status: 500 });
       },
     });
-    const client = net.connect(server.port, "127.0.0.1");
+    const client = net.connect(server.port!, "127.0.0.1");
     try {
       client.on("error", () => {});
       client.write(

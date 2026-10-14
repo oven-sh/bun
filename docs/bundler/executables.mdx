@@ -441,6 +441,62 @@ bun test --aot
 
 Your program sees the paths of its source files, as it does with `bun run`. In `bun test --aot`, `spyOn` throws a `TypeError` for a property of a built-in object, such as `spyOn(Math, "random")`.
 
+#### Typed versions of packages
+
+`--aot` generates faster code for TypeScript than for JavaScript, because the types tell it how your objects are laid out. Most packages on npm ship JavaScript. A typed version of a package is the package's own code with types added and nothing else changed. When your project has one for the exact files that are installed, `--aot` compiles it in place of the JavaScript. Nothing in `node_modules` is modified, and builds without `--aot` ignore typed versions.
+
+Install the typed version of a package the way you install its `@types` package:
+
+```bash icon="terminal" terminal
+bun add -d @sound/react-dom
+```
+
+For a package named `pkg`, Bun looks in two places:
+
+1. `.sound/pkg/` in the directory you run the build from. Use it for a package that you have patched.
+2. `node_modules/@sound/pkg` (`@sound/scope__pkg` for `@scope/pkg`), if your own `package.json` lists it in `dependencies` or `devDependencies`. Bun ignores a typed version that only one of your dependencies depends on. Your own `package.json` is the nearest one at or above the directory you run the build from.
+
+Either one has a `sound.json` and a `lay` directory:
+
+```json sound.json icon="file-json"
+{
+  "sound": 1,
+  "name": "react-reconciler",
+  "version": "0.33.0",
+  "when": { "process.env.NODE_ENV": "production" },
+  "basis": { "cjs/react-reconciler.production.js": "9eab580c..." },
+  "lay": {
+    "cjs/react-reconciler.production.ts": "new",
+    "index.js": "fc1202d3..."
+  },
+  "needs": []
+}
+```
+
+| Field             | Meaning                                                                                                                                                |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`, `version` | The installed package they are for.                                                                                                                    |
+| `when`            | What the build must [`define`](/bundler#define), as strings.                                                                                           |
+| `basis`           | Installed files that the types were written for and that are not replaced, each with its SHA-256.                                                      |
+| `lay`             | Paths in the package that `lay/<path>` takes the place of, each with the SHA-256 of the installed file, or `"new"` for a file the package doesn't have. |
+| `needs`           | Other packages whose typed versions must be in use too.                                                                                                |
+
+Bun uses a typed version only if everything matches, and says so:
+
+```txt
+note: "react-reconciler" 0.33.0 is compiled from its typed version in node_modules/@sound/react-reconciler
+```
+
+Otherwise it compiles the package as installed and prints a warning that names the first mismatch, such as after you upgrade the package:
+
+```txt
+warn: the typed version of "react-reconciler" in node_modules/@sound/react-reconciler is not used: it is for version 0.33.0, and 0.33.1 is installed: the package is compiled untyped
+```
+
+`Bun.build` returns both in `logs`. `bun run --aot` and `bun test --aot` print neither.
+
+Bun type checks a typed version when you build. What your `tsconfig.json` asks for beyond `strict`, such as `noUncheckedIndexedAccess`, and its `lib`, `target` and `types` do not apply to it. If it has a type error, Bun prints a warning and compiles it without its types.
+
 ---
 
 ## Embedding runtime arguments

@@ -25,6 +25,8 @@
 #include <JavaScriptCore/DateInstance.h>
 #include <JavaScriptCore/JSModuleEnvironment.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include "JavaScriptCore/AOTFunction.h"
+#include "ModuleLoader.h"
 #include "BunPlugin.h"
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
@@ -390,6 +392,9 @@ public:
         if (attributes & SpyAttributeESModuleNamespace) {
             if (auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, identifier, implValue);
+                RETURN_IF_EXCEPTION(scope, );
+            } else if (JSC::AOT::Typed::isModuleNamespace(target)) {
+                Bun::overrideExportOfCompiledNamespace(defaultGlobalObject(globalObject), target, identifier, jsUndefined());
                 RETURN_IF_EXCEPTION(scope, );
             }
         } else if (auto index = parseIndex(identifier)) {
@@ -1581,6 +1586,14 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+            } else if (JSC::AOT::Typed::isModuleNamespace(object)) {
+                bool isDone = Bun::overrideExportOfCompiledNamespace(globalObject, object, Identifier::fromUid(vm, propertyKey.uid()), mock);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!isDone) {
+                    throwTypeError(globalObject, scope, makeString("Cannot spy on `"_s, String(propertyKey.uid()), "`: the exports of a module cannot be replaced in ahead-of-time compiled programs"_s));
+                    return {};
+                }
+                mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
             } else if (auto index = parseIndex(propertyKey)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
                 object->putDirectIndex(globalObject, *index, mock, attributes, PutDirectIndexLikePutDirect);
@@ -1607,6 +1620,9 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
                 moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, mock);
                 mock->spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
+            } else if (JSC::AOT::Typed::isModuleNamespace(object)) {
+                throwTypeError(globalObject, scope, makeString("Cannot spy on `"_s, String(propertyKey.uid()), "`: an export that is no function cannot be replaced in ahead-of-time compiled programs"_s));
+                return {};
             } else {
                 object->putDirectAccessor(globalObject, propertyKey, JSC::GetterSetter::create(vm, globalObject, mock, mock), attributes);
             }

@@ -166,7 +166,13 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--aot                             Compile the program to machine code ahead of time, then run it"
     ),
     parse_param!(
+        "--aot-type-errors <STR>           With --aot: what a value that contradicts its type does: \"throw\" (default), or \"log\": write a record of it to stderr, and go on as JavaScript where it can"
+    ),
+    parse_param!(
         "--aot-graph-fd <STR>              (internal) What --aot becomes once the program is compiled"
+    ),
+    parse_param!(
+        "--aot-audit                       Run as usual and log every place where a build with --aot would throw, convert a value or refuse a change. No tail calls are made meanwhile: stacks are deeper"
     ),
     parse_param!(
         "--interactive                     Start a Node.js-compatible REPL, like node --interactive"
@@ -419,6 +425,12 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--compile-jit-policy <NUMBER>    JIT tier-up threshold scale the executable starts with (default 1 = normal; see Bun.unsafe.setJITPolicy)"
         ),
         parse_param!(
+            "--compile-function-source        With --compile --aot: keep the text that Function.prototype.toString() answers with (default: true)"
+        ),
+        parse_param!(
+            "--no-compile-function-source     With --compile --aot: leave that text out; toString() of a compiled function says [native code]"
+        ),
+        parse_param!(
             "--compile-autoload-dotenv        Enable autoloading of .env files in standalone executable (default: true)"
         ),
         parse_param!(
@@ -446,7 +458,13 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot                            Compile JavaScript to machine code ahead of time in standalone executable. Requires --compile. Implies --bytecode"
         ),
         parse_param!(
+            "--aot-explain <STR>...           With --aot: print what the compiler has decided, e.g. --aot-explain=throws lists every check that can fail when the program runs"
+        ),
+        parse_param!(
             "--compile-aot                    (deprecated) The former name of --aot"
+        ),
+        parse_param!(
+            "--aot-type-errors <STR>          With --compile --aot: what the executable does with a value that contradicts its type: \"throw\" (default), or \"log\": write a record of it to stderr, and go on as JavaScript where it can"
         ),
         parse_param!(
             "--compile-run                    (internal) Run what was built in place of this process instead of writing an executable"
@@ -1288,6 +1306,21 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
         ctx.runtime_options.aot = args.flag(b"--aot");
+        ctx.runtime_options.aot_logs_type_errors = match args.option(b"--aot-type-errors") {
+            None | Some(b"throw") => false,
+            Some(b"log") => true,
+            Some(type_errors) => {
+                Output::err_generic(
+                    "Invalid value for --aot-type-errors: \"{}\". Must be \"throw\" or \"log\"",
+                    format_args!("{}", BStr::new(type_errors)),
+                );
+                Global::exit(1);
+            }
+        };
+        ctx.runtime_options.aot_audit = args.flag(b"--aot-audit");
+        if ctx.runtime_options.aot_audit {
+            crate::cli::aot_audit::want();
+        }
         ctx.runtime_options.aot_graph_fd = args
             .option(b"--aot-graph-fd")
             .and_then(|fd| core::str::from_utf8(fd).ok()?.parse().ok());
@@ -2130,6 +2163,11 @@ fn parse_build_command_options(
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.check = args.flag(b"--check");
     ctx.bundler_options.aot = args.flag(b"--aot") || args.flag(b"--compile-aot");
+    ctx.bundler_options.aot_explain = slice_to_owned(args.options(b"--aot-explain"));
+    if let Some(word) = ctx.bundler_options.aot_explain.iter().find(|word| !bun_aot::Explain::default().set(word)) {
+        Output::err_generic("--aot-explain does not take \"{}\": it is one of {}", (BStr::new(word), bun_aot::Explain::WORDS.join(", ")));
+        Global::exit(1);
+    }
     ctx.bundler_options.compile_run = args.flag(b"--compile-run");
     ctx.bundler_options.rewrite_jest_for_tests = args.flag(b"--rewrite-jest-for-tests");
     if args.flag(b"--expose-internals") {
@@ -2411,6 +2449,26 @@ fn parse_build_command_options(
         }
     }
 
+    {
+        let has_positive = args.flag(b"--compile-function-source");
+        let has_negative = args.flag(b"--no-compile-function-source");
+
+        if has_positive || has_negative {
+            if !ctx.bundler_options.compile {
+                Output::err_generic("--compile-function-source requires --compile", ());
+                Global::crash();
+            }
+            if has_positive && has_negative {
+                Output::err_generic(
+                    "Cannot use both --compile-function-source and --no-compile-function-source",
+                    (),
+                );
+                Global::crash();
+            }
+            ctx.bundler_options.compile_function_source = has_positive;
+        }
+    }
+
     // Handle --compile-autoload-dotenv flags
     {
         let has_positive = args.flag(b"--compile-autoload-dotenv");
@@ -2502,6 +2560,23 @@ fn parse_build_command_options(
     if ctx.bundler_options.aot && !ctx.bundler_options.compile {
         Output::err_generic("--aot requires --compile", ());
         Global::crash();
+    }
+    if let Some(type_errors) = args.option(b"--aot-type-errors") {
+        if !ctx.bundler_options.aot {
+            Output::err_generic("--aot-type-errors requires --aot", ());
+            Global::crash();
+        }
+        ctx.bundler_options.aot_logs_type_errors = match type_errors {
+            b"throw" => false,
+            b"log" => true,
+            _ => {
+                Output::err_generic(
+                    "Invalid value for --aot-type-errors: \"{}\". Must be \"throw\" or \"log\"",
+                    format_args!("{}", BStr::new(type_errors)),
+                );
+                Global::exit(1);
+            }
+        };
     }
     if ctx.bundler_options.aot {
         if let Some(why) = crate::cli::aot::why_unsupported(&ctx.bundler_options.compile_target) {

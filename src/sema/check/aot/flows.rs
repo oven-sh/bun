@@ -38,13 +38,14 @@ use super::alterations::{Alteration, DoorsCounted, NUMBER_OF_OPERANDS, UntypedAl
 use super::escape_closure::Escapes;
 use super::first_stores::Constructions;
 use super::trust::Claim;
+use super::storage::Made;
 use crate::hir::{BinOp, Chain, ClassId, ExprId, ExprKind, ExprTag, FileKind, FnId, MappedModifier, MemberKind, PatKind, TypeNodeId, TypeNodeKind};
 use crate::program::{FileId, Sym};
 use crate::types::{ComponentsId, EnumValue, Follow, Intrinsic, MapperId, Origin, Prop, PropFlags, PropSource, Shape, SigId, TypeData, TypeId, Visitor};
 use crate::util::{FxHashMap, FxHashSet};
 use std::hash::Hash;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Barrier, Mutex, PoisonError, RwLock};
+use std::sync::{Arc, Barrier, Mutex, PoisonError, RwLock};
 
 /// The classes of the language whose objects the engine makes and tells by what they are.
 const CLASSES_OF_THE_ENGINE: [&[u8]; 23] = [
@@ -75,6 +76,23 @@ const CLASSES_OF_THE_ENGINE: [&[u8]; 23] = [
 
 /// A type in whose own type arguments one declaration is applied more often than this, one application within the other, is not laid out.
 const MOST_APPLICATIONS_WITHIN_EACH_OTHER: u32 = 8;
+
+const MOST_INSTANTIATIONS_LOOKED_INTO: u32 = 8;
+
+const MOST_INSTANTIATIONS_LOOKED_INTO_AT_ALL: u32 = 2048;
+
+const MOST_LEVELS_LOOKED_INTO: u32 = 256;
+
+const MOST_PROPERTIES_OF_A_RECORD_THAT_IS_TURNED_WHERE_IT_LIES: usize = 6;
+
+const MOST_TYPES_THAT_CROSS_FROM_ONE_PLACE: u32 = 1 << 16;
+
+pub struct GaveUp {
+    rank: (u8, u32, u32),
+    pub typed_side: FileId,
+    pub name: String,
+    pub place: String,
+}
 
 /// Where in the source something has been noted.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -126,6 +144,8 @@ pub struct Noted<T = TypeId> {
     not_laid_out: FxHashSet<T>,
     /// Where a declaration without a body was taken for a prediction: `Checker::unvouched_claim`.
     predictions: FxHashMap<Place, Claim>,
+    cut_short: FxHashMap<Place, [u32; 4]>,
+    most_looked_into: [u32; 3],
     /// By field, which is a layout and a name: the functions whose closures the allocation sites of the layout store there.
     callees_at_birth: FxHashMap<(T, Atom), Callee>,
     /// The same for the stores through a supertype, which reach the objects of every subtype.
@@ -161,6 +181,8 @@ impl<T> Default for Noted<T> {
             untyped_into: FxHashMap::default(),
             not_laid_out: FxHashSet::default(),
             predictions: FxHashMap::default(),
+            cut_short: FxHashMap::default(),
+            most_looked_into: [0; 3],
             callees_at_birth: FxHashMap::default(),
             callees_stored: FxHashMap::default(),
             callee_holes: FxHashMap::default(),
@@ -172,6 +194,16 @@ impl<T> Default for Noted<T> {
 }
 
 impl<T: Copy + Eq + Hash> Noted<T> {
+    pub fn absorb_evidence_of_strangers(&mut self, other: &Noted<T>) {
+        if let Some(noted) = &other.escapes.alterations {
+            self.escapes.alterations.get_or_insert_with(Default::default).absorb_evidence_of_strangers(noted);
+        }
+    }
+
+    pub fn evidence_of_strangers(&self) -> (Vec<T>, Vec<T>, Vec<T>) {
+        self.escapes.with_alterations(|noted| (noted.let_out(), noted.entered_by_strangers(), noted.entered_if_let_out()))
+    }
+
     /// Adds what has been noted elsewhere, in terms of the same names for the types.
     pub fn absorb(&mut self, other: Noted<T>) {
         self.allocated_at_site.extend(other.allocated_at_site);
@@ -185,6 +217,14 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         self.tests.extend(other.tests);
         self.not_laid_out.extend(other.not_laid_out);
         self.predictions.extend(other.predictions);
+        for (at, times) in other.cut_short {
+            for (sum, more) in self.cut_short.entry(at).or_default().iter_mut().zip(times) {
+                *sum += more;
+            }
+        }
+        for (most, other) in self.most_looked_into.iter_mut().zip(other.most_looked_into) {
+            *most = (*most).max(other);
+        }
         self.callee_holes.extend(other.callee_holes);
         self.creations.absorb(other.creations);
         self.constructions.absorb(other.constructions);
@@ -263,7 +303,7 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         let creations = self.creations.renamed(&mut rename);
         let constructions = self.constructions.renamed(&mut rename);
         let escapes = self.escapes.renamed(&mut rename);
-        Noted { allocated_at_site, copied_into, upcasts, casts, guards, forced, data_held_to, tests, vouched_into, foreign, untyped_into, not_laid_out, predictions: self.predictions, callees_at_birth, callees_stored, callee_holes: self.callee_holes, creations, constructions, escapes }
+        Noted { allocated_at_site, copied_into, upcasts, casts, guards, forced, data_held_to, tests, vouched_into, foreign, untyped_into, not_laid_out, predictions: self.predictions, cut_short: self.cut_short, most_looked_into: self.most_looked_into, callees_at_birth, callees_stored, callee_holes: self.callee_holes, creations, constructions, escapes }
     }
 }
 
@@ -311,32 +351,47 @@ pub(super) struct State {
     place: Place,
     /// What `types_held_entering` has been asked.
     held_entering: FxHashSet<(TypeId, TypeId)>,
+    is_known_by_the_stores: bool,
+    looked_into: Vec<((Applied, Applied), [u32; 2])>,
+    not_looked_into: FxHashSet<(TypeId, bool)>,
+    levels_looked_into: u32,
     /// `find_applications_in`, as far as it has been asked.
     applications: FxHashMap<TypeId, Vec<(Applied, u32)>>,
     beyond_the_layouts: FxHashMap<TypeId, bool>,
     /// Once the program is linked: a bit for every published name, by its number. Set: some code of the program stores a property by it.
-    stored: Option<Vec<u64>>,
+    stored: Option<std::sync::Arc<Vec<u64>>>,
     /// Cache of `canonical_type`.
     canonical: FxHashMap<TypeId, TypeId>,
     laid_out: FxHashMap<TypeId, TypeId>,
     nested_too_deeply: FxHashMap<TypeId, bool>,
+    with_room_for_what_nothing_is_said_of: FxHashMap<TypeId, bool>,
+    seen_before: Option<Arc<FxHashSet<Identity>>>,
     finding_canonical: u32,
+    pub(super) objects_of: FxHashMap<TypeId, std::rc::Rc<super::alterations::ObjectsOf>>,
     pub(super) takes_primitives_by_itself: FxHashMap<TypeId, bool>,
+    pub(super) function_types: Option<[TypeId; 3]>,
     /// `is_tainted`, as far as it has been asked.
     tainted: FxHashMap<TypeId, bool>,
     with_tainted_part: FxHashMap<TypeId, bool>,
     being_asked_of_taint: u32,
     /// This checker is at the search from the doors. While it is, no type is tainted.
     is_searching_from_doors: bool,
+    is_crossing_bounded: bool,
+    crossing_from_one_place: u32,
+    gave_up_crossing: Option<GaveUp>,
     /// For the search: the untyped files that a tool has made of a TypeScript file which is still in the program, checked, and only declares (`P.tsx.js` of `P.tsx`), and those TypeScript files.
     made_of_checked_text: FxHashSet<FileId>,
     checked_texts: FxHashSet<FileId>,
+    pairs_compared: FxHashSet<(TypeId, TypeId, bool)>,
+    given_and_kept_by_nobody: Vec<Vec<Atom>>,
 }
 
 /// What the search from the doors has found, as every task reads it: it mentions no type by its number. It follows from the program alone, so that it does not matter which task has made it.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(super) struct Given {
+    went_on_by_pairs: bool,
     identities: FxHashSet<Identity>,
+    names: FxHashMap<Identity, Vec<Box<[u8]>>>,
     /// Of those that have properties: by name, `said_by` what the property holds. A name is its text: a text first seen during the check is an atom of the task that has seen it, and another task has another text by that number.
     properties: Vec<FxHashMap<Box<[u8]>, Said>>,
     /// By name of a property: the indexes in `properties` of those that have it.
@@ -468,6 +523,7 @@ pub struct Membership {
     pub(super) altered_by: [[u32; 3]; 2],
     pub(super) untyped_alterations: UntypedAlterations,
     pub(super) widest_alterations: WidestAlterations,
+    pub(super) constructions_are_incomplete: bool,
     pub(super) doors: DoorsCounted,
     pub sizes: Sizes,
     /// For each view that admits foreign objects: why.
@@ -541,8 +597,22 @@ struct LookedAt {
     source: (TypeId, Identity),
     parts_of_source: Vec<Identity>,
     file: FileId,
+    written: TypeNodeId,
     operand: ExprId,
     is_known_for_data: Option<bool>,
+}
+
+struct WrittenUnion {
+    file: FileId,
+    node: TypeNodeId,
+    members: Vec<(TypeId, Identity)>,
+}
+
+#[derive(Default)]
+struct Left {
+    looked_at: FxHashMap<FileId, Vec<LookedAt>>,
+    unions: FxHashMap<FileId, Vec<WrittenUnion>>,
+    arrays: Vec<(Identity, Vec<Identity>)>,
 }
 
 type SaidByType = (Identity, Option<Vec<(Box<[u8]>, Said)>>);
@@ -559,7 +629,17 @@ fn share_by_weight(files: &[FileId], weights: &[u64], index: usize, searchers: u
     files.iter().copied().filter(starts_in_share).collect()
 }
 
-struct Search {
+pub enum Share<'a> {
+    Of(&'a [FileId]),
+    Rest { index: usize, of: usize, is_taken: &'a [bool] },
+}
+
+pub struct Meeting {
+    barrier: Barrier,
+    search: Search,
+}
+
+pub(super) struct Search {
     searchers: usize,
     barrier: Barrier,
     found_by_all: AtomicUsize,
@@ -568,6 +648,13 @@ struct Search {
     said: Vec<Mutex<Vec<SaidByType>>>,
     said_so_far: Mutex<FxHashSet<Vec<(Box<[u8]>, Said)>>>,
     given: RwLock<Given>,
+    gave_up: Mutex<Option<GaveUp>>,
+    is_gone_on_with: bool,
+    left: Mutex<Left>,
+    seen_before: Option<Arc<FxHashSet<Identity>>>,
+    targets_by_source: FxHashMap<Identity, Vec<Identity>>,
+    seen_by_other_declarations: FxHashMap<FileId, Place>,
+    names: Mutex<FxHashMap<Identity, Vec<Box<[u8]>>>>,
 }
 
 fn held<T>(lock: Result<T, PoisonError<T>>) -> T {
@@ -585,7 +672,32 @@ impl Search {
             said: (0..searchers).map(|_| Mutex::default()).collect(),
             said_so_far: Mutex::default(),
             given: RwLock::default(),
+            gave_up: Mutex::default(),
+            is_gone_on_with: false,
+            left: Mutex::default(),
+            seen_before: None,
+            targets_by_source: FxHashMap::default(),
+            seen_by_other_declarations: FxHashMap::default(),
+            names: Mutex::default(),
         }
+    }
+
+    fn going_on_from(first: Search, parties: usize) -> Search {
+        let seen = held(first.seen.into_inner());
+        Search {
+            seen_before: Some(Arc::new(seen.clone())),
+            seen: RwLock::new(seen),
+            tainted: first.tainted,
+            said_so_far: first.said_so_far,
+            given: first.given,
+            left: first.left,
+            names: first.names,
+            ..Search::new(parties)
+        }
+    }
+
+    fn found(&self) -> Given {
+        Given { names: std::mem::take(&mut *held(self.names.lock())), ..std::mem::take(&mut *held(self.given.write())) }
     }
 
     fn has_any_found(&self, found: usize) -> bool {
@@ -619,11 +731,35 @@ impl Search {
 }
 
 impl<'s> Program<'s> {
-    pub fn find_what_is_given(&self, searchers: usize, step: u32, at_once: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) -> Vec<Finished<'s>> {
-        if self.aot.storage.given.get().is_some() {
-            return Vec::new();
+    pub fn is_what_is_given_found(&self) -> bool {
+        self.aot.storage.given.get().is_some()
+    }
+
+    pub(crate) fn absorb_pairs_compared(&self, mut pairs: Vec<(Identity, Identity)>) {
+        if !pairs.is_empty() {
+            held(self.aot.storage.pairs_compared.lock()).append(&mut pairs);
         }
-        let search = Search::new(searchers.max(1));
+    }
+
+    pub fn meeting_of(&self, parties: usize) -> Meeting {
+        let first = held(self.aot.storage.found_at_first.lock()).take().expect("the search from the doors is made ahead of the plan");
+        let mut search = Search::going_on_from(first, parties);
+        for (source, target) in std::mem::take(&mut *held(self.aot.storage.pairs_compared.lock())) {
+            search.targets_by_source.entry(source).or_default().push(target);
+        }
+        for targets in search.targets_by_source.values_mut() {
+            targets.sort_unstable();
+            targets.dedup();
+        }
+        Meeting { barrier: Barrier::new(parties), search }
+    }
+
+    pub fn find_what_is_given(&self, searchers: usize, step: u32, is_searched_again: bool, at_once: &dyn Fn(usize, &(dyn Fn(usize) + Sync))) -> Result<Vec<Finished<'s>>, GaveUp> {
+        if self.aot.storage.given.get().is_some() {
+            return Ok(Vec::new());
+        }
+        let search = Search { is_gone_on_with: is_searched_again, seen_by_other_declarations: self.checker().importers_that_see_other_declarations(), ..Search::new(searchers.max(1)) };
+        held(search.given.write()).went_on_by_pairs = is_searched_again;
         let finished: Vec<Mutex<Option<Finished<'s>>>> = (0..search.searchers).map(|_| Mutex::new(None)).collect();
         at_once(search.searchers, &|index| {
             let mut searcher = self.checker();
@@ -635,11 +771,23 @@ impl<'s> Program<'s> {
                 }
             }
             searcher.aot.flows.is_searching_from_doors = true;
-            searcher.search_from_doors(&search, index);
+            searcher.aot.flows.is_crossing_bounded = true;
+            searcher.search_from_doors(&search, index, &Share::Rest { index, of: search.searchers, is_taken: &[] }, &FxHashMap::default());
             *held(finished[index].lock()) = Some(searcher.end_task());
         });
-        let _ = self.aot.storage.given.set(held(search.given.into_inner()));
-        finished.into_iter().filter_map(|finished| held(finished.into_inner())).collect()
+        if let Some(gave_up) = held(search.gave_up.lock()).take() {
+            return Err(gave_up);
+        }
+        match is_searched_again {
+            true => {
+                self.aot.storage.given.set_for_warming_up(held(search.given.read()).clone());
+                *held(self.aot.storage.found_at_first.lock()) = Some(search);
+            }
+            false => {
+                let _ = self.aot.storage.given.set(search.found());
+            }
+        }
+        Ok(finished.into_iter().filter_map(|finished| held(finished.into_inner())).collect())
     }
 }
 
@@ -651,10 +799,13 @@ pub enum WhyForeign {
     /// The value of an expression whose type says nothing has been held to the view, or to one that holds it, and objects of the kind are
     /// of the type of the view.
     Untyped { at: Place, candidate: Candidate },
+    Given { at: Place, candidate: Candidate },
+    GivenAndKeptByNobody { at: Place },
     /// What is in a place of the view `from` gets into places of this one untested.
     Inherited { from: u32, at: Place },
     /// A declaration file declares the type: it describes host objects to begin with.
     DeclaredOnly,
+    Instance,
     /// What is in a place of the view `from` and is not laid out passes a cast to this one.
     PassedCast { from: u32 },
     /// It requires no live field, so nearly everything fits it, and a value that only its type vouches for is held to it. See `subtypes.rs`,
@@ -680,6 +831,8 @@ struct Having {
     by_name: FxHashMap<Atom, Vec<u32>>,
 }
 
+const MOST_GIVEN_KINDS_ASKED_ABOUT: usize = 256;
+
 /// What a question is about.
 #[derive(Copy, Clone)]
 enum Kind {
@@ -695,6 +848,7 @@ enum Kind {
     ValueOf(Sym),
     /// Objects of a type that no declaration names, which whoever has noted it has kept.
     Of(TypeId),
+    Given(TypeId),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1037,13 +1191,81 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    pub fn note_what_a_generic_function_made(&mut self, made: &Made, made_as: TypeId) {
+        if made_as == TypeId::UNRESOLVED {
+            return;
+        }
+        let mut views = Vec::new();
+        self.add_what_is_made_as(made, made_as, &mut views);
+        for view in views {
+            self.note_foreign(view, TypeId::UNRESOLVED);
+        }
+    }
+
+    fn add_what_is_made_as(&mut self, made: &Made, made_as: TypeId, out: &mut Vec<TypeId>) {
+        let mut made_as = self.reduced(made_as);
+        if self.is_instantiable(made_as) {
+            let bound = self.base_constraint(made_as);
+            made_as = self.reduced(bound);
+        }
+        if !self.may_hold_objects(made_as) {
+            return;
+        }
+        if let TypeData::Union(parts) = self.data(made_as) {
+            let parts: Vec<TypeId> = parts.to_vec();
+            let objects: Vec<TypeId> = parts.iter().copied().filter(|&part| self.says_properties(part)).collect();
+            if objects.len() > 1 {
+                let objects = self.union(&objects);
+                let common = self.view_of_union(objects);
+                if !matches!(self.data(common), TypeData::Union(_)) {
+                    self.add_what_is_made_as(made, common, out);
+                }
+            }
+            for part in parts {
+                self.add_what_is_made_as(made, part, out);
+            }
+            return;
+        }
+        if self.is_array_or_tuple(made_as) {
+            if let Some(elements) = &made.elements {
+                let of_elements: Vec<TypeId> = self.type_arguments(made_as).to_vec();
+                for of_element in of_elements {
+                    self.add_what_is_made_as(elements, of_element, out);
+                }
+            }
+            return;
+        }
+        let is_module = matches!(self.data(made_as), TypeData::Anon { origin: Origin::Module(..), .. });
+        if !made.is_object || self.built_in_that_is(made_as).is_some() || self.is_type_of_instances(made_as) || !self.says_properties(made_as) || is_module {
+            return;
+        }
+        let view = self.laid_out_as(made_as);
+        out.push(view);
+        for (name, held) in &made.within {
+            if let Some(of_field) = self.type_of_property(made_as, *name) {
+                self.add_what_is_made_as(held, of_field, out);
+            }
+        }
+        if let Some(anywhere) = &made.anywhere
+            && let Some(members) = self.members(made_as)
+        {
+            for info in members.shape().index.iter() {
+                self.add_what_is_made_as(anywhere, info.value, out);
+            }
+            for prop in members.shape().props.iter() {
+                let of_field = self.type_of_prop(prop, members.mapper);
+                self.add_what_is_made_as(anywhere, of_field, out);
+            }
+        }
+    }
+
     /// The types that the record of the type refers to, those that its mappers map to among them, and the type arguments of the alias that is stored with it.
     fn types_referred_to_by(&self, at: TypeId) -> Vec<TypeId> {
         let mut referred = Referred::default();
         self.data(at).visit(&mut referred);
         // What a spread was made of is no part of it: `{ ...a, ...b, ...c }` is made of `{ ...a, ...b }` and `c`, and has the properties of all three itself.
         if let TypeData::Synth(shape) = self.data(at)
-            && let Some((left, right)) = shape.spread_of
+            && let Some((left, right)) = shape.created_from
         {
             for operand in [left, right] {
                 if let Some(index) = referred.types.iter().position(|&ty| ty == operand) {
@@ -1094,7 +1316,7 @@ impl<'p, 's> Checker<'p, 's> {
                 TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. } => "the type of a literal under type parameters",
                 TypeData::Anon { .. } => "another written type",
                 TypeData::Fns { .. } => "a function type",
-                TypeData::Synth(shape) if shape.spread_of.is_some() => "a spread",
+                TypeData::Synth(shape) if shape.created_from.is_some() && !shape.is_object_rest_type => "a spread",
                 TypeData::Synth(shape) if shape.is_object_rest_type => "a rest",
                 TypeData::Synth(shape) if shape.instantiation_target.is_some() => "an instantiation of what is computed",
                 TypeData::Synth(shape) if !shape.call.is_empty() || !shape.construct.is_empty() => "a signature that is computed",
@@ -1279,11 +1501,11 @@ impl<'p, 's> Checker<'p, 's> {
         for prop in members.shape().props.iter() {
             let ty = self.type_of_prop(prop, members.mapper);
             let flags = prop.flags & (PropFlags::OPTIONAL | PropFlags::METHOD | PropFlags::ACCESSOR);
-            shape.props.push(Prop { name: prop.name, flags, source: PropSource::Type(ty), mapper: MapperId::IDENTITY });
+            shape.props.push(Prop { name: prop.name, flags, source: PropSource::Type(ty), mapper: MapperId::IDENTITY, name_type: TypeId::UNRESOLVED });
         }
         self.sort_by_name(&mut shape);
         shape.index.extend(members.shape().index.iter().cloned());
-        (shape.spread_of, shape.spread_rank) = (Some((TypeId::NEVER, union)), u32::MAX - 1);
+        (shape.created_from, shape.spread_rank) = (Some((TypeId::NEVER, union)), u32::MAX - 1);
         self.synth(shape)
     }
 
@@ -1311,20 +1533,20 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether the type is a `view_of_anything_as`.
     pub fn is_view_of_anything(&self, ty: TypeId) -> bool {
-        matches!(self.data(ty), TypeData::Synth(shape) if shape.spread_rank == u32::MAX && matches!(shape.spread_of, Some((TypeId::UNKNOWN, _))))
+        matches!(self.data(ty), TypeData::Synth(shape) if shape.spread_rank == u32::MAX && matches!(shape.created_from, Some((TypeId::UNKNOWN, _))))
     }
 
     /// For a `view_of_anything_as` the type that was cast to, for a `view_of_either` the union. Any other type unchanged.
     fn type_coerced_to(&self, ty: TypeId) -> TypeId {
         match self.data(ty) {
-            TypeData::Synth(shape) if shape.spread_rank == u32::MAX => shape.spread_of.map_or(ty, |made_for| made_for.1),
+            TypeData::Synth(shape) if shape.spread_rank == u32::MAX => shape.created_from.map_or(ty, |made_for| made_for.1),
             _ => ty,
         }
     }
 
     /// Whether the type is a `view_of_anything_as` or a `view_of_either`: nobody has declared it, and no primitive is of it.
     pub fn is_view_made_by_coercion(&self, ty: TypeId) -> bool {
-        matches!(self.data(ty), TypeData::Synth(shape) if shape.spread_rank == u32::MAX && shape.spread_of.is_some())
+        matches!(self.data(ty), TypeData::Synth(shape) if shape.spread_rank == u32::MAX && shape.created_from.is_some())
     }
 
     /// `made_for`: `unknown` and the type that is meant, for `view_of_anything_as`; `never` and the union, for `view_of_either`. It is kept
@@ -1356,11 +1578,11 @@ impl<'p, 's> Checker<'p, 's> {
                     flags |= PropFlags::OPTIONAL;
                 }
                 let ty = self.union(&types);
-                shape.props.push(Prop { name: prop.name, flags, source: PropSource::Type(ty), mapper: MapperId::IDENTITY });
+                shape.props.push(Prop { name: prop.name, flags, source: PropSource::Type(ty), mapper: MapperId::IDENTITY, name_type: TypeId::UNRESOLVED });
             }
         }
         self.sort_by_name(&mut shape);
-        (shape.spread_of, shape.spread_rank) = (Some(made_for), u32::MAX);
+        (shape.created_from, shape.spread_rank) = (Some(made_for), u32::MAX);
         let view = self.synth(shape);
         for &part in parts {
             let part = self.laid_out_as(part);
@@ -1649,7 +1871,12 @@ impl<'p, 's> Checker<'p, 's> {
     ///
     /// A cast may make an object of `target`: of plain data a copy, of an object that was made as something `target` extends that
     /// object. Nothing becomes an object of a class but by its constructor. What it makes of which layout is found at the link.
+    pub fn know_by_the_stores(&mut self, is_known: bool) -> bool {
+        std::mem::replace(&mut self.aot.flows.is_known_by_the_stores, is_known)
+    }
+
     pub fn note_cast(&mut self, sources: &[TypeId], target: TypeId, may_be_plain: bool, is_vouched: bool, may_change: bool, is_guard: bool) {
+        let (may_be_plain, is_vouched) = if self.aot.flows.is_known_by_the_stores { (false, false) } else { (may_be_plain, is_vouched) };
         let at = self.aot.flows.place;
         if may_be_plain && !self.is_type_of_instances(target) {
             self.aot.flows.noted.copied_into.insert(target);
@@ -1808,6 +2035,51 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether data from outside the program is looked at as the type. Types are facts about what the program makes and predictions about what it is given: a place of such a type holds
     /// anything, and the type is what it is expected to hold. ASSERTED.md 1.
+    pub(super) fn explain_taint(&mut self) -> Vec<String> {
+        let files = self.files();
+        let mut seen: FxHashSet<Sym> = FxHashSet::default();
+        let mut declared: Vec<Sym> = Vec::new();
+        for (file, module) in files.modules.iter().enumerate() {
+            if module.is_untyped() || self.only_declares(FileId(file as u32)) {
+                continue;
+            }
+            for (id, symbol) in module.bound.symbols.iter().enumerate() {
+                let sym = files.sym(FileId(file as u32), SymbolId(id as u32));
+                if symbol.flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE) && seen.insert(sym) {
+                    declared.push(sym);
+                }
+            }
+        }
+        let given = self.given();
+        let (mut all, mut by_identity, mut by_looks, mut otherwise) = (0u32, 0u32, 0u32, 0u32);
+        let mut lost: Vec<String> = Vec::new();
+        for sym in declared {
+            let ty = self.declared_type(sym);
+            if !self.says_properties(ty) || !self.may_hold_objects(ty) || self.is_declared_outside(ty) {
+                continue;
+            }
+            all += 1;
+            if !self.is_tainted(ty) {
+                continue;
+            }
+            let identity = self.identity_of_type(ty);
+            if given.identities.contains(&identity) {
+                by_identity += 1;
+            } else if self.takes_what_is_given(ty, given) {
+                by_looks += 1;
+                if lost.len() < 8 {
+                    let name = self.name_for_people(ty);
+                    lost.push(format!("alterations: given: where: by its looks: {name}"));
+                }
+            } else {
+                otherwise += 1;
+            }
+        }
+        let mut lines = vec![format!("alterations: given: of the {all} classes and interfaces that compiled files declare, data from outside is looked at as {by_identity} by what they are, {by_looks} by their looks, {otherwise} otherwise; {} types are given", given.identities.len())];
+        lines.append(&mut lost);
+        lines
+    }
+
     pub fn is_tainted(&mut self, ty: TypeId) -> bool {
         if self.aot.flows.is_searching_from_doors || !(self.says_properties(ty) || self.is_array_or_tuple(ty)) {
             return false;
@@ -1827,10 +2099,19 @@ impl<'p, 's> Checker<'p, 's> {
         self.aot.flows.tainted.insert(ty, false);
         self.aot.flows.being_asked_of_taint += 1;
         let identity = self.identity_of_type(ty);
-        let is_tainted = given.identities.contains(&identity) || self.takes_what_is_given(ty, given) || self.is_type_of_plain_literal(ty);
+        let is_tainted = given.identities.contains(&identity) || self.takes_what_is_given(ty, given) || self.is_type_of_literal_that_is_given_otherwise(ty, given) || self.is_type_of_plain_literal(ty);
         self.aot.flows.being_asked_of_taint -= 1;
         self.aot.flows.tainted.insert(ty, is_tainted);
         is_tainted
+    }
+
+    fn is_type_of_literal_that_is_given_otherwise(&mut self, ty: TypeId, given: &Given) -> bool {
+        if !matches!(self.data(ty), TypeData::Anon { origin: Origin::ObjectLiteral(..), .. }) {
+            return false;
+        }
+        let regular = self.regular_type_of_object_literal(ty);
+        let widened = self.get_widened_type(regular);
+        [regular, widened].into_iter().any(|other| other != ty && given.identities.contains(&self.identity_of_type(other)))
     }
 
     /// Whether it is the type of an object literal that stands where a tainted type is expected. Such a literal is made as a plain object (`FileBuild::is_asked_to_be_dynamic`). A place that takes its type from an initializer takes it from
@@ -1849,13 +2130,13 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // By a checker of its own, outside the plan: what it finds out on the way is dropped with it. So the task that happens to make the search is left as every other task is: with nothing looked at out of its order, and
         // nothing remembered from while no type was tainted.
-        let search = Search::new(1);
+        let search = Search { seen_by_other_declarations: self.importers_that_see_other_declarations(), ..Search::new(1) };
         let mut searcher = program.checker();
         (searcher.stack_base, searcher.stack_limit) = (self.stack_base, self.stack_limit);
         searcher.aot.flows.is_searching_from_doors = true;
-        searcher.search_from_doors(&search, 0);
+        searcher.search_from_doors(&search, 0, &Share::Rest { index: 0, of: 1, is_taken: &[] }, &FxHashMap::default());
         drop(searcher);
-        program.aot.storage.given.get_or_init(|| held(search.given.into_inner()))
+        program.aot.storage.given.get_or_init(|| search.found())
     }
 
     fn said_by_properties_of(&mut self, ty: TypeId) -> Option<Vec<(Box<[u8]>, Said)>> {
@@ -1935,6 +2216,12 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let Some(members) = self.members(ty) else { return false };
+        if given.went_on_by_pairs
+            && members.shape().props.len() <= MOST_PROPERTIES_OF_A_RECORD_THAT_IS_TURNED_WHERE_IT_LIES
+            && members.shape().props.iter().filter(|prop| !prop.flags.contains(PropFlags::OPTIONAL)).count() >= 2
+        {
+            return false;
+        }
         let atoms = self.atoms();
         let names: Vec<(&[u8], bool)> = members.shape().props.iter().map(|prop| (atoms.bytes(prop.name), prop.flags.contains(PropFlags::OPTIONAL))).filter(|name| !is_keyed_by_symbol(name.0)).collect();
         let none = Vec::new();
@@ -2047,14 +2334,45 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// It goes by the trees, the symbols and the checker's types alone: every task finds the same, and nothing is remembered on the way that the answer would change.
-    fn search_from_doors(&mut self, search: &Search, index: usize) {
-        let mut held_to = Vec::new();
+    pub fn search_with_the_others(&mut self, meeting: &Meeting, index: usize, share: &Share<'_>) {
+        let program = self.p;
+        let own_pairs = self.targets_compared_by_source();
+        self.aot = Default::default();
+        self.aot.flows.is_searching_from_doors = true;
+        self.aot.flows.seen_before = meeting.search.seen_before.clone();
+        if let Share::Rest { .. } = share {
+            for file in (0..program.files.modules.len() as u32).map(FileId) {
+                if self.is_untyped_file(file) {
+                    self.task.begin_file(file, false);
+                }
+            }
+        }
+        self.search_from_doors(&meeting.search, index, share, &own_pairs);
+        if meeting.barrier.wait().is_leader() {
+            let _ = program.aot.storage.given.set(meeting.search.found());
+        }
+        meeting.barrier.wait();
+        self.aot = Default::default();
+    }
+
+    fn go_through_the_doors(&mut self, search: &Search, share: &Share<'_>, held_to: &mut Vec<TypeId>, looked_at: &mut Vec<LookedAt>, written_unions: &mut Vec<WrittenUnion>) -> bool {
         let count = self.files().modules.len() as u32;
         let all = move || (0..count).map(FileId);
         let weights: Vec<u64> = all().map(|file| self.hir(file).exprs.len() as u64 + 1).collect();
-        let own = |files: &[FileId]| -> Vec<FileId> { share_by_weight(files, &weights, index, search.searchers) };
+        let mine: FxHashSet<FileId> = if let Share::Of(mine) = share { mine.iter().copied().collect() } else { FxHashSet::default() };
+        let own = |files: &[FileId]| -> Vec<FileId> {
+            match *share {
+                Share::Of(_) => files.iter().copied().filter(|file| mine.contains(file)).collect(),
+                Share::Rest { index, of, is_taken } => {
+                    let left: Vec<FileId> = files.iter().copied().filter(|file| !is_taken.get(file.idx()).copied().unwrap_or(false)).collect();
+                    share_by_weight(&left, &weights, index, of)
+                }
+            }
+        };
         // `P.tsx.js`, which a tool has made of `P.tsx`, does what the checked text does. No value of another type gets anywhere than in the text: all that differs is that what the text makes is made as plain objects.
-        let standing_in: FxHashMap<&[u8], FileId> = all().filter(|&file| self.only_declares(file) && self.hir(file).kind != FileKind::Declaration).map(|file| (self.files().module(file).file_name(), file)).collect();
+        let standing_in: FxHashMap<&[u8], FileId> = (all().filter(|&file| self.only_declares(file) && self.hir(file).kind != FileKind::Declaration && self.hir(file).decorators.is_empty()))
+            .map(|file| (self.files().module(file).file_name(), file))
+            .collect();
         let made_of: Vec<(FileId, FileId)> = (all().filter(|&file| self.is_compiled(file) && self.is_untyped_file(file)))
             .filter_map(|file| Some((file, *standing_in.get(self.files().module(file).file_name().strip_suffix(b".js")?)?)))
             .collect();
@@ -2062,42 +2380,144 @@ impl<'p, 's> Checker<'p, 's> {
         self.aot.flows.checked_texts = made_of.iter().map(|made| made.1).collect();
         let texts: Vec<FileId> = made_of.iter().map(|made| made.1).collect();
         for text in own(&texts) {
-            self.add_types_born_in(text, &mut held_to);
+            self.add_types_born_in(text, held_to);
         }
         // So the text is gone through like that of a typed file.
         let files: Vec<FileId> = all().filter(|&file| (self.is_compiled(file) || self.aot.flows.checked_texts.contains(&file)) && !self.is_untyped_file(file)).collect();
         // A type is written where its alias is: also in a module that is imported for its types alone, which is no module of the program's graph.
         let written: Vec<FileId> = all().filter(|&file| self.hir(file).kind != FileKind::Declaration && !self.is_untyped_file(file)).collect();
         for file in own(&files) {
-            self.add_types_that_data_is_held_to(file, &mut held_to);
+            self.add_types_that_data_is_held_to(file, held_to);
         }
         // Untyped code of the program is outside as well: it calls what it imports with what it has made, and stores to what it is handed.
         let untyped: Vec<FileId> = all().filter(|&file| self.is_compiled(file) && self.is_untyped_file(file) && !self.aot.flows.made_of_checked_text.contains(&file)).collect();
         let (mut imported, mut crossed) = (FxHashSet::default(), FxHashSet::default());
+        let seen_by_other_declarations = &search.seen_by_other_declarations;
+        for file in own(&files) {
+            if let Some(&at) = seen_by_other_declarations.get(&file) {
+                let module = self.files().file_symbol(file);
+                let value = self.files().module_value(module);
+                let of_module = self.type_of_symbol(value);
+                self.add_what_is_handed_to(of_module, 0, file, at, &mut FxHashSet::default(), &mut crossed, held_to);
+            }
+        }
+        for file in own(&untyped) {
+            self.add_what_is_handed_to_what_is_exported_again(file, &mut crossed, held_to);
+        }
         if !untyped.is_empty() {
             for file in own(&untyped).into_iter().chain(own(&files)) {
-                self.add_types_imported_across(file, &mut imported, &mut crossed, &mut held_to);
+                self.add_types_imported_across(file, &mut imported, &mut crossed, held_to);
             }
             for file in own(&files) {
-                self.add_types_handed_to_javascript(file, &mut crossed, &mut held_to);
+                self.add_types_handed_to_javascript(file, &mut crossed, held_to);
             }
         }
-        let mut looked_at = Vec::new();
+        if let Some(gave_up) = self.aot.flows.gave_up_crossing.take() {
+            let mut first = held(search.gave_up.lock());
+            if first.as_ref().is_none_or(|known| gave_up.rank < known.rank) {
+                *first = Some(gave_up);
+            }
+        }
+        search.barrier.wait();
+        if held(search.gave_up.lock()).is_some() {
+            return false;
+        }
         for file in own(&files) {
-            self.add_what_is_looked_at_in(file, &mut looked_at);
+            self.add_what_is_looked_at_in(file, looked_at);
         }
-        let mut written_unions = Vec::new();
         for file in own(&written) {
-            self.add_unions_written_in(file, &mut written_unions);
+            self.add_unions_written_in(file, written_unions);
         }
+        true
+    }
+
+    pub(in crate::check) fn note_pair_compared(&mut self, source: TypeId, target: TypeId, relation: Relation, is_reported: bool) {
+        if self.p.files.options.undefined_properties_name_nobody && relation != Relation::Identity && (relation != Relation::Comparable || is_reported) && self.aot.flows.seen_before.is_none() && self.p.aot.storage.given.get().is_none() {
+            self.aot.flows.pairs_compared.insert((source, target, is_reported));
+        }
+    }
+
+    fn pairs_that_carry_on(&mut self) -> Vec<(TypeId, TypeId)> {
+        let mut compared: Vec<(TypeId, TypeId, bool)> = std::mem::take(&mut self.aot.flows.pairs_compared).into_iter().collect();
+        compared.sort_unstable_by_key(|pair| (pair.0.0, pair.1.0, pair.2));
+        let mut pairs = Vec::new();
+        for (source, target, is_reported) in compared {
+            let takes = self.says_properties(target) && self.may_hold_objects(target) && !self.is_type_of_instances(target) && self.built_in_that_is(target).is_none() && self.element_of_array_subtype(target).is_none() && !self.is_declared_outside(target);
+            if !takes || !self.says_properties(source) || !self.may_hold_objects(source) || !(is_reported || self.is_assignable(source, target)) {
+                continue;
+            }
+            pairs.push((source, target));
+        }
+        self.aot.flows.pairs_compared.clear();
+        pairs
+    }
+
+    pub(crate) fn take_pairs_compared(&mut self) -> Vec<(Identity, Identity)> {
+        let mut pairs = Vec::new();
+        for (source, target) in self.pairs_that_carry_on() {
+            self.keep_type(target);
+            pairs.push((self.identity_of_type(source), self.identity_of_type(target)));
+        }
+        pairs
+    }
+
+    fn targets_compared_by_source(&mut self) -> FxHashMap<Identity, Vec<TypeId>> {
+        let mut targets: FxHashMap<Identity, Vec<TypeId>> = FxHashMap::default();
+        for (source, target) in self.pairs_that_carry_on() {
+            targets.entry(self.identity_of_type(source)).or_default().push(target);
+        }
+        targets
+    }
+
+    fn add_targets_of_what_is_found(&mut self, search: &Search, own_pairs: &FxHashMap<Identity, Vec<TypeId>>, kept_targets: &FxHashMap<Identity, TypeId>, followed: &mut FxHashSet<Identity>, out: &mut Vec<TypeId>) {
+        if own_pairs.is_empty() && kept_targets.is_empty() {
+            return;
+        }
+        let mut found: Vec<Identity> = {
+            let by_all = held(search.tainted.read());
+            let of_earlier_tasks = (!kept_targets.is_empty()).then(|| search.targets_by_source.keys());
+            own_pairs.keys().chain(of_earlier_tasks.into_iter().flatten()).copied().filter(|identity| by_all.contains(identity) && !followed.contains(identity)).collect()
+        };
+        found.sort_unstable();
+        found.dedup();
+        followed.extend(found.iter().copied());
+        for identity in found {
+            out.extend(own_pairs.get(&identity).into_iter().flatten().copied());
+            for target in search.targets_by_source.get(&identity).into_iter().flatten() {
+                out.extend(kept_targets.get(target));
+            }
+        }
+    }
+
+    fn search_from_doors(&mut self, search: &Search, index: usize, share: &Share<'_>, own_pairs: &FxHashMap<Identity, Vec<TypeId>>) {
+        let (mut held_to, mut looked_at, mut written_unions) = (Vec::new(), Vec::new(), Vec::new());
+        let goes_on = search.seen_before.is_some();
+        if !goes_on && !self.go_through_the_doors(search, share, &mut held_to, &mut looked_at, &mut written_unions) {
+            return;
+        }
+        let (mut is_left_taken, mut arrays_before, mut arrays_found, mut arrays_not_said_yet): (bool, Vec<(Identity, Vec<Identity>)>, Vec<Identity>, Vec<Identity>) = (!goes_on, Vec::new(), Vec::new(), Vec::new());
         let (mut seen, mut views): (FxHashSet<(TypeId, bool)>, Vec<TypeId>) = (FxHashSet::default(), Vec::new());
         let mut gone_through: FxHashSet<(TypeId, bool)> = FxHashSet::default();
         let mut tainted: FxHashSet<TypeId> = FxHashSet::default();
         let mut arrays: Vec<(TypeId, Vec<Identity>)> = Vec::new();
         let mut listed: FxHashSet<TypeId> = FxHashSet::default();
         let mut not_said_yet: Vec<TypeId> = Vec::new();
+        let mut followed: FxHashSet<Identity> = FxHashSet::default();
+        let mut kept_targets: FxHashMap<Identity, TypeId> = FxHashMap::default();
+        if let (false, &Share::Rest { index, of, .. }) = (search.targets_by_source.is_empty(), share) {
+            for (at, ty) in self.kept_types().into_iter().enumerate() {
+                if at % of == index {
+                    kept_targets.insert(self.identity_of_type(ty), ty);
+                }
+            }
+        }
+        self.add_targets_of_what_is_found(search, own_pairs, &kept_targets, &mut followed, &mut held_to);
         loop {
             while search.has_any_found(held_to.len()) {
+                if !is_left_taken {
+                    is_left_taken = true;
+                    self.take_what_was_left(search, index, share, &mut looked_at, &mut written_unions, &mut arrays_before);
+                }
                 for ty in held_to.drain(..) {
                     self.add_what_stays_untyped(ty, true, &mut seen, &mut views);
                 }
@@ -2125,8 +2545,17 @@ impl<'p, 's> Checker<'p, 's> {
                 // An array of them that the data may hold. Not `string[]`, which is everybody's.
                 loop {
                     let identities: Vec<Identity> = newly.iter().map(|&ty| self.identity_of_type(ty)).collect();
-                    held(search.tainted.write()).extend(identities);
+                    let mut names = Vec::with_capacity(newly.len());
+                    for (&ty, &identity) in newly.iter().zip(&identities) {
+                        self.keep_type(ty);
+                        let Some(members) = self.members(ty) else { continue };
+                        let atoms = self.atoms();
+                        names.push((identity, members.shape().props.iter().map(|prop| atoms.bytes(prop.name).into()).collect()));
+                    }
+                    held(search.names.lock()).extend(names);
+                    held(search.tainted.write()).extend(identities.into_iter().chain(arrays_found.iter().copied()));
                     not_said_yet.append(&mut newly);
+                    arrays_not_said_yet.append(&mut arrays_found);
                     search.barrier.wait();
                     {
                         let by_all = held(search.tainted.read());
@@ -2137,13 +2566,21 @@ impl<'p, 's> Checker<'p, 's> {
                             }
                             !is_of_them
                         });
+                        arrays_before.retain(|(identity, parts)| {
+                            let is_of_them = parts.iter().any(|part| by_all.contains(part));
+                            if is_of_them {
+                                arrays_found.push(*identity);
+                            }
+                            !is_of_them
+                        });
                     }
-                    if !search.has_any_found(newly.len()) {
+                    if !search.has_any_found(newly.len() + arrays_found.len()) {
                         break;
                     }
                 }
                 // What the program has made and looks at as such a type is written to as the data is: `(second as ListItem).next = parsed`, `const item: ListItem = second`.
                 self.add_types_looked_at_as(&mut looked_at, search, &mut held_to);
+                self.add_targets_of_what_is_found(search, own_pairs, &kept_targets, &mut followed, &mut held_to);
             }
             // The members of a union that is written go together, also where one of them only takes what has been found.
             let mut said = Vec::new();
@@ -2153,6 +2590,7 @@ impl<'p, 's> Checker<'p, 's> {
                     said.push((identity, self.said_by_properties_of(ty)));
                 }
             }
+            said.extend(arrays_not_said_yet.drain(..).map(|identity| (identity, None)));
             *held(search.said[index].lock()) = said;
             search.barrier.wait();
             if index == 0 {
@@ -2161,13 +2599,75 @@ impl<'p, 's> Checker<'p, 's> {
             search.barrier.wait();
             self.add_members_of_written_unions(&written_unions, search, &mut held_to);
             if !search.has_any_found(held_to.len()) {
-                return;
+                break;
+            }
+        }
+        if search.is_gone_on_with {
+            let seen = held(search.seen.read());
+            let mut left = held(search.left.lock());
+            for it in looked_at {
+                if !seen.contains(&it.target.1) || !seen.contains(&it.source.1) && self.may_hold_objects(it.source.0) {
+                    left.looked_at.entry(it.file).or_default().push(it);
+                }
+            }
+            for union in written_unions {
+                if !union.members.iter().all(|member| seen.contains(&member.1)) {
+                    left.unions.entry(union.file).or_default().push(union);
+                }
+            }
+            for (ty, parts) in arrays {
+                left.arrays.push((self.identity_of_type(ty), parts));
             }
         }
     }
 
+    fn take_what_was_left(&mut self, search: &Search, index: usize, share: &Share<'_>, looked_at: &mut Vec<LookedAt>, unions: &mut Vec<WrittenUnion>, arrays: &mut Vec<(Identity, Vec<Identity>)>) {
+        let (mut of_looked_at, mut of_unions) = (Vec::new(), Vec::new());
+        {
+            let mut left = held(search.left.lock());
+            let files: Vec<FileId> = match *share {
+                Share::Of(mine) => mine.to_vec(),
+                Share::Rest { index, of, is_taken } => {
+                    let mut files: Vec<FileId> = (left.looked_at.keys().chain(left.unions.keys()).copied()).filter(|file| !is_taken.get(file.idx()).copied().unwrap_or(false) && file.idx() % of == index).collect();
+                    files.sort_unstable_by_key(|file| file.0);
+                    files.dedup();
+                    files
+                }
+            };
+            for file in files {
+                of_looked_at.extend(left.looked_at.remove(&file).unwrap_or_default());
+                of_unions.extend(left.unions.remove(&file).unwrap_or_default());
+            }
+            if index == 0 {
+                *arrays = std::mem::take(&mut left.arrays);
+                arrays.sort_unstable();
+                arrays.dedup();
+            }
+        }
+        for mut it in of_looked_at {
+            let target = self.type_from_node(it.file, it.written);
+            it.target.0 = self.reduced(target);
+            self.prepare_enclosing(it.file, it.operand);
+            let source = self.type_of_expr(it.file, it.operand);
+            it.source.0 = self.reduced(source);
+            looked_at.push(it);
+        }
+        for mut union in of_unions {
+            let written = self.type_from_node(union.file, union.node);
+            let mut members = Vec::new();
+            for member in self.parts(written).to_vec() {
+                let member = self.reduced(member);
+                if self.may_hold_objects(member) {
+                    members.push(member);
+                }
+            }
+            union.members = members.into_iter().map(|member| (member, self.identity_of_type(member))).collect();
+            unions.push(union);
+        }
+    }
+
     /// A place of `A | B` holds anything as soon as `A` is tainted, a literal there that no discriminant singles out is made plain, and what is narrowed to `B` is expected to be laid out as a `B`. `taking`: `takes_what_is_given`, as far as asked.
-    fn add_unions_written_in(&mut self, file: FileId, out: &mut Vec<Vec<(TypeId, Identity)>>) {
+    fn add_unions_written_in(&mut self, file: FileId, out: &mut Vec<WrittenUnion>) {
         let hir = self.hir(file);
         for (index, node) in hir.types.iter().enumerate() {
             if !matches!(node.kind, TypeNodeKind::Union(_)) {
@@ -2182,15 +2682,15 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             if members.len() >= 2 {
-                out.push(members);
+                out.push(WrittenUnion { file, node: TypeNodeId(index as u32), members });
             }
         }
     }
 
-    fn add_members_of_written_unions(&mut self, unions: &[Vec<(TypeId, Identity)>], search: &Search, out: &mut Vec<TypeId>) {
+    fn add_members_of_written_unions(&mut self, unions: &[WrittenUnion], search: &Search, out: &mut Vec<TypeId>) {
         let (seen, tainted, given) = (held(search.seen.read()), held(search.tainted.read()), held(search.given.read()));
         let mut taking: FxHashMap<TypeId, bool> = FxHashMap::default();
-        for members in unions {
+        for WrittenUnion { members, .. } in unions {
             if members.iter().all(|member| seen.contains(&member.1)) {
                 continue;
             }
@@ -2246,7 +2746,7 @@ impl<'p, 's> Checker<'p, 's> {
             let mut identities_of_parts = |ty: TypeId| -> Vec<Identity> { self.parts(ty).to_vec().into_iter().map(|part| self.identity_of_type(part)).collect() };
             let (parts_of_target, parts_of_source) = (identities_of_parts(target), identities_of_parts(source));
             let (target, source) = ((target, self.identity_of_type(target)), (source, self.identity_of_type(source)));
-            out.push(LookedAt { target, parts_of_target, source, parts_of_source, file, operand, is_known_for_data: None });
+            out.push(LookedAt { target, parts_of_target, source, parts_of_source, file, written, operand, is_known_for_data: None });
         }
     }
 
@@ -2309,13 +2809,132 @@ impl<'p, 's> Checker<'p, 's> {
             if !imported.insert((target, is_untyped)) {
                 continue;
             }
-            let is_across = self.files().decls_of(target).iter().any(|&(declared_in, _)| match is_untyped {
+            let across = self.files().decls_of(target).iter().map(|declared| declared.0).find(|&declared_in| match is_untyped {
                 true => !self.is_untyped_file(declared_in) && self.hir(declared_in).kind != FileKind::Declaration,
                 false => self.is_declared_for_javascript(declared_in),
             });
-            if is_across {
+            if let Some(declared_in) = across {
                 let of_target = self.type_of_symbol(target);
-                self.add_what_crosses(of_target, seen, out);
+                let typed_side = if is_untyped { declared_in } else { file };
+                self.add_what_crosses_at(of_target, u8::from(!is_untyped), typed_side, Place { file, pos: self.hir(file)[name].pos }, seen, out);
+            }
+        }
+    }
+
+    fn add_what_is_handed_to_what_is_exported_again(&mut self, file: FileId, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+        let module = self.files().file_symbol(file);
+        let value = self.files().module_value(module);
+        let of_module = self.type_of_symbol(value);
+        let Some(members) = self.members(of_module) else { return };
+        let exported: Vec<Sym> = (members.shape().props.iter()).filter_map(|prop| if let PropSource::Symbol(exported) = prop.source { Some(exported) } else { None }).collect();
+        for exported in exported {
+            let target = if self.files().flags(exported).contains(SymFlags::ALIAS) { self.files().resolve_alias(exported) } else { Some(exported) };
+            let Some(target) = target else { continue };
+            let declared_in = self.files().decls_of(target).iter().map(|declaration| declaration.0).find(|&declared_in| !self.is_untyped_file(declared_in) && self.hir(declared_in).kind != FileKind::Declaration);
+            if let Some(declared_in) = declared_in {
+                let of_target = self.type_of_symbol(target);
+                self.add_what_is_handed_to(of_target, 0, declared_in, Place { file, pos: 0 }, &mut FxHashSet::default(), seen, out);
+            }
+        }
+    }
+
+    fn add_data_that_crosses_at(&mut self, ty: TypeId, depth: u32, typed_side: FileId, at: Place, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+        let ty = self.reduced(ty);
+        for part in self.parts(ty).to_vec() {
+            if self.is_shaped_as_data(part, &mut FxHashSet::default()) {
+                self.add_what_crosses_at(part, 1, typed_side, at, seen, out);
+            } else if depth < 4 {
+                for signature in self.signatures(part, false).to_vec() {
+                    let yielded = self.sig_return(signature);
+                    self.add_data_that_crosses_at(yielded, depth + 1, typed_side, at, seen, out);
+                }
+            }
+        }
+    }
+
+    fn is_shaped_as_data(&mut self, ty: TypeId, gone_through: &mut FxHashSet<TypeId>) -> bool {
+        let ty = self.reduced(ty);
+        if self.parts(ty).iter().any(|&part| matches!(self.data(part), TypeData::Fns { .. })) {
+            return false;
+        }
+        if !self.may_hold_objects(ty) || self.says_nothing(ty) || !gone_through.insert(ty) {
+            return true;
+        }
+        for part in self.parts(ty).to_vec() {
+            if !self.may_hold_objects(part) || self.says_nothing(part) {
+                continue;
+            }
+            if self.is_instantiable(part) {
+                let bound = self.base_constraint(part);
+                if !self.is_shaped_as_data(bound, gone_through) {
+                    return false;
+                }
+                continue;
+            }
+            if self.is_array_or_tuple(part) {
+                for element in self.type_arguments(part).to_vec() {
+                    if !self.is_shaped_as_data(element, gone_through) {
+                        return false;
+                    }
+                }
+                continue;
+            }
+            if self.is_type_of_instances(part) || self.built_in_that_is(part).is_some() || !self.signatures(part, false).is_empty() || !self.signatures(part, true).is_empty() {
+                return false;
+            }
+            let Some(members) = self.members(part) else { continue };
+            let mut held: Vec<TypeId> = members.shape().index.iter().map(|info| info.value).collect();
+            for prop in members.shape().props.iter() {
+                held.push(self.type_of_prop(prop, members.mapper));
+            }
+            for held in held {
+                if !self.is_shaped_as_data(held, gone_through) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn add_what_is_handed_to(&mut self, ty: TypeId, depth: u32, typed_side: FileId, at: Place, gone_through: &mut FxHashSet<TypeId>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+        let ty = self.reduced(ty);
+        if depth > 4 || !gone_through.insert(ty) {
+            return;
+        }
+        for part in self.parts(ty).to_vec() {
+            if matches!(self.data(part), TypeData::Ref { .. } | TypeData::Tuple { .. }) {
+                for argument in self.type_arguments(part).to_vec() {
+                    self.add_what_is_handed_to(argument, depth + 1, typed_side, at, gone_through, seen, out);
+                }
+            }
+            if self.is_declared_outside(part) {
+                continue;
+            }
+            for is_construct in [false, true] {
+                for signature in self.signatures(part, is_construct).to_vec() {
+                    let parameters = self.sig_params(signature);
+                    for index in 0..parameters.len() + 8 {
+                        let Some(parameter) = self.param_type_at(&parameters, index) else { break };
+                        self.add_data_that_crosses_at(parameter, 0, typed_side, at, seen, out);
+                    }
+                    let yielded = self.sig_return(signature);
+                    self.add_what_is_handed_to(yielded, depth + 1, typed_side, at, gone_through, seen, out);
+                }
+            }
+            if !self.may_hold_objects(part) || self.is_array_or_tuple(part) || self.is_instantiable(part) {
+                continue;
+            }
+            let Some(members) = self.members(part) else { continue };
+            let mut held: Vec<(TypeId, bool)> = Vec::new();
+            for prop in members.shape().props.iter() {
+                held.push((self.type_of_prop(prop, members.mapper), prop.flags.contains(PropFlags::READONLY)));
+            }
+            let is_module = matches!(self.data(part), TypeData::Anon { origin: Origin::Module(_), .. });
+            for (held, is_readonly) in held {
+                if !is_readonly && !is_module {
+                    self.add_data_that_crosses_at(held, 0, typed_side, at, seen, out);
+                }
+                self.add_what_is_handed_to(held, depth + 1, typed_side, at, gone_through, seen, out);
             }
         }
     }
@@ -2344,18 +2963,48 @@ impl<'p, 's> Checker<'p, 's> {
                 };
                 self.prepare_enclosing(file, argument);
                 let handed = self.type_of_expr(file, argument);
-                self.add_what_crosses(handed, seen, out);
+                self.add_what_crosses_at(handed, 2, file, Place { file, pos: hir[argument].pos }, seen, out);
             }
+        }
+    }
+
+    fn add_what_crosses_at(&mut self, ty: TypeId, rank: u8, typed_side: FileId, at: Place, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+        if self.aot.flows.gave_up_crossing.is_some() {
+            return;
+        }
+        self.aot.flows.crossing_from_one_place = 0;
+        self.add_what_crosses(ty, seen, out);
+        if self.aot.flows.crossing_from_one_place > MOST_TYPES_THAT_CROSS_FROM_ONE_PLACE {
+            let name = match *self.data(ty) {
+                TypeData::Anon { origin: Origin::Module(module), .. } => format!("typeof import(\"{}\")", self.path_for_people(module.file)),
+                _ => self.name_for_people(ty),
+            };
+            let text = &self.hir(at.file).text;
+            let line = text[..(at.pos as usize).min(text.len())].iter().filter(|&&byte| byte == b'\n').count() + 1;
+            let place = format!("{}:{line}", self.path_for_people(at.file));
+            self.aot.flows.gave_up_crossing = Some(GaveUp { rank: (rank, at.file.0, at.pos), typed_side, name, place });
+        }
+    }
+
+    fn path_for_people(&self, file: FileId) -> String {
+        let path = String::from_utf8_lossy(self.files().module(file).file_name());
+        match path.rsplit_once("/node_modules/") {
+            Some((_, inside)) => inside.to_owned(),
+            None => path.rsplit('/').next().unwrap_or(&path).to_owned(),
         }
     }
 
     /// What untyped code has to do with once it holds a value of the type. A function it calls with what it has made, and what the function yields it holds in turn. Of an object it reads and stores the properties, of a
     /// container the elements. `out`: the types among all that which say properties. What a declaration file declares is gone through by its type arguments alone: nothing is laid out by it.
     fn add_what_crosses(&mut self, ty: TypeId, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+        if self.aot.flows.crossing_from_one_place > MOST_TYPES_THAT_CROSS_FROM_ONE_PLACE {
+            return;
+        }
         let ty = self.reduced(ty);
         if !(self.may_hold_objects(ty) || matches!(self.data(ty), TypeData::Fns { .. })) || !seen.insert(ty) {
             return;
         }
+        self.aot.flows.crossing_from_one_place += u32::from(self.aot.flows.is_crossing_bounded);
         // `wrap(): Box<Box<T>>`: it is laid out so far and no further.
         if self.is_nested_too_deeply(ty) {
             return;
@@ -2396,6 +3045,28 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_declared_outside(ty) {
             return;
         }
+        if let TypeData::Anon { origin: Origin::Mapped(file, node), .. } = *self.data(ty)
+            && (self.has_type_variables(ty) || self.generic_form_of(ty) == Some(ty))
+        {
+            let template = self.mapped_decl(file, node).ty;
+            if template.is_some() {
+                let template = self.type_from_node(file, template);
+                self.add_what_crosses(template, seen, out);
+            }
+        }
+        if let Some(form) = self.generic_form_of(ty)
+            && form != ty
+            && self.is_applied_to_what_is_applied(ty)
+        {
+            self.add_what_crosses(form, seen, out);
+            for argument in self.types_referred_to_by(ty) {
+                self.add_what_crosses(argument, seen, out);
+            }
+            if self.says_properties(ty) {
+                out.push(ty);
+            }
+            return;
+        }
         let Some(members) = self.members(ty) else { return };
         for info in members.shape().index.iter() {
             self.add_what_crosses(info.value, seen, out);
@@ -2407,6 +3078,90 @@ impl<'p, 's> Checker<'p, 's> {
         if self.says_properties(ty) {
             out.push(ty);
         }
+    }
+
+    fn has_room_for_what_nothing_is_said_of(&mut self, ty: TypeId, depth: u32) -> bool {
+        if depth == 0
+            && let Some(&known) = self.aot.flows.with_room_for_what_nothing_is_said_of.get(&ty)
+        {
+            return known;
+        }
+        let found = self.says_nothing_of_objects(ty)
+            || depth < 2
+                && self.parts(ty).to_vec().into_iter().any(|part| {
+                    matches!(self.data(part), TypeData::Ref { .. } | TypeData::Tuple { .. }) && self.type_arguments(part).to_vec().into_iter().any(|argument| self.has_room_for_what_nothing_is_said_of(argument, depth + 1))
+                });
+        if depth == 0 {
+            self.aot.flows.with_room_for_what_nothing_is_said_of.insert(ty, found);
+        }
+        found
+    }
+
+    pub(super) fn note_what_enters_a_place_that_says_nothing(&mut self, own: TypeId, target: Option<TypeId>) {
+        if !self.may_hold_objects(own) && !matches!(self.data(own), TypeData::Fns { .. }) || !self.aot.escape_closure.entered_places_that_say_nothing.insert((own, target)) {
+            return;
+        }
+        if let Some(target) = target {
+            if matches!(self.data(own), TypeData::Fns { .. } | TypeData::Anon { origin: Origin::Function(_), .. }) {
+                for mine in self.signatures(own, false).to_vec() {
+                    for theirs in self.signatures(target, false).to_vec() {
+                        let (taken, handed) = (self.sig_params(mine), self.sig_params(theirs));
+                        for index in 0..taken.len() {
+                            let (Some(into), Some(from)) = (self.param_type_at(&taken, index), self.param_type_at(&handed, index)) else { break };
+                            if self.has_room_for_what_nothing_is_said_of(into, 0) {
+                                self.note_all_that_is_brought_by(from, 0);
+                            }
+                        }
+                        let (yielded, expected) = (self.sig_return(mine), self.sig_return(theirs));
+                        if self.has_room_for_what_nothing_is_said_of(expected, 0) {
+                            self.note_all_that_is_brought_by(yielded, 0);
+                        }
+                    }
+                }
+            }
+            if !self.has_room_for_what_nothing_is_said_of(target, 0) {
+                return;
+            }
+        }
+        self.note_all_that_is_brought_by(own, 0);
+    }
+
+    fn note_all_that_is_brought_by(&mut self, ty: TypeId, depth: u32) {
+        self.note_what_is_let_out(ty, None);
+        for part in self.parts(ty).to_vec() {
+            if self.says_properties(part) && !self.is_type_of_instances(part) && !self.is_declared_outside(part) {
+                self.note_view_let_out(part);
+            }
+            if depth >= 2 {
+                continue;
+            }
+            if matches!(self.data(part), TypeData::Ref { .. } | TypeData::Tuple { .. }) {
+                for argument in self.type_arguments(part).to_vec() {
+                    self.note_all_that_is_brought_by(argument, depth + 1);
+                }
+            }
+            if matches!(self.data(part), TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. })
+                && let Some(members) = self.members(part)
+            {
+                let mut held: Vec<TypeId> = Vec::new();
+                for prop in members.shape().props.iter() {
+                    held.push(self.type_of_prop(prop, members.mapper));
+                }
+                for held in held {
+                    self.note_all_that_is_brought_by(held, depth + 1);
+                }
+            }
+        }
+    }
+
+    fn is_applied_to_what_is_applied(&mut self, ty: TypeId) -> bool {
+        self.find_applications_in(ty);
+        for argument in self.types_referred_to_by(ty) {
+            if self.is_instantiable(argument) || self.has_type_variables(argument) || self.aot.flows.applications[&argument].iter().any(|applied| applied.1 > 0) {
+                return true;
+            }
+        }
+        false
     }
 
     /// `JSON.parse(..)`, `response.json()`, `structuredClone(..)`.
@@ -2557,9 +3312,16 @@ impl<'p, 's> Checker<'p, 's> {
     /// `stays`: what is of type `ty` is in a container, or is held by what is.
     fn add_what_stays_untyped(&mut self, ty: TypeId, stays: bool, seen: &mut FxHashSet<(TypeId, bool)>, out: &mut Vec<TypeId>) {
         let ty = self.reduced(ty);
-        if !self.may_hold_objects(ty) || !seen.insert((ty, stays)) {
+        if !self.may_hold_objects(ty) || seen.contains(&(ty, stays)) {
             return;
         }
+        if stays && self.aot.flows.seen_before.is_some() {
+            let identity = self.identity_of_type(ty);
+            if self.aot.flows.seen_before.as_ref().is_some_and(|before| before.contains(&identity)) {
+                return;
+            }
+        }
+        seen.insert((ty, stays));
         if let TypeData::Union(parts) = self.data(ty) {
             let parts: Vec<TypeId> = parts.to_vec();
             // What an object is looked at as of which it is not known which part it is of.
@@ -2773,11 +3535,13 @@ impl<'p, 's> Checker<'p, 's> {
             return entering;
         }
         let mut functions_of: Vec<Option<Vec<(Atom, TypeId)>>> = vec![None; self.parts(target).len()];
+        let mut said_by: Vec<Option<([Option<TypeId>; 2], [bool; 2])>> = vec![None; self.parts(target).len()];
         for &from in self.parts(source) {
             if self.has_primitive_flag(from) {
                 continue;
             }
             let is_written = self.is_record_written_by_the_program(from);
+            let mut said_by_from = None;
             for (number, &to) in self.parts(target).iter().enumerate() {
                 if from == to || self.has_primitive_flag(to) {
                     continue;
@@ -2789,13 +3553,25 @@ impl<'p, 's> Checker<'p, 's> {
                     entering.extend(held.iter().copied().zip(held_as.iter().copied()));
                     continue;
                 }
-                for key in [TypeId::NUMBER, TypeId::STRING] {
-                    if let (Some(held), Some(held_as)) = (self.index_type_of_type(from, key), self.index_type_of_type(to, key)) {
+                let first = entering.len();
+                let (held, is_declared) = match said_by_from {
+                    Some(known) => known,
+                    None => *said_by_from.insert(self.held_and_called(from)),
+                };
+                let (held_as, is_called) = match said_by[number] {
+                    Some(known) => known,
+                    None => *said_by[number].insert(self.held_and_called(to)),
+                };
+                for key in 0..2 {
+                    if let (Some(held), Some(held_as)) = (held[key], held_as[key]) {
                         entering.push((held, held_as));
                     }
                 }
                 // A function that is called as `to` says is handed what that takes, and what it yields is taken for what that yields.
                 for constructs in [false, true] {
+                    if !is_declared[usize::from(constructs)] || !is_called[usize::from(constructs)] {
+                        continue;
+                    }
                     for &called_as in self.signatures(to, constructs).iter() {
                         let arguments = self.sig_params(called_as);
                         for &declared_as in self.signatures(from, constructs).iter() {
@@ -2812,6 +3588,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // So with a function that is a property: `{ deps: (ctx: A) => .. }` that is taken for a `{ deps: (ctx: Big) => .. }` is handed a `Big`.
                 // Not of what the standard library or a declaration file writes: `then` yields a `Promise` of a type parameter of its own, whose `then` yields another: that does not end.
                 if !is_written {
+                    self.end_what_grows(from, to, first, &mut entering);
                     continue;
                 }
                 if functions_of[number].is_none() {
@@ -2830,16 +3607,143 @@ impl<'p, 's> Checker<'p, 's> {
                     }
                     functions_of[number] = Some(functions);
                 }
-                for (name, held_as) in functions_of[number].clone().unwrap_or_default() {
+                for index in 0..functions_of[number].as_ref().map_or(0, Vec::len) {
+                    let Some(&(name, held_as)) = functions_of[number].as_ref().and_then(|functions| functions.get(index)) else { break };
                     if let Some(held) = self.type_of_property(from, name)
                         && held != held_as
                     {
                         entering.push((held, held_as));
                     }
                 }
+                self.end_what_grows(from, to, first, &mut entering);
             }
         }
         entering
+    }
+
+    fn held_and_called(&mut self, ty: TypeId) -> ([Option<TypeId>; 2], [bool; 2]) {
+        let held = [TypeId::NUMBER, TypeId::STRING].map(|key| self.index_type_of_type(ty, key));
+        (held, [false, true].map(|constructs| !self.signatures(ty, constructs).is_empty()))
+    }
+
+    fn applied_by(&self, ty: TypeId) -> Applied {
+        match *self.data(ty) {
+            TypeData::Ref { target, .. } => Applied::Named(target),
+            TypeData::Anon { origin, .. } => Applied::Written(origin),
+            TypeData::Fns { ref decls, .. } => decls.first().map_or(Applied::Computed, |&(file, func)| Applied::Function(file, func)),
+            TypeData::Intersection(ref parts) => parts.first().map_or(Applied::Computed, |&part| self.applied_by(part)),
+            _ => Applied::Computed,
+        }
+    }
+
+    fn is_nested_more_in_itself(&mut self, inner: TypeId, outer: [TypeId; 2]) -> bool {
+        for ty in [inner, outer[0], outer[1]] {
+            self.find_applications_in(ty);
+        }
+        let applications = &self.aot.flows.applications;
+        applications[&inner].iter().any(|&(applied, times)| {
+            let around = outer.iter().filter_map(|ty| applications[ty].iter().find(|known| known.0 == applied)).map(|known| known.1).max();
+            around.is_some_and(|around| times > around)
+        })
+    }
+
+    pub fn times_not_known(&self) -> usize {
+        self.aot.flows.times_not_known
+    }
+
+    pub(super) fn answers_are_provisional(&self) -> bool {
+        self.aot.flows.is_searching_from_doors || self.aot.flows.being_asked_of_taint != 0 || self.aot.flows.finding_canonical != 0
+    }
+
+    pub fn go_a_level_into_what_is_held(&mut self) {
+        self.aot.flows.levels_looked_into += 1;
+    }
+
+    pub fn come_back_a_level(&mut self) {
+        self.aot.flows.levels_looked_into -= 1;
+    }
+
+    fn end_what_grows(&mut self, from: TypeId, to: TypeId, first: usize, entering: &mut Vec<(TypeId, TypeId)>) {
+        if entering.len() == first {
+            return;
+        }
+        let mut grown = Vec::new();
+        for index in first..entering.len() {
+            let (held, held_as) = entering[index];
+            if self.is_nested_more_in_itself(held, [from, to]) || self.is_nested_more_in_itself(held_as, [from, to]) {
+                grown.push(index);
+            }
+        }
+        let key = (self.applied_by(from), self.applied_by(to));
+        let known = match self.aot.flows.looked_into.iter().position(|known| known.0 == key) {
+            Some(known) => known,
+            None => {
+                self.aot.flows.looked_into.push((key, [0; 2]));
+                self.aot.flows.looked_into.len() - 1
+            }
+        };
+        let times = &mut self.aot.flows.looked_into[known].1;
+        times[0] += 1;
+        times[1] += u32::from(!grown.is_empty());
+        let [at_all, for_what_grows] = *times;
+        let levels = self.aot.flows.levels_looked_into;
+        let most = &mut self.aot.flows.noted.most_looked_into;
+        *most = [most[0].max(at_all), most[1].max(for_what_grows), most[2].max(levels)];
+        let why = if levels > MOST_LEVELS_LOOKED_INTO {
+            3
+        } else if self.is_half_of_stack_in_use() {
+            2
+        } else if at_all > MOST_INSTANTIATIONS_LOOKED_INTO_AT_ALL {
+            1
+        } else if for_what_grows > MOST_INSTANTIATIONS_LOOKED_INTO && !grown.is_empty() {
+            0
+        } else {
+            return;
+        };
+        if why != 0 {
+            grown = (first..entering.len()).collect();
+        }
+        let at = self.aot.flows.place;
+        self.aot.flows.noted.cut_short.entry(at).or_default()[why] += 1;
+        for index in grown.into_iter().rev() {
+            let (held, held_as) = entering.remove(index);
+            self.note_what_is_not_looked_into(held, held_as);
+        }
+    }
+
+    fn note_once_what_comes_from_beyond_the_layouts(&mut self, ty: TypeId) {
+        if ty == TypeId::UNRESOLVED {
+            return;
+        }
+        let (mut seen, mut views) = (std::mem::take(&mut self.aot.flows.not_looked_into), Vec::new());
+        self.add_what_stays_untyped(ty, true, &mut seen, &mut views);
+        self.aot.flows.not_looked_into = seen;
+        for view in views {
+            self.note_foreign(view, TypeId::UNRESOLVED);
+        }
+    }
+
+    fn note_what_is_not_looked_into(&mut self, held: TypeId, held_as: TypeId) {
+        self.note_once_what_comes_from_beyond_the_layouts(held_as);
+        for (function, is_what_it_is_called_as) in [(held_as, true), (held, false)] {
+            for &part in self.parts(function) {
+                for constructs in [false, true] {
+                    for &signature in self.signatures(part, constructs).iter() {
+                        if is_what_it_is_called_as {
+                            let yielded = self.sig_return(signature);
+                            self.note_once_what_comes_from_beyond_the_layouts(yielded);
+                            continue;
+                        }
+                        let parameters = self.sig_params(signature);
+                        for index in 0..parameters.len() {
+                            if let Some(parameter) = self.param_type_at(&parameters, index) {
+                                self.note_once_what_comes_from_beyond_the_layouts(parameter);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn is_record_written_by_the_program(&self, ty: TypeId) -> bool {
@@ -2865,6 +3769,18 @@ impl<'p, 's> Checker<'p, 's> {
                 self.aot.flows.noted.add_foreign(view, Some(source), at);
                 if comes_from_beyond {
                     self.note_what_comes_from_beyond_the_layouts(view);
+                }
+            }
+        } else if self.has_tainted_part(source) {
+            let at = self.aot.flows.place;
+            for part in self.parts(source).to_vec() {
+                if !self.is_tainted(part) {
+                    continue;
+                }
+                for &view in views {
+                    if self.is_type_of_instances(view) && self.is_seen_as(part, view) {
+                        self.aot.flows.noted.add_foreign(view, Some(part), at);
+                    }
                 }
             }
         }
@@ -2913,10 +3829,152 @@ impl<'p, 's> Checker<'p, 's> {
         self.parts(expected).iter().any(|&part| self.is_type_of_instances(part))
     }
 
+    fn classes_named_by(&self, types: &[TypeId]) -> FxHashSet<Sym> {
+        (types.iter())
+            .filter_map(|&ty| match *self.data(ty) {
+                TypeData::Ref { target, .. } if self.is_type_of_instances(ty) => Some(target),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn classes_opened_for_strangers(&mut self, let_out: &[TypeId], entered: &[TypeId], entered_if_let_out: &[TypeId]) -> FxHashSet<Sym> {
+        let (mut opened, evidence) = (self.classes_named_by(entered), self.classes_named_by(let_out));
+        let (mut pending, mut above_what_is_let_out): (Vec<TypeId>, FxHashSet<Sym>) = (let_out.to_vec(), FxHashSet::default());
+        while let Some(ty) = pending.pop() {
+            let TypeData::Ref { target, .. } = *self.data(ty) else { continue };
+            if above_what_is_let_out.insert(target) {
+                pending.extend(self.base_types(target).iter().copied());
+            }
+        }
+        for &ty in entered_if_let_out {
+            let TypeData::Ref { target, .. } = *self.data(ty) else { continue };
+            if !self.is_type_of_instances(ty) || opened.contains(&target) {
+                continue;
+            }
+            if above_what_is_let_out.contains(&target) || self.extends_one_of(ty, &evidence) {
+                opened.insert(target);
+            }
+        }
+        opened
+    }
+
+    pub fn classes_served_by_second_bodies(&mut self, let_out: &[TypeId], entered: &[TypeId], entered_if_let_out: &[TypeId], classes: &[TypeId]) -> Vec<bool> {
+        let opened = self.classes_opened_for_strangers(let_out, entered, entered_if_let_out);
+        let mut pending: Vec<TypeId> = let_out.to_vec();
+        let let_out = self.classes_named_by(let_out);
+        let is_open: Vec<bool> = classes.iter().map(|&class| self.extends_one_of(class, &opened)).collect();
+        let mut met: FxHashSet<Sym> = FxHashSet::default();
+        for (&class, &is_open) in classes.iter().zip(&is_open) {
+            if is_open || self.extends_one_of(class, &let_out) {
+                pending.push(class);
+            }
+        }
+        while let Some(ty) = pending.pop() {
+            let TypeData::Ref { target, .. } = *self.data(ty) else { continue };
+            if met.insert(target) {
+                pending.extend(self.base_types(target).iter().copied());
+            }
+        }
+        (classes.iter().zip(is_open)).map(|(&class, is_open)| !is_open && matches!(*self.data(class), TypeData::Ref { target, .. } if met.contains(&target))).collect()
+    }
+
+    pub fn note_evidence_of_strangers_in(&mut self, file: FileId) {
+        let program = self.p;
+        let kept = self.take_noted();
+        for (_, expressions) in self.code_whose_escapes_are_noted(file) {
+            self.note_escapes_of(file, &expressions);
+        }
+        self.note_escapes_of(file, &[]);
+        let noted = self.take_noted();
+        self.aot.flows.noted = kept;
+        let noted = noted.renamed(|ty| match *self.data(ty) {
+            TypeData::Ref { target, .. } if self.is_type_of_instances(ty) => Some(target),
+            _ => None,
+        });
+        let mut evidence: Noted<Sym> = Noted::default();
+        evidence.absorb_evidence_of_strangers(&noted);
+        let places = program.aot.storage.evidence_of_strangers_noted.get_or_init(|| (0..program.files.modules.len()).map(|_| Mutex::new(None)).collect());
+        *held(places[file.idx()].lock()) = Some(evidence.escapes.alterations.unwrap_or_default());
+    }
+
+    pub fn merge_noted_evidence_of_strangers(&mut self, is_compiled: &dyn Fn(FileId) -> bool) {
+        let program = self.p;
+        let Some(places) = program.aot.storage.evidence_of_strangers_noted.get() else { return };
+        let mut all: super::alterations::Alterations<Sym> = Default::default();
+        for file in (0..program.files.modules.len() as u32).map(FileId) {
+            if !is_compiled(file) || self.hir(file).kind == FileKind::Declaration || self.files.module(file).is_opaque() || self.is_untyped_file(file) {
+                continue;
+            }
+            let Some(noted) = held(places[file.idx()].lock()).take() else { return };
+            all.absorb_evidence_of_strangers(&noted);
+        }
+        let evidence: FxHashSet<Sym> = all.all_with_evidence_of_strangers().into_iter().collect();
+        let mut met: FxHashSet<Sym> = FxHashSet::default();
+        let files = if evidence.is_empty() { Vec::new() } else { self.files_declaring_classes() };
+        for file in files {
+            for class in (0..self.hir(file).classes.len() as u32).map(ClassId) {
+                let ty = self.type_of_instances(file, class);
+                if !self.extends_one_of(ty, &evidence) {
+                    continue;
+                }
+                let mut pending: Vec<TypeId> = vec![ty];
+                while let Some(ty) = pending.pop() {
+                    let TypeData::Ref { target, .. } = *self.data(ty) else { continue };
+                    if met.insert(target) {
+                        pending.extend(self.base_types(target).iter().copied());
+                    }
+                }
+            }
+        }
+        let _ = program.aot.storage.evidence_of_strangers.set(met);
+    }
+
+    pub fn may_be_served_by_second_bodies(&mut self, file: FileId, class: ClassId) -> bool {
+        let program = self.p;
+        let Some(met) = program.aot.storage.evidence_of_strangers.get() else { return true };
+        let ty = self.type_of_instances(file, class);
+        matches!(*self.data(ty), TypeData::Ref { target, .. } if met.contains(&target))
+    }
+
+    fn extends_one_of(&mut self, ty: TypeId, classes: &FxHashSet<Sym>) -> bool {
+        let (mut pending, mut seen): (Vec<TypeId>, FxHashSet<Sym>) = (vec![ty], FxHashSet::default());
+        while let Some(ty) = pending.pop() {
+            let TypeData::Ref { target, .. } = *self.data(ty) else { continue };
+            if !seen.insert(target) {
+                continue;
+            }
+            if classes.contains(&target) {
+                return true;
+            }
+            pending.extend(self.base_types(target).iter().copied());
+        }
+        false
+    }
+
     /// Hands over what has been noted to this checker, which starts anew: what is noted from here on does not depend on what was asked
     /// before.
+    pub fn note_what_is_given(&mut self, kept: &dyn Fn(&Identity) -> Option<TypeId>) -> usize {
+        let given = self.given();
+        let mut kept_by_nobody: Vec<Identity> = Vec::new();
+        for identity in &given.identities {
+            match kept(identity) {
+                Some(ty) => {
+                    self.aot.flows.noted.not_laid_out.insert(ty);
+                }
+                None => kept_by_nobody.push(*identity),
+            }
+        }
+        kept_by_nobody.sort_unstable();
+        let atoms = self.atoms();
+        self.aot.flows.given_and_kept_by_nobody = kept_by_nobody.iter().filter_map(|identity| given.names.get(identity)).map(|names| names.iter().filter_map(|name| atoms.lookup(name)).collect()).collect();
+        kept_by_nobody.len()
+    }
+
     pub fn take_noted(&mut self) -> Noted {
         self.aot.flows.held_entering.clear();
+        self.aot.flows.looked_into.clear();
+        self.aot.flows.not_looked_into.clear();
         std::mem::take(&mut self.aot.flows.noted)
     }
 
@@ -3189,7 +4247,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// The types of the objects that are not laid out and that the program need not have got from anyone: arrays, functions, the objects of
     /// the classes of the engine, and whatever the program or the library of the language declares that is one of them and more. A class
     /// as a value and a function that has been given properties are among them. With `any` for type parameters.
-    fn kinds_not_laid_out(&mut self, noted: &FxHashSet<TypeId>) -> (Vec<Kind>, Having) {
+    fn kinds_not_laid_out(&mut self, noted: &FxHashSet<TypeId>, given: &[TypeId]) -> (Vec<Kind>, Having) {
         let (mut kinds, mut having) = (Vec::new(), Having::default());
         let of_functions = [known::Function, known::CallableFunction, known::NewableFunction].map(|name| self.global_ref(name, &[]));
         let mut add = |c: &mut Self, kind: Kind, is_function: bool| {
@@ -3214,6 +4272,9 @@ impl<'p, 's> Checker<'p, 's> {
         for ty in noted {
             let is_function = matches!(self.built_in_that_is(ty), Some(BuiltIn::Function));
             add(self, Kind::Of(ty), is_function);
+        }
+        for &ty in given {
+            add(self, Kind::Given(ty), false);
         }
         let files = self.files();
         let mut seen: FxHashSet<Sym> = FxHashSet::default();
@@ -3250,7 +4311,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn type_of_kind(&mut self, kind: Kind) -> TypeId {
         let ty = match kind {
             Kind::Made(ty) | Kind::Assignable(ty) => return ty,
-            Kind::Of(ty) => ty,
+            Kind::Of(ty) | Kind::Given(ty) => ty,
             Kind::Arrays => return self.array_of(TypeId::ANY),
             Kind::Functions => return self.global_ref(known::Function, &[]),
             Kind::InstancesOf(sym) => self.declared_type(sym),
@@ -3427,15 +4488,18 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// From here on `is_of_type` and all that goes before it leave out the properties whose names are not among `stored`.
     fn go_by_names_stored(&mut self, stored: &FxHashSet<Atom>) {
-        let mut bits: Vec<u64> = Vec::new();
-        for name in stored.iter().filter(|name| name.is_some() && !name.is_own()) {
-            let at = name.0 as usize;
-            if bits.len() <= at / 64 {
-                bits.resize(at / 64 + 1, 0);
+        let bits = self.p.aot.storage.names_stored.get_or_init(|| {
+            let mut bits: Vec<u64> = Vec::new();
+            for name in stored.iter().filter(|name| name.is_some() && !name.is_own()) {
+                let at = name.0 as usize;
+                if bits.len() <= at / 64 {
+                    bits.resize(at / 64 + 1, 0);
+                }
+                bits[at / 64] |= 1 << (at % 64);
             }
-            bits[at / 64] |= 1 << (at % 64);
-        }
-        self.aot.flows.stored = Some(bits);
+            std::sync::Arc::new(bits)
+        });
+        self.aot.flows.stored = Some(bits.clone());
     }
 
     /// Whether the objects of the type are made by the program, as far as the type tells. What a declaration file declares is made
@@ -3456,7 +4520,7 @@ impl<'p, 's> Checker<'p, 's> {
             TypeData::Ref { target, .. } => self.only_declares(target.file),
             TypeData::Anon { origin: Origin::TypeLiteral(file, _), .. } => self.only_declares(*file),
             TypeData::Intersection(parts) => parts.iter().any(|&part| self.is_declared_only_record(part)),
-            TypeData::Synth(shape) if shape.spread_rank >= u32::MAX - 1 => shape.spread_of.is_some_and(|(_, viewed)| self.parts(viewed).iter().any(|&part| self.is_declared_only_record(part))),
+            TypeData::Synth(shape) if shape.spread_rank >= u32::MAX - 1 => shape.created_from.is_some_and(|(_, viewed)| self.parts(viewed).iter().any(|&part| self.is_declared_only_record(part))),
             _ => false,
         }
     }
@@ -3592,6 +4656,21 @@ impl<'p, 's> Checker<'p, 's> {
             noted.copied_into.len(),
             noted.foreign.len()
         ));
+        let mut cut_short: Vec<(Place, [u32; 4])> = noted.cut_short.iter().map(|(&at, &times)| (at, times)).collect();
+        cut_short.sort_unstable();
+        let sums = cut_short.iter().fold([0u32; 4], |sums, cut| [sums[0] + cut.1[0], sums[1] + cut.1[1], sums[2] + cut.1[2], sums[3] + cut.1[3]]);
+        let first = cut_short.first().map_or_else(String::new, |cut| format!("; the first at {}", self.place_for_people(cut.0)));
+        clock.say(format_args!(
+            "what is held within what enters: the walk was cut short at {} places: {} times for what nests in itself, {} for too many of two declarations, {} for the stack, {} for too many levels{first}; the most of two declarations in one body: {} looked into, {} of them for what nests in itself; the deepest: {} levels",
+            cut_short.len(),
+            sums[0],
+            sums[1],
+            sums[2],
+            sums[3],
+            noted.most_looked_into[0],
+            noted.most_looked_into[1],
+            noted.most_looked_into[2]
+        ));
         self.go_by_names_stored(&stored);
         let mut index_of: FxHashMap<TypeId, u32> = FxHashMap::default();
         for (index, &view) in views.iter().enumerate() {
@@ -3673,26 +4752,69 @@ impl<'p, 's> Checker<'p, 's> {
         // holds a value to the type of which its text says nothing, if there is such an object that is of the type.
         let mut foreign: Vec<(u32, Option<TypeId>, WhyForeign)> = Vec::new();
         let mut about_kinds: Vec<(Question, u32, WhyForeign)> = Vec::new();
-        let (others, having) = if untyped_into.is_empty() { Default::default() } else { self.kinds_not_laid_out(&noted.not_laid_out) };
+        let mut given: Vec<TypeId> = noted.not_laid_out.iter().copied().collect();
+        given.retain(|&ty| self.is_tainted(ty));
+        for ty in &given {
+            noted.not_laid_out.remove(ty);
+        }
+        given.sort_unstable_by_key(|ty| ty.0);
+        let (others, having) = if untyped_into.is_empty() && given.is_empty() { Default::default() } else { self.kinds_not_laid_out(&noted.not_laid_out, &given) };
         clock.say(format_args!("{} vouched for, {} kinds that are not laid out", vouched.len(), others.len()));
         let mut candidates: Vec<u32> = Vec::new();
+        let mut having_of_nobody = Having::default();
+        for (index, names) in std::mem::take(&mut self.aot.flows.given_and_kept_by_nobody).into_iter().enumerate() {
+            having_of_nobody.all.push(index as u32);
+            having_of_nobody.indexable.push(index as u32);
+            for name in names {
+                having_of_nobody.by_name.entry(name).or_default().push(index as u32);
+            }
+        }
+        let mut of_nobody: Vec<u32> = Vec::new();
+        let (let_out, entered, entered_if_let_out) = noted.evidence_of_strangers();
+        let opened = self.classes_opened_for_strangers(&let_out, &entered, &entered_if_let_out);
         for (index, &view) in views.iter().enumerate() {
+            let seen_at = noted.foreign.get(&view).map(|seen| seen.1);
             if let Some(&(source, at)) = noted.foreign.get(&view) {
                 // What a coercion lets through is whatever it was, laid out or not. It passes no cast for being that.
                 let passing = source.filter(|_| !self.is_view_made_by_coercion(view));
                 foreign.push((index as u32, passing, WhyForeign::Seen { source, at }));
             } else if self.is_declared_only_record(view) {
                 foreign.push((index as u32, None, WhyForeign::DeclaredOnly));
-            } else if let Some(&at) = untyped_into.get(&view) {
-                candidates.clear();
-                self.add_candidates(&having, view, &mut candidates);
-                candidates.sort_unstable();
-                candidates.dedup();
-                about_kinds.extend(candidates.iter().map(|&candidate| {
-                    let kind = others[candidate as usize];
-                    (Question { kind, view }, index as u32, WhyForeign::Untyped { at, candidate: Candidate(kind) })
-                }));
+                continue;
+            } else if self.is_type_of_instances(view) && self.extends_one_of(view, &opened) {
+                foreign.push((index as u32, None, WhyForeign::Instance));
+                continue;
             }
+            let untyped_at = untyped_into.get(&view).copied().filter(|_| seen_at.is_none());
+            let vouched_at = vouched.binary_search_by_key(&(index as u32), |target| target.0).ok().map(|found| vouched[found].1);
+            let Some(at) = seen_at.or(untyped_at).or(vouched_at) else { continue };
+            candidates.clear();
+            self.add_candidates(&having, view, &mut candidates);
+            candidates.sort_unstable();
+            candidates.dedup();
+            let is_given = |candidate: &u32| matches!(others[*candidate as usize], Kind::Given(_));
+            let is_made_by_coercion = self.is_view_made_by_coercion(view);
+            if !is_made_by_coercion {
+                of_nobody.clear();
+                self.add_candidates(&having_of_nobody, view, &mut of_nobody);
+                if !of_nobody.is_empty() {
+                    foreign.push((index as u32, None, WhyForeign::GivenAndKeptByNobody { at }));
+                    continue;
+                }
+            }
+            let of_given: Vec<u32> = candidates.iter().copied().filter(|candidate| !is_made_by_coercion && is_given(candidate)).collect();
+            if of_given.len() > MOST_GIVEN_KINDS_ASKED_ABOUT {
+                foreign.push((index as u32, None, WhyForeign::Given { at, candidate: Candidate(others[of_given[0] as usize]) }));
+                continue;
+            }
+            about_kinds.extend(of_given.iter().map(|&candidate| {
+                let kind = others[candidate as usize];
+                (Question { kind, view }, index as u32, WhyForeign::Given { at, candidate: Candidate(kind) })
+            }));
+            about_kinds.extend(candidates.iter().filter(|candidate| untyped_at.is_some() && !is_given(candidate)).map(|&candidate| {
+                let kind = others[candidate as usize];
+                (Question { kind, view }, index as u32, WhyForeign::Untyped { at, candidate: Candidate(kind) })
+            }));
         }
 
         let mut upcasts: Vec<(u32, u32, Place)> = noted.upcasts.iter().filter_map(|(&(from, to), &at)| Some((*index_of.get(&from)?, *index_of.get(&to)?, at))).collect();
@@ -3887,6 +5009,14 @@ impl<'p, 's> Checker<'p, 's> {
                 Kind::Made(made) => self.is_of_type(made, question.view),
                 Kind::Assignable(made) => self.is_of_type_as(made, question.view, false) || self.is_narrowed_from(question.view, made),
                 _ if admitting == Some(question.view) => false,
+                Kind::Given(_) => {
+                    let given = self.type_of_kind(question.kind);
+                    let is_admitted = self.is_of_type_as(given, question.view, false);
+                    if is_admitted {
+                        admitting = Some(question.view);
+                    }
+                    is_admitted
+                }
                 kind => {
                     let other = self.type_of_kind(kind);
                     let is_admitted = self.is_of_type(other, question.view);
@@ -3969,7 +5099,13 @@ impl<'p, 's> Checker<'p, 's> {
                         let candidate = self.type_of_kind(candidate.0);
                         line += &format!("untyped: something untyped is held to it at {}, and {} is of the type", self.place_for_people(at), self.name_for_people(candidate));
                     }
+                    WhyForeign::Given { at, candidate } => {
+                        let candidate = self.type_of_kind(candidate.0);
+                        line += &format!("given: a value that only its type vouches for is held to it or to what holds it at {}, and {}, which the program is given, is assignable to it or to what holds it", self.place_for_people(at), self.name_for_people(candidate));
+                    }
+                    WhyForeign::GivenAndKeptByNobody { at } => line += &format!("given: a value that only its type vouches for is held to it or to what holds it at {}, and a type that the program is given and that no task could keep, such as untyped code makes, has its names", self.place_for_people(at)),
                     WhyForeign::DeclaredOnly => line += "declared in a declaration file",
+                    WhyForeign::Instance => line += "a class: the text shows that an object its constructor has not made can come to be: an object of it or a method of it is handed to what is not typed code, or to a built-in that lets it out",
                     WhyForeign::Flat { at } => line += &format!("flat: all its properties are primitives, and something untyped is held to it at {}", self.place_for_people(at)),
                     WhyForeign::TooMany { at } => line += &format!("too many layouts may fit it to ask about each, and a value that only its type vouches for is held to it at {}", self.place_for_people(at)),
                     WhyForeign::Weak { at } => line += &format!("weak: it requires no live field, and a value that only its type vouches for is held to it at {}", self.place_for_people(at)),

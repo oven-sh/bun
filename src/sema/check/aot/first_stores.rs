@@ -101,6 +101,10 @@ pub(crate) struct ConstructionsByView {
 }
 
 impl ConstructionsByView {
+    pub(super) fn is_incomplete(&self) -> bool {
+        self.is_incomplete
+    }
+
     /// Fills in `Reach::never_seen_absent`. All by view. `becomes`: what a cast may turn a layout into.
     ///
     /// Whatever the order of what has been noted, it comes out the same: an intersection does not depend on it.
@@ -114,7 +118,7 @@ impl ConstructionsByView {
         let is_instance = |layout: u32| facts[layout as usize].flags & IS_INSTANCE != 0;
         // The records that may inherit from anything: `class_flags::MAY_HAVE_OTHER_PROTOTYPE`, as the link gives it to them. The run time does
         // not guard the `prototype` object of a function that initializes one.
-        let mut may_inherit: Vec<bool> = views.iter().map(|reach| reach.may_have_other_prototype).collect();
+        let mut may_inherit: Vec<bool> = vec![false; views.len()];
         for (view, ..) in self.constructors.iter().filter(|constructor| constructor.3) {
             for &layout in views[*view as usize].members.iter().chain([view]).filter(|&&layout| !is_instance(layout)) {
                 may_inherit[layout as usize] = true;
@@ -122,11 +126,8 @@ impl ConstructionsByView {
         }
         for (view, function, stores, _) in &self.constructors {
             let this = &views[*view as usize];
-            // The engine stores without a test as far as every layout that the function may be handed has a field for the name, and not
-            // at all where `this` may be an object that is not laid out, or one that may inherit a setter. What it stores the general
-            // way is not counted among the keys unless the store finds the marker.
             let is_had_by_all = |name: &&Atom| this.members.iter().all(|&layout| facts[layout as usize].declared.binary_search(&name.0).is_ok());
-            let is_general = this.admits_foreign || this.members.iter().any(|&layout| may_inherit[layout as usize]);
+            let is_general = this.members.iter().any(|&layout| may_inherit[layout as usize]);
             let stores = if is_general { &[][..] } else { &stores[..stores.iter().take_while(is_had_by_all).count()] };
             let is_meant_to_get = |layout: &&u32| *layout == view || expected_by_new[**layout as usize].iter().any(|expected| expected.is_none_or(|expected| expected == *function));
             for &layout in this.members.iter().chain([view]).filter(is_meant_to_get) {
@@ -256,9 +257,36 @@ impl<'p, 's> Checker<'p, 's> {
     /// `(this as any).name = value` is one of them where the layout has a field for the name: `undeclared_fields.rs`.
     pub fn first_stores_of(&mut self, file: FileId, func: FnId) -> Vec<FirstStore> {
         let mut stores = self.first_stores_written_in(file, func);
-        let count = self.count_first_stores_to_fields(file, func, &stores);
+        let mut count = self.count_first_stores_to_fields(file, func, &stores);
+        while count > 0 && count < stores.len() && stores[count].stmt == stores[count - 1].stmt {
+            count -= 1;
+        }
         stores.truncate(count);
         stores
+    }
+
+    pub(super) fn explain_first_stores_ended_by_listed_names(&mut self) -> (usize, usize) {
+        let listed = self.prototype_property_names();
+        let all = self.constructor_functions();
+        let mut ended = 0;
+        for &(file, func) in &all {
+            let hir = self.hir(file);
+            let FnBody::Block(body) = hir[func].body else { continue };
+            if self.has_mutable_prototype(file, func) {
+                continue;
+            }
+            let last = self.first_stores_written_in(file, func).last().map(|store| store.stmt);
+            let next = hir.ids(body).skip_while(|&stmt| last.is_some_and(|last| stmt != last)).nth(last.is_some() as usize);
+            let Some(StmtKind::Expr(mut e)) = next.map(|stmt| hir[stmt].kind) else { continue };
+            while let ExprKind::Assign { op: None, target, value } = hir[e].kind {
+                if matches!(hir[target].kind, ExprKind::Dot { name, .. } if listed.contains(&name)) {
+                    ended += 1;
+                    break;
+                }
+                e = value;
+            }
+        }
+        (ended, all.len())
     }
 
     /// Whether or not there is a field for what is stored through `any`.
@@ -271,21 +299,38 @@ impl<'p, 's> Checker<'p, 's> {
             return stores;
         }
         let on_prototypes = self.prototype_property_names();
+        let keeps_them_off = self.keeps_field_names_off_its_prototype(file, func);
         for stmt in hir.ids(body) {
             let StmtKind::Expr(e) = hir[stmt].kind else { break };
             // A directive.
             if stores.is_empty() && matches!(hir[e].kind, ExprKind::String(_)) {
                 continue;
             }
-            let ExprKind::Assign { op: None, target, value } = hir[e].kind else { break };
-            let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[target].kind else { break };
-            let this = self.this_cast_to_any(file, obj).unwrap_or(obj);
-            let is_inherited = on_prototypes.contains(&name) || ON_OBJECT_PROTOTYPE.contains(&self.atoms().bytes(name));
-            let is_first = matches!(hir[this].kind, ExprKind::This) && !is_inherited && stores.iter().all(|store| store.name != name);
-            if !is_first || !(self.names_parameter_of(file, func, value) || self.is_plain_nil(file, value) || self.is_enum_constant(file, value) || self.yields_primitive(file, value)) {
+            let mut targets: Vec<ExprId> = Vec::new();
+            let mut value = e;
+            while let ExprKind::Assign { op: None, target, value: assigned } = hir[value].kind {
+                targets.push(target);
+                value = assigned;
+            }
+            let has_no_operand = matches!(hir[value].kind, ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::Ident(_));
+            let yields_primitive = (targets.len() == 1 || has_no_operand) && self.yields_primitive(file, value);
+            if targets.is_empty() || !(self.names_parameter_of(file, func, value) || self.is_plain_nil(file, value) || self.is_enum_constant(file, value) || yields_primitive) {
                 break;
             }
-            stores.push(FirstStore { stmt, this, target, name, value });
+            let before = stores.len();
+            for &target in targets.iter().rev() {
+                let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[target].kind else { break };
+                let this = self.this_cast_to_any(file, obj).unwrap_or(obj);
+                let is_inherited = (!keeps_them_off && on_prototypes.contains(&name)) || ON_OBJECT_PROTOTYPE.contains(&self.atoms().bytes(name));
+                if !matches!(hir[this].kind, ExprKind::This) || is_inherited || stores.iter().any(|store| store.name == name) {
+                    break;
+                }
+                stores.push(FirstStore { stmt, this, target, name, value });
+            }
+            if stores.len() != before + targets.len() {
+                stores.truncate(before);
+                break;
+            }
         }
         stores
     }

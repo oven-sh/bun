@@ -50,16 +50,52 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         // Whoever evaluates an expression goes on where it was.
         let outer = fx.b.pos;
+        let made_so_far = fx.b.func.values.len();
         let value = self.expr_as_written(fx, e);
         fx.b.pos = pos;
+        if self.shared.constants.notes_spans && value.is_some() && value.idx() < made_so_far {
+            let node = &self.hir(fx.file)[e];
+            fx.first_spans.entry(value).or_insert(crate::audit::Noted { start: node.pos, end: node.end, step: crate::audit::READ_LATER, block: fx.b.block });
+        }
+        self.note_span(fx, value, e);
         let value = self.fit_to_expression(fx, value, e);
+        self.note_span(fx, value, e);
         fx.b.pos = outer;
         value
+    }
+
+    pub(crate) fn note_span(&mut self, fx: &mut Fx, value: V, e: ExprId) {
+        if self.shared.constants.notes_spans && value.is_some() {
+            let node = &self.hir(fx.file)[e];
+            if fx.last_spans.get(&value).is_some_and(|noted| (noted.start, noted.end) == (node.pos, node.end)) {
+                return;
+            }
+            let span = crate::audit::Noted { start: node.pos, end: node.end, step: 0, block: fx.b.block };
+            fx.first_spans.entry(value).or_insert(span);
+            fx.last_spans.insert(value, span);
+        }
+    }
+
+    pub(crate) fn note_span_of_what_is_stored(&mut self, fx: &mut Fx, value: V, e: ExprId) {
+        if self.shared.constants.notes_spans {
+            let node = &self.hir(fx.file)[e];
+            let step = match node.kind {
+                ExprKind::Unary { op: hir::UnOp::PostInc, .. } => 1,
+                ExprKind::Unary { op: hir::UnOp::PostDec, .. } => -1,
+                _ => 0,
+            };
+            let span = crate::audit::Noted { start: node.pos, end: node.end, step, block: fx.b.block };
+            fx.first_spans.insert(value, span);
+            fx.last_spans.insert(value, span);
+        }
     }
 
     /// `fit` for the value of the expression `e`, at the position of that.
     fn fit_at(&mut self, fx: &mut Fx, e: ExprId, value: V, want: Ty, why: Why) -> V {
         let pos = if e.is_some() { self.hir(fx.file)[e].pos } else { fx.b.pos };
+        if e.is_some() {
+            self.note_span(fx, value, e);
+        }
         let outer = std::mem::replace(&mut fx.b.pos, pos);
         let value = self.fit(fx, value, want, why);
         fx.b.pos = outer;
@@ -154,7 +190,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         } else {
             self.expr(fx, e)
         };
-        self.fit_at(fx, e, value, want, why)
+        let held = self.fit_at(fx, e, value, want, why);
+        if matches!(self.hir(fx.file)[e].kind, ExprKind::Object(_)) {
+            self.mark_cast_of_what_is_fresh(fx, held, value);
+        }
+        held
     }
 
     fn expr_for_sink(&mut self, fx: &mut Fx, sink: Sink) -> V {
@@ -197,6 +237,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// The expression is evaluated and nothing is done with its value.
     pub(crate) fn expr_for_effect(&mut self, fx: &mut Fx, e: ExprId) {
+        if !fx.is_typed
+            && e.is_some()
+            && let ExprKind::Unary { op: op @ (hir::UnOp::PostInc | hir::UnOp::PostDec), operand } = self.hir(fx.file)[e].kind
+        {
+            let outer = std::mem::replace(&mut fx.b.pos, self.hir(fx.file)[e].pos);
+            self.unary(fx, e, if matches!(op, hir::UnOp::PostInc) { hir::UnOp::PreInc } else { hir::UnOp::PreDec }, operand);
+            fx.b.pos = outer;
+            return;
+        }
         self.expr_unheld(fx, e);
     }
 
@@ -292,16 +341,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    pub(crate) fn is_unwrapped_in(&self, file: FileId, e: ExprId) -> bool {
+    pub(crate) fn is_unwrapped_in(&mut self, file: FileId, e: ExprId) -> bool {
         if e.is_none() || self.c.is_stack_low() {
             return false;
         }
         let (hir, constants) = (self.hir(file), &self.shared.constants);
         match hir[e].kind {
             ExprKind::Call(call) | ExprKind::New(call) => {
-                hir[call].can_be_unwrapped_if_unused
-                    && !constants.ignores_dce_annotations
-                    && !matches!(hir[hir[call].callee].kind, ExprKind::Ident(known::require))
+                !constants.ignores_dce_annotations
+                    && self.shared.calls_marked_pure[file.idx()].get_or_init(|| super::comments::calls_marked_pure(hir)).binary_search(&e.0).is_ok()
+                    && !(matches!(hir[hir[call].callee].kind, ExprKind::Ident(known::require)) && self.is_free_in(file, hir[call].callee, known::require))
                     && !hir.ids(hir[call].args).any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_)))
             }
             ExprKind::Jsx(_) => !constants.ignores_dce_annotations && !constants.jsx_has_side_effects,
@@ -324,7 +373,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
-    fn vanishes_unused(&self, file: FileId, e: ExprId) -> bool {
+    fn is_item_of_an_import(&mut self, file: FileId, e: ExprId, name: Atom) -> bool {
+        self.c.binding_of_identifier(file, e, name).is_some_and(|found| self.files.decls(found).into_iter().any(|(_, decl)| matches!(decl, Decl::ImportDefault(_) | Decl::ImportSpec(_) | Decl::ImportEquals(_))))
+    }
+
+    fn vanishes_unused(&mut self, file: FileId, e: ExprId) -> bool {
         if e.is_none() {
             return true;
         }
@@ -334,6 +387,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let hir = self.hir(file);
         match hir[e].kind {
             ExprKind::Missing | ExprKind::This | ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_) | ExprKind::Regex | ExprKind::Fn(_) => true,
+            ExprKind::Ident(name) => !self.is_item_of_an_import(file, e, name) && (matches!(self.c.atoms().bytes(name), b"undefined" | b"NaN" | b"Infinity") || !self.is_free_in(file, e, name)),
+            ExprKind::Unary { op: hir::UnOp::Typeof, operand } => match hir[operand].kind {
+                ExprKind::Ident(name) => !self.is_item_of_an_import(file, operand, name),
+                _ => self.vanishes_unused(file, operand),
+            },
             ExprKind::Call(call) | ExprKind::New(call) => self.is_unwrapped_in(file, e) && hir.ids(hir[call].args).all(|argument| self.vanishes_unused(file, argument)),
             ExprKind::Jsx(jsx) => {
                 let element = &hir[jsx];
@@ -429,6 +487,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// What `expr_tested_first` has yielded for `e`, now that it is used: held to the type of `e`, as `expr` holds it.
     fn hold_tested(&mut self, fx: &mut Fx, value: V, e: ExprId) -> V {
+        self.note_span(fx, value, e);
         let mut held = value;
         // What the engine makes sure of with a read that has the type of the field. Nothing new flows anywhere. A prediction is held to nothing.
         if let Prediction::Field(to) = fx.b.func.prediction(value)
@@ -476,7 +535,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.c.is_stack_low() {
             return self.unsupported(fx, node.pos, "an expression that is nested this deeply");
         }
-        if matches!(node.kind, ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Call(_) | ExprKind::Binary { op: hir::BinOp::EqEqEq | hir::BinOp::NotEqEq | hir::BinOp::EqEq | hir::BinOp::NotEq, .. })
+        if matches!(node.kind, ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_) | ExprKind::Binary { op: hir::BinOp::EqEqEq | hir::BinOp::NotEqEq | hir::BinOp::EqEq | hir::BinOp::NotEq, .. })
             && let Some(constant) = self.replacement(fx, e)
         {
             return self.emit_constant(fx, &constant);
@@ -598,7 +657,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 if captures.is_empty() && self.c.is_evaluated_once(fx.file, Parent::Expr(e)) {
                     return self.emit(fx, Op::FuncRef(id));
                 }
-                if let Some((activation, field)) = self.c.kept_function_expression(fx.file, func) {
+                if let Some((activation, field)) = self.c.kept_function_expression(fx.file, func).filter(|_| !self.is_written_in_second_body(fx.file, func)) {
                     let layout = self.layout_of_activation(activation);
                     let env = self.env_of(fx, layout);
                     return self.emit(fx, Op::ClosureOnce { func: id, captures, env, field });
@@ -778,43 +837,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             ExprKind::Jsx(jsx) => self.jsx(fx, e, jsx),
             ExprKind::ImportCall { args } => {
                 let specifier = hir.id_at(args, 0);
-                if let ExprKind::String(text) = hir[specifier].kind
-                    && let Some(imported) = self.imported_file(fx.file, text)
-                {
-                    self.note_value_of_json_module(fx, imported, e);
-                    let is_node_mode = self.exports_an_object(imported) && self.is_node_mode(fx.file, imported);
-                    let func = self.dynamic_import_of(imported, is_node_mode);
-                    let Some(options) = hir.ids(args).nth(1) else {
-                        self.emit_importer(fx, imported, true);
-                        return self.emit_throwing(fx, Op::CallDirect { func, args: Args::new() });
-                    };
-                    let options = self.expr(fx, options);
-                    let import = self.emit(fx, Op::FuncRef(func));
-                    self.emit_importer(fx, imported, true);
-                    let promise = self.operation(fx, "ImportWithOptions", &[options, import]);
-                    self.emit_importer(fx, imported, false);
-                    return promise;
-                }
-                if let ExprKind::String(text) = hir[specifier].kind
-                    && self.is_in_the_bundle_only(fx.file, text)
-                {
-                    return self.unsupported(fx, node.pos, "an import of a file that is neither code nor a constant");
-                }
                 let options = hir.ids(args).nth(1);
-                // What the bundler keeps for itself: `with { type: "sqlite" }`.
-                if options.is_some() && matches!(hir[specifier].kind, ExprKind::String(_)) {
-                    return self.unsupported(fx, node.pos, "`import()` with options of what the bundle has not");
+                if let ExprKind::String(text) = hir[specifier].kind {
+                    return self.import_of_text(fx, e, text, Some(specifier), options);
+                }
+                if options.is_none() && !hir.folded_choice_of_specifiers(specifier).is_empty() {
+                    let value = self.import_choice(fx, e, specifier);
+                    return self.fit_to_expression(fx, value, e);
                 }
                 let specifier = self.expr(fx, specifier);
-                let options = match options {
-                    Some(options) => self.expr(fx, options),
-                    None => self.emit(fx, Op::Undefined),
-                };
-                let value = self.operation(fx, "ImportExternalModule", &[specifier, options]);
+                let value = self.import_from_the_host(fx, specifier, options);
                 self.fit_to_expression(fx, value, e)
             }
             ExprKind::ImportMeta => {
-                let value = self.operation(fx, "GetImportMeta", &[]);
+                let value = self.import_meta(fx);
                 self.fit_to_expression(fx, value, e)
             }
             ExprKind::NewTarget(_) => {
@@ -831,6 +867,87 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.unsupported(fx, node.pos, "`new.target` in an arrow function")
             }
         }
+    }
+
+    fn import_of_text(&mut self, fx: &mut Fx, e: ExprId, text: Atom, literal: Option<ExprId>, options: Option<ExprId>) -> V {
+        if let Some(imported) = self.imported_file(fx.file, text) {
+            if literal.is_some() {
+                self.note_value_of_json_module(fx, imported, e);
+            }
+            let is_node_mode = self.exports_an_object(imported) && self.is_node_mode(fx.file, imported);
+            let func = self.dynamic_import_of(imported, is_node_mode);
+            let Some(options) = options else {
+                self.emit_importer(fx, imported, true);
+                return self.emit_throwing(fx, Op::CallDirect { func, args: Args::new() });
+            };
+            let options = self.expr(fx, options);
+            let import = self.emit(fx, Op::FuncRef(func));
+            self.emit_importer(fx, imported, true);
+            let promise = self.operation(fx, "ImportWithOptions", &[options, import]);
+            self.emit_importer(fx, imported, false);
+            return promise;
+        }
+        let pos = self.hir(fx.file)[e].pos;
+        if self.is_in_the_bundle_only(fx.file, text) {
+            return self.unsupported(fx, pos, "an import of a file that is neither code nor a constant");
+        }
+        // What the bundler keeps for itself: `with { type: "sqlite" }`.
+        if options.is_some() {
+            return self.unsupported(fx, pos, "`import()` with options of what the bundle has not");
+        }
+        let specifier = match literal {
+            Some(literal) if self.as_the_host_names_it(text) == text => self.expr(fx, literal),
+            _ => {
+                let text = self.as_the_host_names_it(text);
+                let text = self.str(text);
+                self.emit(fx, Op::Str(text))
+            }
+        };
+        let value = self.import_from_the_host(fx, specifier, None);
+        if literal.is_some() { self.fit_to_expression(fx, value, e) } else { value }
+    }
+
+    fn import_from_the_host(&mut self, fx: &mut Fx, specifier: V, options: Option<ExprId>) -> V {
+        let options = match options {
+            Some(options) => self.expr(fx, options),
+            None => self.emit(fx, Op::Undefined),
+        };
+        let mut operands = vec![specifier, options];
+        if let Some(path) = self.own_path(fx.file, b"path") {
+            let path = self.out.strs.intern(&path);
+            operands.push(self.emit(fx, Op::Str(path)));
+        }
+        self.operation(fx, "ImportExternalModule", &operands)
+    }
+
+    fn import_choice(&mut self, fx: &mut Fx, e: ExprId, specifier: ExprId) -> V {
+        let hir = self.hir(fx.file);
+        let ExprKind::Cond { test, yes, no } = hir[specifier].kind else {
+            let text = hir.constant_specifier(specifier);
+            debug_assert!(text.is_some());
+            return self.import_of_text(fx, e, text.unwrap_or(Atom::NONE), None, None);
+        };
+        if let Some(test) = self.constant(fx, test) {
+            let (taken, left_out) = if test.is_truthy() { (yes, no) } else { (no, yes) };
+            self.cut_expr(fx, left_out);
+            return self.import_choice(fx, e, taken);
+        }
+        let (then, otherwise, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
+        let result = self.new_result(fx, None);
+        self.branch_on(fx, test, then, otherwise);
+        fx.b.seal(then);
+        fx.b.seal(otherwise);
+        fx.b.switch_to(then);
+        let value = self.import_choice(fx, e, yes);
+        self.write(fx, result, value);
+        fx.b.jump(join);
+        fx.b.switch_to(otherwise);
+        let value = self.import_choice(fx, e, no);
+        self.write(fx, result, value);
+        fx.b.jump(join);
+        fx.b.seal(join);
+        fx.b.switch_to(join);
+        self.read(fx, result)
     }
 
     /// tag`a${b}c`: the tag is called with the template object, which is created once per site, and the substitutions.
@@ -1053,8 +1170,23 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let name = self.name_after_file("import", imported);
         let module = self.module_of(imported);
         let func = self.add_func(name, module, 0, ir::FuncKind::Plain, super::Source::DynamicImport(imported, is_node_mode));
-        self.out.funcs[func.idx()].flags |= func_flags::ASYNC | func_flags::IS_HIDDEN_IN_STACK_TRACES;
+        let has_body_of_its_own = self.is_async_module(imported);
+        self.out.funcs[func.idx()].flags |= func_flags::IS_HIDDEN_IN_STACK_TRACES | if has_body_of_its_own { 0 } else { func_flags::ASYNC };
         self.dynamic_imports.insert((imported, is_node_mode), func);
+        func
+    }
+
+    pub(crate) fn dynamic_import_body_of(&mut self, imported: FileId, is_node_mode: bool) -> FuncId {
+        if let Some(&func) = self.dynamic_import_bodies.get(&(imported, is_node_mode)) {
+            return func;
+        }
+        let name = self.name_after_file("import", imported);
+        let module = self.module_of(imported);
+        let func = self.add_func(name, module, 0, ir::FuncKind::Plain, super::Source::DynamicImportBody(imported, is_node_mode));
+        self.out.funcs[func.idx()].flags |= func_flags::ASYNC | func_flags::IS_HIDDEN_IN_STACK_TRACES;
+        self.out.funcs[func.idx()].params = vec![TyId::NONE];
+        self.out.funcs[func.idx()].length = 1;
+        self.dynamic_import_bodies.insert((imported, is_node_mode), func);
         func
     }
 
@@ -1066,12 +1198,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// Where the namespace object of an external module is kept. It is set when a module that imports it is evaluated.
     pub(crate) fn external_module_global(&mut self, file: FileId, specifier: Atom) -> GlobalId {
+        self.external_module_global_kept_in(file, file, specifier)
+    }
+
+    pub(crate) fn external_module_global_kept_in(&mut self, keeper: FileId, file: FileId, specifier: Atom) -> GlobalId {
+        let specifier = self.as_the_host_finds_it(file, specifier);
         let specifier = self.str(specifier);
         match self.external_modules.iter().find(|&&(known, _)| known == specifier) {
             Some(&(_, global)) => global,
             None => {
                 let key = GlobalKey::ExternalModule(self.out.strs.get(specifier).into());
-                let global = self.add_global(specifier, file, Ty::NONE, key);
+                let global = self.add_global(specifier, keeper, Ty::NONE, key);
                 self.external_modules.push((specifier, global));
                 self.out.globals[global.idx()].initialization = ir::Initialization::Undefined;
                 global
@@ -1779,6 +1916,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         {
             return self.emit_clone_with_stores(fx, layout, props);
         }
+        if !is_plain
+            && !is_dynamic
+            && let Some(layout) = self.layout_cloned_after_names(fx, e, props)
+        {
+            return self.emit_clone_after_names(fx, layout, props);
+        }
         if self.is_copy_left_ordinary(fx, e, props) {
             let only = props.iter().next().map_or(ExprId::NONE, |only| hir[only].value);
             let source = self.expr(fx, only);
@@ -1800,7 +1943,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             .collect();
         // It goes straight to a place whose type is written down: no other code, and no other file, gets to see the type of its own.
         let is_hidden = fx.sink.is_some_and(|sink| sink.e == e && sink.want.id.is_some());
-        let layout = if self.is_asked_to_be_dynamic(fx, e) {
+        let layout = if self.is_asked_to_be_dynamic(fx, e) || has_accessors && names.is_empty() && !self.c.initializes_member_of_inferred_type(fx.file, e) {
             None
         } else if props.is_empty() {
             let is_checked = self.c.contextual_type_of_literal(fx.file, e).is_some();
@@ -1934,7 +2077,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         // `{ ok, value } as { ok: true; value: T } | { ok: false; value: undefined }`: which one it is shows when the program runs, so it is
         // an ordinary object, and the cast makes it one of them.
         if number_that_fit > 0 {
-            return first.filter(|_| number_that_fit == 1);
+            let is_taken_by_another = number_that_fit == 1
+                && self.c.parts(expected).to_vec().into_iter().any(|part| (!self.is_object_type_of_program(part) || self.record_layout(part) != first) && self.c.is_object_type(part) && self.c.is_provably_assignable(own, part));
+            return first.filter(|_| number_that_fit == 1 && !is_taken_by_another);
         }
         if is_told_its_properties { None } else { self.record_layout(own).filter(|&found| self.fits(found, names)) }
     }
@@ -2020,41 +2165,119 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// `{ a: .., ...y }`: the layout that `{ a: .. }` is made as in its place, likewise.
     fn layout_cloned_by_literal(&mut self, fx: &Fx, e: ExprId, props: Span<PropId>) -> Option<LayoutId> {
         let hir = self.hir(fx.file);
-        if !fx.is_typed || props.iter().len() < 2 || self.is_asked_to_be_dynamic(fx, e) {
+        if !fx.is_typed || props.iter().len() < 2 || self.is_asked_to_be_dynamic(fx, e) || !self.c.has_declared_type(fx.file, e) {
             return None;
         }
         let first = props.iter().next()?;
-        let is_cloned = hir[first].kind == PropKind::Spread;
-        let (layout, base) = if is_cloned {
-            let copied = self.c.type_of_expr(fx.file, hir[first].value);
-            if !self.is_object_type_of_program(copied) {
-                return None;
-            }
-            (self.record_layout(copied)?, copied)
-        } else {
+        if hir[first].kind != PropKind::Spread {
             let ahead = props.iter().take_while(|&p| hir[p].kind != PropKind::Spread);
             let names: Vec<StrId> = ahead.filter_map(|p| if let PropKey::Name(name) = hir[p].key { Some(self.str(name)) } else { None }).collect();
             let made = self.layout_of_literal(fx, e, &names)?;
-            (made, *self.layout_types.get(&made)?)
-        };
-        for p in props.iter().skip(usize::from(is_cloned)) {
+            let base = *self.layout_types.get(&made)?;
+            return self.are_items_held_by(fx, props, 0, made, base).then_some(made);
+        }
+        let written = self.c.type_of_expr(fx.file, hir[first].value);
+        let copied = self.c.non_nullable(written);
+        let may_be_nil = copied != written;
+        if !self.is_object_type_of_program(copied) {
+            return None;
+        }
+        let layout = self.record_layout(copied)?;
+        let mut names: Vec<StrId> = self.out.layouts[layout.idx()].fields.iter().map(|field| field.name).collect();
+        if !may_be_nil
+            && self.are_items_held_by(fx, props, 1, layout, copied)
+            && let Some(made) = self.layout_of_literal(fx, e, &names)
+            && let (Some(&source), Some(&target)) = (self.layout_types.get(&layout), self.layout_types.get(&made))
+            && (made == layout || self.c.is_seen_as(source, target))
+        {
+            return Some(layout);
+        }
+        if fx.sink.is_some_and(|sink| sink.e == e && sink.want.id.is_none()) || self.ty_of(copied) == self.out.tys.anything {
+            return None;
+        }
+        let mut later: Vec<Atom> = Vec::new();
+        let mut is_behind_a_spread = false;
+        for p in props.iter().skip(1) {
+            if hir[p].kind == PropKind::Spread {
+                is_behind_a_spread = true;
+                continue;
+            }
+            let PropKey::Name(name) = hir[p].key else { return None };
+            if is_behind_a_spread {
+                return None;
+            }
+            names.push(self.str(name));
+            later.push(name);
+        }
+        let made = self.layout_of_literal(fx, e, &names)?;
+        let base = *self.layout_types.get(&made)?;
+        (self.is_spread_held_by_but(made, base, copied, &later) && self.are_items_held_by(fx, props, 1, made, base)).then_some(made)
+    }
+
+    fn layout_cloned_after_names(&mut self, fx: &Fx, e: ExprId, props: Span<PropId>) -> Option<LayoutId> {
+        let hir = self.hir(fx.file);
+        let number_ahead = props.iter().len().checked_sub(1).filter(|&ahead| ahead > 0)?;
+        let spread = props.iter().nth(number_ahead)?;
+        if !fx.is_typed || hir[spread].kind != PropKind::Spread || self.is_asked_to_be_dynamic(fx, e) || !self.c.has_declared_type(fx.file, e) || fx.sink.is_some_and(|sink| sink.e == e && sink.want.id.is_none()) {
+            return None;
+        }
+        let copied = self.c.type_of_expr(fx.file, hir[spread].value);
+        if !self.is_object_type_of_program(copied) || self.ty_of(copied) == self.out.tys.anything {
+            return None;
+        }
+        let layout = self.record_layout(copied)?;
+        let mut names: Vec<StrId> = Vec::new();
+        for p in props.iter().take(number_ahead) {
+            let PropKey::Name(name) = hir[p].key else { return None };
+            let name = self.str(name);
+            if !matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand) || names.contains(&name) {
+                return None;
+            }
+            names.push(name);
+        }
+        let of_source: Vec<StrId> = self.out.layouts[layout.idx()].fields.iter().map(|field| field.name).filter(|name| !names.contains(name)).collect();
+        names.extend(of_source);
+        let made = self.layout_of_literal(fx, e, &names)?;
+        let base = *self.layout_types.get(&made)?;
+        self.are_items_held_by(fx, props, 0, made, base).then_some(made)
+    }
+
+    fn emit_clone_after_names(&mut self, fx: &mut Fx, layout: LayoutId, props: Span<PropId>) -> V {
+        let hir = self.hir(fx.file);
+        let mut operands = vec![V::NONE];
+        for p in props.iter() {
+            if hir[p].kind == PropKind::Spread {
+                operands[0] = self.expr(fx, hir[p].value);
+                continue;
+            }
+            let PropKey::Name(name) = hir[p].key else { continue };
+            self.note_callee_stored(fx, layout, name, hir[p].value, true);
+            let given = if hir[p].kind == PropKind::Init { name } else { Atom::NONE };
+            let name = self.str(name);
+            let field = self.out.layouts[layout.idx()].field(name).unwrap_or(0);
+            let (want, why) = (self.type_of_field(layout, field), self.why_of_field(layout, field));
+            let value = self.expr_named_into(fx, hir[p].value, given, want, why);
+            operands.push(self.emit(fx, Op::Str(name)));
+            operands.push(value);
+        }
+        let copied = self.layout_types.get(&layout).copied().unwrap_or(TypeId::UNRESOLVED);
+        self.note_allocation(layout);
+        let clone = self.operation(fx, "CloneObjectAfter", &operands);
+        fx.checked.insert(clone, copied);
+        fx.b.func.values[clone.idx()].prediction = Prediction::Ty(self.ty_of(copied));
+        self.fit_fresh(fx, clone, copied)
+    }
+
+    fn are_items_held_by(&mut self, fx: &Fx, props: Span<PropId>, start: usize, layout: LayoutId, base: TypeId) -> bool {
+        let hir = self.hir(fx.file);
+        props.iter().skip(start).all(|p| {
             let given = self.c.type_of_expr(fx.file, hir[p].value);
-            let is_held = match (hir[p].kind, hir[p].key) {
+            match (hir[p].kind, hir[p].key) {
                 (PropKind::Spread, _) => self.is_spread_held_by(layout, base, given),
                 (PropKind::Init | PropKind::Shorthand, PropKey::Name(name)) => self.is_property_held_by(layout, base, name, given),
                 _ => false,
-            };
-            if !is_held {
-                return None;
             }
-        }
-        if !is_cloned {
-            return Some(layout);
-        }
-        let names: Vec<StrId> = self.out.layouts[layout.idx()].fields.iter().map(|field| field.name).collect();
-        let made = self.layout_of_literal(fx, e, &names)?;
-        let (source, target) = (*self.layout_types.get(&layout)?, *self.layout_types.get(&made)?);
-        (made == layout || self.c.is_seen_as(source, target)).then_some(layout)
+        })
     }
 
     /// Whether a value of the type `given` may be stored to the property `name` of an object that is made with the layout, of the type `base`.
@@ -2063,11 +2286,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.c.atoms().bytes(name) != b"__proto__"
             && self.out.layouts[layout.idx()].field(field).is_some()
             && !self.c.is_immutable_discriminant(base, name)
-            && self.c.type_of_property(base, name).is_some_and(|held| self.c.is_provably_assignable(given, held))
+            && (self.c.is_predicted_through_spread(base, name) || self.c.type_of_property(base, name).is_some_and(|held| self.c.is_provably_assignable(given, held)))
     }
 
     /// The same of every property that an object of the type `spread` is known to have.
     pub(crate) fn is_spread_held_by(&mut self, layout: LayoutId, base: TypeId, spread: TypeId) -> bool {
+        self.is_spread_held_by_but(layout, base, spread, &[])
+    }
+
+    pub(crate) fn is_spread_held_by_but(&mut self, layout: LayoutId, base: TypeId, spread: TypeId, overwritten: &[Atom]) -> bool {
         for &part in self.c.parts(spread) {
             if self.has_nothing_to_copy(part) {
                 continue;
@@ -2082,6 +2309,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             let known: Vec<(Atom, bool)> = shape.props.iter().map(|prop| (prop.name, prop.flags.contains(PropFlags::OPTIONAL))).collect();
             for (name, is_optional) in known {
+                if overwritten.contains(&name) {
+                    continue;
+                }
                 let Some(given) = self.c.type_of_property(part, name) else { return false };
                 let given = if is_optional { self.c.remove_missing_or_undefined_type(given) } else { given };
                 if !self.is_property_held_by(layout, base, name, given) {
@@ -2201,7 +2431,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if hir[p].kind == PropKind::Spread {
                 copied = self.c.type_of_expr(fx.file, hir[p].value);
                 let source = self.expr(fx, hir[p].value);
-                clone = self.operation(fx, "CloneObject", &[source]);
+                if self.record_layout(copied) == Some(layout) {
+                    clone = self.operation(fx, "CloneObject", &[source]);
+                } else {
+                    copied = self.layout_types.get(&layout).copied().unwrap_or(copied);
+                    let mut operands = vec![source];
+                    for later in props.iter().skip(1) {
+                        if let PropKey::Name(name) = hir[later].key {
+                            let name = self.str(name);
+                            operands.push(self.emit(fx, Op::Str(name)));
+                        }
+                    }
+                    self.note_allocation(layout);
+                    clone = self.operation(fx, "CloneObjectWith", &operands);
+                }
                 fx.checked.insert(clone, copied);
                 fx.b.func.values[clone.idx()].prediction = Prediction::Ty(self.ty_of(copied));
                 continue;
@@ -2498,7 +2741,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         {
             let want = Ty { id: self.ty_of(checked), checked };
             // `f.call(x as A)`: the parameter is an `A` because the argument says so. Holding the one to the other asserts nothing that is written down.
-            let is_its_own_source = matches!(self.hir(fx.file)[e].kind, ExprKind::As { .. }) && self.c.is_taken_as_what_the_arguments_say(fx.file, e);
+            let is_its_own_source = (matches!(self.hir(fx.file)[e].kind, ExprKind::As { .. }) || (self.c.is_handed_back_by_the_call_it_is_handed_to(fx.file, e) && self.c.is_predicted(fx.file, e))) && self.c.is_taken_as_what_the_arguments_say(fx.file, e);
             if self.is_made_by_casts(want.id) && !is_its_own_source {
                 return self.expr_into(fx, e, want, Why::Cast);
             }
@@ -2508,6 +2751,30 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return self.expr_tested(fx, e);
         }
         self.expr(fx, e)
+    }
+
+    fn override_named_by(&mut self, file: FileId, e: ExprId) -> Option<GlobalId> {
+        if !self.shared.constants.has_test_globals {
+            return None;
+        }
+        let ExprKind::Ident(name) = self.hir(file)[e].kind else { return None };
+        let sym = self.c.binding_of_identifier(file, e, name)?;
+        let sym = self.value_symbol(sym);
+        self.override_of(sym)
+    }
+
+    fn direct_call_unless_overridden(&mut self, fx: &mut Fx, global: Option<GlobalId>, func: FuncId, args: &[V], e: ExprId) -> V {
+        let Some(global) = global else { return self.direct_call(fx, func, V::NONE, args, e) };
+        self.unless_overridden(
+            fx,
+            global,
+            e,
+            |this, fx, callee| {
+                let receiver = this.emit(fx, Op::Undefined);
+                this.emit_throwing(fx, Op::Call { callee, this: receiver, args: args.iter().copied().collect() })
+            },
+            |this, fx| this.direct_call(fx, func, V::NONE, args, e),
+        )
     }
 
     /// The function of the program an expression names, if nothing else can be its value.
@@ -2558,6 +2825,46 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.emit_throwing(fx, Op::CallDirect { func, args: all })
     }
 
+    fn direct_call_with_spread(&mut self, fx: &mut Fx, func: FuncId, list: IdList<ExprId>, e: ExprId) -> Option<V> {
+        if !fx.is_typed && !self.is_untyped_file(fx.file) && !self.typed_bodies.contains_key(&func) && self.out.funcs[func.idx()].annotated.contains(&true) {
+            return None;
+        }
+        let func = self.typed_bodies.get(&func).copied().filter(|_| fx.is_typed).unwrap_or(func);
+        if list.len == 1 || !self.out.funcs[func.idx()].has(func_flags::HAS_REST) {
+            return None;
+        }
+        let hir = self.hir(fx.file);
+        let named = self.out.funcs[func.idx()].params.len() - 1;
+        let is_taken_by_rest = hir.ids(list).enumerate().all(|(i, argument)| match hir[argument].kind {
+            ExprKind::Missing => false,
+            ExprKind::Spread(_) => i >= named,
+            _ => true,
+        });
+        if !is_taken_by_rest {
+            return None;
+        }
+        let mut packed = Vec::new();
+        let (mut array, mut pending) = (V::NONE, Args::new());
+        for (i, argument) in hir.ids(list).enumerate() {
+            match hir[argument].kind {
+                ExprKind::Spread(inner) => {
+                    array = self.emit_array_append(fx, array, std::mem::take(&mut pending));
+                    let iterable = self.expr(fx, inner);
+                    let outer = std::mem::replace(&mut fx.b.pos, hir[inner].pos);
+                    array = self.operation(fx, "AppendSpread", &[array, iterable]);
+                    fx.b.func.values[array.idx()].ty = self.known.array;
+                    fx.b.pos = outer;
+                }
+                _ if i < named => packed.push(self.argument(fx, argument)),
+                _ => pending.push(self.argument(fx, argument)),
+            }
+        }
+        packed.push(self.emit_array_append(fx, array, pending));
+        let all = self.direct_args(fx, func, V::NONE, &packed);
+        let value = self.emit_throwing(fx, Op::CallDirect { func, args: all });
+        Some(self.fit_to_expression(fx, value, e))
+    }
+
     /// The same as the value of the call `e`. What the function is declared to yield the engine has from the function.
     fn direct_call(&mut self, fx: &mut Fx, func: FuncId, this: V, args: &[V], e: ExprId) -> V {
         if !fx.is_typed && !self.is_untyped_file(fx.file) && !self.typed_bodies.contains_key(&func) && self.out.funcs[func.idx()].annotated.contains(&true) {
@@ -2566,7 +2873,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let value = self.emit_throwing(fx, Op::Call { callee, this, args: args.iter().copied().collect() });
             return self.fit_to_expression(fx, value, e);
         }
-        let func = self.typed_bodies.get(&func).copied().filter(|_| fx.is_typed).unwrap_or(func);
+        let anything = self.out.tys.anything;
+        let entry = self.entries_beside.get(&func).copied().filter(|_| {
+            (fx.is_typed || self.is_untyped_file(fx.file))
+                && self.out.funcs[func.idx()].kind != ir::FuncKind::Method
+                && (args.iter().zip(&self.out.funcs[func.idx()].params)).any(|(&given, &held_to)| {
+                    let have = self.ty(fx, given);
+                    held_to.is_some() && held_to != anything && (have.is_none() || have == anything || !self.out.tys.get(have).has_objects() && !self.out.tys.get(have).is_described_within(self.out.tys.get(held_to)))
+                })
+        });
+        let func = entry.unwrap_or_else(|| self.typed_bodies.get(&func).copied().filter(|_| fx.is_typed).unwrap_or(func));
         let value = self.emit_direct_call(fx, func, this, args);
         self.fit_to_expression(fx, value, e)
     }
@@ -2969,8 +3285,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         for ignored in hir.ids(c.args).skip(1) {
             self.expr(fx, ignored);
         }
-        let reports_own_paths = self.emit(fx, Op::Bool(self.shared.constants.own_paths.is_some()));
-        Some(self.operation(fx, "DirectEval", &[source, scope, reports_own_paths]))
+        let own_path = match self.own_path(fx.file, b"path") {
+            Some(path) => {
+                let path = self.out.strs.intern(&path);
+                self.emit(fx, Op::Str(path))
+            }
+            None => self.emit(fx, Op::Bool(self.shared.constants.own_paths.is_some())),
+        };
+        Some(self.operation(fx, "DirectEval", &[source, scope, own_path]))
     }
 
     fn call(&mut self, fx: &mut Fx, e: ExprId, call: CallId, bail: BlockId) -> V {
@@ -3001,6 +3323,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             return self.fit_to_expression(fx, value, e);
         }
+        if let Some(value) = self.require_resolve_call(fx, call) {
+            return self.fit_to_expression(fx, value, e);
+        }
         if let Some(value) = self.intrinsic_call(fx, call) {
             return self.fit_to_expression(fx, value, e);
         }
@@ -3024,13 +3349,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && let Some(func) = lazy.map(|(_, func)| func).or_else(|| self.function_for_expr(fx, c.callee))
         {
             let Some(args) = self.arguments(fx, c.args) else {
+                if let Some(value) = self.direct_call_with_spread(fx, func, c.args, e) {
+                    return value;
+                }
                 let callee = self.expr(fx, c.callee);
                 let this = self.emit(fx, Op::Undefined);
                 let args = self.emit_array_with_spread(fx, c.args);
                 let value = self.operation(fx, "Apply", &[callee, this, args]);
                 return self.fit_to_expression(fx, value, e);
             };
-            return self.direct_call(fx, func, V::NONE, &args, e);
+            let global = self.override_named_by(fx.file, c.callee);
+            return self.direct_call_unless_overridden(fx, global, func, &args, e);
         }
         // `(a.b)(..)`: parentheses yield the reference, so `a` is `this`. All they do is end an optional chain.
         if let ExprKind::Dot { obj, name, chain, .. } = hir[c.callee].kind
@@ -3040,13 +3369,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 && let Some(func) = self.function_of_symbol(fx, member)
             {
                 let Some(args) = self.arguments(fx, c.args) else {
+                    if let Some(value) = self.direct_call_with_spread(fx, func, c.args, e) {
+                        return value;
+                    }
                     let callee = self.closure_of(fx, func);
                     let this = self.emit(fx, Op::Undefined);
                     let args = self.emit_array_with_spread(fx, c.args);
                     let value = self.operation(fx, "Apply", &[callee, this, args]);
                     return self.fit_to_expression(fx, value, e);
                 };
-                return self.direct_call(fx, func, V::NONE, &args, e);
+                let global = self.override_of(member);
+                return self.direct_call_unless_overridden(fx, global, func, &args, e);
             }
             if let Some(member) = self.namespace_member(fx, obj, name) {
                 // A binding that holds a function: `export const f = () => ..`.
@@ -3189,8 +3522,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let callee = self.chain_operand(fx, e, c.callee, bail);
         let callee = self.predict_callee(fx, callee, c.callee);
         let this = self.emit(fx, Op::Undefined);
+        if let Some((file, path)) = self.builtin_held_by_callee(fx, c.callee)
+            && !hir.ids(c.args).any(|arg| matches!(hir[arg].kind, ExprKind::Spread(_) | ExprKind::Missing))
+            && let Some(args) = self.arguments(fx, c.args)
+        {
+            let args = self.as_the_builtin_takes_them(fx, file, path, args);
+            let value = self.emit_throwing(fx, Op::Call { callee, this, args });
+            return self.fit_to_expression(fx, value, e);
+        }
         let value = self.emit_call(fx, callee, this, c.args);
         self.fit_to_expression(fx, value, e)
+    }
+
+    fn builtin_held_by_callee(&mut self, fx: &Fx, callee: ExprId) -> Option<(FileId, ExprId)> {
+        let ExprKind::Ident(name) = self.hir(fx.file)[callee].kind else { return None };
+        let sym = self.c.binding_of_identifier(fx.file, callee, name)?;
+        let held = match self.c.builtin_held_by(sym) {
+            None if self.c.has_dead_zone(sym) => self.c.builtin_or_undefined_held_by(sym),
+            held => held,
+        };
+        held.filter(|held| held.0 == fx.file)
     }
 
     /// `callee?.(..)`: the chain ends where `callee` is `undefined` or `null`.
@@ -3326,7 +3677,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return None;
         }
         let held = self.ident(fx, named, name, false);
-        let shared = if method.is_none() { self.arguments(fx, c.args)? } else { Args::new() };
+        let shared = match method {
+            None => {
+                let args = self.arguments(fx, c.args)?;
+                self.as_the_builtin_takes_them(fx, file, path, args)
+            }
+            Some(_) => Args::new(),
+        };
         let (is_nothing_yet, is_function, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
         let result = self.new_result(fx, Some(e));
         let undefined = self.emit(fx, Op::Undefined);
@@ -3413,7 +3770,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let hir = self.hir(fx.file);
         let c = &hir[call];
         fx.b.pos = self.last_pos(fx, c.callee);
-        if let Some(class) = self.class_for_expr(fx.file, c.callee)
+        if self.override_named_by(fx.file, c.callee).is_none()
+            && let Some(class) = self.class_for_expr(fx.file, c.callee)
             && let Some(value) = self.construct_class(fx, c.callee, class, c.args)
         {
             return self.fit_to_expression(fx, value, e);
@@ -3526,6 +3884,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         let key = self.expr(fx, index);
                         self.emit_throwing(fx, Op::ElemDelete { obj, key })
                     }
+                    ExprKind::Ident(_) if self.c.bound(fx.file).is_arguments_object(operand) => self.emit(fx, Op::Bool(false)),
+                    ExprKind::Ident(name) => match self.c.binding_of_identifier(fx.file, operand, name).map(|sym| self.value_symbol(sym)) {
+                        Some(sym) if !self.is_ambient(sym) => self.emit(fx, Op::Bool(false)),
+                        _ => {
+                            let obj = self.public_global(fx, b"globalThis");
+                            let name = self.str(name);
+                            self.emit_throwing(fx, Op::PropDelete { obj, name })
+                        }
+                    },
                     // Not a reference.
                     _ => {
                         self.expr(fx, operand);
@@ -3549,12 +3916,29 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let mut old = V::NONE;
                 let new = self.update(fx, operand, |this, fx, current| {
                     let current = this.used_as_its_type(fx, current, operand);
-                    let numeric = this.emit_arithmetic(fx, Op::Unary { op: UnOp::ToNumeric, a: current }, e, Computes::Before);
-                    // Of a number it is that number, so what is expected of the operand is expected of it, and of what the operand holds next.
-                    let numeric = this.predict_expression(fx, numeric, operand);
+                    let converts = Op::Unary { op: UnOp::ToNumeric, a: current };
+                    let is_converted_by_the_step = !is_post && !fx.is_typed && {
+                        let shown = this.ty_shown_by_text(fx, e, Computes::Before);
+                        let yielded = if shown.is_some() { shown } else { this.type_of_op(fx, &converts).id };
+                        this.is_number_or_bigint(fx, yielded, e)
+                    };
+                    let numeric = if is_converted_by_the_step {
+                        current
+                    } else {
+                        let numeric = this.emit_arithmetic(fx, converts, e, Computes::Before);
+                        // Of a number it is that number, so what is expected of the operand is expected of it, and of what the operand holds next.
+                        this.predict_expression(fx, numeric, operand)
+                    };
                     old = numeric;
-                    let one = this.one_like(fx, numeric, e);
-                    let next = this.emit_arithmetic(fx, Op::Binary { op: op_ir, a: numeric, b: one }, e, Computes::Stored);
+                    let held = this.ty(fx, numeric);
+                    let step = if is_converted_by_the_step || this.is_number_or_bigint(fx, held, e) {
+                        let name = this.out.strs.intern(if matches!(op_ir, BinOp::Add) { b"Increment" } else { b"Decrement" });
+                        Op::Operation { name, args: [numeric].into_iter().collect() }
+                    } else {
+                        let one = this.one_like(fx, numeric, e);
+                        Op::Binary { op: op_ir, a: numeric, b: one }
+                    };
+                    let next = this.emit_arithmetic(fx, step, e, Computes::Stored);
                     this.predict_expression(fx, next, operand)
                 });
                 if is_post { old } else { new }
@@ -3564,37 +3948,20 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// What `++` and `--` add to or take from `numeric`, which `ToNumeric` has yielded: `1`, or `1n` if that is a bigint. `e`: the whole expression.
     fn one_like(&mut self, fx: &mut Fx, numeric: V, e: ExprId) -> V {
-        let described = self.out.tys.get(self.ty(fx, numeric));
-        let (kinds, has_integers) = (described.prims, described.ints.is_some());
-        let bigint_one = self.out.strs.intern(b"1");
+        let kinds = self.out.tys.get(self.ty(fx, numeric)).prims;
         // A number without a range is not said to be one in untyped code (`unless_plain_number`). That it is no bigint is gone by all the same.
         if kinds & prim::BIGINT == 0 || !fx.is_typed && self.c.kinds_yielded_by(fx.file, e) & check::kind::BIGINT == 0 {
             return self.emit(fx, Op::Int(1));
         }
+        let bigint_one = self.out.strs.intern(b"1");
+        self.emit(fx, Op::BigInt(bigint_one))
+    }
+
+    fn is_number_or_bigint(&mut self, fx: &Fx, ty: TyId, e: ExprId) -> bool {
+        let described = self.out.tys.get(ty);
+        let (kinds, has_integers) = (described.prims, described.ints.is_some());
         // `bigint | integers 0..9` has its numbers in the range.
-        if kinds & prim::NUMBER == 0 && !has_integers {
-            return self.emit(fx, Op::BigInt(bigint_one));
-        }
-        let (bigint, number, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
-        let result = self.new_result(fx, None);
-        let kind = self.emit(fx, Op::TypeOf(numeric));
-        let name = self.out.strs.intern(b"bigint");
-        let name = self.emit(fx, Op::Str(name));
-        let is_bigint = self.emit(fx, Op::StrictEq { a: kind, b: name });
-        self.branch(fx, is_bigint, bigint, number);
-        fx.b.seal(bigint);
-        fx.b.seal(number);
-        fx.b.switch_to(bigint);
-        let one = self.emit(fx, Op::BigInt(bigint_one));
-        self.write(fx, result, one);
-        fx.b.jump(join);
-        fx.b.switch_to(number);
-        let one = self.emit(fx, Op::Int(1));
-        self.write(fx, result, one);
-        fx.b.jump(join);
-        fx.b.seal(join);
-        fx.b.switch_to(join);
-        self.read(fx, result)
+        kinds & prim::BIGINT != 0 && (kinds & prim::NUMBER != 0 || has_integers) && (fx.is_typed || self.c.kinds_yielded_by(fx.file, e) & check::kind::BIGINT != 0)
     }
 
     /// An operand of arithmetic, of `<` and the like, a part of a template, the receiver of a read or a call.
@@ -3604,6 +3971,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     fn binary(&mut self, fx: &mut Fx, e: ExprId, op: hir::BinOp, left: ExprId, right: ExprId) -> V {
+        if let Some(is_main) = self.is_main_by_the_host(fx, op, left, right) {
+            return is_main;
+        }
         if let Some(op) = arithmetic_operator(op) {
             let a = self.operand(fx, left);
             let b = self.operand(fx, right);
@@ -4531,7 +4901,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let reference = self.target(fx, target);
             let reference = self.with_key_made_once(fx, reference);
             self.note_callee_assigned(fx, &reference, value);
-            let current = self.load(fx, &reference, pos);
+            let current = match reference {
+                Reference::Other(variable) if fx.is_typed && self.c.reference_read_by(fx.file, variable).is_some_and(|read| read.is_asserted) => self.expr_tested_first(fx, variable),
+                _ => self.load(fx, &reference, pos),
+            };
             let reference = reference.once_loaded();
             return self.short_circuit(fx, op, None, current, |this, fx| {
                 let value = this.assigned_value(fx, value, target);

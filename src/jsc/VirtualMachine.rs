@@ -610,6 +610,13 @@ pub unsafe extern "C" fn Bun__standaloneModuleIsCompiled(name: *const u8, len: u
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__standaloneSourcesOfCompiledProgram(out_len: *mut usize) -> *const u8 {
+    let paths = standalone_module_graph().map_or(&[][..], |graph| graph.sources_of_compiled_program());
+    unsafe { *out_len = paths.len() };
+    paths.as_ptr()
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn Bun__standaloneModuleIsInternal(name: *const u8, len: usize) -> bool {
     // SAFETY: `name[..len]` is the caller's live 8-bit string buffer.
     let name = unsafe { bun_core::ffi::slice(name, len) };
@@ -2383,6 +2390,40 @@ impl VirtualMachine {
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
     }
 
+    /// Ends this thread's VM, which is not the main thread's: its exit handlers,
+    /// [`teardown`](Self::teardown), and the storage `init` put on the global heap.
+    /// Returns its exit code.
+    ///
+    /// # Safety
+    /// `this` is this thread's VM, made without a caller's `log`; this thread holds
+    /// its API lock and abandons it; nothing else can reach the VM.
+    pub unsafe fn exit_and_free(this: *mut Self) -> u8 {
+        // SAFETY: fn contract (statement-scoped exclusive access: the handlers run script).
+        let exit_code = unsafe {
+            (*this).is_shutting_down = true;
+            (*this).on_exit();
+            (*this).exit_handler.exit_code
+        };
+        // SAFETY: fn contract.
+        unsafe { Self::teardown(this, Teardown::Worker) };
+        // SAFETY: sole owner; nothing past this point dereferences the VM.
+        unsafe {
+            let console = core::mem::replace(&mut (*this).console, core::ptr::null_mut());
+            if !console.is_null() {
+                bun_core::heap::destroy(console);
+            }
+            if let Some(log) = (*this).log.take() {
+                bun_core::heap::destroy(log.as_ptr());
+            }
+            VMHolder::set_vm(None);
+            // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
+            // `init`, NOT `Box::new` — dealloc the raw storage directly so
+            // field `Drop`s do not re-run on already-`deinit`'d state.
+            std::alloc::dealloc(this.cast::<u8>(), core::alloc::Layout::new::<Self>());
+        }
+        exit_code
+    }
+
     /// Checkpoint + close the sqlite connections *this* VM opened, while it is
     /// alive and no user script will touch them again. Never another VM's: a
     /// worker still running when the main thread exits without joining it owns
@@ -3502,10 +3543,9 @@ impl VirtualMachine {
             crate::cpp::Bun__preExecutionBootstrap(self.global());
         }
 
-        self.main_is_compiled = self.preload.is_empty()
-            && (self.standalone_module_graph)
-                .and_then(|graph| graph.program_data_index(entry_path))
-                .is_some_and(|module| Bun__AOT__isCompiledEntryPoint(module));
+        let is_compiled = self.is_compiled_entry_point(entry_path);
+        self.has_loaded = is_compiled && self.standalone_module_graph.is_some_and(|graph| graph.preserves_source_paths());
+        self.main_is_compiled = self.preload.is_empty() && is_compiled;
 
         if !self.main_is_html_entrypoint && !self.main_is_compiled {
             if let Some(hooks) = hooks {
@@ -4195,7 +4235,9 @@ impl VirtualMachine {
     }
 
     /// `--disallow-code-generation-from-strings`, as a `bun_core::CodeGenerationFromStrings`.
-    /// The process's, so it takes no `VirtualMachine`.
+    /// The process's, so it takes no `VirtualMachine`. C++ does not ask a build that has the
+    /// level as a constant (CodeGenerationFromStrings.h).
+    #[cfg(not(bun_disallow_code_generation_from_strings))]
     #[unsafe(export_name = "Bun__codeGenerationFromStrings")]
     pub(crate) extern "C" fn code_generation_from_strings_for_cpp() -> u8 {
         bun_core::code_generation_from_strings() as u8
@@ -4246,6 +4288,13 @@ impl VirtualMachine {
             return v;
         }
         self.transpiler.env_mut().get_tls_reject_unauthorized()
+    }
+
+    /// The TLS 1.2 list assigned through `tls.DEFAULT_CIPHERS`, `None` when never assigned.
+    pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
+        self.rare_data
+            .as_deref()
+            .and_then(RareData::tls_default_ciphers)
     }
 
     /// Registers a spawned subprocess with the auto-killer.
@@ -5086,6 +5135,7 @@ impl VirtualMachine {
             source_code_printer: printer.as_ptr(),
             // `fetchWithoutOnLoadPlugins` forbids the async path.
             promise_ptr: core::ptr::null_mut(),
+            function_texts: core::ptr::null_mut(),
         };
         let args = ModuleLoader::TranspileArgs {
             specifier: lr.specifier,
@@ -5687,11 +5737,17 @@ impl VirtualMachine {
     }
 
     /// Resets entry-point state and re-loads `entry_path` for the test runner, returning the load promise.
+    fn is_compiled_entry_point(&self, entry_path: &[u8]) -> bool {
+        (self.standalone_module_graph)
+            .and_then(|graph| graph.program_data_index(entry_path))
+            .is_some_and(|module| Bun__AOT__isCompiledEntryPoint(module))
+    }
+
     pub(crate) fn reload_entry_point_for_test_runner(
         &mut self,
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        self.has_loaded = false;
+        self.has_loaded = self.is_compiled_entry_point(entry_path) && self.standalone_module_graph.is_some_and(|graph| graph.preserves_source_paths());
         self.set_main(entry_path);
         self.main_resolved_path = bun_core::String::EMPTY;
         self.main_hash = bun_watcher::Watcher::get_hash(entry_path);

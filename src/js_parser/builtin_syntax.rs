@@ -59,9 +59,7 @@ fn is_named_export(stmt: &Stmt) -> bool {
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
-    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
-{
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     fn unresolved_identifier(&mut self, name: &'a [u8], loc: Loc) -> Expr {
         let ref_ = self.store_name_in_ref(name);
         Expr::init_identifier(ref_, loc)

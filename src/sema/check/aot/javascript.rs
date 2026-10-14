@@ -13,11 +13,14 @@ use crate::hir::{BinOp, CallId, ExprId, ExprKind, FileKind, Flags, FnBody, FnId,
 use super::kinds::kind;
 use crate::program::{FileId, Sym};
 use crate::types::{MapperId, Origin, Prop, PropFlags, PropSource, Shape, TypeData, TypeId};
+use crate::util::InParallel;
 use bun_alloc::vec_from_iter_in;
 use bun_threading::Guarded;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::rc::Rc;
-use std::sync::OnceLock;
+use super::OnceLock;
+
+const FILES_OF_A_CHECKER: usize = 32;
 
 /// Of the calls of a function, this many say what its parameters are.
 const MOST_CALLS: usize = 32;
@@ -987,7 +990,7 @@ impl<'p, 's> Checker<'p, 's> {
             let mut props = Vec::with_capacity(members.len());
             for (name, stored) in members {
                 let ty = c.either(&stored).unwrap_or(TypeId::ANY);
-                props.push(Prop { name, flags: PropFlags::empty(), source: PropSource::Type(ty), mapper: MapperId::IDENTITY });
+                props.push(Prop { name, flags: PropFlags::empty(), source: PropSource::Type(ty), mapper: MapperId::IDENTITY, name_type: TypeId::UNRESOLVED });
             }
             Some(c.synth(Shape { props: vec_from_iter_in(props, c.arena), ..Shape::new_in(c.arena) }))
         })
@@ -1002,23 +1005,29 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The imports that the program calls or constructs, or a member of which it does, in the order of the files.
-    pub fn imports_that_are_called(&mut self) -> &'p [Sym] {
-        self.p.aot.javascript.imports_that_are_called.get_or_init(|| {
-            let mut imports = Vec::new();
-            let mut seen = FxHashSet::default();
-            for file in self.files_with_code() {
-                let (hir, bound) = (self.hir(file), self.bound(file));
-                for (index, node) in hir.exprs.iter().enumerate() {
-                    if let ExprKind::Call(call) | ExprKind::New(call) = node.kind
-                        && !matches!(bound.expr_parent[index], Parent::None)
-                        && let Some((import, _)) = self.import_named_by(file, hir[call].callee)
-                        && seen.insert(import)
-                    {
-                        imports.push(import);
+    pub fn imports_that_are_called(&mut self, in_parallel: InParallel<'_>) -> &'p [Sym] {
+        let program = self.p;
+        program.aot.javascript.imports_that_are_called.get_or_init(|| {
+            let files = self.files_with_code();
+            let found = self.in_slices(&files, FILES_OF_A_CHECKER, Some(in_parallel), &|c, files| {
+                let mut imports = Vec::new();
+                let mut seen = FxHashSet::default();
+                for &file in files {
+                    let (hir, bound) = (c.hir(file), c.bound(file));
+                    for (index, node) in hir.exprs.iter().enumerate() {
+                        if let ExprKind::Call(call) | ExprKind::New(call) = node.kind
+                            && !matches!(bound.expr_parent[index], Parent::None)
+                            && let Some((import, _)) = c.import_named_by(file, hir[call].callee)
+                            && seen.insert(import)
+                        {
+                            imports.push(import);
+                        }
                     }
                 }
-            }
-            imports
+                imports
+            });
+            let mut seen = FxHashSet::default();
+            found.into_iter().flatten().filter(|&import| seen.insert(import)).collect()
         })
     }
 

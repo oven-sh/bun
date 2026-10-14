@@ -1480,6 +1480,9 @@ impl<'p, 's> Checker<'p, 's> {
         let mut intersections: Vec<TypeId> = Vec::with_capacity(size);
         let mut constituents = set.to_vec();
         for i in 0..size {
+            if self.is_out_of_fuel() {
+                return None;
+            }
             let mut n = i;
             for j in (0..set.len()).rev() {
                 if let TypeData::Union(alternatives) = self.data(set[j]) {
@@ -2157,7 +2160,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // TypeScript orders them by id, in the order `getSpreadType` created them: `mapType`
             // iterates over the left operand, and for each of its members over the right.
-            (TypeData::Synth(x), TypeData::Synth(y)) => match (x.spread_of, y.spread_of) {
+            (TypeData::Synth(x), TypeData::Synth(y)) => match (x.created_from, y.created_from) {
                 (Some((l, r)), Some((m, s))) => (x.spread_rank.cmp(&y.spread_rank))
                     .then_with(|| types(l, m))
                     .then_with(|| types(r, s)),

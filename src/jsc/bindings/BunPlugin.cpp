@@ -1,4 +1,5 @@
 #include "BunPlugin.h"
+#include "ModuleLoader.h"
 
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/ExceptionScope.h"
@@ -46,6 +47,8 @@ static bool isValidNamespaceString(String& namespaceString)
     return namespaceRegex->match(namespaceString) > -1;
 }
 
+extern "C" const uint8_t* Bun__standaloneSourcesOfCompiledProgram(size_t*);
+
 static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -90,6 +93,23 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
     if (!func.isCell() || !func.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, "onLoad() expects second argument to be a function"_s));
         return {};
+    }
+
+    if (namespaceString.isEmpty() || namespaceString == "file"_s) {
+        size_t length = 0;
+        const uint8_t* paths = Bun__standaloneSourcesOfCompiledProgram(&length);
+        std::span<const uint8_t> left { paths, length };
+        while (!left.empty()) {
+            size_t end = std::find(left.begin(), left.end(), '\n') - left.begin();
+            String path = String::fromUTF8(left.first(end));
+            left = left.subspan(std::min(end + 1, left.size()));
+            auto matchResult = filter->regExp()->match(globalObject, path, 0);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (matchResult) {
+                throwException(globalObject, scope, createError(globalObject, makeString("--aot: not compiled yet: a plugin that loads \""_s, path, "\", which was compiled without it"_s)));
+                return {};
+            }
+        }
     }
 
     plugin.append(vm, filter->regExp(), func.getObject(), namespaceString);
@@ -171,6 +191,8 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     return JSValue::encode(callframe->thisValue());
 }
 
+extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
+
 static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target, BunPlugin::Base& plugin)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -215,6 +237,23 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
     if (!func.isCell() || !func.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, "onResolve() expects second argument to be a function"_s));
         return {};
+    }
+
+    size_t lengthOfCompiledSources = 0;
+    Bun__standaloneSourcesOfCompiledProgram(&lengthOfCompiledSources);
+    if (lengthOfCompiledSources && (namespaceString.isEmpty() || namespaceString == "file"_s)) {
+        JSValue main = JSValue::decode(BunObject_getter_main(defaultGlobalObject(globalObject)));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (main.isString()) {
+            String path = main.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto matchResult = filter->regExp()->match(globalObject, path, 0);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (matchResult) {
+                throwException(globalObject, scope, createError(globalObject, makeString("--aot: not compiled yet: a plugin that resolves the entry point \""_s, path, "\", which was compiled without it"_s)));
+                return {};
+            }
+        }
     }
 
     plugin.append(vm, filter->regExp(), uncheckedDowncast<JSObject>(func), namespaceString);
@@ -705,9 +744,39 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         return {};
     }
 
+    bool isCompiledWithTheProgram = false;
+    size_t lengthOfCompiledSources = 0;
+    const uint8_t* compiledSources = Bun__standaloneSourcesOfCompiledProgram(&lengthOfCompiledSources);
+    for (std::span<const uint8_t> left { compiledSources, lengthOfCompiledSources }; !left.empty();) {
+        size_t end = std::find(left.begin(), left.end(), '\n') - left.begin();
+        if (String::fromUTF8(left.first(end)) == specifier) {
+            isCompiledWithTheProgram = true;
+            break;
+        }
+        left = left.subspan(std::min(end + 1, left.size()));
+    }
+
     JSC::JSObject* callback = callbackValue.getObject();
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback, specifierString);
+
+    if (isCompiledWithTheProgram && !Bun::hasFilesOfCompiledProgram(globalObject)) {
+        scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, makeString("mock(module, fn) cannot replace a module that was compiled ahead of time: \""_s, specifier, "\""_s)));
+        return {};
+    }
+
+    if (isCompiledWithTheProgram) {
+        JSValue exportsValue = mock->executeOnce(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (auto* promise = dynamicDowncast<JSC::JSPromise>(exportsValue); promise && promise->status() == JSC::JSPromise::Status::Fulfilled)
+            exportsValue = promise->result();
+        bool isDone = exportsValue.isObject() && !exportsValue.inherits<JSC::JSPromise>() && Bun::overrideExportsOfCompiledModule(globalObject, specifier, exportsValue.getObject());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!isDone) {
+            scope.throwException(lexicalGlobalObject, JSC::createTypeError(lexicalGlobalObject, makeString("mock(module, fn) cannot replace a module that was compiled ahead of time: \""_s, specifier, "\""_s)));
+            return {};
+        }
+    }
 
     LoadedModule loaded = findLoadedModule(globalObject, specifierString);
     RETURN_IF_EXCEPTION(scope, {});

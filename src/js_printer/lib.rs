@@ -1383,6 +1383,27 @@ pub struct Options<'a> {
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
+    pub function_texts: Option<&'a mut Vec<FunctionText>>,
+    pub audited: Option<&'static bun_ast::audited::AuditedFile>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FunctionText {
+    pub key: i32,
+    pub start: i32,
+    pub end: i32,
+}
+
+pub fn finish_function_texts(printed: &[u8], texts: &mut Vec<FunctionText>) {
+    for text in texts.iter_mut() {
+        while text.start < text.end && printed.get(text.start as usize) == Some(&b' ') {
+            text.start += 1;
+        }
+    }
+    texts.retain(|text| {
+        text.key >= 0 && text.start < text.end && text.end as usize <= printed.len()
+    });
+    texts.sort_unstable_by_key(|text| text.key);
 }
 
 impl<'a> Options<'a> {
@@ -1439,6 +1460,8 @@ impl<'a> Default for Options<'a> {
             has_dynamic_import_items: false,
             line_offset_tables: None,
             mangled_props: None,
+            function_texts: None,
+            audited: None,
         }
     }
 }
@@ -2487,6 +2510,14 @@ pub(crate) mod __gated_printer {
             }
         }
 
+        fn note_audited_parameters(&mut self, function: bun_ast::Loc) {
+            if let Some(audited) = self.options.audited {
+                for parameter in audited.parameters_of(function.start as u32) {
+                    bun_ast::audited::note_printed_parameter(self.writer.written() as u32, parameter.index, parameter.id);
+                }
+            }
+        }
+
         pub(crate) fn print_fn_args(
             &mut self,
             open_paren_loc: Option<bun_ast::Loc>,
@@ -2500,6 +2531,7 @@ pub(crate) mod __gated_printer {
             if wrap {
                 if let Some(loc) = open_paren_loc {
                     self.add_source_mapping(loc);
+                    self.note_audited_parameters(loc);
                 }
                 self.print(b"(");
             }
@@ -2527,7 +2559,18 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_func(&mut self, func: &G::Fn) {
+        #[inline]
+        fn did_print_function_text(&mut self, key: bun_ast::Loc, start: i32) {
+            if let Some(texts) = self.options.function_texts.as_deref_mut() {
+                texts.push(FunctionText {
+                    key: key.start,
+                    start,
+                    end: self.writer.written(),
+                });
+            }
+        }
+
+        pub(crate) fn print_func(&mut self, func: &G::Fn, text_start: i32) {
             self.print_fn_args(
                 Some(func.open_parens_loc),
                 slice_of(func.args),
@@ -2536,9 +2579,10 @@ pub(crate) mod __gated_printer {
             );
             self.print_space();
             self.print_block(func.body.loc, slice_of(func.body.stmts), None);
+            self.did_print_function_text(func.open_parens_loc, text_start);
         }
 
-        pub(crate) fn print_class(&mut self, class: &G::Class) {
+        pub(crate) fn print_class(&mut self, class: &G::Class, text_start: i32) {
             if let Some(extends) = &class.extends {
                 self.print(b" extends");
                 self.print_space();
@@ -2581,6 +2625,7 @@ pub(crate) mod __gated_printer {
                 self.add_source_mapping(class.close_brace_loc);
             }
             self.print(b"}");
+            self.did_print_function_text(class.body_loc, text_start);
         }
 
         pub(crate) fn best_quote_char_for_e_string(str: &E::String, allow_backtick: bool) -> u8 {
@@ -3495,6 +3540,11 @@ pub(crate) mod __gated_printer {
                         self.print(b")");
                     }
                 }
+                ExprData::ECall(e) if matches!(e.target.data, ExprData::EMissing(..)) => {
+                    let start = self.writer.written();
+                    self.print_expr(e.args[0], level, flags);
+                    bun_ast::audited::note_printed_expression(start as u32, self.writer.written() as u32, e.close_paren_loc.start as u32);
+                }
                 ExprData::ECall(e) => {
                     let mut wrap = level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall);
                     let mut target_flags = ExprFlag::none();
@@ -3829,11 +3879,14 @@ pub(crate) mod __gated_printer {
                         self.print(b"(");
                     }
 
+                    let mut text_start = self.writer.written();
                     if e.is_async {
                         self.add_source_mapping(expr.loc);
                         self.print_space_before_identifier();
+                        text_start = self.writer.written();
                         self.print(b"async");
                         self.print_space();
+                        self.note_audited_parameters(expr.loc);
                     }
 
                     self.print_fn_args(
@@ -3858,6 +3911,7 @@ pub(crate) mod __gated_printer {
                     if !was_printed {
                         self.print_block(e.body.loc, slice_of(e.body.stmts), None);
                     }
+                    self.did_print_function_text(expr.loc, text_start);
 
                     if wrap {
                         self.print(b")");
@@ -3873,6 +3927,7 @@ pub(crate) mod __gated_printer {
 
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
+                    let text_start = self.writer.written();
                     if e.func.flags.contains(G::FnFlags::IsAsync) {
                         self.print(b"async ");
                     }
@@ -3888,7 +3943,7 @@ pub(crate) mod __gated_printer {
                         self.print_symbol(sym.ref_);
                     }
 
-                    self.print_func(&e.func);
+                    self.print_func(&e.func, text_start);
                     if wrap {
                         self.print(b")");
                     }
@@ -3902,13 +3957,14 @@ pub(crate) mod __gated_printer {
 
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
+                    let text_start = self.writer.written();
                     self.print(b"class");
                     if let Some(name) = &e.class_name {
                         self.print(b" ");
                         self.add_source_mapping(name.loc);
                         self.print_symbol(name.ref_);
                     }
-                    self.print_class(e);
+                    self.print_class(e, text_start);
                     if wrap {
                         self.print(b")");
                     }
@@ -4872,6 +4928,7 @@ pub(crate) mod __gated_printer {
                 ts_decorators: bun_alloc::AstAlloc::vec(),
                 ts_metadata: Default::default(),
             };
+            let mut text_start = 0;
             if !IS_JSON {
                 if item.kind == G::PropertyKind::Spread {
                     self.print(b"...");
@@ -4932,6 +4989,7 @@ pub(crate) mod __gated_printer {
                     self.print(b"static");
                     self.print_space();
                 }
+                text_start = self.writer.written();
 
                 match item.kind {
                     G::PropertyKind::Get => {
@@ -4998,7 +5056,7 @@ pub(crate) mod __gated_printer {
                 if let Some(val) = &item.value {
                     if let ExprData::EFunction(func) = &val.data {
                         if item.flags.contains(js_ast::flags::Property::IsMethod) {
-                            self.print_func(&func.func);
+                            self.print_func(&func.func, text_start);
                             return;
                         }
                     }
@@ -5138,7 +5196,7 @@ pub(crate) mod __gated_printer {
                     .expect("infallible: prop has value")
                     .data
                 {
-                    self.print_func(&func.func);
+                    self.print_func(&func.func, text_start);
                     return;
                 }
             }
@@ -5146,7 +5204,7 @@ pub(crate) mod __gated_printer {
             if let Some(val) = &item.value {
                 if let ExprData::EFunction(f) = &val.data {
                     if item.flags.contains(js_ast::flags::Property::IsMethod) {
-                        self.print_func(&f.func);
+                        self.print_func(&f.func, text_start);
                         return;
                     }
                 }
@@ -5447,6 +5505,7 @@ pub(crate) mod __gated_printer {
                     if s.func.flags.contains(G::FnFlags::IsExport) {
                         self.print(b"export ");
                     }
+                    let text_start = self.writer.written();
                     if s.func.flags.contains(G::FnFlags::IsAsync) {
                         self.print(b"async ");
                     }
@@ -5461,7 +5520,7 @@ pub(crate) mod __gated_printer {
                     self.add_source_mapping(name.loc);
                     let local_name = self.name_for_symbol(name_ref);
                     self.print_identifier(local_name);
-                    self.print_func(&s.func);
+                    self.print_func(&s.func, text_start);
 
                     if Self::MAY_HAVE_MODULE_INFO && s.func.flags.contains(G::FnFlags::IsExport) {
                         if let Some(mi) = self.module_info() {
@@ -5486,11 +5545,12 @@ pub(crate) mod __gated_printer {
                         self.print(b"export ");
                     }
 
+                    let text_start = self.writer.written();
                     self.print(b"class ");
                     self.add_source_mapping(s.class.class_name.as_ref().unwrap().loc);
                     let name_str = self.name_for_symbol(name_ref);
                     self.print_identifier(name_str);
-                    self.print_class(&s.class);
+                    self.print_class(&s.class, text_start);
 
                     if Self::MAY_HAVE_MODULE_INFO && s.is_export {
                         if let Some(mi) = self.module_info() {
@@ -5541,6 +5601,7 @@ pub(crate) mod __gated_printer {
                                 StmtData::SFunction(func) => {
                                     self.print_space_before_identifier();
 
+                                    let text_start = self.writer.written();
                                     if func.func.flags.contains(G::FnFlags::IsAsync) {
                                         self.print(b"async ");
                                     }
@@ -5562,7 +5623,7 @@ pub(crate) mod __gated_printer {
                                         self.print_identifier(fn_name);
                                     }
 
-                                    self.print_func(&func.func);
+                                    self.print_func(&func.func, text_start);
 
                                     if Self::MAY_HAVE_MODULE_INFO {
                                         if let Some(mi) = self.module_info() {
@@ -5580,6 +5641,7 @@ pub(crate) mod __gated_printer {
                                 StmtData::SClass(class) => {
                                     self.print_space_before_identifier();
 
+                                    let text_start = self.writer.written();
                                     let class_name: Option<&[u8]> = class
                                         .class
                                         .class_name
@@ -5593,7 +5655,7 @@ pub(crate) mod __gated_printer {
                                         self.print(b"class");
                                     }
 
-                                    self.print_class(&class.class);
+                                    self.print_class(&class.class, text_start);
 
                                     if Self::MAY_HAVE_MODULE_INFO {
                                         if let Some(mi) = self.module_info() {
@@ -7236,7 +7298,8 @@ pub(crate) mod __gated_printer {
                 self.print(b"],\n");
             } else {
                 debug_assert!(ast.exports_kind == js_ast::ExportsKind::Cjs);
-                self.print_func(func);
+                let text_start = self.writer.written();
+                self.print_func(func, text_start);
                 self.print(b",\n");
             }
 

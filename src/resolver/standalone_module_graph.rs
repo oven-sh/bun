@@ -50,6 +50,9 @@ pub trait StandaloneModuleGraph: Send + Sync {
     fn is_compiled_module(&self, _name: &[u8]) -> bool {
         false
     }
+    fn sources_of_compiled_program(&self) -> &'static [u8] {
+        &[]
+    }
     fn is_internal_module(&self, _name: &[u8]) -> bool {
         false
     }

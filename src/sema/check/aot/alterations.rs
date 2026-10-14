@@ -22,6 +22,7 @@
 //! escape closure, which `Subtypes::finish` adds.
 
 use std::hash::Hash;
+use std::rc::Rc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -94,6 +95,15 @@ pub(crate) struct Alterations<T = TypeId> {
     untyped_enters: FxHashSet<TypeParameter>,
     /// A value of a type that depends on a type parameter in another way, `T[K]`: it is not followed.
     anything_enters: FxHashSet<TypeParameter>,
+    instances_let_out: FxHashSet<T>,
+    parameters_let_out: FxHashSet<TypeParameter>,
+    instances_entered_by_strangers: FxHashSet<T>,
+    parameters_entered_by_strangers: FxHashSet<TypeParameter>,
+    instances_entered_if_let_out: FxHashSet<T>,
+    parameters_entered_if_let_out: FxHashSet<TypeParameter>,
+    views_let_out: FxHashSet<T>,
+    entering_views: FxHashSet<(T, T)>,
+    instances_entering_views: FxHashSet<T>,
     /// By alteration and `Operand`: how many places in the source.
     sites: [[u32; OPERANDS]; 2],
     /// By alteration: the first place in the source that marks all that has escaped, and the first that marks every layout.
@@ -113,6 +123,15 @@ impl<T> Default for Alterations<T> {
             parameter_enters: FxHashSet::default(),
             untyped_enters: FxHashSet::default(),
             anything_enters: FxHashSet::default(),
+            instances_let_out: FxHashSet::default(),
+            parameters_let_out: FxHashSet::default(),
+            instances_entered_by_strangers: FxHashSet::default(),
+            parameters_entered_by_strangers: FxHashSet::default(),
+            instances_entered_if_let_out: FxHashSet::default(),
+            parameters_entered_if_let_out: FxHashSet::default(),
+            views_let_out: FxHashSet::default(),
+            entering_views: FxHashSet::default(),
+            instances_entering_views: FxHashSet::default(),
             sites: [[0; OPERANDS]; 2],
             widest: Default::default(),
             untyped_places: Default::default(),
@@ -144,6 +163,15 @@ impl<T: Copy + Eq + Hash> Alterations<T> {
         self.parameter_enters.extend(other.parameter_enters);
         self.untyped_enters.extend(other.untyped_enters);
         self.anything_enters.extend(other.anything_enters);
+        self.instances_let_out.extend(other.instances_let_out);
+        self.parameters_let_out.extend(other.parameters_let_out);
+        self.instances_entered_by_strangers.extend(other.instances_entered_by_strangers);
+        self.parameters_entered_by_strangers.extend(other.parameters_entered_by_strangers);
+        self.instances_entered_if_let_out.extend(other.instances_entered_if_let_out);
+        self.parameters_entered_if_let_out.extend(other.parameters_entered_if_let_out);
+        self.views_let_out.extend(other.views_let_out);
+        self.entering_views.extend(other.entering_views);
+        self.instances_entering_views.extend(other.instances_entering_views);
         for (mine, theirs) in self.doors.as_flattened_mut().as_flattened_mut().as_flattened_mut().iter_mut().zip(other.doors.as_flattened().as_flattened().as_flattened()) {
             *mine += theirs;
         }
@@ -172,11 +200,83 @@ impl<T: Copy + Eq + Hash> Alterations<T> {
             parameter_enters: self.parameter_enters,
             untyped_enters: self.untyped_enters,
             anything_enters: self.anything_enters,
+            instances_let_out: self.instances_let_out.into_iter().filter_map(&mut *rename).collect(),
+            parameters_let_out: self.parameters_let_out,
+            instances_entered_by_strangers: self.instances_entered_by_strangers.into_iter().filter_map(&mut *rename).collect(),
+            parameters_entered_by_strangers: self.parameters_entered_by_strangers,
+            instances_entered_if_let_out: self.instances_entered_if_let_out.into_iter().filter_map(&mut *rename).collect(),
+            parameters_entered_if_let_out: self.parameters_entered_if_let_out,
+            views_let_out: self.views_let_out.into_iter().filter_map(&mut *rename).collect(),
+            entering_views: self.entering_views.into_iter().filter_map(|(view, instance)| Some((rename(view)?, rename(instance)?))).collect(),
+            instances_entering_views: self.instances_entering_views.into_iter().filter_map(&mut *rename).collect(),
             sites: self.sites,
             widest: self.widest,
             untyped_places: self.untyped_places,
             doors: self.doors,
         }
+    }
+
+    pub(super) fn absorb_evidence_of_strangers(&mut self, other: &Alterations<T>) {
+        self.enters.extend(other.enters.iter().copied());
+        self.parameter_enters.extend(other.parameter_enters.iter().copied());
+        self.instances_let_out.extend(other.instances_let_out.iter().copied());
+        self.parameters_let_out.extend(other.parameters_let_out.iter().copied());
+        self.instances_entered_by_strangers.extend(other.instances_entered_by_strangers.iter().copied());
+        self.parameters_entered_by_strangers.extend(other.parameters_entered_by_strangers.iter().copied());
+        self.instances_entered_if_let_out.extend(other.instances_entered_if_let_out.iter().copied());
+        self.parameters_entered_if_let_out.extend(other.parameters_entered_if_let_out.iter().copied());
+        self.views_let_out.extend(other.views_let_out.iter().copied());
+        self.entering_views.extend(other.entering_views.iter().copied());
+        self.instances_entering_views.extend(other.instances_entering_views.iter().copied());
+    }
+
+    pub(super) fn all_with_evidence_of_strangers(&self) -> Vec<T> {
+        let instances: FxHashSet<T> = self.instances_let_out.iter().chain(&self.instances_entered_by_strangers).chain(&self.instances_entered_if_let_out).chain(&self.instances_entering_views).copied().collect();
+        let parameters: FxHashSet<TypeParameter> = self.parameters_let_out.iter().chain(&self.parameters_entered_by_strangers).chain(&self.parameters_entered_if_let_out).copied().collect();
+        self.closed_over(&instances, &parameters)
+    }
+
+    pub(super) fn entered_by_strangers(&self) -> Vec<T> {
+        self.closed_over(&self.instances_entered_by_strangers, &self.parameters_entered_by_strangers)
+    }
+
+    pub(super) fn entered_if_let_out(&self) -> Vec<T> {
+        self.closed_over(&self.instances_entered_if_let_out, &self.parameters_entered_if_let_out)
+    }
+
+    pub(super) fn let_out(&self) -> Vec<T> {
+        let mut entering: FxHashMap<T, Vec<T>> = FxHashMap::default();
+        for &(view, from) in &self.entering_views {
+            entering.entry(view).or_default().push(from);
+        }
+        let mut pending: Vec<T> = self.views_let_out.iter().copied().collect();
+        let mut reached: FxHashSet<T> = pending.iter().copied().collect();
+        while let Some(view) = pending.pop() {
+            for &from in entering.get(&view).into_iter().flatten() {
+                if reached.insert(from) {
+                    pending.push(from);
+                }
+            }
+        }
+        let instances: FxHashSet<T> = self.instances_let_out.union(&reached).copied().collect();
+        self.closed_over(&instances, &self.parameters_let_out)
+    }
+
+    fn closed_over(&self, instances: &FxHashSet<T>, parameters: &FxHashSet<TypeParameter>) -> Vec<T> {
+        let mut entering: FxHashMap<TypeParameter, Vec<TypeParameter>> = FxHashMap::default();
+        for &(into, from) in &self.parameter_enters {
+            entering.entry(into).or_default().push(from);
+        }
+        let mut pending: Vec<TypeParameter> = parameters.iter().copied().collect();
+        let mut reached: FxHashSet<TypeParameter> = pending.iter().copied().collect();
+        while let Some(into) = pending.pop() {
+            for &from in entering.get(&into).into_iter().flatten() {
+                if reached.insert(from) {
+                    pending.push(from);
+                }
+            }
+        }
+        instances.iter().copied().chain(self.enters.iter().filter(|enters| reached.contains(&enters.0)).map(|enters| enters.1)).collect()
     }
 
     /// The types of the objects that may be the operand, type parameters followed back to what enters them.
@@ -205,7 +305,7 @@ impl<T: Copy + Eq + Hash> Alterations<T> {
 
 /// The objects that a value of a type may be, as far as the type goes.
 #[derive(Default)]
-struct ObjectsOf {
+pub(super) struct ObjectsOf {
     /// `laid_out_as`.
     types: Vec<TypeId>,
     parameters: Vec<TypeParameter>,
@@ -219,6 +319,29 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn add_objects_of(&mut self, ty: TypeId, found: &mut ObjectsOf) {
+        if self.answers_are_provisional() {
+            return self.find_objects_of(ty, found);
+        }
+        let known = match self.aot.flows.objects_of.get(&ty) {
+            Some(known) => Rc::clone(known),
+            None => {
+                let careful_before = (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
+                let mut of_type = ObjectsOf::default();
+                self.find_objects_of(ty, &mut of_type);
+                let of_type = Rc::new(of_type);
+                if careful_before == (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known) {
+                    self.aot.flows.objects_of.insert(ty, Rc::clone(&of_type));
+                }
+                of_type
+            }
+        };
+        found.types.extend_from_slice(&known.types);
+        found.parameters.extend_from_slice(&known.parameters);
+        found.is_untyped |= known.is_untyped;
+        found.depends_on_type_parameter |= known.depends_on_type_parameter;
+    }
+
+    fn find_objects_of(&mut self, ty: TypeId, found: &mut ObjectsOf) {
         let ty = self.reduced(ty);
         let parts: Vec<TypeId> = self.parts(ty).to_vec();
         for part in parts {
@@ -263,6 +386,71 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => {}
             }
         }
+    }
+
+    pub(super) fn note_what_a_stranger_may_enter(&mut self, target: TypeId, only_if_let_out: bool) {
+        let mut found = ObjectsOf::default();
+        self.add_objects_of(target, &mut found);
+        let types = std::mem::take(&mut found.types);
+        let instances: Vec<TypeId> = types.into_iter().filter(|&ty| self.is_type_of_instances(ty)).collect();
+        if instances.is_empty() && found.parameters.is_empty() {
+            return;
+        }
+        let noted = self.alterations_noted();
+        if only_if_let_out {
+            noted.instances_entered_if_let_out.extend(instances);
+            noted.parameters_entered_if_let_out.extend(found.parameters);
+        } else {
+            noted.instances_entered_by_strangers.extend(instances);
+            noted.parameters_entered_by_strangers.extend(found.parameters);
+        }
+    }
+
+    pub(super) fn note_view_let_out(&mut self, view: TypeId) {
+        let view = self.laid_out_as(view);
+        self.alterations_noted().views_let_out.insert(view);
+    }
+
+    pub(super) fn note_instances_entering_views(&mut self, own: TypeId, target: TypeId) {
+        if own == target || !self.aot.escape_closure.entered_views.insert((own, target)) {
+            return;
+        }
+        let (mut from, mut into) = (ObjectsOf::default(), ObjectsOf::default());
+        self.add_objects_of(target, &mut into);
+        let views: Vec<TypeId> = into.types.into_iter().filter(|&ty| !self.is_type_of_instances(ty)).collect();
+        if views.is_empty() {
+            return;
+        }
+        self.add_objects_of(own, &mut from);
+        if from.types.is_empty() {
+            return;
+        }
+        let instances: Vec<TypeId> = from.types.iter().copied().filter(|&ty| self.is_type_of_instances(ty)).collect();
+        let noted = self.alterations_noted();
+        noted.instances_entering_views.extend(instances);
+        for &entering in &from.types {
+            noted.entering_views.extend(views.iter().filter(|&&view| view != entering).map(|&view| (view, entering)));
+        }
+    }
+
+    pub(super) fn note_what_is_let_out(&mut self, own: TypeId, target: Option<TypeId>) {
+        if let Some(target) = target {
+            let mut into = ObjectsOf::default();
+            self.add_objects_of(target, &mut into);
+            if !into.is_untyped {
+                return;
+            }
+        }
+        let mut found = ObjectsOf::default();
+        self.add_objects_of(own, &mut found);
+        let types = std::mem::take(&mut found.types);
+        let instances: Vec<TypeId> = types.into_iter().filter(|&ty| self.is_type_of_instances(ty)).collect();
+        if instances.is_empty() && found.parameters.is_empty() {
+            return;
+        }
+        let noted = self.alterations_noted();
+        noted.instances_let_out.extend(instances);
+        noted.parameters_let_out.extend(found.parameters);
     }
 
     /// A value of type `source` enters a place of type `target`, which may be one of a type parameter.
@@ -683,6 +871,20 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
+        let (every, since, mutable, all) = self.explain_mutable_prototypes();
+        lines.push(format!("alterations: constructor functions: what is done to a function that is not known goes for every one: {every}"));
+        lines.push(format!("alterations: constructor functions: {mutable} of {all} have a prototype object that may be replaced or got hold of"));
+        let ([other, constructor, unknown], listed) = self.explain_prototype_property_names();
+        lines.push(format!(
+            "alterations: constructor functions: places that define a property on a prototype object, by what the function is: no constructor function {other}, a constructor function {constructor}, not known {unknown}; names listed: {listed}"
+        ));
+        let (ended, of) = self.explain_first_stores_ended_by_listed_names();
+        lines.push(format!("alterations: constructor functions: first stores end at a listed name: {ended} of {of}"));
+        if let Some(since) = since {
+            lines.push(format!("alterations: constructor functions: where: the first place that goes for every one: {}", self.place_for_people(since)));
+        }
+        lines.push(format!("alterations: first stores: a construction has been left out, so nothing is known of any record: {}", membership.constructions_are_incomplete));
+        lines.append(&mut self.explain_taint());
         lines.push(format!("alterations: properties defined and deleted: places by the operand: {OPERANDS_OF_DOORS:?}"));
         for (language, by_key) in ["TypeScript", "JavaScript"].into_iter().zip(membership.doors) {
             for (key, by_descriptor) in KEYS.into_iter().zip(by_key) {

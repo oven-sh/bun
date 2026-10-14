@@ -63,6 +63,7 @@ pub(super) struct State {
     held: FxHashMap<FileId, Rc<FxHashMap<SymbolId, u16>>>,
     /// While that is found for a file: what has been found so far.
     growing: Option<(FileId, FxHashMap<SymbolId, u16>)>,
+    reads_of_what_grows: u64,
     /// By file: `kinds_returned_by`.
     returned: FxHashMap<FileId, Rc<FxHashMap<FnId, u16>>>,
     /// The same while `growing`.
@@ -179,7 +180,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// Every value that the variable or the parameter ever holds is of one of the kinds. `kind::ANYTHING`: nothing is known.
     pub fn kinds_held_by(&mut self, at: Sym) -> u16 {
         let found = match &self.aot.kinds.growing {
-            Some((file, so_far)) if *file == at.file => so_far.get(&at.id).copied(),
+            Some((file, so_far)) if *file == at.file => {
+                self.aot.kinds.reads_of_what_grows += 1;
+                so_far.get(&at.id).copied()
+            }
             _ => self.kinds_held_in(at.file).get(&at.id).copied(),
         };
         match found {
@@ -212,21 +216,36 @@ impl<'p, 's> Checker<'p, 's> {
         let outer_returned = std::mem::replace(&mut self.aot.kinds.returned_so_far, functions.iter().map(|&func| (func, kind::NOTHING)).collect());
         let outer_yielded = std::mem::take(&mut self.aot.kinds.yielded_this_round);
         let outer_at_flow = std::mem::take(&mut self.aot.kinds.at_flow_this_round);
+        let (mut settled_functions, mut settled): (FxHashSet<FnId>, FxHashSet<SymbolId>) = Default::default();
         loop {
             let mut has_grown = false;
             self.aot.kinds.yielded_this_round.clear();
             self.aot.kinds.at_flow_this_round.clear();
             for &func in &functions {
+                if self.aot.kinds.returned_so_far.get(&func) == Some(&kind::ANYTHING) || settled_functions.contains(&func) {
+                    continue;
+                }
+                let reads = self.aot.kinds.reads_of_what_grows;
                 let all = self.find_kinds_returned_by(file, func) | self.aot.kinds.returned_so_far.get(&func).copied().unwrap_or(kind::NOTHING);
+                if self.aot.kinds.reads_of_what_grows == reads {
+                    settled_functions.insert(func);
+                }
                 has_grown |= self.aot.kinds.returned_so_far.insert(func, all) != Some(all);
             }
             for (id, place, starts_blank) in &followed {
+                if matches!(&self.aot.kinds.growing, Some((_, so_far)) if so_far.get(id) == Some(&kind::ANYTHING)) || settled.contains(id) {
+                    continue;
+                }
+                let reads = self.aot.kinds.reads_of_what_grows;
                 let mut all = if *starts_blank { kind::UNDEFINED } else { kind::NOTHING };
                 for &store in &place.stores {
                     all |= match store {
                         Store::Value(e) | Store::Computed(e) => self.kinds_yielded_by(file, e),
                         Store::Nil => kind::UNDEFINED,
                     };
+                }
+                if self.aot.kinds.reads_of_what_grows == reads {
+                    settled.insert(*id);
                 }
                 if let Some((_, so_far)) = &mut self.aot.kinds.growing {
                     let all = all | so_far.get(id).copied().unwrap_or(kind::NOTHING);
@@ -249,6 +268,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whatever a call of the function yields is of one of the kinds, whoever calls it. Not what `new` makes of it.
     pub fn kinds_returned_by(&mut self, file: FileId, func: FnId) -> u16 {
         if matches!(&self.aot.kinds.growing, Some((growing, _)) if *growing == file) {
+            self.aot.kinds.reads_of_what_grows += 1;
             return self.aot.kinds.returned_so_far.get(&func).copied().unwrap_or(kind::ANYTHING);
         }
         self.kinds_held_in(file);
@@ -512,6 +532,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_growing = matches!(&self.aot.kinds.growing, Some((growing, _)) if *growing == walk.at.file);
         let known = if is_growing { self.aot.kinds.at_flow_this_round.get(&(walk.at.id, start)) } else { self.aot.kinds.at_flow.get(&(walk.at, start)) };
         if let Some(&known) = known {
+            self.aot.kinds.reads_of_what_grows += u64::from(is_growing);
             return known;
         }
         let found = self.find_kinds_at(walk, start);
@@ -761,6 +782,7 @@ impl<'p, 's> Checker<'p, 's> {
         // In the last round nothing grows, so what is remembered there is what is found there.
         if matches!(&self.aot.kinds.growing, Some((growing, _)) if *growing == file) {
             if let Some(&known) = self.aot.kinds.yielded_this_round.get(&e) {
+                self.aot.kinds.reads_of_what_grows += 1;
                 return known;
             }
             let found = self.find_kinds_yielded_by(file, e);

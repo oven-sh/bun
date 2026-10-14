@@ -202,7 +202,7 @@ pub(crate) fn explain_births(program: &Program) -> Vec<String> {
         }
         for (index, block) in func.blocks.iter().enumerate() {
             for &v in &block.ops {
-                let Some(&Op::Coerce { value, to, why: Why::Cast }) = func.op(v) else { continue };
+                let Some(&Op::Coerce { value, to, why: Why::Cast | Why::CastFresh }) = func.op(v) else { continue };
                 if to.is_none() || !program.tys.get(to).parts.iter().any(|part| matches!(part, Part::Class(_))) {
                     continue;
                 }
@@ -221,36 +221,57 @@ pub(crate) fn explain_births(program: &Program) -> Vec<String> {
     lines
 }
 
-pub(crate) fn sizes_of_sets_of_strings(program: &Program) -> (Vec<Vec<V>>, Vec<String>) {
+pub(crate) fn sizes_of_sets_of_strings(program: &Program, in_parallel: bun_sema::util::InParallel<'_>) -> (Vec<Vec<V>>, Vec<String>) {
     use crate::declared::prim;
+    const FUNCTIONS_OF_A_TASK: usize = 256;
     let size = program.strs.find(b"size");
     let mut marked_values = vec![Vec::new(); program.funcs.len()];
     let names_of_collections = [b"Set".as_slice(), b"ReadonlySet"].map(|name| program.strs.find(name));
-    let mut remarks_on_sizes = Vec::new();
-    for (index, func) in program.funcs.iter().enumerate() {
-        for block in &func.blocks {
-            for &v in &block.ops {
-                if let Some(&Op::PropGet { obj, name }) = func.op(v)
-                    && Some(name) == size
-                    && let [crate::declared::Part::Global(global, arguments)] = &program.tys.get(func.ty(obj)).parts[..]
-                    && names_of_collections.contains(&Some(*global))
-                    && let Some(&key) = arguments.first()
-                    && let key = program.tys.get(key)
-                    && key.prims & prim::STRING != 0
-                    && key.prims & !(prim::STRING | prim::NULLISH) == 0
-                    && key.parts.is_empty()
-                    && key.ints.is_none()
-                    && !key.any_object
-                    && !key.any_function
-                {
-                    marked_values[index].push(v);
-                    let text = |name: StrId| String::from_utf8_lossy(program.strs.get(name)).into_owned();
-                    let module = if func.module.is_none() { String::new() } else { text(program.modules[func.module.idx()].display_path) };
-                    remarks_on_sizes.push(format!("literals: collections: size in {} ({module}): the keys are strings by the type", text(func.name)));
+    let mut tasks: Vec<(&[crate::ir::Func], &mut [Vec<V>], Vec<String>)> = program.funcs.chunks(FUNCTIONS_OF_A_TASK).zip(marked_values.chunks_mut(FUNCTIONS_OF_A_TASK)).map(|(funcs, marked_values)| (funcs, marked_values, Vec::new())).collect();
+    bun_sema::util::for_each_mut(&mut tasks, in_parallel, &|(funcs, marked_values, remarks_on_sizes)| {
+        for (index, func) in funcs.iter().enumerate() {
+            for block in &func.blocks {
+                for &v in &block.ops {
+                    if let Some(&Op::PropGet { obj, name }) = func.op(v)
+                        && Some(name) == size
+                        && let [crate::declared::Part::Global(global, arguments)] = &program.tys.get(func.ty(obj)).parts[..]
+                        && names_of_collections.contains(&Some(*global))
+                        && let Some(&key) = arguments.first()
+                        && let key = program.tys.get(key)
+                        && key.prims & prim::STRING != 0
+                        && key.prims & !(prim::STRING | prim::NULLISH) == 0
+                        && key.parts.is_empty()
+                        && key.ints.is_none()
+                        && !key.any_object
+                        && !key.any_function
+                    {
+                        marked_values[index].push(v);
+                        let text = |name: StrId| String::from_utf8_lossy(program.strs.get(name)).into_owned();
+                        let module = if func.module.is_none() { String::new() } else { text(program.modules[func.module.idx()].display_path) };
+                        remarks_on_sizes.push(format!("literals: collections: size in {} ({module}): the keys are strings by the type", text(func.name)));
+                    }
+                    if let Some(Op::Construct { .. }) = func.op(v)
+                        && let [crate::declared::Part::Global(global, arguments)] = &program.tys.get(func.ty(v)).parts[..]
+                        && Some(*global) == names_of_collections[0]
+                        && let Some(&key) = arguments.first()
+                        && let key = program.tys.get(key)
+                        && key.prims & prim::STRING != 0
+                        && key.prims & !(prim::STRING | prim::NULLISH) == 0
+                        && key.parts.is_empty()
+                        && key.ints.is_none()
+                        && !key.any_object
+                        && !key.any_function
+                    {
+                        marked_values[index].push(v);
+                        let text = |name: StrId| String::from_utf8_lossy(program.strs.get(name)).into_owned();
+                        let module = if func.module.is_none() { String::new() } else { text(program.modules[func.module.idx()].display_path) };
+                        remarks_on_sizes.push(format!("literals: collections: born in {} ({module}): the keys are strings by the type", text(func.name)));
+                    }
                 }
             }
         }
-    }
+    });
+    let remarks_on_sizes = tasks.into_iter().flat_map(|task| task.2).collect();
     (marked_values, remarks_on_sizes)
 }
 

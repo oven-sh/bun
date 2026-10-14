@@ -3,12 +3,13 @@
 
 use crate::declared::Part;
 use crate::id::{LayoutId, TyId};
-use crate::ir::{Def, Op, Program, Why, field_flags};
+use crate::ir::{Def, Func, Op, Program, Why, field_flags};
 use bun_sema::check::FieldTypes;
 use bun_sema::types::TypeId;
+use bun_sema::util::{InParallel, for_each_mut};
 
 /// `views`: the layouts that a type of the checker stands for.
-pub(crate) fn field_types(program: &Program, views: &[(LayoutId, TypeId)]) -> FieldTypes {
+pub(crate) fn field_types(program: &Program, views: &[(LayoutId, TypeId)], in_parallel: InParallel<'_>) -> FieldTypes {
     let mut view_of = vec![u32::MAX; program.layouts.len()];
     for (index, view) in views.iter().enumerate() {
         view_of[view.0.idx()] = index as u32;
@@ -62,11 +63,17 @@ pub(crate) fn field_types(program: &Program, views: &[(LayoutId, TypeId)]) -> Fi
         unions.dedup();
         unions_in.push(unions);
     }
-    let casts = program.funcs.iter().flat_map(|func| &func.values).filter_map(|value| match value.def {
-        Def::Op(Op::Coerce { to, why: Why::Cast | Why::Coerce | Why::CoerceFreshGraph, .. }) if to.is_some() => Some(to.0),
-        _ => None,
+    let mut runs: Vec<(&[Func], Vec<u32>)> = program.funcs.chunks(256).map(|funcs| (funcs, Vec::new())).collect();
+    for_each_mut(&mut runs, in_parallel, &|(funcs, copied_to)| {
+        let casts = funcs.iter().flat_map(|func| &func.values).filter_map(|value| match value.def {
+            Def::Op(Op::Coerce { to, why: Why::Cast | Why::CastFresh | Why::Coerce | Why::CoerceFreshGraph, .. }) if to.is_some() => Some(to.0),
+            _ => None,
+        });
+        copied_to.extend(casts);
+        copied_to.sort_unstable();
+        copied_to.dedup();
     });
-    let mut copied_to: Vec<u32> = casts.collect();
+    let mut copied_to: Vec<u32> = runs.into_iter().flat_map(|run| run.1).collect();
     copied_to.sort_unstable();
     copied_to.dedup();
     let of_views = (views.iter())

@@ -87,8 +87,9 @@ pub(super) const IS_FLAT_BUT_FOR_FUNCTIONS: u16 = 1 << 12;
 
 /// Phase B asks about no more layouts than this for one target. Of a target that the program tells apart from others, or the type of the objects
 /// of a class, which cannot take any object instead: than that.
-const MOST_CANDIDATES: usize = 64;
+const MOST_CANDIDATES: usize = 4096;
 const MOST_CANDIDATES_OF_WHAT_IS_MADE: usize = 4096;
+const MANY_CANDIDATES: usize = 64;
 /// A supertype with as many subtypes is asked about first where there are too many candidates.
 const LARGE: usize = 8;
 /// What fits brings a target no more subtypes than this in all. `Element<any>` fits every `Element<P>`, and brings all the others to each.
@@ -563,6 +564,7 @@ impl Subtypes {
                 None => self.nodes,
             };
             self.let_in(view, stranger, why);
+            self.let_in_what_is_opened(view, why);
         }
         for at in 0..self.gathered.vouched.len() {
             let (target, place) = self.gathered.vouched[at];
@@ -688,6 +690,26 @@ impl Subtypes {
     fn let_in(&mut self, view: u32, stranger: u32, why: WhyForeign) {
         if self.insert(view, stranger, Cause::Birth) {
             self.why_let_in.insert((view, stranger), why);
+        }
+    }
+
+    fn let_in_what_is_opened(&mut self, view: u32, why: WhyForeign) {
+        if matches!(why, WhyForeign::GivenAndKeptByNobody { .. }) {
+            self.let_in_below(view, why);
+        }
+    }
+
+    fn let_in_below(&mut self, view: u32, why: WhyForeign) {
+        let mut reached = vec![view];
+        while let Some(above) = reached.pop() {
+            let fields = &self.gathered.fields;
+            let below: Vec<u32> = fields.of_views[above as usize].iter().flat_map(|field| fields.views_in[field.1 as usize].iter().copied()).collect();
+            for view in below {
+                if self.insert(view, self.nodes, Cause::Birth) {
+                    self.why_let_in.insert((view, self.nodes), why);
+                    reached.push(view);
+                }
+            }
         }
     }
 
@@ -1333,6 +1355,7 @@ impl Subtypes {
         for (at, (_, view, why)) in std::mem::take(&mut self.gathered.about_kinds).into_iter().enumerate() {
             if answers[at] != Answer::No {
                 self.let_in(view, self.nodes, why);
+                self.let_in_what_is_opened(view, why);
             }
         }
         let answer_at = |at: u32| match at {
@@ -1487,7 +1510,7 @@ impl Subtypes {
         candidates
     }
 
-    /// The supertypes with the largest sets that may fit the target by their names, `MOST_CANDIDATES` at most. Ascending.
+    /// The supertypes with the largest sets that may fit the target by their names, `MANY_CANDIDATES` at most. Ascending.
     fn large_candidates_for(&self, lists: &Candidates, target: u32) -> Vec<u32> {
         let facts = &self.gathered.facts[target as usize];
         let names = if facts.required.is_empty() { &facts.declared } else { &facts.required };
@@ -1496,7 +1519,7 @@ impl Subtypes {
         large.dedup();
         large.retain(|&view| view != target && may_fit(&self.gathered.facts[view as usize], facts));
         large.sort_by_key(|&view| (std::cmp::Reverse(self.sets[view as usize].len()), view));
-        large.truncate(MOST_CANDIDATES);
+        large.truncate(MANY_CANDIDATES);
         large.sort_unstable();
         large
     }
@@ -1515,16 +1538,16 @@ impl Subtypes {
                 continue;
             }
             let facts = &self.gathered.facts[target as usize];
-            // Nearly everything fits a class that requires nothing, and it cannot take any object instead.
-            if facts.flags & IS_INSTANCE != 0 && facts.required.is_empty() {
+            // Nearly everything fits a class that requires nothing, and it cannot take any object instead. A type all of whose properties are optional can.
+            if facts.flags & (IS_INSTANCE | IS_WEAK) != 0 && facts.required.is_empty() {
                 self.give_up_completing(target, place);
                 continue;
             }
-            let most = if facts.flags & (IS_INSTANCE | IS_TOLD_APART) != 0 { MOST_CANDIDATES_OF_WHAT_IS_MADE } else { MOST_CANDIDATES };
+            let (many, most) = if facts.flags & (IS_INSTANCE | IS_TOLD_APART) != 0 { (MOST_CANDIDATES_OF_WHAT_IS_MADE, MOST_CANDIDATES_OF_WHAT_IS_MADE) } else { (MANY_CANDIDATES, MOST_CANDIDATES) };
             let (has, asked_first) = (&self.sets[target as usize], self.asked_first.get(&target));
             let may_be_new = |&made: &u32| made != target && has.binary_search(&made).is_err() && asked_first.is_none_or(|asked| asked.binary_search(&made).is_err()) && may_fit(&self.gathered.facts[made as usize], facts);
             let fitting: Vec<u32> = Self::candidates_for(&lists, facts).into_iter().filter(may_be_new).take(MOST_CANDIDATES_OF_WHAT_IS_MADE + 1).collect();
-            if fitting.len() > most {
+            if fitting.len() > many {
                 // One of them may bring most of the others, unless they are beyond all measure.
                 let large = if self.completes_by_fit && asked_first.is_none() && fitting.len() <= MOST_CANDIDATES_OF_WHAT_IS_MADE { self.large_candidates_for(&lists, target) } else { Vec::new() };
                 if !large.is_empty() {
@@ -1533,6 +1556,8 @@ impl Subtypes {
                     again.push((target, place));
                     continue;
                 }
+            }
+            if fitting.len() > most {
                 self.give_up_completing(target, place);
                 continue;
             }
@@ -1690,8 +1715,10 @@ impl Subtypes {
         }
         self.say("the callees");
         self.gathered.creations.apply(&mut reached);
+        let constructions_are_incomplete = self.gathered.constructions.is_incomplete();
         self.gathered.constructions.apply(&mut reached, &self.gathered.facts, &self.becomes);
         Membership {
+            constructions_are_incomplete,
             views: reached,
             alteration_sites,
             altered_by,

@@ -281,7 +281,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         env.map
             .put(b"npm_lifecycle_script", original_script)
             .expect("unreachable");
-        crate::cli::check_command::note_package_script(env, name, cwd);
+        crate::cli::script_or_command::note_package_script(env, name, cwd);
 
         let mut copy_script_capacity: usize = original_script.len();
         for part in passthrough {
@@ -797,6 +797,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let more = more.filter(|_| is_page(&path)).map(EntryPoint::file);
         let entry_points: Vec<EntryPoint> = std::iter::once(main).chain(more).collect();
         check_before(&entry_points, before_read)
+    }
+
+    fn audit_main(ctx: &ContextData, vm: &mut VirtualMachine) {
+        let main = crate::cli::check_command::EntryPoint {
+            path: vm.main(),
+            loader: Some(Self::loader_of_main(ctx, vm.main(), None)),
+            text: Some(&ctx.runtime_options.eval.script[..]).filter(|it| !it.is_empty()),
+        };
+        cli::aot_audit::prepare(&[main], crate::cli::check_command::watching(vm), false);
     }
 
     /// What the module loader loads the main module at `path` with, where `boot` is given `loader`.
@@ -1515,6 +1524,9 @@ impl Run<'_> {
         if has_type_errors {
             // It is not read if the options are wrong.
             vm.add_main_to_watcher_if_needed();
+        }
+        if ctx.runtime_options.aot_audit && !has_type_errors {
+            RunCommand::audit_main(ctx, vm);
         }
         let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
         match loaded {

@@ -33,7 +33,7 @@ pub(super) const BUILTINS: &[(&str, &str)] = &[
     ("WeakSet", "add delete has"),
     ("console", "assert clear count countReset debug dir dirxml error group groupCollapsed groupEnd info log profile profileEnd table time timeEnd timeLog timeStamp trace warn"),
 ];
-pub(super) const REPLACEABLE_GLOBALS: &[&str] = &["console"];
+pub(super) const REPLACEABLE_GLOBALS: &[&str] = &["Buffer", "console"];
 
 /// What a built-in may do with an operand. The letters of the header of generate-aot-builtins.py, in their order.
 #[allow(dead_code)]
@@ -413,6 +413,8 @@ pub(super) const BUILTIN_ENTRIES: &[BuiltinEntry] = &[
     BuiltinEntry { kind: BuiltinKind::Static, holder: "console", name: "profileEnd", this: 0, parameters: &[(Pattern::ToString, Arity::Optional, 16)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Static, holder: "console", name: "timeStamp", this: 0, parameters: &[(Pattern::ToString, Arity::Optional, 16)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Static, holder: "console", name: "timeLog", this: 0, parameters: &[(Pattern::ToString, Arity::Optional, 16), (Pattern::Any, Arity::Rest, 272)], fresh: Fresh::No },
+    BuiltinEntry { kind: BuiltinKind::Static, holder: "Buffer", name: "byteLength", this: 0, parameters: &[(Pattern::ToString, Arity::Required, 16), (Pattern::ToString, Arity::Optional, 16)], fresh: Fresh::No },
+    BuiltinEntry { kind: BuiltinKind::Static, holder: "Buffer", name: "byteLength", this: 0, parameters: &[(Pattern::Any, Arity::Required, 511), (Pattern::Any, Arity::Optional, 0), (Pattern::Any, Arity::Rest, 0)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Static, holder: "Iterator", name: "concat", this: 0, parameters: &[(Pattern::Any, Arity::Rest, 20)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Static, holder: "Iterator", name: "from", this: 0, parameters: &[(Pattern::Any, Arity::Optional, 52), (Pattern::Any, Arity::Rest, 0)], fresh: Fresh::No },
     BuiltinEntry { kind: BuiltinKind::Static, holder: "Iterator", name: "zip", this: 0, parameters: &[(Pattern::Any, Arity::Rest, 511)], fresh: Fresh::No },

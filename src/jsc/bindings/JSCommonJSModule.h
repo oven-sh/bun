@@ -166,6 +166,8 @@ JSC::JSValue createRequireCacheObject(JSC::JSGlobalObject*, JSC::JSMap* requireM
 
 // `graph`: the Bun.ModuleGraph whose loader is importing the file (the module goes in
 // its require cache), or null for the global object's loader.
+JSC::JSSourceCode* sourceOfLoadedCommonJSModule(Zig::GlobalObject*, const WTF::String& key, bool ignoreESModuleAnnotation);
+
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSModuleGraph* graph,

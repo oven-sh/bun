@@ -2224,6 +2224,20 @@ impl StackCheck {
             .saturating_sub(Self::THRESHOLD)
     }
 
+    /// The same check, which says no after at most `bytes` more of stack
+    /// than are in use here. For what builds a tree that other code walks
+    /// afterwards: that code needs stack for each level too, its frames can
+    /// be larger, and a derived `Drop` cannot ask.
+    #[inline]
+    pub fn with_at_most(self, bytes: usize) -> Self {
+        let end = Self::frame_address()
+            .saturating_sub(Self::THRESHOLD)
+            .saturating_sub(bytes);
+        Self {
+            cached_stack_end: self.cached_stack_end.max(end),
+        }
+    }
+
     /// Like [`is_safe_to_recurse`] but reserves `extra` bytes of additional
     /// headroom on top of the platform threshold. Use when the code after the
     /// check makes a deep call (e.g. into the transpiler) before reaching the
@@ -4289,6 +4303,17 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
+static BEFORE_RELOAD: std::sync::OnceLock<fn()> = std::sync::OnceLock::new();
+static KEPT_OPEN_OVER_RELOAD: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(-1);
+
+pub fn before_reload(hook: fn()) {
+    let _ = BEFORE_RELOAD.set(hook);
+}
+
+pub fn keep_open_over_reload(fd: i32) {
+    KEPT_OPEN_OVER_RELOAD.store(fd, AOrdering::SeqCst);
+}
+
 /// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
@@ -4353,7 +4378,11 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
             .iter()
             .map(|z| ZBox::from_vec_with_nul(z.as_bytes().to_vec()))
             .collect();
-        let errno = execve_self(&dupe_argv, None);
+        if let Some(hook) = BEFORE_RELOAD.get() {
+            hook();
+        }
+        let kept_open = KEPT_OPEN_OVER_RELOAD.load(AOrdering::SeqCst);
+        let errno = execve_self(&dupe_argv, (kept_open >= 0).then(|| Fd::from_native(kept_open)));
         if may_return {
             crate::output::pretty_errorln(format_args!(
                 "error: Failed to reload process: errno {}",

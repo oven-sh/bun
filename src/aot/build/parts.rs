@@ -74,6 +74,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn end_part(&mut self, fx: &mut Fx, mark: Option<Mark>) {
         let Some(mark) = mark.filter(|_| fx.b.is_open()) else { return };
+        self.modules_touched.2.clear();
         let to = fx.b.block;
         self.marks.push(Mark { to, last: fx.b.func.blocks[to.idx()].ops.last().copied().unwrap_or(V::NONE), end_block: fx.b.func.blocks.len() as u32, ..mark });
         if fx.found_initialized.is_empty() {

@@ -52,7 +52,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     rc: undefined,
     nasm: undefined,
     ...overrides,
-  };
+  } as Toolchain;
 }
 
 /** Shorthand: resolve a config for a darwin target (cross on non-darwin hosts). */

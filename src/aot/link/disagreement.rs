@@ -42,7 +42,8 @@ const FIELD_FLAGS: [(u32, &str); 13] = [
     (field_flags::DECLARED_WITHOUT_UNDEFINED as u32, "DECLARED_WITHOUT_UNDEFINED"),
 ];
 const ONLY_FUNCTION_FLAGS: [(u32, &str); 2] = [(only_function_flags::IS_FACT as u32, "IS_FACT"), (only_function_flags::OR_NIL as u32, "OR_NIL")];
-const CLASS_FLAGS: [(u32, &str); 6] = [
+const CLASS_FLAGS: [(u32, &str); 7] = [
+    (class_flags::MAY_BE_REUSED, "MAY_BE_REUSED"),
     (class_flags::IS_LAID_OUT, "IS_LAID_OUT"),
     (class_flags::IS_EVALUATED_ONCE, "IS_EVALUATED_ONCE"),
     (class_flags::HAS_FOREIGN_ROOT, "HAS_FOREIGN_ROOT"),
@@ -521,7 +522,7 @@ fn ways_of_function(fragment: &Fragment, function: &Function, layout: LayoutId) 
         add(body.class == layout, "code: it is a function of the class");
         add(body.declares.contains(&layout), "code: it evaluates the declaration");
         add(body.classes_as_values.contains(&layout), "code: the class object as a value");
-        add(body.mentions.globals.iter().any(|global| names(fragment.globals[global.idx()].global.declared)), "type: of a variable it mentions");
+        add(body.mentions.globals().any(|global| names(fragment.globals[global.idx()].global.declared)), "type: of a variable it mentions");
     }
     ways
 }

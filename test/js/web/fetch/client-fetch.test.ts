@@ -15,6 +15,7 @@ test("function signature", () => {
 });
 
 test("args validation", async () => {
+  // @ts-expect-error
   expect(fetch()).rejects.toThrow(TypeError);
   expect(fetch("ftp://unsupported")).rejects.toThrow(TypeError);
 });
@@ -26,8 +27,8 @@ test("request json", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const body = await fetch(`http://localhost:${server.address().port}`);
-  expect(obj).toEqual(await body.json());
+  const body = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`);
+  expect(obj).toEqual((await body.json()) as any);
 });
 
 test("request text", async () => {
@@ -37,7 +38,7 @@ test("request text", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const body = await fetch(`http://localhost:${server.address().port}`);
+  const body = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`);
   expect(JSON.stringify(obj)).toEqual(await body.text());
 });
 
@@ -48,7 +49,7 @@ test("request arrayBuffer", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const body = await fetch(`http://localhost:${server.address().port}`);
+  const body = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`);
   expect(Buffer.from(JSON.stringify(obj))).toEqual(Buffer.from(await body.arrayBuffer()));
 });
 
@@ -60,7 +61,7 @@ test("should set type of blob object to the value of the `Content-Type` header f
   }).listen(0);
   await once(server, "listening");
 
-  const response = await fetch(`http://localhost:${server.address().port}`);
+  const response = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`);
   expect("application/json;charset=utf-8").toBe((await response.blob()).type);
 });
 
@@ -72,7 +73,7 @@ test("pre aborted with readable request body", async () => {
     const ac = new AbortController();
     ac.abort();
     expect(
-      fetch(`http://localhost:${server.address().port}`, {
+      fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`, {
         signal: ac.signal,
         method: "POST",
         body: new ReadableStream({
@@ -105,7 +106,7 @@ test("pre aborted with closed readable request body", async () => {
   });
 
   expect(
-    fetch(`http://localhost:${server.address().port}`, {
+    fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`, {
       signal: ac.signal,
       method: "POST",
       body,
@@ -120,7 +121,9 @@ test("unsupported formData 1", async () => {
     res.end();
   }).listen(0);
   await once(server, "listening");
-  expect(fetch(`http://localhost:${server.address().port}`).then(res => res.formData())).rejects.toThrow(TypeError);
+  expect(
+    fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`).then(res => res.formData()),
+  ).rejects.toThrow(TypeError);
 });
 
 test("multipart formdata not base64", async () => {
@@ -131,7 +134,7 @@ test("multipart formdata not base64", async () => {
   formData.append("field2", blob, "file.txt");
 
   const tempRes = new Response(formData);
-  const boundary = tempRes.headers.get("content-type").split("boundary=")[1];
+  const boundary = tempRes.headers.get("content-type")!.split("boundary=")[1];
   const formRaw = await tempRes.text();
 
   await using server = createServer((req, res) => {
@@ -139,13 +142,13 @@ test("multipart formdata not base64", async () => {
     res.write(formRaw);
     res.end();
   });
-  const listen = promisify(server.listen.bind(server));
+  const listen: (port: number) => Promise<void> = promisify(server.listen.bind(server));
   await listen(0);
-  const res = await fetch(`http://localhost:${server.address().port}`);
+  const res = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`);
   const form = await res.formData();
   expect(form.get("field1")).toBe("value1");
 
-  const text = await form.get("field2").text();
+  const text = await (form.get("field2") as File).text();
   expect(text).toBe("example\ntext file");
 });
 
@@ -173,9 +176,9 @@ test.todo("multipart formdata base64", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const digest = await fetch(`http://localhost:${server.address().port}`)
+  const digest = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`)
     .then(res => res.formData())
-    .then(form => form.get("file").arrayBuffer())
+    .then(form => (form.get("file") as File).arrayBuffer())
     .then(buffer => createHash("sha256").update(Buffer.from(buffer)).digest("base64"));
   expect(createHash("sha256").update(data).digest("base64")).toBe(digest);
 });
@@ -211,10 +214,10 @@ test("busboy emit error", async () => {
     res.end();
   });
 
-  const listen = promisify(server.listen.bind(server));
+  const listen: (port: number) => Promise<void> = promisify(server.listen.bind(server));
   await listen(0);
 
-  const res = await fetch(`http://localhost:${server.address().port}`);
+  const res = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`);
   expect(res.formData()).rejects.toThrow("FormData parse error missing final boundary");
 });
 
@@ -226,7 +229,7 @@ test("parsing formData preserve full path on files", async () => {
   const tempRes = new Response(formData);
   const form = await tempRes.formData();
 
-  expect(form.get("field1").name).toBe("a/b/c/foo.txt");
+  expect((form.get("field1") as File).name).toBe("a/b/c/foo.txt");
 });
 
 test("urlencoded formData", async () => {
@@ -236,7 +239,9 @@ test("urlencoded formData", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const formData = await fetch(`http://localhost:${server.address().port}`).then(res => res.formData());
+  const formData = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`).then(res =>
+    res.formData(),
+  );
   expect(formData.get("field1")).toBe("value1");
   expect(formData.get("field2")).toBe("value2");
 });
@@ -248,7 +253,7 @@ test("text with BOM", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const text = await fetch(`http://localhost:${server.address().port}`).then(res => res.text());
+  const text = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`).then(res => res.text());
   expect(text).toBe("test=\uFEFF");
 });
 
@@ -259,7 +264,9 @@ test.todo("formData with BOM", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const formData = await fetch(`http://localhost:${server.address().port}`).then(res => res.formData());
+  const formData = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`).then(res =>
+    res.formData(),
+  );
   expect(formData.get("\uFEFFtest")).toBe("\uFEFF");
 });
 
@@ -269,8 +276,8 @@ test("locked blob body", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const res = await fetch(`http://localhost:${server.address().port}`);
-  const reader = res.body.getReader();
+  const res = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`);
+  const reader = res.body!.getReader();
   expect(res.blob()).rejects.toThrow("ReadableStream is locked");
   reader.cancel();
 });
@@ -281,7 +288,7 @@ test("disturbed blob body", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const res = await fetch(`http://localhost:${server.address().port}`);
+  const res = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`);
   await res.blob();
   expect(res.blob()).rejects.toThrow("Body already used");
 });
@@ -307,7 +314,7 @@ test("redirect with body", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const res = await fetch(`http://localhost:${server.address().port}`, {
+  const res = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`, {
     method: "PUT",
     body: "asd",
   });
@@ -331,7 +338,7 @@ test("redirect with stream", async () => {
 
   await once(server, "listening");
 
-  const res = await fetch(`http://localhost:${server.address().port}`, {
+  const res = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`, {
     redirect: "manual",
   });
   expect(res.status).toBe(302);
@@ -376,7 +383,7 @@ test("post FormData with Blob", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const res = await fetch(`http://localhost:${server.address().port}`, {
+  const res = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`, {
     method: "PUT",
     body,
   });
@@ -392,7 +399,7 @@ test("post FormData with File", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const res = await fetch(`http://localhost:${server.address().port}`, {
+  const res = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`, {
     method: "PUT",
     body,
   });
@@ -484,7 +491,7 @@ test("do not decode redirect body", async () => {
     res.end(gzipSync(JSON.stringify(obj)));
   }).listen(0);
   await once(server, "listening");
-  const body = await fetch(`http://localhost:${server.address().port}/resource`);
+  const body = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}/resource`);
   expect(JSON.stringify(obj)).toBe(await body.text());
 });
 
@@ -498,7 +505,7 @@ test("decode non-redirect body with location header", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const body = await fetch(`http://localhost:${server.address().port}/resource`);
+  const body = await fetch(`http://localhost:${(server.address() as net.AddressInfo).port}/resource`);
   expect(JSON.stringify(obj)).toBe(await body.text());
 });
 
@@ -510,7 +517,7 @@ test("error on redirect", async () => {
   await once(server, "listening");
 
   expect(
-    fetch(`http://localhost:${server.address().port}`, {
+    fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`, {
       redirect: "error",
     }),
   ).rejects.toThrow(/UnexpectedRedirect/);
@@ -534,7 +541,7 @@ test("Receiving non-Latin1 headers", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  const url = `http://localhost:${server.address().port}`;
+  const url = `http://localhost:${(server.address() as net.AddressInfo).port}`;
   const response = await fetch(url, { method: "HEAD" });
   const cdHeaders = [...response.headers].filter(([k]) => k.startsWith("content-disposition")).map(([, v]) => v);
   const lengths = cdHeaders.map(h => h.length);
@@ -552,7 +559,7 @@ test("fetching with Request object - issue #1527", async () => {
     await once(server, "listening");
 
     const body = JSON.stringify({ foo: "bar" });
-    const request = new Request(`http://localhost:${server.address().port}`, {
+    const request = new Request(`http://localhost:${(server.address() as net.AddressInfo).port}`, {
       method: "POST",
       body,
     });
@@ -582,7 +589,7 @@ test.each([
     .createServer(sock => {
       sock.on("error", () => {});
       sock.on("data", d => {
-        recorded = Buffer.concat([recorded, d]);
+        recorded = Buffer.concat([recorded, d as Buffer]);
         const raw = recorded.toString("latin1");
         if (raw.endsWith("0\r\n\r\n") && raw.includes(lastData)) {
           sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
@@ -625,7 +632,7 @@ test("an empty request body chunk does not stall a stream body sent with an expl
     .createServer(sock => {
       sock.on("error", () => {});
       sock.on("data", d => {
-        recorded = Buffer.concat([recorded, d]);
+        recorded = Buffer.concat([recorded, d as Buffer]);
         if (recorded.toString("latin1").endsWith("AAAABBBB")) {
           sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
         }

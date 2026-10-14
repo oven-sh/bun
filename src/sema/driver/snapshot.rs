@@ -33,6 +33,7 @@ pub struct Snapshot {
     pub entry_functions: Vec<[Vec<u8>; 2]>,
     /// `TypeChecked::statements`. A snapshot that ends before it was written without.
     pub statements: Vec<(Vec<u8>, u32, bool)>,
+    pub without_side_effects: Vec<Vec<u8>>,
 }
 
 const MAGIC: &[u8] = b"bun aot snapshot 4\n";
@@ -164,6 +165,12 @@ impl Snapshot {
             put(&mut out, path);
             put_count(&mut out, (*start as usize) << 1 | usize::from(*verdict));
         }
+        let mut without_side_effects: Vec<_> = self.without_side_effects.iter().collect();
+        without_side_effects.sort();
+        put_count(&mut out, without_side_effects.len());
+        for path in without_side_effects {
+            put(&mut out, path);
+        }
         out
     }
 
@@ -188,12 +195,14 @@ impl Snapshot {
         let entry_functions = (0..reader.count().unwrap_or(0)).map(|_| Some([reader.bytes()?, reader.bytes()?])).collect::<Option<_>>()?;
         let statements = (0..reader.count().unwrap_or(0)).map(|_| Some((reader.bytes()?, reader.count()?))).collect::<Option<Vec<_>>>()?;
         let statements = statements.into_iter().map(|(path, word)| (path, (word >> 1) as u32, word & 1 != 0)).collect();
+        let without_side_effects = (0..reader.count().unwrap_or(0)).map(|_| reader.bytes()).collect::<Option<_>>()?;
         Some(Snapshot {
             entry_functions,
             defines,
             features,
             preserve_source_paths,
             statements,
+            without_side_effects,
             cwd,
             tsconfig: has_tsconfig.then_some(tsconfig),
             conditions,

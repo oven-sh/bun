@@ -101,6 +101,8 @@ pub(crate) struct RuntimeState {
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
+    /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
+    pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
 }
 
 thread_local! {
@@ -188,6 +190,23 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
     unsafe { &(*state).global_dns_data }
 }
 
+/// [`RuntimeState::lint`] of this thread's VM.
+#[inline]
+pub(crate) fn lint_vm() -> &'static core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>> {
+    let state = runtime_state();
+    debug_assert!(!state.is_null(), "lint_vm before init_runtime_state");
+    // SAFETY: as `global_dns_data`.
+    unsafe { &(*state).lint }
+}
+
+/// Takes [`RuntimeState::lint`] out of this thread's VM, which is about to end.
+pub(crate) fn take_lint_vm() -> Option<Box<crate::cli::lint_js::LintVm>> {
+    let state = runtime_state();
+    debug_assert!(!state.is_null(), "take_lint_vm before init_runtime_state");
+    // SAFETY: this thread's state, and no `lint_vm()` borrow is live: the caller runs no JavaScript.
+    unsafe { (*state).lint.take() }
+}
+
 /// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
 /// thread's). `WTFTimer` may be entered off the VM's JS thread (the locked
 /// `All.wtf_timers` heap exists for exactly that), and the
@@ -216,10 +235,9 @@ pub(crate) unsafe fn runtime_state_of(vm: *mut VirtualMachine) -> *mut RuntimeSt
 /// Note: lives here (high tier) because the storage slot
 /// (`RareData.default_client_ssl_ctx`) is in `bun_jsc` but population requires
 /// `RuntimeState.ssl_ctx_cache` (this crate). The cached `SSL_CTX*` is held
-/// for the VM's lifetime so the weak-cache entry never tombstones.
+/// until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
 pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCtx {
-    let rare = vm.as_mut().rare_data();
-    if rare.default_client_ssl_ctx.is_none() {
+    if vm.as_mut().rare_data().default_client_ssl_ctx.is_none() {
         let mut err = bun_uws::create_bun_socket_error_t::none;
         let state = runtime_state();
         debug_assert!(
@@ -235,17 +253,23 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
         // rejectUnauthorized:true) verifies real servers. Route through the
         // weak cache so a `tls.connect()` with default options later resolves
         // to the same CTX rather than building a second one with the same
-        // digest. The +1 ref returned here is held for the VM's lifetime, so
-        // the entry never tombstones.
-        match cache.get_or_create_opts(&Default::default(), &mut err) {
-            Some(ctx) => rare.default_client_ssl_ctx = Some(ctx),
+        // digest. The +1 ref returned here is held, so the entry never tombstones.
+        let ctx = if vm.tls_default_ciphers().is_some() {
+            cache.get_or_create(&crate::socket::tls_true_defaults(vm, false), &mut err)
+        } else {
+            cache.get_or_create_opts(&Default::default(), &mut err)
+        };
+        match ctx {
+            Some(ctx) => vm.as_mut().rare_data().default_client_ssl_ctx = Some(ctx),
             None => bun_core::Output::panic(format_args!(
                 "default client SSL_CTX init failed: {}",
                 bun_core::fmt::s(err.message().unwrap_or(b"unknown")),
             )),
         }
     }
-    rare.default_client_ssl_ctx
+    vm.as_mut()
+        .rare_data()
+        .default_client_ssl_ctx
         .as_ref()
         .unwrap()
         .as_ptr()
@@ -347,6 +371,7 @@ unsafe fn init_runtime_state(
         },
         wake_ctx: None,
         cron_jobs: Vec::new(),
+        lint: core::cell::OnceCell::new(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 
@@ -2148,6 +2173,7 @@ fn transpile_source_code_inner(
     let (loader, module_type): (Loader, ModuleType) =
         unsafe { ((*extra).loader, (*extra).module_type) };
 
+    let function_texts = unsafe { (*extra).function_texts };
     let disable_transpilying = args.flags.disable_transpiling();
     let specifier = args.specifier;
     let referrer = args.referrer;
@@ -2584,6 +2610,8 @@ fn transpile_source_code_inner(
                     allow_bytecode_cache: true,
                     set_breakpoint_on_first_line,
                     runtime_transpiler_cache: if !disable_transpilying
+                        && function_texts.is_null()
+                        && !crate::cli::aot_audit::is_on()
                         && !<RuntimeTranspilerCache as bun_bundler::RuntimeTranspilerCacheExt>::disabled()
                     {
                         Some(&mut cache)
@@ -2693,7 +2721,7 @@ fn transpile_source_code_inner(
 
                 // Set before the early returns below (cache hit, `// @bun`, async queue):
                 // every later module load is gated on this flag.
-                if is_main && !disable_transpilying {
+                if is_main && !disable_transpilying && function_texts.is_null() {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe { (*jsc_vm).has_loaded = true };
                 }
@@ -3044,7 +3072,16 @@ fn transpile_source_code_inner(
                 // `writer: &mut BufferPrinter` live inside `print_ast`. After
                 // this block returns, the `printer` binding is rederived from
                 // the raw pointer below — any earlier Unique tag is dead.
-                {
+                if !function_texts.is_null() {
+                    unsafe {
+                        (*jsc_vm).transpiler.print_noting_function_texts(
+                            &arena_guard.1,
+                            parse_result,
+                            &mut *(*extra).source_code_printer,
+                            &mut *function_texts,
+                        )
+                    }?;
+                } else {
                     // SAFETY: `jsc_vm` / `(*extra).source_code_printer` are live
                     // for the call (fn contract); `mapper` does not escape this
                     // scope, so the unbounded `'a` from the raw-deref reborrow
@@ -3073,6 +3110,7 @@ fn transpile_source_code_inner(
                         drop(module_info.take());
                     }
                     print_result?;
+                    crate::cli::aot_audit::end_file(unsafe { (*(*extra).source_code_printer).ctx.get_written() });
                 }
 
                 // `module_info.asDeserialized()`: finalize the printer-filled
@@ -4364,6 +4402,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         } else {
             ptr::null_mut()
         },
+        function_texts: ptr::null_mut(),
     };
     let args = TranspileArgs {
         specifier: lr.specifier,
@@ -4422,6 +4461,114 @@ fn transpile_error_value(
             to_jsc_fetch_error(&err),
         )),
     }
+}
+
+type PrintedFunctionTexts = (Box<[u8]>, Vec<bun_js_printer::FunctionText>);
+
+thread_local! {
+    static FUNCTION_TEXTS_BY_PATH: core::cell::RefCell<std::collections::HashMap<Box<[u8]>, Option<PrintedFunctionTexts>>> =
+        Default::default();
+}
+
+fn print_noting_function_texts(
+    global: &JSGlobalObject,
+    specifier_str: &bun_core::String,
+) -> Option<PrintedFunctionTexts> {
+    let jsc_vm: *mut VirtualMachine = global.bun_vm_ptr();
+    let specifier = specifier_str.to_utf8();
+    let mut log = bun_ast::Log::init();
+    let mut virtual_source_to_use: Option<bun_ast::Source> = None;
+    let mut blob_to_deinit: Option<crate::webcore::Blob> = None;
+    let lr = unsafe {
+        get_loader_and_virtual_source(
+            specifier.slice(),
+            jsc_vm,
+            &mut virtual_source_to_use,
+            &mut blob_to_deinit,
+            None,
+        )
+    }
+    .ok()?;
+    let loader = lr.loader.filter(|loader| loader.is_java_script_like())?;
+    let module_type = match lr.path.name().ext {
+        b".cjs" | b".cts" => ModuleType::Cjs,
+        b".mjs" | b".mts" => ModuleType::Esm,
+        b".js" | b".ts" => lr
+            .package_json
+            .map_or(ModuleType::Unknown, |pkg| pkg.module_type),
+        _ => ModuleType::Unknown,
+    };
+    let _reset_arena = ArenaResetGuard::new(jsc_vm);
+    let printer_ptr: *mut bun_js_printer::BufferPrinter = TRANSPILE_PRINTER.with(|cell| {
+        let mut p = cell.get();
+        if p.is_null() {
+            let writer = bun_js_printer::BufferWriter::init();
+            let bp = Box::new(bun_js_printer::BufferPrinter::init(writer));
+            p = bun_core::heap::into_raw(bp);
+            cell.set(p);
+        }
+        p
+    });
+    let mut function_texts = Vec::new();
+    let mut extra = TranspileExtra {
+        path: unsafe { lr.path.into_static() },
+        loader,
+        module_type,
+        source_code_printer: printer_ptr,
+        promise_ptr: ptr::null_mut(),
+        function_texts: &raw mut function_texts,
+    };
+    let args = TranspileArgs {
+        specifier: lr.specifier,
+        referrer: b"",
+        input_specifier: specifier_str,
+        log: &raw mut log,
+        virtual_source: lr.virtual_source,
+        global_object: global,
+        flags: FetchFlags::Transpile,
+        extra: &raw mut extra,
+    };
+    let resolved = match transpile_source_code_inner(jsc_vm, &args) {
+        Ok(resolved) => resolved,
+        Err(
+            crate::Error::JSError
+            | crate::Error::Js(_)
+            | crate::Error::Bundler(bun_bundler::Error::Js(_)),
+        ) => {
+            let _ = global.take_error(bun_jsc::JsError::Thrown);
+            return None;
+        }
+        Err(_) => return None,
+    };
+    let printed: Box<[u8]> = resolved.source_code.byte_slice().into();
+    bun_js_printer::finish_function_texts(&printed, &mut function_texts);
+    Some((printed, function_texts))
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__AOT__textOfFunctionInFile(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+    place: u32,
+    text: &mut bun_core::String,
+) -> bool {
+    let key = path.to_utf8();
+    let is_known = FUNCTION_TEXTS_BY_PATH.with_borrow(|known| known.contains_key(key.slice()));
+    if !is_known {
+        let printed = print_noting_function_texts(global, path);
+        FUNCTION_TEXTS_BY_PATH.with_borrow_mut(|known| known.insert(key.slice().into(), printed));
+    }
+    FUNCTION_TEXTS_BY_PATH.with_borrow(|known| {
+        let Some(Some((printed, texts))) = known.get(key.slice()) else {
+            return false;
+        };
+        let Ok(found) = texts.binary_search_by_key(&(place as i32), |it| it.key) else {
+            return false;
+        };
+        let found = texts[found];
+        *text = bun_core::String::clone_latin1(&printed[found.start as usize..found.end as usize]);
+        true
+    })
 }
 
 /// Transpiles plugin-provided source through the per-thread
@@ -4502,6 +4649,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         module_type: ModuleType::Unknown,
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(), // null forbids async resolution
+        function_texts: ptr::null_mut(),
     };
     let args = TranspileArgs {
         specifier,

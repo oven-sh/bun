@@ -3,8 +3,10 @@ import { expect, test } from "bun:test";
 // GitHub Issue #25639: setTimeout Timeout object missing _idleStart property
 // Next.js 16 uses _idleStart to coordinate timers for Cache Components
 
+type Timeout = NodeJS.Timeout & { _idleStart: number };
+
 test("setTimeout returns Timeout object with _idleStart property", () => {
-  const timer = setTimeout(() => {}, 100);
+  const timer = setTimeout(() => {}, 100) as Timeout;
 
   try {
     // Verify _idleStart exists and is a number
@@ -19,7 +21,7 @@ test("setTimeout returns Timeout object with _idleStart property", () => {
 });
 
 test("setInterval returns Timeout object with _idleStart property", () => {
-  const timer = setInterval(() => {}, 100);
+  const timer = setInterval(() => {}, 100) as Timeout;
 
   try {
     // Verify _idleStart exists and is a number
@@ -34,7 +36,7 @@ test("setInterval returns Timeout object with _idleStart property", () => {
 });
 
 test("_idleStart is writable (Next.js modifies it to coordinate timers)", () => {
-  const timer = setTimeout(() => {}, 100);
+  const timer = setTimeout(() => {}, 100) as Timeout;
 
   try {
     const originalIdleStart = timer._idleStart;
@@ -50,10 +52,10 @@ test("_idleStart is writable (Next.js modifies it to coordinate timers)", () => 
 });
 
 test("timers created at different times have different _idleStart values", async () => {
-  const timer1 = setTimeout(() => {}, 100);
+  const timer1 = setTimeout(() => {}, 100) as Timeout;
   // Wait a bit to ensure different timestamp
   await Bun.sleep(10);
-  const timer2 = setTimeout(() => {}, 100);
+  const timer2 = setTimeout(() => {}, 100) as Timeout;
 
   try {
     expect(timer2._idleStart).toBeGreaterThanOrEqual(timer1._idleStart);

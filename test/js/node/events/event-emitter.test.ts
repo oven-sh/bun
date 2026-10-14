@@ -504,7 +504,7 @@ describe("EventEmitter.on", () => {
       emitter.emit("close");
     });
 
-    const result = [];
+    const result: any[][] = [];
     for await (const ev of asyncIterator) {
       result.push(ev);
     }
@@ -523,7 +523,7 @@ describe("EventEmitter.on", () => {
       emitter.emit("hey", 3);
     });
 
-    const result = [];
+    const result: any[][] = [];
     for await (const ev of asyncIterator) {
       result.push(ev);
     }
@@ -564,7 +564,7 @@ describe("EventEmitter.on", () => {
     emitter.emit("hey", 1, 2, 3);
     emitter.emit("hey", [4, 5, 6]);
 
-    expect((await asyncIterator.next()).value).toBe(1);
+    expect((await asyncIterator.next()).value).toBe<number>(1);
     expect((await asyncIterator.next()).value).toEqual([4, 5, 6]);
   });
 
@@ -573,7 +573,7 @@ describe("EventEmitter.on", () => {
     const process = require("node:process");
 
     const ee = new EventEmitter();
-    const output = [];
+    const output: unknown[] = [];
 
     // Emit later on
     process.nextTick(() => {
@@ -607,7 +607,7 @@ describe("EventEmitter.on", () => {
 
     const ac = new AbortController();
     const ee = new EventEmitter();
-    const output = [];
+    const output: unknown[] = [];
 
     process.nextTick(() => {
       ee.emit("foo", "bar");
@@ -669,7 +669,7 @@ describe("EventEmitter.on", () => {
     for (let i = 0; i < 4; i++) emitter.emit("hey", i);
     emitter.emit("close");
 
-    const result = [];
+    const result: any[][] = [];
     for await (const ev of asyncIterator) result.push(ev);
 
     expect({ result, calls }).toEqual({ result: [[0], [1], [2], [3]], calls: ["pause"] });
@@ -683,7 +683,7 @@ describe("EventEmitter.on", () => {
     const fpath = path.join(__filename, "..", "..", "child_process", "fixtures", "child-process-echo-options.js");
     const text = await Bun.file(fpath).text();
     const interfaced = createInterface(createReadStream(fpath));
-    const output = [];
+    const output: string[] = [];
 
     try {
       for await (const line of interfaced) {

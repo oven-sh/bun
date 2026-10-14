@@ -4,8 +4,8 @@
 //! one can hardly ever be shown: `pos` comes from a scanner that adds to it, `id` from a counter. So it is not shown. It is expected,
 //! and the field is kept so that an int32 takes four bytes and anything else is kept beside the object. What is found here is a
 //! prediction: it decides how fast the program is and how much memory it takes, and nothing of what it does. It may be wrong either way.
-//! A field of fractions that is expected to hold int32s is slow and large, so what is not known counts for nothing, and one piece of
-//! evidence to the contrary settles it.
+//! A field of fractions that is expected to hold int32s is slow and large, so one piece of evidence to the contrary settles it, and a
+//! constant counts only beside an int32 that is computed, or where nothing gets to the field that is not known.
 //!
 //! It goes by the name, over the whole program, because fields of one name share their place in the objects. Numbers get from place to
 //! place: from a parameter to a property, from a property to a variable, from a variable to what a function returns. Each file says
@@ -153,6 +153,8 @@ impl Contrary {
 pub enum FlowSource<N = Atom> {
     /// From something that yields int32s, as far as anyone would expect.
     Int32,
+    Constant,
+    Unknown,
     Not(Contrary),
     Node(FlowNode<N>),
     /// From `FlowNode::ResultNamed`, where the type of the call says that it yields a number. If no function of the program is a property
@@ -174,6 +176,8 @@ impl<N> NumberFlow<N> {
     pub fn renamed<M>(self, mut rename: impl FnMut(N) -> M) -> NumberFlow<M> {
         let from = match self.from {
             FlowSource::Int32 => FlowSource::Int32,
+            FlowSource::Constant => FlowSource::Constant,
+            FlowSource::Unknown => FlowSource::Unknown,
             FlowSource::Not(why) => FlowSource::Not(why),
             FlowSource::Node(node) => FlowSource::Node(node.renamed(&mut rename)),
             FlowSource::NumberNamed(name) => FlowSource::NumberNamed(rename(name)),
@@ -222,6 +226,8 @@ pub fn expected_int32<N: Copy + Eq + Hash>(flows: &[(FileId, NumberFlow<N>)], ra
     };
     let mut edges: Vec<(u32, u32)> = Vec::new();
     let mut pending: Vec<u32> = Vec::new();
+    let mut constants: Vec<u32> = Vec::new();
+    let mut unknown: Vec<u32> = Vec::new();
     // In the order of the program, each with the node it gets to.
     let mut contrary: Vec<((u32, u32, Contrary), FileId, u32)> = Vec::new();
     // `FlowSource::NumberNamed`: the edge, and where it is written.
@@ -230,6 +236,8 @@ pub fn expected_int32<N: Copy + Eq + Hash>(flows: &[(FileId, NumberFlow<N>)], ra
         let to = number_of(flow.to);
         match flow.from {
             FlowSource::Int32 => pending.push(to),
+            FlowSource::Constant => constants.push(to),
+            FlowSource::Unknown => unknown.push(to),
             FlowSource::Not(why) => contrary.push(((rank_of_file(file), flow.pos, why), file, to)),
             FlowSource::Node(from) => edges.push((number_of(from), to)),
             FlowSource::NumberNamed(name) => {
@@ -248,6 +256,10 @@ pub fn expected_int32<N: Copy + Eq + Hash>(flows: &[(FileId, NumberFlow<N>)], ra
             contrary.push(((rank_of_file(file), pos, Contrary::OnlyDeclared), file, to));
         }
     }
+    for &node in pending.iter().chain(&constants).chain(&unknown).chain(contrary.iter().map(|evidence| &evidence.2)) {
+        is_led_to[node as usize] = true;
+    }
+    unknown.extend((0..nodes.len() as u32).filter(|&node| !is_led_to[node as usize]));
     edges.sort_unstable();
     edges.dedup();
     // By node: where its edges start.
@@ -260,12 +272,15 @@ pub fn expected_int32<N: Copy + Eq + Hash>(flows: &[(FileId, NumberFlow<N>)], ra
     }
     let reached_from = |node: u32| edges[starts[node as usize] as usize..starts[node as usize + 1] as usize].iter().map(|edge| edge.1);
 
-    let mut is_reached_by_int32 = vec![false; nodes.len()];
-    while let Some(node) = pending.pop() {
-        if !std::mem::replace(&mut is_reached_by_int32[node as usize], true) {
-            pending.extend(reached_from(node));
+    let [is_reached_by_computed, is_reached_by_constant, is_reached_by_unknown] = [std::mem::take(&mut pending), constants, unknown].map(|mut pending| {
+        let mut is_reached = vec![false; nodes.len()];
+        while let Some(node) = pending.pop() {
+            if !std::mem::replace(&mut is_reached[node as usize], true) {
+                pending.extend(reached_from(node));
+            }
         }
-    }
+        is_reached
+    });
     // The first that gets to a node gets to all that the node leads to, so whatever comes later ends there.
     contrary.sort_unstable_by_key(|evidence| evidence.0);
     let mut first: Vec<u32> = vec![NONE; nodes.len()];
@@ -281,7 +296,7 @@ pub fn expected_int32<N: Copy + Eq + Hash>(flows: &[(FileId, NumberFlow<N>)], ra
     let verdict_of = |(number, node): (usize, &FlowNode<N>)| {
         let FlowNode::Property(name) = *node else { return None };
         let evidence = contrary.get(first[number] as usize);
-        Some(Int32Verdict { name, is_reached_by_int32: is_reached_by_int32[number], contrary: evidence.map(|&((_, pos, why), file, _)| (Place { file, pos }, why)) })
+        Some(Int32Verdict { name, is_reached_by_int32: is_reached_by_computed[number] || (is_reached_by_constant[number] && !is_reached_by_unknown[number]), contrary: evidence.map(|&((_, pos, why), file, _)| (Place { file, pos }, why)) })
     };
     nodes.iter().enumerate().filter_map(verdict_of).collect()
 }
@@ -840,6 +855,29 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Where the numbers come from that the expression yields. `is_rounded`: what comes after the point is dropped from what it yields.
     fn add_sources_of(&mut self, file: FileId, e: ExprId, is_rounded: bool, out: &mut Sources) {
+        let before = out.len();
+        self.add_followed_sources_of(file, e, is_rounded, out);
+        if out.len() != before || e.is_none() {
+            return;
+        }
+        let (kind, pos) = (self.hir(file)[e].kind, self.hir(file)[e].pos);
+        let may_be_number = if self.is_untyped_file(file) {
+            !matches!(
+                kind,
+                ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::String(_) | ExprKind::BigInt(_) | ExprKind::Regex | ExprKind::Template { .. } | ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Fn(_) | ExprKind::Class(_)
+            )
+        } else if self.is_half_of_stack_in_use() {
+            true
+        } else {
+            let ty = self.type_of_expr(file, e);
+            self.may_be_number(ty)
+        };
+        if may_be_number {
+            out.push((FlowSource::Unknown, pos));
+        }
+    }
+
+    fn add_followed_sources_of(&mut self, file: FileId, e: ExprId, is_rounded: bool, out: &mut Sources) {
         if e.is_none() || self.is_half_of_stack_in_use() {
             return;
         }
@@ -869,7 +907,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let ExprKind::Number(index) = kind {
             let value = hir.numbers[index as usize];
             if is_int32(value) {
-                out.push((FlowSource::Int32, pos));
+                out.push((FlowSource::Constant, pos));
             } else {
                 add_contrary(if value.fract() != 0.0 { Contrary::Fraction } else { Contrary::Large }, out);
             }
@@ -880,8 +918,11 @@ impl<'p, 's> Checker<'p, 's> {
             if !self.may_be_number(ty) {
                 return;
             }
-            if self.integers_of_expr(file, e).is_some_and(|(least, most)| least >= INT32.0 && most <= INT32.1) {
-                out.push((FlowSource::Int32, pos));
+            if let Some((least, most)) = self.integers_of_expr(file, e)
+                && least >= INT32.0
+                && most <= INT32.1
+            {
+                out.push((if least == most { FlowSource::Constant } else { FlowSource::Int32 }, pos));
                 return;
             }
         }
@@ -956,6 +997,7 @@ impl<'p, 's> Checker<'p, 's> {
                 out.push((FlowSource::Node(node), pos));
             }
             Accessed::OnlyDeclared(_) if is_small => out.push((FlowSource::Int32, pos)),
+            Accessed::OnlyDeclared(_) if matches!(self.atoms().bytes(name), b"MAX_VALUE" | b"MAX_SAFE_INTEGER" | b"MIN_SAFE_INTEGER" | b"POSITIVE_INFINITY" | b"NEGATIVE_INFINITY") => {}
             Accessed::OnlyDeclared(true) => out.push((FlowSource::Not(Contrary::OnlyDeclared), pos)),
             Accessed::OnlyDeclared(false) => {}
         }
@@ -1047,6 +1089,14 @@ impl<'p, 's> Checker<'p, 's> {
                 // `host.now ? host.now() : 0`: where no function of the program is a property of the name, nothing need have the method.
                 let declared = self.resolved_signature(file, e).sig.and_then(|sig| self.sig_decl(sig));
                 let is_optional = declared.is_some_and(|(of, func, _)| matches!(self.bound(of).fns[func.idx()].owner, FnOwner::Member(member) if self.hir(of)[member].flags.contains(Flags::OPTIONAL)));
+                let is_optional = is_optional
+                    || match self.hir(file)[callee].kind {
+                        ExprKind::Dot { obj, .. } => {
+                            let object = self.type_of_expr(file, obj);
+                            self.get_property_of_type(object, name).is_some_and(|(prop, _)| prop.flags.contains(crate::types::PropFlags::OPTIONAL))
+                        }
+                        _ => false,
+                    };
                 out.push((if is_number && !is_optional { FlowSource::NumberNamed(name) } else { FlowSource::Node(FlowNode::ResultNamed(name)) }, pos));
             }
         }

@@ -16,8 +16,9 @@ use bun_react_compiler::{
 };
 use bun_sema::atom::{Atom, Atoms};
 use bun_sema::check::{Checker, Program as Checked};
-use bun_sema::hir::{self, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, PatKind, StmtKind};
+use bun_sema::hir::{self, ExprId, ExprKind, FnBody, FnId, FnKind, PatKind, StmtKind};
 use bun_sema::program::FileId;
+use bun_sema::util::InParallel;
 use std::collections::BTreeMap;
 use std::sync::{Mutex, PoisonError, RwLock};
 
@@ -153,7 +154,7 @@ impl Run<'_, '_, '_, '_> {
     /// `Err`: the visit pass does not hand it over.
     fn convert(&mut self, candidate: &Candidate) -> Result<(PendingCompile, Vec<Stmt>), Outcome> {
         let declared = &self.hir[candidate.func];
-        let is_suppressed = declared.flags.contains(Flags::REACT_HOOKS_SUPPRESSION);
+        let is_suppressed = self.adapter.is_under_a_suppression(candidate.func);
         let prologue = match declared.body {
             FnBody::Block(list) => self.adapter.directives(list),
             _ => Vec::new(),
@@ -314,8 +315,8 @@ impl<'a> Report<'a> {
     }
 
     /// `Request::loaded`
-    pub fn begin(&self, program: &Checked<'_>, roots: &[FileId]) {
-        *self.shared.write().unwrap_or_else(PoisonError::into_inner) = Some(Shared::new(program, &[roots.to_vec()], self.constants));
+    pub fn begin(&self, program: &Checked<'_>, roots: &[FileId], in_parallel: InParallel<'_>) {
+        *self.shared.write().unwrap_or_else(PoisonError::into_inner) = Some(Shared::new(program, &[roots.to_vec()], self.constants, in_parallel));
         self.files.lock().unwrap_or_else(PoisonError::into_inner).clear();
     }
 

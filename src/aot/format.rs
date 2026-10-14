@@ -8,12 +8,15 @@ use crate::ir::{BinOp, Def, Func, Literal, Op, Prediction, Program, RelOp, Targe
 use bun_sema::util::{InParallel, for_each_mut};
 
 pub const MAGIC: u32 = 0x5249_5442;
-pub const VERSION: u32 = 30;
+pub const VERSION: u32 = 34;
+pub const PROGRAM_LOGS_TYPE_ERRORS: u32 = 1;
 pub const NONE: u32 = u32::MAX;
 /// In the prediction of a value: the other bits number a function, which the value is expected to be a closure of, and not a type.
 pub const PREDICTION_IS_CLOSURE: u32 = 1 << 31;
 pub const PREDICTION_IS_BY_KEY: u32 = 1 << 30;
 pub const RECEIVER_IS_OF_ONE_ROW: u32 = 1 << 29;
+pub const ELEMENT_IS_KNOWN_BY_THE_STORES: u32 = 3;
+pub const VARIABLE_IS_INITIALIZED: u32 = 1;
 /// In the type of a parameter of a function: it is written down. The other bits number the type. Not in `NONE`.
 pub const PARAMETER_IS_ANNOTATED: u32 = 1 << 31;
 
@@ -227,6 +230,7 @@ pub fn record(def: &Def) -> Record<'_> {
             let why = match asserted {
                 Why::Store => 0,
                 Why::Cast => 1,
+                Why::CastFresh => 1 | 1 << 8,
                 Why::NonNull(_) => 2,
                 Why::Claim => 3,
                 Why::Flow => 4,
@@ -239,6 +243,7 @@ pub fn record(def: &Def) -> Record<'_> {
             (r.opcode, r.children[0], r.immediates) = (Opcode::Cast, *value, [first, why]);
         }
         Op::Caught => r.opcode = Opcode::CatchValue,
+        Op::CaughtException => (r.opcode, r.immediates[0]) = (Opcode::CatchValue, 1),
         Op::Poll => r.opcode = Opcode::LoopHint,
         Op::Operation { name, args } => (r.opcode, r.immediates[0], r.args) = (Opcode::Operation, name.0, args),
         Op::ExternalModule(specifier) => (r.opcode, r.immediates[0]) = (Opcode::GetExternalModule, specifier.0),
@@ -346,7 +351,7 @@ struct Writer {
     targets: Vec<u32>,
 }
 
-const SIZES: [u32; 12] = [2, 8, 4, 20, 8, 5, 6, 5, 16, 10, 11, 3];
+const SIZES: [u32; 12] = [2, 8, 4, 20, 8, 5, 6, 7, 18, 10, 11, 3];
 
 impl Writer {
     /// The words as a list in the pool: where it starts and how long it is.
@@ -377,6 +382,12 @@ impl Writer {
             let (blocks, values) = (self.blocks.len() as u32 / SIZES[9], self.values.len() as u32 / SIZES[10]);
             for (number, value) in func.values.iter().enumerate() {
                 let mut r = record(&value.def);
+                if value.prediction == Prediction::Stores && matches!(r.opcode, Opcode::GetByVal | Opcode::IteratorValue) {
+                    r.immediates[0] = ELEMENT_IS_KNOWN_BY_THE_STORES;
+                }
+                if value.finds_initialized && matches!(r.opcode, Opcode::GetModuleVariable) {
+                    r.immediates[1] = VARIABLE_IS_INITIALIZED;
+                }
                 if is_marked.get(number) == Some(&true) {
                     r.immediates[1] = 1;
                 }
@@ -387,7 +398,7 @@ impl Writer {
                 assert!(!is_labelled || matches!(r.opcode, Opcode::GetById | Opcode::PutById), "a label stands on what is no access by name");
                 let arguments = self.list(r.args.iter().map(|v| v.0));
                 let prediction = match value.prediction {
-                    Prediction::None => NONE,
+                    Prediction::None | Prediction::Stores => NONE,
                     Prediction::Ty(ty) | Prediction::Field(ty) => ty.0,
                     Prediction::Closure(func) => PREDICTION_IS_CLOSURE | func.0,
                     Prediction::ByKey(property) => PREDICTION_IS_BY_KEY | property.0,
@@ -435,6 +446,8 @@ impl Writer {
                 func.values.len() as u32,
                 func.length as u32,
                 func.result.0,
+                func.place_of_text,
+                func.end_of_text,
             ]);
         }
     }
@@ -464,6 +477,42 @@ impl Writer {
 
 /// How many functions are written at a time. The number does not show in what is written.
 const FUNCTIONS_OF_A_SLICE: usize = 256;
+
+fn site_table(p: &Program) -> Vec<u32> {
+    const REASONS: [&str; 7] = ["As", "Store", "Claim", "Flow", "NonNull", "Coerce", "IteratorOpen"];
+    fn text(table: &mut Vec<u32>, bytes: &[u8]) {
+        table.push(bytes.len() as u32);
+        let mut words = vec![0u32; bytes.len() / 4 + 1];
+        for (i, &byte) in bytes.iter().enumerate() {
+            words[i / 4] |= u32::from(byte) << (i % 4 * 8);
+        }
+        table.append(&mut words);
+    }
+    const _: () = assert!(crate::audit::Kind::ALL.len() <= 32);
+    let kinds = crate::audit::Kind::ALL;
+    let number_of = |kind: crate::audit::Kind| kinds.iter().position(|&listed| listed == kind).unwrap_or(0) as u32;
+    let mut table = vec![kinds.len() as u32];
+    for kind in kinds {
+        text(&mut table, kind.as_str().as_bytes());
+    }
+    table.push(REASONS.len() as u32);
+    for reason in REASONS {
+        text(&mut table, reason.as_bytes());
+    }
+    let mut sites = crate::audit::sites(p);
+    sites.retain(|site| site.column < 1 << 20);
+    sites.sort_by_key(|site| (site.module, site.line, site.column, number_of(site.kind), site.ordinal));
+    table.push(sites.chunk_by(|a, b| a.module == b.module).count() as u32);
+    for of_module in sites.chunk_by(|a, b| a.module == b.module) {
+        text(&mut table, p.strs.get(p.modules[of_module[0].module as usize].display_path));
+        table.push(of_module.len() as u32);
+        for site in of_module {
+            let reason = REASONS.iter().position(|&reason| reason == site.what).unwrap_or(REASONS.len()) as u32;
+            table.extend([site.line, site.column << 12 | site.ordinal.min(15) << 8 | reason << 5 | number_of(site.kind)]);
+        }
+    }
+    table
+}
 
 pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
     let mut w = Writer::default();
@@ -531,6 +580,8 @@ pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
     for module in &p.modules {
         w.modules.extend([module.path.0, module.init.0, module.display_path.0, w.bytes.len() as u32, module.line_table.len() as u32]);
         w.bytes.extend_from_slice(&module.line_table);
+        w.modules.extend([w.bytes.len() as u32, module.printed.len() as u32]);
+        w.bytes.extend_from_slice(&module.printed);
     }
     let mut slices: Vec<((usize, &[Func]), Writer)> = p.funcs.chunks(FUNCTIONS_OF_A_SLICE).enumerate().map(|(number, funcs)| ((number * FUNCTIONS_OF_A_SLICE, funcs), Writer::default())).collect();
     let none_is_marked: Vec<Vec<V>> = if p.marked_values.len() == p.funcs.len() { Vec::new() } else { vec![Vec::new(); p.funcs.len()] };
@@ -559,12 +610,14 @@ pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
     let functions_by_key = list(&mut p.functions_by_key.iter().flat_map(|&(property, key, func)| [property.0, key.0, func.0]));
     let entries = list(&mut p.entries.iter().map(|func| func.0));
     let regexp_literals = list(&mut p.regexp_literals.iter().flat_map(|&(pattern, flags)| [pattern.0, flags.0]));
+    let table_of_sites = if p.logs_type_errors { site_table(p) } else { Vec::new() };
+    let sites = list(&mut table_of_sites.into_iter());
 
     let number_of_bytes = w.bytes.len() as u32;
     while w.bytes.len() % 4 != 0 {
         w.bytes.push(0);
     }
-    const HEADER_WORDS: usize = 5 + 14 * 2 + 14 + 12;
+    const HEADER_WORDS: usize = 6 + 14 * 2 + 16 + 12;
     let of_slices = |table: fn(&Writer) -> &[u32]| slices.iter().map(move |(slice, _)| table(slice));
     let tables: [(Vec<&[u32]>, u32); 13] = [
         (std::iter::once(&head[..]).chain(of_slices(|slice| &slice.words[..])).chain([&w.words[..]]).collect(), 1),
@@ -581,7 +634,7 @@ pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
         (of_slices(|slice| &slice.values[..]).collect(), SIZES[10]),
         (of_slices(|slice| &slice.targets[..]).collect(), SIZES[11]),
     ];
-    let mut header: Vec<u32> = vec![MAGIC, VERSION, 0, hash_of_opcode_names(), crate::builtins_generated::BUILTINS_HASH];
+    let mut header: Vec<u32> = vec![MAGIC, VERSION, 0, hash_of_opcode_names(), crate::builtins_generated::BUILTINS_HASH, if p.logs_type_errors { PROGRAM_LOGS_TYPE_ERRORS } else { 0 }];
     let mut offset = HEADER_WORDS * 4;
     header.extend([offset as u32, number_of_bytes]);
     offset += w.bytes.len();
@@ -597,10 +650,33 @@ pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
     header.extend(functions_by_key);
     header.extend(entries);
     header.extend(regexp_literals);
+    header.extend(sites);
     header.extend(SIZES.iter().map(|words| words * 4));
     header[2] = offset as u32;
     debug_assert_eq!(header.len(), HEADER_WORDS);
     let mut out = Vec::with_capacity(offset);
+    if cfg!(target_endian = "little") {
+        const BYTES_OF_A_PIECE: usize = 1 << 20;
+        fn bytes_of(words: &[u32]) -> &[u8] {
+            // SAFETY: every byte of a `u32` is initialized, and a byte is aligned anywhere.
+            unsafe { words.align_to::<u8>() }.1
+        }
+        let parts = [bytes_of(&header), &w.bytes[..]].into_iter().chain(tables.iter().flat_map(|(table, _)| table).map(|part| bytes_of(part)));
+        let mut room = &mut out.spare_capacity_mut()[..offset];
+        let mut pieces = Vec::new();
+        for piece in parts.flat_map(|part| part.chunks(BYTES_OF_A_PIECE)) {
+            let (here, behind) = room.split_at_mut(piece.len());
+            pieces.push((here, piece));
+            room = behind;
+        }
+        assert!(room.is_empty());
+        for_each_mut(&mut pieces, in_parallel, &|(here, piece)| {
+            here.write_copy_of_slice(piece);
+        });
+        // SAFETY: the pieces are all of the first `offset` bytes, and each has been written.
+        unsafe { out.set_len(offset) };
+        return out;
+    }
     extend_with_words(&mut out, &header);
     out.extend_from_slice(&w.bytes);
     for part in tables.iter().flat_map(|(table, _)| table) {

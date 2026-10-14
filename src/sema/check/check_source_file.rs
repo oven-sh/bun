@@ -17,6 +17,7 @@ use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent};
 use crate::types::LinkCounts;
 use crate::util::InParallel;
+use crate::util::SharedSort;
 use smallvec::SmallVec;
 
 /// How much native stack a checker may use, measured from `Checker::begin_stack_budget`. One
@@ -117,6 +118,7 @@ impl<'s> Program<'s> {
             (self.closed_a_cycle).store(true, std::sync::atomic::Ordering::Relaxed);
         }
         for finished in finished {
+            self.absorb_pairs_compared(std::mem::take(&mut finished.pairs_compared));
             self.publish_diagnostics(finished);
         }
         published
@@ -209,6 +211,16 @@ impl<'s> Checker<'_, 's> {
         self.set_stack_limit(TASK_STACK);
     }
 
+    pub fn begin_stack_budget_with(&mut self, more: usize) -> (usize, usize) {
+        let before = (self.stack_base, self.stack_limit);
+        self.set_stack_limit(TASK_STACK + more);
+        before
+    }
+
+    pub fn put_stack_budget_back(&mut self, (base, limit): (usize, usize)) {
+        (self.stack_base, self.stack_limit) = (base, limit);
+    }
+
     /// Called before `check_file`. `step` counts from 0. `index`: the position of the task in its
     /// step, in task order.
     /// `is_read_later`: whether anything will read what this task publishes. If not, only its
@@ -228,8 +240,11 @@ impl<'s> Checker<'_, 's> {
 
     /// Called on the thread of the task, after everything else this checker does.
     pub fn end_task(&mut self) -> Finished<'s> {
+        let pairs_compared = self.take_pairs_compared();
         let diagnostics = self.take_diagnostics();
-        self.task.finish(self.p, diagnostics)
+        let mut finished = self.task.finish(self.p, diagnostics);
+        finished.pairs_compared = pairs_compared;
+        finished
     }
 
     /// After `check_file`: whether the native stack ran out in that file. A task checks several files.
@@ -272,7 +287,7 @@ impl<'s> Checker<'_, 's> {
             .flat_map(|&tag| index.of(tag).iter().copied())
             .filter(|&e| (self.p.deferred_nodes.get(&self.task, &(file, e))).is_some())
             .collect();
-        earlier.sort_unstable_by_key(|&e| hir[e].pos);
+        earlier.shared_sort_unstable_by_key(|&e| hir[e].pos);
         for e in earlier {
             self.check_node_deferred(file, e);
         }
@@ -280,9 +295,6 @@ impl<'s> Checker<'_, 's> {
         self.check_deferred_nodes(file);
         self.check_merged_symbols(file);
         self.check_exprs_visited_by_queries(file);
-        if hir.kind != FileKind::Declaration {
-            self.check_unused_renamed_binding_elements(file);
-        }
         self.note_assignments_marked_by_check(file);
         if self.p.files.options.reports_uninitialized_variables {
             self.check_variable_initialization(file);
@@ -482,7 +494,16 @@ impl<'s> Checker<'_, 's> {
                     }
                 }
                 self.check_getter_returns_a_value(file, func);
-                if hir[func].ret.is_none() && hir[func].kind != FnKind::Setter {
+                if matches!(hir[func].kind, FnKind::Getter | FnKind::Setter) {
+                    // `checkAccessorDeclaration`: `getTypeOfAccessors` of the symbol, whose getter comes first.
+                    if let Parent::Prop(p) = self.bound(file).expr_parent[e.idx()] {
+                        let getter = match hir[p].kind {
+                            PropKind::Setter => self.accessor_of_literal(file, p, PropKind::Getter),
+                            _ => None,
+                        };
+                        self.type_of_literal_prop(file, getter.unwrap_or(p));
+                    }
+                } else if hir[func].ret.is_none() {
                     self.return_type_of_fn(file, func);
                 }
                 self.check_all_code_paths_in_non_void_function_return_or_throw(file, func);
@@ -531,9 +552,10 @@ impl<'s> Checker<'_, 's> {
 
     /// `checkBlock` of an `IsFunctionOrModuleBlock`
     fn check_function_or_module_block(&mut self, file: FileId, statements: IdList<StmtId>) {
-        let save_flow_analysis_disabled = self.flow_analysis_disabled;
+        let save_flow_analysis_disabled = self.flow_analysis_disabled.len();
         self.check_source_elements(file, statements);
-        self.flow_analysis_disabled = save_flow_analysis_disabled;
+        self.flow_analysis_disabled
+            .truncate(save_flow_analysis_disabled);
     }
 
     /// `checkSourceElement(node.Body())`, `checkExpressionCached(node.Body())`
@@ -754,20 +776,30 @@ impl<'s> Checker<'_, 's> {
         }
     }
 
-    /// The end of `checkParameter`: 2370.
-    pub(super) fn check_rest_parameter_type(&mut self, file: FileId, func: FnId, p: ParamId) {
+    /// Whether `assignParameterType` adds `undefined` for the `?` of the parameter `p` of `func`:
+    /// it assigns only the parameters of a context sensitive function expression or method.
+    pub(super) fn is_optional_in_assign_parameter_type(
+        &self,
+        file: FileId,
+        func: FnId,
+        p: ParamId,
+    ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let (param, f) = (&hir[p], &hir[func]);
-        let mut ty = self.type_of_param(file, p);
-        // `assignParameterType`: by the time it is checked, a parameter of a context sensitive function expression has had its `?`
-        // added.
-        if param.flags.contains(Flags::OPTIONAL)
+        param.flags.contains(Flags::OPTIONAL)
             && param.ty.is_none()
             && param.default.is_none()
             && f.type_params.is_empty()
             && matches!(f.kind, FnKind::Expr | FnKind::Arrow | FnKind::Method)
             && matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_))
-        {
+    }
+
+    /// The end of `checkParameter`: 2370.
+    pub(super) fn check_rest_parameter_type(&mut self, file: FileId, func: FnId, p: ParamId) {
+        let mut ty = self.type_of_param(file, p);
+        // `assignParameterType`: by the time it is checked, a parameter of a context sensitive function expression has had its `?`
+        // added.
+        if self.is_optional_in_assign_parameter_type(file, func, p) {
             ty = self.optional(ty);
         }
         let ty = self.reduced(ty);
@@ -858,7 +890,7 @@ impl<'s> Checker<'_, 's> {
     /// `checkVariableLikeDeclaration`, the part for `node.Name()`: a name, or the elements of a
     /// pattern (`checkBindingElement`).
     fn check_binding_name(&mut self, file: FileId, pat: PatId, is_bodiless: bool) {
-        if pat.is_none() {
+        if pat.is_none() || self.is_stack_low() {
             return;
         }
         let hir = self.hir(file);
@@ -972,48 +1004,6 @@ impl<'s> Checker<'_, 's> {
                 PatParent::Prop(_, p) if self.is_renamed_binding_element(file, p) => true,
                 declaration => declaration.initializer(hir).is_some(),
             }
-    }
-
-    /// `checkUnusedRenamedBindingElements`: 2842
-    fn check_unused_renamed_binding_elements(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for p in std::mem::take(&mut self.renamed_binding_elements_in_types) {
-            let symbol = bound.pat_symbol[hir[p].value.idx()];
-            // `WalkUpBindingElementsAndPatterns`
-            let PatParent::Param(param) = root_declaration(bound, hir[p].value) else {
-                continue;
-            };
-            if symbol.is_none() {
-                continue;
-            }
-            // `referenceKinds`: `Resolve` notes the reference, so only an identifier that is
-            // checked is one.
-            if (bound.expr_symbol.iter().enumerate()).any(|(i, &resolved)| {
-                resolved == symbol
-                    && !bound.is_unchecked(i)
-                    && !self.is_never_checked(hir.exprs[i].pos)
-            }) {
-                continue;
-            }
-            let start = hir[hir[p].value].pos;
-            let (node, name) = match hir[hir[p].value].kind {
-                PatKind::Ident(name) if name != known::empty => (
-                    self.place_of_token(file, start),
-                    self.declaration_name_at(file, start),
-                ),
-                _ => ((file, start, start), b"(Missing)".to_vec()),
-            };
-            let property = self.declaration_name_at(file, hir[p].key_pos);
-            let related = hir[param].ty.is_none().then(|| {
-                let end = self.end_of_param(file, param);
-                self.new_diagnostic((file, end, end), 2843, &[Arg::Bytes(&property)])
-            });
-            let args = [Arg::Bytes(&name), Arg::Bytes(&property)];
-            let diagnostic = self.error_at(node, 2842, &args);
-            if let Some(related) = related {
-                diagnostic.add_related_info(related);
-            }
-        }
     }
 
     /// `checkVariableDeclarationList`, `checkVariableDeclaration`. `parent`: `node.Parent.Kind`.
@@ -1841,6 +1831,7 @@ impl<'s> Checker<'_, 's> {
                     self.check_source_elements(file, hir[c].body);
                     let fallthrough = bound.case_fallthrough[c.idx()];
                     if self.p.files.options.no_fallthrough_cases_in_switch
+                        && !self.is_held_to_the_fixed_set(file)
                         && fallthrough.is_some()
                         && self.is_reachable(file, fallthrough)
                     {
@@ -1874,6 +1865,7 @@ impl<'s> Checker<'_, 's> {
                     self.check_grammar_duplicate_label(file, s, label);
                 }
                 if self.p.files.options.allow_unused_labels == Some(false)
+                    && !self.is_held_to_the_fixed_set(file)
                     && bound.unused_labels.contains(&s)
                 {
                     self.error_at(self.place_of_token(file, hir[s].start), 7028, &[]);
@@ -2171,7 +2163,7 @@ impl<'s> Checker<'_, 's> {
         if self.bound(file).flow_places > super::flow::MAX_FLOW_DEPTH
             && (self.p.flows_too_deep.get(&self.task, &(file, e))).is_some()
         {
-            self.flow_analysis_disabled = true;
+            self.disable_flow_analysis(file);
         }
     }
 

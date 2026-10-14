@@ -7,20 +7,20 @@ use super::{FileBuild, Fx, ImportSource, Source};
 use crate::builder::Var;
 use crate::declared::{Declared, Part, prim};
 use crate::id::{TyId, V};
-use crate::ir::{LayoutKind, Op, Prediction, Why};
+use crate::ir::{Args, LayoutKind, Op, Prediction, Why};
 use bun_sema::bind::{Decl, PatParent, required_specifier};
 use bun_sema::check::{Checker, CodeOfImport};
 use bun_sema::hir::{ExprId, FileKind, ParamId, PatId, PatKind, PropKey};
-use bun_sema::program::Sym;
+use bun_sema::program::{FileId, Sym};
 use bun_sema::types::{TypeData, TypeId};
 use smallvec::SmallVec;
 
 impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// Once for the program, before anything is translated. A parameter is expected to be what the calls of its function pass. Behind an import the checker
     /// sees the declaration of a function, often in a declaration file: it is told which code runs.
-    pub(crate) fn tell_code_of_imports(&mut self) {
+    pub(crate) fn code_of_imports(&mut self, imports: &[Sym]) -> Vec<(Sym, CodeOfImport)> {
         let mut code = Vec::new();
-        for &import in self.c.imports_that_are_called() {
+        for &import in imports {
             let found = match self.is_declared_by_import(import).then(|| self.import_source(import)) {
                 Some(ImportSource::Declaration(exported)) => Some(CodeOfImport::Binding(self.value_symbol_of_export(exported))),
                 Some(ImportSource::Namespace(file)) => Some(CodeOfImport::Export(file, None)),
@@ -30,7 +30,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             };
             code.extend(found.map(|found| (import, found)));
         }
-        self.c.set_code_of_imports(code);
+        code
     }
 
     /// `const a = require("m")` and `const { a } = require("m")` in JavaScript, which the checker takes for imports.
@@ -132,6 +132,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.expect(fx, value, prediction)
     }
 
+    pub(crate) fn as_the_builtin_takes_them(&mut self, fx: &mut Fx, file: FileId, path: ExprId, mut args: Args) -> Args {
+        for (arg, is_number) in args.iter_mut().zip(self.c.is_number_taken_by_builtin_at(file, path)) {
+            let Some(is_number) = is_number else { continue };
+            if fx.b.func.prediction(*arg) == Prediction::None && self.takes_prediction(fx, *arg) {
+                let expected = if is_number { self.known.number } else { self.known.string };
+                *arg = self.expect(fx, *arg, Prediction::Ty(expected));
+            }
+        }
+        args
+    }
+
     /// `callee`: the value of the expression `e`, which is called or constructed. `new (C || (C = allocator.getC()))(..)`: where two ways meet, the operand
     /// has no definition for the engine to go by, so what is expected is said of the value.
     pub(crate) fn predict_callee(&mut self, fx: &mut Fx, callee: V, e: ExprId) -> V {
@@ -221,7 +232,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let says_no_more_than_the_type = match prediction {
             Prediction::None => true,
             Prediction::Ty(expected) | Prediction::Field(expected) => tys.get(ty).is_described_within(tys.get(expected)),
-            Prediction::Closure(_) | Prediction::ByKey(_) => false,
+            Prediction::Closure(_) | Prediction::ByKey(_) | Prediction::Stores => false,
         };
         if says_no_more_than_the_type || prediction == so_far {
             return value;

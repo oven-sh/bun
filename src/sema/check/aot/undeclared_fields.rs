@@ -28,7 +28,7 @@ use crate::program::{FileId, Sym};
 use crate::types::{TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
 use std::rc::Rc;
-use std::sync::OnceLock;
+use super::OnceLock;
 
 /// The type of `this`, the interface that declares the name, the name. The types are `laid_out_as`.
 type Store = (TypeId, TypeId, Atom);

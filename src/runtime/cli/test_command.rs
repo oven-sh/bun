@@ -2344,6 +2344,12 @@ impl TestCommand {
             vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
         }
 
+        if ctx.runtime_options.aot_audit && !has_type_errors {
+            use crate::cli::check_command::{EntryPoint, watching};
+            let paths = test_files.iter().map(|path| EntryPoint::file(path));
+            crate::cli::aot_audit::prepare(&paths.collect::<Vec<_>>(), watching(vm), true);
+        }
+
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
         let mut ran_parallel = false;
 

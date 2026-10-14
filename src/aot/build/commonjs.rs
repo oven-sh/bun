@@ -6,7 +6,7 @@
 use super::fit::Ty;
 use super::imports::ImportSource;
 use super::{FileBuild, Fx};
-use crate::fragment::{GlobalKey, NO_FILE};
+use crate::fragment::GlobalKey;
 use crate::id::{GlobalId, V};
 use crate::ir::{self, Op};
 use bun_builtin_syntax::Archive;
@@ -15,6 +15,7 @@ use bun_sema::bind::{Decl, SymFlags};
 use bun_sema::check::CommonJsExports;
 use bun_sema::hir::{CallId, ExprId, ExprKind, FileKind, FnBody, FnId, ImportEqualsTarget, PatId, PatKind, PropKey, PropKind, ResolutionMode, StmtId, StmtKind};
 use bun_sema::program::{Builtin, FileId, Files};
+use bun_sema::util::InParallel;
 use rustc_hash::FxHashMap;
 
 /// A function at the top level of a file of builtin functions, and what the directives in front of it say.
@@ -179,14 +180,16 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     }
 
     /// Once for the program, before anything is translated: which code each import runs, and which conditions at the top level of CommonJS modules the build folds.
-    pub(crate) fn tell_resolved_imports(&mut self) {
-        let shared = self.shared;
-        let (mut resolved, mut folded, mut implicit) = (Vec::new(), Vec::new(), Vec::new());
-        for &file in &shared.modules {
+    pub(crate) fn resolved_imports_of(&mut self, files: &[FileId]) -> (Vec<((FileId, Atom), FileId)>, Vec<(FileId, FileId)>) {
+        let (mut resolved, mut implicit) = (Vec::new(), Vec::new());
+        for &file in files {
             let hir = self.hir(file);
-            let text_of = |e: ExprId| match hir[e].kind {
-                ExprKind::String(specifier) => specifier,
-                _ => Atom::NONE,
+            let texts_of = |e: ExprId| {
+                let mut found = Vec::new();
+                if !hir.choice_of_specifiers(e, &mut found) {
+                    found.clear();
+                }
+                found
             };
             let declared = hir.ids(hir.body).map(|stmt| match hir[stmt].kind {
                 StmtKind::Import(import) => hir[import].spec,
@@ -198,10 +201,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 },
                 _ => Atom::NONE,
             });
-            let on_demand = hir.exprs.iter().map(|e| match e.kind {
-                ExprKind::ImportCall { args } => hir.ids(args).next().map_or(Atom::NONE, text_of),
-                ExprKind::Call(call) if hir[call].args.len() == 1 && matches!(hir[hir[call].callee].kind, ExprKind::Ident(known::require)) => text_of(hir.id_at(hir[call].args, 0)),
-                _ => Atom::NONE,
+            let on_demand = hir.exprs.iter().flat_map(|e| match e.kind {
+                ExprKind::ImportCall { args } => hir.ids(args).next().map_or(Vec::new(), texts_of),
+                ExprKind::Call(call) if hir[call].args.len() == 1 && matches!(hir[hir[call].callee].kind, ExprKind::Ident(known::require)) => texts_of(hir.id_at(hir[call].args, 0)),
+                _ => Vec::new(),
             });
             resolved.extend(declared.chain(on_demand).filter_map(|specifier| Some(((file, specifier), self.imported_file(file, specifier)?))));
             if let Some(runtime) = self.jsx_runtime(file)
@@ -210,14 +213,27 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             {
                 implicit.push((file, imported));
             }
+        }
+        (resolved, implicit)
+    }
+
+    pub(crate) fn tell_resolved_imports(&mut self, found: impl Iterator<Item = (Vec<((FileId, Atom), FileId)>, Vec<(FileId, FileId)>)>, in_parallel: InParallel<'_>) {
+        let shared = self.shared;
+        let (mut resolved, mut folded, mut implicit) = (Vec::new(), Vec::new(), Vec::new());
+        for (mut more_resolved, mut more_implicit) in found {
+            resolved.append(&mut more_resolved);
+            implicit.append(&mut more_implicit);
+        }
+        for &file in &shared.modules {
             if self.is_commonjs(file) {
+                let hir = self.hir(file);
                 for stmt in hir.ids(hir.body) {
                     self.fold_conditions(file, stmt, &mut folded);
                 }
             }
         }
-        self.c.set_resolved_imports(&shared.modules, resolved, folded, implicit);
-        self.c.commonjs_exports(NO_FILE);
+        self.c.set_resolved_imports(&shared.modules, resolved, folded, implicit, shared.constants.own_paths.is_some());
+        self.c.settle_commonjs(in_parallel);
     }
 
     fn fold_conditions(&mut self, file: FileId, stmt: StmtId, folded: &mut Vec<((FileId, StmtId), bool)>) {
@@ -277,7 +293,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         Some((self.export_variable(module, name), held, name))
     }
 
-    fn has_export_variables(&mut self, file: FileId) -> bool {
+    pub(crate) fn has_export_variables(&mut self, file: FileId) -> bool {
         matches!(self.c.commonjs_exports(file), CommonJsExports::Variables | CommonJsExports::Of(_))
     }
 
@@ -346,7 +362,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && let ExprKind::Call(call) = self.hir(fx.file)[e].kind
         {
             let other = self.hir(fx.file).id_at(self.hir(fx.file)[call].args, 0);
-            return Some(self.expr(fx, other));
+            let evaluated = self.expr(fx, other);
+            if let ExprKind::Dot { obj, name, .. } = self.hir(fx.file)[self.hir(fx.file)[call].callee].kind {
+                self.call_if_there_is_no_such_method(fx, obj, name);
+            }
+            return Some(evaluated);
         }
         if self.c.defines_alias_of_export_variable(fx.file, e) {
             self.cut_expr(fx, e);
@@ -354,7 +374,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let mention = self.c.exports_mentioned_by(fx.file, e)?;
         match self.hir(fx.file)[e].kind {
-            ExprKind::Call(_) => self.emit_module_evaluation(fx, mention.module),
+            ExprKind::Call(_) => self.emit_module_evaluation_by_require(fx, mention.module),
             // `box.default`, `ns.default`
             ExprKind::Dot { obj, name, .. } if !matches!(self.hir(fx.file)[obj].kind, ExprKind::Ident(known::module)) => self.evaluate_holder_of_exports(fx, obj, name),
             // A variable holds what `require` has yielded.
@@ -362,6 +382,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             _ => {}
         }
         Some(self.exports_without_object(fx))
+    }
+
+    fn call_if_there_is_no_such_method(&mut self, fx: &mut Fx, holder: ExprId, name: Atom) {
+        let obj = self.expr(fx, holder);
+        let name = self.str(name);
+        let method = self.emit_throwing(fx, Op::PropGet { obj, name });
+        let is_missing = self.emit(fx, Op::IsNullish(method));
+        let (missing, join) = (fx.b.new_block(), fx.b.new_block());
+        self.branch(fx, is_missing, missing, join);
+        fx.b.seal(missing);
+        fx.b.switch_to(missing);
+        self.emit_throwing(fx, Op::CallMethod { obj, name, args: std::iter::empty().collect() });
+        fx.b.jump(join);
+        fx.b.seal(join);
+        fx.b.switch_to(join);
     }
 
     /// `module.exports = { a, b: value }`
@@ -419,7 +454,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let named = |this: &Self, e: ExprId, name: &[u8]| matches!(hir[e].kind, ExprKind::Ident(found) if this.c.atoms().bytes(found) == name);
         let is_candidate = match hir[e].kind {
             ExprKind::Ident(_) => named(self, e, b"__filename") || named(self, e, b"__dirname"),
-            ExprKind::Dot { obj, .. } => named(self, obj, b"module"),
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => named(self, obj, b"module"),
             ExprKind::Binary { left, right, .. } => named(self, left, b"module") || named(self, right, b"module"),
             _ => false,
         };
@@ -431,11 +466,23 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let slash = path.iter().rposition(|&byte| byte == b'/')?;
         match hir[e].kind {
             ExprKind::Ident(_) if is_free(self, e) => Some(Constant::String(if named(self, e, b"__filename") { path.to_vec() } else { path[..slash.max(1)].to_vec() })),
-            ExprKind::Dot { obj, name, chain: bun_sema::hir::Chain::No, .. } if self.is_commonjs(file) && is_free(self, obj) => match self.c.atoms().bytes(name) {
-                b"id" | b"path" => Some(Constant::String(bun_sema::resolve::get_relative_path_from_directory(&self.shared.constants.root, path, self.files.is_case_sensitive))),
-                b"filename" => Some(Constant::String(path[slash + 1..].to_vec())),
+            ExprKind::Dot { obj, name, chain: bun_sema::hir::Chain::No, .. } if self.is_commonjs(file) && is_free(self, obj) => match (self.c.atoms().bytes(name), self.shared.constants.own_paths.is_some()) {
+                (b"filename", true) => Some(Constant::String(path.to_vec())),
+                (b"path", true) => Some(Constant::String(path[..slash.max(1)].to_vec())),
+                (b"id", true) if !self.shared.roots().contains(&file) => Some(Constant::String(path.to_vec())),
+                (b"id", true) => None,
+                (b"id" | b"path", _) => Some(Constant::String(bun_sema::resolve::get_relative_path_from_directory(&self.shared.constants.root, path, self.files.is_case_sensitive))),
+                (b"filename", _) => Some(Constant::String(path[slash + 1..].to_vec())),
                 _ => None,
             },
+            ExprKind::Index { obj, index, chain: bun_sema::hir::Chain::No } if self.shared.constants.own_paths.is_none() && self.is_commonjs(file) && is_free(self, obj) => {
+                let ExprKind::String(name) = hir[index].kind else { return None };
+                match self.c.atoms().bytes(name) {
+                    b"id" | b"path" => Some(Constant::String(bun_sema::resolve::get_relative_path_from_directory(&self.shared.constants.root, path, self.files.is_case_sensitive))),
+                    b"filename" => Some(Constant::String(path[slash + 1..].to_vec())),
+                    _ => None,
+                }
+            }
             ExprKind::Binary { op, left, right } if self.is_commonjs(file) => {
                 let (module, main) = if named(self, left, b"module") { (left, right) } else { (right, left) };
                 let ExprKind::Dot { obj: require, name, chain: bun_sema::hir::Chain::No, .. } = hir[main].kind else { return None };
@@ -453,6 +500,32 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
+    pub(crate) fn is_main_by_the_host(&mut self, fx: &mut Fx, op: bun_sema::hir::BinOp, left: ExprId, right: ExprId) -> Option<V> {
+        use bun_sema::hir::BinOp;
+        let file = fx.file;
+        let is_equality = matches!(op, BinOp::EqEqEq | BinOp::EqEq);
+        if !(is_equality || matches!(op, BinOp::NotEqEq | BinOp::NotEq)) || self.shared.constants.own_paths.is_none() || !self.is_commonjs(file) || self.is_builtin_file(file) {
+            return None;
+        }
+        let hir = self.hir(file);
+        let named = |this: &Self, e: ExprId, name: &[u8]| matches!(hir[e].kind, ExprKind::Ident(found) if this.c.atoms().bytes(found) == name);
+        let is_free = |this: &mut Self, e: ExprId| matches!(hir[e].kind, ExprKind::Ident(name) if this.is_free_in(file, e, name));
+        let (module, main) = if named(self, left, b"module") { (left, right) } else { (right, left) };
+        let ExprKind::Dot { obj: require, name, chain: bun_sema::hir::Chain::No, .. } = hir[main].kind else { return None };
+        if !named(self, module, b"module") || self.c.atoms().bytes(name) != b"main" || !named(self, require, b"require") || !is_free(self, require) || !is_free(self, module) {
+            return None;
+        }
+        if !self.shared.entry_points().iter().any(|entry_point| entry_point.first() == Some(&file)) {
+            return None;
+        }
+        let meta = self.import_meta(fx);
+        let name = self.out.strs.intern(b"main");
+        let said = self.emit_throwing(fx, Op::PropGet { obj: meta, name });
+        let yes = self.emit(fx, Op::Bool(true));
+        let is_main = self.emit(fx, Op::StrictEq { a: said, b: yes });
+        Some(if is_equality { is_main } else { self.emit(fx, Op::Not(is_main)) })
+    }
+
     /// `this` at the top level of a module, from within an arrow function: of a CommonJS module, what `exports` is.
     pub(crate) fn this_of_module(&mut self, fx: &mut Fx) -> V {
         if !self.is_commonjs(fx.file) {
@@ -462,7 +535,377 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.emit(fx, Op::GlobalGet(global))
     }
 
+    pub(crate) fn may_be_asked_by_the_host(&self) -> bool {
+        self.shared.constants.own_paths.is_some() && self.shared.bundle.is_some()
+    }
+
+    fn files_the_host_may_ask_for(&self) -> Vec<FileId> {
+        let is_one = |file: &FileId| !self.is_builtin_file(*file) && !self.shared.is_prelude(*file) && self.files.module(*file).is_module() && self.hir(*file).kind != FileKind::Json && !self.only_declares(*file);
+        self.shared.modules.iter().copied().filter(is_one).collect()
+    }
+
+    pub(crate) fn files_by_path(&mut self, entry: FileId) -> crate::id::FuncId {
+        let name = self.name_after_file("files of", entry);
+        let module = self.module_of(entry);
+        self.add_func(name, module, 0, ir::FuncKind::Plain, super::Source::FilesByPath(entry))
+    }
+
+    pub(crate) fn emit_files_by_path(&mut self, fx: &mut Fx, entry: FileId) {
+        let name = self.name_after_file("evaluation of a file of", entry);
+        let module = self.module_of(entry);
+        let evaluate = self.add_func(name, module, 0, ir::FuncKind::Plain, super::Source::EvaluationByNumber(entry));
+        self.out.funcs[evaluate.idx()].params = vec![crate::id::TyId::NONE; 4];
+        self.out.funcs[evaluate.idx()].length = 4;
+        let table = self.emit(fx, Op::NewObject);
+        let key = self.out.strs.intern(b"");
+        let key = self.emit(fx, Op::Str(key));
+        let evaluate = self.emit(fx, Op::FuncRef(evaluate));
+        self.operation(fx, "DefineField", &[table, key, evaluate]);
+        for (number, file) in self.files_the_host_may_ask_for().into_iter().enumerate() {
+            let Some(path) = self.own_path(file, b"path") else { continue };
+            let key = self.out.strs.intern(&path);
+            let key = self.emit(fx, Op::Str(key));
+            let number = self.emit(fx, Op::Int(number as i64));
+            self.operation(fx, "DefineField", &[table, key, number]);
+        }
+        self.terminate_with_return(fx, table);
+    }
+
+    fn sorted_names_of_export_variables(&mut self, keeper: FileId) -> Vec<Atom> {
+        let mut names = self.c.names_of_export_variables(keeper);
+        names.sort_by_cached_key(|&name| String::from_utf8_lossy(self.c.atoms().bytes(name)).encode_utf16().collect::<Vec<u16>>());
+        names.dedup();
+        names
+    }
+
+    fn view_of_export_variables(&mut self, fx: &mut Fx, keeper: FileId) -> V {
+        let global = self.global_of_module(keeper, "view of the exports");
+        self.lazily(fx, global, |this, fx| {
+            let read = match this.imports_of_exported_objects.get(&(keeper, 3)) {
+                Some(&known) => known,
+                None => {
+                    let name = this.name_after_file("exports of", keeper);
+                    let module = this.module_of(keeper);
+                    let read = this.add_func(name, module, 0, ir::FuncKind::Plain, super::Source::ExportVariablesReader(keeper));
+                    this.out.funcs[read.idx()].params = vec![crate::id::TyId::NONE];
+                    this.out.funcs[read.idx()].length = 1;
+                    this.imports_of_exported_objects.insert((keeper, 3), read);
+                    read
+                }
+            };
+            let mut arguments = vec![this.emit(fx, Op::FuncRef(read))];
+            for name in this.sorted_names_of_export_variables(keeper) {
+                let name = this.str(name);
+                arguments.push(this.emit(fx, Op::Str(name)));
+            }
+            arguments.push(this.emit(fx, Op::Bool(true)));
+            this.operation(fx, "MakeModuleNamespace", &arguments)
+        })
+    }
+
+    pub(crate) fn emit_export_variables_reader(&mut self, fx: &mut Fx, keeper: FileId) {
+        let number = self.add_entry_param(fx, Ty::NONE);
+        let number = self.emit_throwing(fx, Op::Coerce { value: number, to: self.known.int32, why: ir::Why::Claim });
+        let names = self.sorted_names_of_export_variables(keeper);
+        let arms: Vec<crate::id::BlockId> = names.iter().map(|_| fx.b.new_block()).collect();
+        let none = fx.b.new_block();
+        let cases = arms.iter().enumerate().map(|(number, &arm)| (number as i64, ir::Target::new(arm))).collect();
+        fx.b.terminate(ir::Term::Switch { value: number, cases, default: ir::Target::new(none) });
+        for (&arm, name) in arms.iter().zip(names) {
+            fx.b.seal(arm);
+            fx.b.switch_to(arm);
+            let value = if name == known::__esModule {
+                self.emit(fx, Op::Bool(true))
+            } else {
+                let (module, name) = self.c.export_variable_behind(keeper, name);
+                let global = self.export_variable(module, name);
+                self.emit(fx, Op::GlobalGet(global))
+            };
+            self.terminate_with_return(fx, value);
+        }
+        fx.b.seal(none);
+        fx.b.switch_to(none);
+        let undefined = self.emit(fx, Op::Undefined);
+        self.terminate_with_return(fx, undefined);
+    }
+
+    pub(crate) fn emit_evaluation_by_number(&mut self, fx: &mut Fx) {
+        let number = self.add_entry_param(fx, Ty::NONE);
+        let module = self.add_entry_param(fx, Ty::NONE);
+        let how = self.add_entry_param(fx, Ty::NONE);
+        let value = self.add_entry_param(fx, Ty::NONE);
+        let number = self.emit_throwing(fx, Op::Coerce { value: number, to: self.known.int32, why: ir::Why::Claim });
+        let how = self.emit_throwing(fx, Op::Coerce { value: how, to: self.known.int32, why: ir::Why::Claim });
+        let files = self.files_the_host_may_ask_for();
+        if self.shared.constants.has_test_globals {
+            let (finds, goes_on) = (fx.b.new_block(), fx.b.new_block());
+            fx.b.terminate(ir::Term::Switch { value: how, cases: vec![(4, ir::Target::new(finds))], default: ir::Target::new(goes_on) });
+            fx.b.seal(finds);
+            fx.b.seal(goes_on);
+            fx.b.switch_to(finds);
+            for (number, &file) in files.iter().enumerate() {
+                if self.is_commonjs(file) {
+                    continue;
+                }
+                let sym = self.files.file_symbol(file);
+                let name = self.out.strs.intern(b"namespace");
+                let global = self.add_global(name, file, Ty::NONE, GlobalKey::Namespace(sym.file, sym.id));
+                self.out.globals[global.idx()].initialization = ir::Initialization::Undefined;
+                let known = self.emit(fx, Op::GlobalGet(global));
+                let is_it = self.emit(fx, Op::StrictEq { a: known, b: module });
+                let (found, next) = (fx.b.new_block(), fx.b.new_block());
+                self.branch(fx, is_it, found, next);
+                fx.b.seal(found);
+                fx.b.seal(next);
+                fx.b.switch_to(found);
+                let number = self.emit(fx, Op::Int(number as i64));
+                self.terminate_with_return(fx, number);
+                fx.b.switch_to(next);
+            }
+            let no = self.emit(fx, Op::Bool(false));
+            self.terminate_with_return(fx, no);
+            fx.b.switch_to(goes_on);
+        }
+        let (notes, by_number) = (fx.b.new_block(), fx.b.new_block());
+        fx.b.terminate(ir::Term::Switch { value: how, cases: vec![(7, ir::Target::new(notes))], default: ir::Target::new(by_number) });
+        fx.b.seal(notes);
+        fx.b.seal(by_number);
+        fx.b.switch_to(notes);
+        let is_read = self.variable_of_program("require.cache is read");
+        let was_read = self.emit(fx, Op::GlobalGet(is_read));
+        let yes = self.emit(fx, Op::Bool(true));
+        self.emit(fx, Op::GlobalSet(is_read, yes));
+        self.terminate_with_return(fx, was_read);
+        fx.b.switch_to(by_number);
+        let arms: Vec<crate::id::BlockId> = files.iter().map(|_| fx.b.new_block()).collect();
+        let none = fx.b.new_block();
+        let cases = arms.iter().enumerate().map(|(number, &arm)| (number as i64, ir::Target::new(arm))).collect();
+        fx.b.terminate(ir::Term::Switch { value: number, cases, default: ir::Target::new(none) });
+        for (&arm, file) in arms.iter().zip(files) {
+            fx.b.seal(arm);
+            fx.b.switch_to(arm);
+            let (registers, otherwise) = (fx.b.new_block(), fx.b.new_block());
+            fx.b.terminate(ir::Term::Switch { value: how, cases: vec![(8, ir::Target::new(registers))], default: ir::Target::new(otherwise) });
+            fx.b.seal(registers);
+            fx.b.seal(otherwise);
+            fx.b.switch_to(registers);
+            if self.is_registered_when_asked_for(file) {
+                let flag = self.global_of_module(file, "evaluated");
+                let known = self.emit(fx, Op::GlobalGet(flag));
+                let undefined = self.emit(fx, Op::Undefined);
+                let has_not_run = self.emit(fx, Op::StrictEq { a: known, b: undefined });
+                let has_run = fx.b.new_block();
+                self.branch(fx, has_not_run, none, has_run);
+                fx.b.seal(has_run);
+                fx.b.switch_to(has_run);
+                self.emit_registration(fx, file);
+                let yes = self.emit(fx, Op::Bool(true));
+                self.terminate_with_return(fx, yes);
+            } else {
+                fx.b.jump(none);
+            }
+            fx.b.switch_to(otherwise);
+            if self.shared.constants.has_test_globals {
+                let (stores, skips, other) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
+                fx.b.terminate(ir::Term::Switch { value: how, cases: vec![(3, ir::Target::new(stores)), (5, ir::Target::new(skips))], default: ir::Target::new(other) });
+                fx.b.seal(stores);
+                fx.b.seal(skips);
+                fx.b.seal(other);
+                fx.b.switch_to(stores);
+                let exports = if self.is_commonjs(file) { Vec::new() } else { self.exports_of_file(file) };
+                for (name, source) in exports {
+                    let ImportSource::Declaration(member) = source else { continue };
+                    let sym = self.value_symbol_of_export(member);
+                    let Some(global) = self.override_of(sym) else { continue };
+                    let name = self.str(name);
+                    let name = self.emit(fx, Op::Str(name));
+                    let is_it = self.emit(fx, Op::StrictEq { a: module, b: name });
+                    let (found, next) = (fx.b.new_block(), fx.b.new_block());
+                    self.branch(fx, is_it, found, next);
+                    fx.b.seal(found);
+                    fx.b.seal(next);
+                    fx.b.switch_to(found);
+                    self.emit(fx, Op::GlobalSet(global, value));
+                    let yes = self.emit(fx, Op::Bool(true));
+                    self.terminate_with_return(fx, yes);
+                    fx.b.switch_to(next);
+                }
+                fx.b.jump(none);
+                fx.b.switch_to(skips);
+                if self.is_commonjs(file) {
+                    let not_mine = self.emit(fx, Op::Null);
+                    self.terminate_with_return(fx, not_mine);
+                } else {
+                    let flag = self.global_of_module(file, "evaluated");
+                    let known = self.emit(fx, Op::GlobalGet(flag));
+                    let undefined = self.emit(fx, Op::Undefined);
+                    let has_not_run = self.emit(fx, Op::StrictEq { a: known, b: undefined });
+                    let first = fx.b.new_block();
+                    self.branch(fx, has_not_run, first, none);
+                    fx.b.seal(first);
+                    fx.b.switch_to(first);
+                    let yes = self.emit(fx, Op::Bool(true));
+                    self.emit(fx, Op::GlobalSet(flag, yes));
+                    self.terminate_with_return(fx, yes);
+                }
+                fx.b.switch_to(other);
+            }
+            let (requires, imports, reads) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
+            fx.b.terminate(ir::Term::Switch { value: how, cases: vec![(1, ir::Target::new(imports)), (2, ir::Target::new(reads))], default: ir::Target::new(requires) });
+            fx.b.seal(requires);
+            fx.b.seal(imports);
+            fx.b.seal(reads);
+            if !self.is_commonjs(file) {
+                fx.b.switch_to(imports);
+                let func = self.dynamic_import_of(file, false);
+                let promise = self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
+                self.terminate_with_return(fx, promise);
+                fx.b.switch_to(reads);
+                if self.is_async_module(file) {
+                    fx.b.jump(none);
+                } else {
+                    if let Some(func) = self.evaluation_of(file) {
+                        self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
+                    }
+                    let namespace = self.read_sym(fx, self.files.file_symbol(file), 0);
+                    self.terminate_with_return(fx, namespace);
+                }
+                fx.b.switch_to(requires);
+                if self.is_async_module(file) {
+                    fx.b.jump(none);
+                } else {
+                    if let Some(func) = self.evaluation_of(file) {
+                        self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
+                    }
+                    let exports = self.required_es_module(fx, file, 0);
+                    let name = self.out.strs.intern(b"exports");
+                    self.emit_throwing(fx, Op::PropSet { obj: module, name, value: exports });
+                    let yes = self.emit(fx, Op::Bool(true));
+                    self.terminate_with_return(fx, yes);
+                }
+                continue;
+            }
+            for asked in [imports, reads] {
+                fx.b.switch_to(asked);
+                let path = self.own_path(file, b"path").unwrap_or_default();
+                let path = self.out.strs.intern(&path);
+                let path = self.emit(fx, Op::Str(path));
+                self.operation(fx, "RequireExternalModule", &[path]);
+                if asked == reads {
+                    let said = self.emit(fx, Op::Int(if self.c.is_in_module_package(file) { 2 } else { 1 }));
+                    self.terminate_with_return(fx, said);
+                } else {
+                    fx.b.jump(none);
+                }
+            }
+            fx.b.switch_to(requires);
+            let has_object = !self.has_export_variables(file) && self.c.commonjs_exports(file) == CommonJsExports::Object;
+            let asked = self.global_of_module(file, if has_object { "evaluated" } else { "handed to the host" });
+            let known = self.emit(fx, Op::GlobalGet(asked));
+            let undefined = self.emit(fx, Op::Undefined);
+            let is_first = self.emit(fx, Op::StrictEq { a: known, b: undefined });
+            let first = fx.b.new_block();
+            self.branch(fx, is_first, first, none);
+            fx.b.seal(first);
+            fx.b.switch_to(first);
+            let yes = self.emit(fx, Op::Bool(true));
+            let own = self.global_of_module(file, "module");
+            if has_object {
+                self.emit(fx, Op::GlobalSet(own, module));
+                if let Some(func) = self.evaluation_of(file) {
+                    self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
+                }
+                self.terminate_with_return(fx, yes);
+                continue;
+            }
+            self.emit(fx, Op::GlobalSet(asked, yes));
+            let flag = self.global_of_module(file, "evaluated");
+            let evaluated = self.emit(fx, Op::GlobalGet(flag));
+            let has_not_run = self.emit(fx, Op::StrictEq { a: evaluated, b: undefined });
+            let (run, ready) = (fx.b.new_block(), fx.b.new_block());
+            self.branch(fx, has_not_run, run, ready);
+            fx.b.seal(run);
+            fx.b.switch_to(run);
+            self.emit(fx, Op::GlobalSet(own, module));
+            if let Some(func) = self.evaluation_of(file) {
+                self.emit_throwing(fx, Op::CallDirect { func, args: ir::Args::new() });
+            }
+            fx.b.jump(ready);
+            fx.b.seal(ready);
+            fx.b.switch_to(ready);
+            let exports = match self.c.module_with_export_variables(file) {
+                Some(keeper) => self.view_of_export_variables(fx, keeper),
+                None => {
+                    let global = self.module_exports_variable(file);
+                    self.emit(fx, Op::GlobalGet(global))
+                }
+            };
+            let name = self.out.strs.intern(b"exports");
+            self.emit_throwing(fx, Op::PropSet { obj: module, name, value: exports });
+            self.terminate_with_return(fx, yes);
+        }
+        fx.b.seal(none);
+        fx.b.switch_to(none);
+        let no = self.emit(fx, Op::Bool(false));
+        self.terminate_with_return(fx, no);
+    }
+
+    fn is_registered_when_asked_for(&mut self, file: FileId) -> bool {
+        let has_object = !self.has_export_variables(file) && self.c.commonjs_exports(file) == CommonJsExports::Object;
+        self.may_be_asked_by_the_host() && self.is_commonjs(file) && !self.is_builtin_file(file) && !has_object && !self.shared.roots().contains(&file) && self.own_path(file, b"path").is_some()
+    }
+
+    fn emit_registration(&mut self, fx: &mut Fx, file: FileId) {
+        let own = self.global_of_module(file, "module");
+        let own = self.emit(fx, Op::GlobalGet(own));
+        let exports = match self.c.module_with_export_variables(file) {
+            Some(keeper) => self.view_of_export_variables(fx, keeper),
+            None => {
+                let global = self.module_exports_variable(file);
+                self.emit(fx, Op::GlobalGet(global))
+            }
+        };
+        let (name, specifier, cache) = (self.out.strs.intern(b"exports"), self.out.strs.intern(b"node:module"), self.out.strs.intern(b"_cache"));
+        self.emit_throwing(fx, Op::PropSet { obj: own, name, value: exports });
+        let specifier = self.emit(fx, Op::Str(specifier));
+        let constructor = self.operation(fx, "RequireExternalModule", &[specifier]);
+        let cache = self.emit_throwing(fx, Op::PropGet { obj: constructor, name: cache });
+        let path = self.own_path(file, b"path").unwrap_or_default();
+        let path = self.out.strs.intern(&path);
+        let path = self.emit(fx, Op::Str(path));
+        self.emit_throwing(fx, Op::ElemSet { obj: cache, key: path, value: own });
+        let handed = self.global_of_module(file, "handed to the host");
+        let yes = self.emit(fx, Op::Bool(true));
+        self.emit(fx, Op::GlobalSet(handed, yes));
+    }
+
+    pub(crate) fn emit_commonjs_epilogue(&mut self, fx: &mut Fx, file: FileId) {
+        if !self.is_registered_when_asked_for(file) {
+            return;
+        }
+        let is_read = self.variable_of_program("require.cache is read");
+        let is_read = self.emit(fx, Op::GlobalGet(is_read));
+        let undefined = self.emit(fx, Op::Undefined);
+        let is_unread = self.emit(fx, Op::StrictEq { a: is_read, b: undefined });
+        let (registers, done) = (fx.b.new_block(), fx.b.new_block());
+        self.branch(fx, is_unread, done, registers);
+        fx.b.seal(registers);
+        fx.b.switch_to(registers);
+        self.emit_registration(fx, file);
+        fx.b.jump(done);
+        fx.b.seal(done);
+        fx.b.switch_to(done);
+    }
+
     fn emit_host_module(&mut self, fx: &mut Fx, file: FileId) -> Option<V> {
+        if !self.may_be_asked_by_the_host() || self.own_path(file, b"path").is_none() || self.is_builtin_file(file) {
+            return self.emit_new_host_module(fx, file);
+        }
+        let global = self.global_of_module(file, "module");
+        Some(self.lazily(fx, global, |this, fx| this.emit_new_host_module(fx, file).unwrap_or(V::NONE)))
+    }
+
+    fn emit_new_host_module(&mut self, fx: &mut Fx, file: FileId) -> Option<V> {
         let path = self.own_path(file, b"path").filter(|_| !self.is_builtin_file(file))?;
         let has_object = !self.has_export_variables(file) && self.c.commonjs_exports(file) == CommonJsExports::Object;
         let is_registered = has_object || self.shared.roots().contains(&file);
@@ -498,8 +941,8 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.seal(join);
         fx.b.switch_to(join);
         if is_registered {
-            let name = self.out.strs.intern(b"cache");
-            let cache = self.emit_throwing(fx, Op::PropGet { obj: require, name });
+            let name = self.out.strs.intern(b"_cache");
+            let cache = self.emit_throwing(fx, Op::PropGet { obj: constructor, name });
             self.emit_throwing(fx, Op::ElemSet { obj: cache, key: path, value: module });
         }
         let global = self.global_of_module(file, "module");
@@ -546,7 +989,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// Evaluates the module if it has not been.
     pub(crate) fn emit_module_evaluation(&mut self, fx: &mut Fx, file: FileId) {
-        if let Some(func) = self.evaluation_of(file) {
+        let evaluation = self.evaluation_of(file);
+        self.emit_call_of_evaluation(fx, file, evaluation);
+    }
+
+    fn emit_module_evaluation_by_require(&mut self, fx: &mut Fx, file: FileId) {
+        let evaluation = self.evaluation_by_require_of(file);
+        self.emit_call_of_evaluation(fx, file, evaluation);
+    }
+
+    fn emit_call_of_evaluation(&mut self, fx: &mut Fx, file: FileId, evaluation: Option<crate::id::FuncId>) {
+        if let Some(func) = evaluation {
             if self.shared.constants.own_paths.is_some() && self.is_commonjs(file) && self.is_commonjs(fx.file) && !self.is_builtin_file(fx.file) {
                 let (own, parent) = (self.global_of_module(fx.file, "module"), self.global_of_module(file, "parent"));
                 let module = self.emit(fx, Op::GlobalGet(own));
@@ -594,7 +1047,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// As Node.js has it, `default` is `module.exports` whatever `__esModule` says.
     pub(crate) fn is_node_mode(&self, importer: FileId, file: FileId) -> bool {
-        self.files.module(importer).implied_format == ResolutionMode::Import || self.hir(file).kind == FileKind::Json
+        let ignores_the_marker = match self.shared.constants.own_paths {
+            Some(_) => self.c.is_in_module_package(file),
+            None => self.files.module(importer).implied_format == ResolutionMode::Import,
+        };
+        ignores_the_marker || self.hir(file).kind == FileKind::Json
     }
 
     /// What an ES module sees of such a module: `default` and a getter for each property.
@@ -603,7 +1060,24 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         self.namespace_of_exported_object_as(fx, is_node_mode, file)
     }
 
+    pub(crate) fn is_seen_through_the_host(&mut self, file: FileId) -> bool {
+        self.may_be_asked_by_the_host() && self.is_commonjs(file) && !self.is_builtin_file(file) && !self.has_export_variables(file) && self.own_path(file, b"path").is_some()
+    }
+
+    pub(crate) fn namespace_by_the_host(&mut self, fx: &mut Fx, file: FileId) -> V {
+        let path = self.own_path(file, b"path").unwrap_or_default();
+        let path = self.c.atoms().intern(&path);
+        let global = self.external_module_global(file, path);
+        self.lazily(fx, global, |this, fx| {
+            let path = this.str(path);
+            this.emit_throwing(fx, Op::ExternalModule(path))
+        })
+    }
+
     pub(crate) fn namespace_of_exported_object_as(&mut self, fx: &mut Fx, is_node_mode: bool, file: FileId) -> V {
+        if self.is_seen_through_the_host(file) {
+            return self.namespace_by_the_host(fx, file);
+        }
         let global = self.global_of_module(file, if is_node_mode { "namespace for Node.js" } else { "namespace" });
         self.lazily(fx, global, |this, fx| {
             let exported = this.exported_object(fx, file);
@@ -625,8 +1099,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 None => self.exports_without_object(fx),
             };
         }
+        if self.is_seen_through_the_host(file) {
+            let namespace = self.namespace_by_the_host(fx, file);
+            let name = self.out.strs.intern(name);
+            return self.emit_throwing(fx, Op::PropGet { obj: namespace, name });
+        }
         let is_default = name == b"default";
-        let is_node_mode = self.files.module(importer).implied_format == ResolutionMode::Import || self.hir(file).kind == FileKind::Json;
+        let is_node_mode = self.is_node_mode(importer, file);
         let (global, source) = match (is_default, is_node_mode) {
             (false, _) => ("exported object", super::Source::MemberOfExportedObject(file)),
             (true, is_node_mode) => (name_of_default(is_node_mode), super::Source::DefaultOfExportedObject(file, is_node_mode)),
@@ -810,7 +1289,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         })
     }
 
-    fn is_free_in(&mut self, file: FileId, e: ExprId, name: Atom) -> bool {
+    pub(crate) fn is_free_in(&mut self, file: FileId, e: ExprId, name: Atom) -> bool {
         let Some(found) = self.c.binding_of_identifier(file, e, name) else { return true };
         if self.files.flags(found).intersects(SymFlags::MODULE_EXPORTS) {
             return true;
@@ -848,6 +1327,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             b"url" => file_url(path),
             _ => return None,
         })
+    }
+
+    pub(crate) fn import_meta(&mut self, fx: &mut Fx) -> V {
+        let mut path_of_module = Vec::new();
+        if let Some(path) = self.own_path(fx.file, b"path") {
+            let path = self.out.strs.intern(&path);
+            path_of_module.push(self.emit(fx, Op::Str(path)));
+        }
+        self.operation(fx, "GetImportMeta", &path_of_module)
     }
 
     /// `require` of a module that reports its own path and is no entry point: the host's is the entry point's.
@@ -903,6 +1391,52 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         })
     }
 
+    pub(crate) fn require_resolve_call(&mut self, fx: &mut Fx, call: CallId) -> Option<V> {
+        use bun_sema::hir::Chain;
+        let hir = self.hir(fx.file);
+        let c = &hir[call];
+        let ExprKind::Dot { obj, name, chain: Chain::No, .. } = hir[c.callee].kind else { return None };
+        let ExprKind::Ident(require) = hir[obj].kind else { return None };
+        if self.c.atoms().bytes(name) != b"resolve" || self.c.atoms().bytes(require) != b"require" || c.args.len() != 1 || c.chain != Chain::No {
+            return None;
+        }
+        let ExprKind::String(specifier) = hir[hir.id_at(c.args, 0)].kind else { return None };
+        let is_executable = self.shared.constants.resolved.is_some() && self.shared.constants.own_paths.is_none();
+        if !is_executable || self.is_builtin_file(fx.file) || !self.is_free(fx, obj, require) {
+            return None;
+        }
+        let path = self.files.module(fx.file).file_name();
+        let slash = path.iter().rposition(|&byte| byte == b'/')?;
+        let (folder, paths, resolve) = (self.out.strs.intern(&path[..slash.max(1)]), self.out.strs.intern(b"paths"), self.out.strs.intern(b"resolve"));
+        let require = self.operation(fx, "GetRequireFunction", &[]);
+        let specifier = self.str(specifier);
+        let specifier = self.emit(fx, Op::Str(specifier));
+        let folder = self.emit(fx, Op::Str(folder));
+        let folders = self.emit_throwing(fx, Op::NewArray([folder].into_iter().collect()));
+        let options = self.emit(fx, Op::NewObject);
+        let paths = self.emit(fx, Op::Str(paths));
+        self.operation(fx, "DefineField", &[options, paths, folders]);
+        Some(self.emit_throwing(fx, Op::CallMethod { obj: require, name: resolve, args: [specifier, options].into_iter().collect() }))
+    }
+
+    pub(crate) fn emit_value_of_asset(&mut self, fx: &mut Fx, file: FileId, specifier: Atom, text: &[u8]) -> V {
+        let text = self.out.strs.intern(text);
+        let text = self.emit(fx, Op::Str(text));
+        let Some(kind) = self.asset_the_host_loads(file, specifier) else { return text };
+        let require = self.operation(fx, "GetRequireFunction", &[]);
+        let this = self.emit(fx, Op::Undefined);
+        if matches!(kind, super::imports::HostLoads::Addon) {
+            return self.emit_throwing(fx, Op::Call { callee: require, this, args: [text].into_iter().collect() });
+        }
+        let (name, sqlite, db) = (self.out.strs.intern(b"type"), self.out.strs.intern(b"sqlite"), self.out.strs.intern(b"db"));
+        let options = self.emit(fx, Op::NewObject);
+        let name = self.emit(fx, Op::Str(name));
+        let sqlite = self.emit(fx, Op::Str(sqlite));
+        self.operation(fx, "DefineField", &[options, name, sqlite]);
+        let module = self.emit_throwing(fx, Op::Call { callee: require, this, args: [text, options].into_iter().collect() });
+        self.emit_throwing(fx, Op::PropGet { obj: module, name: db })
+    }
+
     /// `require("specifier")`
     pub(crate) fn require_call(&mut self, fx: &mut Fx, call: CallId) -> Option<V> {
         let hir = self.hir(fx.file);
@@ -911,10 +1445,46 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.c.atoms().bytes(name) != b"require" || c.args.len() != 1 {
             return None;
         }
-        let ExprKind::String(specifier) = hir[hir.id_at(c.args, 0)].kind else { return None };
-        if !self.is_free(fx, c.callee, name) {
+        let argument = hir.id_at(c.args, 0);
+        if !hir.choice_of_specifiers(argument, &mut Vec::new()) || !self.is_free(fx, c.callee, name) {
             return None;
         }
+        Some(self.require_choice(fx, call, argument))
+    }
+
+    fn require_choice(&mut self, fx: &mut Fx, call: CallId, argument: ExprId) -> V {
+        let hir = self.hir(fx.file);
+        let ExprKind::Cond { test, yes, no } = hir[argument].kind else {
+            let required = hir.constant_specifier(argument).and_then(|specifier| self.require_specifier(fx, call, specifier));
+            debug_assert!(required.is_some());
+            return required.unwrap_or_else(|| self.emit(fx, Op::Undefined));
+        };
+        if let Some(test) = self.constant(fx, test) {
+            let (taken, left_out) = if test.is_truthy() { (yes, no) } else { (no, yes) };
+            self.cut_expr(fx, left_out);
+            return self.require_choice(fx, call, taken);
+        }
+        let (then, otherwise, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
+        let result = self.new_result(fx, None);
+        self.branch_on(fx, test, then, otherwise);
+        fx.b.seal(then);
+        fx.b.seal(otherwise);
+        fx.b.switch_to(then);
+        let value = self.require_choice(fx, call, yes);
+        self.write(fx, result, value);
+        fx.b.jump(join);
+        fx.b.switch_to(otherwise);
+        let value = self.require_choice(fx, call, no);
+        self.write(fx, result, value);
+        fx.b.jump(join);
+        fx.b.seal(join);
+        fx.b.switch_to(join);
+        self.read(fx, result)
+    }
+
+    fn require_specifier(&mut self, fx: &mut Fx, call: CallId, specifier: Atom) -> Option<V> {
+        let hir = self.hir(fx.file);
+        let c = &hir[call];
         if self.is_builtin_file(fx.file) {
             let Some(id) = self.builtin_id_required_by(fx.file, specifier) else {
                 return Some(self.unsupported(fx, hir[c.callee].pos, "a `require` of what is no builtin module"));
@@ -924,8 +1494,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         // A file that is loaded as a string, or for its path.
         if let Some(text) = self.text_imported_as(fx.file, specifier) {
-            let text = self.out.strs.intern(text);
-            return Some(self.emit(fx, Op::Str(text)));
+            return Some(self.emit_value_of_asset(fx, fx.file, specifier, text));
         }
         let Some(imported) = self.imported_file(fx.file, specifier) else {
             if self.is_in_the_bundle_only(fx.file, specifier) {
@@ -952,16 +1521,60 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if self.is_async_module(imported) {
             return Some(self.unsupported(fx, hir[c.callee].pos, "a `require` of a module that has a top-level `await` or imports one that has"));
         }
-        self.emit_module_evaluation(fx, imported);
+        if self.may_be_asked_by_the_host()
+            && self.is_commonjs(imported)
+            && !self.has_export_variables(imported)
+            && let Some(path) = self.own_path(imported, b"path")
+        {
+            let is_read = self.variable_of_program("require.cache is read");
+            let known = self.emit(fx, Op::GlobalGet(is_read));
+            let undefined = self.emit(fx, Op::Undefined);
+            let is_unread = self.emit(fx, Op::StrictEq { a: known, b: undefined });
+            let (unread, read, join) = (fx.b.new_block(), fx.b.new_block(), fx.b.new_block());
+            let result = self.new_temporary(fx);
+            self.branch(fx, is_unread, unread, read);
+            fx.b.seal(unread);
+            fx.b.seal(read);
+            fx.b.switch_to(read);
+            let path = self.out.strs.intern(&path);
+            let path = self.emit(fx, Op::Str(path));
+            let own = if self.is_commonjs(fx.file) { self.emit_host_module(fx, fx.file) } else { None };
+            let value = match own {
+                Some(own) => {
+                    let (specifier, prototype, require) = (self.out.strs.intern(b"node:module"), self.out.strs.intern(b"prototype"), self.out.strs.intern(b"require"));
+                    let specifier = self.emit(fx, Op::Str(specifier));
+                    let constructor = self.operation(fx, "RequireExternalModule", &[specifier]);
+                    let prototype = self.emit_throwing(fx, Op::PropGet { obj: constructor, name: prototype });
+                    let callee = self.emit_throwing(fx, Op::PropGet { obj: prototype, name: require });
+                    self.emit_throwing(fx, Op::Call { callee, this: own, args: [path].into_iter().collect() })
+                }
+                None => self.operation(fx, "RequireExternalModule", &[path]),
+            };
+            self.write(fx, result, value);
+            fx.b.jump(join);
+            fx.b.switch_to(unread);
+            self.emit_module_evaluation_by_require(fx, imported);
+            let value = self.exported_object(fx, imported);
+            self.write(fx, result, value);
+            fx.b.jump(join);
+            fx.b.seal(join);
+            fx.b.switch_to(join);
+            return Some(self.read(fx, result));
+        }
+        self.emit_module_evaluation_by_require(fx, imported);
         if self.exports_an_object(imported) {
             return Some(self.exported_object(fx, imported));
         }
         let pos = hir[c.callee].pos;
+        Some(self.required_es_module(fx, imported, pos))
+    }
+
+    fn required_es_module(&mut self, fx: &mut Fx, imported: FileId, pos: u32) -> V {
         let exports = self.exports_of_file(imported);
         let named = |name: &[u8]| exports.iter().find(|export| self.c.atoms().bytes(export.0) == name).map(|export| export.1);
         // `export { x as "module.exports" }`
         if let Some(source) = named(b"module.exports") {
-            return Some(self.read_member_of_namespace(fx, source));
+            return self.read_member_of_namespace(fx, source);
         }
         let says_so_itself = named(b"__esModule").is_some();
         let namespace = self.read_sym(fx, self.files.file_symbol(imported), pos);
@@ -971,6 +1584,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let (key, yes) = (self.emit(fx, Op::Str(key)), self.emit(fx, Op::Bool(true)));
             self.operation(fx, "DefineField", &[namespace, key, yes]);
         }
-        Some(namespace)
+        namespace
     }
 }

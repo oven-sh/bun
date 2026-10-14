@@ -234,7 +234,7 @@ impl FuncBuilder {
             self.func.values.pop();
         } else {
             let undefined = self.undefined;
-            self.func.values[param.idx()] = crate::ir::Value { def: crate::ir::Def::Op(Op::Undefined), pos: 0, ty: undefined, prediction: Prediction::None };
+            self.func.values[param.idx()] = crate::ir::Value { def: crate::ir::Def::Op(Op::Undefined), pos: 0, ty: undefined, prediction: Prediction::None, finds_initialized: false };
             self.func.blocks[block.idx()].ops.insert(0, param);
         }
         true

@@ -9,7 +9,7 @@ use bun_sema::check::compute_ecma_line_starts;
 use bun_sema::config::{self, Project};
 use bun_sema::json::Json;
 use bun_sema::messages::text;
-use bun_sema::resolve::{Host, Options, displayed_path, join, to_path};
+use bun_sema::resolve::{Host, displayed_path, join, to_path};
 use bun_sema::session::Session;
 use bun_sema_driver::{Category, Diagnostic, Report, Request};
 use bun_threading::Guarded;
@@ -462,7 +462,7 @@ impl Host for Virtual {
         path: &[u8],
         text: &[u8],
         atoms: &bun_sema::atom::Interner<'s>,
-        options: &Options,
+        options: bun_sema::resolve::ParseOptions,
     ) -> bun_sema::hir::File<'s> {
         self.disk.parse(arena, path, text, atoms, options)
     }
@@ -1789,6 +1789,7 @@ fn run_one(
             compiler_options: &[],
             cwd: cwd.as_bytes(),
             project: None,
+            listed_projects: None,
             build: false,
             errors: &[],
             paths: &[],
@@ -1804,6 +1805,9 @@ fn run_one(
             task_clock: None,
             plan_options: bun_sema_driver::PlanOptions {
                 reproduces_symbol_ids: false,
+                // The tests run side by side, each on one thread. The plan of several threads is the
+                // one with steps, publishing and validation.
+                tasks_on_one_thread: true,
                 ..Default::default()
             },
             retains_everything: false,

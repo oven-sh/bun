@@ -216,6 +216,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// The type as what a cast makes of plain data. No object is made as what the parts of a union have in common: it is made as one of
     /// the parts, so where that layout stands for the union, here the parts are named, also for the elements of an array.
     pub(crate) fn ty_of_cast_target(&mut self, ty: TyId) -> TyId {
+        if let Some(&(grown, known)) = self.cast_targets.get(&ty)
+            && grown == self.views_grown
+        {
+            return known;
+        }
+        let found = self.find_ty_of_cast_target(ty);
+        self.cast_targets.insert(ty, (self.views_grown, found));
+        found
+    }
+
+    fn find_ty_of_cast_target(&mut self, ty: TyId) -> TyId {
         let described = self.out.tys.get(ty).clone();
         let mut target = Declared { parts: Default::default(), ..described.clone() };
         for part in &described.parts {
@@ -294,6 +305,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                             let parts = self.parts_of_views.entry(layout).or_default();
                             if !parts.contains(&part) {
                                 parts.push(part);
+                                self.views_grown += 1;
                             }
                         }
                         result = result.or(&Declared::part(Part::Class(layout)));
@@ -396,7 +408,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     Some((_, arguments)) => arguments.into_iter().all(|argument| !self.c.is_object_type(argument) || self.is_object_type_of_program(argument) || self.is_class_of_program(argument)),
                     None => self.is_written_in_typescript(file),
                 },
-                Origin::Module(namespace) => self.c.is_reified_namespace(namespace),
+                Origin::Module(namespace) => self.c.is_reified_namespace(namespace) && self.declares_records(namespace.file),
                 _ => false,
             },
             TypeData::Intersection(parts) => parts.iter().all(|&part| self.is_object_type_of_program(part)),
@@ -684,13 +696,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 // As `fields_of` has it.
                 let own = members.shape().props.iter().filter(|prop| !prop.flags.contains(PropFlags::ACCESSOR));
                 for (i, prop) in own.clone().enumerate() {
-                    self.type_field_as_property(layout, i as u32, prop, members.mapper);
+                    self.type_field_as_property(layout, i as u32, prop, members.mapper, ty);
                 }
                 for (i, &(name, declaring)) in self.c.undeclared_fields_of(ty).iter().enumerate() {
                     let field = (own.clone().count() + i) as u32;
                     let Some(declared_by) = self.c.members(declaring) else { continue };
                     let Some(prop) = declared_by.shape().props.iter().find(|prop| prop.name == name) else { continue };
-                    self.type_field_as_property(layout, field, prop, declared_by.mapper);
+                    self.type_field_as_property(layout, field, prop, declared_by.mapper, declaring);
                     // It is optional here.
                     let checked = self.c.union(&[self.checked_fields[&(layout, field)], TypeId::UNDEFINED]);
                     self.checked_fields.insert((layout, field), checked);
@@ -735,7 +747,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     if prop.flags.contains(PropFlags::METHOD) {
                         self.out.layouts[layout.idx()].fields[field as usize].flags |= field_flags::METHOD;
                     }
-                    self.type_field_as_property(layout, field, prop, members.mapper);
+                    self.type_field_as_property(layout, field, prop, members.mapper, interface);
                     // `declare x: T`: it is absent until it is stored to, whatever `T` says.
                     if !prop.flags.contains(PropFlags::OPTIONAL) {
                         let declared = self.out.layouts[layout.idx()].fields[field as usize].declared;
@@ -746,11 +758,26 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
+    fn is_inferred_from_first_value_alone(&mut self, prop: &Prop, found_in: TypeId, checked: TypeId) -> bool {
+        if !matches!(self.c.data(found_in), TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. }) || prop.flags.contains(PropFlags::READONLY) || self.c.is_prop_annotated(prop) {
+            return false;
+        }
+        let parts: Vec<TypeId> = match self.c.data(checked) {
+            TypeData::Union(parts) => parts.to_vec(),
+            _ => vec![checked],
+        };
+        let is_nil = |data: &TypeData| matches!(data, TypeData::Intrinsic(Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening | Intrinsic::Null | Intrinsic::NullWidening));
+        parts.iter().all(|&part| is_nil(self.c.data(part))) || parts.len() == 1 && matches!(self.c.data(parts[0]), TypeData::BoolLit { .. } | TypeData::NumberLit { .. } | TypeData::StringLit { .. } | TypeData::BigIntLit { .. })
+    }
+
     /// Gives the field the type of the property, which was found in a type whose mapper is `mapper`.
-    fn type_field_as_property(&mut self, layout: LayoutId, field: u32, prop: &Prop, mapper: MapperId) {
-        let checked = if self.c.is_prop_predicted(prop) { TypeId::UNKNOWN } else { self.c.type_held_by_prop(prop, mapper) };
+    fn type_field_as_property(&mut self, layout: LayoutId, field: u32, prop: &Prop, mapper: MapperId, found_in: TypeId) {
+        let checked = if self.c.is_prop_predicted(prop) || self.c.is_predicted_through_spread(found_in, prop.name) { TypeId::UNKNOWN } else { self.c.type_held_by_prop(prop, mapper) };
+        let checked = if self.is_inferred_from_first_value_alone(prop, found_in, checked) { TypeId::UNKNOWN } else { checked };
         let checked = if prop.flags.contains(PropFlags::OPTIONAL) && !self.c.admits_undefined(checked) { self.c.union(&[checked, TypeId::UNDEFINED]) } else { checked };
         let declared = self.declared(checked);
+        let written = self.c.integers_written_for_prop(prop);
+        let declared = self.with_integers(declared, written);
         self.out.layouts[layout.idx()].fields[field as usize].declared = self.or_anything(declared);
         self.out.layouts[layout.idx()].fields[field as usize].literals = self.literals_of(checked);
         if !self.c.admits_undefined(checked) {

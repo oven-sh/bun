@@ -1,4 +1,5 @@
 use super::alterations::Alterations;
+use super::int32_fields::RunBy;
 use super::builtins_generated::{Arity, BUILTIN_ENTRIES, BuiltinEntry, BuiltinKind, Pattern, uses};
 use super::trust::{ALIASES, TYPED_ARRAYS};
 use crate::atom::Atom;
@@ -74,6 +75,8 @@ pub(super) struct State {
     flows: FxHashSet<(TypeId, TypeId)>,
     /// The same for `note_entering_type_parameters`.
     pub(super) entered: FxHashSet<(TypeId, TypeId)>,
+    pub(super) entered_views: FxHashSet<(TypeId, TypeId)>,
+    pub(super) entered_places_that_say_nothing: FxHashSet<(TypeId, Option<TypeId>)>,
     /// The instantiations and the signatures whose type arguments have been noted.
     bound: FxHashSet<TypeId>,
     bound_at_calls: FxHashSet<SigId>,
@@ -134,7 +137,14 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn is_the_function_type(&mut self, ty: TypeId) -> bool {
-        [crate::atom::known::Function, crate::atom::known::CallableFunction, crate::atom::known::NewableFunction].into_iter().any(|name| ty == self.global_ref(name, &[]))
+        let known = match self.aot.flows.function_types {
+            Some(known) => known,
+            None => {
+                let found = [crate::atom::known::Function, crate::atom::known::CallableFunction, crate::atom::known::NewableFunction].map(|name| self.global_ref(name, &[]));
+                *self.aot.flows.function_types.insert(found)
+            }
+        };
+        known.contains(&ty)
     }
 
     /// The flows that a flow between two types that both say something carries within it.
@@ -276,10 +286,53 @@ impl<'p, 's> Checker<'p, 's> {
         }
         self.aot.escape_closure = State::default();
         if self.is_untyped_file(file) {
-            return self.note_alterations_by_javascript(file);
+            self.note_alterations_by_javascript(file);
         }
-        for index in 0..hir.exprs.len() {
-            self.note_escape_of(file, ExprId(index as u32));
+    }
+
+    fn code_evaluating(&self, file: FileId, mut parent: Parent) -> RunBy {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        loop {
+            parent = match parent {
+                Parent::Expr(e) if e.is_some() => bound.expr_parent[e.idx()],
+                Parent::Stmt(s) if s.is_some() => bound.stmt_parent[s.idx()],
+                Parent::FnBody(func) => return RunBy::Function(func),
+                Parent::ParamDefault(p) => return RunBy::Function(bound.param_fn[p.idx()]),
+                Parent::MemberKey(member) => match bound.member_owner[member.idx()] {
+                    crate::bind::MemberOwner::Class(class) => bound.class_owner[class.idx()].to_parent(),
+                    _ => return RunBy::Module,
+                },
+                Parent::Decorator(class, _) => bound.class_owner[class.idx()].to_parent(),
+                Parent::MethodKey(prop) => Parent::Expr(bound.prop_owner[prop.idx()]),
+                Parent::MemberInit(member) if !hir[member].flags.contains(crate::hir::Flags::STATIC) => match bound.member_owner[member.idx()] {
+                    crate::bind::MemberOwner::Class(class) => return RunBy::ConstructorOf(class),
+                    _ => return RunBy::Module,
+                },
+                Parent::File | Parent::None => return RunBy::Module,
+                _ => self.parent_of_node(file, parent),
+            };
+        }
+    }
+
+    pub fn code_whose_escapes_are_noted(&mut self, file: FileId) -> Vec<(RunBy, Vec<ExprId>)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if hir.kind == FileKind::Declaration || self.files.module(file).is_opaque() || self.is_untyped_file(file) {
+            return Vec::new();
+        }
+        let rank = |by: RunBy| match by {
+            RunBy::Module => (0, 0),
+            RunBy::Function(func) => (1, func.0),
+            RunBy::ConstructorOf(class) => (2, class.0),
+        };
+        let mut all: Vec<(RunBy, ExprId)> = (0..hir.exprs.len() as u32).map(ExprId).map(|e| (self.code_evaluating(file, bound.expr_parent[e.idx()]), e)).collect();
+        all.sort_by_key(|&(by, _)| rank(by));
+        all.chunk_by(|one, other| one.0 == other.0).map(|group| (group[0].0, group.iter().map(|it| it.1).collect())).collect()
+    }
+
+    pub fn note_escapes_of(&mut self, file: FileId, expressions: &[ExprId]) {
+        self.aot.escape_closure = State::default();
+        for &e in expressions {
+            self.note_escape_of(file, e);
         }
     }
 
@@ -290,6 +343,12 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         self.note_alteration_by(file, e);
+        self.note_method_as_value(file, e, parent);
+        self.note_what_instanceof_asks(file, e);
+        if self.gives_its_prototype_away(file, e, parent) {
+            let shown = self.type_shown_by(file, e, 0);
+            self.note_what_is_let_out(shown, None);
+        }
         let entered = self.place_entered_by(file, e, parent);
         match entered {
             Entered::Nowhere => {}
@@ -306,11 +365,230 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let own = self.type_of_expr(file, e);
+        self.note_what_enters_a_place_that_says_nothing(own, if let Entered::Typed(target) = entered { Some(target) } else { None });
+        let is_handed_over = matches!(parent, Parent::Expr(around) if matches!(self.hir(file)[around].kind, ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) | ExprKind::Dot { .. } | ExprKind::Index { .. }));
+        if is_handed_over && matches!(entered, Entered::Untyped) && !self.is_this_of_a_method_of_its_class(file, e, parent) {
+            let shown = self.type_shown_by(file, e, 0);
+            self.note_what_is_let_out(shown, None);
+            self.note_what_a_function_takes(file, e, shown);
+        }
+        if let Entered::Typed(target) = entered
+            && self.says_nothing(own)
+            && self.origin_of_data(file, e).is_some()
+        {
+            self.note_what_is_let_out(target, None);
+            self.note_what_a_stranger_may_enter(target, false);
+        }
+        if let Entered::Typed(target) = entered
+            && !self.says_nothing(own)
+            && self.parts(target).iter().any(|&part| self.is_type_of_instances(part) || matches!(*self.data(part), TypeData::TypeParam(..)))
+            && self.is_predicted(file, e)
+        {
+            self.note_what_a_stranger_may_enter(target, true);
+        }
         self.note_type_arguments_in(own);
         if let Entered::Typed(target) = entered {
             self.note_type_arguments_in(target);
             self.note_flow(own, target);
+            self.note_instances_entering_views(own, target);
         }
+    }
+
+    fn note_what_instanceof_asks(&mut self, file: FileId, e: ExprId) {
+        let ExprKind::Binary { op: BinOp::Instanceof, left, right } = self.hir(file)[e].kind else { return };
+        let asked = self.type_of_expr(file, left);
+        let asked = self.non_nullable(asked);
+        if self.parts(asked).iter().all(|&part| self.is_type_of_instances(part)) {
+            return;
+        }
+        let class = self.type_of_expr(file, right);
+        let signatures: Vec<SigId> = self.signatures(class, true).iter().copied().collect();
+        for signature in signatures {
+            let made = self.sig_return(signature);
+            self.note_what_a_stranger_may_enter(made, true);
+        }
+    }
+
+    fn note_what_a_function_takes(&mut self, file: FileId, e: ExprId, shown: TypeId) {
+        let is_tested_at_the_entry = matches!(self.hir(file)[e].kind, ExprKind::Fn(func) if self.has_second_body(file, func));
+        let mut seen: FxHashSet<TypeId> = FxHashSet::default();
+        for part in self.parts(shown).to_vec() {
+            let signatures: Vec<SigId> = self.signatures(part, false).iter().copied().collect();
+            for signature in signatures {
+                let taken: Vec<TypeId> = self.sig_params(signature).iter().map(|parameter| parameter.ty).collect();
+                for ty in taken {
+                    self.note_what_enters_within(ty, 0, is_tested_at_the_entry, &mut seen);
+                }
+            }
+        }
+    }
+
+    fn note_what_enters_within(&mut self, ty: TypeId, depth: u32, is_tested: bool, seen: &mut FxHashSet<TypeId>) {
+        if depth > 3 || (!is_tested && !seen.insert(ty)) {
+            return;
+        }
+        if !is_tested {
+            self.note_what_a_stranger_may_enter(ty, true);
+        }
+        for part in self.parts(ty).to_vec() {
+            if self.is_type_of_instances(part) {
+                continue;
+            }
+            if let TypeData::Ref { .. } = *self.data(part) {
+                for argument in self.type_arguments(part).to_vec() {
+                    self.note_what_enters_within(argument, depth + 1, false, seen);
+                }
+            } else if self.is_object_type(part) && self.signatures(part, false).is_empty() {
+                let Some(members) = self.members(part) else { continue };
+                for prop in members.shape().props.iter() {
+                    let held = self.type_of_prop(prop, members.mapper);
+                    self.note_what_enters_within(held, depth + 1, false, seen);
+                }
+            }
+        }
+    }
+
+    fn gives_its_prototype_away(&mut self, file: FileId, e: ExprId, parent: Parent) -> bool {
+        let hir = self.hir(file);
+        let Parent::Expr(around) = parent else { return false };
+        let (ExprKind::Call(call) | ExprKind::New(call)) = hir[around].kind else { return false };
+        let callee = hir[call].callee;
+        if callee == e {
+            return false;
+        }
+        match hir[callee].kind {
+            ExprKind::Dot { obj, name, .. } => match self.atoms().bytes(name) {
+                b"create" => self.names_global_object(file, obj, b"Object"),
+                b"construct" => self.names_global_object(file, obj, b"Reflect"),
+                b"getPrototypeOf" | b"setPrototypeOf" => self.names_global_object(file, obj, b"Object") || self.names_global_object(file, obj, b"Reflect"),
+                _ => false,
+            },
+            ExprKind::Ident(_) => matches!(hir[around].kind, ExprKind::New(_)) && self.names_global_object(file, callee, b"Proxy"),
+            _ => false,
+        }
+    }
+
+    fn type_shown_by(&mut self, file: FileId, e: ExprId, depth: u32) -> TypeId {
+        let own = self.type_of_expr(file, e);
+        if !self.says_nothing(own) || depth > 8 {
+            return own;
+        }
+        match self.hir(file)[e].kind {
+            ExprKind::As { expr, .. } | ExprKind::NonNull(expr) | ExprKind::Satisfies { expr, .. } => self.type_shown_by(file, expr, depth + 1),
+            ExprKind::Ident(name) => {
+                let Some(sym) = self.symbol_of_identifier(file, e, name) else { return own };
+                let Some((of, Decl::Var(pat))) = self.files().value_declaration(sym) else { return own };
+                let (hir, bound) = (self.hir(of), self.bound(of));
+                let crate::bind::PatParent::Var(d) = bound.pat_parent[pat.idx()] else { return own };
+                if hir[d].pat != pat || hir[d].init.is_none() || !bound.assignments_to(bound.pat_symbol[pat.idx()]).is_empty() {
+                    return own;
+                }
+                self.type_shown_by(of, hir[d].init, depth + 1)
+            }
+            _ => own,
+        }
+    }
+
+    fn note_method_as_value(&mut self, file: FileId, e: ExprId, parent: Parent) {
+        let hir = self.hir(file);
+        let ExprKind::Dot { obj, name, .. } = hir[e].kind else { return };
+        if matches!(hir[obj].kind, ExprKind::Super) {
+            return;
+        }
+        let bound = self.bound(file);
+        let (mut at, mut parent) = (e, parent);
+        while let Parent::Expr(around) = parent
+            && matches!(hir[around].kind, ExprKind::NonNull(_) | ExprKind::As { .. } | ExprKind::Satisfies { .. })
+        {
+            (at, parent) = (around, bound.expr_parent[around.idx()]);
+        }
+        let mut bound_to = None;
+        let is_kept = match parent {
+            Parent::Expr(around) => match hir[around].kind {
+                ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => hir[call].callee == at,
+                ExprKind::Assign { op: None | Some(BinOp::And), target, .. } => target == at,
+                ExprKind::Unary { .. } => true,
+                ExprKind::Cond { test, .. } => test == at,
+                ExprKind::Binary { op: BinOp::And, left, .. } => left == at,
+                ExprKind::Binary { op: BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq, .. } => true,
+                ExprKind::Binary { op: BinOp::Instanceof, right, .. } => right == at,
+                ExprKind::Dot { obj: function, name: asked, .. } if function == at => match self.atoms().bytes(asked) {
+                    b"name" | b"length" => true,
+                    b"bind" | b"call" | b"apply" => {
+                        if let Parent::Expr(user) = bound.expr_parent[around.idx()]
+                            && let ExprKind::Call(call) = hir[user].kind
+                            && hir[call].callee == around
+                        {
+                            bound_to = hir.ids(hir[call].args).next();
+                        }
+                        false
+                    }
+                    _ => false,
+                },
+                _ => false,
+            },
+            Parent::Stmt(stmt) if stmt.is_some() => match hir[stmt].kind {
+                StmtKind::Expr(_) => true,
+                StmtKind::If { test, .. } | StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } | StmtKind::For { test, .. } => test == at,
+                _ => false,
+            },
+            _ => false,
+        };
+        if is_kept {
+            return;
+        }
+        let given = bound_to.map(|to| self.type_given_as_this(file, to));
+        let receiver = self.type_of_expr(file, obj);
+        let receiver = self.non_nullable(receiver);
+        for part in self.parts(receiver).to_vec() {
+            if !self.is_type_of_instances(part) || !self.members(part).is_some_and(|members| members.resolved.prop(name).is_some_and(|prop| prop.flags.contains(crate::types::PropFlags::METHOD))) {
+                continue;
+            }
+            let is_bound_to_its_like = given.is_some_and(|given| self.is_object_of_class(given, part));
+            if !is_bound_to_its_like {
+                self.note_what_is_let_out(part, None);
+            }
+        }
+    }
+
+    fn type_given_as_this(&mut self, file: FileId, mut to: ExprId) -> TypeId {
+        let hir = self.hir(file);
+        while let ExprKind::NonNull(inner) | ExprKind::As { expr: inner, .. } | ExprKind::Satisfies { expr: inner, .. } = hir[to].kind {
+            to = inner;
+        }
+        if matches!(hir[to].kind, ExprKind::Spread(_)) {
+            return TypeId::UNKNOWN;
+        }
+        let given = self.type_of_expr(file, to);
+        if self.is_instantiable(given) { self.base_constraint(given) } else { given }
+    }
+
+    fn is_object_of_class(&mut self, given: TypeId, class: TypeId) -> bool {
+        self.parts(given).to_vec().into_iter().all(|of| self.is_type_of_instances(of)) && self.is_assignable(given, class)
+    }
+
+    fn is_this_of_a_method_of_its_class(&mut self, file: FileId, e: ExprId, parent: Parent) -> bool {
+        let hir = self.hir(file);
+        let Parent::Expr(user) = parent else { return false };
+        let ExprKind::Call(call) = hir[user].kind else { return false };
+        let ExprKind::Dot { obj: mut function, name: asked, .. } = hir[hir[call].callee].kind else { return false };
+        if !matches!(self.atoms().bytes(asked), b"bind" | b"call" | b"apply") || hir.ids(hir[call].args).next() != Some(e) {
+            return false;
+        }
+        while let ExprKind::NonNull(inner) | ExprKind::As { expr: inner, .. } | ExprKind::Satisfies { expr: inner, .. } = hir[function].kind {
+            function = inner;
+        }
+        let ExprKind::Dot { obj, name, .. } = hir[function].kind else { return false };
+        let given = self.type_given_as_this(file, e);
+        let receiver = self.type_of_expr(file, obj);
+        let receiver = self.non_nullable(receiver);
+        let parts = self.parts(receiver).to_vec();
+        !parts.is_empty()
+            && parts.into_iter().all(|part| {
+                self.is_type_of_instances(part)
+                    && self.members(part).is_some_and(|members| members.resolved.prop(name).is_some_and(|prop| prop.flags.contains(crate::types::PropFlags::METHOD)))
+                    && self.is_object_of_class(given, part)
+            })
     }
 
     /// The type of where the value of `e` goes, as it is declared: a type parameter and not what it is bound by.

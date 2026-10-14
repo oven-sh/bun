@@ -203,7 +203,7 @@ test("ECDH.convertKey - supports different input and output encodings", () => {
   const compressedHex = testKeys["prime256v1"].compressed;
 
   // Convert from hex to buffer
-  const convertedToBuffer = ECDH.convertKey(compressedHex, "prime256v1", "hex", "buffer", "compressed");
+  const convertedToBuffer = ECDH.convertKey(compressedHex, "prime256v1", "hex", "buffer" as any, "compressed");
   expect(convertedToBuffer).toBeInstanceOf(Buffer);
   expect(convertedToBuffer.toString("hex")).toBe(compressedHex);
 
@@ -232,11 +232,13 @@ test("ECDH.convertKey - throws on invalid input", () => {
 
   // Invalid input encoding
   expect(() => {
+    // @ts-expect-error
     ECDH.convertKey("0102030405", "prime256v1", "invalid-encoding", "hex", "compressed");
   }).toThrow("Unknown encoding: invalid-encoding");
 
   // Invalid format
   expect(() => {
+    // @ts-expect-error
     ECDH.convertKey("0102030405", "prime256v1", "hex", "hex", "invalid-format");
   }).toThrow("Invalid ECDH format: invalid-format");
 });
@@ -254,7 +256,7 @@ test("ECDH - computeSecret throws when only a public key is set (no private key)
   // bob only sets a public key (a documented API) and never generates/sets a private key,
   // so the underlying key agreement cannot succeed.
   const bob = createECDH(curve);
-  bob.setPublicKey(alicePubKey);
+  (bob as any).setPublicKey(alicePubKey);
 
   // Must throw a clean error, never hand back a "secret" buffer.
   expect(() => bob.computeSecret(alicePubKey)).toThrow();
@@ -273,7 +275,7 @@ test.each([
   [
     "the main realm",
     () =>
-      class MyECDH extends ECDH {
+      class MyECDH extends (ECDH as unknown as new (curve: string) => ECDH) {
         publicKeyHex() {
           return this.getPublicKey("hex");
         }

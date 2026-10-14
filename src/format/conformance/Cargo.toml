@@ -1,0 +1,16 @@
+[package]
+name = "bun_format_conformance"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_format.workspace = true
+bun_core.workspace = true
+bun_sys.workspace = true
+bstr.workspace = true
+
+[lints]
+workspace = true

@@ -66,12 +66,14 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         kind,
         has_module_syntax,
         is_js,
+        is_flow: _,
         check_directive,
         is_module_by_decree,
         has_errors,
         ran_out_of_stack: _,
         decorators,
         legacy_decorators,
+        may_bind_a_parameter_twice: _,
         diagnostics,
         syntax_errors,
         error_pos: _,
@@ -83,6 +85,8 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         body,
         references,
         comment_directives,
+        comments: _,
+        mentioned: _,
         with_bodies,
         body_starts: _,
         after_skipped,
@@ -90,6 +94,7 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         specifier_uses,
         deferred_import_calls,
         import_call_type_args: _,
+        folded_specifiers: _,
         import_attributes,
         specifier_expressions,
         exports_from_expressions: _,
@@ -142,8 +147,6 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         bases: _,
         lazy: _,
         keyword_identifier_positions: _,
-        fn_nodes: _,
-        class_nodes: _,
     } = file;
     let mut d = Dump {
         file,
@@ -685,7 +688,6 @@ impl Dump<'_, '_> {
             close_pos,
             chain,
             template,
-            can_be_unwrapped_if_unused: _,
         } = node!(self, depth, label, calls, id);
         put!(
             self,

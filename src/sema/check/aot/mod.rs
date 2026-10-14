@@ -37,22 +37,130 @@ pub use identity::Identity;
 pub use int32_fields::{Contrary, FlowNode, FlowSource, Int32Verdict, NumberFlow, RunBy, expected_int32};
 pub use javascript::CodeOfImport;
 pub use kinds::kind;
-pub use flows::{Answer, BuiltIn, Candidate, Literal, Membership, Noted, OriginOfData, Place, Question, Reach, WhyForeign};
+pub use flows::{Answer, BuiltIn, Candidate, GaveUp, Literal, Meeting, Membership, Noted, OriginOfData, Place, Question, Reach, Share, WhyForeign};
 pub use subtypes::{Cause, FieldTypes, Sizes, Subtypes};
 pub use storage::{Evaluates, Primitive, Recovery, ReferenceRead, Storage};
-pub use trust::Claim;
+pub use trust::{Claim, is_builtin_of_the_engine, is_locked_global_of_the_engine};
 
-use super::Checker;
+use super::{Checker, Program};
 use super::relate::Relation;
 use crate::atom::known;
+use crate::bind::Parent;
 use crate::hir::ExprsByKind;
 use crate::local::MaybeLocal;
 use crate::program::FileId;
 use crate::types::{TypeData, TypeId};
-use std::sync::OnceLock;
+use crate::util::{InParallel, for_each_mut};
+
+const DEEPEST_NEST_OF_A_TASK: u32 = 1000;
+const STACK_OF_A_LEVEL: usize = 16 << 10;
+const MOST_STACK_FOR_A_NEST: usize = 2 << 30;
+
+fn longest_chain(parents: &[Parent], above: impl Fn(Parent) -> Option<usize>) -> u32 {
+    if parents.len() <= DEEPEST_NEST_OF_A_TASK as usize / 2 {
+        return 0;
+    }
+    let mut lengths = vec![0u32; parents.len()];
+    let (mut path, mut longest): (Vec<usize>, u32) = (Vec::new(), 0);
+    for node in 0..parents.len() {
+        let (mut at, mut length) = (Some(node), 0);
+        while let Some(on) = at {
+            if lengths[on] != 0 {
+                length = lengths[on];
+                break;
+            }
+            path.push(on);
+            at = above(parents[on]);
+        }
+        while let Some(on) = path.pop() {
+            length += 1;
+            lengths[on] = length;
+        }
+        longest = longest.max(length);
+    }
+    longest
+}
+
+impl Program<'_> {
+    pub fn stack_beyond_that_of_a_task(&self, files: &[FileId]) -> usize {
+        let deepest = files.iter().map(|&file| self.deepest_nest(file)).max().unwrap_or(0);
+        if deepest <= DEEPEST_NEST_OF_A_TASK { 0 } else { (deepest as usize * STACK_OF_A_LEVEL).min(MOST_STACK_FOR_A_NEST) }
+    }
+
+    fn deepest_nest(&self, file: FileId) -> u32 {
+        *self.aot.deepest_nests.get_or_init(self.files.modules.len(), file, || {
+            let bound = self.files.bound(file);
+            let of_expressions = longest_chain(&bound.expr_parent, |parent| if let Parent::Expr(above) = parent { above.is_some().then(|| above.idx()) } else { None });
+            let of_statements = longest_chain(&bound.stmt_parent, |parent| if let Parent::Stmt(above) = parent { above.is_some().then(|| above.idx()) } else { None });
+            of_expressions + of_statements
+        })
+    }
+}
 
 /// What `Checker::is_provably_assignable` may make before it gives up.
-const FUEL: u64 = 1 << 20;
+const FUEL: u64 = 1 << 16;
+
+thread_local! {
+    static IS_WARMING_UP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+struct OnceLock<T> {
+    made: std::sync::OnceLock<T>,
+    made_while_warming_up: std::sync::OnceLock<Box<T>>,
+}
+
+impl<T> Default for OnceLock<T> {
+    fn default() -> OnceLock<T> {
+        OnceLock::new()
+    }
+}
+
+impl<T> OnceLock<T> {
+    const fn new() -> OnceLock<T> {
+        OnceLock { made: std::sync::OnceLock::new(), made_while_warming_up: std::sync::OnceLock::new() }
+    }
+
+    fn get(&self) -> Option<&T> {
+        match self.made.get() {
+            None if IS_WARMING_UP.get() => self.made_while_warming_up.get().map(|made| &**made),
+            made => made,
+        }
+    }
+
+    fn get_or_init(&self, make: impl FnOnce() -> T) -> &T {
+        match self.made.get() {
+            Some(made) => made,
+            None if IS_WARMING_UP.get() => self.made_while_warming_up.get_or_init(|| Box::new(make())),
+            None => self.made.get_or_init(make),
+        }
+    }
+
+    fn set(&self, value: T) -> Result<(), T> {
+        match IS_WARMING_UP.get() {
+            true => self.made_while_warming_up.set(Box::new(value)).map_err(|value| *value),
+            false => self.made.set(value),
+        }
+    }
+
+    fn set_for_warming_up(&self, value: T) {
+        let _ = self.made_while_warming_up.set(Box::new(value));
+    }
+}
+
+impl<'p, 's> Checker<'p, 's> {
+    pub fn while_warming_up<R>(&mut self, work: impl FnOnce(&mut Checker<'p, 's>) -> R) -> R {
+        let kept = std::mem::take(&mut self.aot);
+        IS_WARMING_UP.set(true);
+        let result = work(self);
+        IS_WARMING_UP.set(false);
+        self.aot = kept;
+        result
+    }
+
+    pub fn is_warming_up(&self) -> bool {
+        IS_WARMING_UP.get()
+    }
+}
 
 /// A table by file. Each entry is made once, by whoever asks for it first, and is only read from then on. What is in it follows from
 /// the trees and the symbols alone, so that it does not matter who that is.
@@ -79,6 +187,7 @@ impl<T> ByFile<T> {
 pub(super) struct Shared {
     /// `exprs_by_kind_of`
     exprs_by_kind: ByFile<ExprsByKind>,
+    deepest_nests: ByFile<u32>,
     classes: classes::Shared,
     commonjs: commonjs::Shared,
     escape: escape::Shared,
@@ -113,6 +222,19 @@ impl<'p, 's> Checker<'p, 's> {
     fn exprs_by_kind_of(&self, file: FileId) -> &'p ExprsByKind {
         let program = self.p;
         program.aot.exprs_by_kind.get_or_init(program.files.modules.len(), file, || ExprsByKind::new(self.hir(file)))
+    }
+
+    pub fn in_slices<T: Sync, R: Send>(&mut self, items: &[T], size: usize, in_parallel: Option<InParallel<'_>>, work: &(dyn Fn(&mut Checker<'p, 's>, &[T]) -> R + Sync)) -> Vec<R> {
+        let Some(in_parallel) = in_parallel else { return items.chunks(size).map(|slice| work(self, slice)).collect() };
+        let program = self.p;
+        let mut slices: Vec<(&[T], Option<R>)> = items.chunks(size).map(|slice| (slice, None)).collect();
+        for_each_mut(&mut slices, in_parallel, &|(slice, result)| {
+            let mut c = program.checker();
+            c.begin_stack_budget();
+            let made = work(&mut c, slice);
+            *result = (!c.take_ran_out_of_stack() && c.times_half_of_stack_was_in_use() == 0).then_some(made);
+        });
+        slices.into_iter().map(|(slice, result)| result.unwrap_or_else(|| work(self, slice))).collect()
     }
 
     /// Of an interface that extends `Array` or `ReadonlyArray`, such as `NodeArray<T>`, and of an intersection with an array, a tuple or
@@ -169,11 +291,14 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let (cuts, fuel) = (self.cuts(), self.fuel.get());
-        self.fuel.set(fuel.min(FUEL));
+        let had_run_out_of_stack = self.ran_out_of_stack.get();
+        let most = fuel.min(FUEL);
+        self.fuel.set(most);
         let is_related = self.related(source, target, relation);
-        let burnt = fuel.min(FUEL) - self.fuel.get();
+        let burnt = most - self.fuel.get();
         self.fuel.set(if fuel == u64::MAX { fuel } else { fuel - burnt });
         if self.cuts() != cuts {
+            self.ran_out_of_stack.set(had_run_out_of_stack);
             self.aot.flows.times_not_known += 1;
             self.aot.flows.cut_short.insert((source, target, relation as u8));
             return false;

@@ -522,12 +522,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
     payload.extend_from_slice(unsafe { core::slice::from_raw_parts(bytes.as_ptr(), size) });
     CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
     let mut aot_image_size = 0usize;
-    let aot_image_bytes = unsafe { Bun__BytecodeLinkEncoder__aotImage(&raw mut aot_image_size) };
-    let aot_image = if aot_image_size == 0 {
-        Vec::new()
-    } else {
-        unsafe { core::slice::from_raw_parts(aot_image_bytes, aot_image_size) }.to_vec()
-    };
+    unsafe { Bun__BytecodeLinkEncoder__aotImage(&raw mut aot_image_size) };
     Bun__BytecodeLinkEncoder__freeAOTImage();
     Some(bun_bundler::bytecode_order::LinkedPayload {
         payload,
@@ -536,7 +531,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_finish(
         named_hot_functions,
         placed_hot_functions,
         functions_without_name,
-        aot_image,
+        has_aot_image: aot_image_size != 0,
     })
 }
 
@@ -580,6 +575,7 @@ pub(crate) fn __bun_jsc_build_program_data(
             strings: *const u8,
             strings_size: usize,
             ctx: *mut core::ffi::c_void,
+            reserve: extern "C" fn(*mut core::ffi::c_void, usize),
             append: extern "C" fn(*mut core::ffi::c_void, *const u8, usize),
             find_ctx: *mut core::ffi::c_void,
             find: Find,
@@ -608,6 +604,9 @@ pub(crate) fn __bun_jsc_build_program_data(
         }
         true
     }
+    extern "C" fn reserve(ctx: *mut core::ffi::c_void, size: usize) {
+        unsafe { (*ctx.cast::<Vec<u8>>()).reserve_exact(size) };
+    }
     extern "C" fn append(ctx: *mut core::ffi::c_void, bytes: *const u8, size: usize) {
         if size == 0 {
             return;
@@ -622,6 +621,7 @@ pub(crate) fn __bun_jsc_build_program_data(
             strings.as_ptr(),
             strings.len(),
             (&raw mut out).cast(),
+            reserve,
             append,
             core::ptr::from_ref(&original_position).cast_mut().cast(),
             find,

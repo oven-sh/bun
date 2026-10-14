@@ -9,7 +9,8 @@
 use bun_builtin_syntax::{Archive, Reason, Trigger};
 use bun_resolve_builtins::HardcodedModule::{Alias, Cfg};
 use bun_sema::atom::{Atom, Interner, known};
-use bun_sema::hir::{BinOp, ExprId, ExprKind, File, SpecifierKind, UnOp};
+use bun_sema::bind::Decl;
+use bun_sema::hir::{BinOp, ExprId, ExprKind, FnBody, SpecifierKind, UnOp};
 use bun_sema::program::Module;
 use bun_sema::util::{FxHashMap, FxHashSet};
 
@@ -95,7 +96,18 @@ impl Scan<'_, '_> {
         GLOBALS.iter().position(|global| global.1.contains(&text))
     }
 
-    fn file(&mut self, hir: &File<'_>) {
+    fn file(&mut self, module: &Module<'_>) {
+        let hir = &module.hir;
+        let is_free = |e: ExprId| {
+            let symbol = module.bound.expr_symbol[e.idx()];
+            symbol.is_none()
+                || !module.bound.symbols[symbol.idx()].decls.iter().any(|&decl| match decl {
+                    Decl::Fn(f) => !matches!(hir[f].body, FnBody::None),
+                    Decl::Var(_) | Decl::Class(_) | Decl::Module(_) | Decl::Enum(_) => !hir.is_ambient(hir.node(decl)),
+                    Decl::Interface(_) | Decl::Alias(_) | Decl::TypeParam(_) => false,
+                    _ => true,
+                })
+        };
         // By local name: the global that it is another name of.
         let mut aliases: Vec<(Atom, usize)> = Vec::new();
         for import in hir.imports.iter().filter(|import| !import.type_only) {
@@ -134,11 +146,13 @@ impl Scan<'_, '_> {
                 _ => {}
             }
         }
-        let global_named = |name: Atom| self.globals.iter().position(|&global| global == Some(name)).or_else(|| aliases.iter().find(|alias| alias.0 == name).map(|alias| alias.1));
         let global_at = |e: ExprId| match hir[e].kind {
-            ExprKind::Ident(name) => global_named(name),
+            ExprKind::Ident(name) => match self.globals.iter().position(|&global| global == Some(name)) {
+                Some(global) if is_free(e) => Some(global),
+                _ => aliases.iter().find(|alias| alias.0 == name).map(|alias| alias.1),
+            },
             ExprKind::Dot { obj, name, .. } => match hir[obj].kind {
-                ExprKind::Ident(object) if self.global_objects.contains(&object) => self.globals.iter().position(|&global| global == Some(name)),
+                ExprKind::Ident(object) if self.global_objects.contains(&object) && is_free(obj) => self.globals.iter().position(|&global| global == Some(name)),
                 _ => None,
             },
             _ => None,
@@ -183,9 +197,9 @@ impl Scan<'_, '_> {
         let is_one_of = |name: Atom, names: &[&[u8]]| names.contains(&self.atoms.bytes(name));
         // The global variable that the expression names: `eval`, `globalThis.eval`.
         let variable_at = |e: ExprId| match hir[e].kind {
-            ExprKind::Ident(name) => Some(name),
+            ExprKind::Ident(name) if (matches!(name, known::require | known::module | known::eval | known::Function) || is(name, b"Worker") || is(name, b"ShadowRealm")) && is_free(e) => Some(name),
             ExprKind::Dot { obj, name, .. } => match hir[asserted(obj)].kind {
-                ExprKind::Ident(object) if self.global_objects.contains(&object) => Some(name),
+                ExprKind::Ident(object) if self.global_objects.contains(&object) && is_free(asserted(obj)) => Some(name),
                 _ => None,
             },
             _ => None,
@@ -252,7 +266,7 @@ impl Scan<'_, '_> {
             let found = match expr.kind {
                 ExprKind::ImportCall { args } if !matches!(hir[hir.id_at(args, 0)].kind, ExprKind::String(_)) => Some("import() of a name that is computed"),
                 ExprKind::ImportMeta => Some("import.meta"),
-                ExprKind::Ident(object) if self.global_objects.contains(&object) => {
+                ExprKind::Ident(object) if self.global_objects.contains(&object) && is_free(e) => {
                     hands_on_global_object = true;
                     Some("the global object")
                 }
@@ -301,14 +315,14 @@ impl Scan<'_, '_> {
     }
 }
 
-fn looked_through<'a, 's>(empty: &(dyn Fn() -> Scan<'a, 's> + Sync), files: &[&File<'_>], in_parallel: crate::InParallel<'_>) -> Scan<'a, 's> {
+fn looked_through<'a, 's>(empty: &(dyn Fn() -> Scan<'a, 's> + Sync), files: &[&Module<'_>], in_parallel: crate::InParallel<'_>) -> Scan<'a, 's> {
     const FILES_OF_A_TASK: usize = 64;
-    let slices: Vec<&[&File<'_>]> = files.chunks(FILES_OF_A_TASK).collect();
+    let slices: Vec<&[&Module<'_>]> = files.chunks(FILES_OF_A_TASK).collect();
     let found: Vec<std::sync::OnceLock<Scan<'a, 's>>> = slices.iter().map(|_| std::sync::OnceLock::new()).collect();
     in_parallel(slices.len(), &|slice| {
         let mut scan = empty();
-        for hir in slices[slice] {
-            scan.file(hir);
+        for module in slices[slice] {
+            scan.file(module);
         }
         _ = found[slice].set(scan);
     });
@@ -334,7 +348,7 @@ pub(crate) fn find(loaded: &[Option<Module<'_>>], atoms: &Interner<'_>, is_compi
         hands_on_global_object: false,
         listens_for_messages: false,
     };
-    let files: Vec<&File<'_>> = loaded.iter().zip(is_compiled).filter(|it| *it.1).filter_map(|it| it.0.as_ref()).map(|module| &module.hir).collect();
+    let files: Vec<&Module<'_>> = loaded.iter().zip(is_compiled).filter(|it| *it.1).filter_map(|it| it.0.as_ref()).collect();
     let scan = looked_through(&empty, &files, in_parallel);
     let mut roots: Vec<u32> = Vec::new();
     let mut why: FxHashMap<u32, Why> = FxHashMap::default();

@@ -430,7 +430,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
 
 /// Local shim for `@tagName(loader)` — `bun_options_types::schema::api::Loader`
 /// has no `From<Loader> for &str` impl upstream.
-fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static str {
+pub(crate) fn api_loader_tag_name(l: bun_options_types::schema::api::Loader) -> &'static str {
     use bun_options_types::schema::api::Loader as L;
     match l {
         L::jsx => "jsx",

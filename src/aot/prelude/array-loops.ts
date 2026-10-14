@@ -103,7 +103,7 @@ export function Array$map<T, U>(a: T[], f: unknown, thisArg: unknown): U[] {
         const has: boolean = $hasIndex(a, k);
         if (has) out[k] = $callNoInline<U>(f, thisArg, $getIndex<T>(a, k), k, a);
     }
-    return out;
+    return $truncateNewArray<U>(out, n);
 }
 
 export function Array$filter<T>(a: T[], f: unknown, thisArg: unknown): T[] {
@@ -725,6 +725,15 @@ export function Array$sort<T>(a: T[], f: unknown): T[] {
             }
         }
         let k = 0;
+        if (count > 0) {
+            const first: number = $getDoubleIndex(from, 0);
+            const isFirstStored: boolean = $tryPutIndex(a, 0, first);
+            if (!isFirstStored) a[0] = first as unknown as T;
+            k = 1;
+            if (isDoubleArray(a) && count <= a.length) {
+                for (; k < count; k++) $putDoubleIndex(a, k, $getDoubleIndex(from, k));
+            }
+        }
         for (; k < count; k++) {
             const x: number = $getDoubleIndex(from, k);
             const isStored: boolean = $tryPutIndex(a, k, x);
@@ -800,6 +809,15 @@ export function Array$sort<T>(a: T[], f: unknown): T[] {
             }
         }
         let k = 0;
+        if (count > 0) {
+            const first = $getContiguousIndex<T>(from, 0);
+            const isFirstStored: boolean = $tryPutIndex(a, 0, first);
+            if (!isFirstStored) a[0] = first;
+            k = 1;
+            if (isContiguousArray(a) && count <= a.length) {
+                for (; k < count; k++) $putContiguousIndex(a, k, $getContiguousIndex<T>(from, k));
+            }
+        }
         for (; k < count; k++) {
             const x = $getContiguousIndex<T>(from, k);
             const isStored: boolean = $tryPutIndex(a, k, x);
@@ -876,7 +894,7 @@ export function Array$toSorted<T>(a: T[], f: unknown): T[] {
                 to = swapped;
             }
         }
-        return from as unknown as T[];
+        return $truncateNewArray<T>(from as unknown as T[], n);
     }
     if (!isContiguousArray(a)) return (a as any).toSorted(f, undefined);
         let from: T[] = $newContiguousArray<T>(n);
@@ -945,7 +963,7 @@ export function Array$toSorted<T>(a: T[], f: unknown): T[] {
             }
         }
         for (let k = count; k < n; k++) $putContiguousIndex(from, k, undefined);
-        return from;
+        return $truncateNewArray<T>(from, n);
 }
 
 // The iteration of an array with its original structure cannot be observed: it asks for the length and then for the element, every time.
@@ -970,7 +988,7 @@ export function Array$from<T, U>(items: unknown, f: unknown, thisArg: unknown): 
             }
         }
         for (; k < n; k++) out[k] = $callNoInline<U>(f, thisArg, $getIndex<T>(items, k), k);
-        return out;
+        return $truncateNewArray<U>(out, n);
     }
     if (f === undefined || !isOriginal) return (Array as any).from(items, f, thisArg, undefined);
     const a = items as T[];

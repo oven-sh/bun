@@ -14,6 +14,7 @@ use bun_sema::bind::Parent;
 use bun_sema::check::{Recovery, kind};
 use bun_sema::hir::{self, ExprId, ExprKind};
 use bun_sema::types::TypeId;
+use std::rc::Rc;
 
 /// A type as the engine reads it, and as the checker has it, which says more: what a function returns, what a map holds.
 /// `TypeId::UNRESOLVED`: the checker has none.
@@ -187,6 +188,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             | Op::Construct { .. }
             | Op::CallMethod { .. }
             | Op::Caught
+            | Op::CaughtException
             | Op::Operation { .. }
             | Op::Yield(_)
             | Op::ExternalModule(_)
@@ -274,7 +276,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// What the text of the expression shows its value to be, whatever the types say: `Checker::kinds_yielded_by`, and the integers that
     /// are found without a type. For a file whose types nothing holds the program to. `NONE`: nothing.
-    fn ty_shown_by_text(&mut self, fx: &Fx, e: ExprId, computes: Computes) -> TyId {
+    pub(crate) fn ty_shown_by_text(&mut self, fx: &Fx, e: ExprId, computes: Computes) -> TyId {
         let kinds = self.c.kinds_yielded_by(fx.file, e);
         let described = self.ty_of_kinds(kinds);
         let integers = match computes {
@@ -292,6 +294,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// checker's type of `e`, and which integers that is, is for the checker as well. Nothing is made of the types of the operands.
     pub(crate) fn emit_arithmetic(&mut self, fx: &mut Fx, op: Op, e: ExprId, computes: Computes) -> V {
         let value = self.emit_throwing(fx, op);
+        if matches!(computes, Computes::Stored) {
+            self.note_span_of_what_is_stored(fx, value, e);
+        }
         if !fx.is_typed {
             let shown = self.ty_shown_by_text(fx, e, computes);
             if shown.is_some() {
@@ -803,7 +808,17 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if fx.b.func.prediction(value) == Prediction::None && want.id != self.out.tys.anything {
             fx.b.func.values[value.idx()].prediction = Prediction::Ty(want.id);
         }
-        self.fit(fx, value, want, Why::Cast)
+        let held = self.fit(fx, value, want, Why::Cast);
+        self.mark_cast_of_what_is_fresh(fx, held, value);
+        held
+    }
+
+    pub(crate) fn mark_cast_of_what_is_fresh(&mut self, fx: &mut Fx, held: V, value: V) {
+        if let Some(&Op::Coerce { value: of, to, why: Why::Cast }) = fx.b.func.op(held)
+            && (of == value || held == value && matches!(fx.b.func.op(of), Some(Op::NewObject | Op::Operation { .. })))
+        {
+            fx.b.func.values[held.idx()].def = crate::ir::Def::Op(Op::Coerce { value: of, to, why: Why::CastFresh });
+        }
     }
 
     /// The value of the expression `e` as the checker's type of `e`. Where the program is not held to that, or it says nothing, the value
@@ -813,9 +828,58 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// What the checker has found out about a place on the way to a read of it may no longer hold: see `reference_read_by`. Then the
     /// value is what the place is declared to hold, and the use that needs more makes sure of it: see `as_narrowed`.
     pub(crate) fn fit_to_expression(&mut self, fx: &mut Fx, value: V, e: ExprId) -> V {
+        self.note_span(fx, value, e);
+        if !fx.is_typed || !(self.c.is_read_out_of_array_by_what_the_stores_say(fx.file, e) || self.c.what_the_stores_say_of_array(fx.file, e) != 0) {
+            return self.fit_to_expression_by_its_type(fx, value, e);
+        }
+        let before = self.c.know_by_the_stores(true);
+        let held = self.fit_to_expression_by_its_type(fx, value, e);
+        self.c.know_by_the_stores(before);
+        if matches!(self.hir(fx.file)[e].kind, ExprKind::Index { .. }) {
+            self.mark_read_known_by_the_stores(fx, held);
+        }
+        held
+    }
+
+    pub(crate) fn mark_read_known_by_the_stores(&mut self, fx: &mut Fx, held: V) {
+        let anything = self.out.tys.anything;
+        if let Some(&Op::Coerce { value: read, to, why: Why::Claim }) = fx.b.func.op(held)
+            && matches!(fx.b.func.op(read), Some(Op::IterGet { .. }))
+            && fx.b.func.ty(read) == anything
+            && fx.b.func.ty(held) == to
+        {
+            fx.b.func.values[read.idx()].ty = to;
+            fx.b.func.values[held.idx()].def = crate::ir::Def::Op(Op::Coerce { value: read, to, why: Why::Upcast });
+            return self.mark_read_known_by_the_stores(fx, read);
+        }
+        let said = fx.b.func.ty(held);
+        if matches!(fx.b.func.op(held), Some(Op::ElemGet { .. } | Op::IterGet { .. })) && said.is_some() && said != anything && fx.b.func.prediction(held) == Prediction::None {
+            fx.b.func.values[held.idx()].prediction = Prediction::Stores;
+        }
+    }
+
+    fn fit_to_expression_by_its_type(&mut self, fx: &mut Fx, value: V, e: ExprId) -> V {
         // The expressions within it have been translated since `expr` said so.
         let pos = self.hir(fx.file)[e].pos;
         self.c.note_place(fx.file, pos);
+        if matches!(self.hir(fx.file)[e].kind, ExprKind::Ident(_) | ExprKind::This) {
+            fx.narrowed.remove(&value);
+        }
+        let said_by_the_operation = self.ty(fx, value);
+        if fx.is_typed
+            && said_by_the_operation.is_some()
+            && self.out.tys.get(said_by_the_operation).any_object
+            && matches!(fx.b.func.op(value), Some(Op::CallDirect { .. } | Op::Call { .. } | Op::CallMethod { .. }))
+            && let Some(made) = self.c.what_a_generic_function_may_have_made(fx.file, e)
+        {
+            let made_as = self.c.type_of_expr(fx.file, e);
+            self.c.note_what_a_generic_function_made(&made, made_as);
+            if let Some(sink) = fx.sink
+                && sink.e == e
+            {
+                self.c.note_what_a_generic_function_made(&made, sink.want.checked);
+            }
+        }
         if fx.is_typed && self.ty(fx, value) == self.out.tys.anything && self.c.is_read_from_beyond_the_layouts(fx.file, e) {
             let read_as = self.c.type_of_expr(fx.file, e);
             self.c.note_what_comes_from_beyond_the_layouts(read_as);
@@ -866,6 +930,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if fx.is_typed && (matches!(fx.b.func.op(value), Some(Op::NewObject)) && self.defines_accessor(fx, e) || self.c.yields_redefined_literal(fx.file, e)) {
             let own = self.c.type_of_expr(fx.file, e);
             fx.stays_ordinary.insert(value, own);
+            for held_as in [Some(own), Some(self.c.widened(own)), self.c.contextual_type_of_literal(fx.file, e)].into_iter().flatten() {
+                let held_as = self.ty_of(held_as);
+                let views = self.types_of_layouts_in(held_as);
+                self.c.admits_foreign(own, &views);
+            }
         }
         if let Some(sink) = fx.sink
             && sink.e == e
@@ -898,6 +967,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.note_prediction(fx, e);
                 let (predicted, supertypes) = (self.c.type_of_expr(fx.file, e), self.types_of_layouts_in(want.id));
                 self.c.admits_foreign(predicted, &supertypes);
+                for (held, held_as) in self.c.types_held_entering(predicted, want.checked) {
+                    self.note_entry_of_type(held, held_as);
+                }
             }
             if !is_handed_back {
                 self.note_cast_of_declared_result(fx, e, want.id);
@@ -988,7 +1060,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
             return self.remember_narrowing(fx, value, read.declared, want, e);
         }
+        let made = value;
         let value = self.fit(fx, value, want, why);
+        if matches!(self.hir(fx.file)[e].kind, ExprKind::Object(_)) {
+            self.mark_cast_of_what_is_fresh(fx, value, made);
+        }
         let value = self.as_written(fx, value, want);
         self.set_checked(fx, value, checked);
         // Which function a function is, its type does not say.
@@ -1027,7 +1103,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         | Op::Await(_)
                         | Op::Operation { .. }
                         | Op::IterGet { .. }
-                        | Op::Coerce { why: Why::Cast | Why::Store | Why::Flow | Why::Claim | Why::NonNull(_), .. }
+                        | Op::Coerce { why: Why::Cast | Why::CastFresh | Why::Store | Why::Flow | Why::Claim | Why::NonNull(_), .. }
                 )
             )
     }
@@ -1113,9 +1189,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if !self.c.says_nothing(checked) {
             fx.checked.insert(value, checked);
         }
+        let read = value;
         let value = if have.id == self.out.tys.anything { self.predict_expression(fx, value, e) } else { value };
         if is_narrowed {
             fx.narrowed.insert(value, want);
+        } else {
+            fx.narrowed.remove(&read);
+            fx.narrowed.remove(&value);
         }
         value
     }
@@ -1149,7 +1229,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// Whether the value of the expression is only there for its properties to be copied out of it at once: the operand of a spread in an
     /// object literal, an argument of `Object.assign` after the first, or what yields one. Nobody else ever sees it, so a literal there is
-    /// an ordinary object. The checker checks it against what the whole is checked against, which it need not be.
+    /// an ordinary object. The checker checks it against what the whole is checked against, which it need not be. Also what `Object.create` or `Object.setPrototypeOf` makes a prototype: who reads it holds the heir.
     pub(crate) fn is_only_copied_from(&mut self, fx: &Fx, e: ExprId) -> bool {
         self.c.is_only_copied_from(fx.file, e)
     }
@@ -1531,13 +1611,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// Whether every value of the one type is one of the other, so that nothing has to be tested.
     pub(crate) fn is_within(&mut self, have: Ty, want: Ty) -> bool {
         // What an array, a map or a dictionary holds enters with it, and is described by neither type.
-        for (held, held_as) in self.c.types_held_entering(have.checked, want.checked) {
-            self.note_entry_of_type(held, held_as);
+        let entering = self.c.types_held_entering(have.checked, want.checked);
+        if !entering.is_empty() {
+            self.c.go_a_level_into_what_is_held();
+            for (held, held_as) in entering {
+                self.note_entry_of_type(held, held_as);
+            }
+            self.c.come_back_a_level();
         }
         if have.id == want.id || want.id == self.out.tys.anything {
             return true;
         }
-        let (a, b) = (self.out.tys.get(have.id).clone(), self.out.tys.get(want.id).clone());
+        let (a, b) = (self.out.tys.get(have.id), self.out.tys.get(want.id));
         if a.prims & !b.prims != 0 {
             return false;
         }
@@ -1550,16 +1635,18 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if b.any_object {
             return true;
         }
-        let mut upcasts: Vec<(LayoutId, LayoutId)> = Vec::new();
-        let mut is_foreign = a.any_object || a.any_function && !b.any_function;
-        for part in &a.parts {
-            match (part, b.parts.iter().find(|other| self.is_part_within(part, other))) {
-                (&Part::Class(from), Some(&Part::Class(to))) if from != to => upcasts.push((from, to)),
-                (_, Some(_)) => {}
-                (Part::Class(_), None) => return false,
-                (_, None) => is_foreign = true,
+        let found = match self.parts_within.get(&(have.id, want.id)) {
+            Some(known) => known.clone(),
+            None => {
+                let not_known_before = self.c.times_not_known();
+                let found = self.find_parts_within(have.id, want.id);
+                if self.c.times_not_known() == not_known_before {
+                    self.parts_within.insert((have.id, want.id), found.clone());
+                }
+                found
             }
-        }
+        };
+        let Some((upcasts, is_foreign)) = found else { return false };
         // An object that is not laid out, an array, a function, what a package makes, is of a type of the program if the checker's type
         // of it is assignable to that. The layout then stands for such objects too.
         if is_foreign {
@@ -1573,10 +1660,25 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         }
         // Whoever asks leaves out a test. The checker sees to it that the members of the one layout are members of the other.
-        for (from, to) in upcasts {
+        for &(from, to) in upcasts.iter() {
             self.c.note_upcast(self.layout_types[&from], self.layout_types[&to]);
         }
         true
+    }
+
+    fn find_parts_within(&mut self, have: TyId, want: TyId) -> Option<(Rc<[(LayoutId, LayoutId)]>, bool)> {
+        let (a, b) = (self.out.tys.get(have).clone(), self.out.tys.get(want).clone());
+        let mut upcasts: Vec<(LayoutId, LayoutId)> = Vec::new();
+        let mut is_foreign = a.any_object || a.any_function && !b.any_function;
+        for part in &a.parts {
+            match (part, b.parts.iter().find(|other| self.is_part_within(part, other))) {
+                (&Part::Class(from), Some(&Part::Class(to))) if from != to => upcasts.push((from, to)),
+                (_, Some(_)) => {}
+                (Part::Class(_), None) => return None,
+                (_, None) => is_foreign = true,
+            }
+        }
+        Some((upcasts.into(), is_foreign))
     }
 
     pub(crate) fn is_type_laid_out(&mut self, checked: TypeId) -> bool {
@@ -1732,6 +1834,11 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             }
         }
         let Some(target) = self.c.type_entered_by(fx.file, e) else { return };
+        if fx.is_typed && self.c.is_predicted(fx.file, e) {
+            let described = self.ty_of(target);
+            let (predicted, supertypes) = (self.c.type_of_expr(fx.file, e), self.types_of_layouts_in(described));
+            self.c.admits_foreign(predicted, &supertypes);
+        }
         let source = self.type_of_value(fx, e);
         // A literal that is only copied from is no object.
         if source == TypeId::UNKNOWN {
@@ -1751,6 +1858,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
     }
 
+    fn note_parts_seen_as_their_view(&mut self, ty: TyId) {
+        let views: Vec<LayoutId> = self.out.tys.get(ty).parts.iter().filter_map(|part| if let &Part::Class(view) = part { Some(view) } else { None }).collect();
+        for view in views {
+            let (Some(parts), Some(&target)) = (self.parts_of_views.get(&view).cloned(), self.layout_types.get(&view)) else { continue };
+            for part in parts {
+                let Some(&source) = self.layout_types.get(&part) else { continue };
+                if self.c.is_seen_as(source, target) {
+                    self.c.note_upcast(source, target);
+                }
+            }
+        }
+    }
+
     /// Whoever calls the function without knowing it hands it anything, and the engine holds that to the types of the parameters on the
     /// way in: as `as` does, where they are written down.
     pub(crate) fn note_casts_of_arguments(&mut self, func: FuncId, only_tests: bool) {
@@ -1760,6 +1880,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let this = self.out.funcs[func.idx()].this_declared;
         if this.is_some() {
             self.note_cast(Ty::of(anything), this, Why::Store);
+            for view in self.types_of_layouts_in(this) {
+                self.c.note_untyped_inflow(view);
+            }
         }
         for k in 0..self.out.funcs[func.idx()].params.len() {
             let param = self.out.funcs[func.idx()].params[k];
@@ -1768,6 +1891,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let target = if why == Why::Cast { self.ty_of_cast_target(param) } else { param };
                 let why = if only_tests { Why::Claim } else { why };
                 self.note_cast(Ty::of(anything), target, why);
+                self.note_parts_seen_as_their_view(param);
             }
         }
     }

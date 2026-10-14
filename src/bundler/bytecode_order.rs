@@ -145,7 +145,7 @@ pub struct LinkedPayload {
     pub placed_hot_functions: u32,
     /// How many functions of modules that have names have none.
     pub functions_without_name: u32,
-    pub aot_image: Vec<u8>,
+    pub has_aot_image: bool,
 }
 
 /// `Bun::BytecodeOrderNamesRef`. A text that did not parse has no names: its functions are laid out as code no order

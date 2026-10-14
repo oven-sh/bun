@@ -430,13 +430,16 @@ JSC_DEFINE_CUSTOM_GETTER(jsRequireCacheGetter, (JSC::JSGlobalObject * globalObje
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     auto* requirer = requirerOf(JSValue::decode(thisValue));
     JSModuleGraph* graph = requirer ? requirer->moduleGraph() : nullptr;
-    if (!graph)
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!graph) {
+        Bun::noteThatRequireCacheIsRead(thisObject);
+        RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(thisObject->lazyRequireCacheObject());
+    }
     // A require() that belongs to a Bun.ModuleGraph: a view of that graph's cache.
     if (JSValue existing = graph->requireCache())
         return JSValue::encode(existing);
-    auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue cache = createRequireCacheObject(globalObject, graph->requireMap(), requirer);
     RETURN_IF_EXCEPTION(scope, {});
     graph->setRequireCache(vm, cache);
@@ -834,8 +837,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
 
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    Bun::throwIfMayNotMakeScriptFromStrings(globalObject, throwScope);
-    RETURN_IF_EXCEPTION(throwScope, {});
+    RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(globalObject, throwScope, {});
 
     String sourceString = callframe->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -1729,6 +1731,20 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
             },
             sourceOrigin,
             sourceURL));
+}
+
+JSC::JSSourceCode* sourceOfLoadedCommonJSModule(Zig::GlobalObject* globalObject, const WTF::String& key, bool ignoreESModuleAnnotation)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue entry = globalObject->requireMap()->get(globalObject, jsString(vm, key));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* moduleObject = entry ? dynamicDowncast<JSCommonJSModule>(entry) : nullptr;
+    if (!moduleObject)
+        return nullptr;
+    moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;
+    moduleObject->hasEvaluated = true;
+    return JSC::JSSourceCode::create(vm, commonJSModuleSyntheticSourceCode(Zig::toSourceOrigin(key, false), key, nullptr));
 }
 
 std::optional<JSC::SourceCode> createCommonJSModule(

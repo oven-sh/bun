@@ -14,7 +14,7 @@ use crate::hir::{
 use crate::program::{FileId, Sym};
 use crate::types::{Origin, PropFlags, PropSource, TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
-use std::sync::OnceLock;
+use super::OnceLock;
 
 #[derive(Default)]
 pub(super) struct Shared {
@@ -80,6 +80,7 @@ struct Discriminants {
 struct MutablePrototypes {
     /// All of them: it is replaced or given another prototype for a function that is not known.
     every: bool,
+    every_since: Option<super::flows::Place>,
     functions: FxHashSet<(FileId, FnId)>,
 }
 
@@ -211,6 +212,101 @@ struct FileFacts {
     tested_by_private_name: FxHashSet<ClassId>,
 }
 
+impl crate::program::Files<'_> {
+    pub fn is_decorated_member(&self, file: FileId, member: crate::hir::MemberId) -> bool {
+        let hir = self.hir(file);
+        hir.legacy_decorators && hir.decorators.iter().any(|&(owner, _)| owner == crate::hir::DecoratorOwner::Member(member))
+    }
+
+    pub fn member_decorated_by(&self, file: FileId, owner: crate::hir::DecoratorOwner) -> Option<crate::hir::MemberId> {
+        let bound = self.bound(file);
+        match owner {
+            crate::hir::DecoratorOwner::Class(_) => None,
+            crate::hir::DecoratorOwner::Member(member) => Some(member),
+            crate::hir::DecoratorOwner::Param(p) => match bound.fns.get(bound.param_fn[p.idx()].idx()).map(|func| func.owner) {
+                Some(FnOwner::Member(member)) => Some(member),
+                _ => None,
+            },
+        }
+    }
+
+    pub fn has_decorator(&self, file: FileId, class: crate::hir::ClassId) -> bool {
+        let bound = self.bound(file);
+        self.hir(file).decorators.iter().any(|&(owner, _)| match owner {
+            crate::hir::DecoratorOwner::Class(decorated) => decorated == class,
+            _ => self.member_decorated_by(file, owner).is_some_and(|member| bound.member_owner[member.idx()] == MemberOwner::Class(class)),
+        })
+    }
+
+    pub fn lowers_decorators(&self, file: FileId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if hir.decorators.is_empty() || !hir.legacy_decorators || hir.is_js {
+            return false;
+        }
+        let emits_metadata = self.options.emit_decorator_metadata;
+        hir.decorators.iter().all(|&(owner, _)| {
+            if let crate::hir::DecoratorOwner::Class(class) = owner {
+                let mut constructors = hir[class].members.iter().filter(|&member| hir[member].kind == crate::hir::MemberKind::Constructor);
+                return !emits_metadata || constructors.all(|member| self.has_plain_types(file, member));
+            }
+            let Some(member) = self.member_decorated_by(file, owner) else { return false };
+            let MemberOwner::Class(class) = bound.member_owner[member.idx()] else { return false };
+            let m = &hir[member];
+            let is_lowered = match m.kind {
+                crate::hir::MemberKind::Constructor => true,
+                crate::hir::MemberKind::Method | crate::hir::MemberKind::Getter | crate::hir::MemberKind::Setter => self.is_plain_member(file, member),
+                crate::hir::MemberKind::Property => self.is_plain_member(file, member) && (m.init.is_none() || self.calls_super_at_the_top(file, class)),
+                _ => false,
+            };
+            is_lowered && (!emits_metadata || self.has_plain_types(file, member))
+        })
+    }
+
+    fn is_plain_member(&self, file: FileId, member: crate::hir::MemberId) -> bool {
+        let m = &self.hir(file)[member];
+        matches!(m.key, crate::hir::PropKey::Name(_)) && !m.flags.intersects(crate::hir::Flags::STATIC | crate::hir::Flags::AMBIENT | crate::hir::Flags::ABSTRACT | crate::hir::Flags::ACCESSOR)
+    }
+
+    fn calls_super_at_the_top(&self, file: FileId, class: crate::hir::ClassId) -> bool {
+        let hir = self.hir(file);
+        let is_super_call = |stmt: crate::hir::StmtId| {
+            matches!(hir[stmt].kind, crate::hir::StmtKind::Expr(e) if matches!(hir[e].kind, crate::hir::ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, crate::hir::ExprKind::Super)))
+        };
+        hir[class].extends.is_none()
+            || hir[class].members.iter().filter(|&member| hir[member].kind == crate::hir::MemberKind::Constructor && hir[member].func.is_some()).all(|member| match hir[hir[member].func].body {
+                crate::hir::FnBody::Block(stmts) => hir.ids(stmts).any(is_super_call),
+                _ => true,
+            })
+    }
+
+    fn has_plain_types(&self, file: FileId, member: crate::hir::MemberId) -> bool {
+        let hir = self.hir(file);
+        let m = &hir[member];
+        let mut types = vec![m.ty];
+        if m.func.is_some() {
+            types.extend(hir[m.func].params.iter().map(|p| hir[p].ty));
+            types.push(hir[m.func].ret);
+        }
+        types.into_iter().all(|ty| self.is_plain_type(file, ty))
+    }
+
+    fn is_plain_type(&self, file: FileId, ty: crate::hir::TypeNodeId) -> bool {
+        use crate::hir::TypeNodeKind as Kind;
+        if ty.is_none() {
+            return true;
+        }
+        let hir = self.hir(file);
+        match hir[ty].kind {
+            Kind::Keyword(keyword) => keyword != crate::hir::Keyword::Intrinsic,
+            Kind::Ref { .. } | Kind::StringLit(_) | Kind::NumberLit(_) | Kind::BigIntLit { .. } | Kind::BoolLit(_) | Kind::Template { .. } => true,
+            Kind::Array(_) | Kind::Tuple(_) | Kind::Readonly(_) | Kind::Fn(_) | Kind::Object(_) | Kind::Mapped(_) | Kind::Keyof(_) | Kind::Typeof { .. } => true,
+            Kind::IndexedAccess { obj, .. } => self.is_plain_type(file, obj),
+            Kind::Union(members) | Kind::Intersection(members) => hir.ids(members).all(|member| self.is_plain_type(file, member)),
+            _ => false,
+        }
+    }
+}
+
 /// What follows from the declaration of a class and from the facts of the class it extends.
 #[derive(Copy, Clone, Debug)]
 pub struct ClassFacts {
@@ -328,7 +424,7 @@ impl<'p, 's> Checker<'p, 's> {
         for &file in &code {
             let (hir, bound, index) = (self.hir(file), self.bound(file), self.exprs_by_kind_of(file));
             let is_object_of_access = |e: ExprId| matches!(bound.expr_parent[e.idx()], Parent::Expr(parent) if matches!(hir[parent].kind, ExprKind::Dot { obj, chain: Chain::No, .. } if obj == e));
-            is_module_object_made |= !index.of(ExprTag::ImportCall).is_empty() || index.of(ExprTag::Call).iter().any(|&e| crate::bind::required_specifier(hir, e).is_some());
+            is_module_object_made |= !index.of(ExprTag::ImportCall).is_empty() || index.of(ExprTag::Call).iter().any(|&e| crate::bind::required_specifier(hir, e).is_some() || !hir.specifiers_of_folded_require(e).is_empty());
             for &e in index.of(ExprTag::Ident) {
                 let Some(symbol) = bound.symbols.get(bound.expr_symbol[e.idx()].idx()) else { continue };
                 if !symbol.flags.intersects(SymFlags::VALUE_MODULE | SymFlags::ALIAS) || bound.is_in_type_query(e) {
@@ -657,7 +753,7 @@ impl<'p, 's> Checker<'p, 's> {
         let constructor = self.constructor_of_class(file, class);
         let is_initialized_in_order = !constructor.is_some_and(|func| found.with_uninitialized_this.contains(&func));
         let is_evaluated_once = self.is_evaluated_once(file, bound.class_owner[class.idx()].to_parent()) && !self.is_class_named_by_computed_key(file, class);
-        let is_laid_out = is_evaluated_once && !self.is_untyped_file(file) && (c.extends.is_none() || base.is_some_and(|base| base.is_laid_out) && is_initialized_in_order) && {
+        let is_laid_out = is_evaluated_once && !self.is_untyped_file(file) && !self.files().has_decorator(file, class) && (c.extends.is_none() || base.is_some_and(|base| base.is_laid_out) && is_initialized_in_order) && {
             let instances = self.type_of_instances(file, class);
             !self.is_redefined_somewhere(instances)
         } && {
@@ -771,6 +867,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         self.files().options.specified_use_define_for_class_fields == Some(false)
             && !hir.is_js
+            && !self.is_held_to_the_fixed_set(file)
             && !hir[class].members.iter().any(|member| {
                 let m = &hir[member];
                 m.kind == MemberKind::Property && !m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT) && matches!(m.key, PropKey::Computed(_))
@@ -784,7 +881,7 @@ impl<'p, 's> Checker<'p, 's> {
             && m.init.is_none()
             && !m.flags.intersects(Flags::STATIC | Flags::ACCESSOR)
             && matches!(m.key, PropKey::Name(_))
-            && matches!(self.bound(file).member_owner[member.idx()], MemberOwner::Class(class) if self.assigns_fields(file, class))
+            && matches!(self.bound(file).member_owner[member.idx()], MemberOwner::Class(class) if self.assigns_fields(file, class) || self.files().is_decorated_member(file, member))
     }
 
     /// Whether every declaration of the member is one that no code comes of: in an interface, or `declare x: T` in a class.
@@ -862,7 +959,8 @@ impl<'p, 's> Checker<'p, 's> {
                 let is_assigned = self.files.flags(sym).contains(SymFlags::ASSIGNED)
                     || bound.symbols[local.idx()].flags.contains(SymFlags::ASSIGNED)
                     || !bound.assignments_to(local).is_empty()
-                    || self.is_stored_through_assertions(file, local);
+                    || self.is_stored_through_assertions(file, local)
+                    || self.files.has_decorator(file, class);
                 // What a script declares at its top level, every file sees.
                 let is_seen_by_its_file_only = self.files.module(file).is_module() || self.enclosing_fn(file, bound.class_owner[class.idx()].to_parent()).is_some();
                 (!hir[class].flags.contains(Flags::AMBIENT) && !is_assigned && is_seen_by_its_file_only).then_some((file, class))
@@ -964,13 +1062,19 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// For each of `candidates`: whether its class object may be what one of the classes `extending` extends, going by the type of what
     /// stands after `extends` there. As in `function mixin<T extends new (..) => object>(Base: T) { return class extends Base {} }`, where
-    /// it is not known which class that is. A type that says nothing, as `any`, is taken for none of them.
+    /// it is not known which class that is. A type that says nothing, as `any`, may be any of them: in a module of the runtime, any of the runtime's.
     pub fn may_be_extended_by_value(&mut self, extending: &[(FileId, ClassId)], candidates: &[(FileId, ClassId)]) -> Vec<bool> {
         let mut extended: Vec<TypeId> = Vec::new();
+        let (mut is_anything_extended, mut is_anything_extended_in_the_runtime) = (false, false);
         for &(file, class) in extending {
             let mut ty = self.type_of_expr(file, self.hir(file)[class].extends);
             if self.is_instantiable(ty) {
                 ty = self.base_constraint(ty);
+            }
+            if self.files.module(file).builtin.is_some() {
+                is_anything_extended_in_the_runtime |= self.says_nothing(ty);
+            } else {
+                is_anything_extended |= self.says_nothing(ty);
             }
             if !self.says_nothing(ty) && !extended.contains(&ty) {
                 extended.push(ty);
@@ -980,7 +1084,7 @@ impl<'p, 's> Checker<'p, 's> {
             .map(|&(file, class)| {
                 let symbol = self.files.sym(file, self.bound(file).class_symbol[class.idx()]);
                 let class_object = self.type_of_symbol(symbol);
-                extended.iter().any(|&extended| self.is_assignable(class_object, extended))
+                is_anything_extended || is_anything_extended_in_the_runtime && self.files.module(file).builtin.is_some() || extended.iter().any(|&extended| self.is_assignable(class_object, extended))
             })
             .collect()
     }
@@ -1017,6 +1121,11 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             let extended = self.type_of_expr(file, c.extends);
+            if let ExprKind::Ident(name) = hir[c.extends].kind
+                && self.symbol_of_identifier(file, c.extends, name).is_none()
+            {
+                out.extend([name, self.atoms().intern(b"Error")]);
+            }
             for signature in self.signatures(extended, true).into_vec() {
                 let made = self.sig_return(signature);
                 self.add_global_classes_of(made, &mut seen, out);
@@ -1060,9 +1169,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     // ───────────────────────────── function prototypes ─────────────────────────────
 
-    /// Appends the names of the properties that the file defines on a `prototype` object, in source order. With `P` written as
-    /// `E.prototype` or `E["prototype"]`, whatever `E` is, with or without assertions around it:
-    ///
     /// * `P.name = ..` and `P["name"] = ..`, compound assignments too;
     /// * `Object.defineProperty(P, "name", ..)`, `Reflect.defineProperty(P, "name", ..)`, `Reflect.set(P, "name", ..)`;
     /// * the keys that are written down in the object literals of `Object.defineProperties(P, { .. })` and `Object.assign(P, { .. }, ..)`.
@@ -1072,14 +1178,35 @@ impl<'p, 's> Checker<'p, 's> {
     /// on the `prototype` of a function that initializes records, unless the name is listed. For a name that is listed, compiled code
     /// looks at the prototype where such a record lacks the field.
     pub fn prototype_property_names_in(&mut self, file: FileId, out: &mut Vec<Atom>) {
+        self.prototype_property_names_by_function_in(file, out, &mut [0; 3]);
+    }
+
+    pub(super) fn explain_prototype_property_names(&mut self) -> ([usize; 3], usize) {
+        let (mut names, mut places) = (Vec::new(), [0; 3]);
+        for file in self.files_declaring_classes() {
+            self.prototype_property_names_by_function_in(file, &mut names, &mut places);
+        }
+        (places, self.prototype_property_names().len())
+    }
+
+    fn prototype_property_names_by_function_in(&mut self, file: FileId, out: &mut Vec<Atom>, places: &mut [usize; 3]) {
         let (hir, bound) = (self.hir(file), self.bound(file));
         if matches!(hir.kind, FileKind::Declaration | FileKind::Json) || bound.ran_out_of_stack {
             return;
         }
-        let is_prototype = |e: ExprId| match hir[skip_assertions(hir, e)].kind {
-            ExprKind::Dot { name, .. } => name == known::prototype,
-            ExprKind::Index { index, .. } => matches!(hir[index].kind, ExprKind::String(name) if name == known::prototype),
-            _ => false,
+        let mut is_prototype = |c: &Checker<'p, 's>, e: ExprId| {
+            let of = match hir[skip_assertions(hir, e)].kind {
+                ExprKind::Dot { obj, name, .. } if name == known::prototype => obj,
+                ExprKind::Index { obj, index, .. } if matches!(hir[index].kind, ExprKind::String(name) if name == known::prototype) => obj,
+                _ => return false,
+            };
+            let named = c.function_named_by(file, of, 0);
+            places[match named {
+                NamedFunction::Other => 0,
+                NamedFunction::Constructor(..) => 1,
+                NamedFunction::Unknown => 2,
+            }] += 1;
+            !matches!(named, NamedFunction::Other)
         };
         for (index, node) in hir.exprs.iter().enumerate() {
             // The parser leaves nodes behind that are part of nothing.
@@ -1088,8 +1215,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let e = ExprId(index as u32);
             match node.kind {
-                ExprKind::Dot { obj, name, .. } if is_prototype(obj) && self.store_to_access(file, e) == Some(false) => out.push(name),
-                ExprKind::Index { obj, index: key, .. } if is_prototype(obj) && self.store_to_access(file, e) == Some(false) => {
+                ExprKind::Dot { obj, name, .. } if self.store_to_access(file, e) == Some(false) && is_prototype(self, obj) => out.push(name),
+                ExprKind::Index { obj, index: key, .. } if self.store_to_access(file, e) == Some(false) && is_prototype(self, obj) => {
                     if let ExprKind::String(name) = hir[key].kind {
                         out.push(name);
                     }
@@ -1103,7 +1230,7 @@ impl<'p, 's> Checker<'p, 's> {
                         _ => continue,
                     };
                     let mut args = hir.ids(hir[call].args);
-                    if !args.next().is_some_and(|target| is_prototype(target)) || !self.symbol_of_identifier(file, global, global_name).is_none_or(|sym| self.is_only_declared(sym)) {
+                    if !args.next().is_some_and(|target| is_prototype(self, target)) || !self.symbol_of_identifier(file, global, global_name).is_none_or(|sym| self.is_only_declared(sym)) {
                         continue;
                     }
                     if takes_key {
@@ -1147,7 +1274,64 @@ impl<'p, 's> Checker<'p, 's> {
     /// This is no fact. Where it is not seen, the run time keeps the `prototype` object of the function as it is and refuses the rest.
     pub fn has_mutable_prototype(&self, file: FileId, func: FnId) -> bool {
         let known = self.mutable_prototypes();
-        known.functions.contains(&(file, func)) || known.every && self.discriminants().constructor_functions.iter().any(|it| it.function == (file, func))
+        known.functions.contains(&(file, func)) || known.every && self.discriminants().constructor_functions.iter().any(|it| it.function == (file, func)) && self.may_be_a_value(file, func)
+    }
+
+    pub fn keeps_field_names_off_its_prototype(&self, file: FileId, func: FnId) -> bool {
+        self.discriminants().constructor_functions.iter().any(|it| it.function == (file, func)) && !self.may_be_a_value(file, func)
+    }
+
+    fn may_be_a_value(&self, file: FileId, func: FnId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let f = &hir[func];
+        if hir.is_js
+            || bound.ran_out_of_stack
+            || f.kind != FnKind::Decl
+            || f.flags.intersects(Flags::EXPORT | Flags::DEFAULT | Flags::AMBIENT)
+            || self.has_direct_eval(file)
+            || self.mentions_arguments_object(file, func)
+        {
+            return true;
+        }
+        let id = bound.fn_symbol[func.idx()];
+        let Some(symbol) = bound.symbols.get(id.idx()) else { return true };
+        let is_more = SymFlags::VALUE.difference(SymFlags::FUNCTION) | SymFlags::MERGED | SymFlags::ASSIGNED | SymFlags::ALIAS;
+        if symbol.flags.intersects(is_more) || symbol.decls.len() != 1 {
+            return true;
+        }
+        if hir.exports.iter().any(|export| export.spec.is_none() && export.items.iter().any(|item| hir[item].local == f.name)) {
+            return true;
+        }
+        let FnOwner::Stmt(stmt) = bound.fns[func.idx()].owner else { return true };
+        if matches!(bound.stmt_parent[stmt.idx()], Parent::File) && !hir.has_module_syntax {
+            return true;
+        }
+        let is_within = |e: ExprId| {
+            let mut around = self.enclosing_fn_of_expr(file, e);
+            while let Some(arrow) = around.filter(|&it| hir[it].kind == FnKind::Arrow) {
+                around = bound.fns[arrow.idx()].enclosing.some();
+            }
+            around == Some(func)
+        };
+        if self.exprs_by_kind_of(file).of(ExprTag::NewTarget).iter().any(|&e| is_within(e)) {
+            return true;
+        }
+        self.exprs_by_kind_of(file).of(ExprTag::Ident).iter().filter(|&&mention| bound.expr_symbol[mention.idx()] == id).any(|&mention| {
+            let mut asserted = mention;
+            while let Parent::Expr(parent) = bound.expr_parent[asserted.idx()]
+                && parent.is_some()
+                && matches!(hir[parent].kind, ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) if expr == asserted)
+            {
+                asserted = parent;
+            }
+            !matches!(bound.expr_parent[asserted.idx()], Parent::Expr(parent) if parent.is_some() && matches!(hir[parent].kind, ExprKind::New(call) if hir[call].callee == asserted))
+        })
+    }
+
+    pub(super) fn explain_mutable_prototypes(&self) -> (bool, Option<super::flows::Place>, usize, usize) {
+        let all = &self.discriminants().constructor_functions;
+        let known = self.mutable_prototypes();
+        (known.every, known.every_since, all.iter().filter(|it| self.has_mutable_prototype(it.function.0, it.function.1)).count(), all.len())
     }
 
     pub fn number_of_constructor_functions(&self) -> usize {
@@ -1228,7 +1412,10 @@ impl<'p, 's> Checker<'p, 's> {
                 NamedFunction::Constructor(of, func) => {
                     found.functions.insert((of, func));
                 }
-                NamedFunction::Unknown if is_replaced => found.every = true,
+                NamedFunction::Unknown if is_replaced => {
+                    found.every = true;
+                    found.every_since.get_or_insert(super::flows::Place { file, pos: hir[function].pos });
+                }
                 NamedFunction::Unknown | NamedFunction::Other => {}
             }
         }
@@ -1897,6 +2084,10 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether the function, which is no arrow function, mentions `new.target`, also from within an arrow function.
     pub fn mentions_new_target(&mut self, file: FileId, func: FnId) -> bool {
         self.class_facts_of_file(file).mentioning_new_target.contains(&func)
+    }
+
+    pub(super) fn mentions_super(&mut self, file: FileId, func: FnId) -> bool {
+        self.class_facts_of_file(file).mentioning_super.contains(&func)
     }
 
     /// Whether the function, which is no arrow function, looks at its `this`: it mentions `this` or `super`, also from within an arrow

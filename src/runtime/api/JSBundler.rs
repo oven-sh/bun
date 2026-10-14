@@ -251,7 +251,10 @@ pub(crate) mod js_bundler {
         pub(crate) autoload_bunfig: bool,
         pub(crate) autoload_tsconfig: bool,
         pub(crate) autoload_package_json: bool,
+        pub(crate) aot_explain: Vec<Box<[u8]>>,
         pub(crate) aot: bool,
+        pub(crate) logs_type_errors: bool,
+        pub(crate) function_source: bool,
         /// `compile.jitPolicy`: the tier-up threshold scale the executable starts with (1 = normal JIT policy).
         pub(crate) jit_policy: f32,
         /// `compile.bytecodeOrder`: payload order files, most important first.
@@ -277,7 +280,10 @@ pub(crate) mod js_bundler {
                 autoload_bunfig: true,
                 autoload_tsconfig: false,
                 autoload_package_json: false,
+                aot_explain: Vec::new(),
                 aot: false,
+                logs_type_errors: false,
+                function_source: true,
                 jit_policy: 1.0,
                 bytecode_order: Vec::new(),
             }
@@ -432,6 +438,12 @@ pub(crate) mod js_bundler {
                 }
             }
 
+            if let Some(function_source) =
+                object.get_boolean_loose(global_this, "functionSource")?
+            {
+                this.function_source = function_source;
+            }
+
             if let Some(autoload_dotenv) =
                 object.get_boolean_loose(global_this, "autoloadDotenv")?
             {
@@ -458,6 +470,48 @@ pub(crate) mod js_bundler {
 
             if let Some(aot) = object.get_boolean_loose(global_this, "aot")? {
                 this.aot = aot;
+            }
+
+            if let Some(explain) = object.get(global_this, "aotExplain")?
+                && !explain.is_undefined_or_null()
+            {
+                let mut push = |word: JSValue| -> JsResult<()> {
+                    let refused = || global_this.throw_invalid_property_type_value(b"compile.aotExplain", bun_aot::Explain::WORDS.join(" | ").as_bytes(), word);
+                    if !word.is_string() {
+                        return Err(refused());
+                    }
+                    let slice = word.to_utf8(global_this)?;
+                    if !bun_aot::Explain::default().set(slice.slice()) {
+                        return Err(refused());
+                    }
+                    this.aot_explain.push(Box::from(slice.slice()));
+                    Ok(())
+                };
+                if explain.is_array() {
+                    let mut iter = explain.array_iterator(global_this)?;
+                    while let Some(word) = iter.next()? {
+                        push(word)?;
+                    }
+                } else {
+                    push(explain)?;
+                }
+            }
+
+            if let Some(type_errors) = object.get(global_this, "aotTypeErrors")?
+                && !type_errors.is_undefined()
+            {
+                let slice = type_errors.to_utf8(global_this)?;
+                this.logs_type_errors = match slice.slice() {
+                    b"throw" => false,
+                    b"log" => true,
+                    _ => {
+                        return Err(global_this.throw_invalid_property_type_value(
+                            b"compile.aotTypeErrors",
+                            b"\"throw\" or \"log\"",
+                            type_errors,
+                        ));
+                    }
+                };
             }
 
             // `false` is "no order file", as in `compile: { bytecodeOrder: haveProfile && path }`.

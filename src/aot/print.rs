@@ -66,6 +66,7 @@ impl Program {
         };
         let prediction = |o: &mut String, prediction: Prediction| match prediction {
             Prediction::None => {}
+            Prediction::Stores => o.push_str(" ~stores"),
             Prediction::Ty(ty) | Prediction::Field(ty) => {
                 let _ = write!(o, " ~#{}", ty.0);
             }
@@ -363,9 +364,12 @@ impl Program {
                             let _ = write!(o, " shape {} field {}", r.immediates[0], r.immediates[1]);
                         }
                         Opcode::Cast => {
-                            let _ = write!(o, " {}", ["Store", "As", "NonNull", "Claim", "Flow", "Upcast", "Coerce"][r.immediates[1] as usize]);
+                            let _ = write!(o, " {}", ["Store", "As", "NonNull", "Claim", "Flow", "Upcast", "Coerce"][(r.immediates[1] & 0xff) as usize]);
+                            if r.immediates[1] >> 8 != 0 {
+                                let _ = write!(o, " fresh {}", r.immediates[1] >> 8);
+                            }
                             // What it tries for. For any other reason that is the type of the value.
-                            if r.immediates[1] == 6 {
+                            if r.immediates[1] & 0xff == 6 {
                                 o.push(' ');
                                 ty(o, TyId(r.immediates[0]));
                             }
@@ -375,6 +379,7 @@ impl Program {
                                 self.quoted(o, StrId(r.immediates[0]));
                             }
                         }
+                        Opcode::CatchValue if r.immediates[0] == 1 => o.push_str(" exception"),
                         _ => {}
                     }
                     if matches!(r.opcode, Opcode::NewArray | Opcode::Strcat | Opcode::Call | Opcode::Construct | Opcode::CallMethod | Opcode::CallDirect | Opcode::Operation | Opcode::NewClosure | Opcode::NewClosureOnce) {

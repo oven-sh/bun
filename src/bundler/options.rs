@@ -1239,6 +1239,7 @@ pub struct TypeChecked<'a, 'i> {
     /// The imports that are not in the bundle: the path of the file and the specifier. An import of TypeScript that turned out to be
     /// of types only, and what a barrel file re-exports and nothing asks it for.
     pub dropped_imports: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
+    pub without_side_effects: &'i mut dyn Iterator<Item = &'a [u8]>,
     /// The statements at the top level of those files, as the parser has left them: the path of the file, where the statement starts in
     /// the text that the bundler has parsed (`stmt.loc.start`), which is the text in `sources`, and `Part::can_be_removed_if_unused` of its part.
     pub statements: &'i mut dyn Iterator<Item = (&'a [u8], u32, bool)>,
@@ -1263,6 +1264,10 @@ pub struct TypeChecked<'a, 'i> {
     pub react_compiler_outputs: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
     /// The path of each of `sources` whose JSX the tsconfig.json around it has lowered in another way than the one around the first entry point would, and how.
     pub jsx: &'i mut dyn Iterator<Item = (&'a [u8], JsxOfFile<'a>)>,
+    pub function_texts: Option<&'a [(&'a [u8], Box<[u8]>, Vec<bun_js_printer::FunctionText>)]>,
+    pub explain: &'a [Box<[u8]>],
+    pub explains_into_log: bool,
+    pub logs_type_errors: bool,
 }
 
 /// `jsx`, `jsxFactory`, `jsxFragmentFactory` and `jsxImportSource` as they hold for a file.
@@ -1282,6 +1287,9 @@ pub type TypeCheck = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) ->
 /// about the program.
 pub type Analyze =
     fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> Option<bun_ast::type_tags::ProgramFacts>;
+
+pub type TypedPackage =
+    fn(root: &[u8], defines: &[(Box<[u8]>, Box<[u8]>)], directory: &[u8], name: &[u8]) -> (Vec<(Box<[u8]>, Box<[u8]>)>, Option<Box<str>>);
 
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
@@ -1421,6 +1429,7 @@ pub struct BundleOptions<'a> {
     /// checker.
     pub type_check: Option<TypeCheck>,
     pub analyze: Option<Analyze>,
+    pub typed_package: Option<TypedPackage>,
     /// `--conditions`, `conditions`: those of `conditions` that are not there by default.
     pub custom_conditions: Vec<Box<[u8]>>,
 
@@ -1436,7 +1445,11 @@ pub struct BundleOptions<'a> {
     /// Run JSC's build-time bytecode optimization passes over the cached bytecode (`optimize.bytecode`).
     pub optimize_bytecode: bool,
     pub aot: bool,
+    pub aot_explain: Vec<Box<[u8]>>,
+    pub aot_explains_into_log: bool,
+    pub aot_logs_type_errors: bool,
     pub preserve_source_paths: bool,
+    pub compile_function_source: bool,
     /// `--compile --bytecode`: payload order files to lay the bytecode out by (`bytecode_order`), most important first.
     pub bytecode_order: Vec<Box<[u8]>>,
     /// `--compile --bytecode`: whose internal modules get ahead-of-time bytecode embedded alongside the bundle's.
@@ -1510,6 +1523,19 @@ fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
 impl<'a> BundleOptions<'a> {
     pub(crate) fn is_test(&self) -> bool {
         self.rewrite_jest_for_tests
+    }
+
+    pub fn compiles_ahead_of_time(&self) -> bool {
+        match bun_core::env_var::BUN_AOT.get() {
+            Some(false) => false,
+            Some(true) => {
+                self.aot
+                    || (self.bytecode
+                        && self.compile_mode.is_executable()
+                        && self.output_format == Format::Esm)
+            }
+            None => self.aot,
+        }
     }
 
     pub(crate) fn set_production(&mut self, value: bool) {
@@ -1639,6 +1665,7 @@ impl<'a> BundleOptions<'a> {
             module_preload: self.module_preload,
             type_check: self.type_check,
             analyze: self.analyze,
+            typed_package: self.typed_package,
             custom_conditions: self.custom_conditions.clone(),
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
@@ -1647,7 +1674,11 @@ impl<'a> BundleOptions<'a> {
             bytecode_depth: self.bytecode_depth,
             optimize_bytecode: self.optimize_bytecode,
             aot: self.aot,
+            aot_explain: self.aot_explain.clone(),
+            aot_explains_into_log: self.aot_explains_into_log,
+            aot_logs_type_errors: self.aot_logs_type_errors,
             preserve_source_paths: self.preserve_source_paths,
+            compile_function_source: self.compile_function_source,
             bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
@@ -1828,6 +1859,7 @@ impl<'a> BundleOptions<'a> {
             module_preload: true,
             type_check: None,
             analyze: None,
+            typed_package: None,
             custom_conditions: transform.conditions.clone(),
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,
@@ -1901,7 +1933,11 @@ impl<'a> BundleOptions<'a> {
             deprecated_namespace_object_setters: true,
             bytecode: false,
             aot: false,
+            aot_explain: Vec::new(),
+            aot_explains_into_log: false,
+            aot_logs_type_errors: false,
             preserve_source_paths: false,
+            compile_function_source: true,
             bytecode_depth: u32::MAX,
             optimize_bytecode: true,
             bytecode_order: Vec::new(),

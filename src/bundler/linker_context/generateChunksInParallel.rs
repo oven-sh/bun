@@ -683,10 +683,14 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         let graph = c.parse_graph();
         let keys = graph.input_files.items_unique_key_for_additional_file();
         let additional_files = graph.input_files.items_additional_files();
-        for (key, files) in keys.iter().zip(additional_files) {
+        let sources = graph.input_files.items_source();
+        for ((key, files), source) in keys.iter().zip(additional_files).zip(sources) {
             let Some(file) = files.last().filter(|_| !key.is_empty()) else { continue };
             let path = &graph.additional_output_files.as_slice()[crate::chunk::additional_output_file_index(file)].dest_path;
-            let path = cheap_prefix_normalizer(c.options.public_path, path).concat();
+            let path = match c.options.preserve_source_paths {
+                true => source.path.text.to_vec(),
+                false => cheap_prefix_normalizer(c.options.public_path, path).concat(),
+            };
             for bytes in [&key[..], &path[..]] {
                 replaced_strings.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
                 replaced_strings.extend_from_slice(bytes);
@@ -1570,6 +1574,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
     }
     let mut linked_bytecode_payload: Option<Box<[u8]>> = None;
     let mut aot_image: Vec<u8> = Vec::new();
+    let mut has_aot_image = false;
     let mut has_program_data = false;
     if let Some(mut linked) = linked_bytecode {
         if let Some((path, names_out)) = &linked.names_out {
@@ -1599,9 +1604,9 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 named_hot_functions,
                 placed_hot_functions,
                 functions_without_name,
-                aot_image: image,
+                has_aot_image: has_image,
             }) => {
-                aot_image = image;
+                has_aot_image = has_image;
                 if functions_without_name != 0 {
                     c.log_mut().add_warning_fmt(
                         None,
@@ -1732,13 +1737,12 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 .map_or(&[][..], |order| &order.hot_strings),
         );
         debug!("Bytecode external string table: {} bytes", bytes.len());
-        if !aot_image.is_empty() {
+        if has_aot_image {
             let maps = SourceMapsByEntryOffset::of(&result);
             let find =
                 |entry_offset: u32, line: u32, column: u32| maps.find(entry_offset, line, column);
-            let program_data = crate::bundle_v2::dispatch::build_program_data(&bytes, &find);
-            has_program_data = !program_data.is_empty();
-            aot_image.extend_from_slice(&program_data);
+            aot_image = crate::bundle_v2::dispatch::build_program_data(&bytes, &find);
+            has_program_data = !aot_image.is_empty();
         }
         result.push(options::OutputFile::init(options::OutputFileInit {
             output_path: b".bytecode-strings".to_vec().into_boxed_slice(),

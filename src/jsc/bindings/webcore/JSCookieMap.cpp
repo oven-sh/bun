@@ -191,6 +191,8 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
         return {};
     }
 
+    auto* structure = structureForNewTarget<CookieMap>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
     auto result_exception = CookieMap::create(WTF::move(init));
     if (result_exception.hasException()) {
         WebCore::propagateException(lexicalGlobalObject, throwScope, result_exception.releaseException());
@@ -198,10 +200,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
     }
     auto result = result_exception.releaseReturnValue();
 
-    JSValue jsValue = toJSNewlyCreated(lexicalGlobalObject, castedThis->globalObject(), WTF::move(result));
-    setSubclassStructureIfNeeded<CookieMap>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    return JSValue::encode(jsValue);
+    return JSValue::encode(createWrapper<CookieMap>(castedThis->globalObject(), structure, WTF::move(result)));
 }
 
 JSC_ANNOTATE_HOST_FUNCTION(JSCookieMapDOMConstructorConstruct, JSCookieMapDOMConstructor::construct);

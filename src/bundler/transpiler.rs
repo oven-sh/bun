@@ -1487,9 +1487,6 @@ impl<'a> Transpiler<'a> {
                     repl_mode: self.options.repl_mode,
                     lower_toml_datetimes: false,
                     is_entry_point: false,
-                    tolerant: false,
-                    is_javascript: false,
-                    bigint_names_are_digits: false,
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
@@ -1549,6 +1546,7 @@ impl<'a> Transpiler<'a> {
                     .as_deref()
                     .and_then(|s| s.clone().ok().map(Box::new));
                 opts.features.define_hash = self.options.define.user_hash;
+                opts.features.audited = bun_ast::audited::table_for(source.path.text, &source.contents);
                 opts.features.repl_mode = self.options.repl_mode;
 
                 // we'll just always enable top-level await
@@ -2228,6 +2226,7 @@ impl<'a> Transpiler<'a> {
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        function_texts: Option<&mut Vec<js_printer::FunctionText>>,
     ) -> crate::Result<usize> {
         // Routed through the T0 ftrace subset like the
         // other bundler spans (`Bundler.computeChunks` etc.) —
@@ -2302,6 +2301,7 @@ impl<'a> Transpiler<'a> {
                         exports_kind,
                         runtime_transpiler_cache,
                         module_info,
+                        function_texts,
                     )
                 } else {
                     self.print_ast_esm_ascii_not_bun_cold::<ENABLE_SOURCE_MAP>(
@@ -2314,6 +2314,7 @@ impl<'a> Transpiler<'a> {
                         exports_kind,
                         runtime_transpiler_cache,
                         module_info,
+                        function_texts,
                     )
                 }
             }
@@ -2379,6 +2380,7 @@ impl<'a> Transpiler<'a> {
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        function_texts: Option<&mut Vec<js_printer::FunctionText>>,
     ) -> crate::Result<usize> {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
             print_arena,
@@ -2390,6 +2392,7 @@ impl<'a> Transpiler<'a> {
             exports_kind,
             runtime_transpiler_cache,
             module_info,
+            function_texts,
         )
     }
 
@@ -2407,6 +2410,7 @@ impl<'a> Transpiler<'a> {
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<js_printer::RuntimeTranspilerCacheRef>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        function_texts: Option<&mut Vec<js_printer::FunctionText>>,
     ) -> crate::Result<usize> {
         // Both set on this (EsmAscii) arm only.
         // SAFETY: `module_info` is `ModuleInfo::create`'s `heap::alloc` (or
@@ -2441,6 +2445,8 @@ impl<'a> Transpiler<'a> {
             // hoist on `Target::Bun` — defaulting to `Browser` here regressed
             // oven-sh/bun#15738.
             target: to_bundle_enums_target(self.options.target),
+            function_texts,
+            audited: bun_ast::audited::current(),
             ..Default::default()
         };
         js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
@@ -2480,6 +2486,28 @@ impl<'a> Transpiler<'a> {
             None,
             None,
             None,
+            None,
+        )
+    }
+
+    #[inline(never)]
+    pub fn print_noting_function_texts(
+        &mut self,
+        print_arena: &Arena,
+        result: ParseResult,
+        writer: &mut js_printer::BufferPrinter,
+        function_texts: &mut Vec<js_printer::FunctionText>,
+    ) -> crate::Result<usize> {
+        self.print_with_source_map_maybe::<false>(
+            print_arena,
+            result.ast,
+            &result.source,
+            writer,
+            js_printer::Format::EsmAscii,
+            None,
+            None,
+            None,
+            Some(function_texts),
         )
     }
 
@@ -2514,6 +2542,7 @@ impl<'a> Transpiler<'a> {
                 Some(handler),
                 result.runtime_transpiler_cache,
                 module_info,
+                None,
             );
         }
         self.print_with_source_map_maybe::<true>(
@@ -2525,6 +2554,7 @@ impl<'a> Transpiler<'a> {
             Some(handler),
             result.runtime_transpiler_cache,
             module_info,
+            None,
         )
     }
 

@@ -27,6 +27,8 @@ pub struct InitOpts<'a> {
     /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
     /// alive alongside `arena` until the module finishes loading.
     pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    /// `ResolvedSource::is_static` of what `parse_result` is printed as.
+    pub is_static: bool,
 }
 
 pub struct AsyncModule {
@@ -46,6 +48,8 @@ pub struct AsyncModule {
     pub(crate) arena: Box<ArenaAllocator>,
     /// See [`InitOpts::ast_alloc_state`].
     pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    /// See [`InitOpts::is_static`].
+    is_static: bool,
 
     // This is the specific state for making it async
     pub(crate) poll_ref: KeepAlive,
@@ -628,6 +632,7 @@ impl AsyncModule {
             global_this: crate::GlobalRef::new(global_object),
             arena: opts.arena,
             ast_alloc_state: opts.ast_alloc_state,
+            is_static: opts.is_static,
             poll_ref: KeepAlive::default(),
         })
     }
@@ -1221,6 +1226,7 @@ impl AsyncModule {
             };
 
             resolved_source.is_commonjs_module = is_commonjs_module;
+            resolved_source.is_static = self.is_static;
 
             return Ok(resolved_source);
         }
@@ -1229,6 +1235,7 @@ impl AsyncModule {
             source_code: BunString::clone_latin1(printer.ctx.get_written()),
             source_url: BunString::from_bytes(path.text),
             is_commonjs_module,
+            is_static: self.is_static,
             ..Default::default()
         })
     }

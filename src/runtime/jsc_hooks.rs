@@ -2163,9 +2163,15 @@ fn transpile_source_code_inner(
     args: &TranspileArgs<'_>,
 ) -> crate::Result<ResolvedSource> {
     let mut resolved_source = transpile_source_code_of_any_provenance(jsc_vm, args)?;
-    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM and `extra` is live for the call.
+    resolved_source.is_static |= is_input_static(jsc_vm, args);
+    Ok(resolved_source)
+}
+
+/// Whether what is transpiled is static code (`ResolvedSource::is_static`), so that what is made of it is.
+fn is_input_static(jsc_vm: *mut VirtualMachine, args: &TranspileArgs<'_>) -> bool {
+    // SAFETY: as for `transpile_source_code_inner` — `jsc_vm` is the live per-thread VM and `extra` is live for the call.
     let (vm, path) = unsafe { (&*jsc_vm, &(*args.extra).path) };
-    resolved_source.is_static |= match args.virtual_source {
+    match args.virtual_source {
         // The program itself, from `-e` or stdin. Any other is a plugin's text or a blob.
         Some(source) => vm
             .module_loader
@@ -2173,8 +2179,7 @@ fn transpile_source_code_inner(
             .as_deref()
             .is_some_and(|eval_source| core::ptr::eq(eval_source, source)),
         None => vm.is_file_on_disk_static(path.text),
-    };
-    Ok(resolved_source)
+    }
 }
 
 /// The body of [`transpile_source_code_inner`], which says whether the result is static code.
@@ -3019,6 +3024,7 @@ fn transpile_source_code_of_any_provenance(
                                 referrer,
                                 arena,
                                 ast_alloc_state,
+                                is_static: is_input_static(jsc_vm, args),
                             },
                         );
                     }

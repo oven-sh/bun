@@ -66,7 +66,7 @@ A `Worker` whose own `execArgv` contains the flag throws `ERR_WORKER_INVALID_EXE
 | `eval()` inside a `node:vm` context, including one made with `codeGeneration: { strings: true }`      | allowed | refused   |
 | `module._compile()`, and a `require.extensions` handler that calls it                                 | allowed | refused   |
 | Assigning a different `Module.wrapper`                                                                | allowed | refused   |
-| `import`, `import()` and `require()` of a `data:` or `blob:` URL                                      | allowed | refused   |
+| `import`, `import()` and `require()` of a `data:` or `blob:` URL that holds code                      | allowed | refused   |
 | A `Worker` started from a `data:` or `blob:` URL, or with `eval: true`                                | allowed | refused   |
 | A [plugin](/runtime/plugins) that returns `contents`                                                  | allowed | refused   |
 | [Macros](/bundler/macros)                                                                             | allowed | refused   |

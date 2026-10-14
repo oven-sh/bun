@@ -87,8 +87,8 @@ describe.concurrent("Server", () => {
 
       const { promise, resolve } = Promise.withResolvers();
       Bun.connect({
-        hostname: server.hostname,
-        port: server.port,
+        hostname: server.hostname!,
+        port: server.port!,
 
         socket: {
           async open(socket) {
@@ -1378,6 +1378,75 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     });
   });
 
+  test("stop() drains TLS connections whose handshake is queued behind the per-iteration budget", async () => {
+    // The loop runs five TLS handshakes per iteration and parks the rest of a
+    // burst in a loop-wide low-priority queue, unlinked from the socket list
+    // the stop() sweep walks. The first request to arrive stops the server, so
+    // most of the burst is still parked at that moment. A parked connection
+    // that the sweep misses stays keep-alive: it answers every later request
+    // and holds the drain promise open until the client hangs up. The client
+    // only hangs up after a third answer, so one answer on a connection means
+    // the server closed it after the first response.
+    const connections = 30;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let stopped;
+          let resolved = false;
+          const server = Bun.serve({
+            port: 0, hostname: "127.0.0.1", tls: ${JSON.stringify(tls)},
+            idleTimeout: 255,
+            fetch() {
+              stopped ??= server.stop().then(() => { resolved = true; });
+              return new Response("ok");
+            },
+          });
+          const GET = "GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n";
+          const END = "\\r\\n\\r\\nok";
+          const conns = [];
+          for (let i = 0; i < ${connections}; i++) {
+            const closed = Promise.withResolvers();
+            const conn = { answers: 0, closed: closed.promise };
+            let buf = "";
+            Bun.connect({
+              hostname: "127.0.0.1", port: server.port, tls: { rejectUnauthorized: false },
+              socket: {
+                handshake: s => void s.write(GET),
+                data(s, d) {
+                  buf += d.toString("latin1");
+                  while (buf.includes(END)) {
+                    buf = buf.slice(buf.indexOf(END) + END.length);
+                    if (++conn.answers < 3) s.write(GET);
+                    else s.end();
+                  }
+                },
+                close: () => closed.resolve(),
+                error: () => {},
+                connectError: () => closed.resolve(),
+              },
+            }).catch(() => {});
+            conns.push(conn);
+          }
+          await Promise.all(conns.map(c => c.closed));
+          await stopped;
+          console.log(JSON.stringify({ resolved, answers: conns.map(c => c.answers).join("") }));
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      stderr: "",
+      out: { resolved: true, answers: Buffer.alloc(connections, "1").toString() },
+      exitCode: 0,
+    });
+  });
+
   test("server.reload() keeps the connection count coherent", async () => {
     // clearRoutes() used to wipe filterHandlers, so a connection open across
     // reload left active_connection_count stuck > 0 forever. With the stuck
@@ -2015,7 +2084,7 @@ test.concurrent("should be able to async upgrade using custom protocol", async (
   const serverClose = Promise.withResolvers<{ code: number; reason: string }>();
   using server = Bun.serve<unknown>({
     port: 0,
-    async fetch(req: Request, server: Server) {
+    async fetch(req: Request, server: Server<undefined>) {
       await Bun.sleep(1);
 
       if (server.upgrade(req)) return;
@@ -2119,8 +2188,8 @@ test.concurrent("should be able to abrubtly close a upload request", async () =>
     return;
   }
   await Bun.connect({
-    hostname: server.hostname,
-    port: server.port,
+    hostname: server.hostname!,
+    port: server.port!,
     data: {
       state: 0,
       pending: null,
@@ -2177,8 +2246,8 @@ test("reading an upload whose client went away before the first read rejects", a
     },
   });
   const socket = await Bun.connect({
-    hostname: server.hostname,
-    port: server.port,
+    hostname: server.hostname!,
+    port: server.port!,
     socket: {
       open(socket) {
         socket.write("POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\npartial");
@@ -2460,7 +2529,10 @@ describe.concurrent("HEAD requests #15355", () => {
       expect(await response.text()).toBe("Hello World");
     }
 
-    function doHead(server: Server, path: string): Promise<{ statusLine: string; headers: string; body: string }> {
+    function doHead(
+      server: Server<undefined>,
+      path: string,
+    ): Promise<{ statusLine: string; headers: string; body: string }> {
       const { promise, resolve, reject } = Promise.withResolvers<{
         statusLine: string;
         headers: string;
@@ -2713,7 +2785,7 @@ describe.concurrent("websocket and routes test", () => {
     {
       // main route for upgrade
       routes: {
-        "/": (req: Request, server: Server) => {
+        "/": (req: Request, server: Server<undefined>) => {
           if (server.upgrade(req)) return;
           return new Response("Forbidden", { status: 403 });
         },
@@ -2725,7 +2797,7 @@ describe.concurrent("websocket and routes test", () => {
     {
       // Generic route for upgrade
       routes: {
-        "/*": (req: Request, server: Server) => {
+        "/*": (req: Request, server: Server<undefined>) => {
           if (server.upgrade(req)) return;
           return new Response("Forbidden", { status: 403 });
         },
@@ -2739,7 +2811,7 @@ describe.concurrent("websocket and routes test", () => {
     {
       routes: {
         "/ws": {
-          GET: (req: Request, server: Server) => {
+          GET: (req: Request, server: Server<undefined>) => {
             if (server.upgrade(req)) return;
             return new Response("Forbidden", { status: 403 });
           },
@@ -2757,12 +2829,12 @@ describe.concurrent("websocket and routes test", () => {
     {
       routes: {
         "/": {
-          POST: (req: Request, server: Server) => {
+          POST: (req: Request, server: Server<undefined>) => {
             return new Response("Hello World");
           },
         },
       },
-      fetch: (req: Request, server: Server) => {
+      fetch: (req: Request, server: Server<undefined>) => {
         if (server.upgrade(req)) return;
         return new Response("Forbidden", { status: 403 });
       },
@@ -2774,7 +2846,7 @@ describe.concurrent("websocket and routes test", () => {
     {
       routes: {
         "/": {
-          POST: (req: Request, server: Server) => {
+          POST: (req: Request, server: Server<undefined>) => {
             return new Response("Hello World");
           },
         },
@@ -2785,7 +2857,7 @@ describe.concurrent("websocket and routes test", () => {
     },
     // fetch only
     {
-      fetch: (req: Request, server: Server) => {
+      fetch: (req: Request, server: Server<undefined>) => {
         if (server.upgrade(req)) return;
         return new Response("Forbidden", { status: 403 });
       },
@@ -2807,7 +2879,7 @@ describe.concurrent("websocket and routes test", () => {
             ws.send(`recv: ${message}`);
           },
         },
-      });
+      } as Bun.Serve.Options<undefined>);
 
       {
         const { promise, resolve, reject } = Promise.withResolvers();

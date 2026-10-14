@@ -21,6 +21,7 @@ const bigFile = args["big-file"]!;
 
 const big = Buffer.alloc(5 * 1024 * 1024, "abcdefghijklmnop");
 let lateRead: PromiseWithResolvers<void> | undefined;
+const stopCalled = Promise.withResolvers<void>();
 
 const makeRoutes = () => ({
   "/api/:id": (req: Bun.BunRequest<"/api/:id">) =>
@@ -276,9 +277,19 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
     case "/stop": {
       // ?exit: leave once the stop() promise resolves, that is once every connection is gone.
       const exit = url.searchParams.has("exit");
-      setTimeout(() => server.stop().then(() => exit && process.exit(0)), 0);
+      setTimeout(() => {
+        server.stop().then(() => exit && process.exit(0));
+        stopCalled.resolve();
+      }, 0);
       return new Response("stopping");
     }
+    // Starts its body at once and ends it after /stop: a client that has the response has a stream open across the stop.
+    case "/open-until-stop":
+      return new Response(async function* () {
+        yield "open,";
+        await stopCalled.promise;
+        yield "stopped";
+      });
     case "/reload":
       server.reload({
         routes: { ...makeRoutes(), "/reloaded-route": new Response("after-reload") },

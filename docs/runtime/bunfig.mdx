@@ -390,6 +390,398 @@ junit = "test-results.xml"
 
 CI systems and other tools can consume the report.
 
+## Linter
+
+The `[lint]` section configures [`bun lint`](/lint). Run `bun lint --init` to add it.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+typeAware = true
+ignorePatterns = ["vendor/", "**/*.gen.ts"]
+
+[lint.rules]
+"no-console" = "warn"
+eqeqeq = ["error", "smart"]
+
+[[lint.overrides]]
+files = ["scripts/**"]
+rules = { "no-console" = "off" }
+```
+
+`bun lint` uses the nearest `bunfig.toml` that has a `[lint]` section, from the working directory up, so it finds the same problems from any directory of the project. Next to an ESLint or oxlint config, what those tools read from the working directory is still read from there.
+
+Paths and patterns in the section are relative to the file, including the ones in the options of the `import` rules. So are the patterns in a config file that `config` names and the file names in the file that `suppressionsLocation` names.
+
+With `bun --config=<path> lint`, everything but `plugins` is relative to the working directory.
+
+A typo is an error. `bun lint` exits with code `2` on an unknown key or an unknown rule.
+
+```txt
+2 | "no-vra" = "error"
+    ^
+error: Unknown rule "no-vra"
+  Did you mean "no-var"?
+    at bunfig.toml:2:1
+```
+
+### `lint.rules`
+
+Set a rule to `"off"`, `"warn"`, or `"error"`. To pass options, use an array. Every rule in `bun lint --rules` works, with nothing to install.
+
+```toml title="bunfig.toml" icon="settings"
+[lint.rules]
+"no-console" = "warn"
+"@typescript-eslint/no-explicit-any" = "off"
+"unicorn/prefer-node-protocol" = "error"
+"no-restricted-imports" = ["error", { paths = ["lodash"] }]
+```
+
+Some ESLint rules have a typescript-eslint version, such as `no-unused-vars` and `@typescript-eslint/no-unused-vars`. Setting either name sets both. The ESLint rule runs on JavaScript files and the typescript-eslint rule on TypeScript files, so a problem is never reported twice. If you set both names, each one applies to its own kind of file.
+
+A few typescript-eslint versions need type information, such as `@typescript-eslint/require-await`. Setting that name type checks your TypeScript files, like any other [type-aware rule](/lint#type-aware-rules). Setting only `require-await` doesn't start a type check. It uses the typescript-eslint version if the run has types anyway, and the ESLint rule otherwise.
+
+### `lint.plugins`
+
+Load [ESLint plugins](/lint/plugins): paths, relative to `bunfig.toml`, or package names. Their rules are added to the built-in ones.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+plugins = ["./lint/plugin.js", "eslint-plugin-perfectionist"]
+
+[lint.rules]
+"local/no-todo" = "warn"
+"perfectionist/sort-imports" = "error"
+```
+
+### `lint.categories`
+
+Set a whole category of rules at once. `[lint.rules]` wins over a category.
+
+```toml title="bunfig.toml" icon="settings"
+[lint.categories]
+suspicious = "warn"
+perf = "warn"
+```
+
+| Category      | What its rules report                          |
+| ------------- | ---------------------------------------------- |
+| `correctness` | Code that is wrong or useless                  |
+| `suspicious`  | Code that is probably wrong or useless         |
+| `pedantic`    | Strict checks, with some false positives       |
+| `perf`        | Code that could run faster                     |
+| `style`       | Code that could be more idiomatic              |
+| `restriction` | Language features and patterns you want to ban |
+| `nursery`     | New rules that are still changing              |
+| `all`         | Every category at once                         |
+
+### `lint.overrides`
+
+Use different rules for some files. `files` is required. `excludeFiles`, `rules`, `globals`, and `settings` are optional.
+
+```toml title="bunfig.toml" icon="settings"
+[[lint.overrides]]
+files = ["*.test.ts", "scripts/**"]
+excludeFiles = ["scripts/vendor/**"]
+rules = { "no-console" = "off" }
+```
+
+Patterns use the same syntax as [`Bun.Glob`](/runtime/glob) and are relative to `bunfig.toml`. A pattern without a slash matches the file name in any directory. Later overrides win over earlier ones, and all of them win over `[lint.rules]`.
+
+### `lint.ignorePatterns`
+
+Skip the files that match. `bun lint` already skips `node_modules` and everything in `.gitignore`.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+ignorePatterns = ["vendor/", "**/*.gen.ts"]
+```
+
+### `lint.settings`
+
+Settings that rules share, such as the React version. The same as `settings` in an ESLint or oxlint config.
+
+```toml title="bunfig.toml" icon="settings"
+[lint.settings.react]
+version = "18.2"
+
+[lint.settings."jsx-a11y".components]
+Picture = "img"
+```
+
+### `lint.typeAware`
+
+Turn on typescript-eslint's recommended [type-aware rules](/lint#type-aware-rules), such as `@typescript-eslint/no-floating-promises`. Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+typeAware = true
+tsconfig = "./tsconfig.lint.json" # default: the nearest tsconfig.json
+```
+
+You don't need it for a single rule. A type-aware rule runs as soon as you turn it on in `[lint.rules]`. `typeAware = false` skips every type-aware rule.
+
+### `lint.typeCheck`
+
+Also report type errors, like [`bun check`](/runtime/check). It turns on no rules. Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+typeCheck = true
+```
+
+### `lint.globals`
+
+Declare global variables, so that `no-undef` accepts them. A global is `"readonly"`, `"writable"`, or `"off"`.
+
+```toml title="bunfig.toml" icon="settings"
+[lint.globals]
+MY_GLOBAL = "readonly"
+```
+
+### `lint.maxWarnings`
+
+Exit with code `1` if there are more warnings than this. By default, warnings never fail a run.
+
+```toml title="bunfig.toml" icon="settings"
+[lint]
+maxWarnings = 0
+```
+
+### All keys
+
+Every flag that makes sense as a default is also a key, in camelCase: `--max-warnings 0` is `maxWarnings = 0`, and `--no-inline-config` is `inlineConfig = false`. The command line wins over `bunfig.toml`.
+
+| Key                             | Value                                 | Flag                                                |
+| ------------------------------- | ------------------------------------- | --------------------------------------------------- |
+| `rules`                         | table                                 | `--rule`                                            |
+| `plugins`                       | array                                 | `--plugin`                                          |
+| `categories`                    | table                                 | `-A`, `-W`, `-D`                                    |
+| `overrides`                     | array of tables                       |                                                     |
+| `globals`                       | table                                 | `--global`                                          |
+| `settings`                      | table                                 |                                                     |
+| `ignorePatterns`                | array                                 | `--ignore-pattern`                                  |
+| `typeAware`                     | boolean                               | `--type-aware`, `--no-type-aware`                   |
+| `typeCheck`                     | boolean                               | `--type-check`                                      |
+| `tsconfig`                      | path                                  | `--tsconfig`                                        |
+| `inferGlobals`                  | boolean                               | `--infer-globals`, `--no-infer-globals`             |
+| `maxWarnings`                   | number                                | `--max-warnings`                                    |
+| `denyWarnings`                  | boolean                               | `--deny-warnings`                                   |
+| `quiet`                         | boolean                               | `--quiet`                                           |
+| `silent`                        | boolean                               | `--silent`                                          |
+| `format`                        | name                                  | `-f`, `--format`                                    |
+| `all`                           | boolean                               | `--all`                                             |
+| `threads`                       | number                                | `--threads`                                         |
+| `inlineConfig`                  | boolean                               | `--no-inline-config`                                |
+| `reportUnusedDisableDirectives` | boolean, `"off"`, `"warn"`, `"error"` | `--report-unused-disable-directives`                |
+| `reportUnusedInlineConfigs`     | `"off"`, `"warn"`, `"error"`          | `--report-unused-inline-configs`                    |
+| `fixType`                       | array                                 | `--fix-type`                                        |
+| `config`                        | path                                  | `-c`, `--config`                                    |
+| `configLookup`                  | boolean                               | `--no-config-lookup`                                |
+| `disableNestedConfig`           | boolean                               | `--disable-nested-config`                           |
+| `allowUnsupported`              | boolean                               | `--allow-unsupported`                               |
+| `nativePluginRules`             | boolean, or an array of plugin names  | `--native-plugin-rules`, `--no-native-plugin-rules` |
+| `parserOptions`                 | table                                 | `--parser-options`                                  |
+| `ext`                           | array                                 | `--ext`                                             |
+| `ignore`                        | boolean                               | `--no-ignore`                                       |
+| `ignorePath`                    | path                                  | `--ignore-path`                                     |
+| `warnIgnored`                   | boolean                               | `--no-warn-ignored`                                 |
+| `errorOnUnmatchedPattern`       | boolean                               | `--no-error-on-unmatched-pattern`                   |
+| `passOnNoPatterns`              | boolean                               | `--pass-on-no-patterns`                             |
+| `exitOnFatalError`              | boolean                               | `--exit-on-fatal-error`                             |
+| `suppressionsLocation`          | path                                  | `--suppressions-location`                           |
+| `passOnUnprunedSuppressions`    | boolean                               | `--pass-on-unpruned-suppressions`                   |
+
+`bun lint --help --all` says what each flag does.
+
+`[lint]` also applies next to an `eslint.config.js` or an `.oxlintrc.json`. There, a key overrides the config file the way its flag does.
+
+## Formatter
+
+The `[fmt]` section configures [`bun fmt`](/format). Run `bun fmt --init` to add it.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt]
+printWidth = 100
+semi = false
+sortImports = true
+ignorePatterns = ["vendor/", "**/*.gen.ts"]
+```
+
+`bun fmt` uses the nearest `bunfig.toml` that has a `[fmt]` section, from the working directory up, so it prints the same from any directory of the project.
+
+Paths and patterns in the section are relative to the file. With `bun --config=<path> fmt` they are relative to the working directory.
+
+A typo doesn't go unnoticed. An unknown key or a bad value is an error, and `bun fmt` exits with code `2`.
+
+### Style options
+
+Same names, defaults, and meaning as [Prettier's options](https://prettier.io/docs/options). Each one is also a flag, like `--print-width 100` or `--no-semi`, and the flag wins.
+
+| Key                            | Default       | What it does                                                          |
+| ------------------------------ | ------------- | --------------------------------------------------------------------- |
+| `printWidth`                   | `80`          | Wrap lines at this column                                             |
+| `tabWidth`                     | `2`           | Spaces per indentation level                                          |
+| `useTabs`                      | `false`       | Indent with tabs                                                      |
+| `semi`                         | `true`        | Print semicolons                                                      |
+| `singleQuote`                  | `false`       | Use single quotes                                                     |
+| `jsxSingleQuote`               | `false`       | Use single quotes in JSX                                              |
+| `quoteProps`                   | `"as-needed"` | Quote object keys: `"as-needed"`, `"consistent"`, or `"preserve"`     |
+| `trailingComma`                | `"all"`       | `"all"`, `"es5"`, or `"none"`                                         |
+| `bracketSpacing`               | `true`        | `{ a }` or `{a}`                                                      |
+| `bracketSameLine`              | `false`       | Put the `>` of a multi-line element at the end of the last line       |
+| `arrowParens`                  | `"always"`    | `(x) => x` or, with `"avoid"`, `x => x`                               |
+| `objectWrap`                   | `"preserve"`  | `"collapse"` puts an object on one line whenever it fits              |
+| `singleAttributePerLine`       | `false`       | One attribute per line in HTML, Vue, and JSX                          |
+| `proseWrap`                    | `"preserve"`  | Wrap Markdown text: `"always"`, `"never"`, or `"preserve"`            |
+| `endOfLine`                    | `"lf"`        | `"lf"`, `"crlf"`, `"cr"`, or `"auto"`                                 |
+| `htmlWhitespaceSensitivity`    | `"css"`       | How whitespace in HTML is treated: `"css"`, `"strict"`, or `"ignore"` |
+| `vueIndentScriptAndStyle`      | `false`       | Indent the code in `<script>` and `<style>` of Vue files              |
+| `embeddedLanguageFormatting`   | `"auto"`      | `"off"` leaves embedded code alone, like CSS in a template literal    |
+| `experimentalTernaries`        | `false`       | Prettier's new style for nested ternaries                             |
+| `experimentalOperatorPosition` | `"end"`       | `"start"` puts a binary operator at the start of the next line        |
+
+### `format.sortImports`
+
+[Sort, group, and merge imports](/format#sort-imports). Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt]
+sortImports = true
+```
+
+To change the groups, use a table. These are the defaults:
+
+```toml title="bunfig.toml" icon="settings"
+[fmt.sortImports]
+groups = ["builtin", "external", ["internal", "subpath"], ["parent", "sibling", "index"], "style", "unknown"]
+internalPattern = ["~/", "@/", "#"]
+newlinesBetween = true
+```
+
+| Key                  | Default | What it does                                                                  |
+| -------------------- | ------- | ----------------------------------------------------------------------------- |
+| `groups`             | above   | The order of the groups. A nested array merges several groups into one        |
+| `customGroups`       | `[]`    | Your own groups: `{ groupName = "ui", elementNamePattern = ["@acme/ui/**"] }` |
+| `internalPattern`    | above   | The prefixes that count as `internal`                                         |
+| `newlinesBetween`    | `true`  | A blank line between groups                                                   |
+| `order`              | `"asc"` | `"asc"` or `"desc"`                                                           |
+| `ignoreCase`         | `true`  | `a` and `A` sort together                                                     |
+| `sortSideEffects`    | `false` | Also move side-effect imports, like `import "./setup"`                        |
+| `partitionByComment` | `false` | Sort the imports before and after a comment line separately                   |
+| `partitionByNewline` | `false` | The same for a blank line. Needs `newlinesBetween = false`                    |
+
+To give type imports a group of their own, prefix a group with `type-`, like `"type-external"`, or use `"type"` for all of them.
+
+### `format.sortTailwindcss`
+
+[Sort Tailwind CSS classes](/format#sort-tailwind-css-classes). Default `false`. Needs `tailwindcss` version 3 or 4 installed in the project.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt.sortTailwindcss]
+stylesheet = "./src/app.css"
+functions = ["clsx", "tw"]
+```
+
+| Key                  | What it does                                                          |
+| -------------------- | --------------------------------------------------------------------- |
+| `stylesheet`         | Tailwind 4: the CSS file that imports Tailwind                        |
+| `config`             | Tailwind 3: the path of `tailwind.config.js`                          |
+| `functions`          | Sort the strings passed to these functions. Replaces the default list |
+| `attributes`         | Sort these attributes too, besides `class` and `className`            |
+| `preserveWhitespace` | Keep the whitespace between classes                                   |
+| `preserveDuplicates` | Keep duplicate classes                                                |
+
+By default, `functions` is `clsx`, `cn`, `cva`, `cx`, `classNames`, `classnames`, `twMerge`, `twJoin`, and `tv`.
+
+### `format.sortPackageJson`
+
+[Sort the keys of `package.json`](/format#sort-package-json). Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt]
+sortPackageJson = true
+```
+
+`sortPackageJson = { sortScripts = true }` sorts `scripts` by name too.
+
+### `format.jsdoc`
+
+[Format JSDoc comments](/format#format-jsdoc-comments). Default `false`.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt]
+jsdoc = true
+```
+
+| Key                           | Default        | What it does                                                                |
+| ----------------------------- | -------------- | --------------------------------------------------------------------------- |
+| `capitalizeDescriptions`      | `true`         | Start descriptions with a capital letter                                    |
+| `descriptionWithDot`          | `false`        | End descriptions with a period                                              |
+| `descriptionTag`              | `false`        | Put `@description` before the description                                   |
+| `addDefaultToDescription`     | `true`         | Add ``Default is `1` `` to the description of `@param {number} [a=1]`       |
+| `commentLineStrategy`         | `"singleLine"` | Put a short comment on one line: `"singleLine"`, `"multiline"`, or `"keep"` |
+| `separateTagGroups`           | `false`        | A blank line between different tags                                         |
+| `separateReturnsFromParam`    | `false`        | A blank line between `@param` and `@returns`                                |
+| `bracketSpacing`              | `false`        | `{ number }` instead of `{number}`                                          |
+| `preferCodeFences`            | `false`        | Turn indented code into a fenced code block                                 |
+| `lineWrappingStyle`           | `"greedy"`     | `"balance"` makes wrapped lines about the same length                       |
+| `keepUnparsableExampleIndent` | `false`        | Keep the indentation of an `@example` that doesn't parse                    |
+
+### `format.svelte`
+
+[Format Svelte components](/format#svelte). Default `true`. `svelte = false` leaves `.svelte` files alone, and the Svelte code blocks in Markdown.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt.svelte]
+sortOrder = "scripts-markup-styles-options"
+```
+
+| Key                    | Default                           | What it does                                                                                |
+| ---------------------- | --------------------------------- | ------------------------------------------------------------------------------------------- |
+| `sortOrder`            | `"options-scripts-markup-styles"` | The order of `<svelte:options>`, the scripts, the markup, and the styles. `"none"` keeps it |
+| `allowShorthand`       | `true`                            | Print `a={a}` as `{a}`                                                                      |
+| `indentScriptAndStyle` | `true`                            | Indent the code in `<script>` and `<style>`                                                 |
+
+Next to a `.prettierrc` or an `.oxfmtrc.json`, the default is what that file says: Prettier formats `.svelte` files if it lists `prettier-plugin-svelte`, and oxfmt if it has `svelte`. The key overrides the file either way. With `svelte = true`, Bun formats the files whichever version of the plugin is installed.
+
+### `format.ignorePatterns`
+
+Skip the files that match. `bun fmt` already skips `node_modules` and everything in `.gitignore`.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt]
+ignorePatterns = ["vendor/", "**/*.gen.ts"]
+```
+
+### `format.overrides`
+
+Different options for some files. Later entries win over earlier ones, and a flag wins over all of them.
+
+```toml title="bunfig.toml" icon="settings"
+[[fmt.overrides]]
+files = ["*.test.ts", "scripts/**"]
+excludeFiles = ["scripts/vendor/**"]
+options = { printWidth = 120, sortImports = false }
+```
+
+- `files` and `excludeFiles` take a glob or an array of globs, relative to `bunfig.toml`. They use the same syntax as [`Bun.Glob`](/runtime/glob). A glob without a slash matches the file name in any directory.
+- `options` takes the style options, `sortImports`, `sortTailwindcss`, `sortPackageJson`, `jsdoc`, `svelte`, and `parser`.
+
+### Every other flag
+
+Any flag that makes sense as a default has a key: its name in camelCase. `bun fmt --help --all` lists the flags. The command line wins over `bunfig.toml`.
+
+```toml title="bunfig.toml" icon="settings"
+[fmt]
+editorconfig = false # --no-editorconfig
+ignorePath = [".gitignore", ".formatignore"] # --ignore-path .gitignore --ignore-path .formatignore
+insertFinalNewline = false # --no-insert-final-newline
+logLevel = "warn" # --log-level warn
+threads = 4 # --threads 4
+```
+
+`[fmt]` also applies in a project with a `.prettierrc` or an `.oxfmtrc.json`, where a key overrides the config file as its flag does. `plugins` belong in that config file.
+
 ## Package manager
 
 The `[install]` section configures the behavior of `bun install`.

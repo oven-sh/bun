@@ -174,6 +174,59 @@ it("process.env defineProperty matches assignment semantics", () => {
   expect(process.env[""]).toBeUndefined();
 });
 
+it("process.env converts the value to a string each time the same assignment runs", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const values = [];
+        for (let i = 0; i < 6; i++) {
+          process.env.ASSIGNED_IN_A_LOOP = i;
+          values.push(process.env.ASSIGNED_IN_A_LOOP);
+        }
+        console.log(JSON.stringify(values));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: ["0", "1", "2", "3", "4", "5"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("process.env accepts a value whose toString() changes process.env", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.env.A = process.env.B = "x";
+        process.env.A = { toString() { delete process.env.B; return "deleted"; } };
+        const deleted = [process.env.A, process.env.B ?? null];
+        process.env.A = { toString() { process.env.C = "c"; return "added"; } };
+        const added = [process.env.A, process.env.C];
+        process.env.A = { toString() { return "read " + process.env.NOT_READ_YET; } };
+        console.log(JSON.stringify({ deleted, added, read: process.env.A }));
+      `,
+    ],
+    env: { ...bunEnv, NOT_READ_YET: "value" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: { deleted: ["deleted", null], added: ["added", "c"], read: "read value" },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("a write to an object that inherits from process.env changes nothing about the process", async () => {
   await using proc = Bun.spawn({
     cmd: [

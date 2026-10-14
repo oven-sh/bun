@@ -181,6 +181,9 @@ bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, P
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
     }
 
+    // An inline cache would store the next value as given, without calling put().
+    slot.disableCaching();
+
     auto* uid = propertyName.uid();
     if (uid && uid->isSymbol()) {
         throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);

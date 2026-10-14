@@ -77,6 +77,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         modifiers: Span<ModifierId>,
     ) -> StmtId {
         let id = StmtId(self.f.stmts.len() as u32);
+        self.finish_statement(id, &kind, start.pos, self.prev_end());
         self.f.stmts.push(Stmt {
             kind,
             start: start.pos,

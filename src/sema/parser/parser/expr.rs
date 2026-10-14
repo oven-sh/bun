@@ -180,6 +180,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(always)]
     pub(crate) fn add_expr(&mut self, kind: ExprKind, pos: u32, end: u32) -> ExprId {
         let id = ExprId(self.f.exprs.len() as u32);
+        self.finish_node(NodeData::Expr(id), pos, end);
         self.f.exprs.push(Expr { kind, pos, end });
         id
     }

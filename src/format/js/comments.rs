@@ -18,7 +18,6 @@ use super::source_text::SourceText;
 use crate::options::{Flavor, FormatOptions};
 use bun_lint::ast::{Expr, ExprKind, File};
 use bun_lint::span::{Span, Spanned};
-use bun_lint::tokens::TokenKind;
 use std::cell::Cell;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -41,6 +40,9 @@ pub(crate) struct Comment {
     leads_until: u32,
     pub(crate) kind: CommentKind,
     flags: u16,
+    /// Where the token before it ends, and where the token after it starts.
+    pub(crate) prev_token_end: u32,
+    pub(crate) next_token_start: u32,
     /// Which of the dangling comments of its owner it is.
     pub(crate) marker: Marker,
     pub(crate) placement: Placement,
@@ -70,6 +72,8 @@ const TRAILS_LINK: u16 = 1 << 7;
 const LEADS_LINK: u16 = 1 << 8;
 /// Prettier's `comment.unignore`.
 const UNIGNORED: u16 = 1 << 9;
+/// Prettier's `mergeNestledJsdocComments` has made it part of the comment before it. Nothing owns it or prints it.
+const MERGED_INTO_PREVIOUS: u16 = 1 << 10;
 
 impl Comment {
     /// Without the delimiters.
@@ -147,6 +151,11 @@ impl Comment {
         self.flags & LOOKS_LIKE_TYPE_CAST != 0
     }
 
+    #[inline]
+    pub(crate) fn is_merged_into_previous(self) -> bool {
+        self.flags & MERGED_INTO_PREVIOUS != 0
+    }
+
     /// The same, in a file where the parentheses after it are kept.
     #[inline]
     pub(crate) fn is_type_cast(self) -> bool {
@@ -172,7 +181,7 @@ impl Comment {
             placement: attachment.placement,
             owner_kind: match attachment.owner {
                 Owner::Node(node) => node.kind() as u8,
-                Owner::Name(_) | Owner::CastParentheses(..) => u8::MAX,
+                Owner::Name(_) | Owner::CastParens(..) => u8::MAX,
             },
             flags: self.flags
                 | if attachment.is_unignored {
@@ -230,14 +239,16 @@ fn scan_comments<'a>(
     let source = SourceText::new(text);
     let first = comments.len();
     let has_type_casts = has_tree_of_babel || type_casts_are_kept_in_typescript(flavor);
-    for token in file.comments() {
-        let span = token.span();
-        let content = token.comment_value();
-        let kind = match token.kind() {
-            TokenKind::Line => CommentKind::Line,
-            TokenKind::Block if source.contains_newline(span) => CommentKind::MultiLineBlock,
-            TokenKind::Block => CommentKind::SingleLineBlock,
-            _ => continue,
+    for parsed_comment in file.comments_by_id() {
+        let span = parsed_comment.span();
+        let written = source.text_for(&span);
+        let (content, kind) = match written {
+            [b'/', b'/', content @ ..] => (content, CommentKind::Line),
+            [b'/', b'*', content @ .., b'*', b'/'] if source.contains_newline(span) => {
+                (content, CommentKind::MultiLineBlock)
+            }
+            [b'/', b'*', content @ .., b'*', b'/'] => (content, CommentKind::SingleLineBlock),
+            _ => (&b""[..], CommentKind::SingleLineBlock),
         };
         let mut flags = 0;
         let before = text.get(..span.start as usize).unwrap_or_default();
@@ -267,16 +278,18 @@ fn scan_comments<'a>(
         }
         // Prettier's `mergeNestledJsdocComments`. JSDoc has a form in which several `/** .. */` directly
         // follow each other, for the overloads of a function. They are one comment.
+        let previous = (comments.get_mut(first..).unwrap_or_default().iter_mut())
+            .rfind(|it| !it.is_merged_into_previous());
         if flags & INDENTABLE != 0
-            && comments.len() > first
-            && let Some(previous) = comments.last_mut()
+            && let Some(previous) = previous
             && previous.span.end == span.start
             && previous.flags & INDENTABLE != 0
         {
             previous.span.end = span.end;
             previous.flags =
                 (previous.flags & !FOLLOWED_BY_NEWLINE) | (flags & !PRECEDED_BY_NEWLINE);
-            continue;
+            // It keeps its place in the list, so that the index of a comment is its id.
+            flags = MERGED_INTO_PREVIOUS;
         }
         comments.push(Comment {
             span,
@@ -288,29 +301,48 @@ fn scan_comments<'a>(
             placement: Placement::Dangling,
             owner_kind: u8::MAX,
             index: (comments.len() - first) as u32,
+            prev_token_end: parsed_comment.prev_token_end(),
+            next_token_start: parsed_comment.next_token_start(),
         });
     }
 }
 
 /// The comments of a file.
 pub(crate) struct FileComments {
-    /// In source order.
+    /// By their ids, which is the order of the text.
     all: Vec<Comment>,
     owners: Owners,
+    cast_parens: Vec<u32>,
 }
 
 impl FileComments {
     pub(crate) const EMPTY: FileComments = FileComments {
         all: Vec::new(),
         owners: Owners::EMPTY,
+        cast_parens: Vec::new(),
     };
 
     pub(crate) fn iter(&self) -> impl Iterator<Item = &Comment> {
-        self.all.iter()
+        self.all.iter().filter(|it| !it.is_merged_into_previous())
     }
 }
 
 pub(crate) static NO_COMMENTS: FileComments = FileComments::EMPTY;
+
+/// Where the `(` are that directly follow a type cast comment. Sorted. If one is around an expression, Prettier keeps the
+/// `ParenthesizedExpression`.
+pub(crate) fn cast_parens(file: &File<'_>, comments: &[Comment]) -> Vec<u32> {
+    let text = file.text();
+    (comments.iter().enumerate())
+        .filter(|(id, comment)| {
+            comment.is_type_cast()
+                && text.get(comment.next_token_start as usize) == Some(&b'(')
+                && (comments.get(id + 1))
+                    .is_none_or(|next| next.span.start > comment.next_token_start)
+        })
+        .map(|(_, comment)| comment.next_token_start)
+        .collect()
+}
 
 /// The comments of `file`, which keeps them, so that they live as long as the handles.
 pub(crate) fn of_file<'a>(
@@ -326,7 +358,8 @@ pub(crate) fn of_file<'a>(
             has_tree_of_babel,
             experimental_ternaries: options.experimental_ternaries,
         };
-        let attached = attach::attach(file, &comments, how);
+        let cast_parens = cast_parens(file, &comments);
+        let attached = attach::attach(file, &comments, &cast_parens, how);
         for (comment, attachment) in comments.iter_mut().zip(&attached.attachments) {
             *comment = comment.with_attachment(attachment);
         }
@@ -334,6 +367,7 @@ pub(crate) fn of_file<'a>(
         FileComments {
             all: comments,
             owners,
+            cast_parens,
         }
     });
     comments.unwrap_or(&NO_COMMENTS)
@@ -411,6 +445,7 @@ pub(crate) struct Comments<'a> {
     /// Every comment of the file, in source order.
     all: &'a [Comment],
     owners: &'a Owners,
+    cast_parens: &'a [u32],
     /// The result of the last search in `all`. Nodes are mostly printed in source order, so the next search starts here.
     search_hint: Cell<usize>,
     /// A bit for each comment, by its index: it is printed.
@@ -451,6 +486,7 @@ fn count_that_end_before(comments: &[Comment], pos: u32) -> usize {
 impl<'a> Comments<'a> {
     pub(crate) fn new(source_text: SourceText<'a>, comments: &'a FileComments) -> Self {
         let owners = &comments.owners;
+        let cast_parens = &comments.cast_parens[..];
         let comments = &comments.all[..];
         let flags = comments
             .iter()
@@ -460,6 +496,7 @@ impl<'a> Comments<'a> {
             inner: &[],
             all: comments,
             owners,
+            cast_parens,
             search_hint: Cell::new(0),
             printed_bitset: vec![0; comments.len().div_ceil(64)],
             printed_log: Vec::new(),
@@ -892,7 +929,8 @@ impl<'a> Comments<'a> {
 
     /// The comments that have not been printed. After a file is formatted there must be none.
     pub(crate) fn unprinted(&self) -> impl Iterator<Item = &'a Comment> + use<'a, '_> {
-        self.all.iter().filter(|comment| !self.is_printed(comment))
+        (self.all.iter())
+            .filter(|comment| !comment.is_merged_into_previous() && !self.is_printed(comment))
     }
 
     /// Marks every comment inside `span` as printed: the source text of `span` has been copied to the output.
@@ -1131,18 +1169,7 @@ impl<'a> Comments<'a> {
     /// Whether the `(` at `open` follows a type cast comment with nothing but white space in between.
     /// If it is around an expression, Prettier keeps the `ParenthesizedExpression`.
     pub(crate) fn is_cast_parenthesis(&self, open: u32) -> bool {
-        let before = self.inner.partition_point(|comment| comment.start() < open);
-        // The text of a moved comment is somewhere else.
-        self.inner[..before]
-            .iter()
-            .rev()
-            .find(|comment| !comment.is_moved())
-            .is_some_and(|comment| {
-                self.is_type_cast_comment(comment)
-                    && self
-                        .source_text
-                        .all_bytes(Span::after(comment.span, open), |b| b.is_ascii_whitespace())
-            })
+        self.cast_parens.binary_search(&open).is_ok()
     }
 
     /// Hides the comments that start at or after `position`, whatever is shown or hidden with the other

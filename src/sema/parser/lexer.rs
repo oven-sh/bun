@@ -15,7 +15,9 @@ use bun_core::lexer::{
 use bun_core::strings::{self, is_js_line_terminator, push_codepoint_wtf8_joined};
 use bun_highway::ScannerStops;
 use bun_sema::atom::{Atom, Intern};
-use bun_sema::hir::{CommentDirective, CommentDirectiveKind, Diagnostic, DiagnosticKind};
+use bun_sema::hir::{
+    Comment, CommentDirective, CommentDirectiveKind, Diagnostic, DiagnosticKind, NodeOrName,
+};
 
 pub(crate) struct Lexer<'a> {
     pub(crate) src: &'a [u8],
@@ -67,7 +69,11 @@ pub(crate) struct Lexer<'a> {
     /// The comments before the first token.
     pub(crate) leading_comments: Vec<(u32, u32)>,
     /// `hir::File::comments`
-    pub(crate) comments: Vec<(u32, u32)>,
+    pub(crate) comments: Vec<Comment>,
+    /// `Options::attach_comments`
+    pub(crate) attach_comments: bool,
+    /// See `Parser::finish_node`: a node that starts after this offset cannot affect any pending comment.
+    pub(crate) max_relevant_node_start: u32,
     /// What TypeScript's scanner reports and ECMAScript allows outside strict code: the code of the
     /// message, and from where to where. Only with `is_ecmascript`: otherwise the text is refused.
     pub(crate) flagged: Vec<(u32, u32, u32)>,
@@ -268,6 +274,8 @@ impl<'a> Lexer<'a> {
             comment_directives: Vec::new(),
             leading_comments: Vec::new(),
             comments: Vec::new(),
+            attach_comments: false,
+            max_relevant_node_start: 0,
             flagged: Vec::new(),
             recovers: false,
             errors: Vec::new(),
@@ -305,7 +313,11 @@ impl<'a> Lexer<'a> {
         self.full_start = mark.full_start;
         self.atom = mark.atom;
         self.number = mark.number;
-        if self.comments.last().is_some_and(|last| last.0 >= mark.end) {
+        if self
+            .comments
+            .last()
+            .is_some_and(|last| last.pos >= mark.end)
+        {
             self.forget_comments_from(mark.end);
         }
         if self.flagged.last().is_some_and(|last| last.1 >= mark.end) {
@@ -420,7 +432,7 @@ impl<'a> Lexer<'a> {
     #[cold]
     #[inline(never)]
     fn forget_comments_from(&mut self, pos: u32) {
-        let kept = self.comments.partition_point(|comment| comment.0 < pos);
+        let kept = self.comments.partition_point(|comment| comment.pos < pos);
         self.comments.truncate(kept);
     }
 
@@ -706,10 +718,20 @@ impl<'a> Lexer<'a> {
     }
 
     /// At a comment, or at a character that is not ASCII: scans the token after it and after the
-    /// blanks and comments that follow it. They are passed over in a loop: not every build turns
-    /// the last call of a function into a jump, and a file can start with thousands of comments.
+    /// blanks and comments that follow it.
     #[inline(never)]
-    fn scan_after_comments(&mut self, mut pos: usize) {
+    fn scan_after_comments(&mut self, pos: usize) {
+        let first = self.comments.len();
+        self.pass_over_comments_and_scan(pos);
+        let next_token_start = self.start;
+        for comment in self.comments.get_mut(first..).unwrap_or_default() {
+            comment.next_token_start = next_token_start;
+        }
+    }
+
+    /// They are passed over in a loop: not every build turns the last call of a function into a
+    /// jump, and a file can start with thousands of comments.
+    fn pass_over_comments_and_scan(&mut self, mut pos: usize) {
         if self.is_too_deep() {
             return;
         }
@@ -1172,6 +1194,24 @@ impl<'a> Lexer<'a> {
         src.len()
     }
 
+    /// `Lexer::scan_after_comments` fills in `next_token_start`.
+    #[inline(always)]
+    fn note_comment(&mut self, start: usize, end: usize) {
+        self.comments.push(Comment {
+            pos: start as u32,
+            end: end as u32,
+            prev_token_end: self.full_start,
+            next_token_start: end as u32,
+            enclosing_node: NodeOrName::None,
+            preceding_node: NodeOrName::None,
+            following_node: NodeOrName::None,
+        });
+        // Until the parser has looked at the new comment, any node could be next to it.
+        if self.attach_comments {
+            self.max_relevant_node_start = u32::MAX;
+        }
+    }
+
     /// Notes the `//` comment at `start`. Returns its end.
     #[inline(never)]
     fn line_comment(&mut self, start: usize) -> usize {
@@ -1179,7 +1219,7 @@ impl<'a> Lexer<'a> {
         if self.full_start == 0 {
             self.leading_comments.push((start as u32, end as u32));
         }
-        self.comments.push((start as u32, end as u32));
+        self.note_comment(start, end);
         // `processCommentDirective`: "Skip opening //", "Skip another / if present"
         let src = self.src;
         let mut pos = start + 2;
@@ -1225,7 +1265,7 @@ impl<'a> Lexer<'a> {
         if self.full_start == 0 {
             self.leading_comments.push((start as u32, end as u32));
         }
-        self.comments.push((start as u32, end as u32));
+        self.note_comment(start, end);
         // `processCommentDirective`: "Skip whitespace", "Skip combinations of / and *"
         let mut pos = last_line;
         while pos < end && matches!(src[pos], b' ' | b'\t') {

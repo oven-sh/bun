@@ -27,6 +27,7 @@
 //! - The default of the shorthand `{ a = 1 }` is an [`ExprKind::Assign`] that is the value of the
 //!   property. A [`TupleElem`] is there for every element of a tuple type, also for a plain `T`.
 
+pub mod comments;
 mod decl;
 mod entities;
 mod expr;
@@ -126,7 +127,7 @@ slices! {
         import_attributes: (u32, hir::ExprId),
         deferred_import_calls: (hir::ExprId, u32),
         jsdoc_comments: (u32, u32),
-        comments: (u32, u32),
+        comments: hir::Comment,
         keyword_identifier_positions: u32,
         mentioned: u64,
         diagnostics: hir::Diagnostic,

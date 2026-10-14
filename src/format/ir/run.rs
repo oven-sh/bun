@@ -35,7 +35,8 @@ pub(crate) fn format_with_marks<'a>(
             has_tree_of_babel: file.is_javascript(),
             experimental_ternaries: options.experimental_ternaries,
         };
-        crate::js::attach::list(file, &comments, attach_options, out);
+        let cast_parens = crate::js::comments::cast_parens(file, &comments);
+        crate::js::attach::list(file, &comments, &cast_parens, attach_options, out);
         return Ok([None; 2]);
     }
     let root = write_document(file, options, cursor, scratch, write);

@@ -15,7 +15,6 @@
 //! none behind it on the same line.
 
 use super::ast_nodes::{AsAstNodes, AstNodes, ChainElement, inner_of_stmt};
-use super::attach::as_parenthesizable_expr;
 use super::parentheses;
 use super::print;
 use super::print::program::ends_before_semicolon;
@@ -196,7 +195,7 @@ pub(crate) fn format_name<'a>(
 /// Prettier's `printIgnored`: copies the source text of `node`, with the parentheses and the `;` that it needs where it
 /// is. This is the only place that writes an ignored node.
 pub(crate) fn write_ignored_node<'a>(node: AstNodes<'a>, f: &mut Formatter<'a>) {
-    if let Some(expr) = as_parenthesizable_expr(node) {
+    if let Some(expr) = node.as_expression() {
         return write_suppressed_expression(expr, false, f);
     }
     let statement = match (node, node.raw()) {
@@ -731,7 +730,7 @@ fn format_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
 }
 
 /// Whether `statement` is in the head of a `for`, and not its body.
-fn is_in_head_of_for(statement: Stmt<'_>) -> bool {
+pub(crate) fn is_in_head_of_for(statement: Stmt<'_>) -> bool {
     matches!(statement.parent(), Node::Stmt(parent) if matches!(
         parent.kind(),
         StmtKind::For { body, .. } | StmtKind::ForIn { body, .. } | StmtKind::ForOf { body, .. }

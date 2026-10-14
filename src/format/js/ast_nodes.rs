@@ -817,6 +817,26 @@ fn parent_of_owner<'a>(owner: Node<'a>) -> AstNodes<'a> {
 }
 
 impl<'a> AstNodes<'a> {
+    /// The expression that it is, if it is one: what parentheses can be written around.
+    pub(crate) fn as_expression(self) -> Option<Expr<'a>> {
+        use AstNodes as N;
+        match self {
+            N::Function(func) | N::ArrowFunctionExpression(func) => func.owner().as_expr(),
+            N::Class(class) => class.owner().as_expr(),
+            N::SpreadElement(_)
+            | N::JSXExpressionContainer(_)
+            | N::JSXSpreadChild(_)
+            | N::JSXOpeningElement(_)
+            | N::Decorator(_)
+            | N::ChainExpression(_)
+            | N::AssignmentTargetRest(_) => None,
+            _ => match self.raw() {
+                Node::Expr(e) => Some(e),
+                _ => None,
+            },
+        }
+    }
+
     /// What it is directly in. `Program` is in itself.
     pub(crate) fn parent(self) -> AstNodes<'a> {
         use AstNodes as N;

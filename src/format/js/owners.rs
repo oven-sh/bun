@@ -62,8 +62,8 @@ pub(crate) struct OwnedComments<'a> {
 fn sort_key(owner: Owner<'_>, placement: u8) -> u64 {
     let (owner_class, id, kind) = match owner {
         Owner::Node(node) => (0, node.raw().index(), node.kind() as u8),
-        Owner::Name(name) => (1, name.span.start, 0),
-        Owner::CastParentheses(_, open) => (2, open, 0),
+        Owner::Name(start) => (1, start, 0),
+        Owner::CastParens(_, open) => (2, open, 0),
     };
     (owner_class << 48) | (u64::from(id) << 16) | (u64::from(kind) << 8) | u64::from(placement)
 }
@@ -82,14 +82,14 @@ impl Owners {
     /// `comments`: those of `file` in the order of the source, which is the order of `attached`.
     pub(crate) fn new(file: &File<'_>, comments: &[Comment], attached: Attached<'_>) -> Owners {
         let mut sort_keys: Vec<(u64, u32)> =
-            Vec::with_capacity(comments.len() + attached.ignored.len());
+            Vec::with_capacity(comments.len() + attached.ignored_nodes.len());
         for (index, attachment) in attached.attachments.iter().enumerate() {
             sort_keys.push((
                 sort_key(attachment.owner, attachment.placement as u8),
                 index as u32,
             ));
         }
-        for owner in &attached.ignored {
+        for owner in &attached.ignored_nodes {
             sort_keys.push((sort_key(*owner, IGNORED), u32::MAX));
         }
         if !sort_keys.is_sorted() {

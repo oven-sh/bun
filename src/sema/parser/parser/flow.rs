@@ -702,7 +702,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return self.push_unnamed_parameter(start, ty, flags);
         }
         let (name, pos, end) = self.word();
-        let pat = self.f.pat(PatKind::Ident(name), pos, end);
+        let pat = self.add_pat(PatKind::Ident(name), pos, end);
         if self.eat(T::Question) {
             flags |= Flags::OPTIONAL;
         }

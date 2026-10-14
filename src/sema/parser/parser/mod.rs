@@ -2,6 +2,7 @@
 //! speculation, names and lists.
 
 mod class;
+mod comments;
 mod declared;
 mod expr;
 mod flow;
@@ -174,6 +175,7 @@ pub(crate) struct Checkpoint {
     unclaimed_nullable_types: u32,
     declared: declared::Mark,
     jsdoc: jsdoc::Lens,
+    comments: comments::CommentCheckpoint,
 }
 
 /// `GENERAL`: it can recover from errors, read JSDoc comments and read Flow, if the options say so. Without it
@@ -192,6 +194,7 @@ pub(crate) struct Parser<'a, const GENERAL: bool> {
     /// See `reads_jsdoc()`.
     reads_jsdoc: bool,
     pub(crate) jsdoc: jsdoc::State,
+    comments: comments::CommentTracker,
     /// `parsingContexts`: a bit for each `ListKind` of which a list is open.
     pub(crate) lists: u32,
     pub(crate) declaration_scan: stmt::DeclarationScan,
@@ -362,6 +365,7 @@ pub(crate) fn run<'a>(
     lx.is_jsx = options.is_jsx;
     lx.recovers = options.recovers;
     lx.comments = std::mem::take(&mut file.comments);
+    lx.attach_comments = options.attach_comments;
     let is_ecmascript = options.dialect.ecmascript && options.is_javascript && !options.is_json;
     lx.is_ecmascript = is_ecmascript;
     lx.is_typescript_5 = options.dialect.typescript_5;
@@ -466,6 +470,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             recovers: options.recovers,
             reads_jsdoc: jsdoc.wanted != 0,
             jsdoc,
+            comments: comments::CommentTracker::default(),
             lists: 0,
             // No token is in it.
             declaration_scan: stmt::DeclarationScan {
@@ -520,6 +525,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     /// Leaves the file in `file`.
     fn parse_into(mut self, file: &mut FileBuilder) -> Harvest<'a> {
         self.source_file();
+        self.resolve_top_level_comments();
         self.report_what_the_scanner_flagged();
         if !self.lx.private_names.is_empty() {
             self.f.rare_syntax |= rare::ODD_PRIVATE_NAME;
@@ -675,7 +681,9 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     #[inline(always)]
     pub(crate) fn next_after_name(&mut self) {
         self.take_as_name();
+        let (pos, end) = (self.lx.start, self.lx.end);
         self.lx.next();
+        self.finish_name(pos, end);
     }
 
     /// The token, a word, is taken as a name.
@@ -946,6 +954,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
             unclaimed_nullable_types: self.unclaimed_nullable_types,
             declared: self.declared.mark(),
             jsdoc,
+            comments: self.comment_checkpoint(),
         }
     }
 
@@ -962,6 +971,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         if self.reads_jsdoc() {
             self.rollback_jsdoc(to);
         }
+        self.rollback_comments(to);
     }
 
     /// Forgets the nodes that were built since `since`, for which the tree has no place. The tokens
@@ -1233,6 +1243,7 @@ macro_rules! take_span {
             _ => $p.f.$field.extend_from_slice(items),
         }
         $p.s.$field.truncate(base);
+        $crate::parser::comments::finish_list!($p, $field, start, len);
         bun_sema::hir::Span::new(start, len)
     }};
 }

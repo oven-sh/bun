@@ -27,6 +27,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(always)]
     pub(crate) fn add_type(&mut self, kind: TypeNodeKind, pos: u32, end: u32) -> TypeNodeId {
         let id = TypeNodeId(self.f.types.len() as u32);
+        self.finish_node(NodeData::Type(id), pos, end);
         self.f.types.push(TypeNode { kind, pos, end });
         id
     }

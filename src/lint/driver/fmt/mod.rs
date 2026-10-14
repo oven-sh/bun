@@ -351,6 +351,7 @@ fn with_tree<'h, R>(
         how.atoms.of_this_thread(),
         options.experimental_decorators,
         options.every_file_is_a_module,
+        true,
         // The names are the file's own.
         |summary, atoms| then(summary, atoms, &language),
     )

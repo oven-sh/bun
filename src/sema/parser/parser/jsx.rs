@@ -153,7 +153,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let from = self.full_start();
         let before = self.token();
         // What was read as a comment is text.
-        let kept = self.lx.comments.partition_point(|it| it.0 < from);
+        let kept = self.lx.comments.partition_point(|it| it.pos < from);
         self.lx.comments.truncate(kept);
         self.lx.end = from;
         self.lx.next_jsx_child();

@@ -2275,7 +2275,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.reverse_mapped_source_stack,
             self.reverse_mapped_target_stack,
         ) = (sources, targets);
-        let before = (self.unmarked_refusals, self.limits, self.refused_at);
+        let before = self.interruptions();
         let result = if self.reverse_expanding != 3 {
             // `inferReverseMappedTypeWorker`: `T[P]` is what is inferred.
             self.reverse_mapped_inferences_from.push(self.stack.len());
@@ -2298,7 +2298,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.reverse_expanding = saved;
         // `c.reverseMappedCache[key] = t` at every return, whatever is in progress: the outermost call
         // for a key assigns last. Not a result cut short by a request or a limit that tsgo has not.
-        let is_cut_short = before != (self.unmarked_refusals, self.limits, self.refused_at);
+        let is_cut_short = before != self.interruptions();
         let stored = match self.end_scope_by_counters(scope) {
             Ok(stored) => Some(stored),
             Err(_) => (!is_cut_short).then(Stored::new),
@@ -2969,8 +2969,7 @@ impl<'p, 's> Checker<'p, 's> {
             return known;
         }
         let could_contain = self.could_contain_type_variables_worker(ty);
-        let mut known = self.could_contain_type_variables.borrow_mut();
-        known.insert(ty, could_contain);
+        (self.could_contain_type_variables.borrow_mut()).insert(ty, could_contain);
         could_contain
     }
 

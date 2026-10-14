@@ -2752,6 +2752,12 @@ impl<'p, 's> Checker<'p, 's> {
         self.limits + self.times_cut_short.get()
     }
 
+    /// Changes whenever a query is refused or a computation is cut short. The same before and after: what was computed in
+    /// between is whole, and may be kept longer than the frames around it.
+    fn interruptions(&self) -> (u64, u64, u64) {
+        (self.unmarked_refusals, self.cuts(), self.refused_at)
+    }
+
     /// A result that was cut short has been read. Records the same marks as recomputing it would,
     /// so that results computed from it are recorded in turn.
     fn cut_short_again(&mut self) {

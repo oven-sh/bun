@@ -2785,13 +2785,13 @@ impl<'p, 's> Checker<'p, 's> {
             return;
         }
         let reported = self.reported.len();
-        let cuts = (self.unmarked_refusals, self.cuts(), self.refused_at);
+        let cuts = self.interruptions();
         let outer = std::mem::replace(&mut self.is_checking_in_flow_loop, true);
         self.check_expression(file, e);
         self.is_checking_in_flow_loop = outer;
         // What a check that was cut short has reported is not all: it stays with the frames in progress, which drop it, and
         // the task that gets through has the owner.
-        if cuts == (self.unmarked_refusals, self.cuts(), self.refused_at) {
+        if cuts == self.interruptions() {
             self.log_reported_in_flow_loop(reported, file, e);
         }
     }

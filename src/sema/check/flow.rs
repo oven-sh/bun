@@ -1724,7 +1724,13 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Whether `flowLoopStack` is not empty: the types that a reference has are those that a loop has collected so far.
     pub(super) fn is_in_flow_loop(&self) -> bool {
-        (self.flow_loops.last()).is_some_and(|pushed| self.is_flow_loop_visible(pushed.5))
+        self.flow_loop_pushed_at().is_some()
+    }
+
+    /// The depth of `stack` when the pass over the innermost loop of `flowLoopStack` began.
+    pub(super) fn flow_loop_pushed_at(&self) -> Option<usize> {
+        (self.flow_loops.last().map(|pushed| pushed.5))
+            .filter(|&pushed_at| self.is_flow_loop_visible(pushed_at))
     }
 
     /// The depth of `stack` when the top of `flowLoopStack` was pushed, if that was after
@@ -6819,7 +6825,7 @@ impl<'p, 's> Checker<'p, 's> {
                     // A walk in which a cycle is left unmarked behind `eager` is not one tsgo makes, nor one in which a query is
                     // refused for the depth at which it is made or at a limit that tsgo has not: the value assigned on a
                     // back edge is missing then. Nothing of it is in `flowLoopCache`, which outlives the frames around.
-                    let refusals = (self.unmarked_refusals, self.cuts(), self.refused_at);
+                    let refusals = self.interruptions();
                     // Once the type is the declared type, only subtypes could be added. Unlike at a
                     // branch label, the initial type is not considered.
                     if entry != walk.declared {
@@ -6846,10 +6852,7 @@ impl<'p, 's> Checker<'p, 's> {
                             // "Control flow analysis was restarted and completed by checkExpressionCached."
                             restarted = (self.flow_memo)
                                 .cached_flow_loop_type(&key, &walk.reference)
-                                .filter(|_| {
-                                    refusals
-                                        == (self.unmarked_refusals, self.cuts(), self.refused_at)
-                                });
+                                .filter(|_| refusals == self.interruptions());
                             if restarted.is_some() {
                                 break;
                             }
@@ -6878,7 +6881,7 @@ impl<'p, 's> Checker<'p, 's> {
                     if !incomplete
                         && !walk.too_deep
                         && walk.steps < MAX_STEPS
-                        && refusals == (self.unmarked_refusals, self.cuts(), self.refused_at)
+                        && refusals == self.interruptions()
                     {
                         self.flow_memo
                             .flow_loop_cache

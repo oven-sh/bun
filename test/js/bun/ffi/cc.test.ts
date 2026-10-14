@@ -139,6 +139,25 @@ describe("given a source file with syntax errors", () => {
   });
 });
 
+// "50%deposit.c" is a file name. In a URL its "%de" is an escape, and the byte DE is not UTF-8.
+// Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789).
+it.skipIf(isWindows)("cc() throws a URIError for a source URL whose path does not percent-decode to UTF-8", () => {
+  const url = new URL("50%deposit.c", import.meta.url);
+  for (const source of [url, url.href, [url]]) {
+    let error: any;
+    try {
+      cc({ source, symbols: { add: { returns: "int", args: ["int", "int"] } } }).close();
+    } catch (e) {
+      error = e;
+    }
+    expect({ name: error?.name, message: error?.message, code: error?.code }).toEqual({
+      name: "URIError",
+      message: "URI malformed",
+      code: undefined,
+    });
+  }
+});
+
 // cc() wraps a symbol that returns a cstring in a closure, not in script made from a string.
 // TinyCC's setjmp/longjmp error handling conflicts with ASan.
 describe.skipIf(isASAN)("given a symbol that returns a cstring", () => {

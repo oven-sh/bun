@@ -15,6 +15,7 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
+import assert from "node:assert";
 import fs, {
   closeSync,
   constants,
@@ -57,6 +58,7 @@ import fs, {
 } from "node:fs";
 import * as os from "node:os";
 import path, { dirname, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { inspect, promisify } from "node:util";
 
 import _promises, { type FileHandle } from "node:fs/promises";
@@ -7443,5 +7445,111 @@ describe("module init", () => {
       k => !k.startsWith("File") && typeof fs[k] === "function" && fs[k].name !== k,
     );
     expect(mismatched).toStrictEqual([]);
+  });
+});
+
+// "50%deposit.txt" is a file name. In a URL its "%de" is an escape, and the byte DE is not UTF-8.
+// node throws decodeURIComponent()'s URIError where it converts the URL, and so nothing acts on "".
+// Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789), so the call acts on that name.
+describe.skipIf(isWindows)("a file URL whose path does not percent-decode to UTF-8", () => {
+  const isURIMalformed = (err: any) => {
+    assert.strictEqual(err.name, "URIError");
+    assert.strictEqual(err.message, "URI malformed");
+    assert.strictEqual(err.code, undefined);
+    return true;
+  };
+
+  // A directory for each case, so that a call that does act on a path changes nothing else.
+  function fixture() {
+    const dir = tempDir("fs-undecodable-file-url", { "other.txt": "other" });
+    const root = String(dir);
+    const other = join(root, "other.txt");
+    return {
+      url: new URL("50%deposit.txt", pathToFileURL(root + path.sep)),
+      other,
+      expectUntouched() {
+        expect(readdirSync(root)).toEqual(["other.txt"]);
+        expect(readFileSync(other, "utf8")).toBe("other");
+      },
+      [Symbol.dispose]: () => dir[Symbol.dispose](),
+    };
+  }
+
+  // What a call returns when it does not throw. The test fails then, and the handle must not outlive it:
+  // a stream that opens "" emits its error into a later test.
+  async function release(returned: any) {
+    if (typeof returned === "number") closeSync(returned);
+    else if (returned instanceof Dir) returned.closeSync();
+    else if (typeof returned?.destroy === "function") returned.on("error", () => {}).destroy();
+    else if (typeof returned?.stop === "function") returned.stop();
+    else if (typeof returned?.close === "function") await returned.close();
+  }
+
+  it.each<[string, (url: URL, other: string) => unknown]>([
+    ["readFileSync", url => fs.readFileSync(url)],
+    ["writeFileSync", url => fs.writeFileSync(url, "")],
+    ["appendFileSync", url => fs.appendFileSync(url, "")],
+    ["statSync", url => fs.statSync(url)],
+    ["lstatSync", url => fs.lstatSync(url)],
+    ["accessSync", url => fs.accessSync(url)],
+    ["openSync", url => fs.openSync(url, "r")],
+    ["readdirSync", url => fs.readdirSync(url)],
+    ["opendirSync", url => fs.opendirSync(url)],
+    ["mkdirSync", url => fs.mkdirSync(url)],
+    ["rmSync", url => fs.rmSync(url)],
+    ["unlinkSync", url => fs.unlinkSync(url)],
+    ["realpathSync", url => fs.realpathSync(url)],
+    ["renameSync, the old path", (url, other) => fs.renameSync(url, other)],
+    ["renameSync, the new path", (url, other) => fs.renameSync(other, url)],
+    ["copyFileSync", (url, other) => fs.copyFileSync(url, other)],
+    ["cpSync, the source", (url, other) => fs.cpSync(url, other)],
+    ["cpSync, the destination", (url, other) => fs.cpSync(other, url)],
+    ["globSync, the cwd", url => fs.globSync("*", { cwd: url })],
+    ["createReadStream", url => fs.createReadStream(url)],
+    ["createWriteStream", url => fs.createWriteStream(url)],
+    ["watch", url => fs.watch(url)],
+    ["watchFile", url => fs.watchFile(url, () => {})],
+    ["unwatchFile", url => fs.unwatchFile(url)],
+    ["readFile with a callback", url => fs.readFile(url, () => {})],
+    ["stat with a callback", url => fs.stat(url, () => {})],
+    ["cp with a callback", (url, other) => fs.cp(url, other, () => {})],
+    ["glob with a callback", url => fs.glob("*", { cwd: url }, () => {})],
+  ])("fs.%s throws the URIError", async (_, call) => {
+    using files = fixture();
+    let returned: unknown;
+    try {
+      assert.throws(() => {
+        returned = call(files.url, files.other);
+      }, isURIMalformed);
+    } finally {
+      await release(returned);
+    }
+    files.expectUntouched();
+  });
+
+  it.each<[string, (url: URL, other: string) => Promise<unknown>]>([
+    ["readFile", url => promises.readFile(url)],
+    ["writeFile", url => promises.writeFile(url, "")],
+    ["stat", url => promises.stat(url)],
+    ["open", url => promises.open(url)],
+    ["cp", (url, other) => promises.cp(url, other)],
+    ["glob, the cwd", url => Array.fromAsync(promises.glob("*", { cwd: url }))],
+  ])("fs.promises.%s rejects with the URIError", async (_, call) => {
+    using files = fixture();
+    const returned = call(files.url, files.other);
+    try {
+      await assert.rejects(returned, isURIMalformed);
+    } finally {
+      await release(await returned.catch(() => {}));
+    }
+    files.expectUntouched();
+  });
+
+  it("fs.existsSync and fs.exists say false", async () => {
+    using files = fixture();
+    expect(fs.existsSync(files.url)).toBe(false);
+    const { promise, resolve } = Promise.withResolvers<boolean>();
+    fs.exists(files.url, resolve);
+    expect(await promise).toBe(false);
   });
 });

@@ -686,6 +686,25 @@ it("dlopen throws an error instead of returning it", () => {
   expect(err).toBeTruthy();
 });
 
+// "50%deposit.so" is a file name. In a URL its "%de" is an escape, and the byte DE is not UTF-8.
+// Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789).
+it.skipIf(isWindows)("dlopen throws a URIError for a file URL whose path does not percent-decode to UTF-8", () => {
+  const url = new URL("50%deposit.so", import.meta.url);
+  for (const path of [url, url.href]) {
+    let err;
+    try {
+      dlopen(path, { x: {} }).close();
+    } catch (error) {
+      err = error;
+    }
+    expect({ name: err?.name, message: err?.message, code: err?.code }).toEqual({
+      name: "URIError",
+      message: "URI malformed",
+      code: undefined,
+    });
+  }
+});
+
 // Windows: dlopen must accept paths with non-ASCII characters. Previously the
 // path was handed to LoadLibraryA as UTF-8, which the OS decodes as the system
 // ANSI codepage, so any non-ASCII byte mangled the path.

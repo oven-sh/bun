@@ -151,4 +151,82 @@ describe("url.fileURLToPath", () => {
       assert.strictEqual(fromURL, path);
     }
   });
+
+  // node decodes the pathname with decodeURIComponent(), so these throw its error:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/url.js#L1580-L1598
+  describe("a path that does not percent-decode to UTF-8", () => {
+    function assertURIMalformed(fn) {
+      assert.throws(fn, err => {
+        assert.strictEqual(err.name, "URIError");
+        assert.strictEqual(err.message, "URI malformed");
+        assert.strictEqual(err.code, undefined);
+        return true;
+      });
+    }
+
+    // With no `windows` option the host's native conversion runs. On Windows WTF decodes such a
+    // path with U+FFFD in it (oven-sh/WebKit#789), so there only the explicit rules throw.
+    const optionsThatThrow = isWindows
+      ? [{ windows: false }, { windows: true }]
+      : [undefined, {}, { windows: false }, { windows: true }];
+
+    test.each([
+      ["a lead byte and then an ASCII character", "50%deposit.db"],
+      ["a Latin-1 byte", "caf%E9.db"],
+      ["a sequence that ends too soon", "%c3"],
+      ["a wrong continuation byte", "%c3%28"],
+      ["a continuation byte alone", "%80"],
+      ["a byte that UTF-8 never has", "%ff"],
+      ["an overlong form", "%C0%80"],
+      ["a surrogate", "%ED%A0%80"],
+      ["a code point above U+10FFFF", "%F4%90%80%80"],
+    ])("%s throws URIError: %s", (_, name) => {
+      // A drive letter, so that the win32 rules reach the decode step too.
+      const fileURL = "file:///C:/dir/" + name;
+      for (const options of optionsThatThrow) {
+        assertURIMalformed(() => url.fileURLToPath(fileURL, options));
+        assertURIMalformed(() => url.fileURLToPath(new URL(fileURL), options));
+      }
+    });
+
+    test("the scheme, host and encoded separator checks come first", () => {
+      assert.throws(() => url.fileURLToPath("https://example.com/%80"), { code: "ERR_INVALID_URL_SCHEME" });
+      assert.throws(() => url.fileURLToPath("file:///C:/%80%2F"), { code: "ERR_INVALID_FILE_URL_PATH" });
+      assert.throws(() => url.fileURLToPath("file://host/%80", { windows: false }), {
+        code: "ERR_INVALID_FILE_URL_HOST",
+      });
+      // A UNC path: the host is not an error, so the decode step is reached.
+      assertURIMalformed(() => url.fileURLToPath("file://host/share/%80", { windows: true }));
+      if (!isWindows) {
+        assert.throws(() => url.fileURLToPath("file://host/%80"), { code: "ERR_INVALID_FILE_URL_HOST" });
+      }
+    });
+
+    test.skipIf(isWindows)("the state of the URL at the time of the call decides", () => {
+      const fileURL = new URL("file:///C:/dir/ok.txt");
+      const path = url.fileURLToPath(fileURL);
+      fileURL.pathname = "/C:/dir/50%deposit.db";
+      assertURIMalformed(() => url.fileURLToPath(fileURL));
+      fileURL.pathname = "/C:/dir/ok.txt";
+      assert.strictEqual(url.fileURLToPath(fileURL), path);
+    });
+
+    test("escapes that are UTF-8 decode as before", () => {
+      const decoded = [
+        ["caf%C3%A9", "café"],
+        ["%F0%9F%98%80", "😀"],
+        ["%EF%BF%BD", "\uFFFD"],
+        ["50%25deposit.db", "50%deposit.db"],
+        ["a%20b", "a b"],
+      ];
+      for (const [escaped, name] of decoded) {
+        assert.strictEqual(url.fileURLToPath("file:///C:/dir/" + escaped, { windows: false }), "/C:/dir/" + name);
+        assert.strictEqual(url.fileURLToPath("file:///C:/dir/" + escaped, { windows: true }), "C:\\dir\\" + name);
+        assert.strictEqual(
+          url.fileURLToPath("file:///C:/dir/" + escaped),
+          isWindows ? "C:\\dir\\" + name : "/C:/dir/" + name,
+        );
+      }
+    });
+  });
 });

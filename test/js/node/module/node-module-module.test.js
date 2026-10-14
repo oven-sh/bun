@@ -449,6 +449,27 @@ console.log("survived", require("./late.js"));`,
     );
   });
 
+  // "50%deposit.js" is a file name. In a URL its "%de" is an escape, and the byte DE is not UTF-8.
+  // With the path "" for it, the function that createRequire() makes resolves from the current directory.
+  // Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789).
+  test.skipIf(isWindows)("createRequire does not accept a file URL whose path does not percent-decode to UTF-8", () => {
+    const url = new URL("50%deposit.js", Bun.pathToFileURL(import.meta.dir + "/"));
+    for (const filename of [url, url.href]) {
+      let error;
+      try {
+        createRequire(filename);
+      } catch (e) {
+        error = e;
+      }
+      // node throws this for each file URL that fileURLToPath() does not convert.
+      expect({ name: error?.name, code: error?.code, message: error?.message.split(" Received")[0] }).toEqual({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "The argument 'filename' must be a file URL object, file URL string, or absolute path string.",
+      });
+    }
+  });
+
   test("Module exists", () => {
     expect(Module).toBeDefined();
   });

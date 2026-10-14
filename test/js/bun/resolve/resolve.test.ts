@@ -278,6 +278,70 @@ it("file url with special characters in require resolves", async () => {
   expect(stdout.toString("utf8")).toBe(`${dir}${sep}${filename}\n`);
 });
 
+// "50%deposit.js" is a file name. In a URL its "%de" is an escape, and the byte DE is not UTF-8.
+// With the path "" for it, the errors are about a module with no name.
+// Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789).
+it.skipIf(isWindows)("file url whose path does not percent-decode to UTF-8 is an error that names it", async () => {
+  using dir = tempDir("fileurl", {
+    "50%deposit.js": "export const foo = 1;",
+    "dynamic.mjs": `
+      const href = new URL("50%deposit.js", import.meta.url).href;
+      const loads = {
+        "import()": () => import(href),
+        "require()": async () => require(href),
+        "require.resolve()": async () => require.resolve(href),
+        "Bun.resolveSync()": async () => Bun.resolveSync(href, import.meta.dir),
+        "Bun.resolve()": () => Bun.resolve(href, import.meta.dir),
+      };
+      const placeholders = text => text?.replaceAll(href, "<href>").replaceAll(import.meta.url, "<importer>");
+      for (const [name, load] of Object.entries(loads)) {
+        const error = await load().then(() => undefined, error => error);
+        const message = error?.message.split("\\n")[0].split(" imported from ")[0];
+        console.log(name, error?.name, placeholders(message), placeholders(error?.input), placeholders(error?.module));
+      }
+    `,
+  });
+  const href = `${pathToFileURL(String(dir))}/50%deposit.js`;
+  writeFileSync(`${dir}/static.mjs`, `import { foo } from '${href}';\nconsole.log(foo);`);
+
+  const run = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  expect(await run("dynamic.mjs")).toEqual({
+    stdout:
+      // As node: import() rejects with decodeURIComponent()'s error, and the URL and the importer are on it.
+      "import() URIError URI malformed <href> <importer>\n" +
+      "require() ResolveMessage Cannot find module '<href>' undefined undefined\n" +
+      "require.resolve() ResolveMessage Cannot find module '<href>' undefined undefined\n" +
+      "Bun.resolveSync() ResolveMessage Cannot find module '<href>' undefined undefined\n" +
+      "Bun.resolve() ResolveMessage Cannot find module '<href>' undefined undefined\n",
+    stderr: "",
+    exitCode: 0,
+  });
+
+  const fromStatement = await run("static.mjs");
+  expect(fromStatement.stderr).toContain("URIError: URI malformed");
+  expect(fromStatement.stderr).toContain(`input: "${href}"`);
+  expect(fromStatement.stderr).toContain(`module: "${pathToFileURL(String(dir))}/static.mjs"`);
+  expect({ stdout: fromStatement.stdout, exitCode: fromStatement.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+});
+
+// "file:" is not the name of a package. The error names the module as it is written.
+it("file: specifier that does not resolve is named in the error", () => {
+  for (const specifier of ["file:/does/not/exist.mjs", "file:does-not-exist.mjs", "file://%zz/does-not-exist.mjs"]) {
+    expect(() => Bun.resolveSync(specifier, import.meta.dir)).toThrow(`Cannot find module '${specifier}'`);
+  }
+});
+
 it("import long string should not segfault", async () => {
   try {
     await import("a".repeat(10000));

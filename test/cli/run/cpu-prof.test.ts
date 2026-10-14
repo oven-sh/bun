@@ -444,4 +444,33 @@ describe.concurrent("--cpu-prof", () => {
     const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
   });
+
+  // The location of a frame is the path of its source URL. "%80" is an escape whose byte is not UTF-8,
+  // so this URL has no path. A null string as the location is a crash: for a frame with no line
+  // number it is the key of a map.
+  // Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789).
+  test.skipIf(isWindows)("--cpu-prof-md names a source by its URL when the URL has no path", async () => {
+    using dir = tempDir("cpu-prof-md-source-url", {
+      "test.js": `
+        const loop = require("node:vm").runInThisContext(
+          "(function loop() { const end = Date.now() + 300; let x = 0; while (Date.now() < end) { for (let i = 0; i < 1e4; i++) x += Math.sqrt(i); } return x; })",
+          { filename: "file:///%80.js" },
+        );
+        loop();
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof-md", "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+
+    const exitCode = await proc.exited;
+    const mdFiles = readdirSync(String(dir)).filter(f => f.endsWith(".md") && f.startsWith("CPU."));
+    expect({ exitCode, profiles: mdFiles.length }).toEqual({ exitCode: 0, profiles: 1 });
+    expect(readFileSync(join(String(dir), mdFiles[0]), "utf-8")).toContain("| `loop` | `file:///%80.js");
+  });
 });

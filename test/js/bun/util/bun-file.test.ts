@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
+import { readdirSync } from "fs";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -155,3 +156,25 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   });
   expect(exitCode).toBe(0);
 });
+
+// "50%deposit.txt" is a file name. In a URL its "%de" is an escape, and the byte DE is not UTF-8.
+// Not on Windows: WTF decodes such a path with U+FFFD in it there (oven-sh/WebKit#789).
+test.skipIf(isWindows)(
+  "Bun.file() and Bun.write() throw a URIError for a file URL whose path does not percent-decode to UTF-8",
+  async () => {
+    using dir = tempDir("bun-file-undecodable-file-url", {});
+    const url = new URL("50%deposit.txt", Bun.pathToFileURL(String(dir) + "/"));
+    const thrown = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch (error: any) {
+        return { name: error.name, message: error.message, code: error.code };
+      }
+    };
+    const expected = { name: "URIError", message: "URI malformed", code: undefined };
+    expect(thrown(() => Bun.file(url))).toEqual(expected);
+    expect(thrown(() => Bun.write(url, "never written"))).toEqual(expected);
+    expect(thrown(() => Bun.write(join(String(dir), "never-written.txt"), Bun.file(url)))).toEqual(expected);
+    expect(readdirSync(String(dir))).toEqual([]);
+  },
+);

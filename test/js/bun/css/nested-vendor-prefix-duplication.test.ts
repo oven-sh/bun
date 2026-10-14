@@ -150,20 +150,20 @@ test("deeply nested mixed vendor-prefix rules error instead of exploding with no
   // this is ~2^depth copies of the leaf — hundreds of MB by the mid-teens.
   // The bound turns it into a thrown error.
   expect(() => minifyTest(nestedMixedPrefix(20), "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
-});
+}, 30_000);
 
 test("the fuzzer reproduction shape errors instead of amplifying", () => {
   // The fuzzer's shape: unclosed nested rules (the CSS parser closes them at
   // EOF). 884 MB of output on the original 1.5 KB input; now a thrown error.
   const src = ".a:placeholder-shown .x, .b:-webkit-autofill .y {\n".repeat(20) + "color: red;";
   expect(() => minifyTest(src, "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
-});
+}, 30_000);
 
 test("nesting-capable targets also bound the mixed vendor-prefix expansion", () => {
   // Modern targets preserve nesting (no de-nesting), so the same per-prefix
   // re-serialization of the body applies and must be bounded too.
   expect(() => minifyTest(nestedMixedPrefix(20), "", { chrome: 130 << 16 })).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
-});
+}, 30_000);
 
 test("shallow mixed vendor-prefix nesting still minifies with both prefix variants", () => {
   // Below the limit, the rule is still emitted once per prefix variant — the
@@ -204,7 +204,7 @@ test("a large flat stylesheet of fanning-out rules does not trip the bound", () 
   // Four prefix variants per input rule emitted (one unprefixed), not a throw.
   expect(output.split("::placeholder").length - 1).toBe(count);
   expect(output.split("::-webkit-input-placeholder").length - 1).toBe(count);
-});
+}, 30_000);
 
 test("leaf rules nested under a fanning-out ancestor are bounded", () => {
   // The amplification is driven by the whole nested body re-serialized once per

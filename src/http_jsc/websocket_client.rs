@@ -554,6 +554,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         this.handle_data_loop(data_);
     }
 
+    #[inline(always)]
     fn handle_data_loop(&self, data: &[u8]) {
         // In the WebSocket specification, control frames may not be fragmented.
         // However, the frame parser should handle fragmented control frames nonetheless.

@@ -5,7 +5,7 @@
 // a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -584,6 +584,33 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expectInstalled(stdout, resolutions);
   expect(await installedVersions(project, [nameOf("b")])).toEqual(markers(["b"]));
   expect(await lockedPackages(project)).toEqual(locked);
+  expect(exitCode).toBe(0);
+});
+
+// `bun install` finds `git` with the probe behind Bun.which. On musl that probe
+// took a directory or a non-executable file named `git` for the program, and
+// the clone failed with EACCES.
+test.concurrent.skipIf(isWindows)("finds git behind a directory and a non-executable file of that name", async () => {
+  using dir = tempDir("git-dep-shadowed-git", {
+    "shadow-dir/git": {},
+    "shadow-file/git": "not executable\n",
+  });
+  const root = String(dir);
+  chmodSync(join(root, "shadow-file/git"), 0o644);
+  const repoUrl = `git+${pathToFileURL(sharedBare)}`;
+  const project = writeProject(root, { [nameOf("c")]: `${repoUrl}#pkg-c` });
+  const { resolutions } = expectedGitPackages(repoUrl, sharedCommits, ["c"]);
+
+  const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache"), {
+    PATH: [join(root, "shadow-dir"), join(root, "shadow-file"), gitEnv.PATH].join(":"),
+  });
+  expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
+    "Resolving dependencies
+    Resolved, downloaded and extracted [2]
+    Saved lockfile"
+  `);
+  expectInstalled(stdout, resolutions);
+  expect(await installedVersions(project, [nameOf("c")])).toEqual(markers(["c"]));
   expect(exitCode).toBe(0);
 });
 

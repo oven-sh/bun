@@ -732,7 +732,7 @@ describe.concurrent("bun run", () => {
       { command: ["consume/index.js"], stdout: "consume/index.js", stderr: "" },
 
       { command: ["./test"], stdout: "test/index.js", stderr: "" },
-      { command: ["./build"], stdout: "", stderr: /error: Module not found "\.(\/|\\|\\\\)build"|EACCES/, exitCode: 1 },
+      { command: ["./build"], stdout: "", stderr: /error: Module not found "\.(\/|\\|\\\\)build"/, exitCode: 1 },
       { command: ["./consume"], stdout: "consume/index.js", stderr: "" },
 
       { command: ["index.js"], stdout: "index.js", stderr: "" },
@@ -981,12 +981,7 @@ describe.concurrent("bun run", () => {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      if (stderr.includes("myscript.ts") && stderr.includes("EACCES")) {
-        // for some reason on musl, the run_here folder is in $PATH
-        // 'error: Failed to run "myscript.ts" due to:\nEACCES: run_here/myscript.ts: Permission denied (posix_spawn())'
-      } else {
-        expect(stderr).toBe('error: Module not found "myscript.ts"\n');
-      }
+      expect(stderr).toBe('error: Module not found "myscript.ts"\n');
       expect(exitCode).toBe(1);
     });
 

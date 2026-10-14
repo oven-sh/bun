@@ -25,8 +25,10 @@ fn nodes_with_language_comment<'a>(e: Expr<'a>, parent: AstNodes<'a>) -> [Option
 
 /// Whether a comment could name the language of the template `e`. A quick check before the embedded languages are tried.
 pub(crate) fn is_behind_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    (nodes_with_language_comment(e, e.ast_parent()).into_iter().flatten())
-        .any(|node| !f.comments().of_node(node).leading.is_empty())
+    (nodes_with_language_comment(e, e.ast_parent())
+        .into_iter()
+        .flatten())
+    .any(|node| !f.comments().of_node(node).leading.is_empty())
 }
 
 /// Prettier's `hasLanguageComment`: `/* GraphQL */ `..``. `language` is the text between the `/*` and the `*/`.

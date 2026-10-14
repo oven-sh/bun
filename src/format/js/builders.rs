@@ -19,7 +19,8 @@ impl<'a> Formatter<'a> {
         let looks_past_comma = !comma_ends_the_search_for_line_breaks(self);
         self.source_text().get_lines_before(
             span,
-            (self.comments().first_leading_comment_before(span.start)).map(|comment| comment.span()),
+            (self.comments().first_leading_comment_before(span.start))
+                .map(|comment| comment.span()),
             looks_past_comma,
         )
     }

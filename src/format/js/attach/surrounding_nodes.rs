@@ -151,7 +151,9 @@ impl<'a, 'c> AttachContext<'a, 'c> {
     pub(super) fn owner_of_stmt(&self, statement: Stmt<'a>) -> Owner<'a> {
         match statement.kind() {
             // The HIR wraps an expression in the head of a `for`, and the object of a `with`, in a statement. ESTree does not.
-            StmtKind::Expr(e) if is_in_head_of_for(statement) || is_object_of_with(statement, e) => {
+            StmtKind::Expr(e)
+                if is_in_head_of_for(statement) || is_object_of_with(statement, e) =>
+            {
                 self.owner_of_expr(e)
             }
             _ => Owner::Node(statement.as_ast_nodes()),

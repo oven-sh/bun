@@ -117,5 +117,4 @@ impl<'a> Comments<'a> {
     }
 
     pub(crate) fn restore_view_limit(&mut self, _limit: Option<usize>) {}
-
 }

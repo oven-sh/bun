@@ -108,18 +108,13 @@ bitflags::bitflags! {
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
 
-        /// The bundler resolved this record to a module and stored that
-        /// module's path in `path` (`ImportRecord::set_module_path`). Without
-        /// this flag `path` can still be the specifier (an external, a builtin,
-        /// a failed or pending resolve), and a module can have the same text.
-        /// Only valid while the bundler scans: the linker repoints `path` later.
+        /// Scan phase: `path` is the resolved module's path, not a specifier. See `set_module_path`.
         const PATH_IS_MODULE = 1 << 19;
     }
 }
 
 impl ImportRecord {
-    /// Point `path` at the module this record resolved to. The bundler's path
-    /// map pass sets `source_index` from it.
+    /// Store the resolved module's path. The bundler's path map pass links only such records.
     #[inline]
     pub fn set_module_path(&mut self, path: Path<'static>) {
         self.path = path;

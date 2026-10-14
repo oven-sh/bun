@@ -18,9 +18,7 @@ pub type Map = StringHashMap<IndexInt>;
 pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
 
 impl PathToSourceIndexMap {
-    /// The module `record` resolved to. `None` unless resolution stored that
-    /// module's path in `record.path`: any other path text is a specifier, and
-    /// a module with the same text is a different thing.
+    /// Without `PATH_IS_MODULE` the path is a specifier, and a module can have the same text.
     #[inline]
     pub(crate) fn get_record(&self, record: &ImportRecord) -> Option<IndexInt> {
         if !record.flags.contains(ImportRecordFlags::PATH_IS_MODULE) {

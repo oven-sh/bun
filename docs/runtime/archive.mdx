@@ -138,7 +138,9 @@ const count = await archive.extract("./extracted");
 console.log(`Extracted ${count} entries`);
 ```
 
-`extract()` creates the target directory if it doesn't exist and overwrites existing files. The returned count includes files, directories, and symlinks (on POSIX systems).
+`extract()` creates the target directory if it doesn't exist and overwrites existing files. On Linux and macOS, an existing file is removed and created again, as `tar` does, so a hard link to it is not affected and the new file has the mode of the archive entry. If the file cannot be removed (its directory is not writable), it is truncated and written in place, unless it is a symlink or a hard link. A file that Bun writes in place keeps its mode. The returned count includes files, directories, and symlinks (on POSIX systems).
+
+On Linux and macOS, Bun creates each file with the permission bits of its archive entry, and the process umask applies, as with any new file. Bun does not restore the setuid, setgid, and sticky bits of a file. A file entry with no permission bits counts as `0o644`.
 
 **Note**: On Windows, Bun always skips symbolic links during extraction, regardless of privilege level. On Linux and macOS, Bun extracts symlinks normally.
 

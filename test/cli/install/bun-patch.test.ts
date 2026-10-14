@@ -1240,7 +1240,7 @@ describe.concurrent("bun patch --commit for non-registry dependencies", () => {
 // With the isolated linker, `node_modules/<name>` of the root and of each workspace is a link into `node_modules/.bun`.
 // `bun patch` keeps it a link: the copy to edit is in `node_modules/.bun-patches`, and the link points at the copy until
 // `bun patch --commit` has installed the patched package.
-describe("bun patch with the isolated linker keeps the link of a dependency", () => {
+describe.concurrent("bun patch with the isolated linker keeps the link of a dependency", () => {
   const registry = new TestRegistry();
 
   beforeAll(async () => {

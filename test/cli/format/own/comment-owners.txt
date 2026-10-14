@@ -992,6 +992,17 @@ jsx/comment-before-the-name-in-a-tag.jsx
 71 75 L JSXMemberExpression 76 79 -
 103 107 L JSXIdentifier 108 111 -
 139 143 T JSXIdentifier 135 138 -
+jsx/comment-in-empty-arguments-in-jsx.tsx
+22 29 D NewExpression 16 30 -
+59 66 D NewExpression 53 67 -
+103 110 D NewExpression 97 111 -
+141 148 D NewExpression 135 149 -
+184 191 D NewExpression 178 192 -
+225 232 D NewExpression 219 233 -
+264 271 D NewExpression 258 272 -
+300 307 D NewExpression 294 308 -
+337 344 D NewExpression 331 345 -
+383 390 D NewExpression 377 391 -
 jsx/comment-in-the-name-of-a-tag.jsx
 14 18 L JSXIdentifier 19 20 -
 39 43 L JSXIdentifier 45 46 -

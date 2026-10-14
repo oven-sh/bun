@@ -16,12 +16,14 @@ use crate::js::utils::operators::BinOpExt;
 use bun_lint::ast::{BinOp, FnKind, assign_op_text};
 
 /// Whether another part of the statement that `e` is in comes after `e`: the `b` of `e.b`, `e + b`, `a(e, b)`, `a(!e, b)`,
-/// `{ a: e, b }` or `let a = e, b`.
+/// `{ a: e, b }` or `let a = e, b`. In JSX only the next attribute of the tag or the next child of the element counts: the `b` of
+/// `<a {...e} b />` and `<a>{e}b</a>`, not that of `[<a c={e} />, b]`.
 fn is_followed_by_operand(mut e: Expr<'_>) -> bool {
     loop {
         let (is_last_operand, parent) = match e.parent() {
             Node::Expr(parent) => {
                 let is_last_operand = match parent.kind() {
+                    ExprKind::Jsx(jsx) => return jsx.children().last() != Some(e),
                     ExprKind::Index { index, .. } => index == e,
                     ExprKind::Call(call) | ExprKind::New(call) => match call.args().last() {
                         Some(last) => last == e,
@@ -47,6 +49,9 @@ fn is_followed_by_operand(mut e: Expr<'_>) -> bool {
                 let Node::Expr(object) = property.parent() else {
                     return false;
                 };
+                if let ExprKind::Jsx(jsx) = object.kind() {
+                    return jsx.attrs().last() != Some(property);
+                }
                 let is_last_property = (object.as_object())
                     .is_some_and(|properties| properties.last() == Some(property));
                 (property.value() == Some(e) && is_last_property, object)

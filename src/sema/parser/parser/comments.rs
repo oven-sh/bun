@@ -478,6 +478,15 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         }
     }
 
+    /// Call before the end of a finished node is moved. The comments after it are looked at when the next node is finished, and
+    /// by then they would be inside this one.
+    #[inline(always)]
+    pub(crate) fn before_node_grows(&mut self) {
+        if COMMENTS && self.options.attach_comments {
+            self.add_new_pending_comments(Candidate::default());
+        }
+    }
+
     /// Adds the comments that the lexer has scanned since the last call. `finished` is the node that is being finished.
     #[inline(always)]
     fn add_new_pending_comments(&mut self, finished: Candidate) {

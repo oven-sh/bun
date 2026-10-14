@@ -220,7 +220,7 @@ The algorithm is Prettier's, not oxc's. Before printing starts, every comment is
 | the lexer     | the span, where the previous token ends and the next token starts, line or block, whether it spans lines, whether there is a line break before and after it |
 | the parser    | the enclosing, preceding and following node                                                                                                                 |
 
-- The parser finds the three nodes while it parses (`src/sema/parser/parser/comments.rs`). Each time a node is finished, its range is compared with the comments that are still pending. Nothing walks the tree afterwards.
+- The parser finds the three nodes while it parses (`src/sema/parser/parser/comments.rs`). Each time a node is finished, its range is compared with the closest comments that are still pending. Nothing walks the tree afterwards.
 - This only happens with `Options::attach_comments`, which only the formatter sets. The hooks are behind the parameter `COMMENTS` of the `Parser`, so `bun lint` and `bun check` run a parser that is compiled without them. One comparison per node was 0.1% of the instructions of `bun check` on vscode.
 - `bun_lint::ast::comments::Comment<'a>` is the handle to the record, `Copy` like `Expr<'a>`.
 - The formatter stores only what it decides itself, by comment id (`js/comments.rs`): placement and marker, the table from a node to its comment ids (`js/owners.rs`), and one "printed" bit.
@@ -236,6 +236,8 @@ The algorithm is Prettier's, not oxc's. Before printing starts, every comment is
 
 An owner is an `AstNodes`, a name (an identifier or a literal key is a token here and a node in ESTree, so it is identified by its start offset), or the parentheses after a `/** @type {T} */` cast.
 
+**Nothing here may walk a list for each comment**: not the comments of the gap, not the elements of the array, not the parents up to the root. A file can have 40,000 comments between two tokens, or one in each of 40,000 elements. `AttachContext::comments_between_same_tokens` has what the rules ask about all the comments between two tokens, found once. Elements are in source order, so search them by halves. The test "JavaScript with many comments takes time in proportion to its size" has the shapes that once took quadratic time. Add yours.
+
 ### Printing
 
 ```rust
@@ -249,7 +251,9 @@ leading_comments(node)  trailing_comments(node)  dangling_comments(node).with_bl
 - **`// prettier-ignore`**, and `// oxfmt-ignore` in that flavor: the same wrappers copy the node's source text (`write_ignored_node`). `f.comments().is_ignored(node)` is Prettier's `hasNodeIgnoreComment`.
 - **`FormatNodeWithoutTrailingComments(&child)`** leaves the child's trailing comments to the caller, which prints them with `trailing_comments(child_node)`.
 - **Prettier's `willPrintOwnComments`**: a few nodes print their own leading and trailing comments (a JSX element inside parentheses, the members of a union). The wrappers skip those.
-- **Every comment is printed exactly once.** `Comments::mark_printed` returns false for a comment that has been printed. If a comment is left over when the file is done, the file is refused and stays as it is (Prettier's `ensureAllCommentsPrinted`).
+- **Every comment is printed exactly once.** `Comments::mark_printed` returns false for a comment that has been printed.
+- **A comment that is left over does not cost the file.** Prettier throws (`ensureAllCommentsPrinted`). Here the file is formatted once more, and the statement or the class member around the comment writes it after itself (`ir/run.rs`, `write_comments_without_printer`). The comment moves, so it is still a bug: the owner has no printer. `--debug-unprinted-comments` lists what the first pass left over, and the tests want nothing there. Code in a template has no second pass and stays as written.
+- **A comment that waits for the end of the line** (`line_suffix`) is written at the next line break, wherever that is. `Comment::fmt` puts a `line_suffix_boundary` before a block comment of several lines, so that it is not inside that comment.
 - **Formatting something only to look at it**: `f.speculate_will_break(&content)` forgets which comments were printed meanwhile. The result of `memoized().inspect(f)` or `f.intern` has to be used, not thrown away.
 - **Questions by offset are for layout only**: `has_comment_in_span`, `comments_in_span`, `has_comment_before(token_start)`, `comments_directly_before(token_start)`. Their answers do not depend on what has been printed. Never use them to pick the comments to print.
 - `/** @type {T} */ (e)`: `utils/typecast.rs` keeps the parentheses.
@@ -277,6 +281,8 @@ bun bd fmt --debug-unprinted-comments out a.ts   # the comments that no printer 
 ## Performance rules
 
 The goal is to be faster per core than oxfmt and Biome.
+
+- **Measure on an LTO build, and measure time too.** Without LTO, what is inlined changes with unrelated code, which is worth 0.2% either way. A count of instructions does not see a large `memmove`: it is one instruction.
 
 - No heap allocation per node. `SmallVec` for lists that are small in practice, `f.take_vec()` for element buffers.
 - No `String`, no `format!`, no `to_vec()` on the path of ordinary code. Text is `&[u8]`.

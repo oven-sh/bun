@@ -1051,16 +1051,18 @@ impl<'a> Rules<'_, 'a, '_> {
                 )
             )
         };
-        // `type A = (a: B) // comment⏎ => C`. In a component type the comment has to be before the `)`. A hook type has no rule.
+        // `type A = (a: B) // comment⏎ => C`. In `declare component` the comment has to be before the `)`. A hook type has no rule.
         if self.cx.file.is_flow()
             && let Some(function_type) = function_of(node).and_then(flow::function_type)
         {
             let preceding_node = self.preceding_node.filter(|it| is_parameter(*it))?;
             return match function_type {
-                FunctionType::FunctionTypeAnnotation => {
+                FunctionType::ComponentTypeAnnotation if matches!(node, N::Function(_)) => {
+                    self.next_token_starts_with(b')')
+                }
+                FunctionType::FunctionTypeAnnotation | FunctionType::ComponentTypeAnnotation => {
                     !self.following_node.is_some_and(is_parameter)
                 }
-                FunctionType::ComponentTypeAnnotation => self.next_token_starts_with(b')'),
                 FunctionType::HookTypeAnnotation => false,
             }
             .then(|| Attachment::trailing(preceding_node));

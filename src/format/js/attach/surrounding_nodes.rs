@@ -647,12 +647,21 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         let NodeOrName::Node(following_node) = comment.following_node()? else {
             return None;
         };
-        // The rules of oxfmt are about comments that stay on the line of what is before or after them.
-        if self.options.flavor.is_oxfmt()
-            && (self.comments_between_same_tokens(comment).last_on_same_line)
-                .is_some_and(|id| id >= comment.id())
-        {
-            return None;
+        // The rules of oxfmt are about comments that stay on the line of what is before or after them: this one, or one between
+        // it and the following node. Mostly there is none between.
+        if self.options.flavor.is_oxfmt() {
+            if !comment.has_newline_before() {
+                return None;
+            }
+            let is_followed_by_comment = comment.id() + 1 < self.file.comment_count() as u32
+                && self.file.comment(comment.id() + 1).next_token_start()
+                    == comment.next_token_start();
+            if is_followed_by_comment
+                && (self.comments_between_same_tokens(comment).last_on_same_line)
+                    .is_some_and(|id| id > comment.id())
+            {
+                return None;
+            }
         }
         let text = self.file.text();
         let enclosing_node = comment.enclosing_node();

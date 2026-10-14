@@ -1591,6 +1591,8 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     expression = self.element_access(start, expression, chain);
                 }
                 T::Exclamation if !self.newline_before() => {
+                    // `a! /* comment */ !`: the comment is after the node as it is now.
+                    self.before_node_grows();
                     self.next();
                     let end = self.prev_end();
                     if self.options.is_javascript {

@@ -1141,6 +1141,28 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("a comment that no printer writes is written after its statement", async () => {
+    // The file used to be refused: "The formatter failed". When this input gets a printer for `/* a */`, which is right, take
+    // another one that `bun fmt --debug-unprinted-comments <directory> <file>` has a line for.
+    const text = "type N = keyof ( /* a */ B | C /* prettier-ignore */ );\ne;\n";
+    const result = await format({ "a.ts": text }, [], { reads: ["a.ts"] });
+    expect(result.files["a.ts"]).toBe("type N = keyof (B | C) /* prettier-ignore */; /* a */\ne;\n");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a comment that waits for the end of the line is not written in the middle of the next one", async () => {
+    // Prettier 3.9.9 prints `a; /**⏎// b⏎ * c⏎ */`, and with `/* b */` on its own line what it prints does not parse.
+    const rows = [
+      ["a // b\n; /**\n * c\n */\n", "a; // b\n/**\n * c\n */\n"],
+      ["a\n/* b */\n; /**\n * c\n */\n", "a;\n/* b */ /**\n * c\n */\n"],
+    ];
+    const names = rows.map((_, index) => `${index}.js`);
+    const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));
+    const result = await format(texts, [], { reads: names });
+    expect(result.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));
+    expect(result.exitCode).toBe(0);
+  });
+
   test("a binding of Vue that is nothing but a comment stays as it is", async () => {
     // oxfmt 0.72 prints `v-slot=""` and `v-for=" in xs"`.
     const text =

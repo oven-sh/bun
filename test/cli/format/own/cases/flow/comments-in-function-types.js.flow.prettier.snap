@@ -57,6 +57,11 @@ type Q = component(
   // 1
 ) renders C;
 
+type Q1 = component(
+  a: 1,
+  // 1
+) renders C;
+
 type R = A</* 1 */>;
 
 type S = B extends infer /* 1 */ G ? G : H;
@@ -121,6 +126,11 @@ type P = component(
 ) renders C;
 
 type Q = component(
+  a: 1,
+  // 1
+) renders C;
+
+type Q1 = component(
   a: 1,
   // 1
 ) renders C;

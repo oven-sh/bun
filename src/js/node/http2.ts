@@ -2590,6 +2590,12 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
           // For other rstCodes _destroy ends the readable so 'end' is suppressed.
           this.push(null);
         }
+      } catch (err) {
+        // A listener that throws does not stop the close: node main has submitted its reset by then (nodejs/node#66314).
+        thrown = err;
+        threw = true;
+      }
+      try {
         const { ending } = this._writableState;
         if (!ending) {
           // The writable side is still open: set the aborted flag and emit 'aborted'.
@@ -2600,13 +2606,9 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
           this.end();
         }
       } catch (err) {
-        // A listener that throws does not stop the close: node main has submitted its reset by then (nodejs/node#66314).
-        thrown = err;
+        if (!threw) thrown = err;
         threw = true;
-        if (!this._writableState.ending) {
-          this[kAborted] = true;
-          this.end();
-        }
+        if (!this._writableState.ending) this.end();
       }
       this.rstCode = code;
       markStreamClosed(this);
@@ -2635,7 +2637,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
     // push(null)) and a throwing listener would otherwise skip the clear and
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
-    // Read before 'aborted' below: a close() from that listener does not choose the code of this destroy.
+    // Read before 'aborted' below: a close(0) from that listener is not a stored NGHTTP2_NO_ERROR for this destroy.
     const closeRecorded = (this[bunHTTP2StreamStatus] & StreamState.CloseRecorded) !== 0;
     const { ending } = this._writableState;
     this.push(null);

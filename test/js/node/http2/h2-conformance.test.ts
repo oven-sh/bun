@@ -2423,7 +2423,8 @@ describe("close(code) reset code", () => {
       expect(afterThrow).toEqual(sids.map(() => closedInSpiteOfThrow));
     });
 
-    // close(0) ends the readable first, and that emits 'readable' for a stream that was read.
+    // close(0) ends the readable first, and that emits 'readable' for a stream that was read. The
+    // listeners of 'aborted' still run after that listener threw.
     test("close(0) when a 'readable' listener throws: the close is complete", async () => {
       const server = http2.createServer();
       await withRawClient(server, async c => {
@@ -2435,6 +2436,7 @@ describe("close(code) reset code", () => {
             seen.push("close:" + stream.rstCode);
             resolve();
           });
+          stream.on("aborted", () => seen.push("aborted"));
           stream.once("readable", () => {
             throw new Error("boom");
           });
@@ -2442,7 +2444,7 @@ describe("close(code) reset code", () => {
           try {
             stream.close(ErrorCode.NO_ERROR);
           } catch (err) {
-            seen.push("threw:" + (err as Error).message, "aborted:" + stream.aborted);
+            seen.push("threw:" + (err as Error).message);
           }
           ping(c, 0);
         });
@@ -2450,7 +2452,7 @@ describe("close(code) reset code", () => {
         await resetsThenTwoPings(c, [1]);
         expect([...new Set(c.frames.filter(isReset(1)).map(f => f.payload.readUInt32BE(0)))]).toEqual([0]);
         await closed;
-        expect(seen).toEqual(["threw:boom", "aborted:true", "close:0"]);
+        expect(seen).toEqual(["aborted", "threw:boom", "close:0"]);
       });
     });
 
@@ -2507,6 +2509,7 @@ describe("close(code) reset code", () => {
       });
     }
 
+    // Today the stream writes an empty DATA frame with END_STREAM and no RST_STREAM.
     test.todo("close(7) on a request that is already complete sends RST_STREAM(7) (#33380)");
   });
 
@@ -2724,6 +2727,7 @@ describe("close(code) reset code", () => {
       });
     }, 30_000);
 
+    // Today the native AbortSignal listener writes RST_STREAM(CANCEL) first, and 'close' shows 7.
     test.todo("close(7) with the AbortSignal of the request aborted inside 'aborted' sends RST_STREAM(7) (#42763)");
   });
 });

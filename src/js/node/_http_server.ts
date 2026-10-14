@@ -138,6 +138,10 @@ function emitCloseServer(self: Server) {
   if (!relistened) self[kListenerGeneration] = undefined;
   self.emit("close");
 }
+// Node emits the 'error' of a plaintext http socket before the server's 'close' tick (net.js Socket.prototype._destroy). Bun emits that 'error' with the socket's 'close' in one later tick, so the check goes behind it.
+function emitCloseServerAfterSocketClose(self: Server) {
+  process.nextTick(emitCloseServer, self);
+}
 function markListenerGenerationClosed(self: Server, generation) {
   generation.nativeClosed = true;
   emitCloseServer(self);
@@ -1693,6 +1697,8 @@ function getNodeHTTPServerSocket() {
     #closingHandle;
     #resetSupported;
     #closeError: Error | undefined = undefined;
+    // The server that accepted the connection, like Node's socket._server. The public `server` is rewritten by each http.Server that gets the socket as a 'connection'.
+    #owner: Server;
     declare encrypted: boolean;
     declare resetAndClosing: boolean;
     declare _writableState: { emitClose: boolean; decodeStrings: boolean };
@@ -1715,6 +1721,7 @@ function getNodeHTTPServerSocket() {
       this._readableState.emitClose = true;
       this._writableState.decodeStrings = true;
       this.server = server;
+      this.#owner = server;
       this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
       this[kHandle] = handle;
       this._secureEstablished = !!handle?.secureEstablished;
@@ -1824,32 +1831,38 @@ function getNodeHTTPServerSocket() {
       // Once: a queued response's abort can destroy the socket, and run this, before the native close calls it.
       if (this.#closeHandled) return;
       this.#closeHandled = true;
+      // Like Node's Socket.prototype._destroy: the count goes down before any code of the program runs, and the server's
+      // 'close' check is queued from this frame, not from a listener on the socket.
+      const server = this.#owner;
+      const tracked = server[kTrackedConnections];
+      tracked?.delete(this);
       const errored = this.errored;
-      // freeParser equivalent: runs before 'close' listeners so they observe the
-      // released parser (free() invoked, kOnTimeout nulled).
-      releaseServerParserShim(this);
-      this[kHandle] = null;
-      if (closedHandle) {
-        // Peer FIN: 'end' before 'close', like Node's net.Socket. read(0) emits it when nothing reads the socket.
-        if (closedHandle.peerEnded) {
-          this.push(null);
-          this.read(0);
+      try {
+        // freeParser equivalent: runs before 'close' listeners so they observe the
+        // released parser (free() invoked, kOnTimeout nulled).
+        releaseServerParserShim(this);
+        this[kHandle] = null;
+        if (closedHandle) {
+          // Peer FIN: 'end' before 'close', like Node's net.Socket. read(0) emits it when nothing reads the socket.
+          if (closedHandle.peerEnded) {
+            this.push(null);
+            this.read(0);
+          }
+          // With no 'error' listener (a socket handed to 'upgrade') the read error would be an uncaught exception.
+          const closeError = this.listenerCount("error") > 0 ? closedHandle.closeError : undefined;
+          if (closeError) {
+            // Node's errnoException(nread, 'read'): "read ECONNRESET".
+            const er = new ErrnoException(closeError.errno, "read");
+            this.#closeError = er.code === closeError.code ? er : closeError;
+          }
         }
-        // With no 'error' listener (a socket handed to 'upgrade') the read error would be an uncaught exception.
-        const closeError = this.listenerCount("error") > 0 ? closedHandle.closeError : undefined;
-        if (closeError) {
-          // Node's errnoException(nread, 'read'): "read ECONNRESET".
-          const er = new ErrnoException(closeError.errno, "read");
-          this.#closeError = er.code === closeError.code ? er : closeError;
-        }
-      }
-      const server = this.server;
-      const tracked = server?.[kTrackedConnections];
-      if (tracked) {
-        tracked.delete(this);
-        if (tracked.size === 0 && server[kPendingDrainClose]) {
-          // The server 'close' follows this socket's own 'close' event.
-          this.once("close", () => process.nextTick(emitCloseServer, server));
+      } finally {
+        // Behind the ticks of the peer's 'end' above, and also when a 'readable' listener throws from read(0).
+        if (tracked && tracked.size === 0 && server[kPendingDrainClose]) {
+          process.nextTick(
+            (errored || this.#closeError) && !this.encrypted ? emitCloseServerAfterSocketClose : emitCloseServer,
+            server,
+          );
         }
       }
       const timer = this[kSocketTimeoutTimer];

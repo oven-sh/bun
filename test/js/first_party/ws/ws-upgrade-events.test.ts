@@ -3,7 +3,7 @@
 // The request that comes with 'unexpected-response' is in ws-client-compat-request.test.ts.
 import { describe, expect, test } from "bun:test";
 import { isWindows } from "harness";
-import type { IncomingMessage } from "node:http";
+import type { ClientRequest, IncomingMessage } from "node:http";
 import {
   acceptKey,
   createPeer,
@@ -41,7 +41,8 @@ async function readAll(response: IncomingMessage) {
 
 const emitterMethods = ["on", "once", "addListener", "prependListener", "prependOnceListener"] as const;
 
-describe.each(implementations)("ws client, 'upgrade' and 'unexpected-response' ($name)", ({ ws: implementation }) => {
+describe.each(implementations)("ws client, 'upgrade' and 'unexpected-response' ($name)", row => {
+  const { ws: implementation, builtin } = row;
   const { WebSocket } = implementation;
   type WebSocket = InstanceType<typeof WebSocket>;
 
@@ -198,79 +199,166 @@ describe.each(implementations)("ws client, 'upgrade' and 'unexpected-response' (
       const withLength = "HTTP/1.1 403 Forbidden\r\nContent-Length: 6\r\n\r\n";
       const inChunks = "HTTP/1.1 403 Forbidden\r\nTransfer-Encoding: chunked\r\n\r\n";
       const untilTheEnd = "HTTP/1.1 403 Forbidden\r\n\r\n";
-      type End = { how: string; head: string; first: string; then(conn: RawSocket): void; reset?: boolean };
-      const fin = (conn: RawSocket) => conn.end();
-      const rst = (conn: RawSocket) => conn.reset();
+      type Parties = { conn: RawSocket; ws: WebSocket; req: ClientRequest };
+      type End = {
+        how: string;
+        head: string;
+        first: string;
+        then(parties: Parties): void;
+        /** The `ws` socket fails too. */
+        fails?: string;
+        /** The response gets no 'error' listener. */
+        unheard?: boolean;
+      };
+      const fin = ({ conn }: Parties) => conn.end();
+      const rst = ({ conn }: Parties) => conn.reset();
+      const reset = 'Error "read ECONNRESET" ECONNRESET';
 
-      /** The events of the response to `head`, whose body starts with `first`. `then` runs once that has arrived. */
-      async function bodyEvents({ head, first, then, reset }: End) {
+      /**
+       * The events of the response to `head`, whose body starts with `first`, of its request and of the socket. `then`
+       * runs once `first` has arrived.
+       */
+      async function bodyEvents({ head, first, then, fails, unheard }: End) {
         await using client = await dial(implementation, {}, { respond: () => head + first });
-        const [, response] = (await event(client.ws, "unexpected-response")) as [unknown, IncomingMessage];
-        const events: string[] = [];
-        const closed = event(response, "close");
-        response.on("aborted", () => events.push("aborted"));
-        response.on("end", () => events.push("end"));
-        response.on("error", error => events.push(`error ${showError(error)}`));
-        response.on("close", () => events.push("close"));
-        response.on("data", chunk => events.push(`data ${show(chunk)}`));
-        await event(response, "data");
-        then(await client.peer.connection());
+        const { ws } = client;
+        const [req, res] = (await event(ws, "unexpected-response")) as [ClientRequest, IncomingMessage];
+        const response: string[] = [];
+        const request: string[] = [];
+        const closed = Promise.all([event(res, "close"), event(req, "close")]);
+        for (const name of ["aborted", "end", "close"]) res.on(name, () => response.push(name));
+        if (!unheard) res.on("error", error => response.push(`error ${showError(error)}`));
+        for (const name of ["abort", "close"]) req.on(name, () => request.push(name));
+        req.on("error", error => request.push(`error ${showError(error)}`));
+        res.on("data", chunk => response.push(`data ${show(chunk)}`));
+        await event(res, "data");
+        then({ conn: await client.peer.connection(), ws, req });
         await closed;
-        if (reset) await client.closed;
-        const { complete, aborted, destroyed } = response;
-        return { events, complete, aborted, destroyed, socket: [client.ws.readyState, ...client.events] };
+        if (fails) await client.closed;
+        // Copies: the disposal of `client` aborts the request.
+        return {
+          response: [...response],
+          request: [...request],
+          flags: { complete: res.complete, aborted: res.aborted, destroyed: [res.destroyed, req.destroyed] },
+          socket: [ws.readyState, ...client.events],
+        };
       }
-      // What becomes of the socket is up to the listener, but a reset is an error of the request too.
-      const socketAfter = ({ reset }: End) =>
-        reset
-          ? [WebSocket.CLOSED, 'error Error "read ECONNRESET" ECONNRESET rs=2', "close 1006 Buffer() rs=3"]
-          : [WebSocket.CONNECTING];
+      // What becomes of the socket is up to the listener, unless the request fails.
+      const socketAfter = ({ fails }: End) =>
+        fails ? [WebSocket.CLOSED, `error ${fails} rs=2`, "close 1006 Buffer() rs=3"] : [WebSocket.CONNECTING];
+      const requestAfter = ({ fails }: End) => (fails ? [`error ${fails}`, "close"] : ["close"]);
+      const cutOff = ['data Buffer("no")', "aborted", 'error Error "aborted" ECONNRESET', "close"];
 
       test.each<End>([
-        { how: "the last byte of Content-Length", head: withLength, first: "no", then: conn => conn.write(" way") },
+        {
+          how: "the last byte of Content-Length",
+          head: withLength,
+          first: "no",
+          then: ({ conn }) => conn.write(" way"),
+        },
         {
           how: "the last chunk",
           head: inChunks,
           first: "2\r\nno\r\n",
-          then: conn => conn.write("4\r\n way\r\n0\r\n\r\n"),
+          then: ({ conn }) => conn.write("4\r\n way\r\n0\r\n\r\n"),
         },
-        { how: "FIN, with neither", head: untilTheEnd, first: "no", then: conn => conn.socket.end(" way") },
-      ])("is complete at $how: 'end', then 'close'", async row => {
+        { how: "FIN, with neither", head: untilTheEnd, first: "no", then: ({ conn }) => conn.socket.end(" way") },
+      ])("is complete at $how: 'end' and 'close', and 'close' of the request", async row => {
         expect(await bodyEvents(row)).toEqual({
-          events: ['data Buffer("no")', 'data Buffer(" way")', "end", "close"],
-          complete: true,
-          aborted: false,
-          destroyed: true,
+          response: ['data Buffer("no")', 'data Buffer(" way")', "end", "close"],
+          request: ["close"],
+          flags: { complete: true, aborted: false, destroyed: [true, true] },
           socket: socketAfter(row),
         });
       });
 
       // Nothing says how long such a body is, so any end of the connection ends it.
       test("is complete at RST, with neither", async () => {
-        const row = { how: "", head: untilTheEnd, first: "no", then: rst, reset: true };
+        const row = { how: "", head: untilTheEnd, first: "no", then: rst, fails: reset };
         expect(await bodyEvents(row)).toEqual({
-          events: ['data Buffer("no")', "end", "close"],
-          complete: true,
-          aborted: false,
-          destroyed: true,
+          response: ['data Buffer("no")', "end", "close"],
+          request: requestAfter(row),
+          flags: { complete: true, aborted: false, destroyed: [true, true] },
           socket: socketAfter(row),
         });
       });
 
       test.each<End>([
         { how: "FIN before the last byte of Content-Length", head: withLength, first: "no", then: fin },
-        { how: "RST before the last byte of Content-Length", head: withLength, first: "no", then: rst, reset: true },
+        { how: "RST before the last byte of Content-Length", head: withLength, first: "no", then: rst, fails: reset },
         { how: "FIN before the last chunk", head: inChunks, first: "2\r\nno\r\n", then: fin },
-        { how: "RST before the last chunk", head: inChunks, first: "2\r\nno\r\n", then: rst, reset: true },
+        { how: "RST before the last chunk", head: inChunks, first: "2\r\nno\r\n", then: rst, fails: reset },
         { how: "FIN inside a chunk", head: inChunks, first: "6\r\nno", then: fin },
       ])("is cut off by $how: 'aborted', 'error', 'close', and no 'end'", async row => {
         expect(await bodyEvents(row)).toEqual({
-          events: ['data Buffer("no")', "aborted", 'error Error "aborted" ECONNRESET', "close"],
-          complete: false,
-          aborted: true,
-          destroyed: true,
+          response: cutOff,
+          request: requestAfter(row),
+          flags: { complete: false, aborted: true, destroyed: [true, true] },
           socket: socketAfter(row),
         });
+      });
+
+      describe.each([
+        { body: "with a Content-Length", head: withLength, first: "no" },
+        { body: "in chunks", head: inChunks, first: "2\r\nno\r\n" },
+        { body: "with neither", head: untilTheEnd, first: "no" },
+      ])("$body, of which the server holds the rest back", ({ head, first }) => {
+        const closedEarly = 'Error "WebSocket was closed before the connection was established"';
+
+        // Bun's node:http ends a response with neither when its request is destroyed, so the package shows 'end' there.
+        test
+          .skipIf(!builtin && head === untilTheEnd)
+          .each<Pick<End, "how" | "then" | "fails"> & { request: string[] }>([
+            { how: "req.destroy()", then: ({ req }) => req.destroy(), request: ["close"] },
+            { how: "req.abort()", then: ({ req }) => req.abort(), request: ["abort", "close"] },
+            { how: "ws.close()", then: ({ ws }) => ws.close(), request: ["abort", "close"], fails: closedEarly },
+            {
+              how: "ws.terminate()",
+              then: ({ ws }) => ws.terminate(),
+              request: ["abort", "close"],
+              fails: closedEarly,
+            },
+          ])("is cut off by $how", async ({ request, ...row }) => {
+          const { flags, ...events } = await bodyEvents({ head, first, ...row });
+          expect(events).toEqual({ response: cutOff, request, socket: socketAfter({ head, first, ...row }) });
+          // Node calls a body with neither length nor chunks complete here, and aborted.
+          expect(flags).toMatchObject({ aborted: true, destroyed: [true, true] });
+          if (head !== untilTheEnd) expect(flags.complete).toBe(false);
+        });
+      });
+
+      // Node's parser finishes the packet it holds, so the response still ends.
+      test.each([
+        { body: "with a Content-Length", whole: withLength + "no way" },
+        { body: "in chunks", whole: inChunks + "6\r\nno way\r\n0\r\n\r\n" },
+        { body: "of no bytes", whole: "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n" },
+      ])("$body that came whole with the head, and req.abort() in the listener", async ({ whole }) => {
+        await using client = await dial(implementation, {}, { respond: () => whole });
+        const response: string[] = [];
+        const [res] = await new Promise<[IncomingMessage]>(resolve =>
+          client.ws.on("unexpected-response", (req: ClientRequest, res: IncomingMessage) => {
+            for (const name of ["aborted", "end", "close"]) res.on(name, () => response.push(name));
+            res.on("error", error => response.push(`error ${showError(error)}`));
+            res.on("close", () => resolve([res]));
+            req.abort();
+          }),
+        );
+        expect({ response, complete: res.complete, aborted: res.aborted }).toEqual({
+          response: ["end", "close"],
+          complete: true,
+          aborted: false,
+        });
+        expect([client.ws.readyState, ...client.events]).toEqual([WebSocket.CONNECTING]);
+      });
+
+      test("that is cut off needs no 'error' listener", async () => {
+        const row = {
+          how: "",
+          head: withLength,
+          first: "no",
+          then: ({ req }: Parties) => req.destroy(),
+          unheard: true,
+        };
+        expect((await bodyEvents(row)).response).toEqual(['data Buffer("no")', "aborted", "close"]);
       });
 
       // Winsock takes all of it on loopback, so nothing ever waits there.

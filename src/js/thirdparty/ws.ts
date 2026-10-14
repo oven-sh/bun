@@ -618,14 +618,14 @@ function extensionFormat(extensions: Dictionary<FormattedParams | FormattedParam
   return Object.keys(extensions)
     .map(extension => {
       let configurations = extensions[extension];
-      if (!Array.isArray(configurations)) configurations = [configurations];
+      if (!$isArray(configurations)) configurations = [configurations];
       return configurations
         .map(params => {
           return [extension]
             .concat(
               Object.keys(params).map(k => {
                 let values = params[k];
-                if (!Array.isArray(values)) values = [values];
+                if (!$isArray(values)) values = [values];
                 return values.map(v => (v === true ? k : `${k}=${v}`)).join("; ");
               }),
             )
@@ -1089,7 +1089,7 @@ class WebSocket extends EventEmitter {
 
       if (protocols === undefined) {
         protocols = protocolsOption(options);
-      } else if (!Array.isArray(protocols)) {
+      } else if (!$isArray(protocols)) {
         if (typeof protocols === "object" && protocols !== null) {
           options = protocols;
           protocols = protocolsOption(options);
@@ -1425,7 +1425,7 @@ function protocolsOption(options: ClientOptions | undefined): string[] {
   const protocols = options?.protocols;
 
   if (protocols === undefined) return [];
-  return Array.isArray(protocols) ? protocols : [protocols];
+  return $isArray(protocols) ? protocols : [protocols];
 }
 
 function sendControl(
@@ -1757,7 +1757,7 @@ const clientHandlers: ClientHandlers = {
 
       err.errno = -require("node:os").constants.errno.ECONNRESET;
       err.syscall = "read";
-      requestFailed(req, err);
+      requestOnDestroyed(req, err);
     }
   },
   open() {
@@ -1975,7 +1975,7 @@ function responseRead(this: HandshakeResponse, n: number): void {
 }
 
 function responseOnClose(this: HandshakeResponse): void {
-  if (!this.readableEnded) this[kRequest]!.destroy();
+  this[kRequest]!.destroy();
 }
 
 function makeHandshakeResponse(statusCode: number, statusMessage: string, rawHeaders: string[]): HandshakeResponse {
@@ -2293,25 +2293,25 @@ class ClientRequest extends EventEmitter {
     if (this.destroyed) return this;
 
     this.destroyed = true;
-    this.res?.resume();
 
-    const websocket = this[kWebSocket];
-    const native = this[kNative];
+    clearTimeout(this[kWebSocket][kHandshakeTimer]);
 
-    clearTimeout(websocket[kHandshakeTimer]);
+    const { res } = this;
 
-    if (native !== null) {
-      this[kNative] = null;
-      detach(native);
-      native.terminate();
-      if (websocket[kNative] === native) websocket[kNative] = null;
+    if (res !== null && !res.complete) {
+      // What the native client has read along with the head is delivered when the 'unexpected-response' listeners
+      // return. The parser of node:http finishes the chunk it holds, too.
+      res.resume();
+      process.nextTick(releaseNative, this);
+    } else {
+      releaseNative(this);
     }
 
     // A request that its owner destroys fails the handshake, as `req.on('error')` would see it. One that got its
     // response has nothing to report but `err`.
-    if (!err && this.res === null) err = connResetException("socket hang up");
+    if (!err && res === null) err = connResetException("socket hang up");
 
-    if (err) process.nextTick(requestFailed, this, err);
+    if (err) process.nextTick(requestOnDestroyed, this, err);
 
     process.nextTick(emitRequestClose, this);
     return this;
@@ -2322,6 +2322,31 @@ function connResetException(message: string): ConnectError {
   const err: ConnectError = new Error(message);
   err.code = "ECONNRESET";
   return err;
+}
+
+function releaseNative(req: ClientRequest): void {
+  const websocket = req[kWebSocket];
+  const native = req[kNative];
+  const { res } = req;
+
+  if (native !== null) {
+    req[kNative] = null;
+    detach(native);
+    native.terminate();
+    if (websocket[kNative] === native) websocket[kNative] = null;
+  }
+
+  // As the 'close' of the socket does in node:http.
+  if (res !== null && !res.complete) res.destroy(connResetException("aborted"));
+}
+
+// The 'error' event of a ClientRequest: the listener of initAsClient() comes first.
+function requestOnDestroyed(req: ClientRequest, err: Error): void {
+  const aborted = req[kAborted];
+
+  requestFailed(req, err);
+
+  if (!aborted && req.listenerCount("error") > 0) req.emit("error", err);
 }
 
 // `req.on('error')` of initAsClient().

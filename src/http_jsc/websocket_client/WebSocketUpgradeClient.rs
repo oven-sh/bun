@@ -980,20 +980,22 @@ where
             if reads_body {
                 this.response_body.set(Some(ResponseBody::of(&response)));
                 this.body.set(rest.to_vec());
+                // 'unexpected-response' and what came with the head share one checkpoint, as in
+                // node:http, whose parser finishes the chunk it holds.
+                let _scope = vm.enter_event_loop_scope();
+                Self::dispatch_handshake(ws, &response, &[]);
+                return Self::handle_response_body(this, &[]);
             }
             {
                 // 'upgrade' and 'open' share the checkpoint that `did_connect` runs after 'open'.
                 let _scope = is_101.then(|| vm.enter_event_loop_scope_without_checkpoint());
-                let body: &[u8] = if is_101 || reads_body { &[] } else { rest };
+                let body: &[u8] = if is_101 { &[] } else { rest };
                 Self::dispatch_handshake(ws, &response, body);
             }
             if this.cpp_websocket().is_none() {
                 // The listener closed the WebSocket: its checkpoint is this one.
                 drop(vm.enter_event_loop_scope());
                 return;
-            }
-            if reads_body {
-                return Self::handle_response_body(this, &[]);
             }
         }
         Self::process_response(this, response, rest);

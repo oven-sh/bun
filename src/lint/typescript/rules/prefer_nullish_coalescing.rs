@@ -98,7 +98,9 @@ fn is_built_in_boolean_call(node: Node) -> bool {
     let ExprKind::Call(call) = expression.kind() else {
         return false;
     };
+    // For tsgolint a callee in parentheses is no identifier.
     call.callee().is_ident("Boolean")
+        && !(call.callee().is_parenthesized() && expression.file().language().is_oxlint)
         && !call.args().is_empty()
         // tsgolint: no declaration of the symbol of the callee is outside a declaration file.
         && match expression.file().language().is_oxlint {
@@ -220,7 +222,11 @@ pub struct Walks<'a> {
 fn is_mixed_logical_expression<'a>(node: Expr<'a>, left: Expr<'a>, right: Expr<'a>) -> bool {
     let mut seen = FxHashSet::default();
     let mut queue: Vec<Expr<'a>> = Vec::new();
-    queue.extend(node.parent().as_expr());
+    // For tsgolint the parent of an `a ||= b` that is an operand is the `ParenthesizedExpression`, which is no logical
+    // expression: it looks down at the `||=`.
+    if is_logical_or_operator(node) || !node.file().language().is_oxlint {
+        queue.extend(node.parent().as_expr());
+    }
     queue.extend([left, right]);
     let mut next = 0;
     while let Some(&current) = queue.get(next) {
@@ -248,6 +254,9 @@ fn is_mixed_logical_expression<'a>(node: Expr<'a>, left: Expr<'a>, right: Expr<'
 /// Whether two nodes access the same members in the same order, whatever is optional: `a.b.c`,
 /// `a?.b.c`, `a.b?.c`, `(a?.b).c` and `(a.b)?.c` are similar.
 fn are_nodes_similar_member_access<'a>(mut a: Expr<'a>, mut b: Expr<'a>) -> bool {
+    if a.file().language().is_oxlint {
+        return tsgolint_are_nodes_similar_member_access(a, b);
+    }
     let is_private = |name: Ident<'a>| name.bytes().starts_with(b"#");
     loop {
         (a, b) = match (a.kind(), b.kind()) {
@@ -289,6 +298,113 @@ fn are_nodes_similar_member_access<'a>(mut a: Expr<'a>, mut b: Expr<'a>) -> bool
     }
 }
 
+/// tsgolint's `getPropertyNameFromAccess`: the name of `a.b`, `a.#b`, `a['b']` and ``a[`b`]``. Empty for any other.
+fn tsgolint_get_property_name_from_access(node: Expr<'_>) -> &[u8] {
+    match node.kind() {
+        ExprKind::Dot { name, .. } => name.bytes(),
+        ExprKind::Index { index, .. } if !index.is_parenthesized() => match index.kind() {
+            ExprKind::String(value) => value.bytes(),
+            ExprKind::Template(template) => match template.as_static() {
+                Some(value) => value.bytes(),
+                None => b"",
+            },
+            _ => b"",
+        },
+        _ => b"",
+    }
+}
+
+/// tsgolint's `isNodeEqual`, of two nodes without the parentheses around them. Inside them nothing in parentheses
+/// equals anything, nor do two `a.#b`, two `true` or two `a!`. `a?.b` is `a.b`, and `a.b` is not `a[b]`.
+fn tsgolint_is_node_equal<'a>(mut a: Expr<'a>, mut b: Expr<'a>) -> bool {
+    loop {
+        (a, b) = match (a.kind(), b.kind()) {
+            (ExprKind::This, ExprKind::This) | (ExprKind::Null, ExprKind::Null) => return true,
+            (ExprKind::Ident(a), ExprKind::Ident(b))
+            | (ExprKind::String(a), ExprKind::String(b))
+            | (ExprKind::BigInt(a), ExprKind::BigInt(b)) => return a == b,
+            (ExprKind::Number(a), ExprKind::Number(b)) => return a == b,
+            (ExprKind::Template(a), ExprKind::Template(b)) => {
+                return matches!((a.as_static(), b.as_static()), (Some(a), Some(b)) if a == b);
+            }
+            (
+                ExprKind::Dot { obj: a, name, .. },
+                ExprKind::Dot {
+                    obj: b,
+                    name: other,
+                    ..
+                },
+            ) => {
+                if name.bytes().starts_with(b"#") || name.name() != other.name() {
+                    return false;
+                }
+                (a, b)
+            }
+            (
+                ExprKind::Index { obj: a, index, .. },
+                ExprKind::Index {
+                    obj: b,
+                    index: other,
+                    ..
+                },
+            ) => {
+                if index.is_parenthesized()
+                    || other.is_parenthesized()
+                    || !tsgolint_is_node_equal(index, other)
+                {
+                    return false;
+                }
+                (a, b)
+            }
+            _ => return false,
+        };
+        if a.is_parenthesized() || b.is_parenthesized() {
+            return false;
+        }
+    }
+}
+
+/// tsgolint's `areNodesSimilarMemberAccess`: one `!` is taken off each node, accesses are compared by their names and
+/// those without a name by [`tsgolint_is_node_equal`].
+fn tsgolint_are_nodes_similar_member_access<'a>(mut a: Expr<'a>, mut b: Expr<'a>) -> bool {
+    loop {
+        for node in [&mut a, &mut b] {
+            if let ExprKind::NonNull(operand) = node.kind() {
+                // What is left of `a!!` and of `(a)!` is a node that equals nothing.
+                if node.non_null_count() > 1 || operand.is_parenthesized() {
+                    return false;
+                }
+                *node = operand;
+            }
+        }
+        let (
+            ExprKind::Dot { obj: a_object, .. } | ExprKind::Index { obj: a_object, .. },
+            ExprKind::Dot { obj: b_object, .. } | ExprKind::Index { obj: b_object, .. },
+        ) = (a.kind(), b.kind())
+        else {
+            return tsgolint_is_node_equal(a, b);
+        };
+        let (a_name, b_name) = (
+            tsgolint_get_property_name_from_access(a),
+            tsgolint_get_property_name_from_access(b),
+        );
+        let is_same_property = match (a.kind(), b.kind()) {
+            _ if !a_name.is_empty() && !b_name.is_empty() => a_name == b_name,
+            (ExprKind::Index { index: a_index, .. }, ExprKind::Index { index: b_index, .. }) => {
+                !a_index.is_parenthesized()
+                    && !b_index.is_parenthesized()
+                    && tsgolint_is_node_equal(a_index, b_index)
+            }
+            (ExprKind::Dot { .. }, ExprKind::Dot { .. }) => a_name == b_name,
+            _ => false,
+        };
+        if !is_same_property {
+            return false;
+        }
+        (a, b) = (a_object, b_object);
+    }
+}
+
 /// `test`: of a conditional expression or an `if` statement.
 fn get_operator_and_nodes_inside_test_expression(
     test: Expr<'_>,
@@ -307,6 +423,12 @@ fn get_operator_and_nodes_inside_test_expression(
             left,
             right,
         } => {
+            // For tsgolint an operand in parentheses is no comparison.
+            if (left.is_parenthesized() || right.is_parenthesized())
+                && test.file().language().is_oxlint
+            {
+                return (Nodes::new(), None);
+            }
             let (Some(left), Some(right)) =
                 (as_binary_expression(left), as_binary_expression(right))
             else {
@@ -414,6 +536,8 @@ impl PreferNullishCoalescing {
             let is_argument = || {
                 matches!(node.kind(), ExprKind::Cond { .. })
                     && matches!(node.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::Call(_)))
+                    // For tsgolint the parent of one in parentheses is no call.
+                    && !(node.is_parenthesized() && node.file().language().is_oxlint)
             };
             if self.ignore_boolean_coercion
                 && ask_outermost(

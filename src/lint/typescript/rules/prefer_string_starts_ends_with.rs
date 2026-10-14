@@ -64,7 +64,11 @@ fn is_null(node: Expr) -> bool {
 }
 
 fn is_number(node: Expr, value: f64) -> bool {
-    static_value(node).and_then(|evaluated| evaluated.as_number()) == Some(value)
+    let evaluated = match node.file().language().is_oxlint {
+        true => tsgolint_static_number(node),
+        false => static_value(node).and_then(|evaluated| evaluated.as_number()),
+    };
+    evaluated == Some(value)
 }
 
 /// Whether `node` is a string of one UTF-16 code unit.
@@ -188,7 +192,7 @@ fn tsgolint_is_length_expression<'a>(node: Expr<'a>, expected_object: Expr<'a>, 
 /// Whether `node` is the length of the string `expected_object_node`: its `length` property, or
 /// for a string that is known, the number. `for_fix`: not what tsgolint reports for its text alone.
 fn is_length_expression<'a>(node: Expr<'a>, expected_object_node: Expr<'a>, for_fix: bool) -> bool {
-    if for_fix && node.file().language().is_oxlint {
+    if node.file().language().is_oxlint {
         return tsgolint_is_length_expression(node, expected_object_node, for_fix);
     }
     if let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = node.kind()
@@ -340,6 +344,9 @@ fn tsgolint_parse_reg_exp<'a>(mut node: Expr<'a>, for_fix: bool) -> Option<(Side
 
 /// What `node` matches, if it is a `RegExp` for a string at the start or at the end.
 fn parse_reg_exp(node: Expr) -> Option<(Side, Vec<u8>)> {
+    if node.file().language().is_oxlint {
+        return tsgolint_parse_reg_exp(node, false);
+    }
     let evaluated = static_value(node)?;
     let (source, flags) = evaluated.as_regex()?;
     let is_starts_with = source.starts_with(b"^");
@@ -349,12 +356,6 @@ fn parse_reg_exp(node: Expr) -> Option<(Side, Vec<u8>)> {
         backslashes % 2 == 0 && backslashes < before.len()
     });
     if is_starts_with == is_ends_with || strings::index_of_any(flags, b"im").is_some() {
-        return None;
-    }
-    let content = if is_starts_with { source.get(1..) } else { source.get(..source.len().saturating_sub(1)) };
-    if node.file().language().is_oxlint
-        && (strings::index_of_any(flags, b"gy").is_some() || !tsgolint_can_read(content.unwrap_or_default()))
-    {
         return None;
     }
     let text = parse_reg_exp_text(source, strings::contains_char(flags, b'u'))?;
@@ -499,13 +500,14 @@ impl PreferStringStartsEndsWith {
         let Some(argument) = call.args().first().filter(|_| call.args().len() == 1) else {
             return;
         };
-        if !is_null(it.right) || !is_string_type(it.object) {
-            return;
-        }
         let is_oxlint = cx.language().is_oxlint;
         let is_loose = matches!(it.op, BinOp::EqEq | BinOp::NotEq);
-        // What `match` gives is never `undefined`: tsgolint leaves `=== undefined`.
-        if is_oxlint && !is_loose && !matches!(static_value(it.right), Some(StaticValue::Null)) {
+        let is_nullish = match is_oxlint {
+            // What `match` gives is never `undefined`: tsgolint leaves `=== undefined`.
+            true => tsgolint_is_nullish(it.right, is_loose, false),
+            false => is_null(it.right),
+        };
+        if !is_nullish || !is_string_type(it.object) {
             return;
         }
         let Some((side, text)) = parse_reg_exp(argument) else {

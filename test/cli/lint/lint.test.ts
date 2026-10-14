@@ -5004,6 +5004,68 @@ maybe(() => { return f; });
         );
       });
 
+      test("redundant parentheses don't change what a type-aware rule reports", async () => {
+        const pairs: [rule: string, plain: string, parenthesized: string, reports: number][] = [
+          [
+            "require-array-sort-compare",
+            "declare const a: number[];\na.sort();\n",
+            "declare const a: number[];\n(a.sort)();\n",
+            1,
+          ],
+          [
+            "dot-notation",
+            'declare const a: { b: number };\nexport const c = a["b"];\n',
+            'declare const a: { b: number };\nexport const c = a[("b")];\n',
+            1,
+          ],
+          [
+            "use-unknown-in-catch-callback-variable",
+            "declare const p: Promise<number>;\nvoid p.catch((e) => e);\n",
+            "declare const p: Promise<number>;\nvoid (p.catch)((e) => e);\n",
+            1,
+          ],
+          [
+            "prefer-reduce-type-parameter",
+            "declare const a: number[];\nexport const r = a.reduce((x, y) => x.concat(y), [] as number[]);\n",
+            "declare const a: number[];\nexport const r = a.reduce((x, y) => x.concat(y), ([] as number[]));\n",
+            1,
+          ],
+          ["no-implied-eval", 'setTimeout("alert(1)", 1);\n', '(setTimeout)("alert(1)", 1);\n', 1],
+          [
+            "no-floating-promises",
+            "declare const p: Promise<number>;\np.then(() => 1);\n",
+            "declare const p: Promise<number>;\n(p.then)(() => 1);\n",
+            1,
+          ],
+          [
+            "await-thenable",
+            "export async function f() {\n  await Promise.all([1, 2]);\n}\n",
+            "export async function f() {\n  await Promise.all(([1, 2]));\n}\n",
+            2,
+          ],
+        ];
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        pairs.forEach(([rule, plain, parenthesized], index) => {
+          for (const [name, text] of [
+            ["plain", plain],
+            ["parenthesized", parenthesized],
+          ]) {
+            const it = { rule: `typescript/${rule}`, file: "a.ts", text, typed: true };
+            for (const [path, text] of Object.entries(filesOf(it))) files[`${index}-${name}/${path}`] = text;
+          }
+        });
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        const reported = (directory: string) =>
+          JSON.parse(raw)
+            .diagnostics.filter((it: { filename: string }) => it.filename.startsWith(`${directory}/`))
+            .map((it: { code: string }) => it.code);
+        const expected = pairs.map(([rule, , , reports]) =>
+          Array.from({ length: reports }, () => `typescript(${rule})`),
+        );
+        expect(pairs.map((_, index) => reported(`${index}-plain`))).toEqual(expected);
+        expect(pairs.map((_, index) => reported(`${index}-parenthesized`))).toEqual(expected);
+      });
+
       test("what is left after the fixes is reported once, where it was", async () => {
         const tsconfig = JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } });
         const { files, raw } = await lint(

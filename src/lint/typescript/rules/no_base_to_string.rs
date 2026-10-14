@@ -24,6 +24,8 @@ const BASE_TO_STRING: Message = Message::new(
     "'{{name}}' {{certainty}} use Object's default stringification format ('[object Object]') when stringified.",
 );
 
+const KINDS: [ExprTag; 4] = [ExprTag::Binary, ExprTag::Assign, ExprTag::Call, ExprTag::Template];
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Usefulness {
     Always,
@@ -57,11 +59,14 @@ struct Walk<'a> {
     was_cut_off: bool,
 }
 
-/// What has been found for the type of an expression, and whether that was for `join()`.
+/// What has been found for the type of an expression, and whether that was for `join()`. For tsgolint, which keeps it for
+/// the whole file, for every type: its `toStringMemo` and `joinMemo`.
 #[derive(Default)]
 pub struct Certainties<'a> {
     /// The second is for `join()`.
     known: [IdMap<Type<'a>, Usefulness>; 2],
+    /// tsgolint's `resolving`: the types whose entry of `toStringMemo` is being found.
+    resolving: IdSet<Type<'a>>,
 }
 
 /// tsgolint's `isBuiltInStringCall` asks for the type of the callee, not for what its scope declares.
@@ -90,6 +95,24 @@ fn collect_union_type_certainty<'a>(
         }
     }
     match (is_never, is_always) {
+        (true, _) => Usefulness::Never,
+        (false, true) => Usefulness::Always,
+        (false, false) => Usefulness::Sometimes,
+    }
+}
+
+/// tsgolint's `collectUnionTypeCertainty` asks every constituent: what it finds for each of them is kept.
+fn tsgolint_collect_union_type_certainty<'a>(
+    ty: Type<'a>,
+    mut collect_sub_type_certainty: impl FnMut(Type<'a>) -> Usefulness,
+) -> Usefulness {
+    let (mut all_never, mut all_always) = (true, true);
+    for t in ty.types() {
+        let certainty = collect_sub_type_certainty(t);
+        all_never &= certainty == Usefulness::Never;
+        all_always &= certainty == Usefulness::Always;
+    }
+    match (all_never, all_always) {
         (true, _) => Usefulness::Never,
         (false, true) => Usefulness::Always,
         (false, false) => Usefulness::Sometimes,
@@ -145,7 +168,11 @@ fn is_to_string_like_from_object(ty: Type) -> Option<bool> {
     {
         return Some(false);
     }
-    // Otherwise one of the methods that type coercion uses which is not declared on `Object` itself.
+    is_fallback_on_object(ty)
+}
+
+/// Whether the methods that type coercion uses are all declared on `Object` itself. `None`: the type has none of them.
+fn is_fallback_on_object(ty: Type) -> Option<bool> {
     let mut found_fallback_on_object = false;
     for property_name in ["toLocaleString", "toString", "valueOf"] {
         let Some(candidate) = ty.get_property(property_name.as_bytes()) else {
@@ -372,6 +399,125 @@ impl NoBaseToString {
         }
     }
 
+    /// tsgolint's `collectToStringCertainty`.
+    fn tsgolint_collect_to_string_certainty<'a>(
+        &self,
+        ty: Type<'a>,
+        visited: &mut IdSet<Type<'a>>,
+        memo: &mut Certainties<'a>,
+    ) -> Usefulness {
+        // A self referencing array or tuple type is not reported.
+        if visited.contains(ty) {
+            return Usefulness::Always;
+        }
+        if let Some(&certainty) = memo.known[0].get(ty) {
+            return certainty;
+        }
+        if !bun_core::StackCheck::init().is_safe_to_recurse() || !memo.resolving.insert(ty) {
+            return Usefulness::Always;
+        }
+        let certainty = self.tsgolint_to_string_certainty(ty, visited, memo);
+        memo.resolving.remove(ty);
+        memo.known[0].insert(ty, certainty);
+        certainty
+    }
+
+    fn tsgolint_to_string_certainty<'a>(
+        &self,
+        ty: Type<'a>,
+        visited: &mut IdSet<Type<'a>>,
+        memo: &mut Certainties<'a>,
+    ) -> Usefulness {
+        let flags = ty.flags();
+        if flags.intersects(TypeFlags::TYPE_PARAMETER) {
+            return match ty.get_constraint() {
+                Some(constraint) => self.tsgolint_collect_to_string_certainty(constraint, visited, memo),
+                // An unconstrained generic means `unknown`.
+                None if self.check_unknown => Usefulness::Sometimes,
+                None => Usefulness::Always,
+            };
+        }
+        // These have no properties, and the `Boolean` type definition is missing `toString()`. Any other primitive type is
+        // asked for its properties: without `interface BigInt` in the lib, a `bigint` has those of `Object`.
+        let always = TypeFlags::ANY | TypeFlags::NEVER | TypeFlags::NULL | TypeFlags::VOID_LIKE | TypeFlags::BOOLEAN_LIKE;
+        if flags.intersects(always) {
+            return Usefulness::Always;
+        }
+        // The name is the text of the type: `Foo<string>` is not `Foo`.
+        if !self.ignored_type_names.is_empty() && matches_type_or_base_type(|t| self.has_ignored_name(t), ty) {
+            return Usefulness::Always;
+        }
+        if ty.is_intersection() {
+            return collect_intersection_type_certainty(ty, |t| {
+                self.tsgolint_collect_to_string_certainty(t, visited, memo)
+            });
+        }
+        if ty.is_union() {
+            return tsgolint_collect_union_type_certainty(ty, |t| {
+                self.tsgolint_collect_to_string_certainty(t, visited, memo)
+            });
+        }
+        if ty.is_tuple_type() || ty.is_array_type() {
+            visited.insert(ty);
+            let certainty = self.tsgolint_collect_elements_certainty(ty, visited, memo);
+            visited.remove(ty);
+            return certainty;
+        }
+        match is_fallback_on_object(ty) {
+            Some(true) => Usefulness::Never,
+            Some(false) => Usefulness::Always,
+            None if self.check_unknown && flags.intersects(TypeFlags::UNKNOWN) => Usefulness::Sometimes,
+            None => Usefulness::Always,
+        }
+    }
+
+    /// tsgolint's `collectTupleCertainty`, which asks every element, and `collectArrayCertainty`.
+    fn tsgolint_collect_elements_certainty<'a>(
+        &self,
+        ty: Type<'a>,
+        visited: &mut IdSet<Type<'a>>,
+        memo: &mut Certainties<'a>,
+    ) -> Usefulness {
+        if !ty.is_tuple_type() {
+            return match ty.get_number_index_type() {
+                Some(elem_type) => self.tsgolint_collect_to_string_certainty(elem_type, visited, memo),
+                None => Usefulness::Always,
+            };
+        }
+        let (mut has_never, mut has_sometimes) = (false, false);
+        for t in ty.get_type_arguments() {
+            let certainty = self.tsgolint_collect_to_string_certainty(t, visited, memo);
+            has_never |= certainty == Usefulness::Never;
+            has_sometimes |= certainty == Usefulness::Sometimes;
+        }
+        match (has_never, has_sometimes) {
+            (true, _) => Usefulness::Never,
+            (false, true) => Usefulness::Sometimes,
+            (false, false) => Usefulness::Always,
+        }
+    }
+
+    /// tsgolint's `collectJoinCertainty`.
+    fn tsgolint_collect_join_certainty<'a>(&self, ty: Type<'a>, memo: &mut Certainties<'a>) -> Usefulness {
+        if let Some(&certainty) = memo.known[1].get(ty) {
+            return certainty;
+        }
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
+            return Usefulness::Always;
+        }
+        let certainty = if ty.is_union() {
+            tsgolint_collect_union_type_certainty(ty, |t| self.tsgolint_collect_join_certainty(t, memo))
+        } else if ty.is_intersection() {
+            collect_intersection_type_certainty(ty, |t| self.tsgolint_collect_join_certainty(t, memo))
+        } else if ty.is_tuple_type() || ty.is_array_type() {
+            self.tsgolint_collect_elements_certainty(ty, &mut IdSet::new(), memo)
+        } else {
+            Usefulness::Always
+        };
+        memo.known[1].insert(ty, certainty);
+        certainty
+    }
+
     fn report<'a>(node: Expr<'a>, message: Message, certainty: Usefulness, cx: &Cx<'a, Self>) {
         let certainty = match certainty {
             Usefulness::Always => return,
@@ -387,10 +533,17 @@ impl NoBaseToString {
     }
 
     fn check_expression<'a>(&self, node: Expr<'a>, ty: Option<Type<'a>>, cx: &mut Cx<'a, Self>) {
-        if ast_utils::is_literal(node) {
+        let is_oxlint = cx.language().is_oxlint;
+        // tsgolint's `IsLiteralExpression` is false for a literal in parentheses.
+        if ast_utils::is_literal(node) && !(is_oxlint && node.is_parenthesized()) {
             return;
         }
         let ty = ty.unwrap_or_else(|| node.ty());
+        if is_oxlint {
+            let certainty = self.tsgolint_collect_to_string_certainty(ty, &mut IdSet::new(), &mut cx.state);
+            Self::report(node, BASE_TO_STRING, certainty, cx);
+            return;
+        }
         if ty.has_flags(TypeFlags::PRIMITIVE | TypeFlags::ANY | TypeFlags::NEVER) {
             return;
         }
@@ -419,6 +572,10 @@ impl NoBaseToString {
         };
         let callee = call.callee();
         let is_oxlint = cx.language().is_oxlint;
+        // For tsgolint the callee in parentheses is a `ParenthesizedExpression`, which it does not look into.
+        if is_oxlint && callee.is_parenthesized() {
+            return;
+        }
         let (object, property) = match callee.kind() {
             ExprKind::Ident(name) => {
                 // `isBuiltInStringCall`
@@ -459,8 +616,12 @@ impl NoBaseToString {
         }
         if is_join {
             let ty = get_constrained_type_at_location(object);
-            let certainty =
-                *cx.state.known[1].get_or_insert_with(ty, || self.collect_join_certainty(ty, &mut Walk::default()));
+            let certainty = match is_oxlint {
+                true => self.tsgolint_collect_join_certainty(ty, &mut cx.state),
+                false => {
+                    *cx.state.known[1].get_or_insert_with(ty, || self.collect_join_certainty(ty, &mut Walk::default()))
+                }
+            };
             Self::report(object, BASE_ARRAY_JOIN, certainty, cx);
         } else {
             self.check_expression(object, None, cx);
@@ -472,7 +633,11 @@ impl NoBaseToString {
             return;
         };
         let expressions = template.exprs();
-        if expressions.is_empty() || matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate) {
+        // tsgolint asks the parent, which is the ParenthesizedExpression of a tag in parentheses.
+        if expressions.is_empty()
+            || matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate)
+                && !(cx.language().is_oxlint && node.is_parenthesized())
+        {
             return;
         }
         for expression in expressions {
@@ -485,7 +650,7 @@ impl Rule for NoBaseToString {
     const META: Meta = Meta::typescript("no-base-to-string", Kind::Suggestion)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    const ON: On = On::new().exprs(&[ExprTag::Binary, ExprTag::Assign, ExprTag::Call, ExprTag::Template]);
+    const ON: On = On::new().exprs(&KINDS).enter(NodeTags::new().exprs(&KINDS));
     type State<'a> = Certainties<'a>;
 
     fn new(options: &Options) -> Self {
@@ -502,6 +667,14 @@ impl Rule for NoBaseToString {
         }
     }
 
+    // tsgolint keeps what it has found for a type while it walks the file: what it finds depends on the order.
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        match file.language().is_oxlint {
+            true => On::new().enter(NodeTags::new().exprs(&KINDS)),
+            false => On::new().exprs(&KINDS),
+        }
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Certainties<'a>> {
         Some(Certainties::default())
     }
@@ -512,6 +685,12 @@ impl Rule for NoBaseToString {
             ExprTag::Call => self.check_call(node, cx),
             ExprTag::Template => self.check_template_literal(node, cx),
             _ => {}
+        }
+    }
+
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if let Node::Expr(node) = node {
+            self.expr(node, cx);
         }
     }
 }

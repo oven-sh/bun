@@ -1371,9 +1371,6 @@ impl StandaloneModuleGraph {
         let alignment = bun_elf::BUN_SECTION_ALIGNMENT as usize;
         // The section is the graph between its length and `Offsets` + `TRAILER`. It starts a page and is padded to `alignment`.
         let start = self.bytes.cast::<u8>().addr() - size_of::<u64>();
-        if !start.is_multiple_of(bun_alloc::page_size()) {
-            return Err(E::EINVAL);
-        }
         let len = (size_of::<u64>() + self.bytes.len() + size_of::<Offsets>() + TRAILER.len())
             .next_multiple_of(alignment);
         // SAFETY: `[start, start + len)` is whole pages of the executable's image that hold nothing but the section.

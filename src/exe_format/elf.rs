@@ -583,8 +583,6 @@ const fn page_size(e_machine: u16) -> u64 {
 /// What `write_bun_section` aligns and pads `.bun` to in an executable for the architecture this is compiled for.
 pub const BUN_SECTION_ALIGNMENT: u64 = page_size(if cfg!(target_arch = "aarch64") {
     EM_AARCH64
-} else if cfg!(target_arch = "powerpc64") {
-    EM_PPC64
 } else {
     0
 });

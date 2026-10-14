@@ -267,6 +267,16 @@ describe.concurrent("bunshell ls", () => {
       .exitCode(1)
       .runAsTest("ls -R lskdjflksdjf");
 
+    // An empty operand names nothing; on Windows it used to resolve to the
+    // shell's cwd and list it.
+    TestBuilder.command`ls ${""}`
+      .ensureTempDir()
+      .file("visible", "")
+      .stdout("")
+      .stderr("ls: No such file or directory\n")
+      .exitCode(1)
+      .runAsTest("empty operand");
+
     test("multiple non-existent files", async () => {
       await TestBuilder.command`ls nonexistent1 nonexistent2`
         .exitCode(1)

@@ -1416,6 +1416,12 @@ impl<'bump> Parser<'bump> {
         let redirect_file: Option<ast::Redirect<'bump>> = 'redirect_file: {
             if has_redirect {
                 if redirect.duplicate_out() {
+                    if self.check(TokenTag::JSObjRef) {
+                        self.add_error(format_args!(
+                            "`2>&1` and `1>&2` take no target. Use `&>` to send stdout and stderr to a JS object."
+                        ))?;
+                        return Err(ParseError::Unexpected.into());
+                    }
                     break 'redirect_file None;
                 }
                 if self.r#match(TokenTag::JSObjRef) {

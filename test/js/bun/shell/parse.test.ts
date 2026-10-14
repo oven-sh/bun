@@ -1155,6 +1155,13 @@ describe("parse shell invalid input", () => {
     expect(() => parse`echo a 2>&1 b > f`).toThrow(message);
   });
 
+  test("fd duplication followed by a JS object", () => {
+    const buffer = new Uint8Array(8);
+    const message = "`2>&1` and `1>&2` take no target. Use `&>` to send stdout and stderr to a JS object.";
+    expect(() => parse`echo hi 2>&1 ${buffer}`).toThrow(message);
+    expect(() => parse`echo hi 1>&2 ${buffer}`).toThrow(message);
+  });
+
   // Each of these ran two commands. bash reports an error for each, except
   // that `[[` after a command name is an argument there.
   test.each([

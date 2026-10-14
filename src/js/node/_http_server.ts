@@ -726,27 +726,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       hostname: host,
       unix: socketPath,
       reusePort,
-      // Bindings to be used for WS Server
-      websocket: {
-        open(ws) {
-          ws.data.open(ws);
-        },
-        message(ws, message) {
-          ws.data.message(ws, message);
-        },
-        close(ws, code, reason) {
-          ws.data.close(ws, code, reason);
-        },
-        drain(ws) {
-          ws.data.drain(ws);
-        },
-        ping(ws, data) {
-          ws.data.ping(ws, data);
-        },
-        pong(ws, data) {
-          ws.data.pong(ws, data);
-        },
-      },
       maxRequestBodySize: Number.MAX_SAFE_INTEGER,
 
       onNodeHTTPRequest(
@@ -840,6 +819,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             detachSocketListenersForHandoff(socket);
             // Pass the pipelined data (head buffer) if any was received with the CONNECT request
             const head = connectHead ? connectHead : kEmptyBuffer;
+            socket.bytesRead += head.length;
             // Node.js's parserOnIncoming: req.upgrade is true for CONNECT
             // regardless of shouldUpgradeCallback.
             http_req.upgrade = true;
@@ -951,7 +931,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // token; the server then consults shouldUpgradeCallback (default: an
         // 'upgrade' listener is installed) and otherwise dispatches the
         // request normally.
-        // Not when pipelined: the builtin ws answers through the socket's current response, the one in flight.
+        // Not when pipelined: a queued native response cannot upgrade.
         let is_upgrade = false;
         if (
           !isPipelined &&
@@ -1079,6 +1059,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_req.complete = true;
           }
           const upgradeHead = !hasBody && connectHead ? connectHead : kEmptyBuffer;
+          socket.bytesRead += upgradeHead.length;
           let upgradeHandled;
           try {
             upgradeHandled = server.emit("upgrade", http_req, socket, upgradeHead);
@@ -1461,7 +1442,12 @@ function replyMissingHostHeader(socket) {
   socket.destroySoon();
 }
 
+// What bytesWritten was when the socket let go of its native handle.
 const kBytesWritten = Symbol("kBytesWritten");
+// Raw socket.write() bytes of the connection, and what its current response counted: body bytes, the 101 of a WebSocket.
+function bytesWrittenThrough(handle) {
+  return handle.bytesWritten + (handle.response?.getBytesWritten() ?? 0);
+}
 const kEnableStreaming = Symbol("kEnableStreaming");
 // Upgrade request whose body is still being parsed: reading the raw socket also
 // resumes this request, like Node.js's UpgradeStream._read, so an unread body
@@ -1697,6 +1683,7 @@ function getNodeHTTPServerSocket() {
     declare resetAndClosing: boolean;
     declare _writableState: { emitClose: boolean; decodeStrings: boolean };
     declare _readableState: { emitClose: boolean };
+    declare writableBuffer: { chunk: Buffer }[];
     constructor(server: Server, handle, encrypted, listenerGeneration) {
       // allowHalfOpen: node's connectionListener sockets never auto-end the
       // writable side on the peer's FIN (CONNECT/Upgrade tunnels stay writable);
@@ -1738,9 +1725,11 @@ function getNodeHTTPServerSocket() {
 
     get bytesWritten() {
       const handle = this[kHandle];
-      return handle
-        ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? this[kBytesWritten] ?? 0)
-        : (this[kBytesWritten] ?? 0);
+      let bytes = handle ? bytesWrittenThrough(handle) : this[kBytesWritten];
+      // Like net.Socket: a write that Writable still queues counts.
+      const queued = this.writableBuffer;
+      for (let i = 0; i < queued.length; i++) bytes += queued[i].chunk.length;
+      return bytes;
     }
     set bytesWritten(value) {
       this[kBytesWritten] = value;
@@ -1766,8 +1755,6 @@ function getNodeHTTPServerSocket() {
       }
     }
     #onDrain() {
-      const handle = this[kHandle];
-      this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
       const callback = this.#pendingCallback;
       if (callback) {
         this.#pendingCallback = null;
@@ -1777,9 +1764,12 @@ function getNodeHTTPServerSocket() {
     }
     #onData(chunk, last) {
       this._unrefTimer();
-      // A full buffer stops the reads: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198
-      if (chunk && this.push(chunk) === false && !last) {
-        this[kHandle]?.readStop();
+      if (chunk) {
+        this.bytesRead += chunk.length;
+        // A full buffer stops the reads: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L191-L198
+        if (this.push(chunk) === false && !last) {
+          this[kHandle]?.readStop();
+        }
       }
       if (last) {
         const handle = this[kHandle];
@@ -1804,6 +1794,7 @@ function getNodeHTTPServerSocket() {
       }
     }
     #closeHandle(handle, callback, err?: Error) {
+      this[kBytesWritten] = bytesWrittenThrough(handle);
       this[kHandle] = undefined;
       // Capture the in-flight response before detachSocket() can clear it: a
       // synchronous res.destroy() inside the request handler runs detachSocket()
@@ -1830,6 +1821,7 @@ function getNodeHTTPServerSocket() {
       releaseServerParserShim(this);
       this[kHandle] = null;
       if (closedHandle) {
+        this[kBytesWritten] = bytesWrittenThrough(closedHandle);
         // Peer FIN: 'end' before 'close', like Node's net.Socket. read(0) emits it when nothing reads the socket.
         if (closedHandle.peerEnded) {
           this.push(null);

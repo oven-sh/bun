@@ -202,20 +202,6 @@ public:
         getHttpResponseData()->state |= HttpResponseData<SSL>::HTTP_SEND_WHEN_COMPLETE;
     }
 
-    /* Ends the 101 of upgrade(): terminates the header section and marks the
-     * response done. Not internalEnd(), because the socket leaves HTTP right
-     * after: the connection close gate does not apply (Connection: close,
-     * HTTP/1.0 and close-when-idle describe the HTTP connection, not the
-     * WebSocket that takes over the socket), and the cork stays so the
-     * handshake batches with the first frames written from open(). */
-    void endUpgradeHandshake() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        writeMark();
-        Super::write("\r\n", 2);
-        httpResponseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
-        httpResponseData->markDone(this);
-    }
-
     /* Returns true on success, indicating that it might be feasible to write more data.
      * Will start timeout if stream reaches totalSize or write failure. */
     bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false) {
@@ -379,11 +365,20 @@ public:
     }
 
     /* Manually upgrade to WebSocket. Typically called in upgrade handler. Immediately calls open handler.
-     * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use. */
+     * NOTE: Will invalidate 'this' as socket might change location in memory. Throw away after use.
+     * Returns nullptr, with nothing written and userData untouched, for a closed or shut down socket. */
     template <typename UserData>
     us_socket_t *upgrade(UserData&& userData, std::string_view secWebSocketKey, std::string_view secWebSocketProtocol,
             std::string_view secWebSocketExtensions,
             WebSocketContext<SSL, true, UserData> *webSocketContext) {
+
+        /* us_socket_adopt() refuses these, and by then HttpResponseData is destructed */
+        if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
+            return nullptr;
+        }
+
+        /* The 101 and what the open handler sends go out in one write */
+        Super::cork();
 
         /* Extract needed parameters from WebSocketContextData */
         WebSocketContextData<SSL, UserData> *webSocketContextData = webSocketContext->getExt();
@@ -434,8 +429,8 @@ public:
 
                     /* If we are dedicated and have the 3kb then correct any 4kb to 3kb,
                      * (they both share the windowBits = 9) */
-                    if (webSocketContextData->compression & DEDICATED_COMPRESSOR_3KB) {
-                        compressOptions = DEDICATED_COMPRESSOR_3KB;
+                    if ((webSocketContextData->compression & CompressOptions::_COMPRESSOR_MASK) == CompressOptions::DEDICATED_COMPRESSOR_3KB) {
+                        compressOptions = CompressOptions::DEDICATED_COMPRESSOR_3KB;
                     }
                 }
 
@@ -450,13 +445,49 @@ public:
             }
         }
 
-        endUpgradeHandshake();
+        writeMark();
+        Super::write("\r\n", 2);
+
+        return adoptWebSocket(std::forward<UserData>(userData), perMessageDeflate, compressOptions, webSocketContext);
+    }
+
+    /* upgrade() with a response head made by the caller, who also negotiated: it is written as it is.
+     * compressOptions are those of this socket, DISABLED without permessage-deflate. */
+    template <typename UserData>
+    us_socket_t *upgradeRaw(UserData&& userData, std::string_view handshake, CompressOptions compressOptions,
+            WebSocketContext<SSL, true, UserData> *webSocketContext) {
+
+        if (us_socket_is_closed((us_socket_t *) this) || us_socket_is_shut_down((us_socket_t *) this)) {
+            return nullptr;
+        }
+
+        Super::cork();
+        Super::write(handshake.data(), (int) handshake.length());
+
+        return adoptWebSocket(std::forward<UserData>(userData), compressOptions != CompressOptions::DISABLED, compressOptions, webSocketContext);
+    }
+
+private:
+    /* The corked socket has its 101 and becomes a WebSocket of webSocketContext */
+    template <typename UserData>
+    us_socket_t *adoptWebSocket(UserData&& userData, bool perMessageDeflate, CompressOptions compressOptions,
+            WebSocketContext<SSL, true, UserData> *webSocketContext) {
+
+        WebSocketContextData<SSL, UserData> *webSocketContextData = webSocketContext->getExt();
+
+        /* Not internalEnd(), because the socket leaves HTTP right after: the
+         * connection close gate does not apply (Connection: close, HTTP/1.0
+         * and close-when-idle describe the HTTP connection, not the WebSocket
+         * that takes over the socket), and the cork stays so the handshake
+         * batches with the first frames written from open(). */
+        auto* responseData = getHttpResponseData();
+        responseData->state |= HttpResponseData<SSL>::HTTP_END_CALLED;
+        responseData->markDone(this);
 
         /* Grab the httpContext from res */
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((struct us_socket_t *) this);
 
         /* Move any backpressure out of HttpResponse */
-        auto* responseData = getHttpResponseData();
         BackPressure backpressure(std::move(((AsyncSocketData<SSL> *) responseData)->buffer));
 
         auto* socketData = responseData->socketData;
@@ -537,9 +568,13 @@ public:
             webSocketContextData->openHandler(webSocket);
         }
 
+        /* Whoever corked the response (cork() above us, or nobody after an await) cannot uncork a WebSocket */
+        ((AsyncSocket<SSL> *) webSocket)->uncork();
+
         return usSocket;
     }
 
+public:
     /* Immediately terminate this Http response */
     using Super::close;
 
@@ -968,10 +1003,9 @@ public:
             /* If we're no longer in a cork slot, either: (a) the handler wrote
              * large data that triggered an internal uncork, (b) our empty slot
              * was stolen by another request during an await, or (c) we were
-             * upgraded to a WebSocket (upgrade path transferred the slot). In
-             * all cases our data (if any) was already flushed; nothing to do.
-             * The upgrade case is handled by HttpContext's uncork or the drain
-             * loop. */
+             * upgraded to a WebSocket (upgrade() uncorked it). In all cases
+             * our data (if any) was already flushed; nothing to do, and after
+             * an upgrade there is no HttpResponseData left to look at. */
             if (loopData->findCorkSlot(this) == LoopData::INVALID_CORK_SLOT) {
                 return this;
             }

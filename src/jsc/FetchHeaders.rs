@@ -69,6 +69,11 @@ unsafe extern "C" {
         kind: ResponseKind,
         arg2: *mut c_void,
     );
+    safe fn WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(
+        arg0: &mut FetchHeaders,
+        ssl: bool,
+        arg1: *mut c_void,
+    );
     safe fn WebCore__FetchHeaders__createFromH3(arg0: *mut c_void) -> *mut FetchHeaders;
 
     safe fn WebCore__FetchHeaders__createFromJS(
@@ -157,6 +162,11 @@ impl FetchHeaders {
 
     pub fn to_uws_response(&mut self, kind: ResponseKind, uws_response: *mut c_void) {
         WebCore__FetchHeaders__toUWSResponse(self, kind, uws_response)
+    }
+
+    /// For the 101 of an HTTP/1 WebSocket upgrade: skips the fields `upgrade()` writes itself.
+    pub fn to_uws_response_for_websocket_upgrade(&mut self, ssl: bool, uws_response: *mut c_void) {
+        WebCore__FetchHeaders__toUWSResponseForWebSocketUpgrade(self, ssl, uws_response)
     }
 
     pub fn create_empty() -> NonNull<FetchHeaders> {

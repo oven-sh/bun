@@ -109,6 +109,62 @@ describe.concurrent("Server", () => {
     expect(received).toEqual(expected);
   });
 
+  // The socket, its topics and its lifetime would stay with the server that received the request,
+  // while the handlers and the accounting would be the other server's.
+  test.each([
+    ["of the same kind", false],
+    ["of another kind (TLS)", true],
+  ])("upgrade() throws for a Request that another server %s received", async (_label, otherIsTLS) => {
+    const events: string[] = [];
+    const websocket = (name: string) => ({
+      open(ws: ServerWebSocket) {
+        events.push(name + ".open");
+        ws.close();
+      },
+      message() {},
+    });
+    using other = Bun.serve({
+      port: 0,
+      tls: otherIsTLS ? tls : undefined,
+      fetch: () => new Response("other"),
+      websocket: websocket("other"),
+    });
+    const { promise: results, resolve, reject } = Promise.withResolvers<Record<string, string>>();
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      websocket: websocket("server"),
+      fetch(req, server) {
+        try {
+          const result: Record<string, string> = {};
+          try {
+            result.otherUpgrade = String(other.upgrade(req));
+          } catch (e) {
+            result.otherUpgrade = (e as Error).message;
+          }
+          // These two only act on the request's own connection: whichever server object is at hand will do.
+          other.timeout(req, 10);
+          result.otherRequestIP = typeof other.requestIP(req)?.address;
+          result.ownUpgrade = String(server.upgrade(req));
+          resolve(result);
+        } catch (e) {
+          reject(e);
+          throw e;
+        }
+      },
+    });
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    ws.onclose = () => onClose();
+    expect(await results).toEqual({
+      otherUpgrade: "upgrade() must be called on the same server that received the request",
+      otherRequestIP: "string",
+      ownUpgrade: "true",
+    });
+    await closed;
+    expect(events).toEqual(["server.open"]);
+  });
+
   test("should not allow Bun.serve without first argument being a object", () => {
     expect(() => {
       //@ts-ignore
@@ -2913,7 +2969,7 @@ describe.concurrent("websocket and routes test", () => {
         } else {
           const result = await promise;
           expect(errorFired).toBe(true); // Error event should fire for failed upgrade
-          expect(result).toBe(1002);
+          expect(result).toBe(1006);
         }
         if (hasPOST) {
           const result = await fetch(url, {

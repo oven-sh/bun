@@ -477,6 +477,12 @@ fn is_valid_sec_websocket_key(key: &[u8]) -> bool {
             .all(|&c| c.is_ascii_alphanumeric() || c == b'+' || c == b'/')
 }
 
+/// Whether a comma-separated header value names `token`, in any case.
+fn has_token(list: &[u8], token: &[u8]) -> bool {
+    strings::split(list, b",")
+        .any(|item| strings::eql_case_insensitive_ascii(item.trim_ascii(), token, true))
+}
+
 type ServerRequestContext<const SSL: bool, const DEBUG: bool> =
     NewRequestContext<NewServer<SSL, DEBUG>, SSL, DEBUG, false>;
 type ServerMuxRequestContext<const SSL: bool, const DEBUG: bool> =
@@ -1193,9 +1199,78 @@ fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     Ok(JSValue::UNDEFINED)
 }
 
-#[inline]
-fn fetch_headers_from_js(value: JSValue, global: &JSGlobalObject) -> Option<*mut FetchHeaders> {
-    FetchHeaders::cast_(value, global.vm()).map(|p| p.as_ptr())
+/// The `options` of `server.upgrade(request, options)`, each read once.
+struct UpgradeOptions {
+    data: JSValue,
+    headers: Option<NonNull<FetchHeaders>>,
+    /// `Sec-WebSocket-Protocol` in `headers`. Empty declines what the client offered.
+    protocol: Option<bun_core::Utf8Bytes<'static>>,
+    /// `headers` belongs to the caller's `Headers` object, or to the conversion of its HeadersInit.
+    _headers_object: jsc::EnsureStillAlive,
+    _headers_converted: Option<HeadersRef>,
+}
+
+impl UpgradeOptions {
+    fn from_js(global: &JSGlobalObject, options: Option<JSValue>) -> JsResult<Self> {
+        let mut this = Self {
+            data: JSValue::ZERO,
+            headers: None,
+            protocol: None,
+            _headers_object: jsc::EnsureStillAlive(JSValue::UNDEFINED),
+            _headers_converted: None,
+        };
+        let Some(options) = options.filter(|options| !options.is_empty_or_undefined_or_null())
+        else {
+            return Ok(this);
+        };
+        if !options.is_object() {
+            return Err(
+                global.throw_invalid_arguments(format_args!("upgrade options must be an object"))
+            );
+        }
+        if let Some(data) = options.fast_get(global, jsc::BuiltinName::Data)? {
+            this.data = data;
+        }
+        let Some(headers_value) = options
+            .fast_get(global, jsc::BuiltinName::Headers)?
+            .filter(|headers| !headers.is_empty_or_undefined_or_null())
+        else {
+            return Ok(this);
+        };
+        if let Some(headers) = FetchHeaders::cast_(headers_value, global.vm()) {
+            this.headers = Some(headers);
+            this._headers_object = jsc::EnsureStillAlive(headers_value);
+        } else if headers_value.is_object() {
+            // `None` for an empty HeadersInit.
+            this._headers_converted = HeadersRef::create_from_js(global, headers_value)?;
+            this.headers = this
+                ._headers_converted
+                .as_ref()
+                .and_then(|headers| NonNull::new(headers.as_ptr()));
+        } else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "upgrade options.headers must be a Headers or an object"
+            )));
+        }
+        if let Some(headers) = this.headers()
+            && headers.fast_has(jsc::HTTPHeaderName::SecWebSocketProtocol)
+        {
+            this.protocol = Some(
+                headers
+                    .fast_get(jsc::HTTPHeaderName::SecWebSocketProtocol)
+                    .map_or(bun_core::Utf8Bytes::EMPTY, |protocol| {
+                        protocol.to_utf8().into_owned()
+                    }),
+            );
+        }
+        Ok(this)
+    }
+
+    fn headers<'a>(&self) -> Option<&'a mut FetchHeaders> {
+        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
+        self.headers
+            .map(|headers| bun_opaque::opaque_deref_mut(headers.as_ptr()))
+    }
 }
 
 /// Per-process latch for the dev-mode idle-timeout warning. The
@@ -1454,24 +1529,32 @@ where
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let mut iter = jsc::ArgumentsSlice::init(global.bun_vm_ref(), callframe.arguments());
-        let topic_value = iter
-            .next_eat()
-            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
-        if topic_value.is_undefined_or_null() {
-            return Err(global.throw_invalid_arguments(format_args!("Expected string")));
+        use super::server_web_socket::{
+            Accept, compress_from_js, payload_from_js, send_status_to_js, topic_from_js,
+        };
+
+        let [topic_value, message_value, compress_value] = callframe.arguments_as_array::<3>();
+        if callframe.arguments_count() < 2 {
+            return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
         }
-        // Converting `message_value` can run user JS / GC; `topic_view` keeps
-        // the topic bytes alive across it.
-        let topic_view = topic_value.to_js_string_view(global)?;
+        let topic_view = topic_from_js(global, "publish", topic_value)?;
         let topic = topic_view.to_utf8();
-        // jsc.JSValue
-        let message_value = iter
-            .next_eat()
-            .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
-        // ?jsc.JSValue
-        let compress_value = iter.next_eat();
-        self.publish(global, topic.slice(), message_value, compress_value)
+        let compress = compress_from_js(global, "publish", compress_value, true)?;
+        let payload = payload_from_js(global, "publish", message_value, Accept::Any)?;
+        let bytes = payload.bytes();
+
+        let Some(app) = self.app.filter(|_| self.config.websocket.is_some()) else {
+            return Ok(JSValue::js_number(0.0));
+        };
+        let status = AnyWebSocket::publish_with_options(
+            SSL,
+            app.cast::<c_void>(),
+            topic.slice(),
+            bytes.slice(),
+            payload.opcode(),
+            compress,
+        );
+        Ok(send_status_to_js(status, bytes.len(), "publish"))
     }
 
     /// `pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false)`
@@ -1576,67 +1659,12 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn publish(
-        &mut self,
-        global: &JSGlobalObject,
-        topic: &[u8],
-        message_value: JSValue,
-        compress_value: Option<JSValue>,
-    ) -> JsResult<JSValue> {
-        if self.config.websocket.is_none() {
-            return Ok(JSValue::js_number(0.0));
-        }
-
-        if topic.is_empty() {
-            httplog!("publish() topic invalid");
-            return Err(global.throw(format_args!("publish requires a topic string")));
-        }
-
-        // compress defaults to true when the argument is omitted.
-        let compress_js = compress_value.unwrap_or(JSValue::TRUE);
-        let compress = compress_js.to_boolean();
-
-        // Resolve the payload before reading `self.app`: `to_js_string` can run
-        // user JS that stops the server.
-        let array_buffer = message_value.as_array_buffer(global);
-        let message_view;
-        let string_slice;
-        let (buffer, opcode): (&[u8], uws_sys::Opcode) = if let Some(buffer) = &array_buffer {
-            (buffer.slice(), uws_sys::Opcode::Binary)
-        } else if let Some(slice) =
-            super::server_web_socket::blob_payload(global, "publish", message_value)?
-        {
-            (slice, uws_sys::Opcode::Binary)
-        } else {
-            message_view = message_value.to_js_string_view(global)?;
-            string_slice = message_view.to_utf8();
-            (string_slice.slice(), uws_sys::Opcode::Text)
-        };
-
-        let Some(app) = self.app else {
-            return Ok(JSValue::js_number(0.0));
-        };
-        let status = AnyWebSocket::publish_with_options(
-            SSL,
-            app.cast::<c_void>(),
-            topic,
-            buffer,
-            opcode,
-            compress,
-        );
-        let result =
-            super::server_web_socket::send_status_to_js(status, buffer.len(), "publish", "bytes");
-        message_value.ensure_still_alive();
-        Ok(result)
-    }
-
     pub(crate) fn on_upgrade(
         &mut self,
         global: &JSGlobalObject,
         object: JSValue,
         optional: Option<JSValue>,
     ) -> JsResult<JSValue> {
-        use super::node_http_response::Flags as NodeHTTPResponseFlags;
         use bun_core::Utf8Bytes;
         use bun_jsc::HTTPHeaderName;
 
@@ -1664,122 +1692,6 @@ where
             return Ok(JSValue::FALSE);
         }
 
-        if let Some(node_http_response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(object) {
-            // SAFETY: from_js returns a live *mut NodeHTTPResponse; shared —
-            // its mutable state is `Cell`/`JsCell` and `upgrade` takes `&self`.
-            let node_http_response = unsafe { &*node_http_response };
-            let is_ended_or_closed = || {
-                node_http_response
-                    .flags
-                    .get()
-                    .intersects(NodeHTTPResponseFlags::ENDED | NodeHTTPResponseFlags::SOCKET_CLOSED)
-            };
-            if is_ended_or_closed() {
-                return Ok(JSValue::FALSE);
-            }
-
-            let mut data_value = JSValue::ZERO;
-
-            // if we converted a HeadersInit to a Headers object, we need to free it
-            let fetch_headers_to_deref: core::cell::Cell<Option<*mut FetchHeaders>> =
-                core::cell::Cell::new(None);
-            let _fh_guard = scopeguard::guard(&fetch_headers_to_deref, |cell| {
-                if let Some(fh) = cell.get() {
-                    // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                    bun_opaque::opaque_deref_mut(fh).deref();
-                }
-            });
-
-            // Copied out of `options.headers` because `fast_remove` frees the
-            // entry they would otherwise borrow.
-            let mut sec_websocket_protocol = Utf8Bytes::EMPTY;
-            let mut sec_websocket_extensions = Utf8Bytes::EMPTY;
-
-            if let Some(opts) = optional {
-                'getter: {
-                    if opts.is_empty_or_undefined_or_null() {
-                        break 'getter;
-                    }
-
-                    if !opts.is_object() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "upgrade options must be an object"
-                        )));
-                    }
-
-                    if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::data)? {
-                        data_value = headers_value;
-                    }
-
-                    if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::headers)? {
-                        if headers_value.is_empty_or_undefined_or_null() {
-                            break 'getter;
-                        }
-
-                        let fetch_headers_to_use: *mut FetchHeaders =
-                            match fetch_headers_from_js(headers_value, global) {
-                                Some(h) => h,
-                                None => 'brk: {
-                                    if headers_value.is_object() {
-                                        if let Some(fetch_headers) =
-                                            FetchHeaders::create_from_js(global, headers_value)?
-                                        {
-                                            fetch_headers_to_deref
-                                                .set(Some(fetch_headers.as_ptr()));
-                                            break 'brk fetch_headers.as_ptr();
-                                        }
-                                    }
-                                    return Err(global.throw_invalid_arguments(format_args!(
-                                        "upgrade options.headers must be a Headers or an object"
-                                    )));
-                                }
-                            };
-                        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                        let fetch_headers_to_use =
-                            bun_opaque::opaque_deref_mut(fetch_headers_to_use);
-
-                        if let Some(protocol) =
-                            fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol)
-                        {
-                            sec_websocket_protocol = protocol.to_utf8().into_owned();
-                            // Remove from headers so it's not written twice (once here and once by upgrade())
-                            fetch_headers_to_use.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
-                        }
-
-                        if let Some(extensions) =
-                            fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketExtensions)
-                        {
-                            sec_websocket_extensions = extensions.to_utf8().into_owned();
-                            // Remove from headers so it's not written twice (once here and once by upgrade())
-                            fetch_headers_to_use
-                                .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
-                        }
-                        // Option getters and the headers conversion may have ended the response.
-                        if is_ended_or_closed() {
-                            return Ok(JSValue::FALSE);
-                        }
-                        if let Some(raw_response) = node_http_response.writer() {
-                            // we must write the status first so that 200 OK isn't written
-                            raw_response.write_status(b"101 Switching Protocols");
-                            fetch_headers_to_use.to_uws_response(
-                                if SSL {
-                                    ResponseKind::Ssl
-                                } else {
-                                    ResponseKind::Tcp
-                                },
-                                raw_response.socket().cast::<c_void>(),
-                            );
-                        }
-                    }
-                }
-            }
-            return Ok(JSValue::from(node_http_response.upgrade(
-                data_value,
-                sec_websocket_protocol.slice(),
-                sec_websocket_extensions.slice(),
-            )));
-        }
-
         let Some(request_ptr) = <Request as bun_jsc::JsClass>::from_js(object) else {
             return Err(
                 global.throw_invalid_arguments(format_args!("upgrade requires a Request object"))
@@ -1789,6 +1701,16 @@ where
         // argument). Shared, re-derived after each JS re-entry point below; the
         // one field write at the end goes through `request_ptr`.
         let request = unsafe { &*request_ptr };
+
+        if request
+            .request_context
+            .server_ptr()
+            .is_some_and(|owner| !core::ptr::addr_eq(owner, &raw const *self))
+        {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "upgrade() must be called on the same server that received the request"
+            )));
+        }
 
         let Some(upgrader_ptr) = request
             .request_context
@@ -1821,72 +1743,29 @@ where
             unsafe { (*p).deref() }
         });
 
-        let mut sec_websocket_key = Utf8Bytes::EMPTY;
-        let mut sec_websocket_protocol = Utf8Bytes::EMPTY;
-        let mut sec_websocket_extensions = Utf8Bytes::EMPTY;
-        let mut sec_websocket_version = Utf8Bytes::EMPTY;
-        let mut upgrade_header = Utf8Bytes::EMPTY;
-
-        // NOTE: `FetchHeaders::fast_get` takes `&mut self` (FFI signature
-        // is `*mut`), so go through the `BodyMixin` accessor which yields a
-        // `NonNull` instead of the inherent `&FetchHeaders` getter.
-        if let Some(head) = crate::webcore::body::BodyMixin::get_fetch_headers(request) {
-            use jsc::HTTPHeaderName;
-            // `head` is a live, intrusively-refcounted C++ handle owned by
-            // `request.headers`. `FetchHeaders` is an opaque ZST FFI handle
-            // (S008) — safe `*mut → &mut` via `opaque_deref_mut`.
-            let head = bun_opaque::opaque_deref_mut(head.as_ptr());
-            if let Some(key) = head.fast_get(HTTPHeaderName::SecWebSocketKey) {
-                sec_websocket_key = key.to_utf8().into_owned();
-            }
-            if let Some(proto) = head.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
-                sec_websocket_protocol = proto.to_utf8().into_owned();
-            }
-            if let Some(ext) = head.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
-                sec_websocket_extensions = ext.to_utf8().into_owned();
-            }
-            if let Some(ver) = head.fast_get(HTTPHeaderName::SecWebSocketVersion) {
-                sec_websocket_version = ver.to_utf8().into_owned();
-            }
-            if let Some(up) = head.fast_get(HTTPHeaderName::Upgrade) {
-                upgrade_header = up.to_utf8().into_owned();
-            }
-        }
-
-        // SAFETY: upgrader_ptr is live (ref_() above)
-        let upgrader = unsafe { &*upgrader_ptr };
-        if let Some(req_ptr) = upgrader.req.get() {
-            // NOTE: `RequestContext.req` is type-erased to `*mut c_void`
-            // (RequestContext.rs:82). `server.upgrade()` is HTTP/1-only — H3
-            // contexts have a distinct generic param and `request_context.get`
-            // above would have returned None — so the concrete `Req` is always
-            // `uws_sys::Request` here.
-            // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref
-            // (BACKREF; live while RequestContext.req is Some).
-            let r = bun_opaque::opaque_deref(req_ptr.cast::<uws_sys::Request>().cast_const());
-            for (value, name) in [
-                (&mut sec_websocket_key, b"sec-websocket-key".as_slice()),
-                (&mut sec_websocket_protocol, b"sec-websocket-protocol"),
-                (&mut sec_websocket_extensions, b"sec-websocket-extensions"),
-                (&mut sec_websocket_version, b"sec-websocket-version"),
-                (&mut upgrade_header, b"upgrade"),
-            ] {
-                if value.is_empty() {
-                    *value = Utf8Bytes::Borrowed(r.header(name).unwrap_or(b""));
-                }
-            }
-        }
-
-        // RFC 6455 §4.2.1: validate the client's opening handshake.
-        // A request that does not name "websocket" in its |Upgrade| token list,
-        // or whose |Sec-WebSocket-Key| is not base64 of 16 bytes, is not a
-        // WebSocket handshake; fall through so the caller's fetch() can respond.
-        if !strings::split(upgrade_header.slice(), b",")
-            .any(|t| strings::eql_case_insensitive_ascii(t.trim_ascii(), b"websocket", true))
-        {
+        // The handshake is what `request.headers` says, never the raw uWS request.
+        // Copied, because the option getters below can change it.
+        let Some(head) = request.get_fetch_headers_unless_empty() else {
             return Ok(JSValue::FALSE);
-        }
-        if !is_valid_sec_websocket_key(sec_websocket_key.slice()) {
+        };
+        let mut header = |name: HTTPHeaderName| {
+            head.fast_get(name)
+                .map_or(Utf8Bytes::EMPTY, |value| value.to_utf8().into_owned())
+        };
+        let upgrade_header = header(HTTPHeaderName::Upgrade);
+        let connection_header = header(HTTPHeaderName::Connection);
+        let sec_websocket_key = header(HTTPHeaderName::SecWebSocketKey);
+        let sec_websocket_version = header(HTTPHeaderName::SecWebSocketVersion);
+        let sec_websocket_extensions = header(HTTPHeaderName::SecWebSocketExtensions);
+        let offered_protocols = header(HTTPHeaderName::SecWebSocketProtocol);
+
+        // RFC 6455 §4.2.1: a request without "websocket" in |Upgrade|, "Upgrade"
+        // in |Connection|, or base64 of 16 bytes as |Sec-WebSocket-Key| is not a
+        // WebSocket handshake; fall through so the caller's fetch() can respond.
+        if !has_token(&upgrade_header, b"websocket")
+            || !has_token(&connection_header, b"upgrade")
+            || !is_valid_sec_websocket_key(&sec_websocket_key)
+        {
             return Ok(JSValue::FALSE);
         }
         // RFC 6455 §4.4: an unsupported |Sec-WebSocket-Version| MUST be
@@ -1895,167 +1774,108 @@ where
         if sec_websocket_version.slice() != b"13" {
             resp.write_status(b"426 Upgrade Required");
             resp.write_header(b"Sec-WebSocket-Version", b"13");
-            // SAFETY: upgrader_ptr is live (ref_() above)
-            let upgrader = unsafe { &*upgrader_ptr };
             upgrader.flags.set_has_written_status(true);
             upgrader.end_without_body(true);
             return Ok(JSValue::FALSE);
         }
-        let mut data_value = JSValue::ZERO;
-        // Non-unit guard state: holds the temporarily-created FetchHeaders (if
-        // any) and derefs it on scope exit. Populated below via DerefMut.
-        let mut fetch_headers_to_deref = scopeguard::guard(None::<*mut FetchHeaders>, |fh| {
-            // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-            if let Some(h) = fh {
-                bun_opaque::opaque_deref_mut(h).deref()
-            }
-        });
-        let mut fetch_headers_to_use: Option<*mut FetchHeaders> = None;
 
-        if let Some(opts) = optional {
-            'getter: {
-                if opts.is_empty_or_undefined_or_null() {
-                    break 'getter;
-                }
-                if !opts.is_object() {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "upgrade options must be an object"
-                    )));
-                }
-                if let Some(v) = opts.fast_get(global, jsc::BuiltinName::Data)? {
-                    data_value = v;
-                }
+        let options = UpgradeOptions::from_js(global, optional)?;
+        let sec_websocket_protocol = options.protocol.as_deref().unwrap_or(&offered_protocols);
 
-                if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::Headers)? {
-                    if headers_value.is_empty_or_undefined_or_null() {
-                        break 'getter;
-                    }
-                    use jsc::HTTPHeaderName;
-                    let fh: *mut FetchHeaders = match fetch_headers_from_js(headers_value, global) {
-                        Some(h) => h,
-                        None => 'brk: {
-                            if headers_value.is_object() {
-                                if let Some(created) =
-                                    FetchHeaders::create_from_js(global, headers_value)?
-                                {
-                                    *fetch_headers_to_deref = Some(created.as_ptr());
-                                    break 'brk created.as_ptr();
-                                }
-                            }
-                            return Err(global.throw_invalid_arguments(format_args!(
-                                "upgrade options.headers must be a Headers or an object"
-                            )));
-                        }
-                    };
-                    fetch_headers_to_use = Some(fh);
-
-                    // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                    let fh = bun_opaque::opaque_deref_mut(fh);
-                    // Copied out because `fast_remove` frees the entry.
-                    if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
-                        sec_websocket_protocol = p.to_utf8().into_owned();
-                        fh.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
-                    }
-                    if let Some(e) = fh.fast_get(HTTPHeaderName::SecWebSocketExtensions) {
-                        sec_websocket_extensions = e.to_utf8().into_owned();
-                        fh.fast_remove(HTTPHeaderName::SecWebSocketExtensions);
-                    }
-                }
-            }
-        }
-
-        // SAFETY: upgrader_ptr is live (ref_() above)
-        let upgrader = unsafe { &*upgrader_ptr };
-        // Option getters may have run a re-entrant server.upgrade(req).
-        if upgrader.is_aborted_or_ended() || upgrader.did_upgrade_web_socket() {
+        // The option getters may have upgraded, answered or closed the request.
+        if upgrader.is_aborted_or_ended()
+            || !matches!(upgrader.upgrade_context.get(), UpgradeState::Pending(_))
+            || !resp.can_upgrade()
+        {
             return Ok(JSValue::FALSE);
         }
 
-        // `CookieMapRef` releases the moved-out ref on every exit path of this
-        // scope (including the `?` below) once `cookies_to_write` drops.
+        // `CookieMapRef` releases the moved-out ref once `cookies_to_write` drops.
         let mut cookies_to_write = upgrader.cookies.replace(None);
 
-        // Write status, custom headers, and cookies in one place
-        if fetch_headers_to_use.is_some() || cookies_to_write.is_some() {
-            resp.write_status(b"101 Switching Protocols");
-            if let Some(h) = fetch_headers_to_use {
-                // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(h).to_uws_response(
-                    if SSL {
-                        ResponseKind::Ssl
-                    } else {
-                        ResponseKind::Tcp
-                    },
-                    resp.socket().cast::<c_void>(),
-                );
+        let mut upgraded: JsResult<bool> = Ok(false);
+        // One cork for the whole 101. `HttpResponse::upgrade()` hands it to the WebSocket and releases it.
+        resp.corked(|| {
+            if options.headers.is_some() || cookies_to_write.is_some() {
+                resp.write_status(b"101 Switching Protocols");
+                if let Some(headers) = options.headers() {
+                    headers
+                        .to_uws_response_for_websocket_upgrade(SSL, resp.socket().cast::<c_void>());
+                }
+                if let Some(c) = cookies_to_write.as_mut()
+                    && let Err(err) = c.write(
+                        global,
+                        if SSL {
+                            ResponseKind::Ssl
+                        } else {
+                            ResponseKind::Tcp
+                        },
+                        resp.socket().cast::<c_void>(),
+                    )
+                {
+                    upgraded = Err(err);
+                    return;
+                }
             }
-            if let Some(c) = cookies_to_write.as_mut() {
-                c.write(
-                    global,
-                    if SSL {
-                        ResponseKind::Ssl
-                    } else {
-                        ResponseKind::Tcp
-                    },
-                    resp.socket().cast::<c_void>(),
-                )?;
+
+            // --- After this point, do not throw an exception
+            // See https://github.com/oven-sh/bun/issues/1339
+            upgrader.upgrade_context.set(UpgradeState::Upgraded);
+            let signal = upgrader.signal.take();
+            upgrader.resp.set(None);
+
+            // Snapshot the lazy url before detaching (mirrors to_async_without_abort_handler).
+            // SAFETY: re-derived after the JS-running option getters above; still
+            // the live JsClass payload for `object`.
+            let request = unsafe { &*request_ptr };
+            if request.ensure_url().is_err() {
+                request.url.set(BunString::EMPTY);
             }
-        }
 
-        // --- After this point, do not throw an exception
-        // See https://github.com/oven-sh/bun/issues/1339
-        upgrader.upgrade_context.set(UpgradeState::Upgraded);
-        let signal = upgrader.signal.take();
-        upgrader.resp.set(None);
+            // SAFETY: plain-field detach through the root pointer; the shared
+            // borrow above is not used past this point.
+            unsafe { (*request_ptr).request_context = AnyRequestContext::NULL };
+            upgrader.request_weakref.set(request::WeakRef::EMPTY);
 
-        // Snapshot lazy url/headers before detaching (mirrors to_async_without_abort_handler).
-        // SAFETY: re-derived after the JS-running option getters above; still
-        // the live JsClass payload for `object`.
-        let request = unsafe { &*request_ptr };
-        if request.ensure_url().is_err() {
-            request.url.set(BunString::EMPTY);
-        }
-        if !request.has_fetch_headers() {
-            if let Some(req_ptr) = upgrader.req.get() {
-                request.set_fetch_headers(Some(HeadersRef::create_from_uws(req_ptr)));
+            options.data.ensure_still_alive();
+            let ws = ServerWebSocket::init(
+                &self.config.websocket.as_ref().unwrap().handler,
+                options.data,
+                signal,
+            );
+            options.data.ensure_still_alive();
+
+            resp.clear_aborted();
+            resp.clear_on_data();
+            resp.clear_on_writable();
+            resp.clear_timeout();
+
+            // The upgrade detaches the response and disarms onAborted, so neither
+            // on_abort nor an end path can reclaim a parked handler promise's
+            // claim later. Reclaim it here.
+            upgrader.reclaim_promise_cell();
+            upgrader.deref();
+
+            if resp
+                .upgrade(
+                    ws,
+                    sec_websocket_key.slice(),
+                    sec_websocket_protocol,
+                    sec_websocket_extensions.slice(),
+                    // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST, safe
+                    // deref; `UpgradeState::Pending` documents who keeps it alive.
+                    Some(bun_opaque::opaque_deref_mut(upgrade_ctx.as_ptr())),
+                )
+                .is_null()
+            {
+                // SAFETY: `init` just made `ws`; its JS wrapper owns it and uWS never saw it.
+                unsafe { &*ws }.discard_unopened();
+                return;
             }
-        }
+            upgraded = Ok(true);
+        });
 
-        // SAFETY: plain-field detach through the root pointer; the shared
-        // borrow above is not used past this point.
-        unsafe { (*request_ptr).request_context = AnyRequestContext::NULL };
-        upgrader.request_weakref.set(request::WeakRef::EMPTY);
-
-        data_value.ensure_still_alive();
-        let ws = ServerWebSocket::init(
-            &self.config.websocket.as_mut().unwrap().handler,
-            data_value,
-            signal,
-        );
-        data_value.ensure_still_alive();
-
-        resp.clear_aborted();
-        resp.clear_on_data();
-        resp.clear_on_writable();
-        resp.clear_timeout();
-
-        // The upgrade detaches the response and disarms onAborted, so neither
-        // on_abort nor an end path can reclaim a parked handler promise's
-        // claim later. Reclaim it here.
-        upgrader.reclaim_promise_cell();
-        upgrader.deref();
-
-        resp.upgrade(
-            ws,
-            sec_websocket_key.slice(),
-            sec_websocket_protocol.slice(),
-            sec_websocket_extensions.slice(),
-            // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST, safe
-            // deref; `UpgradeState::Pending` documents who keeps it alive.
-            Some(bun_opaque::opaque_deref_mut(upgrade_ctx.as_ptr())),
-        );
-
-        Ok(JSValue::TRUE)
+        upgraded.map(JSValue::from)
     }
 
     /// Swaps the live server's mutable
@@ -3231,20 +3051,10 @@ where
         // duration. Shared — the `on_request` call below re-enters JS, so no
         // `&mut` may span it (pending-request accounting is a `Cell`).
         let this = unsafe { &*self_ptr };
-        // Guards both branches below: the `on_request` fallthrough has no
-        // other gate, and the node:http branch's own re-check (mod.rs:
-        // `on_node_http_request_with_upgrade_ctx`) is redundant on this path
-        // but load-bearing for its other caller (`on_node_http_request`).
         let Some(server_js) = this.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
         };
-        if !this.config.on_node_http_request.is_empty() {
-            // NOTE: receiver is `*mut Self` (mod.rs) — the callee re-enters
-            // JS, so a long-lived `&mut self` here would alias on callback.
-            Self::on_node_http_request_with_upgrade_ctx(self_ptr, req, resp, upgrade_ctx);
-            return;
-        }
         if this.config.on_request.is_empty() {
             // require fetch method to be set otherwise we dont know what route to call
             // this should be the fallback in case no route is provided to upgrade
@@ -3870,7 +3680,7 @@ extern "C" fn server_set_max_headers_count_shim(
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     // NodeHTTPServer__onRequest_{http,https} live in `mod.rs::ffi` (sole user
-    // is `on_node_http_request_with_upgrade_ctx`); duplicate decls here caused
+    // is `on_node_http_request`); duplicate decls here caused
     // clashing_extern_declarations.
 
     // `&JSGlobalObject` encodes non-null/aligned; `socket` is the opaque live

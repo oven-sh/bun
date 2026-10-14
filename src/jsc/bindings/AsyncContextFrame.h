@@ -3,6 +3,11 @@
 #include "root.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/CallData.h>
+#include <wtf/Noncopyable.h>
+
+namespace JSC {
+class InternalFieldTuple;
+}
 
 class AsyncContextFrame : public JSC::JSNonFinalObject {
 public:
@@ -51,4 +56,18 @@ public:
         , context(context_, JSC::WriteBarrierEarlyInit)
     {
     }
+};
+
+// Makes `snapshot` the active async context for its lifetime. An empty, undefined or null snapshot changes nothing.
+class AsyncContextScope {
+    WTF_MAKE_NONCOPYABLE(AsyncContextScope);
+
+public:
+    AsyncContextScope(JSC::JSGlobalObject*, JSC::JSValue snapshot);
+    ~AsyncContextScope();
+
+private:
+    JSC::VM& m_vm;
+    JSC::InternalFieldTuple* m_asyncContextData { nullptr };
+    JSC::JSValue m_previous;
 };

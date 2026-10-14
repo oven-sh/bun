@@ -2,7 +2,7 @@ import { serve } from "bun";
 import { expect, setDefaultTimeout, test } from "bun:test";
 import crypto from "node:crypto";
 import net from "node:net";
-import { deflateRawSync, constants as zc } from "node:zlib";
+import { deflateRawSync, inflateRawSync, constants as zc } from "node:zlib";
 
 // The decompression bomb test needs extra time to compress 150MB of test data
 setDefaultTimeout(30_000);
@@ -215,7 +215,7 @@ test("WebSocket client rejects decompression bombs", async () => {
   const tcpServer = net.createServer();
 
   const serverReady = new Promise<number>(resolve => {
-    tcpServer.listen(0, () => {
+    tcpServer.listen(0, "127.0.0.1", () => {
       const addr = tcpServer.address();
       resolve(typeof addr === "object" && addr ? addr.port : 0);
     });
@@ -229,15 +229,19 @@ test("WebSocket client rejects decompression bombs", async () => {
       if (err.code !== "ECONNRESET" && err.code !== "EPIPE" && err.code !== "ECONNABORTED") throw err;
     });
     let buffer = Buffer.alloc(0);
+    let upgraded = false;
 
     socket.on("data", (data: Buffer) => {
       buffer = Buffer.concat([buffer, data]);
+      if (upgraded) return;
 
       // Look for end of HTTP headers
       const headerEnd = buffer.indexOf("\r\n\r\n");
       if (headerEnd === -1) return;
+      upgraded = true;
 
       const headers = buffer.slice(0, headerEnd).toString();
+      buffer = buffer.subarray(headerEnd + 4);
 
       // Extract Sec-WebSocket-Key
       const keyMatch = headers.match(/Sec-WebSocket-Key: ([A-Za-z0-9+/=]+)/i);
@@ -296,15 +300,18 @@ test("WebSocket client rejects decompression bombs", async () => {
       const frame = Buffer.concat([Buffer.from(frameHeader), compressed]);
       socket.write(frame);
     });
+    socket.on("close", () => fromClient.resolve(parseClientFrame(buffer)));
   });
 
+  const fromClient = Promise.withResolvers<ReturnType<typeof parseClientFrame>>();
   let client: WebSocket | null = null;
   let messageReceived = false;
 
   try {
     // Connect with Bun's WebSocket client
-    client = new WebSocket(`ws://localhost:${port}`);
+    client = new WebSocket(`ws://127.0.0.1:${port}`);
 
+    let error: string | undefined;
     const result = await new Promise<{ code: number; reason: string }>(resolve => {
       client!.onopen = () => {
         // Connection opened, waiting for the bomb to be sent
@@ -315,8 +322,8 @@ test("WebSocket client rejects decompression bombs", async () => {
         messageReceived = true;
       };
 
-      client!.onerror = () => {
-        // Error is expected
+      client!.onerror = event => {
+        error = (event as ErrorEvent).error?.code;
       };
 
       client!.onclose = event => {
@@ -327,9 +334,9 @@ test("WebSocket client rejects decompression bombs", async () => {
       };
     });
 
-    // The connection should be closed with code 1009 (Message Too Big)
-    expect(result.code).toBe(1009);
-    expect(result.reason).toBe("Message too big");
+    // The client fails the connection: the server is told 1009 (Message Too Big), the script gets an error and 1006.
+    expect({ error, ...result }).toEqual({ error: "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH", code: 1006, reason: "" });
+    expect((await fromClient.promise)?.payload).toEqual(Buffer.from([1009 >> 8, 1009 & 0xff]));
   } finally {
     // Ensure cleanup happens even on test failure/timeout
     if (client && client.readyState !== WebSocket.CLOSED) {
@@ -354,11 +361,37 @@ function frame(opcode: number, payload: Uint8Array, { fin = true, rsv1 = false }
   return bytes;
 }
 
-type Outcome = { code: number; reason: string; messages: unknown[] };
+/** `error` is the `code` of the error event, `sent` the status code of the Close frame the server got. */
+type Outcome = { error?: string; code: number; reason: string; messages: unknown[]; sent?: number };
+
+/** What a client that fails the connection over `error` reports, and sends. */
+const failedWith = (error: string, sent: number): Outcome => ({ error, code: 1006, reason: "", messages: [], sent });
+
+/** Unmask one client -> server frame; `null` until all of it has arrived. */
+function parseClientFrame(bytes: Buffer): { fin: boolean; rsv1: boolean; opcode: number; payload: Buffer } | null {
+  if (bytes.length < 2) return null;
+  if (!(bytes[1] & 0x80)) throw new Error("client frame is not masked");
+  let length = bytes[1] & 0x7f;
+  let offset = 2;
+  if (length === 126) {
+    if (bytes.length < 4) return null;
+    length = bytes.readUInt16BE(2);
+    offset = 4;
+  } else if (length === 127) {
+    if (bytes.length < 10) return null;
+    length = Number(bytes.readBigUInt64BE(2));
+    offset = 10;
+  }
+  if (bytes.length < offset + 4 + length) return null;
+  const mask = bytes.subarray(offset, offset + 4);
+  const payload = Buffer.from(bytes.subarray(offset + 4, offset + 4 + length));
+  for (let i = 0; i < payload.length; i++) payload[i] ^= mask[i & 3];
+  return { fin: (bytes[0] & 0x80) !== 0, rsv1: (bytes[0] & 0x40) !== 0, opcode: bytes[0] & 0x0f, payload };
+}
 
 /**
  * Complete a WebSocket handshake by hand, write `frames`, and report how the
- * client reacted: either the close it performed, or the first message it
+ * client reacted: either how it failed the connection, or the first message it
  * delivered (which for these frames would be a protocol violation).
  */
 async function sendRawFrames(
@@ -369,15 +402,22 @@ async function sendRawFrames(
   let handshakeComplete = false;
   const messages: unknown[] = [];
   let client: WebSocket | undefined;
+  let fromClient = Buffer.alloc(0);
+  const clientLeft = Promise.withResolvers<void>();
 
   const server = Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
-      // The client fails the connection by resetting it; that is the point of the test.
       error() {},
+      close() {
+        clientLeft.resolve();
+      },
       data(socket, data) {
-        if (handshakeComplete) return;
+        if (handshakeComplete) {
+          fromClient = Buffer.concat([fromClient, data]);
+          return;
+        }
         handshake += data.toString();
         if (!handshake.includes("\r\n\r\n")) return;
 
@@ -409,8 +449,15 @@ async function sendRawFrames(
       messages.push(event.data);
       resolve({ code: 0, reason: "<still open>", messages });
     };
-    client.onerror = () => {};
-    client.onclose = event => resolve({ code: event.code, reason: event.reason, messages });
+    let error: string | undefined;
+    client.onerror = event => {
+      error = (event as ErrorEvent).error?.code;
+    };
+    client.onclose = async event => {
+      await clientLeft.promise;
+      const sent = parseClientFrame(fromClient)?.payload.readUInt16BE(0);
+      resolve({ error, code: event.code, reason: event.reason, messages, sent });
+    };
     return await promise;
   } finally {
     client?.close();
@@ -430,7 +477,7 @@ test("WebSocket client fails the connection on RSV1 set on a continuation frame"
     { negotiateDeflate: true },
   );
 
-  expect(outcome).toEqual({ code: 1002, reason: "Protocol error - RSV1 must be clear", messages: [] });
+  expect(outcome).toEqual(failedWith("WS_ERR_UNEXPECTED_RSV_1", 1002));
 });
 
 test("WebSocket client fails the connection on RSV1 set on a continuation frame without deflate", async () => {
@@ -442,15 +489,27 @@ test("WebSocket client fails the connection on RSV1 set on a continuation frame 
     { negotiateDeflate: false },
   );
 
-  expect(outcome).toEqual({ code: 1002, reason: "Protocol error - RSV1 must be clear", messages: [] });
+  expect(outcome).toEqual(failedWith("WS_ERR_UNEXPECTED_RSV_1", 1002));
 });
 
-test("WebSocket client fails the connection on RSV1 set on a control frame", async () => {
-  const outcome = await sendRawFrames([frame(OPCODE_PING, Buffer.from("ping"), { rsv1: true })], {
+test.each([true, false])(
+  "WebSocket client fails the connection on RSV1 set on a control frame (deflate negotiated: %p)",
+  async negotiateDeflate => {
+    const outcome = await sendRawFrames([frame(OPCODE_PING, Buffer.from("ping"), { rsv1: true })], {
+      negotiateDeflate,
+    });
+
+    expect(outcome).toEqual(failedWith("WS_ERR_UNEXPECTED_RSV_1", 1002));
+  },
+);
+
+// RFC 6455 section 7.4.1: 1007 is for data that is not consistent with the type of the message.
+test("WebSocket client fails the connection on a compressed message that does not inflate", async () => {
+  const outcome = await sendRawFrames([frame(OPCODE_TEXT, Buffer.from([0xff, 0xff, 0xff, 0xff]), { rsv1: true })], {
     negotiateDeflate: true,
   });
 
-  expect(outcome).toEqual({ code: 1002, reason: "Protocol error - RSV1 must be clear", messages: [] });
+  expect(outcome).toEqual(failedWith("Z_DATA_ERROR", 1007));
 });
 
 test("WebSocket client accepts RSV1 on the first frame of a fragmented compressed message", async () => {
@@ -537,6 +596,9 @@ test.each([false, true])(
             "\r\n",
         );
         for (const w of wire) sock.write(compressedBinaryFrame(w));
+        // The next bytes are the client's Close frame. The server closes the connection
+        // first (RFC 6455 7.1.1); the client sends no FIN before that.
+        sock.once("data", () => sock.end());
       };
       sock.on("data", onData);
     });
@@ -570,3 +632,100 @@ test.each([false, true])(
     }
   },
 );
+
+const DEFLATE_TRAILER = Buffer.from([0x00, 0x00, 0xff, 0xff]);
+
+// RFC 7692 §7.1.2.2: the client offers `client_max_window_bits` without a
+// value, so the server may answer with any window from 8 to 15 bits. zlib
+// refuses to create a raw deflater with an 8-bit window, which used to leave
+// the negotiated extension without a codec: the client still reported it in
+// `extensions`, sent uncompressed, and closed with 1011 on the first compressed
+// server message. It has to compress with a 9-bit window instead, whose output
+// (back-references of at most 250 bytes) a server holding the negotiated
+// 256-byte window can still inflate.
+test("WebSocket client honors client_max_window_bits=8", async () => {
+  // The same 300 bytes repeated: a compressor using a larger window than
+  // negotiated would encode the repeats as back-references that an 8-bit
+  // window cannot resolve.
+  const block = Buffer.alloc(300);
+  let x = 12345;
+  for (let i = 0; i < block.length; i++) {
+    x = (Math.imul(x, 1103515245) + 12345) | 0;
+    block[i] = 0x20 + ((x >>> 16) % 0x5e);
+  }
+  const clientMessage = Buffer.concat(Array(6).fill(block)).toString("latin1");
+
+  const serverDeflated = deflateRawSync(Buffer.from("hello from the server"), { finishFlush: zc.Z_SYNC_FLUSH });
+  const serverFrame = frame(OPCODE_TEXT, serverDeflated.subarray(0, serverDeflated.length - 4), { rsv1: true });
+
+  // Rejected if the connection fails before the events below arrive; every
+  // await below races against it.
+  const failed = Promise.withResolvers<never>();
+  const clientFrame = Promise.withResolvers<NonNullable<ReturnType<typeof parseClientFrame>>>();
+  let fromClient = Buffer.alloc(0);
+  let handshakeComplete = false;
+  const server = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      error(_, error) {
+        failed.reject(error);
+      },
+      data(socket, data) {
+        fromClient = Buffer.concat([fromClient, data]);
+        if (!handshakeComplete) {
+          const end = fromClient.indexOf("\r\n\r\n");
+          if (end < 0) return;
+          const key = /Sec-WebSocket-Key:\s*(\S+)/i.exec(fromClient.subarray(0, end).toString("latin1"));
+          if (!key) throw new Error("client did not send Sec-WebSocket-Key");
+          const accept = new Bun.CryptoHasher("sha1").update(key[1] + WEBSOCKET_GUID).digest("base64");
+          handshakeComplete = true;
+          fromClient = fromClient.subarray(end + 4);
+          socket.write(
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+              "Upgrade: websocket\r\n" +
+              "Connection: Upgrade\r\n" +
+              `Sec-WebSocket-Accept: ${accept}\r\n` +
+              "Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits=8\r\n" +
+              "\r\n",
+          );
+          socket.write(serverFrame);
+          socket.flush();
+        }
+        const parsed = parseClientFrame(fromClient);
+        if (parsed) clientFrame.resolve(parsed);
+      },
+    },
+  });
+
+  const opened = Promise.withResolvers<void>();
+  const serverMessage = Promise.withResolvers<string>();
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+  ws.onopen = () => opened.resolve();
+  ws.onmessage = event => serverMessage.resolve(event.data);
+  ws.onclose = event => failed.reject(new Error(`closed: code=${event.code} reason=${event.reason}`));
+
+  try {
+    await Promise.race([opened.promise, failed.promise]);
+    expect(ws.extensions).toBe("permessage-deflate; client_max_window_bits=8");
+    ws.send(clientMessage);
+
+    expect(await Promise.race([serverMessage.promise, failed.promise])).toBe("hello from the server");
+
+    const { payload, ...header } = await Promise.race([clientFrame.promise, failed.promise]);
+    expect(header).toEqual({ fin: true, rsv1: true, opcode: OPCODE_TEXT });
+    // Inflate with the window the server negotiated. The small chunkSize makes
+    // zlib resolve back-references through that 256-byte window rather than
+    // through the output buffer, so a longer distance fails here as it would on
+    // a real server.
+    const inflated = inflateRawSync(Buffer.concat([payload, DEFLATE_TRAILER]), {
+      windowBits: 8,
+      chunkSize: 64,
+      finishFlush: zc.Z_SYNC_FLUSH,
+    });
+    expect(inflated.toString("latin1")).toBe(clientMessage);
+  } finally {
+    ws.close();
+    server.stop(true);
+  }
+});

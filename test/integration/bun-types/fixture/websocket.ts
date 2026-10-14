@@ -143,7 +143,7 @@ import { expectType } from "./utilities";
   };
 
   ws.onerror = event => {
-    expectType(event).is<Event>();
+    expectType(event.type).is<string>();
   };
 
   ws.onclose = event => {
@@ -288,4 +288,61 @@ import { expectType } from "./utilities";
 {
   const options = { tls: { servername: "dev.local" } } satisfies Bun.WebSocketOptions;
   expectType<string>(options.tls.servername);
+}
+
+// Bun's own declaration, which lib.dom does not replace.
+{
+  const ws = {} as Bun.WebSocket;
+
+  // https://github.com/oven-sh/bun/issues/36329
+  ws.onerror = event => {
+    expectType(event).is<ErrorEvent>();
+  };
+  ws.addEventListener("error", event => {
+    expectType(event).is<ErrorEvent>();
+    expectType(event.message).is<string>();
+    expectType(event.error).is<any>();
+  });
+  const onError = (event: ErrorEvent) => {};
+  ws.onerror = onError;
+  ws.addEventListener("error", onError);
+  ws.removeEventListener("error", onError);
+  // A listener written for the old declaration still fits.
+  ws.onerror = (event: Event) => {};
+  ws.addEventListener("error", (event: Event) => {});
+
+  ws.onmessage = event => {
+    expectType(event).is<MessageEvent>();
+  };
+  ws.addEventListener("message", ({ data }) => {
+    expectType(data).is<any>();
+  });
+
+  ws.addEventListener("ping", event => {
+    expectType(event).is<MessageEvent>();
+  });
+  ws.addEventListener("pong", ({ data }) => {
+    expectType(data).is<any>();
+  });
+  const onPong = (event: MessageEvent) => {};
+  ws.addEventListener("pong", onPong);
+  ws.removeEventListener("pong", onPong);
+
+  expectType<Bun.WebSocket["binaryType"]>().is<"arraybuffer" | "blob" | "nodebuffer">();
+  const blob = new Blob(["payload"]);
+  ws.send(blob);
+  ws.ping(blob);
+  ws.pong(blob);
+
+  ({ headers: new Headers() }) satisfies Bun.WebSocketOptions;
+  ({ headers: [["a", "b"]] }) satisfies Bun.WebSocketOptions;
+}
+
+// cork() hands the callback this socket and returns what the callback returns.
+{
+  const ws = {} as Bun.ServerWebSocket<{ id: number }>;
+  expectType(ws.cork(corked => corked.data.id)).is<number>();
+  ws.cork(corked => {
+    expectType(corked).is<Bun.ServerWebSocket<{ id: number }>>();
+  });
 }

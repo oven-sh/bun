@@ -202,7 +202,32 @@ test("basic + websocket + upgrade + all handlers", {
       console.log("Please send me data. I am ready to receive it.");
     },
 
+    error(ws, error) {
+      expectType(ws).is<Bun.ServerWebSocket<{ name: string }>>();
+      expectType(error).is<Error>();
+      ws.pause();
+      ws.resume();
+      expectType(ws.isPaused).is<boolean>();
+      expectType(ws.cork(corked => corked.data.name)).is<string>();
+      ws.cork(corked => {
+        expectType(corked).is<Bun.ServerWebSocket<{ name: string }>>();
+      });
+    },
+
     perMessageDeflate: true,
+  },
+});
+
+test("websocket without handlers", {
+  fetch: () => new Response("Regular HTTP response"),
+  websocket: {},
+});
+
+test("websocket with only options", {
+  fetch: () => new Response("Regular HTTP response"),
+  websocket: {
+    idleTimeout: 0,
+    perMessageDeflate: { compress: "dedicated", decompress: "disable" },
   },
 });
 

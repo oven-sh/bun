@@ -8,8 +8,8 @@ namespace WebCore {
 
 extern "C" void* Blob__dupeFromJS(JSC::EncodedJSValue impl);
 extern "C" void* Blob__dupe(void* impl);
-extern "C" void* Blob__getDataPtr(JSC::EncodedJSValue blob);
-extern "C" size_t Blob__getSize(JSC::EncodedJSValue blob);
+// False for a file- or S3-backed Blob, whose bytes need a read. The bytes are borrowed from `blob`.
+extern "C" bool Blob__sharedView(JSC::EncodedJSValue blob, const uint8_t** ptr, size_t* len);
 extern "C" void* Blob__fromBytes(JSC::JSGlobalObject* globalThis, const void* ptr, size_t len);
 extern "C" void Blob__ref(void* impl);
 extern "C" void Blob__deref(void* impl);

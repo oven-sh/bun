@@ -63,7 +63,7 @@ namespace uWS {
 
 #include <zlib.h>
 #include <string>
-#include <optional>
+#include <string_view>
 #include "libdeflate.h"
 
 namespace uWS {
@@ -79,26 +79,22 @@ struct ZlibContext {
     char *deflationBuffer;
     char *inflationBuffer;
     libdeflate_decompressor *decompressor;
-    libdeflate_compressor *compressor;
 
     ZlibContext() {
         deflationBuffer = (char *) malloc(LARGE_BUFFER_SIZE);
         inflationBuffer = (char *) malloc(LARGE_BUFFER_SIZE);
         decompressor = libdeflate_alloc_decompressor();
-        compressor = libdeflate_alloc_compressor(6);
     }
 
     ~ZlibContext() {
         free(deflationBuffer);
         free(inflationBuffer);
         libdeflate_free_decompressor(decompressor);
-        libdeflate_free_compressor(compressor);
     }
 };
 
 struct DeflationStream {
     z_stream deflationStream = {};
-    unsigned char reset_buffer[4096 + 1];
 
     DeflationStream(CompressOptions compressOptions) {
 
@@ -114,17 +110,6 @@ struct DeflationStream {
 
     /* Deflate and optionally reset. You must not deflate an empty string. */
     std::string_view deflate(ZlibContext *zlibContext, std::string_view raw, bool reset) {
-        /* Run a fast path in case of shared_compressor */
-        if (reset) {
-            size_t written = 0;
-            written = libdeflate_deflate_compress(zlibContext->compressor, raw.data(), raw.length(), reset_buffer, 4096);
-
-            if (written) {
-                memcpy(&reset_buffer[written], "\x00", 1);
-                return std::string_view((char *) reset_buffer, written + 1);
-            }
-        }
-
         /* Odd place to clear this one, fix */
         zlibContext->dynamicDeflationBuffer.clear();
 
@@ -172,9 +157,14 @@ struct DeflationStream {
     }
 };
 
+struct InflateResult {
+    std::string_view data;
+    /* 0 on success, else the WebSocket close code: 1007 corrupt stream, 1009 over maxPayloadLength */
+    int closeCode;
+};
+
 struct InflationStream {
     z_stream inflationStream = {};
-    char buf[4096];
 
     InflationStream(CompressOptions compressOptions) {
         /* Inflation windowBits are the top 8 bits of the 16 bit compressOptions */
@@ -186,7 +176,7 @@ struct InflationStream {
     }
 
     /* Zero length inflates are possible and valid */
-    std::optional<std::string_view> inflate(ZlibContext *zlibContext, std::string_view compressed, size_t maxPayloadLength, bool reset) {
+    InflateResult inflate(ZlibContext *zlibContext, std::string_view compressed, size_t maxPayloadLength, bool reset) {
         /* The libdeflate fast path is stateless: it cannot resolve back-references into a
          * previous message's sliding window, and whatever it inflates never reaches the zlib
          * stream's window. Both are only correct without context takeover, i.e. when reset is set. */
@@ -198,15 +188,15 @@ struct InflationStream {
             char tmp[9];
             memcpy(tmp, (char *) compressed.data() + compressed.length(), 9);
             memcpy((char *) compressed.data() + compressed.length(), "\x00\x00\xff\xff\x01\x00\x00\xff\xff", 9);
-            libdeflate_result res = libdeflate_deflate_decompress(zlibContext->decompressor, compressed.data(), compressed.length() + 9, buf, 4096, &written);
+            libdeflate_result res = libdeflate_deflate_decompress(zlibContext->decompressor, compressed.data(), compressed.length() + 9, zlibContext->inflationBuffer, LARGE_BUFFER_SIZE, &written);
             memcpy((char *) compressed.data() + compressed.length(), tmp, 9);
 
             if (res == 0) {
                 /* Fast path wins */
                 if (written > maxPayloadLength) {
-                    return std::nullopt;
+                    return {{}, 1009};
                 }
-                return std::string_view(buf, written);
+                return {{zlibContext->inflationBuffer, written}, 0};
             }
         }
 
@@ -232,6 +222,12 @@ struct InflationStream {
             inflationStream.avail_out = LARGE_BUFFER_SIZE;
 
             err = ::inflate(&inflationStream, Z_SYNC_FLUSH);
+            if (err == Z_STREAM_END) {
+                /* RFC 7692 7.2.3.4: a message may end in a BFINAL=1 block. The next one starts a new stream. */
+                inflateReset(&inflationStream);
+                inflationStream.avail_in = 0;
+                err = Z_OK;
+            }
             if (err == Z_OK && inflationStream.avail_out) {
                 break;
             }
@@ -248,27 +244,25 @@ struct InflationStream {
         /* Restore the bytes we used for the tail */
         memcpy(tailLocation, preTailBytes, 4);
 
-        if ((err != Z_BUF_ERROR && err != Z_OK) || zlibContext->dynamicInflationBuffer.length() > maxPayloadLength) {
-            return std::nullopt;
+        if (err != Z_BUF_ERROR && err != Z_OK) {
+            return {{}, 1007};
         }
 
+        if (zlibContext->dynamicInflationBuffer.length() > maxPayloadLength) {
+            return {{}, 1009};
+        }
+
+        std::string_view inflated(zlibContext->inflationBuffer, LARGE_BUFFER_SIZE - inflationStream.avail_out);
         if (zlibContext->dynamicInflationBuffer.length()) {
-            zlibContext->dynamicInflationBuffer.append(zlibContext->inflationBuffer, LARGE_BUFFER_SIZE - inflationStream.avail_out);
-
-            /* Let's be strict about the max size */
-            if (zlibContext->dynamicInflationBuffer.length() > maxPayloadLength) {
-                return std::nullopt;
-            }
-
-            return std::string_view(zlibContext->dynamicInflationBuffer.data(), zlibContext->dynamicInflationBuffer.length());
+            zlibContext->dynamicInflationBuffer.append(inflated);
+            inflated = zlibContext->dynamicInflationBuffer;
         }
 
-        /* Let's be strict about the max size */
-        if ((LARGE_BUFFER_SIZE - inflationStream.avail_out) > maxPayloadLength) {
-            return std::nullopt;
+        if (inflated.length() > maxPayloadLength) {
+            return {{}, 1009};
         }
 
-        return std::string_view(zlibContext->inflationBuffer, LARGE_BUFFER_SIZE - inflationStream.avail_out);
+        return {inflated, 0};
     }
 
 };

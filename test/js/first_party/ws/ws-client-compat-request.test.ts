@@ -1,0 +1,583 @@
+// The `http.ClientRequest` a `ws` client hands to user code: the argument of `finishRequest` and the first argument of
+// 'unexpected-response', with what end(), destroy() and abort() on it do to the socket. See ws-raw-peer.ts.
+import { describe, expect, test } from "bun:test";
+import { isWindows, tempDir, tls } from "harness";
+import type { ClientRequest } from "node:http";
+import path from "node:path";
+import {
+  attempt,
+  closedPort,
+  createPeer,
+  dial,
+  event,
+  implementations,
+  response101,
+  type ClientOptions,
+  type PeerOptions,
+} from "./ws-raw-peer";
+
+const opening = ["upgrade 101 rs=0", "open rs=1"];
+const closedBeforeOpen = [
+  'error Error "WebSocket was closed before the connection was established" rs=2',
+  "close 1006 Buffer() rs=3",
+];
+const hangUp = ['error Error "socket hang up" ECONNRESET rs=2', "close 1006 Buffer() rs=3"];
+const boom = ['error Error "boom" rs=2', "close 1006 Buffer() rs=3"];
+const forbidden = "HTTP/1.1 403 Forbidden\r\nContent-Length: 2\r\n\r\nno";
+
+type Peer = Awaited<ReturnType<typeof createPeer>>;
+type Act = (req: ClientRequest) => unknown;
+
+const flags = (req: ClientRequest) => ({ destroyed: req.destroyed, aborted: req.aborted });
+
+/** Records 'abort' and 'close' of a request. `closed` is its 'close' event. */
+function watchRequest(req: ClientRequest) {
+  const events: string[] = [];
+  req.on("abort", () => events.push("abort"));
+  const closed = new Promise<void>(resolve => req.on("close", () => (events.push("close"), resolve())));
+  return { events, closed };
+}
+
+describe.each(implementations)("ws client, the handshake request ($name)", ({ ws: implementation }) => {
+  const { WebSocket } = implementation;
+
+  /**
+   * The request line of every request `peer` has read, after a control client has dialed it and its request has
+   * arrived: whatever an earlier client was going to send is there too.
+   */
+  async function requestLines(peer: Peer) {
+    const control = new WebSocket(peer.url + "/control");
+    control.on("error", () => {});
+    try {
+      while ((await peer.connection()).headLines[0] !== "GET /control HTTP/1.1");
+    } finally {
+      control.terminate();
+    }
+    return peer.connections.map(connection => connection.headLines[0]);
+  }
+  const onlyControl = ["GET /control HTTP/1.1"];
+
+  /** `dial()` with a `finishRequest` that only keeps the request. */
+  async function dialHeld(options: ClientOptions = {}, peerOptions?: PeerOptions) {
+    let req!: ClientRequest;
+    const client = await dial(
+      implementation,
+      { ...options, finishRequest: request => void (req = request) },
+      peerOptions,
+    );
+    return { ...client, req, [Symbol.asyncDispose]: client[Symbol.asyncDispose] };
+  }
+
+  describe("finishRequest", () => {
+    test("gets the request and the WebSocket, and a header it sets is sent", async () => {
+      const calls: unknown[][] = [];
+      await using client = await dial(implementation, {
+        finishRequest(...args) {
+          calls.push(args);
+          args[0].setHeader("Cookie", "foo=bar");
+          args[0].end();
+        },
+      });
+      const conn = await client.peer.connection();
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toHaveLength(2);
+      expect((calls[0][0] as ClientRequest).constructor.name).toBe("ClientRequest");
+      expect(calls[0][1]).toBe(client.ws);
+      expect(conn.header("cookie")).toBe("foo=bar");
+      await client.opened;
+      expect(client.events).toEqual(opening);
+    });
+
+    const later: { when: string; defer(fn: () => void): unknown }[] = [
+      { when: "in a microtask", defer: fn => queueMicrotask(fn) },
+      { when: "in a later task", defer: fn => setImmediate(fn) },
+      { when: "after an await", defer: async fn => (await null, fn()) },
+    ];
+    const authorizeLater =
+      (defer: (fn: () => void) => unknown): ClientOptions["finishRequest"] =>
+      req =>
+        void defer(() => {
+          req.setHeader("Authorization", "token");
+          req.end();
+        });
+    // Refuses a request that was sent before `finishRequest` released it.
+    const wantsAuthorization: PeerOptions = {
+      respond: conn =>
+        conn.header("authorization") ? response101(conn) : "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n",
+    };
+
+    test.each(later)("req.end() $when: one request, with the headers set until then", async ({ defer }) => {
+      await using client = await dial(
+        implementation,
+        { headers: { a: "1" }, finishRequest: authorizeLater(defer) },
+        wantsAuthorization,
+      );
+      expect(client.ws.readyState).toBe(WebSocket.CONNECTING);
+      await client.opened;
+      expect(client.events).toEqual(opening);
+      expect(client.peer.connections.map(conn => [conn.header("a"), conn.header("authorization")])).toEqual([
+        ["1", "token"],
+      ]);
+    });
+
+    test("a late req.end() over TLS", async () => {
+      await using client = await dial(
+        implementation,
+        { ca: tls.cert, finishRequest: authorizeLater(setImmediate) },
+        { ...wantsAuthorization, secure: true },
+      );
+      await client.opened;
+      expect(client.events).toEqual(opening);
+      expect(client.peer.connections).toHaveLength(1);
+    });
+
+    test.skipIf(isWindows)("a late req.end() over a unix socket", async () => {
+      using dir = tempDir("ws-finish-request", {});
+      await using client = await dial(
+        implementation,
+        { finishRequest: authorizeLater(setImmediate) },
+        { ...wantsAuthorization, path: path.join(String(dir), "ws.sock") },
+      );
+      await client.opened;
+      expect(client.events).toEqual(opening);
+      expect(client.peer.connections).toHaveLength(1);
+    });
+
+    test("every kind of listener added before req.end() gets the events of the connection", async () => {
+      await using client = await dialHeld({ protocols: ["a", "b"] }, { headers: ["Sec-WebSocket-Protocol: a"] });
+      const { ws, req } = client;
+      const seen: string[] = [];
+      ws.on("upgrade", response => seen.push("on upgrade " + response.statusCode));
+      ws.on("open", () => seen.push("on open"));
+      ws.once("open", () => seen.push("once open"));
+      ws.addEventListener("open", () => seen.push("addEventListener open"));
+      ws.onopen = () => seen.push("onopen");
+      ws.onmessage = ({ data }) => seen.push("onmessage " + data);
+      ws.on("message", data => seen.push("on message " + data));
+      expect({ readyState: ws.readyState, protocol: ws.protocol }).toEqual({ readyState: 0, protocol: "" });
+
+      req.end();
+      const conn = await client.peer.connection();
+      conn.text("hi");
+      await event(ws, "message");
+      expect({ readyState: ws.readyState, protocol: ws.protocol }).toEqual({ readyState: 1, protocol: "a" });
+      expect(seen).toEqual([
+        "on upgrade 101",
+        "on open",
+        "once open",
+        "addEventListener open",
+        "onopen",
+        "onmessage hi",
+        "on message hi",
+      ]);
+    });
+
+    test("without req.end() nothing is sent and the socket stays CONNECTING", async () => {
+      await using client = await dialHeld({ headers: { authorization: "secret" } });
+      const { ws, events, peer } = client;
+      expect(await requestLines(peer)).toEqual(onlyControl);
+      expect(events).toEqual([]);
+      expect(ws.readyState).toBe(WebSocket.CONNECTING);
+
+      ws.terminate();
+      expect(ws.readyState).toBe(WebSocket.CLOSING);
+      await client.closed;
+      expect(events).toEqual(closedBeforeOpen);
+    });
+
+    test("handshakeTimeout also runs out for a request that is never ended", async () => {
+      await using client = await dialHeld({ handshakeTimeout: 20 });
+      await client.closed;
+      expect(client.events).toEqual(['error Error "Opening handshake has timed out" rs=2', "close 1006 Buffer() rs=3"]);
+      expect(flags(client.req)).toEqual({ destroyed: true, aborted: true });
+      expect(client.peer.connections).toEqual([]);
+    });
+
+    test.each([
+      { call: "close()", act: ws => ws.close() },
+      { call: "terminate()", act: ws => ws.terminate() },
+    ] as { call: string; act(ws: InstanceType<typeof WebSocket>): void }[])(
+      "$call before req.end() fails the socket, and req.end() sends nothing after it",
+      async ({ act }) => {
+        await using client = await dialHeld();
+        const { ws, req, events, peer } = client;
+        act(ws);
+        expect(ws.readyState).toBe(WebSocket.CLOSING);
+        expect(flags(req)).toEqual({ destroyed: true, aborted: true });
+        await client.closed;
+        expect(attempt(() => req.end() === req)).toBe("true");
+        expect(await requestLines(peer)).toEqual(onlyControl);
+        expect(events).toEqual(closedBeforeOpen);
+      },
+    );
+
+    test("what changes in the arguments after the constructor does not reach the request", async () => {
+      const protocols = ["a"];
+      const headers: Record<string, string> = { "X-One": "1" };
+      await using client = await dialHeld({ protocols, headers }, { headers: ["Sec-WebSocket-Protocol: a"] });
+      protocols.push("a", "b");
+      headers["X-One"] = "2";
+      headers["X-Two"] = "2";
+      client.req.end();
+      const conn = await client.peer.connection();
+      expect(["sec-websocket-protocol", "x-one", "x-two"].map(name => conn.header(name))).toEqual([
+        "a",
+        "1",
+        undefined,
+      ]);
+      await client.opened;
+      expect(client.ws.protocol).toBe("a");
+    });
+
+    test("a second req.end() does nothing", async () => {
+      await using client = await dialHeld();
+      const { req, peer } = client;
+      expect([req.end() === req, req.end() === req]).toEqual([true, true]);
+      await client.opened;
+      expect(req.end()).toBe(req);
+      expect(await requestLines(peer)).toEqual(["GET / HTTP/1.1", ...onlyControl]);
+      expect(client.events).toEqual(opening);
+    });
+
+    test("the request emits 'socket', and req.end() may wait for it", async () => {
+      let socket: any;
+      await using client = await dial(implementation, {
+        finishRequest(req) {
+          req.on("socket", value => {
+            socket = value;
+            req.end();
+          });
+        },
+      });
+      await client.opened;
+      expect(typeof socket.on).toBe("function");
+      expect(client.events).toEqual(opening);
+      expect(client.peer.connections).toHaveLength(1);
+    });
+
+    test("what it throws comes out of the constructor, and nothing is sent", async () => {
+      await using peer = await createPeer();
+      const error = new Error("from finishRequest");
+      let made: InstanceType<typeof WebSocket> | undefined;
+      try {
+        expect(() => {
+          new WebSocket(peer.url, {
+            finishRequest(_, ws) {
+              made = ws;
+              throw error;
+            },
+          });
+        }).toThrow(error);
+        expect(await requestLines(peer)).toEqual(onlyControl);
+      } finally {
+        made?.on("error", () => {}).terminate();
+      }
+    });
+
+    test.each([
+      { what: "an invalid URL", address: "not a url", thrown: 'SyntaxError "Invalid URL: not a url"' },
+      { what: "a URL with a fragment", suffix: "/#a", thrown: 'SyntaxError "The URL contains a fragment identifier"' },
+      {
+        what: "a duplicated subprotocol",
+        protocols: ["a", "a"],
+        thrown: 'SyntaxError "An invalid or duplicated subprotocol was specified"',
+      },
+      {
+        what: "an invalid header name",
+        headers: { "bad name": "1" },
+        thrown: 'TypeError "Header name must be a valid HTTP token [\\"bad name\\"]" ERR_INVALID_HTTP_TOKEN',
+      },
+    ] as { what: string; address?: string; suffix?: string; protocols?: string[]; headers?: {}; thrown: string }[])(
+      "the constructor throws for $what before it calls finishRequest",
+      async ({ address, suffix = "", protocols = [], headers, thrown }) => {
+        address ??= `ws://127.0.0.1:${await closedPort()}${suffix}`;
+        let calls = 0;
+        const made = attempt(() =>
+          new WebSocket(address, protocols, { headers, finishRequest: () => void calls++ }).on("error", () => {}),
+        );
+        expect(made).toBe("throws " + thrown);
+        expect(calls).toBe(0);
+      },
+    );
+
+    test("a client that only its pending req.end() refers to connects after a collection", async () => {
+      await using peer = await createPeer();
+      const total = 5;
+      let ended = 0;
+      let opened = 0;
+      const { promise, resolve } = Promise.withResolvers<void>();
+      for (let i = 0; i < total; i++) {
+        new WebSocket(peer.url, {
+          finishRequest(req) {
+            setImmediate(() => {
+              req.end();
+              if (++ended === total) Bun.gc(true);
+            });
+          },
+        })
+          .on("error", () => {})
+          .on("open", function () {
+            this.terminate();
+            if (++opened === total) resolve();
+          });
+      }
+      Bun.gc(true);
+      await promise;
+      expect(peer.connections).toHaveLength(total);
+    });
+  });
+
+  describe("the headers of the request", () => {
+    test("the handshake headers can be read, and are what is sent", async () => {
+      await using client = await dialHeld({
+        path: "/p?q=1",
+        protocols: ["a"],
+        origin: "http://example.com",
+        headers: { "X-One": "1" },
+      });
+      const { req, peer } = client;
+      expect({ method: req.method, path: req.path, host: req.host, protocol: req.protocol }).toEqual({
+        method: "GET",
+        path: "/p?q=1",
+        host: "127.0.0.1",
+        protocol: "http:",
+      });
+      const key = req.getHeader("sec-websocket-key");
+      expect(key).toMatch(/^[+/0-9A-Za-z]{22}==$/);
+      expect<object>({ ...req.getHeaders() }).toEqual({
+        "x-one": "1",
+        "sec-websocket-version": 13,
+        "sec-websocket-key": key,
+        connection: "Upgrade",
+        upgrade: "websocket",
+        "sec-websocket-extensions": "permessage-deflate; client_max_window_bits",
+        "sec-websocket-protocol": "a",
+        origin: "http://example.com",
+        host: `127.0.0.1:${peer.port}`,
+      });
+      expect([req.getHeader("UPGRADE"), req.getHeader("nope"), req.hasHeader("X-ONE"), req.hasHeader("nope")]).toEqual([
+        "websocket",
+        undefined,
+        true,
+        false,
+      ]);
+      expect(req.getHeaderNames().toSorted()).toEqual(Object.keys(req.getHeaders()).toSorted());
+      expect(req.getRawHeaderNames()).toContain("Sec-WebSocket-Key");
+
+      req.end();
+      const conn = await peer.connection();
+      expect(conn.headLines[0]).toBe("GET /p?q=1 HTTP/1.1");
+      expect(conn.header("sec-websocket-key")).toBe(key as string);
+    });
+
+    // One header line whatever the case of the two names, spelled as the last setHeader() spelled it.
+    test.each([
+      { call: 'setHeader("X-Mode", "1")', act: req => req.setHeader("X-Mode", "1"), lines: ["X-Mode: 1"] },
+      { call: 'setHeader("x-mode", "1")', act: req => req.setHeader("x-mode", "1"), lines: ["x-mode: 1"] },
+      { call: 'setHeader("x-mode", 1)', act: req => req.setHeader("x-mode", 1), lines: ["x-mode: 1"] },
+      { call: 'removeHeader("x-MODE")', act: req => req.removeHeader("x-MODE"), lines: [] },
+    ] as { call: string; act: Act; lines: string[] }[])(
+      "$call replaces the X-Mode of options.headers",
+      async ({ act, lines }) => {
+        await using client = await dialHeld({ headers: { "X-Mode": "0" } });
+        act(client.req);
+        client.req.end();
+        const conn = await client.peer.connection();
+        expect(conn.headLines.filter(line => /^x-mode:/i.test(line))).toEqual(lines);
+      },
+    );
+
+    test("setHeader() returns the request and throws for what node:http refuses", async () => {
+      await using client = await dialHeld();
+      const { req } = client;
+      expect(req.setHeader("X-Good", "1")).toBe(req);
+      expect([
+        attempt(() => req.setHeader("bad name", "1")),
+        attempt(() => req.setHeader("x-bad", "a\r\nx-injected: 1")),
+        attempt(() => req.setHeader("x-bad", undefined as any)),
+        attempt(() =>
+          req.setHeader("x-bad", {
+            toString() {
+              throw new Error("from toString");
+            },
+          } as any),
+        ),
+      ]).toEqual([
+        'throws TypeError "Header name must be a valid HTTP token [\\"bad name\\"]" ERR_INVALID_HTTP_TOKEN',
+        'throws TypeError "Invalid character in header content [\\"x-bad\\"]" ERR_INVALID_CHAR',
+        'throws TypeError "Invalid value \\"undefined\\" for header \\"x-bad\\"" ERR_HTTP_INVALID_HEADER_VALUE',
+        'throws Error "from toString"',
+      ]);
+      req.end();
+      const conn = await client.peer.connection();
+      expect(conn.headLines.filter(line => /^(x-|bad)/i.test(line))).toEqual(["X-Good: 1"]);
+      await client.opened;
+    });
+
+    test("after req.end() the headers cannot change", async () => {
+      await using client = await dialHeld({ headers: { "X-One": "1" } });
+      const { req } = client;
+      const state = () => ({ finished: req.finished, writableEnded: req.writableEnded, headersSent: req.headersSent });
+      expect(state()).toEqual({ finished: false, writableEnded: false, headersSent: false });
+      req.end();
+      expect(state()).toEqual({ finished: true, writableEnded: true, headersSent: true });
+      expect([attempt(() => req.setHeader("X-Late", "1")), attempt(() => req.removeHeader("X-One"))]).toEqual([
+        'throws Error "Cannot set headers after they are sent to the client" ERR_HTTP_HEADERS_SENT',
+        'throws Error "Cannot remove headers after they are sent to the client" ERR_HTTP_HEADERS_SENT',
+      ]);
+      expect(req.getHeader("x-one")).toBe("1");
+      const conn = await client.peer.connection();
+      expect([conn.header("x-one"), conn.header("x-late")]).toEqual(["1", undefined]);
+    });
+  });
+
+  describe("destroy() and abort() in finishRequest", () => {
+    const error = new Error("boom");
+
+    test.each([
+      { call: "req.destroy()", act: req => req.destroy(), aborted: false, request: ["close"], events: hangUp },
+      { call: "req.destroy(error)", act: req => req.destroy(error), aborted: false, request: ["close"], events: boom },
+      {
+        call: "req.destroy() and req.end()",
+        act: req => (req.destroy(), req.end()),
+        aborted: false,
+        request: ["close"],
+        events: hangUp,
+      },
+      // An aborted request reports no error, so the socket never learns of it.
+      { call: "req.abort()", act: req => void req.abort(), aborted: true, request: ["abort", "close"], events: [] },
+    ] as { call: string; act: Act; aborted: boolean; request: string[]; events: string[] }[])(
+      "$call: nothing is sent",
+      async ({ act, aborted, request, events }) => {
+        let watched!: ReturnType<typeof watchRequest>;
+        let result: unknown;
+        let req!: ClientRequest;
+        await using client = await dial(implementation, {
+          finishRequest(request) {
+            req = request;
+            watched = watchRequest(req);
+            result = act(req);
+          },
+        });
+        expect(result).toBe(aborted ? undefined : req);
+        expect(flags(req)).toEqual({ destroyed: true, aborted });
+        await watched.closed;
+        if (events.length) await client.closed;
+        expect(await requestLines(client.peer)).toEqual(onlyControl);
+        expect(watched.events).toEqual(request);
+        expect(client.events).toEqual(events);
+        expect(client.ws.readyState).toBe(events.length ? WebSocket.CLOSED : WebSocket.CONNECTING);
+      },
+    );
+
+    test("'error' gets the very error of req.destroy(error)", async () => {
+      await using client = await dial(implementation, { finishRequest: req => void req.destroy(error) });
+      expect((await event(client.ws, "error"))[0]).toBe(error);
+    });
+  });
+
+  describe("destroy() and abort() while the server has not answered", () => {
+    test.each([
+      { call: "req.destroy()", act: req => req.destroy(), request: ["close"], events: hangUp },
+      { call: "req.destroy(error)", act: req => req.destroy(new Error("boom")), request: ["close"], events: boom },
+      { call: "req.abort()", act: req => req.abort(), request: ["abort", "close"], events: hangUp },
+    ] as { call: string; act: Act; request: string[]; events: string[] }[])(
+      "$call drops the connection and fails the socket",
+      async ({ act, request, events }) => {
+        await using client = await dialHeld({}, { respond: () => null });
+        const { ws, req } = client;
+        req.end();
+        const conn = await client.peer.connection();
+        const watched = watchRequest(req);
+        act(req);
+        expect(ws.readyState).toBe(WebSocket.CONNECTING);
+        await Promise.all([watched.closed, client.closed]);
+        expect(await conn.rest()).toEqual([]);
+        expect(watched.events).toEqual(request);
+        expect(client.events).toEqual(events);
+      },
+    );
+  });
+
+  describe("the request of 'unexpected-response'", () => {
+    /** A client whose 'unexpected-response' has fired, with the request of that event. */
+    async function refused(options: ClientOptions = {}) {
+      const client = await dial(implementation, options, { respond: () => forbidden });
+      try {
+        const [req] = (await event(client.ws, "unexpected-response")) as [ClientRequest];
+        return { ...client, req, [Symbol.asyncDispose]: client[Symbol.asyncDispose] };
+      } catch (error) {
+        await client[Symbol.asyncDispose]();
+        throw error;
+      }
+    }
+
+    test("is the request that was sent", async () => {
+      await using client = await refused({ path: "/p?q=1", headers: { "X-One": "1" } });
+      const { req } = client;
+      const conn = await client.peer.connection();
+      expect({
+        class: req.constructor.name,
+        method: req.method,
+        path: req.path,
+        host: req.host,
+        upgrade: req.getHeader("upgrade"),
+        one: req.getHeader("x-one"),
+        key: req.getHeader("sec-websocket-key"),
+        missing: req.getHeader("x-anything"),
+        ...flags(req),
+      }).toEqual({
+        class: "ClientRequest",
+        method: "GET",
+        path: "/p?q=1",
+        host: "127.0.0.1",
+        upgrade: "websocket",
+        one: "1",
+        key: conn.header("sec-websocket-key"),
+        missing: undefined,
+        destroyed: false,
+        aborted: false,
+      });
+    });
+
+    test("is the request finishRequest got", async () => {
+      let first: ClientRequest | undefined;
+      await using client = await refused({ finishRequest: req => void (first = req).end() });
+      expect(client.req).toBe(first!);
+    });
+
+    // The response was handed over, so the socket takes no further interest: only an error reaches it.
+    test.each([
+      { call: "req.destroy()", act: req => req.destroy(), aborted: false, request: ["close"] },
+      { call: "req.destroy() twice", act: req => (req.destroy(), req.destroy()), aborted: false, request: ["close"] },
+      { call: "req.abort()", act: req => void req.abort(), aborted: true, request: ["abort", "close"] },
+    ] as { call: string; act: Act; aborted: boolean; request: string[] }[])(
+      "$call: the socket stays CONNECTING and emits nothing",
+      async ({ act, aborted, request }) => {
+        await using client = await refused();
+        const { ws, req } = client;
+        const watched = watchRequest(req);
+        expect(act(req)).toBe(aborted ? undefined : req);
+        expect(flags(req)).toEqual({ destroyed: true, aborted });
+        await watched.closed;
+        expect(watched.events).toEqual(request);
+        expect(client.events).toEqual([]);
+        expect(ws.readyState).toBe(WebSocket.CONNECTING);
+      },
+    );
+
+    test("req.destroy(error): 'error' with that error, then 'close' 1006", async () => {
+      await using client = await refused();
+      const { ws, req } = client;
+      const error = new Error("boom");
+      const watched = watchRequest(req);
+      const emitted = event(ws, "error");
+      expect(req.destroy(error)).toBe(req);
+      expect(ws.readyState).toBe(WebSocket.CONNECTING);
+      expect((await emitted)[0]).toBe(error);
+      await Promise.all([client.closed, watched.closed]);
+      expect(client.events).toEqual(boom);
+      expect(watched.events).toEqual(["close"]);
+    });
+  });
+});

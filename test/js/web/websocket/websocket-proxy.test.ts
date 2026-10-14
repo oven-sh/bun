@@ -253,7 +253,7 @@ describe("WebSocket through HTTP CONNECT proxy", () => {
     });
     // The proxy answered 407 to a CONNECT without credentials.
     expect({ events: await failingSession(ws), requests: recorded.requests }).toEqual({
-      events: failed(url, "Proxy connection failed", 1006),
+      events: failed(url, "Proxy authentication required: 407 Proxy Authentication Required"),
       requests: [connectRequest(wsPort)],
     });
     gc();
@@ -267,7 +267,7 @@ describe("WebSocket through HTTP CONNECT proxy", () => {
     });
     // The credentials were sent, and the proxy answered 403.
     expect({ events: await failingSession(ws), requests: recorded.requests }).toEqual({
-      events: failed(url, "Proxy connection failed", 1006),
+      events: failed(url, "Proxy connection failed: 403 Forbidden"),
       requests: [connectRequest(wsPort, { "proxy-authorization": `Basic ${btoa("wrong_user:wrong_pass")}` })],
     });
     gc();
@@ -310,7 +310,7 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
       tls: { rejectUnauthorized: false },
     });
     expect({ events: await failingSession(ws), requests: recorded.requests }).toEqual({
-      events: failed(url, "TLS handshake failed", 1015),
+      events: failed(url, "TLS handshake failed"),
       requests: [connectRequest(originPort)],
     });
   });
@@ -360,7 +360,7 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
       tls: { rejectUnauthorized: false },
     });
     expect({ events: await failingSession(ws), targetReceived: await target.afterClientHello }).toEqual({
-      events: failed(url, "TLS handshake failed", 1015),
+      events: failed(url, "TLS handshake failed"),
       targetReceived: decodeErrorAlert,
     });
   });
@@ -376,6 +376,7 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     const serverClosed = Promise.withResolvers<number>();
     using pingServer = Bun.serve({
       port: 0,
+      hostname: "127.0.0.1",
       tls: {
         key: tlsCerts.key,
         cert: tlsCerts.cert,
@@ -460,6 +461,7 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
       const serverClosed = Promise.withResolvers<number>();
       using server = Bun.serve({
         port: 0,
+        hostname: "127.0.0.1",
         tls: { key: tlsCerts.key, cert: tlsCerts.cert },
         fetch(req, server) {
           if (server.upgrade(req)) return;
@@ -563,6 +565,7 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     const serverClosed = Promise.withResolvers<number>();
     using server = Bun.serve({
       port: 0,
+      hostname: "127.0.0.1",
       tls: { key: tlsCerts.key, cert: tlsCerts.cert },
       fetch(req, server) {
         if (server.upgrade(req)) return;
@@ -637,7 +640,7 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
   // read. The tunnel's TLS engine used to answer the close_notify with its own
   // before it handed over the bytes decrypted ahead of it. The echo of the
   // Close frame then had no TLS session left to go out on, and the client
-  // reported 1006 "Failed to write" instead of the server's close code.
+  // reported 1006 instead of the server's close code.
   describe("server close with the TLS close_notify behind the Close frame", () => {
     const serverClose: ClientEvent[] = ["m1", "m2", { code: 4001, reason: "bye", wasClean: true }];
 
@@ -645,6 +648,7 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
     test.each(["direct", "http", "https"])("Bun.serve origin that calls ws.close() (%s)", async route => {
       using origin = Bun.serve({
         port: 0,
+        hostname: "127.0.0.1",
         tls: { key: tlsCerts.key, cert: tlsCerts.cert },
         fetch(req, server) {
           if (server.upgrade(req)) return;
@@ -768,58 +772,75 @@ describe("WebSocket wss:// through HTTP proxy (TLS tunnel)", () => {
 // After the upgrade the proxy connection still belongs to the upgrade client, and only the tunnel reaches it.
 describe.concurrent("wss:// through a proxy: the end of the proxy connection", () => {
   describe.each(["http", "https"] as const)("%s proxy", scheme => {
-    test.each([
-      ["terminate()", 1006, (ws: WebSocket) => ws.terminate()],
-      ["an invalid frame from the server", 1002, (ws: WebSocket) => ws.send("go")],
-    ] as const)("%s closes it", async (_label, code, act) => {
-      using origin = await startRawWssServer(socket => socket.write(Buffer.from([0x83, 0x00])));
-      using recorded = await startRecordingProxy({ tls: scheme === "https" });
-      const codes = await Promise.all(
-        Array.from({ length: 4 }, async () => {
-          const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, {
-            proxy: `${scheme}://127.0.0.1:${recorded.port}`,
-            tls: { rejectUnauthorized: false },
-          });
-          // Not inside the open event: there the tunnel still has the upgrade client to close through.
-          ws.addEventListener("open", () => setImmediate(act, ws));
-          return closeCodeOf(await clientEvents(ws));
-        }),
-      );
-      expect(codes).toEqual([code, code, code, code]);
-      expect(await Promise.all(recorded.departures)).toHaveLength(4);
+    describe.each(["inside the open event", "after the open event"] as const)("%s", when => {
+      test.each([
+        ["terminate()", [], (ws: WebSocket) => ws.terminate()],
+        // The client says why (a Text frame, then Close 1002) and does not wait for an answer.
+        ["an invalid frame from the server", [0x1, 0x8], (ws: WebSocket) => ws.send("go")],
+      ] as const)("%s closes it", async (_label, opcodes, act) => {
+        const fromClients: number[] = [];
+        using origin = await startRawWssServer((socket, chunk) => {
+          fromClients.push(chunk[0] & 0x0f);
+          if (socket.writable) socket.write(Buffer.from([0x83, 0x00]));
+        });
+        using recorded = await startRecordingProxy({ tls: scheme === "https" });
+        const codes = await Promise.all(
+          Array.from({ length: 4 }, async () => {
+            const ws = new WebSocket(`wss://127.0.0.1:${origin.port}`, {
+              proxy: `${scheme}://127.0.0.1:${recorded.port}`,
+              tls: { rejectUnauthorized: false },
+            });
+            ws.addEventListener("open", () => (when === "inside the open event" ? act(ws) : setImmediate(act, ws)));
+            return closeCodeOf(await clientEvents(ws));
+          }),
+        );
+        expect(codes).toEqual([1006, 1006, 1006, 1006]);
+        expect(await Promise.all(recorded.departures)).toHaveLength(4);
+        await Promise.all(origin.departures);
+        expect(fromClients.sort()).toEqual([...opcodes, ...opcodes, ...opcodes, ...opcodes].sort());
+      });
     });
   });
 
+  const CLOSE_1000 = Buffer.from([0x88, 0x02, 0x03, 0xe8]);
   test.each([
-    ["terminate()", "terminate", "1006 false\n"],
-    ["close(), with a server that never closes the connection", "close", "1000 true\n"],
-  ] as const)("the process exits after %s", async (_label, method, output) => {
-    using origin = await startRawWssServer();
-    using recorded = await startRecordingProxy();
-    await using client = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+    ["terminate()", "terminate", undefined, "30", "1006 false\n"],
+    // Both Close frames are exchanged: what is left of the connection does not hold the process.
+    ["close(), with a server that answers and never closes the connection", "close", CLOSE_1000, "30", "1000 true\n"],
+    // uSockets sweeps its timeouts every 4 s, so a timeout of 1 s takes 4 to 8 s.
+    ["close(), with a server that never answers, at the close timeout", "close", undefined, "1", "1006 false\n"],
+  ] as const)(
+    "the process exits after %s",
+    async (_label, method, answer, closeTimeout, output) => {
+      using origin = await startRawWssServer(socket => void (answer && socket.write(answer)));
+      using recorded = await startRecordingProxy();
+      await using client = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
           const ws = new WebSocket(process.env.WS_URL, { proxy: process.env.WS_PROXY, tls: { rejectUnauthorized: false } });
           ws.onopen = () => setImmediate(() => ws.${method}());
           ws.onclose = event => console.log(event.code, event.wasClean);
         `,
-      ],
-      env: {
-        ...bunEnv,
-        NO_PROXY: "",
-        no_proxy: "",
-        WS_URL: `wss://127.0.0.1:${origin.port}`,
-        WS_PROXY: `http://127.0.0.1:${recorded.port}`,
-      },
-      stdout: "pipe",
-      stderr: "inherit",
-    });
-    const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
-    expect(stdout).toBe(output);
-    expect(exitCode).toBe(0);
-  });
+        ],
+        env: {
+          ...bunEnv,
+          NO_PROXY: "",
+          no_proxy: "",
+          BUN_CONFIG_WS_CLOSE_TIMEOUT: closeTimeout,
+          WS_URL: `wss://127.0.0.1:${origin.port}`,
+          WS_PROXY: `http://127.0.0.1:${recorded.port}`,
+        },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([client.stdout.text(), client.exited]);
+      expect(stdout).toBe(output);
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
 });
 
 // Whoever owns the connection when the origin renegotiates, the verdict of the first handshake stands:
@@ -894,7 +915,7 @@ describe("WebSocket through HTTPS proxy (TLS proxy)", () => {
       connections: recorded.connections,
       requests: recorded.requests,
     }).toEqual({
-      events: failed(url, "TLS handshake failed", 1015),
+      events: failed(url, "TLS handshake failed"),
       connections: 1,
       requests: [],
     });
@@ -1079,8 +1100,9 @@ describe.concurrent("WebSocket NO_PROXY bypass", () => {
         ? { stdout: `message: connected\nclose: 1000 ""\n`, stderr: "", exitCode: 0, proxyConnections: 0 }
         : {
             stdout:
-              `error: WebSocket connection to 'ws://127.0.0.1:${wsPort}/' failed: Proxy connection failed\n` +
-              `close: 1006 "Proxy connection failed"\n`,
+              `error: WebSocket connection to 'ws://127.0.0.1:${wsPort}/' failed: ` +
+              `Proxy authentication required: 407 Proxy Authentication Required\n` +
+              `close: 1006 ""\n`,
             stderr: "",
             exitCode: 0,
             proxyConnections: 1,

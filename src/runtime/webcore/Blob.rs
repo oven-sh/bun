@@ -5654,26 +5654,23 @@ pub(crate) extern "C" fn Bun__Blob__getSizeForBindings(this: &mut Blob) -> u64 {
     this.get_size_for_bindings()
 }
 
+/// The bytes of an in-memory Blob, borrowed from `value`. `false` for a file- or S3-backed one, whose bytes need a read.
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__getDataPtr(value: JSValue) -> *mut c_void {
-    let Some(blob) = Blob::from_js(value) else {
-        return core::ptr::null_mut();
+pub(crate) extern "C" fn Blob__sharedView(
+    value: JSValue,
+    ptr: &mut *const u8,
+    len: &mut usize,
+) -> bool {
+    let Some(blob) = value.as_class_ref::<Blob>() else {
+        return false;
     };
-    // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
-    let data = unsafe { (*blob).shared_view() };
-    if data.is_empty() {
-        return core::ptr::null_mut();
+    if blob.needs_to_read_file() || blob.is_s3() {
+        return false;
     }
-    data.as_ptr().cast_mut().cast::<c_void>()
-}
-
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Blob__getSize(value: JSValue) -> usize {
-    let Some(blob) = Blob::from_js(value) else {
-        return 0;
-    };
-    // SAFETY: `from_js` returns a non-null pointer to a live JSC-owned Blob.
-    unsafe { (*blob).shared_view().len() }
+    let view = blob.shared_view();
+    *ptr = view.as_ptr();
+    *len = view.len();
+    true
 }
 
 /// # Safety

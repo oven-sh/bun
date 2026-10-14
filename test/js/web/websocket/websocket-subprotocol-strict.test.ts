@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import crypto from "node:crypto";
 import net from "node:net";
 
@@ -64,21 +64,28 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     };
   }
 
-  async function expectConnectionFailure(port: number, protocols: string[], expectedCode = 1002) {
-    const { promise: closePromise, resolve: resolveClose } = Promise.withResolvers();
+  /** The connection fails: an 'error' event that says why, then 'close' with 1006. */
+  async function expectConnectionFailure(port: number, protocols: string[], why = "Mismatch client protocol") {
+    const { promise: closePromise, resolve: resolveClose, reject } = Promise.withResolvers<void>();
 
     const ws = new WebSocket(`ws://localhost:${port}`, protocols);
-    const onopenMock = mock(() => {});
-    ws.onopen = onopenMock;
+    ws.onopen = () => {
+      reject(new Error(`the connection opened with the protocol "${ws.protocol}"`));
+      ws.terminate();
+    };
 
+    const events: string[] = [];
+    ws.onerror = error => events.push(`error: ${(error as ErrorEvent).message}`);
     ws.onclose = close => {
-      expect(close.code).toBe(expectedCode);
-      expect(close.reason).toBe("Mismatch client protocol");
+      events.push(`close: ${close.code} "${close.reason}", wasClean ${close.wasClean}`);
       resolveClose();
     };
 
     await closePromise;
-    expect(onopenMock).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      `error: WebSocket connection to 'ws://localhost:${port}/' failed: ${why}`,
+      `close: 1006 "", wasClean false`,
+    ]);
   }
 
   async function expectConnectionSuccess(port: number, protocols: string[], expectedProtocol: string) {
@@ -195,17 +202,7 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
 
   it("should fail the connection when subprotocols were requested but the server omits the Sec-WebSocket-Protocol header, and should connect without a subprotocol when none were requested and the server sends none", async () => {
     await using server = await createTestServer([]);
-    const { promise: closePromise, resolve: resolveClose } = Promise.withResolvers<CloseEvent>();
-
-    const ws = new WebSocket(`ws://localhost:${server.port}`, ["chat", "echo"]);
-    const onopenMock = mock(() => {});
-    ws.onopen = onopenMock;
-    ws.onclose = close => resolveClose(close);
-
-    const close = await closePromise;
-    expect(close.code).toBe(1002);
-    expect(close.reason).toBe("Missing client protocol");
-    expect(onopenMock).not.toHaveBeenCalled();
+    await expectConnectionFailure(server.port, ["chat", "echo"], "Missing client protocol");
 
     const { promise: openPromise, resolve: resolveOpen, reject } = Promise.withResolvers<void>();
     const bare = new WebSocket(`ws://localhost:${server.port}`);
@@ -218,5 +215,46 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     } finally {
       bare.terminate();
     }
+  });
+});
+
+describe("WebSocket constructor: the subprotocol list", () => {
+  function thrown(run: () => void): Error {
+    try {
+      run();
+    } catch (error) {
+      return error as Error;
+    }
+    throw new Error("the call did not throw");
+  }
+
+  it("names a duplicate", () => {
+    expect(() => new WebSocket("ws://127.0.0.1:1/", ["a", "a"])).toThrow(
+      new SyntaxError("WebSocket protocols contain duplicates: 'a'"),
+    );
+  });
+
+  it("compares the names without regard to ASCII case", () => {
+    expect(() => new WebSocket("ws://127.0.0.1:1/", ["chat", "Chat"])).toThrow(
+      new SyntaxError("WebSocket protocols contain duplicates: 'Chat'"),
+    );
+  });
+
+  // One code unit becomes six characters in the message: 358 M of them used to overflow a string and abort.
+  it("quotes at most about 1024 characters of an invalid name", () => {
+    const error = thrown(() => new WebSocket("ws://127.0.0.1:1/", [Buffer.alloc(200_000, 0xff).toString("latin1")]));
+    expect(error.name).toBe("SyntaxError");
+    expect(error.message).toStartWith("Wrong protocol for WebSocket '\\u00FF\\u00FF");
+    expect(error.message).toEndWith("\\u00FF...'");
+    expect(error.message.length).toBeLessThan(1200);
+  });
+
+  it("quotes at most about 1024 characters of a duplicate", () => {
+    const long = Buffer.alloc(200_000, 0x61).toString("latin1");
+    const error = thrown(() => new WebSocket("ws://127.0.0.1:1/", [long, long]));
+    expect(error.name).toBe("SyntaxError");
+    expect(error.message).toStartWith("WebSocket protocols contain duplicates: 'aa");
+    expect(error.message).toEndWith("a...'");
+    expect(error.message.length).toBeLessThan(1200);
   });
 });

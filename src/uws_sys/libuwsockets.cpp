@@ -20,6 +20,59 @@ static inline std::string_view stringViewFromC(const char* message, size_t lengt
 using TLSWebSocket = uWS::WebSocket<true, true, void *>;
 using TCPWebSocket = uWS::WebSocket<false, true, void *>;
 
+typedef struct {
+    /* Bytes. 0 = no limit */
+    unsigned int maxPayloadLength;
+    bool autoPong;
+    bool skipUTF8Validation;
+    /* Whether sockets of this context use permessage-deflate */
+    bool compression;
+
+    uws_websocket_handler open;
+    uws_websocket_message_handler message;
+    uws_websocket_handler drain;
+    uws_websocket_ping_pong_handler ping;
+    uws_websocket_ping_pong_handler pong;
+    uws_websocket_close_handler close;
+} uws_ws_package_behavior_t;
+
+template <bool SSL>
+static uws_socket_context_t *wsPackageContext(uws_app_t *app, const uws_ws_package_behavior_t *behavior)
+{
+  auto generic_handler = typename uWS::TemplatedApp<SSL>::template WebSocketBehavior<void *>{
+      .compression = behavior->compression ? (uWS::CompressOptions)(uWS::SHARED_COMPRESSOR | uWS::SHARED_DECOMPRESSOR) : uWS::DISABLED,
+      /* The frame parser counts in 32 bits */
+      .maxPayloadLength = behavior->maxPayloadLength ? behavior->maxPayloadLength : UINT32_MAX,
+      .autoPong = behavior->autoPong,
+      .skipUTF8Validation = behavior->skipUTF8Validation,
+  };
+  generic_handler.open = [open = behavior->open](auto *ws)
+  {
+    open((uws_websocket_t *)ws);
+  };
+  generic_handler.message = [message = behavior->message](auto *ws, auto data, auto opcode)
+  {
+    message((uws_websocket_t *)ws, data.data(), data.length(), (uws_opcode_t)opcode);
+  };
+  generic_handler.drain = [drain = behavior->drain](auto *ws)
+  {
+    drain((uws_websocket_t *)ws);
+  };
+  generic_handler.ping = [ping = behavior->ping](auto *ws, auto data)
+  {
+    ping((uws_websocket_t *)ws, data.data(), data.length());
+  };
+  generic_handler.pong = [pong = behavior->pong](auto *ws, auto data)
+  {
+    pong((uws_websocket_t *)ws, data.data(), data.length());
+  };
+  generic_handler.close = [close = behavior->close](auto *ws, int code, auto data)
+  {
+    close((uws_websocket_t *)ws, code, data.data(), data.length());
+  };
+  return (uws_socket_context_t *)((uWS::TemplatedApp<SSL> *)app)->template wsPackageContext<void *>(std::move(generic_handler));
+}
+
 extern "C"
 {
 
@@ -33,6 +86,10 @@ extern "C"
   void uws_loop_date_header_timer_update(us_loop_t *loop) {
     uWS::LoopData *loopData = uWS::Loop::data(loop);
     loopData->updateDate();
+  }
+
+  void uws_loop_flush_pending_writes(us_loop_t *loop) {
+    ((uWS::Loop *) loop)->flushPendingWrites();
   }
 
   uws_app_t *uws_create_app(int ssl, struct us_bun_socket_context_options_t options)
@@ -595,7 +652,8 @@ extern "C"
 
   void uws_ws(int ssl, uws_app_t *app, void *upgradeContext, const char *pattern,
               size_t pattern_length, size_t id,
-              const uws_socket_behavior_t *behavior_)
+              const uws_socket_behavior_t *behavior_,
+              const void *context_key)
   {
     uws_socket_behavior_t behavior = *behavior_;
 
@@ -655,7 +713,7 @@ extern "C"
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
 
       uwsApp->ws<void *>(std::string(pattern, pattern_length),
-                         std::move(generic_handler));
+                         std::move(generic_handler), context_key);
     }
     else
     {
@@ -712,8 +770,18 @@ extern "C"
         };
       uWS::App *uwsApp = (uWS::App *)app;
       uwsApp->ws<void *>(std::string(pattern, pattern_length),
-                         std::move(generic_handler));
+                         std::move(generic_handler), context_key);
     }
+  }
+
+  uws_socket_context_t *uws_app_ws_package_context(int ssl, uws_app_t *app,
+                                                   const uws_ws_package_behavior_t *behavior)
+  {
+    if (ssl)
+    {
+      return wsPackageContext<true>(app, behavior);
+    }
+    return wsPackageContext<false>(app, behavior);
   }
 
   void *uws_ws_get_user_data(int ssl, uws_websocket_t *ws)
@@ -743,6 +811,51 @@ extern "C"
           (TCPWebSocket *)ws;
       uws->close();
     }
+  }
+
+  void uws_ws_pause(int ssl, uws_websocket_t *ws)
+  {
+    if (ssl)
+    {
+      TLSWebSocket *uws =
+          (TLSWebSocket *)ws;
+      uws->pause();
+    }
+    else
+    {
+      TCPWebSocket *uws =
+          (TCPWebSocket *)ws;
+      uws->pause();
+    }
+  }
+
+  void uws_ws_resume(int ssl, uws_websocket_t *ws)
+  {
+    if (ssl)
+    {
+      TLSWebSocket *uws =
+          (TLSWebSocket *)ws;
+      uws->resume();
+    }
+    else
+    {
+      TCPWebSocket *uws =
+          (TCPWebSocket *)ws;
+      uws->resume();
+    }
+  }
+
+  bool uws_ws_is_paused(int ssl, uws_websocket_t *ws)
+  {
+    if (ssl)
+    {
+      TLSWebSocket *uws =
+          (TLSWebSocket *)ws;
+      return uws->isPaused();
+    }
+    TCPWebSocket *uws =
+        (TCPWebSocket *)ws;
+    return uws->isPaused();
   }
 
   uws_sendstatus_t uws_ws_send_with_options(int ssl, uws_websocket_t *ws,
@@ -1493,6 +1606,30 @@ size_t uws_req_get_header(uws_req_t *res, const char *lower_case_header,
         stringViewFromC(sec_web_socket_protocol, sec_web_socket_protocol_length),
         stringViewFromC(sec_web_socket_extensions,
                          sec_web_socket_extensions_length),
+        (uWS::WebSocketContext<false, true, void *> *)ws);
+    }
+  }
+
+  us_socket_t *uws_res_upgrade_raw(int ssl, uws_res_r res, void *data,
+                                   const char *handshake, size_t handshake_length,
+                                   uws_compress_options_t compress_options,
+                                   uws_socket_context_t *ws)
+  {
+    if (ssl) {
+    uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+
+    return uwsRes->template upgradeRaw<void *>(
+        data ? std::move(data) : nullptr,
+        stringViewFromC(handshake, handshake_length),
+        (uWS::CompressOptions)(uint64_t)compress_options,
+        (uWS::WebSocketContext<true, true, void *> *)ws);
+    } else {
+    uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+
+    return uwsRes->template upgradeRaw<void *>(
+        data ? std::move(data) : nullptr,
+        stringViewFromC(handshake, handshake_length),
+        (uWS::CompressOptions)(uint64_t)compress_options,
         (uWS::WebSocketContext<false, true, void *> *)ws);
     }
   }

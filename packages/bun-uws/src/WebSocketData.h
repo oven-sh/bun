@@ -32,11 +32,12 @@ struct WebSocketData : AsyncSocketData<false>, WebSocketState<true> {
     template <bool, bool, typename> friend struct WebSocketContext;
     template <bool, typename> friend struct WebSocketContextData;
     template <bool, bool, typename> friend struct WebSocket;
-    template <bool> friend struct HttpContext;
 private:
     std::string fragmentBuffer;
     unsigned int controlTipLength = 0;
     bool isShuttingDown = 0;
+    /* Ahead of isShuttingDown only in a wsPackage context, which waits for the peer's close frame */
+    bool closeFrameSent = false;
     bool hasTimedOut = false;
     
     enum CompressionStatus : char {

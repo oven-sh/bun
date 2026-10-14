@@ -2131,6 +2131,107 @@ test("a tunnel write that waits for a drain settles its callbacks when the clien
   }
 });
 
+describe("bytesWritten and bytesRead of a tunnel socket", () => {
+  describe.each(["http", "https"] as const)("%s", proto => {
+    // Differences, because Node also counts the HTTP bytes that came before the tunnel on this connection.
+    test.each(["connect", "upgrade"] as const)(
+      "'%s': count the raw bytes and keep the count after 'close'",
+      async event => {
+        const server = proto === "https" ? https.createServer(tlsCert) : http.createServer();
+        const reply =
+          event === "connect"
+            ? "HTTP/1.1 200 Connection Established\r\n\r\n"
+            : "HTTP/1.1 101 Switching Protocols\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n";
+        const seen: Record<string, number | number[]> = {};
+        const closed = Promise.withResolvers<void>();
+        server.on(event, (req, duplex, head) => {
+          const socket = duplex as net.Socket;
+          const written = socket.bytesWritten;
+          const read = socket.bytesRead - head.length;
+          let received = head.length;
+          socket.cork();
+          socket.write(reply);
+          socket.write("héllo");
+          seen.corked = socket.bytesWritten - written;
+          socket.uncork();
+          seen.uncorked = socket.bytesWritten - written;
+          socket.on("data", chunk => {
+            received += chunk.length;
+            if (received < 8) return;
+            seen.read = socket.bytesRead - read;
+            socket.end("bye");
+            seen.ended = socket.bytesWritten - written;
+          });
+          socket.on("close", () => {
+            seen.closed = [socket.bytesWritten - written, socket.bytesRead - read];
+            closed.resolve();
+          });
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const port = (server.address() as AddressInfo).port;
+        const client =
+          proto === "https"
+            ? tls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false })
+            : net.connect(port, "127.0.0.1");
+        try {
+          const replyLength = reply.length + Buffer.byteLength("héllo");
+          let got = 0;
+          client.on("data", chunk => {
+            const before = got;
+            got += chunk.length;
+            if (before < replyLength && got >= replyLength) client.write("12345");
+          });
+          client.on("end", () => client.end());
+          client.write(
+            (event === "connect"
+              ? "CONNECT a.test:443 HTTP/1.1\r\nHost: a.test:443\r\n\r\n"
+              : "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n") + "abc",
+          );
+          await closed.promise;
+          expect(seen).toEqual({
+            corked: replyLength,
+            uncorked: replyLength,
+            read: 8,
+            ended: replyLength + 3,
+            closed: [replyLength + 3, 8],
+          });
+        } finally {
+          client.destroy();
+          server.closeAllConnections();
+          server.close();
+        }
+      },
+    );
+  });
+
+  test("bytesWritten counts a write that waits for a drain, and the one queued behind it", async () => {
+    const server = http.createServer();
+    // Two of them are more than a loopback socket takes while nobody reads.
+    const chunk = Buffer.alloc(16 * 1024 * 1024, "a");
+    const seen = Promise.withResolvers<{ waiting: boolean; written: number }>();
+    server.on("upgrade", (req, duplex) => {
+      const socket = duplex as net.Socket;
+      socket.on("error", () => {});
+      const before = socket.bytesWritten;
+      socket.write(chunk);
+      socket.write(chunk);
+      seen.resolve({ waiting: socket.writableLength > 0, written: socket.bytesWritten - before });
+      socket.destroy();
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const client = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.write("GET / HTTP/1.1\r\nHost: x\r\nUpgrade: x\r\nConnection: Upgrade\r\n\r\n");
+      expect(await seen.promise).toEqual({ waiting: true, written: 2 * chunk.length });
+    } finally {
+      client.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+});
+
 // The handed-off socket writes straight to the kernel. While uWS still holds
 // bytes of the response before the CONNECT, such a write must go out behind them.
 describe("a CONNECT tunnel pipelined behind a response that still drains", () => {

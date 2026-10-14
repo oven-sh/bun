@@ -3,6 +3,7 @@
  * ws-proxy.test.ts and websocket-syscall-fault.test.ts.
  */
 
+import { expect } from "bun:test";
 import { bunEnv, nodeExe, tls as tlsCerts } from "harness";
 import { createHash } from "crypto";
 import net from "net";
@@ -266,7 +267,8 @@ export async function startRawWssServer(
  * A TLS 1.2 wss:// server that renegotiates once: before it answers the upgrade,
  * when the upgrade client owns the connection, or on the client's first frame,
  * when the connected client does. After the client's first frame (and that
- * renegotiation) it sends "after renegotiation". It runs in real node because a
+ * renegotiation) it sends "after renegotiation", and it answers what comes next,
+ * the client's Close frame, with Close 1000. It runs in real node because a
  * BoringSSL server cannot renegotiate, so skip the test when `nodeExe()` is null.
  */
 export async function startRenegotiatingWssServer(when: "before the 101" | "after the 101") {
@@ -286,6 +288,7 @@ export async function startRenegotiatingWssServer(when: "before the 101" | "afte
             const greet = () => {
               const payload = Buffer.from("after renegotiation");
               socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
+              socket.once("data", () => socket.end(Buffer.from([0x88, 0x02, 0x03, 0xe8])));
             };
             let head = "";
             const onHead = chunk => {
@@ -393,10 +396,13 @@ export function echoed(message: string): ClientEvent[] {
   return ["connected", message, { code: 1000, reason: "", wasClean: true }];
 }
 
-/** A connection the proxy refused, or whose TLS handshake with the proxy failed. */
-export function failed(url: string, reason: string, code: number): ClientEvent[] {
+/**
+ * A connection the client failed: the proxy refused it, a TLS handshake failed. The error's
+ * message starts with `reason`; what a TLS library has to add behind it is not pinned.
+ */
+export function failed(url: string, reason: string): ClientEvent[] {
   return [
-    { error: `WebSocket connection to '${new URL(url).href}' failed: ${reason}` },
-    { code, reason, wasClean: false },
+    { error: expect.stringContaining(`WebSocket connection to '${new URL(url).href}' failed: ${reason}`) },
+    { code: 1006, reason: "", wasClean: false },
   ];
 }

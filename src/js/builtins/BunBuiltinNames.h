@@ -69,6 +69,7 @@ using namespace JSC;
     macro(data) \
     macro(decode) \
     macro(dest) \
+    macro(detail) \
     macro(dirname) \
     macro(domain) \
     macro(drain) \

@@ -6,6 +6,8 @@ declare module "bun" {
    * - if **-1**, there is **backpressure** of messages.
    * - if **>0**, it represents the **number of bytes sent**.
    *
+   * An empty payload (`ws.send("")`, `ws.ping()`, `ws.pong()`) is sent and also returns **0**.
+   *
    * @example
    * ```js
    * const status = ws.send("Hello!");
@@ -68,7 +70,7 @@ declare module "bun" {
      * Sends a message to the client.
      *
      * @param data The data to send.
-     * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @param compress Whether to compress the data. Defaults to `false`. Ignored if the client does not support compression
      * @example
      * ```ts
      * ws.send("Hello!");
@@ -82,11 +84,11 @@ declare module "bun" {
      * Sends a text message to the client.
      *
      * @param data The data to send.
-     * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @param compress Whether to compress the data. Defaults to `false`. Ignored if the client does not support compression
      * @example
      * ```ts
-     * ws.send("Hello!");
-     * ws.send("Compress this.", true);
+     * ws.sendText("Hello!");
+     * ws.sendText("Compress this.", true);
      * ```
      */
     sendText(data: string, compress?: boolean): ServerWebSocketSendStatus;
@@ -95,11 +97,11 @@ declare module "bun" {
      * Sends a binary message to the client.
      *
      * @param data The data to send.
-     * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @param compress Whether to compress the data. Defaults to `false`. Ignored if the client does not support compression
      * @example
      * ```ts
-     * ws.send(new TextEncoder().encode("Hello!"));
-     * ws.send(new Uint8Array([1, 2, 3, 4]), true);
+     * ws.sendBinary(new TextEncoder().encode("Hello!"));
+     * ws.sendBinary(new Uint8Array([1, 2, 3, 4]), true);
      * ```
      */
     sendBinary(data: BufferSource | Blob, compress?: boolean): ServerWebSocketSendStatus;
@@ -113,17 +115,23 @@ declare module "bun" {
      * - `1011` means the server encountered an error
      * - `1012` means the server is restarting
      * - `1013` means the server is too busy or the client is rate-limited
+     * - `3000` through `3999` are reserved for libraries and frameworks
      * - `4000` through `4999` are reserved for applications
+     *
+     * Valid codes are `1000`-`1003`, `1007`-`1014` and `3000`-`4999`. `0`, `1005`, `1006` and `1015`
+     * never go on the wire: they send a Close frame without a code, so a code received in a `close`
+     * handler can be passed on as it is. Any other code throws a `RangeError`.
      *
      * To close the connection abruptly, use `terminate()`.
      *
      * @param code The close code to send
-     * @param reason The close reason to send
+     * @param reason The close reason to send. Cut to 123 bytes of UTF-8, at a character boundary.
      */
     close(code?: number, reason?: string): void;
 
     /**
-     * Closes the connection abruptly.
+     * Closes the connection abruptly, without a Close frame. Messages that
+     * `send()` and `publish()` already accepted are written first.
      *
      * To close the connection gracefully, use `close()`.
      */
@@ -148,7 +156,7 @@ declare module "bun" {
      *
      * @param topic The topic name.
      * @param data The data to send.
-     * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @param compress Whether to compress the data. Defaults to `false`. Ignored if the client does not support compression
      * @example
      * ```ts
      * ws.publish("chat", "Hello!");
@@ -163,11 +171,11 @@ declare module "bun" {
      *
      * @param topic The topic name.
      * @param data The data to send.
-     * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @param compress Whether to compress the data. Defaults to `false`. Ignored if the client does not support compression
      * @example
      * ```ts
-     * ws.publish("chat", "Hello!");
-     * ws.publish("chat", "Compress this.", true);
+     * ws.publishText("chat", "Hello!");
+     * ws.publishText("chat", "Compress this.", true);
      * ```
      */
     publishText(topic: string, data: string, compress?: boolean): ServerWebSocketSendStatus;
@@ -177,11 +185,11 @@ declare module "bun" {
      *
      * @param topic The topic name.
      * @param data The data to send.
-     * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @param compress Whether to compress the data. Defaults to `false`. Ignored if the client does not support compression
      * @example
      * ```ts
-     * ws.publish("chat", new TextEncoder().encode("Hello!"));
-     * ws.publish("chat", new Uint8Array([1, 2, 3, 4]), true);
+     * ws.publishBinary("chat", new TextEncoder().encode("Hello!"));
+     * ws.publishBinary("chat", new Uint8Array([1, 2, 3, 4]), true);
      * ```
      */
     publishBinary(topic: string, data: BufferSource | Blob, compress?: boolean): ServerWebSocketSendStatus;
@@ -242,7 +250,8 @@ declare module "bun" {
      * you only need to call this if you are sending messages outside of those
      * callbacks or in async functions.
      *
-     * @param callback The callback to run.
+     * @param callback The callback to run. It also runs when the socket is closed.
+     * @returns What `callback` returns.
      * @example
      * ```ts
      * ws.cork((ctx) => {
@@ -252,7 +261,7 @@ declare module "bun" {
      * });
      * ```
      */
-    cork<T = unknown>(callback: (ws: ServerWebSocket<T>) => T): T;
+    cork<R = unknown>(callback: (ws: ServerWebSocket<T>) => R): R;
 
     /**
      * The IP address of the client.
@@ -267,10 +276,10 @@ declare module "bun" {
     /**
      * The ready state of the client.
      *
-     * - if `0`, the client is connecting.
      * - if `1`, the client is connected.
-     * - if `2`, the client is closing.
-     * - if `3`, the client is closed.
+     * - if `3`, the client is closed, or `close()` or `terminate()` was called.
+     *
+     * A `ServerWebSocket` is never `0` (connecting) or `2` (closing).
      *
      * @example
      * ```ts
@@ -291,10 +300,16 @@ declare module "bun" {
      *
      * @example
      * ```ts
-     * let ws: WebSocket;
-     * ws.binaryType = "uint8array";
-     * ws.addEventListener("message", ({ data }) => {
-     *   console.log(data instanceof Uint8Array); // true
+     * Bun.serve({
+     *   websocket: {
+     *     open(ws) {
+     *       ws.binaryType = "uint8array";
+     *     },
+     *     message(ws, message) {
+     *       console.log(message instanceof Uint8Array); // true, for a binary message
+     *     },
+     *   },
+     *   // ...
      * });
      * ```
      */
@@ -328,7 +343,39 @@ declare module "bun" {
      */
     data: T;
 
+    /**
+     * The number of bytes that were accepted by `send()` or `publish()` and
+     * are not yet written to the socket.
+     */
     getBufferedAmount(): number;
+
+    /**
+     * Stops reading from the socket, so the client sees TCP backpressure. The
+     * idle timeout is suspended until `resume()`. Sending still works.
+     *
+     * Messages that were already read from the socket are still delivered.
+     *
+     * @example
+     * ```ts
+     * message(ws, message) {
+     *   if (!file.write(message)) {
+     *     ws.pause();
+     *     file.once("drain", () => ws.resume());
+     *   }
+     * }
+     * ```
+     */
+    pause(): void;
+
+    /**
+     * Starts reading from the socket again after `pause()`.
+     */
+    resume(): void;
+
+    /**
+     * Whether `pause()` was called without a `resume()` since. `false` on a closed socket.
+     */
+    readonly isPaused: boolean;
   }
 
   /**
@@ -344,9 +391,10 @@ declare module "bun" {
    * ```ts
    * import { serve } from "bun";
    *
-   * serve<{name: string}>({
+   * serve({
    *   port: 3000,
    *   websocket: {
+   *     data: {} as { name: string | null },
    *     open: (ws) => {
    *       console.log("Client connected");
    *    },
@@ -411,7 +459,7 @@ declare module "bun" {
      * @param ws The websocket that sent the message
      * @param message The message received
      */
-    message(ws: ServerWebSocket<T>, message: string | Buffer<ArrayBuffer>): void | Promise<void>;
+    message?(ws: ServerWebSocket<T>, message: string | Buffer<ArrayBuffer>): void | Promise<void>;
 
     /**
      * Called when a connection is opened.
@@ -460,14 +508,34 @@ declare module "bun" {
     pong?(ws: ServerWebSocket<T>, data: Buffer): void | Promise<void>;
 
     /**
-     * Sets the maximum size of a message, in bytes.
+     * Called when one of the other handlers throws. Without it, the error is an
+     * uncaught exception.
+     *
+     * A rejected promise from an `async` handler does not come here: it is an
+     * unhandled rejection.
+     *
+     * @param ws The websocket whose handler threw
+     * @param error The value that was thrown
+     */
+    error?(ws: ServerWebSocket<T>, error: Error): void | Promise<void>;
+
+    /**
+     * Sets the maximum size of a received message, in bytes, after
+     * decompression. A client that sends a larger one is closed with code `1009`.
+     *
+     * An integer from `0` to `4294967295`; larger values are clamped. With `0`
+     * only empty messages are accepted.
      *
      * @default 1024 * 1024 * 16 // 16 MB
      */
     maxPayloadLength?: number;
 
     /**
-     * Sets the maximum number of bytes that can be buffered on a single connection.
+     * Sets the maximum number of bytes that can be buffered on a single
+     * connection. Above it, `send()` drops the message and returns `0`.
+     *
+     * An integer from `0` to `4294967295`; larger values are clamped. `0` means
+     * no limit.
      *
      * @default 1024 * 1024 * 16 // 16 MB
      */
@@ -484,6 +552,9 @@ declare module "bun" {
      * Sets the number of seconds to wait before timing out a connection
      * due to no messages or pings.
      *
+     * An integer from `0` to `960`. `0` disables the timeout, and with it the
+     * automatic pings of `sendPings`. `1` to `7` are rounded up to `8`.
+     *
      * @default 120
      */
     idleTimeout?: number;
@@ -496,14 +567,19 @@ declare module "bun" {
     publishToSelf?: boolean;
 
     /**
-     * Whether the server automatically sends pings to clients and responds to pings.
+     * Whether the server pings a client shortly before its `idleTimeout` runs
+     * out, so that a live but quiet connection stays open.
+     *
+     * Pings from clients are always answered with a pong.
      *
      * @default true
      */
     sendPings?: boolean;
 
     /**
-     * Sets the compression level for messages, for clients that support it.
+     * Enables the permessage-deflate extension, for clients that support it.
+     *
+     * `true` is `{ compress: "shared", decompress: "shared" }`.
      *
      * @default false
      */
@@ -511,11 +587,28 @@ declare module "bun" {
       | boolean
       | {
           /**
-           * Sets the compression level.
+           * The compressor for messages the server sends.
+           *
+           * - `"shared"` or `true`: one compressor for all sockets, reset after each message.
+           * - `"dedicated"` or a size: one compressor per socket, which remembers earlier
+           *   messages. Better compression, and that much memory for every socket.
+           *   `"dedicated"` is `"256KB"`.
+           * - `"disable"` or `false`: the server never compresses, even when `send()` asks for it.
+           *
+           * @default "shared" when `decompress` is on
            */
           compress?: WebSocketCompressor | boolean;
           /**
-           * Sets the decompression level.
+           * The decompressor for messages the server receives.
+           *
+           * - `"shared"` or `true`: one decompressor for all sockets. Clients are told to
+           *   reset their compressor after each message.
+           * - `"dedicated"` or a size: one decompressor per socket. The size is its window,
+           *   at most 32 KB: `"dedicated"` and `"64KB"` and above are `"32KB"`, `"3KB"` is 2 KB.
+           * - `"disable"` or `false`: no decompressor per socket. permessage-deflate cannot stop
+           *   a client from compressing, so with `compress` on this is `"shared"`.
+           *
+           * @default "shared" when `compress` is on
            */
           decompress?: WebSocketCompressor | boolean;
         };
@@ -929,7 +1022,7 @@ declare module "bun" {
      *
      * The returned promise resolves once every connection is closed.
      *
-     * @param closeActiveConnections Immediately terminate in-flight requests, websockets, and stop accepting new connections.
+     * @param closeActiveConnections Immediately terminate in-flight requests, close websockets with code `1001`, and stop accepting new connections.
      * @default false
      */
     stop(closeActiveConnections?: boolean): Promise<void>;
@@ -1071,7 +1164,8 @@ declare module "bun" {
      *
      * @param topic The topic to publish to
      * @param data The data to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
+     * @param compress Whether to compress the data. Defaults to `true`, unlike {@link ServerWebSocket.send} and
+     * {@link ServerWebSocket.publish}, which default to `false`. Ignored for subscribers that do not support compression.
      *
      * @returns 0 if the message was dropped for any subscriber (or there were no subscribers), -1 if backpressure was applied for any subscriber, or the number of bytes sent.
      *
@@ -1088,7 +1182,8 @@ declare module "bun" {
      *
      * @example
      * ```js
-     * server.publish("chat", new ArrayBuffer(4), true);
+     * // uncompressed for every subscriber
+     * server.publish("chat", new ArrayBuffer(4), false);
      * ```
      *
      * @example

@@ -208,6 +208,22 @@ impl AnyWebSocket {
         c::uws_ws_get_buffered_amount(ssl, ws)
     }
 
+    /// Stops reading from the socket and suspends its idle timeout.
+    pub fn pause(self) {
+        let (ssl, ws) = self.split();
+        c::uws_ws_pause(ssl, ws)
+    }
+
+    pub fn resume(self) {
+        let (ssl, ws) = self.split();
+        c::uws_ws_resume(ssl, ws)
+    }
+
+    pub fn is_paused(self) -> bool {
+        let (ssl, ws) = self.split();
+        c::uws_ws_is_paused(ssl, ws)
+    }
+
     pub fn get_remote_address<'a>(self, buf: &'a mut [u8]) -> &'a mut [u8] {
         let (ssl_flag, ws) = self.split();
         let mut ptr: *mut u8 = core::ptr::null_mut();
@@ -281,6 +297,23 @@ impl Default for WebSocketBehavior {
     }
 }
 
+/// `uws_ws_package_behavior_t`: a context for sockets of the `ws` package. It has no route.
+#[repr(C)]
+pub struct WsPackageBehavior {
+    /// Bytes. 0 = no limit.
+    pub max_payload_length: c_uint,
+    pub auto_pong: bool,
+    pub skip_utf8_validation: bool,
+    /// Whether sockets of this context use permessage-deflate.
+    pub compression: bool,
+    pub open: uws_websocket_handler,
+    pub message: uws_websocket_message_handler,
+    pub drain: uws_websocket_handler,
+    pub ping: uws_websocket_ping_pong_handler,
+    pub pong: uws_websocket_ping_pong_handler,
+    pub close: uws_websocket_close_handler,
+}
+
 /// User-data type stored on a uWS WebSocket.
 ///
 /// `HAS_ON_*` consts replace `@hasDecl(Type, "...")` — set to `false` to leave
@@ -347,7 +380,6 @@ pub struct Wrap<Server, T, const SSL: bool>(PhantomData<(Server, T)>);
 
 impl<Server, T, const SSL: bool> Wrap<Server, T, SSL>
 where
-    Server: WebSocketUpgradeServer<SSL>,
     T: WebSocketHandler,
 {
     #[inline(always)]
@@ -435,6 +467,33 @@ where
         unsafe { T::on_close(this, ws, code, thunk::c_slice(message, length)) };
     }
 
+    /// No route and so no `Server`: use `Wrap::<(), T, SSL>`.
+    pub fn ws_package(
+        max_payload_length: c_uint,
+        auto_pong: bool,
+        skip_utf8_validation: bool,
+        compression: bool,
+    ) -> WsPackageBehavior {
+        WsPackageBehavior {
+            max_payload_length,
+            auto_pong,
+            skip_utf8_validation,
+            compression,
+            open: Some(Self::on_open),
+            message: Some(Self::on_message),
+            drain: Some(Self::on_drain),
+            ping: Some(Self::on_ping),
+            pong: Some(Self::on_pong),
+            close: Some(Self::on_close),
+        }
+    }
+}
+
+impl<Server, T, const SSL: bool> Wrap<Server, T, SSL>
+where
+    Server: WebSocketUpgradeServer<SSL>,
+    T: WebSocketHandler,
+{
     extern "C" fn on_upgrade(
         ptr: *mut c_void,
         res: *mut uws_res,
@@ -523,7 +582,13 @@ pub mod c {
             pattern_len: usize,
             id: usize,
             behavior: *const WebSocketBehavior,
+            context_key: *const c_void,
         );
+        pub(crate) fn uws_app_ws_package_context(
+            ssl: i32,
+            app: *mut uws_app_t,
+            behavior: *const WsPackageBehavior,
+        ) -> *mut WebSocketUpgradeContext;
         pub(crate) safe fn uws_ws_get_user_data(ssl: i32, ws: &mut RawWebSocket) -> *mut c_void;
         pub(crate) safe fn uws_ws_close(ssl: i32, ws: &mut RawWebSocket);
         pub(crate) fn uws_ws_send_with_options(
@@ -582,6 +647,9 @@ pub mod c {
             compress: bool,
         ) -> SendStatus;
         pub(crate) safe fn uws_ws_get_buffered_amount(ssl: i32, ws: &mut RawWebSocket) -> usize;
+        pub(crate) safe fn uws_ws_pause(ssl: i32, ws: &mut RawWebSocket);
+        pub(crate) safe fn uws_ws_resume(ssl: i32, ws: &mut RawWebSocket);
+        pub(crate) safe fn uws_ws_is_paused(ssl: i32, ws: &mut RawWebSocket) -> bool;
         // Out-param `dest` is `&mut *mut u8` (non-null, valid for write); the C
         // shim only stores a pointer into socket-owned storage and returns its
         // length — no read-through precondition, so `safe fn`.

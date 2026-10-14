@@ -2263,6 +2263,10 @@ impl VirtualMachine {
             self.is_inside_deferred_task_queue.set(false);
         }
 
+        // No tick follows. Not `uws_loop()`: inside spawnSync that loop has no uWS LoopData.
+        // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
+        unsafe { (*uws::Loop::get()).flush_pending_writes() };
+
         self.is_shutting_down = true;
 
         // Node's FreeEnvironment sets `is_stopping` before `RunCleanup`: the

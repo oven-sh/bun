@@ -40,26 +40,17 @@
 #include "FetchHeaders.h"
 #include "WebSocketErrorCode.h"
 #include "JSValueInWrappedObject.h"
-
-namespace WebCore {
-class JSBlob;
-}
-
-namespace uWS {
-template<bool, bool, typename>
-struct WebSocket;
-}
+#include <span>
+#include <variant>
 
 namespace JSC {
-class ArrayBuffer;
-class ArrayBufferView;
+class ArgList;
+class Identifier;
 }
 
 extern "C" void Bun__WebSocket__freeSSLConfig(void* sslConfig);
 
 namespace WebCore {
-
-class Blob;
 
 // Move-only owning handle for the natively heap-allocated SSLConfig returned by
 // Bun__WebSocket__parseSSLConfig. The SSLConfig holds duped cert/key/CA
@@ -108,6 +99,30 @@ private:
     void* m_ptr { nullptr };
 };
 
+// The second argument of `new WebSocket(url, options)`, converted. JSWebSocket.cpp fills it.
+struct WebSocketOptions {
+    Vector<String> protocols;
+    std::optional<FetchHeaders::Init> headers;
+    String proxyURL;
+    std::optional<FetchHeaders::Init> proxyHeaders;
+    WebSocketSSLConfigPtr sslConfig;
+    std::optional<bool> rejectUnauthorized;
+    // The caller of create() sets it on the wrapper; the options argument keeps it alive until then.
+    JSC::JSValue checkServerIdentity;
+    // The Sec-WebSocket-Extensions request header: a permessage-deflate offer. Null: no header.
+    String extensions { "permessage-deflate; client_max_window_bits"_s };
+    WebSocketConnectedOptions connected { 128 * 1024 * 1024, true, false, false, false, false };
+};
+
+// A connection whose handshake is done and whose bytes travel over a stream that lives in JS. For the `ws` module.
+struct WebSocketStreamOptions {
+    String url;
+    String protocol;
+    String extensions;
+    WebSocketConnectedOptions connected { 128 * 1024 * 1024, true, true, false, false, false };
+    std::optional<PerMessageDeflateParams> deflate;
+};
+
 class WebSocket final : public RefCounted<WebSocket>, public EventTargetWithInlineData, public ActiveDOMObject {
     WTF_MAKE_TZONE_ALLOCATED(WebSocket);
 
@@ -119,13 +134,9 @@ public:
 
     static ASCIILiteral subprotocolSeparator();
 
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url);
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const String& protocol);
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
-    // With proxy support
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
-    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized, const String& proxyUrl, std::optional<FetchHeaders::Init>&& proxyHeaders, WebSocketSSLConfigPtr&& sslConfig, bool offerPerMessageDeflate);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, WebSocketOptions&& = {});
+    // OPEN from the start.
+    static Ref<WebSocket> createOverStream(ScriptExecutionContext&, WebSocketStreamOptions&&);
     ~WebSocket();
 
     enum State {
@@ -149,49 +160,51 @@ public:
         Pong = 0xA,
     };
 
-    enum CleanStatus {
-        NotClean = 0,
-        Clean = 1,
-    };
-
     // Tracks the connection type for both the upgrade client and the connected websocket.
     // This replaces separate m_isSecure and m_proxyIsHTTPS bools.
     enum class ConnectionType : uint8_t {
         Plain, // ws:// direct connection
         TLS, // wss:// direct connection
         ProxyPlain, // ws:// or wss:// through HTTP proxy (plain socket to proxy)
-        ProxyTLS // ws:// or wss:// through HTTPS proxy (TLS socket to proxy)
+        ProxyTLS, // ws:// or wss:// through HTTPS proxy (TLS socket to proxy)
+        Stream // createOverStream()
     };
 
-    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
-    // Internal connect with proxy config (used by create() with proxy support)
-    ExceptionOr<void> connect(const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&, std::optional<struct ProxyConfig>&&);
+    // The write flags of the native client.
+    enum FrameFlags : uint8_t {
+        Fin = 1 << 0,
+        CompressIfWorthIt = 1 << 1,
+        Compress = 1 << 2,
+    };
 
-    ExceptionOr<void> send(const String& message);
-    ExceptionOr<void> send(JSC::ArrayBuffer&);
-    ExceptionOr<void> send(JSC::ArrayBufferView&);
-    ExceptionOr<void> send(JSBlob*);
-
-    ExceptionOr<void> ping();
-    ExceptionOr<void> ping(const String& message);
-    ExceptionOr<void> ping(JSC::ArrayBuffer&);
-    ExceptionOr<void> ping(JSC::ArrayBufferView&);
-    ExceptionOr<void> ping(JSBlob*);
-
-    ExceptionOr<void> pong();
-    ExceptionOr<void> pong(const String& message);
-    ExceptionOr<void> pong(JSC::ArrayBuffer&);
-    ExceptionOr<void> pong(JSC::ArrayBufferView&);
-    ExceptionOr<void> pong(JSBlob*);
+    // The bytes are borrowed for the call. A String goes out as UTF-8.
+    using Payload = std::variant<std::span<const uint8_t>, String>;
+    // send(), ping() and pong(). Throws while CONNECTING; once CLOSING, a data frame only counts in bufferedAmount.
+    ExceptionOr<void> sendFrame(Opcode, const Payload&, uint8_t flags = Fin | CompressIfWorthIt);
 
     ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
-    ExceptionOr<void> terminate();
+    void terminate();
     // Receive-side flow control (non-standard; mirrors Bun.Socket). pause()
     // stops kernel reads so TCP backpressure reaches the peer; frames already
     // decoded still dispatch. Before OPEN it latches and applies on connect.
     bool pause();
     bool resume();
-    bool isPaused() const { return m_paused; }
+    bool isPaused() const { return m_paused && (m_state == CONNECTING || m_state == OPEN); }
+
+    // For `_socket` of the `ws` module.
+    // Whether the connection keeps the process alive. An unref() while CONNECTING holds once connected.
+    void setRef(bool);
+    struct RemoteAddress {
+        String address;
+        uint16_t port;
+        bool isIPv6;
+    };
+    // nullopt unless connected, and for a unix socket. Through a proxy it is the proxy's.
+    std::optional<RemoteAddress> remoteAddress() const;
+    // Only after createOverStream(). The bytes read from the stream, borrowed for the call: the handlers run inside it.
+    void feed(std::span<const uint8_t>);
+    // The stream is gone.
+    void streamClosed();
 
     void setProtocol(const String& protocol);
 
@@ -203,19 +216,24 @@ public:
     String extensions() const;
 
     BinaryType binaryType() const { return m_binaryType; }
-    ExceptionOr<void> setBinaryType(const String&);
+    void setBinaryType(const String&);
 
     ScriptExecutionContext* scriptExecutionContext() const final;
+    void dispatchEvent(Event&) final;
 
-    void didConnect();
+    // Both return the connected client, or null if `open` already dropped it.
+    void* didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx, std::span<const uint8_t> verifiedHostname);
+    void* didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params);
     void didStartClosingHandshake();
-    void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
-    void didConnect(us_socket_t* socket, void* bufferedData, const PerMessageDeflateParams* deflate_params, void* customSSLCtx, std::span<const uint8_t> verifiedHostname);
-    void didConnectWithTunnel(void* tunnel, void* bufferedData, const PerMessageDeflateParams* deflate_params);
-    void didFailWithErrorCode(Bun::WebSocketErrorCode code);
+    void didClose(unsigned short code, String&& reason, bool wasClean, size_t bufferedAmount);
+    void didFail(Bun::WebSocketErrorCode, size_t bufferedAmount, String&& systemCode, String&& detail);
+    void didDrain();
+    void streamWrite(std::span<const uint8_t>);
+    void streamEnd();
+    void streamDestroy();
 
     void didReceiveMessage(String&& message);
-    void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
+    void didReceiveFrame(Opcode, std::span<const uint8_t>);
     /// `bun_core::ffi::FfiSlice` — a borrowed `&[u8]` passed by value.
     struct FfiSlice {
         const uint8_t* ptr;
@@ -227,33 +245,15 @@ public:
         FfiSlice value;
     };
     void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body);
-
-    // A single claim the native client holds while it has queued work that will call back in.
-    void holdPendingActivityForClient()
-    {
-        ASSERT(!m_pendingActivityForClient);
-        m_pendingActivityForClient = makePendingActivity(*this);
-    }
-    void releasePendingActivityForClient() { m_pendingActivityForClient = nullptr; }
-
-    void setRejectUnauthorized(bool rejectUnauthorized)
-    {
-        m_rejectUnauthorized = rejectUnauthorized;
-    }
-
-    // Controls the upgrade client's `Sec-WebSocket-Extensions:
-    // permessage-deflate; client_max_window_bits` offer. Disabling this (via
-    // `perMessageDeflate: false` in ws options) matches the behavior of the
-    // npm `ws` package and prevents compression being negotiated at all.
-    void setOfferPerMessageDeflate(bool offer)
-    {
-        m_offerPerMessageDeflate = offer;
-    }
+    // The `ws` module gets the decoded body of a response that is not a 101: handlers.body(chunk), then handlers.body(null).
+    // That response is the outcome, so neither handlers.error nor handlers.close follows.
+    bool readsResponseBody() const { return isWsMode(); }
+    void didReceiveResponseBody(std::span<const uint8_t> chunk, bool ended);
 
     // C++-only callback mode. When set, didConnect/didReceiveMessage/
     // didClose call these function pointers directly instead of building
-    // Event objects and going through dispatchEvent. Fires synchronously
-    // from the socket's onData — no event-loop tick deferral, no JSValue
+    // Event objects and going through dispatchEvent. onOpen and onMessage fire
+    // synchronously from the socket's onData — no event-loop tick deferral, no JSValue
     // allocation. Used when a C++ subsystem owns the socket lifecycle
     // end-to-end (e.g. CDP::Transport connecting to an existing Chrome
     // instance over ws://, where every message is handled by C++ JSON
@@ -262,7 +262,7 @@ public:
     // onMessage gets text frames only — binary frames are dropped (the
     // only current consumer speaks JSON). If a consumer needs binary,
     // add onBinary alongside. onClose fires for both clean and abrupt
-    // close; the error-code-to-string mapping is the caller's job.
+    // close, from the task that would fire the close event.
     struct NativeCallbacks {
         void* ctx = nullptr;
         void (*onOpen)(void* ctx) = nullptr;
@@ -271,14 +271,11 @@ public:
     };
     void setNativeCallbacks(NativeCallbacks cb) { m_native = cb; }
 
-    // Public wrapper for the native-callback consumer to send text frames.
-    // Bypasses the ExceptionOr<> wrapping — the caller has already checked
-    // m_state == OPEN (onOpen fired), and there's no JS caller to surface
-    // an exception to. Same underlying write path as send(String).
+    // For the native-callback consumer: there is no JS caller to surface an exception to.
     void sendTextNative(const String& message)
     {
         if (m_state != OPEN) return;
-        sendWebSocketString(message, Opcode::Text);
+        sendWebSocketString(message, Opcode::Text, Fin | CompressIfWorthIt);
     }
 
     bool rejectUnauthorized() const
@@ -294,6 +291,13 @@ public:
         m_checkServerIdentity.set(vm, wrapper, callback);
     }
 
+    // The async context of the constructor call. Every trusted event is dispatched in it.
+    const JSValueInWrappedObject& asyncContext() const { return m_asyncContext; }
+    void setAsyncContext(JSC::VM& vm, const JSC::JSCell* wrapper, JSC::JSValue context)
+    {
+        m_asyncContext.set(vm, wrapper, context);
+    }
+
     size_t memoryCost() const;
 
 private:
@@ -307,10 +311,18 @@ private:
         ClientSSL,
     };
 
+    struct Failure {
+        ASCIILiteral text;
+        // `error.code`
+        String code;
+        String detail;
+    };
+
     // ActiveDOMObject. Read from the GC thread; a stale answer keeps or drops the wrapper one
     // cycle early or late, as upstream tolerates.
     void stop() final;
-    bool virtualHasPendingActivity() const final { return m_state != CLOSED; }
+    // A stream lives in JS: it is what keeps its WebSocket alive.
+    bool virtualHasPendingActivity() const final { return m_state != CLOSED && m_connectionType != ConnectionType::Stream; }
 
     explicit WebSocket(ScriptExecutionContext&);
 
@@ -319,17 +331,32 @@ private:
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
-    void failConnectingWebSocket();
+    ExceptionOr<void> connect(const String& url, WebSocketOptions&&);
+    void* didConnect();
+    // `error`, then `close` with 1006.
+    void failConnection(ASCIILiteral text, size_t bufferedAmount = 0, String&& code = {}, String&& detail = {});
+    // The native clients are gone. CLOSING now; one task sets CLOSED and fires the events (over a stream: at once).
+    void finish(size_t bufferedAmount, unsigned short code, String&& reason, bool wasClean, std::optional<Failure>&&);
+    void reportFailure(const Failure&);
+    void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
 
-    void sendWebSocketString(const String& message, const Opcode opcode);
-    void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
+    // Made by the `ws` module: nothing is dispatched as an Event, the wrapper's handler table is called.
+    bool isWsMode() const { return m_connectedOptions.text_as_bytes; }
+    // handlers[name].call(owner, ...arguments). What it throws is reported as an uncaught exception.
+    void callHandler(const JSC::Identifier& name, const JSC::ArgList&);
+    void callHandlerWithBuffer(const JSC::Identifier& name, std::span<const uint8_t>, JSC::JSValue secondArgument = {});
+    // The `ws` module hears frames until the peer's Close frame.
+    bool dispatchesFrames() const { return m_state == OPEN || (m_state == CLOSING && isWsMode()); }
+
+    void sendWebSocketString(const String& message, Opcode, uint8_t flags);
+    void sendWebSocketData(std::span<const uint8_t>, Opcode, uint8_t flags);
     void setExtensionsFromDeflateParams(const PerMessageDeflateParams* deflate_params);
 
     State m_state { CONNECTING };
     URL m_url;
+    String m_origin;
+    // Bytes that will never go out: what the native client still held when it went away, and send() since CLOSING.
     unsigned m_bufferedAmount { 0 };
-    unsigned m_bufferedAmountAfterClose { 0 };
     // In browsers, the default is Blob, however most applications
     // immediately change the default to ArrayBuffer.
     //
@@ -340,28 +367,25 @@ private:
     String m_extensions;
     void* m_upgradeClient { nullptr };
     ConnectionType m_connectionType { ConnectionType::Plain };
-    // Drop the in-flight upgrade / the connected client without a closing handshake. Neither
-    // dispatches anything itself; the native side may call back synchronously.
+    // Drop the in-flight upgrade without a callback / the connected client, which answers with didClose().
     void cancelUpgradeClient();
-    bool applyPauseToConnectedClient();
     void cancelConnectedClient();
+    bool applyPauseToConnectedClient();
+    // The bytes that came with the 101 wait while paused. They are parsed from a task, never inside resume() or close().
+    void queueInitialDataDelivery();
     bool m_rejectUnauthorized { false };
     bool m_paused { false };
-    // Default matches pre-existing behavior: advertise permessage-deflate in the upgrade
-    // request. Set to false by ws.WebSocket callers passing `perMessageDeflate: false`.
-    bool m_offerPerMessageDeflate { true };
+    bool m_unref { false };
+    WebSocketConnectedOptions m_connectedOptions {};
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
-    // connect()'s claim on the wrapper: held from connect() until the socket reaches CLOSED (or
+    // connect()'s claim on the wrapper: held from connect() until finish() (or
     // stop()). Posted event tasks keep it alive through queueTaskKeepingObjectAlive().
     RefPtr<PendingActivity<WebSocket>> m_pendingActivity;
-    RefPtr<PendingActivity<WebSocket>> m_pendingActivityForClient;
 
-    // TLS options (native heap SSLConfig — ownership is released to the
-    // upgrade client in connect(); freed by ~WebSocketSSLConfigPtr otherwise).
-    WebSocketSSLConfigPtr m_sslConfig;
-    // `tls.checkServerIdentity`, marked by JSWebSocket::visitChildren.
+    // `tls.checkServerIdentity` and the async context, marked by JSWebSocket::visitChildren.
     JSValueInWrappedObject m_checkServerIdentity;
+    JSValueInWrappedObject m_asyncContext;
 
     NativeCallbacks m_native;
 };

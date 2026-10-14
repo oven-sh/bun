@@ -68,6 +68,26 @@ JSValue AsyncContextFrame::withGraphContextIfNeeded(JSGlobalObject* globalObject
     return AsyncContextFrame::create(JSC::getVM(globalObject), zigGlobalObject->AsyncContextFrameStructure(), callback, graphFrame);
 }
 
+AsyncContextScope::AsyncContextScope(JSGlobalObject* globalObject, JSValue snapshot)
+    : m_vm(globalObject->vm())
+{
+    if (!snapshot || snapshot.isUndefinedOrNull())
+        return;
+    auto* asyncContextData = globalObject->m_asyncContextData.get();
+    JSValue current = asyncContextData->getInternalField(0);
+    m_asyncContextData = asyncContextData;
+    m_previous = current;
+    if (snapshot == current)
+        return;
+    asyncContextData->putInternalField(m_vm, 0, snapshot);
+}
+
+AsyncContextScope::~AsyncContextScope()
+{
+    if (m_asyncContextData)
+        m_asyncContextData->putInternalField(m_vm, 0, m_previous);
+}
+
 template<typename Visitor>
 void AsyncContextFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {

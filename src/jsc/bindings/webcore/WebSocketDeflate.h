@@ -1,4 +1,5 @@
 #pragma once
+#include <stddef.h>
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -9,3 +10,16 @@ typedef struct {
     uint8_t server_no_context_takeover;
     uint8_t client_no_context_takeover;
 } PerMessageDeflateParams;
+
+// This must match the layout of ConnectedOptions in src/http_jsc/websocket_client.rs
+typedef struct {
+    // Bytes of one message after reassembly and inflation. 0 = no limit.
+    size_t max_payload_length;
+    bool auto_pong;
+    // Text frames arrive through WebSocket__didReceiveBytes with opcode 1.
+    bool text_as_bytes;
+    // WebSocket__didDrain is called.
+    bool notify_drain;
+    bool skip_utf8_validation;
+    bool is_server;
+} WebSocketConnectedOptions;

@@ -13,6 +13,7 @@ const FRAME = CHUNK.byteLength + 14;
 const MAX_TO_SATURATE = 1024;
 // Frames sent on top of a saturated socket. Every one of them must be counted.
 const EXTRA = 64;
+const CLOSE_1000 = Buffer.from([0x88, 0x02, 0x03, 0xe8]);
 
 // A raw origin that completes the WebSocket upgrade and then reads only when
 // told to, so the client's send side has to queue. It sees plaintext frames
@@ -21,6 +22,7 @@ const EXTRA = 64;
 function rawOrigin(secure: boolean) {
   const { promise: upgraded, resolve: resolveUpgraded } = Promise.withResolvers<net.Socket>();
   let received = 0;
+  let tail = Buffer.alloc(0);
   let waitingFor = Infinity;
   let resolveReceived = () => {};
   const sockets = new Set<net.Socket>();
@@ -39,6 +41,7 @@ function rawOrigin(secure: boolean) {
       sock.pause();
       sock.on("data", (chunk: Buffer) => {
         received += chunk.length;
+        tail = Buffer.concat([tail, chunk]).subarray(-8);
         if (received >= waitingFor) resolveReceived();
       });
       resolveUpgraded(sock);
@@ -54,6 +57,8 @@ function rawOrigin(secure: boolean) {
         server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
       ),
     upgraded,
+    // The last 8 bytes that arrived.
+    tail: () => tail,
     // Resolves with the exact byte count once at least `bytes` have arrived.
     receive(bytes: number): Promise<number> {
       waitingFor = bytes;
@@ -162,6 +167,102 @@ for (const mode of MODES) {
         origin.close();
       }
     });
+
+    it("close() goes behind the frames that are still queued", async () => {
+      const origin = rawOrigin(mode.secure);
+      const originPort = await origin.listen();
+      const proxy = mode.proxy ? await pipingConnectProxy(mode.proxy === "https") : undefined;
+      try {
+        const ws = new WebSocket(`${mode.secure ? "wss" : "ws"}://127.0.0.1:${originPort}`, {
+          tls: { rejectUnauthorized: false },
+          ...(proxy ? { proxy: `${mode.proxy}://127.0.0.1:${proxy.port}` } : {}),
+        });
+        await open(ws);
+        const peer = await origin.upgraded;
+        const closed = new Promise<CloseEvent>(resolve => (ws.onclose = resolve));
+
+        const sent = sendUntilCounted(ws);
+        ws.close(1000);
+        peer.resume();
+        // 2 header bytes, 4 mask bytes and the status code.
+        expect(await origin.receive(sent * FRAME + 8)).toBe(sent * FRAME + 8);
+        // A server stops reading at the Close frame, so a frame behind it is lost.
+        expect([...origin.tail().subarray(0, 2)]).toEqual([0x88, 0x82]);
+        peer.write(CLOSE_1000);
+        const { code, wasClean } = await closed;
+        expect({ code, wasClean }).toEqual({ code: 1000, wasClean: true });
+      } finally {
+        proxy?.close();
+        origin.close();
+      }
+    });
+
+    // The send queue is a ring of 2048 bytes at first. A frame that ends at the
+    // end of the ring puts the frames behind it at the start. The writable
+    // handler wrote the ring up to its end and stopped. No writable event
+    // follows a write that the socket took whole, so the frames at the start
+    // stayed, and so did a Close frame behind them.
+    it("drains to 0 when the queue wraps around its buffer", async () => {
+      const origin = rawOrigin(mode.secure);
+      const originPort = await origin.listen();
+      const proxy = mode.proxy ? await pipingConnectProxy(mode.proxy === "https") : undefined;
+      try {
+        const ws = new WebSocket(`${mode.secure ? "wss" : "ws"}://127.0.0.1:${originPort}`, {
+          tls: { rejectUnauthorized: false },
+          ...(proxy ? { proxy: `${mode.proxy}://127.0.0.1:${proxy.port}` } : {}),
+        });
+        await open(ws);
+        const peer = await origin.upgraded;
+        const closed = Promise.withResolvers<number>();
+        ws.onclose = event => closed.resolve(event.code);
+        const lost = new Promise<never>((_, reject) => {
+          ws.onerror = event => reject(new Error(`WebSocket error: ${(event as ErrorEvent).message}`));
+          peer.on("close", () => reject(new Error("the connection ended before everything arrived")));
+        });
+        lost.catch(() => {});
+
+        // Bytes given to send(), with the 8 bytes of framing of each frame.
+        let sent = 0;
+        const send = (payload: number) => {
+          ws.send(new Uint8Array(payload));
+          sent += payload + 8;
+        };
+        const tunnel = mode.secure && mode.proxy !== null;
+        if (tunnel) {
+          // A TLS tunnel takes each frame whole. A frame of 1536 bytes passes
+          // through the queue and leaves its read position at 1536.
+          while (ws.bufferedAmount === 0 && sent < MAX_TO_SATURATE * FRAME) send(1528);
+          const heldByTunnel = ws.bufferedAmount;
+          send(504);
+          // Queued as it is, from 1536 to the end of the ring.
+          expect(ws.bufferedAmount - heldByTunnel).toBe(512);
+        } else {
+          // A frame of 1024 bytes passes through the queue and leaves its read
+          // position at 1024.
+          send(1016);
+          expect(ws.bufferedAmount).toBe(0);
+          // Smaller frames skip the queue. Only the part of the last one that
+          // the socket refused is queued, from 1024.
+          while (ws.bufferedAmount === 0 && sent < MAX_TO_SATURATE * FRAME) send(504);
+          send(1024 - ws.bufferedAmount - 8);
+          // The queue now ends at the end of the ring.
+          expect(ws.bufferedAmount).toBe(1024);
+        }
+        // 13 bytes, at the start of the ring, and the 9 bytes of a Close frame.
+        ws.send("wrapped");
+        ws.close(1000, "x");
+        sent += 13 + 9;
+
+        peer.resume();
+        expect(await Promise.race([origin.receive(sent), lost])).toBe(sent);
+        expect(ws.bufferedAmount).toBe(0);
+        peer.write(CLOSE_1000);
+        expect(await Promise.race([closed.promise, lost])).toBe(1000);
+      } finally {
+        proxy?.close();
+        origin.close();
+      }
+    });
   });
 }
 
@@ -187,6 +288,39 @@ describe("WebSocket.bufferedAmount", () => {
     expect(await echoed).toBe("hello");
     expect(ws.bufferedAmount).toBe(0);
     ws.close();
+  });
+
+  // "The bufferedAmount attribute does not reset to zero once the connection closes."
+  it.each([
+    ["terminate()", (ws: WebSocket) => ws.terminate()],
+    ["a protocol error", (_ws: WebSocket, peer: net.Socket) => void peer.write(Buffer.from([0x83, 0x00]))],
+    ["the end of the connection", (_ws: WebSocket, peer: net.Socket) => void peer.destroy()],
+    [
+      "the server's Close frame and the end of the connection",
+      (_ws: WebSocket, peer: net.Socket) => void peer.end(CLOSE_1000),
+    ],
+  ] as const)("keeps what was never sent after %s, and send() adds its payload", async (_label, act) => {
+    const origin = rawOrigin(false);
+    const originPort = await origin.listen();
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${originPort}`);
+      await open(ws);
+      const peer = await origin.upgraded;
+      sendUntilCounted(ws);
+      const queued = ws.bufferedAmount;
+      const closed = new Promise(resolve => (ws.onclose = resolve));
+      act(ws, peer);
+      await closed;
+      const kept = ws.bufferedAmount;
+      // The kernel may have taken some more, and a Close frame of 8 bytes may have joined the queue.
+      expect(kept).toBeGreaterThan(FRAME);
+      expect(kept).toBeLessThanOrEqual(queued + 8);
+      ws.send("12345");
+      ws.ping();
+      expect(ws.bufferedAmount).toBe(kept + 5);
+    } finally {
+      origin.close();
+    }
   });
 
   it("ws package reports the same number", async () => {

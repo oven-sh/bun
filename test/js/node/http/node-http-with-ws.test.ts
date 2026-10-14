@@ -5,6 +5,7 @@ import https from "https";
 import { once } from "node:events";
 import net, { connect, type AddressInfo, type Socket } from "node:net";
 import type { Duplex } from "node:stream";
+import { Server as SocketIOServer } from "socket.io";
 import tls from "tls";
 import { WebSocketServer, type WebSocket as WsWebSocket } from "ws";
 import NpmWebSocketServerModule from "../../../node_modules/ws/lib/websocket-server.js";
@@ -232,6 +233,7 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
     "delivers the 101 and an immediate callback write on a %s socket",
     async (_name, reuse, warmupRequests) => {
       let connection!: import("ws").WebSocket;
+      let bytesWrittenBeforeSend = 0;
       const message = Promise.withResolvers<Buffer>();
       const fixture = await openWebSocketWithAgent({
         ServerClass: NpmWebSocketServer,
@@ -242,6 +244,7 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
         },
         onConnection(ws) {
           connection = ws;
+          bytesWrittenBeforeSend = (ws as WsWebSocket & { _socket: Socket })._socket.bytesWritten;
           ws.send("ready");
         },
       });
@@ -249,6 +252,7 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
         expect(connection).toBe(fixture.accepted.ws);
         expect(fixture.accepted.head).toEqual(Buffer.alloc(0));
         expect((await message.promise).toString()).toBe("ready");
+        expect((fixture.accepted.socket as Socket).bytesWritten - bytesWrittenBeforeSend).toBe(7);
       } finally {
         await closeWebSocketFixture(fixture);
       }
@@ -440,6 +444,159 @@ describe.concurrent("npm ws on node:http upgrade sockets", () => {
       expect((await message.promise).toString()).toBe("native");
     } finally {
       await closeWebSocketFixture(fixture);
+    }
+  });
+});
+
+describe.concurrent("the node:http socket of a WebSocketServer connection", () => {
+  const endOfHead = Buffer.from("\r\n\r\n");
+  function upgradeRequest(path: string) {
+    return `GET ${path} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n`;
+  }
+
+  test.each([
+    ["ws", WebSocketServer],
+    ["npm ws", NpmWebSocketServer],
+  ] as const)("bytesWritten counts the 101 that %s sent", async (_name, ServerClass) => {
+    const server = http.createServer();
+    const wss = new ServerClass({ noServer: true });
+    const accepted = Promise.withResolvers<Socket>();
+    server.on("upgrade", (req, socket, head) => {
+      wss.handleUpgrade(req, socket, head, () => accepted.resolve(socket as Socket));
+    });
+    const reader = new SocketReader(connect(await listen(server), "127.0.0.1"));
+    try {
+      reader.socket.write(upgradeRequest("/"));
+      const head = await reader.readThrough(endOfHead);
+      const socket = await accepted.promise;
+      expect(socket.writable).toBe(true);
+      expect(socket.bytesWritten).toBeGreaterThanOrEqual(head.length);
+    } finally {
+      reader.close();
+      await closeWebSocketServer(wss);
+      server.close();
+    }
+  });
+
+  // engine.io ends an upgraded socket that is not its own when, after destroyUpgradeTimeout, `socket.bytesWritten <= 0`.
+  test("socket.io on the same http.Server leaves it open", async () => {
+    const server = http.createServer();
+    const io = new SocketIOServer(server, { destroyUpgradeTimeout: 1 });
+    const wss = new WebSocketServer({ noServer: true });
+    const endedByEngine = Promise.withResolvers<boolean>();
+    server.on("upgrade", (req, socket, head) => {
+      wss.handleUpgrade(req, socket, head, ws => {
+        // engine.io's listener ran first, so its timer of the same delay fires first.
+        setTimeout(() => {
+          endedByEngine.resolve(socket.writableEnded);
+          ws.send("still open");
+        }, 1);
+      });
+    });
+    const reader = new SocketReader(connect(await listen(server), "127.0.0.1"));
+    try {
+      reader.socket.write(upgradeRequest("/hmr"));
+      await reader.readThrough(endOfHead);
+      expect(await endedByEngine.promise).toBe(false);
+      expect((await reader.readThrough(Buffer.from("still open"))).subarray(2).toString()).toBe("still open");
+    } finally {
+      reader.close();
+      await closeWebSocketServer(wss);
+      await io.close();
+    }
+  });
+
+  test("destroy() closes the connection and emits 'close'", async () => {
+    const server = http.createServer();
+    const wss = new WebSocketServer({ noServer: true });
+    const socketClosed = Promise.withResolvers<void>();
+    const wsClosed = Promise.withResolvers<number>();
+    server.on("upgrade", (req, socket, head) => {
+      wss.handleUpgrade(req, socket, head, ws => {
+        ws.on("close", code => wsClosed.resolve(code));
+        socket.on("close", () => socketClosed.resolve());
+        socket.destroy();
+      });
+    });
+    const client = connect(await listen(server), "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.resume();
+      const clientClosed = once(client, "close");
+      client.write(upgradeRequest("/"));
+      await Promise.all([socketClosed.promise, clientClosed]);
+      expect(await wsClosed.promise).toBe(1006);
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+
+  test("setTimeout(0) after the upgrade leaves no timer", async () => {
+    const server = http.createServer();
+    const wss = new WebSocketServer({ noServer: true });
+    const timeouts: string[] = [];
+    const control = Promise.withResolvers<void>();
+    server.on("upgrade", (req, duplex, head) => {
+      const socket = duplex as Socket;
+      socket.setTimeout(20, () => {
+        timeouts.push(req.url!);
+        control.resolve();
+      });
+      // The control: it connects later and keeps its timer, so a timer of "/ws" would fire first.
+      if (req.url === "/raw") return void socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n");
+      wss.handleUpgrade(req, socket, head, () => socket.setTimeout(0));
+    });
+    const port = await listen(server);
+    const readers: SocketReader[] = [];
+    try {
+      for (const path of ["/ws", "/raw"]) {
+        const reader = new SocketReader(connect(port, "127.0.0.1"));
+        readers.push(reader);
+        reader.socket.write(upgradeRequest(path));
+        await reader.readThrough(endOfHead);
+      }
+      await control.promise;
+      expect(timeouts).toEqual(["/raw"]);
+    } finally {
+      for (const reader of readers) reader.close();
+      await closeWebSocketServer(wss);
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
+  // Bun.serve drops a send() beyond backpressureLimit (16 MiB by default). npm ws has no such limit.
+  test("send() in one burst of 24 MiB delivers each message once and in order", async () => {
+    const server = http.createServer();
+    const wss = new WebSocketServer({ server });
+    const count = 24;
+    const size = 1024 * 1024;
+    let callbacks = 0;
+    wss.on("connection", ws => {
+      for (let i = 0; i < count; i++) ws.send(Buffer.alloc(size, i), () => callbacks++);
+      ws.send("end");
+    });
+    const client = new WebSocket(`ws://127.0.0.1:${await listen(server)}`);
+    try {
+      client.binaryType = "arraybuffer";
+      const received: string[] = [];
+      await new Promise<void>((resolve, reject) => {
+        client.onmessage = event => {
+          if (typeof event.data === "string") resolve();
+          else received.push(`${new Uint8Array(event.data)[0]}:${event.data.byteLength}`);
+        };
+        client.onclose = () => reject(new Error(`closed after ${received.length} messages`));
+      });
+      expect({ received, callbacks }).toEqual({
+        received: Array.from({ length: count }, (_, i) => `${i}:${size}`),
+        callbacks: count,
+      });
+    } finally {
+      client.onclose = null;
+      client.close();
+      await closeWebSocketServer(wss);
+      server.close();
     }
   });
 });

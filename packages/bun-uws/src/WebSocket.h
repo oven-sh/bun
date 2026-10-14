@@ -23,6 +23,7 @@
 #include "WebSocketData.h"
 #include "WebSocketProtocol.h"
 
+#include <charconv>
 #include <string_view>
 // clang-format off
 namespace uWS {
@@ -72,6 +73,12 @@ public:
         if (webSocketData->isShuttingDown) {
             return nullptr;
         }
+
+        /* onClose runs without an fd: what publish() and send() accepted is written here */
+        if (webSocketData->subscriber) {
+            getContextData()->topicTree->drain(webSocketData->subscriber);
+        }
+        Super::uncork();
 
         /* Callers rely on the close event having run on return, which code 0 does not give on TLS (CloseCode, src/uws_sys/us_socket_t.rs). */
         us_socket_t *s = us_socket_close((us_socket_t *) this, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
@@ -144,6 +151,40 @@ public:
             return DROPPED;
         }
 
+        return sendFrame(message, opCode, compress, fin);
+    }
+
+    /* Stops reading from the peer. The idle timeout does not run meanwhile. */
+    void pause() {
+        WebSocketData *webSocketData = (WebSocketData *) Super::getAsyncSocketData();
+        if (us_socket_is_closed((us_socket_t *) this) || webSocketData->isShuttingDown) {
+            return;
+        }
+        Super::pause();
+        Super::timeout(0);
+    }
+
+    void resume() {
+        if (!isPaused()) {
+            return;
+        }
+        Super::resume();
+        if (us_socket_is_closed((us_socket_t *) this)) {
+            return;
+        }
+        Super::timeout(getContextData()->idleTimeoutComponents.first);
+        ((WebSocketData *) Super::getAsyncSocketData())->hasTimedOut = false;
+    }
+
+    bool isPaused() {
+        return ((us_socket_t *) this)->flags.is_paused;
+    }
+
+private:
+    /* send() without the maxBackpressure limit: never DROPPED */
+    SendStatus sendFrame(std::string_view message, OpCode opCode, bool compress, bool fin) {
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
+
         /* If we are subscribers and have messages to drain we need to drain them here to stay synced */
         WebSocketData *webSocketData = (WebSocketData *) Super::getAsyncSocketData();
 
@@ -180,8 +221,9 @@ public:
             if (compress) {
                 WebSocketData *webSocketData = (WebSocketData *) Super::getAsyncSocketData();
 
-                /* Check and correct the compress hint. It is never valid to compress 0 bytes */
-                if (message.length() && opCode < 3 && webSocketData->compressionStatus == WebSocketData::ENABLED) {
+                /* Check and correct the compress hint. It is never valid to compress 0 bytes, or one fragment on its own */
+                if (message.length() && fin && opCode && opCode < 3 && webSocketData->compressionStatus == WebSocketData::ENABLED
+                    && (webSocketContextData->compression & CompressOptions::_COMPRESSOR_MASK) != 0) {
                     LoopData *loopData = Super::getLoopData();
                     /* Compress using either shared or dedicated deflationStream */
                     if (webSocketData->deflationStream) {
@@ -217,57 +259,106 @@ public:
 
         }
 
-        /* Every successful send resets the timeout */
-        if (webSocketContextData->resetIdleTimeoutOnSend) {
+        /* Every successful send resets the timeout, but only the peer can answer a ping */
+        if (webSocketContextData->resetIdleTimeoutOnSend && !webSocketData->hasTimedOut && !isPaused()) {
             Super::timeout(webSocketContextData->idleTimeoutComponents.first);
-            WebSocketData *webSocketData = (WebSocketData *) Super::getAsyncSocketData();
-            webSocketData->hasTimedOut = false;
         }
 
         /* Return success */
         return SUCCESS;
     }
 
-    /* Send websocket close frame, emit close event, send FIN if successful.
-     * Will not append a close reason if code is 0 or 1005. */
-    void end(int code = 0, std::string_view message = {}) {
-        /* Check if we already called this one */
+    /* Writes the close frame behind everything accepted so far, once. Nothing follows it, so there is nothing left to batch. */
+    void sendCloseFrame(int code, std::string_view message) {
         WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
-        if (webSocketData->isShuttingDown) {
+        if (webSocketData->closeFrameSent) {
+            Super::uncork();
             return;
         }
+        webSocketData->closeFrameSent = true;
 
-        /* We postpone any FIN sending to either drainage or uncorking */
-        webSocketData->isShuttingDown = true;
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
 
-        /* Format and send the close frame */
+        /* Queued publishes go first. Make sure to unsubscribe from any pub/sub node at exit */
+        if (webSocketData->subscriber) {
+            webSocketContextData->topicTree->drain(webSocketData->subscriber);
+            webSocketContextData->topicTree->freeSubscriber(webSocketData->subscriber);
+            webSocketData->subscriber = nullptr;
+        }
+
         static const int MAX_CLOSE_PAYLOAD = 123;
         size_t length = std::min<size_t>(MAX_CLOSE_PAYLOAD, message.length());
         char closePayload[MAX_CLOSE_PAYLOAD + 2];
         size_t closePayloadLength = protocol::formatClosePayload(closePayload, (uint16_t) code, message.data(), length);
-        bool ok = send(std::string_view(closePayload, closePayloadLength), OpCode::CLOSE);
+        sendFrame(std::string_view(closePayload, closePayloadLength), OpCode::CLOSE, false, true);
+        Super::uncork();
+    }
 
-        /* FIN if we are ok and not corked */
-        if (!this->isCorked()) {
-            if (ok) {
-                /* If we are not corked, and we just sent off everything, we need to FIN right here.
-                 * In all other cases, we need to fin either if uncork was successful, or when drainage is complete. */
-                this->shutdown();
-            }
+    /* The close frame, then the FIN. Returns false if that was done before. */
+    bool sendClose(int code, std::string_view message) {
+        WebSocketData *webSocketData = (WebSocketData *) us_socket_ext((us_socket_t *) this);
+        if (webSocketData->isShuttingDown) {
+            return false;
         }
 
-        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
+        /* onData ignores the peer from here on, and onWritable sends the FIN if we cannot do it below */
+        webSocketData->isShuttingDown = true;
+
+        sendCloseFrame(code, message);
+        if (getBufferedAmount() == 0) {
+            this->shutdown();
+        }
 
         /* Set shorter timeout (use ping-timeout) to avoid long hanging sockets after end() on broken connections */
-        Super::timeout(webSocketContextData->idleTimeoutComponents.second);
+        Super::timeout(getContextData()->idleTimeoutComponents.second);
 
-        /* Make sure to unsubscribe from any pub/sub node at exit */
-        webSocketContextData->topicTree->freeSubscriber(webSocketData->subscriber);
-        webSocketData->subscriber = nullptr;
+        /* Only a read shows the peer's FIN */
+        Super::resume();
+        return true;
+    }
 
-        /* Emit close event */
+    void emitClose(int code, std::string_view message) {
+        WebSocketContextData<SSL, USERDATA> *webSocketContextData = getContextData();
         if (webSocketContextData->closeHandler) {
             webSocketContextData->closeHandler(this, code, message);
+        }
+    }
+
+public:
+    /* Send websocket close frame, send FIN once everything before it is written, emit close event.
+     * Will not append a close reason if code is 0 or 1005. */
+    void end(int code = 0, std::string_view message = {}) {
+        if (getContextData()->wsPackage) {
+            sendCloseFrame(code, message);
+            return;
+        }
+        conclude(code, message);
+    }
+
+    /* The closing handshake is over: the peer's close frame is in, ours goes out unless end() sent it */
+    void conclude(int code, std::string_view message) {
+        if (sendClose(code, message)) {
+            emitClose(code, message);
+        }
+    }
+
+    /* RFC 6455 7.1.7: the peer broke the protocol. It is told the close code, the close handler 1006. */
+    void failConnection(const WebSocketFailure &failure, unsigned int detail) {
+        if (!getContextData()->wsPackage) {
+            if (sendClose(failure.closeCode, failure.diagnostic)) {
+                emitClose(1006, failure.diagnostic);
+            }
+            return;
+        }
+
+        if (sendClose(failure.closeCode, {})) {
+            char text[16];
+            size_t length = 0;
+            if (failure.kind == WebSocketFailureKind::InvalidOpcode || failure.kind == WebSocketFailureKind::InvalidControlPayloadLength
+                || failure.kind == WebSocketFailureKind::InvalidCloseCode) {
+                length = (size_t) (std::to_chars(text, text + sizeof(text), detail).ptr - text);
+            }
+            emitClose(-(int) failure.kind, {text, length});
         }
     }
 

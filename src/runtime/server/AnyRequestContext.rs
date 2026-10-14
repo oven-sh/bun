@@ -247,6 +247,15 @@ impl AnyRequestContext {
         })
     }
 
+    /// Address of the server that received this request. `None` once detached.
+    pub(crate) fn server_ptr(self) -> Option<*const ()> {
+        dispatch!(self, None, |_T, ctx| {
+            ctx.server
+                .get()
+                .map(|server| server.as_const_ptr().cast::<()>())
+        })
+    }
+
     pub fn deref(self) {
         dispatch!(self, (), |_T, ctx| ctx.deref())
     }

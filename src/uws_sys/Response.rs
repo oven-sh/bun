@@ -176,6 +176,13 @@ impl<const SSL: bool> Response<SSL> {
         us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>()).is_closed()
     }
 
+    /// `upgrade()` returns null for a closed socket and for one that sent its FIN or close_notify.
+    pub(crate) fn can_upgrade(&self) -> bool {
+        let socket =
+            us_socket_t::opaque_ref(std::ptr::from_ref::<Self>(self).cast::<us_socket_t>());
+        !socket.is_closed() && !socket.is_shutdown()
+    }
+
     pub(crate) fn prepare_for_sendfile(&mut self) {
         c::uws_res_prepare_for_sendfile(Self::ssl_flag(), self.as_raw())
     }
@@ -637,6 +644,29 @@ impl<const SSL: bool> Response<SSL> {
             )
         }
     }
+
+    /// `upgrade` for a caller that negotiated: `handshake` is the whole response head and goes out
+    /// byte for byte, `compress_options` are this socket's `CompressOptions` bits (0 = no permessage-deflate).
+    pub(crate) fn upgrade_raw<D>(
+        &mut self,
+        data: *mut D,
+        handshake: &[u8],
+        compress_options: i32,
+        ctx: &mut WebSocketUpgradeContext,
+    ) -> *mut Socket {
+        // SAFETY: self is a live opaque uws_res handle owned by uWS; ptr+len from &[u8].
+        unsafe {
+            c::uws_res_upgrade_raw(
+                Self::ssl_flag(),
+                self.downcast(),
+                data.cast::<c_void>(),
+                handshake.as_ptr(),
+                handshake.len(),
+                compress_options,
+                ctx,
+            )
+        }
+    }
 }
 
 pub type TCPResponse = Response<false>;
@@ -1081,6 +1111,16 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.run_corked_with_type(handler, optional_data))
     }
 
+    /// See `Response::can_upgrade`.
+    pub fn can_upgrade(self) -> bool {
+        match self {
+            AnyResponse::H3(_) | AnyResponse::H2(_) => false,
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).can_upgrade(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).can_upgrade(),
+        }
+    }
+
+    /// Null when the socket was refused: nothing was written and `data` is still the caller's.
     pub fn upgrade<D>(
         self,
         data: *mut D,
@@ -1108,6 +1148,25 @@ impl AnyResponse {
                 sec_web_socket_extensions,
                 ctx,
             ),
+        }
+    }
+
+    /// See `Response::upgrade_raw`. Null as for `upgrade`.
+    pub fn upgrade_raw<D>(
+        self,
+        data: *mut D,
+        handshake: &[u8],
+        compress_options: i32,
+        ctx: &mut WebSocketUpgradeContext,
+    ) -> *mut Socket {
+        match self {
+            AnyResponse::H3(_) | AnyResponse::H2(_) => core::ptr::null_mut(),
+            AnyResponse::SSL(ptr) => {
+                TLSResponse::as_handle(ptr).upgrade_raw(data, handshake, compress_options, ctx)
+            }
+            AnyResponse::TCP(ptr) => {
+                TCPResponse::as_handle(ptr).upgrade_raw(data, handshake, compress_options, ctx)
+            }
         }
     }
 }
@@ -1379,6 +1438,15 @@ pub mod c {
             sec_web_socket_protocol_length: usize,
             sec_web_socket_extensions: *const u8,
             sec_web_socket_extensions_length: usize,
+            ws: *mut WebSocketUpgradeContext,
+        ) -> *mut Socket;
+        pub(crate) fn uws_res_upgrade_raw(
+            ssl: i32,
+            res: *mut uws_res,
+            data: *mut c_void,
+            handshake: *const u8,
+            handshake_length: usize,
+            compress_options: i32,
             ws: *mut WebSocketUpgradeContext,
         ) -> *mut Socket;
         // safe: cork is synchronous — `ctx` is passed straight back to

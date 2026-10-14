@@ -1,0 +1,288 @@
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { tls as tlsCerts } from "harness";
+import { createHash } from "node:crypto";
+import net from "node:net";
+import tls from "node:tls";
+import { startEchoServer, startProxy } from "./proxy-test-utils";
+
+// NO_PROXY applies to an explicit `proxy` option too, and every target here is 127.0.0.1.
+const prevNoProxy = process.env.NO_PROXY;
+const prevNoProxyLower = process.env.no_proxy;
+process.env.NO_PROXY = "";
+process.env.no_proxy = "";
+
+let echo: ReturnType<typeof startEchoServer>;
+let echoUrl: string;
+
+beforeAll(() => {
+  echo = startEchoServer();
+  echoUrl = `ws://127.0.0.1:${echo.port}/`;
+});
+
+afterAll(() => {
+  echo?.stop(true);
+  if (prevNoProxy !== undefined) process.env.NO_PROXY = prevNoProxy;
+  if (prevNoProxyLower !== undefined) process.env.no_proxy = prevNoProxyLower;
+});
+
+/** The first message (the echo server greets with "connected"), or what the `error` event says after "failed: ". */
+function greetingOrFailure(ws: WebSocket): Promise<string> {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  ws.addEventListener("message", event => resolve(String(event.data)));
+  ws.addEventListener("error", event =>
+    resolve((event as ErrorEvent).message.replace(/^WebSocket connection to '[^']*' failed: /, "")),
+  );
+  ws.addEventListener("close", event => resolve(`close ${event.code} ${event.reason}`));
+  return promise.finally(() => ws.terminate());
+}
+
+/**
+ * A proxy that answers every CONNECT with `reply`. What the client sends after that goes to the port
+ * it asked for, and back.
+ * With `firstRead`, the client reads that many bytes of the reply before the proxy writes the rest:
+ * they were readable before a whole handshake with the echo server began on the same event loop.
+ */
+async function startFixedReplyProxy(reply: string, firstRead = reply.length) {
+  /** The head of each CONNECT request, read as latin1. */
+  const requests: string[] = [];
+  const proxy = net.createServer(client => {
+    let request = "";
+    let targetPort = 0;
+    let target: net.Socket | undefined;
+    // The client hangs up as soon as it refuses a reply, so a later write can fail.
+    client.on("error", () => {});
+    client.on("close", () => target?.destroy());
+    client.on("data", async chunk => {
+      if (targetPort) {
+        if (!target) {
+          target = net.connect(targetPort, "127.0.0.1");
+          target.on("data", bytes => void client.write(bytes));
+          target.on("error", () => client.destroy());
+          target.on("close", () => client.destroy());
+        }
+        return void target.write(chunk);
+      }
+      request += chunk.toString("latin1");
+      if (!request.endsWith("\r\n\r\n")) return;
+      requests.push(request);
+      targetPort = Number(/^CONNECT [^ ]*:(\d+) /.exec(request)![1]);
+
+      client.write(Buffer.from(reply.slice(0, firstRead), "latin1"));
+      if (firstRead >= reply.length) return;
+      await greetingOrFailure(new WebSocket(echoUrl));
+      client.write(Buffer.from(reply.slice(firstRead), "latin1"));
+    });
+  });
+  const port = await startProxy(proxy);
+  return {
+    url: `http://127.0.0.1:${port}`,
+    port,
+    requests,
+    [Symbol.dispose]() {
+      proxy.close();
+    },
+  };
+}
+
+describe("the reply to CONNECT", () => {
+  describe.each([
+    ["200", "HTTP/1.1 200 Connection established\r\n\r\n", "connected"],
+    ["200 without a reason phrase", "HTTP/1.1 200\r\n\r\n", "connected"],
+    ["200 over HTTP/1.0", "HTTP/1.0 200 Connection established\r\n\r\n", "connected"],
+    // RFC 9110 section 9.3.6: any 2xx reply opens the tunnel. fetch() applies the same rule.
+    ["201", "HTTP/1.1 201 Created\r\n\r\n", "connected"],
+    ["204", "HTTP/1.1 204 No Content\r\n\r\n", "connected"],
+    ["299", "HTTP/1.1 299 Tunnel Ready\r\n\r\n", "connected"],
+    ["100 Continue, then 200", "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n\r\n", "connected"],
+    [
+      "101",
+      "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+      "Proxy connection failed: 101 Switching Protocols",
+    ],
+    [
+      "300",
+      "HTTP/1.1 300 Multiple Choices\r\nContent-Length: 0\r\n\r\n",
+      "Proxy connection failed: 300 Multiple Choices",
+    ],
+    [
+      "403 with a body",
+      "HTTP/1.1 403 Forbidden\r\nContent-Length: 6\r\n\r\ndenied",
+      "Proxy connection failed: 403 Forbidden",
+    ],
+    [
+      "407",
+      'HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="proxy"\r\nContent-Length: 0\r\n\r\n',
+      "Proxy authentication required: 407 Proxy Authentication Required",
+    ],
+    ["502 without a reason phrase", "HTTP/1.1 502\r\nContent-Length: 0\r\n\r\n", "Proxy connection failed: 502"],
+    [
+      "100 Continue, then 503",
+      "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 503 Busy\r\n\r\n",
+      "Proxy connection failed: 503 Busy",
+    ],
+    ["a reply that is not HTTP", "SSH-2.0-OpenSSH_9.6\r\n", "Invalid response"],
+  ])("%s", (_, reply, outcome) => {
+    test.each([
+      ["in one read", undefined],
+      ["in two reads, the first one 10 bytes long", 10],
+    ])("%s", async (_, firstRead) => {
+      using proxy = await startFixedReplyProxy(reply, firstRead);
+      expect({
+        outcome: await greetingOrFailure(new WebSocket(echoUrl, { proxy: proxy.url })),
+        connects: proxy.requests.length,
+      }).toEqual({ outcome, connects: 1 });
+    });
+  });
+
+  test("has no limit on the number of fields", async () => {
+    const fields = Array.from({ length: 200 }, (_, i) => `x-${i}: v\r\n`).join("");
+    using proxy = await startFixedReplyProxy(`HTTP/1.1 200 OK\r\n${fields}\r\n`);
+    expect(await greetingOrFailure(new WebSocket(echoUrl, { proxy: proxy.url }))).toBe("connected");
+  });
+
+  test.each([
+    ["in one read", undefined],
+    ["in two reads, the first one under the limit", 16000],
+  ])("fails when its head is over the size limit, %s", async (_, firstRead) => {
+    const reply = `HTTP/1.1 200 OK\r\nX-Pad: ${Buffer.alloc(21000, "a").toString()}\r\n\r\n`;
+    using proxy = await startFixedReplyProxy(reply, firstRead);
+    expect(await greetingOrFailure(new WebSocket(echoUrl, { proxy: proxy.url }))).toBe("Response headers too large");
+  });
+});
+
+describe("the 101 read out of a TLS tunnel", () => {
+  /** A wss:// server that answers the upgrade with a 101 that has the `extra` lines, then greets with "connected". */
+  async function startWssServer(before101: string, extra: string[]) {
+    const server = tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert }, socket => {
+      let request = "";
+      socket.on("error", () => {});
+      socket.on("data", chunk => {
+        request += chunk.toString("latin1");
+        if (!request.endsWith("\r\n\r\n")) return;
+        const key = /^sec-websocket-key: (.*)\r$/im.exec(request)![1];
+        request = "";
+        const accept = createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+        const head = [
+          "HTTP/1.1 101 Switching Protocols",
+          "Upgrade: websocket",
+          "Connection: Upgrade",
+          `Sec-WebSocket-Accept: ${accept}`,
+          ...extra,
+          "\r\n",
+        ].join("\r\n");
+        socket.write(before101 + head + "\x81\x09connected", "latin1");
+      });
+    });
+    const port = await startProxy(server);
+    return {
+      url: `wss://127.0.0.1:${port}/`,
+      [Symbol.dispose]() {
+        server.close();
+      },
+    };
+  }
+
+  test.each([
+    ["200 more fields", "", Array.from({ length: 200 }, (_, i) => `x-${i}: v`), "connected"],
+    [
+      "an interim response before it",
+      "HTTP/1.1 103 Early Hints\r\nLink: </a.css>; rel=preload\r\n\r\n",
+      [],
+      "connected",
+    ],
+    ["a head over the size limit", "", ["X-Pad: " + Buffer.alloc(21000, "a").toString()], "Response headers too large"],
+    ["an extension that was not offered", "", ["Sec-WebSocket-Extensions: foo"], "Unsupported websocket extension"],
+  ])("%s", async (_, before101, extra, outcome) => {
+    using server = await startWssServer(before101, extra);
+    using proxy = await startFixedReplyProxy("HTTP/1.1 200 OK\r\n\r\n");
+    const ws = new WebSocket(server.url, { proxy: proxy.url, tls: { ca: tlsCerts.cert } });
+    expect(await greetingOrFailure(ws)).toBe(outcome);
+  });
+
+  test("a certificate that is not trusted is named in error.code", async () => {
+    using server = await startWssServer("", []);
+    using proxy = await startFixedReplyProxy("HTTP/1.1 200 OK\r\n\r\n");
+    const ws = new WebSocket(server.url, { proxy: proxy.url });
+    const { promise, resolve } = Promise.withResolvers<unknown>();
+    ws.addEventListener("error", event => resolve((event as ErrorEvent).error.code));
+    expect({ outcome: await greetingOrFailure(ws), code: await promise }).toEqual({
+      outcome: "TLS handshake failed: self signed certificate",
+      code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+    });
+  });
+});
+
+describe("the CONNECT request", () => {
+  /** The lines of the CONNECT request `connect` makes through a proxy that refuses it. The header lines are sorted. */
+  async function connectRequest(connect: (proxy: { url: string; port: number }) => Promise<unknown>) {
+    using proxy = await startFixedReplyProxy("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n");
+    await connect(proxy);
+    expect(proxy.requests).toHaveLength(1);
+    const [requestLine, ...headers] = proxy.requests[0].split("\r\n").slice(0, -2);
+    return [requestLine, ...headers.sort()];
+  }
+
+  // Both write it with one function.
+  describe.each([
+    [
+      "WebSocket",
+      (proxy: string | { url: string; headers: Record<string, string> }) =>
+        greetingOrFailure(new WebSocket("wss://127.0.0.1:8443/", { proxy })),
+    ],
+    [
+      "fetch",
+      (proxy: string | { url: string; headers: Record<string, string> }) =>
+        fetch("https://127.0.0.1:8443/", { proxy }).catch(() => {}),
+    ],
+  ])("%s", (_, connect) => {
+    test("without options", async () => {
+      expect(await connectRequest(({ url }) => connect(url))).toEqual([
+        "CONNECT 127.0.0.1:8443 HTTP/1.1",
+        "Host: 127.0.0.1:8443",
+        "Proxy-Connection: Keep-Alive",
+      ]);
+    });
+
+    test("credentials in the proxy URL", async () => {
+      expect(await connectRequest(({ port }) => connect(`http://user:pass@127.0.0.1:${port}`))).toEqual([
+        "CONNECT 127.0.0.1:8443 HTTP/1.1",
+        "Host: 127.0.0.1:8443",
+        `Proxy-Authorization: Basic ${btoa("user:pass")}`,
+        "Proxy-Connection: Keep-Alive",
+      ]);
+    });
+
+    test("a Proxy-Authorization header beats credentials in the proxy URL", async () => {
+      const headers = { "Proxy-Authorization": "Bearer token" };
+      expect(
+        await connectRequest(({ port }) => connect({ url: `http://user:pass@127.0.0.1:${port}`, headers })),
+      ).toEqual([
+        "CONNECT 127.0.0.1:8443 HTTP/1.1",
+        "Host: 127.0.0.1:8443",
+        "Proxy-Authorization: Bearer token",
+        "Proxy-Connection: Keep-Alive",
+      ]);
+    });
+
+    test("a Host or Proxy-Connection header replaces the default one", async () => {
+      const headers = { "Host": "other.test", "Proxy-Connection": "close" };
+      expect(await connectRequest(({ url }) => connect({ url, headers }))).toEqual([
+        "CONNECT 127.0.0.1:8443 HTTP/1.1",
+        "Host: other.test",
+        "Proxy-Connection: close",
+      ]);
+    });
+
+    test("header values go out one byte per code unit", async () => {
+      const headers = { "X-Latin1": "café" };
+      expect(await connectRequest(({ url }) => connect({ url, headers }))).toEqual([
+        "CONNECT 127.0.0.1:8443 HTTP/1.1",
+        "Host: 127.0.0.1:8443",
+        "Proxy-Connection: Keep-Alive",
+        "X-Latin1: café",
+      ]);
+    });
+  });
+});

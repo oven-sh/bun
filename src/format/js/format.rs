@@ -709,17 +709,6 @@ impl<'a> Format<'a> for Stmt<'a> {
     }
 }
 
-/// A statement that is followed by another one, which can be empty, in the same list.
-#[derive(Copy, Clone)]
-pub(crate) struct FormatStatementBeforeAnother<'a>(pub(crate) Stmt<'a>);
-
-impl<'a> Format<'a> for FormatStatementBeforeAnother<'a> {
-    #[inline]
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        format_statement(self.0, f);
-    }
-}
-
 fn format_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     if !f.context_mut().has_stack_left() {
         return;

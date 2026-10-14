@@ -1,18 +1,13 @@
 //! The file, its `#!` line, directives, and lists of statements.
 
 use super::semicolon::OptionalSemicolon;
-use super::statements::{
-    CommentPlacement, comment_placements, expression_statement_needs_semicolon,
-    follows_type_cast_comment,
-};
+use super::statements::{expression_statement_needs_semicolon, follows_type_cast_comment};
 use crate::ir::element::TextWidth;
-use crate::js::format::FormatStatementBeforeAnother;
+use crate::js::ast_nodes::node_as_ast_nodes;
 use crate::js::sort_imports::ImportRun;
-use crate::js::trivia::comment_before_semicolon_keeps_its_line;
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::prelude::*;
-use crate::{format_args, write};
-use smallvec::SmallVec;
+use crate::write;
 
 pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
     let source = file.text();
@@ -21,48 +16,22 @@ pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
         f.write_text(&source[..3], Some(TextWidth::single(0)));
     }
     write_hashbang(false, f);
-    // Nothing that a comment could belong to: they are all Prettier's dangling comments of the
-    // program, which have no empty lines between them.
-    if !file.body().is_empty()
-        && file
-            .body()
-            .iter()
-            .all(|it| matches!(it.kind(), StmtKind::Empty))
-    {
-        let comments = f.comments().unprinted_comments();
-        let indent = DanglingIndentMode::None;
-        return write!(
-            f,
-            [
-                FormatDanglingComments::Comments { comments, indent },
-                hard_line_break()
-            ]
-        );
-    }
-    write!(f, FormatStatements(file.body()));
-    let mut rest = f.comments().unprinted_comments();
-    // The empty lines before the first thing in a file go.
-    let is_blank = |before: &[u8]| {
-        (before.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(before))
-            .trim_ascii()
-            .is_empty()
-    };
-    if let Some((first, others)) = rest.split_first()
-        && source
-            .get(..first.span().start as usize)
-            .is_some_and(is_blank)
-    {
-        let (comments, indent) = (CommentList::of(first), DanglingIndentMode::None);
-        write!(f, FormatDanglingComments::Comments { comments, indent });
-        rest = others;
-    }
+    // The program only owns comments if there is no statement to attach them to.
+    let program = node_as_ast_nodes(Node::File(file));
+    write!(
+        f,
+        [
+            leading_comments(program),
+            FormatStatements(file.body()),
+            dangling_comments(program)
+        ]
+    );
     // Behind the comments, if that is all there is in the file.
     let ends_with_empty_line = (file.body().last()).is_some_and(|last| {
         is_directive_before_empty_line(last, f)
             && (source.get(last.span().end as usize..))
                 .is_some_and(|behind| !behind.trim_ascii().is_empty())
     });
-    write!(f, FormatTrailingComments::Comments(rest));
     match ends_with_empty_line {
         true => write!(f, empty_line()),
         false => write!(f, hard_line_break()),
@@ -163,83 +132,19 @@ impl<'a> Format<'a> for FormatStatements<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let mut previous: Option<Stmt<'a>> = None;
         let mut imports = ImportRun::new(f);
-        let last_index = self.0.len().saturating_sub(1);
-        for (index, statement) in self
-            .0
-            .iter()
-            .enumerate()
-            .filter(|(_, it)| it.tag() != StmtTag::Empty)
-        {
-            let write_statement = |f: &mut Formatter<'a>| match index == last_index {
-                true => write!(f, statement),
-                false => write!(f, FormatStatementBeforeAnother(statement)),
-            };
-            let Some(previous_statement) = previous.replace(statement) else {
-                imports.before_statement(statement, f);
-                write_semicolon_before_type_cast_comment(statement, f);
-                write_statement(f);
-                continue;
-            };
-            // Nearly always, what is left between two statements starts its line.
-            let comments = match f.is_quiet() {
-                true => CommentList::empty(),
-                false => f.comments().comments_before(statement.span().start),
-            };
-            let starts_line = |comment: Comment<'_>| {
-                comment.has_newline_before()
-                    || is_behind_empty_statements_that_start_line(previous_statement, comment, f)
-            };
-            let placements = match comments.iter().all(starts_line) {
-                true => SmallVec::new(),
-                false => write_more_trailing_comments(previous_statement, comments, statement, f),
-            };
-            imports.before_separator(statement, placements.is_empty(), f);
-            // `a ⏎ /* comment */; ⏎ b`
-            let is_next_line_empty = match comments.first() {
-                Some(first)
-                    if first.has_newline_before()
-                        && first.span().start < previous_statement.span().end
-                        && comment_before_semicolon_keeps_its_line(f) =>
-                {
-                    f.lines_before(first.span()) > 1
+        for statement in self.0.iter().filter(|it| it.tag() != StmtTag::Empty) {
+            if let Some(previous_statement) = previous.replace(statement) {
+                imports.before_separator(statement, true, f);
+                let is_next_line_empty = !is_behind_semicolon_and_blanks(statement, f)
+                    && is_next_line_empty_after(previous_statement, f);
+                match is_next_line_empty {
+                    true => write!(f, empty_line()),
+                    false => write!(f, hard_line_break()),
                 }
-                None if is_behind_semicolon_and_blanks(statement, f) => false,
-                _ => is_next_line_empty_after(previous_statement, f),
-            };
-            match is_next_line_empty {
-                true => write!(f, empty_line()),
-                false => write!(f, hard_line_break()),
             }
             imports.before_statement(statement, f);
-            for (comment, _) in comments
-                .iter()
-                .zip(&placements)
-                .filter(|(_, placement)| placement.leads())
-            {
-                write!(f, FormatLeadingComments::Comments(CommentList::of(comment)));
-            }
             write_semicolon_before_type_cast_comment(statement, f);
-            write_statement(f);
-        }
-
-        // `a; // comment\n;`: the comments around an empty statement at the end trail `a`.
-        if previous.is_some()
-            && !f.is_quiet()
-            && let Some(last) = self.0.last().filter(|last| last.tag() == StmtTag::Empty)
-        {
-            let end = last.ast_parent().span().end;
-            write!(
-                f,
-                FormatTrailingComments::Comments(f.comments().comments_before(end))
-            );
-        }
-        // `return // a⏎/* b */;`: what `return` has left for the next statement, and there is none.
-        if let Some(last) = previous
-            && !f.is_quiet()
-            && f.options().flavor.is_oxfmt()
-        {
-            let comments = f.comments().comments_before(last.span().end);
-            write!(f, FormatTrailingComments::Comments(comments));
+            write!(f, statement);
         }
         imports.finish(f);
         if let Some(last) = previous
@@ -254,6 +159,7 @@ impl<'a> Format<'a> for FormatStatements<'a> {
 /// `a()⏎⏎; [b].c()`: oxfmt looks for an empty line before a statement, and over a `;` only if that is right before it.
 fn is_behind_semicolon_and_blanks<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
     f.options().flavor.is_oxfmt()
+        && !f.comments().has_comment_before(statement.span().start)
         && (f.file().text().get(..statement.span().start as usize)).is_some_and(|before| {
             let code = before.trim_ascii_end();
             code.len() < before.len()
@@ -262,105 +168,10 @@ fn is_behind_semicolon_and_blanks<'a>(statement: Stmt<'a>, f: &Formatter<'a>) ->
         })
 }
 
-/// `a;⏎;// comment⏎b;`, as bundlers write it: with the empty statement gone the comment starts its line, and for oxfmt it
-/// leads `b`. For Prettier it trails `a`.
-fn is_behind_empty_statements_that_start_line<'a>(
-    previous: Stmt<'a>,
-    comment: Comment<'_>,
-    f: &Formatter<'a>,
-) -> bool {
-    f.options().flavor.is_oxfmt()
-        && previous.span().end <= comment.span().start
-        && (f
-            .source_text()
-            .text_for(&previous.span().between(comment.span()))
-            .iter()
-            .rev())
-        .find(|byte| !matches!(byte, b' ' | b'\t' | b';'))
-        .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
-}
-
 /// `function a() { "use strict";⏎⏎}`: oxfmt keeps the empty line after the last directive, whatever follows, be it
 /// nothing.
 fn is_directive_before_empty_line<'a>(last: Stmt<'a>, f: &Formatter<'a>) -> bool {
     f.options().flavor.is_oxfmt() && last.directive().is_some() && is_next_line_empty_after(last, f)
-}
-
-/// Of `comments`, which are what is left between `previous` and `next`, writes those that trail
-/// `previous`: there is a `;` of `previous`, or an empty statement, between them and what is around
-/// them.
-///
-///     a
-///     // leads b
-///     ; // trails a
-///     ; // trails a
-///     b;
-///
-/// Returns where the comments are, if those that lead `next` have to be written by the caller
-/// because one of them is before one that trails.
-#[cold]
-fn write_more_trailing_comments<'a>(
-    previous: Stmt<'a>,
-    comments: CommentList<'a>,
-    next: Stmt<'a>,
-    f: &mut Formatter<'a>,
-) -> SmallVec<[CommentPlacement; 8]> {
-    let placements = comment_placements(comments, next.span().start, f);
-    // Prettier's `printTrailingComment`
-    let mut is_after_line_comment =
-        (f.comments().printed_comments().last()).is_some_and(|comment| {
-            // It trails `previous`, and is not in it, as in `{ // comment⏎};`: nothing is between it and the end of
-            // `previous` but the `;` and other comments.
-            let end = previous.span().end;
-            let is_blank = |from: u32, to: u32| {
-                (f.source_text()).all_bytes(Span::new(from.min(to), to), |b| {
-                    b.is_ascii_whitespace() || b == b';'
-                })
-            };
-            let mut at = comment.span().end;
-            comment.is_line()
-                && comment.span().start >= previous.span().start
-                && (comments.iter())
-                    .take_while(|it| it.span().start < end)
-                    .all(|it| is_blank(core::mem::replace(&mut at, it.span().end), it.span().start))
-                && is_blank(at, end.max(at))
-        });
-    let mut has_line_suffix = is_after_line_comment;
-    for (comment, _) in comments
-        .iter()
-        .zip(&placements)
-        .filter(|(_, placement)| !placement.leads())
-    {
-        f.comments_mut().mark_printed(comment);
-        if is_after_line_comment {
-            write!(f, line_suffix(&format_args!(hard_line_break(), comment)));
-        } else if comment.is_line() || has_line_suffix {
-            write!(
-                f,
-                [
-                    line_suffix(&format_args!(space(), comment)),
-                    expand_parent()
-                ]
-            );
-        } else {
-            write!(f, [space(), comment]);
-        }
-        has_line_suffix |= comment.is_line() || is_after_line_comment;
-        is_after_line_comment = comment.is_line();
-    }
-
-    let trailing_count = placements
-        .iter()
-        .take_while(|placement| !placement.leads())
-        .count();
-    match placements
-        .iter()
-        .skip(trailing_count)
-        .all(|placement| placement.leads())
-    {
-        true => SmallVec::new(),
-        false => placements,
-    }
 }
 
 /// Prettier's `shouldExpressionStatementPrintOwnComments`: without semicolons, the `;` that a
@@ -380,21 +191,14 @@ fn write_semicolon_before_type_cast_comment_of<'a>(statement: Stmt<'a>, f: &mut 
     let StmtKind::Expr(expression) = statement.kind() else {
         return;
     };
-    let start = statement.span().start;
-    if let Some((_, rest)) = f.comments().comments_before(start).split_last()
-        && follows_type_cast_comment(start, f)
-        && (!f.comments().is_suppressed(start)
-            || semicolon_is_before_cast_comment_of_ignored_statement(f))
+    let node = statement.as_ast_nodes();
+    if let Some((_, rest)) = f.comments().of_node(node).leading.split_last()
+        && follows_type_cast_comment(statement.span().start, f)
+        && !f.comments().is_ignored(node)
         && expression_statement_needs_semicolon(statement, expression, f)
     {
         write!(f, [FormatLeadingComments::Comments(rest), ";"]);
     }
-}
-
-/// Prettier writes the `;` of a statement that is not formatted right before its text. oxfmt keeps the
-/// comment next to its `(`.
-fn semicolon_is_before_cast_comment_of_ignored_statement(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
 }
 
 /// `"use strict";`

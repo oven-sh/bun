@@ -5,9 +5,8 @@ use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
 use super::type_parameters::type_parameters;
 use crate::js::format::{
-    ExprOptions, FormatTypeAnnotation, format_node_without_comments, identifier, write_expression,
+    ExprOptions, FormatTypeAnnotation, format_node, identifier, write_expression,
 };
-use crate::js::trivia::{comments_stay_between_head_and_body, write_head_body_separator};
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typescript::end_of_line_comments;
@@ -224,77 +223,12 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
                 ),
             };
         }
-        let write = |f: &mut Formatter<'a>| {
-            match comments_stay_between_head_and_body(f) && !func.is_arrow() {
-                true => write_head_body_separator(self.span().start, f),
-                false => write!(f, [FormatCommentsBeforeBody(func), space()]),
-            }
-            if is_empty_block(statements) {
-                write!(
-                    f,
-                    [
-                        "{",
-                        format_dangling_comments(self.span()).with_block_indent(),
-                        "}"
-                    ]
-                );
-            } else {
-                write!(f, ["{", block_indent(&FormatStatements(statements)), "}"]);
-            }
-        };
-        format_node_without_comments(AstNodes::FunctionBody(func), f, write);
-    }
-}
-
-/// The comments before the `{` of a function that stay there. A line comment right before the `{`
-/// does not: it is moved into the block. Prettier's `handleLastFunctionParameterComments`.
-struct FormatCommentsBeforeBody<'a>(Func<'a>);
-
-impl<'a> Format<'a> for FormatCommentsBeforeBody<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        if f.is_quiet() {
-            return;
-        }
-        let comments = f
-            .comments()
-            .comments_before(FormatFunctionBody(self.0).span().start);
-        if comments.is_empty() {
-            return;
-        }
-        // Those from before the `(` lead the block, whatever they are.
-        let parameters_start = FormatFormalParameters(self.0).span().start;
-        // After a `=>`, a comment at the end of the line is moved into the block as well:
-        // `handleArrowExpressionComments`.
-        let is_arrow = self.0.is_arrow();
-        let count = (comments.iter())
-            .take_while(|it| {
-                (it.is_block() && !(is_arrow && it.has_newline_after()))
-                    || it.span().end <= parameters_start
-            })
-            .count();
-        let comments = comments.slice(0, count);
-        let (moved, comments) = comments.split_at(
-            comments
-                .iter()
-                .take_while(|it| it.span().end <= parameters_start)
-                .count(),
-        );
-        let (trailing, leading) = comments.split_at(
-            comments
-                .iter()
-                .take_while(|it| !it.has_newline_before())
-                .count(),
-        );
-        write!(
-            f,
-            [
-                space(),
-                FormatLeadingComments::Comments(moved),
-                FormatTrailingComments::Comments(trailing),
-                space(),
-                FormatLeadingComments::Comments(leading)
-            ]
-        );
+        let node = AstNodes::FunctionBody(func);
+        write!(f, space());
+        format_node(node, f, |f| match is_empty_block(statements) {
+            true => write!(f, ["{", dangling_comments(node).with_block_indent(), "}"]),
+            false => write!(f, ["{", block_indent(&FormatStatements(statements)), "}"]),
+        });
     }
 }
 

@@ -260,19 +260,17 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             JSC::ObjectInitializationScope initializationScope(vm);
             array = JSC::JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType), length);
             if (array) {
-                switch (indexingType) {
-                case ArrayWithInt32:
+                // The structure can be ArrayStorage when JSC is "having a bad time".
+                IndexingType actual = array->indexingType();
+                if (hasInt32(actual)) {
                     for (uint32_t i = 0; i < length; i++)
-                        array->initializeIndexWithoutBarrier(initializationScope, i, jsNumber(static_cast<int32_t>(readBits(i))), ArrayWithInt32);
-                    break;
-                case ArrayWithDouble:
+                        array->initializeIndexWithoutBarrier(initializationScope, i, jsNumber(static_cast<int32_t>(readBits(i))), actual);
+                } else if (hasDouble(actual)) {
                     for (uint32_t i = 0; i < length; i++)
-                        array->initializeIndexWithoutBarrier(initializationScope, i, jsDoubleNumber(readFloat(i)), ArrayWithDouble);
-                    break;
-                default:
+                        array->initializeIndexWithoutBarrier(initializationScope, i, jsDoubleNumber(readFloat(i)), actual);
+                } else {
                     for (uint32_t i = 0; i < length; i++)
-                        array->initializeIndexWithoutBarrier(initializationScope, i, jsNumber(readFloat(i)), ArrayWithContiguous);
-                    break;
+                        array->initializeIndexWithoutBarrier(initializationScope, i, isFloat ? jsNumber(readFloat(i)) : jsNumber(static_cast<int32_t>(readBits(i))), actual);
                 }
             }
         }

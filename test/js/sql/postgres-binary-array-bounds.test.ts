@@ -10,6 +10,7 @@
 // before iterating; otherwise slice() reads and writes past the read buffer.
 import { SQL } from "bun";
 import { afterAll, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import {
   listeningServer,
   pgAuthenticationOk,
@@ -344,4 +345,38 @@ const plainArrays: { name: string; oid: number; col: Buffer; expected: unknown }
 test.each(plainArrays)("binary $name decodes to a plain array", async ({ oid, col, expected }) => {
   const result: any = await runMockQuery(col, oid);
   expect(result[0].arr).toEqual(expected);
+});
+
+// An indexed accessor on a prototype puts JSC in "having a bad time" mode: every
+// new array gets ArrayStorage, whatever indexing type was asked for. The packed
+// fill must follow the array's real storage. A subprocess, so this process stays sane.
+test("binary int4[] and float4[] decode while JSC is having a bad time", async () => {
+  current = {
+    oid: INT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 4, lbound: 1 }),
+      int4Elems([1, 2, 3, 4]),
+    ]),
+  };
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      Object.defineProperty(Object.prototype, "123456", { get() { return 0; }, configurable: true });
+      delete Object.prototype["123456"];
+      const { SQL } = require("bun");
+      const sql = new SQL({ url: "postgres://u@127.0.0.1:${port}/db", max: 1, idleTimeout: 5, connectionTimeout: 5 });
+      const rows = await sql\`select x\`.simple();
+      console.log(JSON.stringify(rows[0].arr), Array.isArray(rows[0].arr), rows[0].arr[3]);
+      await sql.close();
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("[1,2,3,4] true 4\n");
+  expect(exitCode).toBe(0);
 });

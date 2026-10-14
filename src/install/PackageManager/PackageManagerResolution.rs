@@ -331,7 +331,7 @@ impl PackageManager {
                     self.options.remote_package_features
                 };
                 // even if optional dependencies are enabled, it's still allowed to fail
-                if failed_dep.behavior.is_optional() || !failed_dep.behavior.is_enabled(features) {
+                if !failed_dep.behavior.must_exist() || !failed_dep.behavior.is_enabled(features) {
                     continue;
                 }
 

@@ -5200,6 +5200,10 @@ describe("bundler", () => {
             const partial = require("./star.js");
             const p = partial.own, q = partial.first, r = partial.second;
             console.log(p, q, r, ns.log.join());
+            const patterned = await import("./star.js");
+            const { own } = patterned;
+            const s = patterned.first, t = patterned.second;
+            console.log(own, s, t, ns.log.join());
           }
           main();
         `,
@@ -5212,6 +5216,7 @@ describe("bundler", () => {
           "1 2 1 first,second,first",
           "2 1 first,second,first,second,first",
           "own 1 2 first,second,first,second,first,first,second",
+          "own 1 2 first,second,first,second,first,first,second,first,second",
         ].join("\n"),
       },
       onAfterBundle(api) {
@@ -5220,6 +5225,8 @@ describe("bundler", () => {
         expect(out).toContain("{ second: d, first: e } = awaited");
         // A local with a bound read keeps its declarators apart.
         expect(out).toContain("p = own, q = partial.first, r = partial.second");
+        // A name that a pattern binds is no read off the local.
+        expect(out).toContain("{ first: s, second: t } = patterned");
       },
     });
   }

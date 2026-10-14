@@ -684,7 +684,6 @@ describe("only block", () => {
     const normalize = xml =>
       xml.replaceAll(/ hostname="[^"]*"/g, "").replaceAll(/ time="\d+(\.\d+)?(e-\d+)?"/g, ' time="#"');
 
-    /** Runs `bun test` on `files`, and returns the report with `#` for each time and without the host names. */
     async function report(args, bunfig) {
       using dir = tempDir("junit-suites", bunfig ? { ...files, "bunfig.toml": bunfig } : files);
       await using proc = spawn([bunExe(), "test", ...args], {
@@ -730,7 +729,7 @@ describe("only block", () => {
         "  b.test.js",
         "    only block",
       ]);
-      // The attributes of <testsuites> and of the <testsuite> of each file.
+      // Attributes of <testsuites> and of each file's top-level <testsuite>.
       const totals = xml =>
         Array.from(xml.matchAll(/^ {0,2}<testsuites? name="[^"]*"(?: file="[^"]*")? (.*)>$/gm), m => m[1]);
       expect(totals(byDefault.xml)).toEqual(totals(flat));

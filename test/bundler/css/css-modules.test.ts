@@ -586,8 +586,7 @@ describe("css", () => {
     },
   });
 
-  // `.a` and `.b` compose each other and `.r`, outside that cycle, leads into
-  // it. This used to overflow the stack.
+  // `.r` is outside the `.a`/`.b` composes cycle but leads into it, which must not overflow the stack.
   itBundled("css-module/ComposesCycleWithoutTheExportedClass", {
     files: {
       "/entry.js": `

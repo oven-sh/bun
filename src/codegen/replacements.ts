@@ -98,8 +98,8 @@ replacements.push({
   to: "extends __no_intrinsic__%1",
 });
 
-// The classes and objects of ZigGlobalObject.lut.txt, read from NativeGlobals (ZigGlobalObject.cpp): Blob -> @natives.Blob
-// Not its functions: such a row makes a new function each time it is evaluated.
+// Classes and objects in ZigGlobalObject.lut.txt. `Blob` becomes `@natives.Blob` (NativeGlobals, ZigGlobalObject.cpp).
+// Functions are left out because evaluating a function row creates a new function each time.
 export const nativeGlobals = Array.from(
   readFileSync(join(import.meta.dir, "../jsc/bindings/ZigGlobalObject.lut.txt"), "utf8").matchAll(
     /^ +(\w+) +(\S+) +(\S+)$/gm,
@@ -111,7 +111,7 @@ export const nativeGlobals = Array.from(
   .map(({ 1: name }) => name)
   .filter(name => !globalsToPrefix.includes(name) && name !== "Bun" && name !== "process");
 
-/** The defines of the two lists above cannot see through `const { Blob } = globalThis`. */
+/** The defines for globalsToPrefix and nativeGlobals don't apply to `const { Blob } = globalThis`. */
 export function assertNoDestructuredGlobalThis(source: string, file: string) {
   if (/}\s*=\s*globalThis\b/.test(source)) {
     throw new Error(

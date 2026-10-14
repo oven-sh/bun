@@ -1688,7 +1688,7 @@ function ensureUrlHasProtocol<T extends string | URL>(
   return `${protocol}://${url}` as never;
 }
 
-/** What follows asks `instanceof URL`: a URL of another implementation (jsdom's) goes on as a string. */
+/** The code below checks `instanceof URL`, so a foreign URL (e.g. jsdom's) is turned into its href string. */
 function textOfForeignURL<T>(value: T): T | string {
   if (typeof value !== "object" || value === null || value instanceof URL) return value;
   return require("internal/url").isURL(value) ? value.href : value;
@@ -1719,7 +1719,7 @@ function parseConnectionDetailsFromOptionsOrEnvironment(
   let sslMode: SSLMode | null = null;
   let adapter: Bun.SQL.__internal.Adapter | null = null;
 
-  // Options may have an `href` and a `protocol` too, of their own: a URL inherits its accessors.
+  // An options object can have its own `href` and `protocol`. A URL inherits them as accessors.
   if (
     typeof stringOrUrlOrOptions === "object" &&
     stringOrUrlOrOptions &&

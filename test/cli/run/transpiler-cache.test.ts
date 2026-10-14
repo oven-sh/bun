@@ -718,7 +718,7 @@ describe.concurrent("`bun test` and `bun run`", () => {
     expect(exitCode).toBe(0);
   }
 
-  /** The entries of a cache directory, by the N of the `"entry:N:"` in the source of each. */
+  /** Cache entries keyed by the N of the `"entry:N:"` marker each source embeds. */
   function readEntries(cache: string) {
     const entries = new Map<number, { bytes: Buffer; key: string; output: Buffer; written: bigint }>();
     for (const name of readdirSync(cache)) {
@@ -727,7 +727,7 @@ describe.concurrent("`bun test` and `bun run`", () => {
       if (!id) continue;
       entries.set(Number(id[1]), {
         bytes,
-        // 0: cache_version u32, 4: module_type u8, 5: output_encoding u8, 6: features_hash u64
+        // Entry header: cache_version u32 at 0, module_type u8 at 4, output_encoding u8 at 5, features_hash u64 at 6.
         key: bytes.subarray(6, 14).toString("hex"),
         output: Buffer.concat([bytes.subarray(0, 6), bytes.subarray(14)]),
         written: statSync(join(cache, name), { bigint: true }).mtimeNs,
@@ -758,7 +758,7 @@ describe.concurrent("`bun test` and `bun run`", () => {
       ...Object.fromEntries(files.map((file, i) => [file, `export const id: string = "entry:${i}:";\n${padding}`])),
       ...loader(files, "import"),
     });
-    // How many entries each run of a sequence wrote, all runs of it with one cache.
+    // Entries written by each run. All runs of a sequence share one cache.
     const written = await Promise.all(
       (
         [
@@ -786,7 +786,6 @@ describe.concurrent("`bun test` and `bun run`", () => {
     ]);
   }, 60_000);
 
-  // Whether what the file is transpiled to may depend on `bun test`.
   const globals = [
     ...["test", "it", "describe", "expect", "expectTypeOf", "beforeAll", "beforeEach", "afterEach", "afterAll", "jest"],
     ...["vi", "xit", "xtest", "xdescribe", "onTestFinished", "suite", "vitest", "onTestFailed", "assertType"],
@@ -989,7 +988,6 @@ describe.concurrent("`bun test` and `bun run`", () => {
       });
       const modes = Object.keys(commands) as Mode[];
 
-      // Each mode after each other, every pair with a cache of its own.
       const pairs = await Promise.all(
         modes
           .flatMap(first => modes.filter(second => second !== first).map(second => [first, second] as const))
@@ -1001,24 +999,21 @@ describe.concurrent("`bun test` and `bun run`", () => {
             return { first, second, afterFirst, afterSecond: readEntries(cache) };
           }),
       );
-      // What each mode transpiles the files to, with nothing in the cache.
       const fresh = Object.fromEntries(pairs.map(pair => [pair.first, pair.afterFirst])) as Record<
         Mode,
         ReturnType<typeof readEntries>
       >;
       for (const mode of modes) expect([mode, fresh[mode].size]).toEqual([mode, names.length]);
 
-      // A file that uses nothing of `bun test` has the key of "nothing" with its extension, in every mode.
+      // A file that uses no `bun test` API gets the same key as the "nothing" file of its extension, in every mode.
       const keyOfNothing = (i: number) => fresh.run.get(names.indexOf(`nothing, ${sources[names[i]][0]}`))!.key;
       const expected = names.filter(name => sources[name][2]);
       for (const mode of modes) {
         expect([mode, names.filter((_, i) => fresh[mode].get(i)!.key !== keyOfNothing(i))]).toEqual([mode, expected]);
       }
-      // Any other has one key for each mode.
       expect(names.filter((_, i) => new Set(modes.map(mode => fresh[mode].get(i)!.key)).size === modes.length)).toEqual(
         expected,
       );
-      // And only such a file is transpiled to something else in one of them.
       const differs = names.filter((_, i) =>
         modes.some(mode => !fresh[mode].get(i)!.output.equals(fresh.run.get(i)!.output)),
       );
@@ -1032,14 +1027,14 @@ describe.concurrent("`bun test` and `bun run`", () => {
       for (const { first, second, afterFirst, afterSecond } of pairs) {
         const differ = (entries: typeof afterFirst, mode: Mode) =>
           names.filter((_, i) => !entries.get(i)?.bytes.equals(fresh[mode].get(i)!.bytes));
-        // What the cache holds after a run is what that run would have made with nothing in it,
+        // After each run the cache holds exactly what that run would write to an empty cache.
         expect([first, second, differ(afterFirst, first), differ(afterSecond, second)]).toEqual([
           first,
           second,
           [],
           [],
         ]);
-        // and the second run wrote none of what the two share.
+        // The second run rewrites only the entries the two modes don't share.
         expect([
           first,
           second,

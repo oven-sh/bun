@@ -213,7 +213,7 @@ extern "C" void Bun__deleteDeferredWorkTask(Bun::JSCDeferredWorkTask* job)
 
 }
 
-// Atomics.waitAsync() and WebAssembly.compileStreaming() settle their promise without keeping the event loop alive for it.
+// Atomics.waitAsync() and WebAssembly.compileStreaming() can still settle a promise but don't keep the event loop alive.
 extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__hasDeferredWorkNotKeepingEventLoopAlive(Zig::GlobalObject* globalObject)
 {
     auto& scheduler = WebCore::clientData(globalObject->vm())->deferredWorkTimer;

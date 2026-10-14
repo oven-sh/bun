@@ -179,7 +179,7 @@ test("coverage leaves out the modules generated for ?worker, ?init and ?inline, 
   expect(exitCode).toBe(0);
 });
 
-// Such a name does not exist on Windows.
+// Windows doesn't allow `?` in a file name.
 test.skipIf(isWindows)("a file with ? in its name is not left out of coverage: it cannot be loaded", async () => {
   using dir = tempDir("cov", {
     "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,

@@ -30,7 +30,6 @@ namespace Bun {
 
 using namespace JSC;
 
-// What a timer keeps of the arguments for its callback: undefined for none, the value itself for one, a JSCellButterfly for more.
 static ALWAYS_INLINE JSValue callbackArguments(JSGlobalObject* globalObject, ThrowScope& scope, CallFrame* callFrame, unsigned first)
 {
     size_t argumentCount = callFrame->argumentCount();
@@ -215,8 +214,7 @@ JSValue createSetImmediateFunction(VM& vm, JSObject* globalObject)
     return createTimerFunction(vm, globalObject, "setImmediate"_s, functionSetImmediate, setImmediatePromisifyCustomGetter);
 }
 
-// The functions `jest.useFakeTimers()` puts in place of the real ones. What they schedule is on the fake clock
-// for as long as they are installed: one that `jest.useRealTimers()` has taken off its owner does what the real one does.
+// jest.useFakeTimers() installs these. A reference kept after jest.useRealTimers() behaves like the real function.
 
 static bool calleeIsInstalled(CallFrame* callFrame)
 {
@@ -238,7 +236,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFakeSetImmediate, (JSGlobalObject * globalObjec
     return scheduleImmediate(globalObject, callFrame, calleeIsInstalled(callFrame) ? Bun__FakeTimers__setImmediate : Bun__Timer__setImmediate);
 }
 
-// util.promisify(setTimeout)(delay, value). `this` is bound to the `setTimeout` it is the promisified form of.
+// util.promisify(setTimeout)(delay, value). `this` is bound to the fake setTimeout it belongs to.
 JSC_DEFINE_HOST_FUNCTION(functionFakeSetTimeoutPromisified, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -250,7 +248,6 @@ JSC_DEFINE_HOST_FUNCTION(functionFakeSetTimeoutPromisified, (JSGlobalObject * gl
     return JSValue::encode(promise);
 }
 
-// util.promisify(setImmediate)(value). `this` is bound likewise.
 JSC_DEFINE_HOST_FUNCTION(functionFakeSetImmediatePromisified, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -304,7 +301,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFakeRequestAnimationFrame, (JSGlobalObject * gl
     RELEASE_AND_RETURN(scope, Bun__FakeTimers__requestAnimationFrame(globalObject, JSValue::encode(callFrame->jsCallee()), JSValue::encode(callback)));
 }
 
-// The values of `Api` in FakeTimers.rs.
+// Must match `Api` in FakeTimers.rs.
 enum class FakeTimerFunction : uint8_t {
     SetTimeout,
     ClearTimeout,
@@ -334,7 +331,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__FakeTimers__cr
         auto* promisified = createPromisified(setTimeout, "setTimeout"_s, functionFakeSetTimeoutPromisified);
         RETURN_IF_EXCEPTION(scope, {});
         setTimeout->putDirect(vm, promisifyCustomSymbol(vm), promisified);
-        // @testing-library/dom takes an own `clock` property of `setTimeout` to mean that Jest's fake timers are on.
+        // @testing-library/dom detects Jest's fake timers by an own `clock` property on setTimeout.
         setTimeout->putDirect(vm, Identifier::fromString(vm, "clock"_s), jsBoolean(true));
         return JSValue::encode(setTimeout);
     }
@@ -365,7 +362,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__FakeTimers__cr
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// What each fake replaced, by fake: a `jest.spyOn()` that is restored after `jest.useRealTimers()` puts the fake it saw back on its owner.
+// Maps each fake to the function it replaced, for when a jest.spyOn() restored after jest.useRealTimers() puts a fake back.
 extern "C" JSC::EncodedJSValue Bun__FakeTimers__createOriginals(Zig::GlobalObject* globalObject)
 {
     return JSValue::encode(JSWeakMap::create(JSC::getVM(globalObject), globalObject->weakMapStructure()));
@@ -376,7 +373,6 @@ extern "C" void Bun__FakeTimers__setOriginal(Zig::GlobalObject* globalObject, JS
     uncheckedDowncast<JSWeakMap>(JSValue::decode(originals))->set(JSC::getVM(globalObject), JSValue::decode(fake).asCell(), JSValue::decode(original));
 }
 
-// Empty: `value` is not a fake.
 extern "C" JSC::EncodedJSValue Bun__FakeTimers__originalOf(JSC::EncodedJSValue originals, JSC::EncodedJSValue encodedValue)
 {
     JSValue value = JSValue::decode(encodedValue);
@@ -386,14 +382,14 @@ extern "C" JSC::EncodedJSValue Bun__FakeTimers__originalOf(JSC::EncodedJSValue o
     return JSValue::encode(fakes->get(value.asCell()));
 }
 
-// What `owner` holds under `name` itself. Runs no getter: an accessor is a cell that is no fake.
+// getDirect() so no getter runs. An accessor comes back as a GetterSetter, which is never a fake.
 extern "C" JSC::EncodedJSValue Bun__FakeTimers__getDirect(Zig::GlobalObject* globalObject, JSC::EncodedJSValue owner, const BunString* name)
 {
     auto& vm = JSC::getVM(globalObject);
     return JSValue::encode(asObject(JSValue::decode(owner))->getDirect(vm, Identifier::fromString(vm, name->toWTFString(BunString::ZeroCopy))));
 }
 
-// node:timers and node:timers/promises keep the functions that are the globals when they are first loaded.
+// node:timers and node:timers/promises capture the globals when first loaded, so load them before installing fakes.
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__FakeTimers__loadNodeTimers(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -409,7 +405,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__FakeTimers__processO
     return JSValue::encode(globalObject->processObject());
 }
 
-// NaN: `setSystemTime()` has not set a time.
+// NaN if setSystemTime() hasn't set a time.
 extern "C" [[ZIG_EXPORT(nothrow)]] double Bun__FakeTimers__overriddenDateNow(JSC::JSGlobalObject* globalObject)
 {
     return globalObject->overridenDateNow;

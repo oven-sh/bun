@@ -1,4 +1,4 @@
-// The expected values in the tables are what Vite 8.3 evaluates the same call to in the same tree.
+// Expected values are what Vite 8.3 evaluates the same call to in the same tree.
 export type Entry = [key: string, kind: "lazy" | "eager", value: unknown];
 export type Case = [code: string, expected: Entry[]];
 

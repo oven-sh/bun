@@ -1938,7 +1938,7 @@ describe("DONT_CONTEXTIFY", () => {
       expect.objectContaining({ name: "EvalError" }),
     );
 
-    // There is no object to make a new context around: the code runs in the context it is given.
+    // A DONT_CONTEXTIFY context has no sandbox object to wrap, so runInNewContext() runs the code in that context.
     const ctx = createContext(constants.DONT_CONTEXTIFY);
     run("var declaredVar = 1; let declaredLet = 2", ctx);
     expect(ctx.declaredVar).toBe(1);
@@ -1970,7 +1970,7 @@ describe.each([
   ["DONT_CONTEXTIFY", () => createContext(constants.DONT_CONTEXTIFY)],
   ["a contextified object", () => createContext({})],
 ])("a bare identifier in %s", (_, makeContext) => {
-  // What jsdom does: the accessors and the Proxy are made in the outer realm, in strict mode.
+  // Mirrors jsdom, which creates its accessors and Proxy in the outer realm, in strict mode.
   function receiverName(inner: object, receiver: unknown) {
     if (receiver === inner) return "globalThis";
     if (receiver === globalThis) return "the outer globalThis";
@@ -2024,7 +2024,7 @@ describe.each([
         return Reflect.set(target, key, value, receiver);
       },
     });
-    // The running program installs it: https://github.com/oven-sh/bun/issues/42331
+    // The script installs the prototype while it runs, as in https://github.com/oven-sh/bun/issues/42331
     inner.install = () => Object.setPrototypeOf(inner, Object.create(proxy));
 
     expect(
@@ -2044,7 +2044,7 @@ describe.each([
   });
 });
 
-// With such a cycle, looking up a name that nothing has never ends: hence another process, which is killed.
+// A cycle would make a missing-name lookup loop forever, so this runs in a subprocess with a timeout.
 test.concurrent("the prototype chain of the globalThis of a context cannot lead back to it", async () => {
   const fixture = /* js */ `
     const vm = require("node:vm");
@@ -2135,7 +2135,6 @@ test.concurrent("the prototype chain of the globalThis of a context cannot lead 
   });
 });
 
-// The global of one context is the contextified object of the next.
 test.concurrent("operations on contexts that are nested too deeply are a RangeError", async () => {
   const fixture = /* js */ `
     const vm = require("node:vm");
@@ -2169,7 +2168,7 @@ test.concurrent("operations on contexts that are nested too deeply are a RangeEr
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", fixture],
-    // So small a stack is used up by few enough contexts to make them here. What does not check goes on beyond this limit.
+    // A small stack limit, so few contexts overflow it. An operation that skips the stack check keeps going past it.
     env: { ...bunEnv, BUN_JSC_maxPerThreadStackUsage: isDebug || isASAN ? "450000" : "200000" },
     stdout: "pipe",
     stderr: "pipe",
@@ -2200,7 +2199,7 @@ test.concurrent("DONT_CONTEXTIFY: `this` of an accessor does not depend on how h
         })();
         wrong\`, vm.createContext(vm.constants.DONT_CONTEXTIFY)));`,
     ],
-    // The optimizing tiers take over at a fixed iteration instead of whenever their threads are done.
+    // Makes tier-up happen at a fixed iteration instead of whenever the JIT threads finish.
     env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
     stderr: "pipe",
   });
@@ -2208,7 +2207,7 @@ test.concurrent("DONT_CONTEXTIFY: `this` of an accessor does not depend on how h
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
 });
 
-// Running code in it made the global its own contextified object: every lookup recursed until the stack overflowed.
+// As a context, the global would be its own contextified object and every lookup would overflow the stack.
 test.concurrent("the globalThis of a contextified context is not itself a context", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -2233,7 +2232,7 @@ test.concurrent("the globalThis of a contextified context is not itself a contex
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false\n" + rejected + rejected, stderr: "", exitCode: 0 });
 });
 
-// Every expected value is what Node.js answers.
+// Every expected value is what Node.js returns.
 describe.each([
   ["is", (proxy: object) => proxy],
   ["inherits from", (proxy: object) => Object.create(proxy)],
@@ -2299,7 +2298,7 @@ describe.each([
     ).toEqual([8, 10, 2, 3, 10, 11, true, true]);
     expect(runInContext("[typeof created, counter]", context)).toEqual([typeof sandbox.created, sandbox.counter]);
     expect(target.counter).toBe(sandbox === proxy ? 10 : 1);
-    // Strict code stores to what the contextified object has itself. For Node.js a Proxy has nothing itself.
+    // Strict code only stores to the contextified object's own properties. Node.js treats a Proxy as having none.
     if (sandbox !== proxy) {
       expect(() => runInContext("'use strict'; counter = 5", context)).toThrow(notDefined("counter"));
       expect(
@@ -2349,7 +2348,7 @@ describe.each([
       ["viaTrap", true],
       ["viaTrap", true],
     ]);
-    // The contextified object never gets into the context.
+    // The contextified object never leaks into the context. It reads back as the global.
     expect(runInContext("itself === this", context)).toBe(true);
 
     const trapsRead: (string | symbol)[] = [];
@@ -2456,7 +2455,7 @@ describe.each([
           console.log(vm.runInContext(code, vm.createContext(${relation === "is"} ? proxy : Object.create(proxy))).join());
         }`,
       ],
-      // The optimizing tiers take over at a fixed iteration instead of whenever their threads are done.
+      // Makes tier-up happen at a fixed iteration instead of whenever the JIT threads finish.
       env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
       stderr: "pipe",
     });
@@ -3116,7 +3115,7 @@ test("SourceTextModule#evaluate() arms the timeout when the number is boxed as a
 });
 
 // A vm timeout that lands while a host function beneath the timed script is spinning a nested event-loop
-// wait (Bun.build() ticks the loop until the promise of a plugin's setup() settles) must unwind to the run and surface as
+// wait (Bun.build() ticks the loop until a plugin's setup() promise settles) must unwind to the run and surface as
 // ERR_SCRIPT_EXECUTION_TIMEOUT; the nested wait used to keep ticking over the pending termination (a hang).
 // In a child, like the other unbounded waits above.
 test.concurrent("timeout during a nested event-loop wait beneath the script", async () => {

@@ -868,11 +868,11 @@ template<typename, JSC::SubspaceAccess mode> JSC::GCClient::IsoSubspace* NodeVMG
 
 NodeVMGlobalObject* NodeVMGlobalObject::create(JSC::VM& vm, NodeVMContextOptions options, JSValue importer, JSObject* contextifiedObject)
 {
-    // A Structure names its realm: one shared by every context would keep the last of them alive.
+    // A Structure points at its realm, so sharing one across contexts would keep the last context alive.
     auto* structure = createStructure(vm);
     auto* cell = new (NotNull, JSC::allocateCell<NodeVMGlobalObject>(vm)) NodeVMGlobalObject(vm, structure, options, importer);
     cell->finishCreation(vm);
-    // After finishCreation(), which reads and deletes properties of the bare global.
+    // Must be set after finishCreation(), which reads and deletes the bare global's properties.
     cell->m_sandbox.setMayBeNull(vm, cell, contextifiedObject);
     defaultGlobalObject(vm)->addDerivedRealm(cell);
     return cell;
@@ -1064,7 +1064,7 @@ void NodeVMGlobalObject::drainOwnMicrotasks()
     microtaskQueue().performMicrotaskCheckpoint</* useCallOnEachMicrotask */ true>(vm, [](JSGlobalObject*, JSGlobalObject*) {});
 }
 
-// The contextified object can be the global of another context, whose contextified object can be another one's, and so on.
+// The contextified object can itself be another context's global, so forwarding can recurse arbitrarily deep.
 static bool isSafeToForwardToContextifiedObject(JSGlobalObject* globalObject, ThrowScope& scope)
 {
     if (scope.vm().isSafeToRecurseSoft()) [[likely]]
@@ -1077,7 +1077,7 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
 {
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
 
-    // JSC stores to a bare identifier with the scope as the receiver, which setters and Proxy traps never get to see.
+    // JSC passes the scope as the receiver when storing to a bare identifier. Setters and Proxy traps must see globalThis.
     if (slot.thisValue() == thisObject)
         slot.setThisValue(thisObject->globalThis());
 
@@ -1127,7 +1127,7 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
 }
 
-// [[Get]] that says whether the property exists. JSC's Proxy has every property; V8's has what its target has unless it has a `get` trap.
+// [[Get]] that reports whether the property exists. A JSC Proxy always says yes, so without a `get` trap ask its target, like V8.
 static bool getPropertySlotOfContextifiedObject(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, PropertySlot& slot)
 {
     NO_TAIL_CALLS();
@@ -1135,7 +1135,7 @@ static bool getPropertySlotOfContextifiedObject(JSGlobalObject* globalObject, JS
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // A Proxy can be on the prototype chain of its own target.
+    // A Proxy can be on its own target's prototype chain.
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
         return false;
@@ -1151,7 +1151,7 @@ static bool getPropertySlotOfContextifiedObject(JSGlobalObject* globalObject, JS
             if (!getTrap)
                 RELEASE_AND_RETURN(scope, getPropertySlotOfContextifiedObject(globalObject, target, propertyName, slot));
 
-            // The rest of performProxyGet() in JSC's ProxyObject.cpp, which would read the trap from the handler a second time.
+            // Copied from performProxyGet() in JSC's ProxyObject.cpp. Calling it would read the trap from the handler twice.
             MarkedArgumentBuffer arguments;
             arguments.append(target);
             arguments.append(identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, propertyName.uid())));
@@ -1190,12 +1190,12 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
 
-    // JSC looks a bare identifier up with the scope as the receiver, which getters and Proxy traps never get to see.
+    // As in put(), getters and Proxy traps must see globalThis as the receiver, not the scope.
     JSValue thisValue = slot.thisValue() == thisObject ? thisObject->globalThis() : slot.thisValue();
 
     if (JSObject* contextifiedObject = thisObject->contextifiedObject()) {
         if (slot.internalMethodType() == JSC::PropertySlot::InternalMethodType::Get) {
-            // Not `slot`: a Proxy taints the slot it fills, which tells JSC to ask [[HasProperty]] whether a variable exists.
+            // A separate slot, because a Proxy taints the one it fills and JSC then asks [[HasProperty]] whether the variable exists.
             PropertySlot contextifiedSlot(contextifiedObject, PropertySlot::InternalMethodType::Get);
             bool result = getPropertySlotOfContextifiedObject(globalObject, contextifiedObject, propertyName, contextifiedSlot);
             RETURN_IF_EXCEPTION(scope, false);
@@ -1500,7 +1500,7 @@ bool NodeVMGlobalObject::setPrototype(JSObject* object, JSGlobalObject* globalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* globalThis = uncheckedDowncast<NodeVMGlobalObject>(object)->globalThis();
 
-    // JSC's cycle check looks for `object` among the prototypes that objects store. Script only ever has globalThis, which stands for it.
+    // JSC's cycle check looks for `object` in the chain, but user code can only put its JSGlobalProxy (globalThis) there.
     for (JSValue next = prototype; next.isObject() && asObject(next)->type() != ProxyObjectType; next = asObject(next)->getPrototypeDirect()) {
         if (next == globalThis)
             return typeError(globalObject, scope, shouldThrowIfCantSet, "cyclic __proto__ value"_s);
@@ -1508,7 +1508,7 @@ bool NodeVMGlobalObject::setPrototype(JSObject* object, JSGlobalObject* globalOb
 
     bool didSet = Base::setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
     RETURN_IF_EXCEPTION(scope, false);
-    // The one globalThis stores is what that check goes on from when it meets globalThis.
+    // Keep the proxy's stored prototype in sync, since JSC's cycle check walks through it.
     if (didSet && globalThis->getPrototypeDirect() != prototype)
         globalThis->setPrototypeDirect(vm, prototype);
     return didSet;

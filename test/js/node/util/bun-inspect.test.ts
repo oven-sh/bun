@@ -144,7 +144,7 @@ describe("Bun.inspect", () => {
     expect(Bun.inspect({ a: { b: { c: { d: 1 } } } }, { depth: 0 })).toEqual("{\n  a: [Object ...],\n}");
   });
 
-  // As in Node, where these use the `inspect` that node:util started with.
+  // Like Node, whose printers keep using the `inspect` that node:util started with.
   it.concurrent.each([
     `util.inspect = 5;`,
     `util.inspect = {};`,

@@ -1,4 +1,4 @@
-// Stands in for `vite/client`: a property on `ImportMeta`, with options and type parameters that Bun's `glob` lacks.
+// Stand-in for `vite/client`. Its `ImportMeta.glob` is a property, with options and type parameters Bun's lacks.
 
 interface ViteGlobOptions<Eager extends boolean, As extends string> {
   as?: As;

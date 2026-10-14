@@ -2259,8 +2259,8 @@ describe.skipIf(!isWindows)("Bun.connect named-pipe client Handlers lifecycle", 
 
 // A socket over a Windows named pipe frees its native context from a task
 // that is queued when the socket closes. A handler can close the socket and
-// then spin the event loop before it returns (`Bun.build()` blocks on the promise
-// of a plugin's `setup()` and runs queued tasks), so the context is gone by the time the
+// then spin the event loop before it returns (`Bun.build()` blocks on a plugin's
+// `setup()` promise and runs queued tasks), so the context is gone by the time the
 // libuv read callback that invoked the handler gets control back. The
 // callback must keep the context alive until it is done with it.
 describe.concurrent.skipIf(!isWindows)("named-pipe socket closed and event loop spun inside a read callback", () => {

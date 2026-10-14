@@ -498,7 +498,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
 
     } else {
         JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message);
-        // A getter that throws is no message.
+        // A `message` getter that throws counts as no message.
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
         except.message = message ? Bun::toStringRef(global, message) : Bun::toStringRef(err->sanitizedMessageString(global));
@@ -861,7 +861,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(global));
     toZigException(JSC::JSValue::decode(jsException), global, exception);
-    // The caller prints what could be read. What could not be is nobody's to catch.
+    // The caller prints whatever could be read, so drop anything the error's getters threw.
     (void)scope.clearExceptionExceptTermination();
 }
 

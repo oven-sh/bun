@@ -67,11 +67,8 @@ async function run(cwd: string, ...args: string[]) {
   return { stdout, stderr, exitCode };
 }
 
-// The default export of a `*.module.css` import is the class-name map
-// `Bun.build` emits for that file.
 describe.concurrent("css module exports", () => {
-  // Imports entry.ts as it is and as `Bun.build` bundles it. One process does
-  // both: scoped names hash the path relative to the working directory.
+  // The runtime import and `Bun.build` share one process because scoped names hash the path relative to the cwd.
   const parity = `
     import * as runtime from "./entry.ts";
     await Bun.build({ entrypoints: ["./entry.ts"], target: "bun", outdir: "out" });
@@ -83,7 +80,7 @@ describe.concurrent("css module exports", () => {
     const { stdout, stderr, exitCode } = await run(cwd, "parity.ts");
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     const { runtime, bundled } = JSON.parse(stdout);
-    // As strings, so that the order of the keys counts.
+    // Compare as strings so key order counts.
     expect(JSON.stringify(runtime)).toBe(JSON.stringify(bundled));
     return runtime;
   }
@@ -324,8 +321,7 @@ describe.concurrent("css module exports", () => {
     expect(await runtimeAndBundled(String(dir))).toEqual({ empty: {}, noLocals: {} });
   });
 
-  // What is wrong with the CSS never fails the import: it is skipped, as a
-  // browser skips it, and nothing is printed. `Bun.build` goes on rejecting it.
+  // At runtime invalid CSS is skipped silently, like in a browser. `Bun.build` still rejects it.
   const skipping = `
     const results = await Promise.all(
       process.argv.slice(2).map(async file => {
@@ -390,7 +386,7 @@ describe.concurrent("css module exports", () => {
         exports: { head: "head_AaIjDQ", foot: "foot_AaIjDQ" },
         bundler: "Unexpected token: ;",
       },
-      // Up to the next "{", everything is the selector of the next rule.
+      // Everything up to the next "{" parses as the next rule's selector, so that rule is dropped too.
       "line-comment-before-a-rule.module.css": {
         css: `.one { color: red }\n// comment\n.two { color: red }\n.three { color: red }`,
         exports: { one: "one_2CjRWA", three: "three_2CjRWA" },
@@ -431,7 +427,7 @@ describe.concurrent("css module exports", () => {
         exports: { base: "base_dl5igQ", a: "base_dl5igQ a_dl5igQ", b: "base_dl5igQ b_dl5igQ" },
         bundler: "Unexpected end of input",
       },
-      // The names a selector had before it went wrong are kept.
+      // Names parsed before the selector's error are still exported.
       "deep-combinator.module.css": {
         css: `.outer >>> .inner { color: red }\n.next { color: red }`,
         exports: { outer: "outer_AQnDcA", next: "next_AQnDcA" },
@@ -625,7 +621,7 @@ describe.concurrent("css module exports", () => {
     using dir = tempDir("css-module-long-composes", {
       "e.ts": `import styles from "./a.module.css";\nconsole.log(JSON.stringify(styles));`,
     });
-    // Its parent directory exists, so the resolver goes on to try the name with each extension.
+    // The parent directory exists, so the resolver goes on to append each extension to the long name.
     const root = String(dir).replaceAll("\\", "/") + "/";
     const limit = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
     const names: string[] = [];
@@ -702,7 +698,7 @@ describe.concurrent("css module exports", () => {
   test("nested rules, required with little stack left", async () => {
     using dir = tempDir("css-module-little-stack", {
       "a.module.css": Buffer.alloc(150 * 3, ".a{").toString() + Buffer.alloc(150, "}").toString(),
-      // On the main thread, JavaScript runs out of stack long before native code does.
+      // In a Worker, because on the main thread JS runs out of stack long before native code does.
       "e.cjs": `new Worker(require.resolve("./worker.cjs"));`,
       "worker.cjs": `
         let styles;
@@ -755,8 +751,8 @@ describe.concurrent("css module exports", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Each file is seen half written before it is seen complete. Each text is longer than the one it replaces:
-  // writeFileSync() writes, then cuts off what is left of the old text, and kqueue does not report the cut.
+  // Each file is written half finished, then complete. Each text is longer than the one it replaces because
+  // writeFileSync() truncates after it writes, and kqueue doesn't report the truncate.
   const rewrites = {
     "the module": [
       ["a.module.css", `.c { color: red; background: blue; margin: 0 } .`, `{"c":"c_BLNoTg"}`],
@@ -790,7 +786,7 @@ describe.concurrent("css module exports", () => {
           console.log(JSON.stringify(styles));
         `,
       });
-      // Not in the directory that is watched: every line written to it would be an event.
+      // Outside the watched directory, or every trace line written would itself be a watcher event.
       using traceDir = tempDir("css-module-reload-trace", {});
       const trace = join(String(traceDir), "events.jsonl");
       await using proc = Bun.spawn({
@@ -806,7 +802,7 @@ describe.concurrent("css module exports", () => {
       let output = "";
       let waitingFor = "";
 
-      // The runner's timeout does not say what was seen. This one, a little earlier, does.
+      // Fires just before the runner's timeout so the failure reports what was seen.
       const stuck = Promise.withResolvers<never>();
       const watchdog = setTimeout(() => {
         stuck.reject(
@@ -819,7 +815,7 @@ describe.concurrent("css module exports", () => {
       }, reloadTimeout - 5_000);
       using _ = { [Symbol.dispose]: () => clearTimeout(watchdog) };
 
-      // One write can cause several reloads: what is printed before the line does not matter.
+      // One write can trigger several reloads, so ignore anything printed before the expected line.
       async function line(expected: string, after: string) {
         waitingFor = `${expected} after ${after}`;
         while (!output.split("\n").slice(0, -1).includes(expected)) {
@@ -840,14 +836,13 @@ describe.concurrent("css module exports", () => {
   );
 });
 
-// Not concurrent with the tests above: nearly all of its time is spent parsing.
+// Not concurrent with the tests above because it spends nearly all its time parsing.
 test("css module: a composes chain too deep for the stack is an error", async () => {
   using dir = tempDir("css-module-deep", {
-    // A worker's stack is smaller than the main thread's, so less has to be parsed.
+    // A Worker's stack is smaller than the main thread's, so a shorter chain overflows it.
     "e.ts": `new Worker(new URL("./worker.ts", import.meta.url).href);`,
-    // How deep is too deep depends on the platform and the build, so the chain
-    // doubles until it is. It is in a file of its own so that it is followed
-    // once, not once per class.
+    // The overflow depth depends on platform and build, so the chain doubles until it overflows.
+    // The chain gets its own file so it's followed once, not once per class.
     "worker.ts": `
       const steps = [];
       for (let depth = 1000; depth < 400_000 && typeof steps.at(-1)?.[1] !== "string"; depth *= 2) {
@@ -871,7 +866,7 @@ test("css module: a composes chain too deep for the stack is an error", async ()
   const steps: [depth: number, names: number | string][] = JSON.parse(stdout);
   expect(steps.length).toBeGreaterThan(1);
   expect(steps).toEqual([
-    // `.a`, and `.c0` to `.c<depth>`.
+    // depth + 2 names are `.a` plus `.c0` through `.c<depth>`.
     ...steps.slice(0, -1).map(([depth]): [number, number] => [depth, depth + 2]),
     [steps.at(-1)![0], "RangeError: Maximum call stack size exceeded."],
   ]);

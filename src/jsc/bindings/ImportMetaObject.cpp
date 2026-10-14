@@ -538,7 +538,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsImportMetaObjectSetter_require, (JSGlobalObject * jsG
     return true;
 }
 
-// A CustomValue: `thisValue` is the prototype that holds the property.
+// Registered as a CustomValue, so `thisValue` is the prototype that holds the property, not `import.meta`.
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);

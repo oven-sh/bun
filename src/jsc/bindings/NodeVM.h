@@ -49,7 +49,7 @@ JSC::EncodedJSValue INVALID_ARG_VALUE_VM_VARIATION(JSC::ThrowScope& throwScope, 
 JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, const ArgList& args, const SourceOrigin& sourceOrigin, CompileFunctionOptions&& options, JSC::SourceTaintedOrigin sourceTaintOrigin, JSC::JSScope* scope);
 JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const SourceOrigin& sourceOrigin);
 bool isContext(JSC::JSGlobalObject* globalObject, JSValue);
-// False if `contextArg` cannot make a context. `contextifiedObject` is null for vm.constants.DONT_CONTEXTIFY.
+// Returns false for an invalid `contextArg`. `contextifiedObject` is null for vm.constants.DONT_CONTEXTIFY.
 bool getContextArg(JSC::JSGlobalObject* globalObject, JSValue contextArg, JSObject*& contextifiedObject);
 bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JSValue value);
 
@@ -99,7 +99,7 @@ class NodeVMGlobalObject final : public Bun::GlobalScope {
 public:
     using Base = Bun::GlobalScope;
 
-    // ProhibitsPropertyCaching even without a contextified object: an inline cache calls accessors with the scope as `this`.
+    // ProhibitsPropertyCaching is needed even without a contextified object, since an inline cache calls accessors with the scope as `this`.
     static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | JSC::OverridesPut | JSC::OverridesGetOwnPropertyNames | JSC::GetOwnPropertySlotMayBeWrongAboutDontEnum | JSC::ProhibitsPropertyCaching;
     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
@@ -117,7 +117,7 @@ public:
     void finishCreation(JSC::VM&);
     static void destroy(JSCell* cell);
     JSObject* contextifiedObject() const { return m_sandbox.get(); }
-    // What vm.createContext() returns for this context.
+    // The object vm.createContext() returns for this context.
     JSObject* contextObject() const { return m_sandbox ? m_sandbox.get() : globalThis(); }
     bool hasOwnMicrotaskQueue() const { return m_contextOptions.ownMicrotaskQueue; }
     // Performs a microtask checkpoint on this context's own queue

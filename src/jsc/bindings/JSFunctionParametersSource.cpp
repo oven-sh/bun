@@ -5,7 +5,7 @@
 #include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/JSFunction.h>
 
-// The text of a function written in JavaScript, from its parameters to its end. Dead for any other value.
+// JSC's source for a function starts at its parameter list, not at `function` or its name.
 extern "C" BunString Bun__JSFunction__sourceFromParameters(JSC::EncodedJSValue encodedValue, bool* isArrowFunction)
 {
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);

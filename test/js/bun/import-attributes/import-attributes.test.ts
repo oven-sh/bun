@@ -373,7 +373,7 @@ describe("?url", () => {
       async filename => {
         await using dir = tempDir("import-attributes", { [filename]: "{}" });
         const url = path.join(String(dir), filename);
-        // As for an asset: require() gives the path itself.
+        // require() returns the path itself, the same as it does for an asset.
         expect(await fn(dir, null, filename + "?url")).toEqual(
           fn === testBunRunRequire ? url : { __esModule: true, default: url },
         );
@@ -383,7 +383,6 @@ describe("?url", () => {
 });
 
 describe.concurrent("suffixes of an import path", () => {
-  /** Runs `main.ts`, which prints one JSON value. */
   async function runMain(files: Record<string, string | Buffer>, args: string[] = ["main.ts"]) {
     using dir = tempDir("import-suffixes", files);
     await using proc = Bun.spawn({
@@ -634,7 +633,7 @@ describe.concurrent("suffixes of an import path", () => {
     });
   });
 
-  // The administrator reads it all the same, and Windows has no such mode.
+  // root can read the file anyway, and Windows has no such file mode.
   test.skipIf(isWindows || process.getuid?.() === 0)("?inline on a file that cannot be read", async () => {
     expect(
       await runMain({
@@ -684,7 +683,7 @@ describe.concurrent("suffixes of an import path", () => {
     });
   });
 
-  // On Windows these are paths with a drive letter and backslashes.
+  // On Windows that means a drive letter and backslashes.
   test("the path of ?url is the native one, which fs, pathToFileURL and Worker take", async () => {
     expect(
       await runMain({

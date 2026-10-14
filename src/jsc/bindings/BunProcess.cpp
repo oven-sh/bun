@@ -4577,7 +4577,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNextTickInDefaultRealm, (JSC::JSGlobalObject 
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
-    // Only the thread's default realm has checkpoints (GlobalObject::drainMicrotasks): the ticks of another realm join its queue.
+    // Only the thread's default realm drains a tick queue (GlobalObject::drainMicrotasks), so other realms queue their ticks there.
     if (!globalObject->isThreadLocalDefaultGlobalObject) {
         auto* nextTickFunction = JSC::JSFunction::create(vm, globalObject, 1, "nextTick"_s, jsFunctionNextTickInDefaultRealm, ImplementationVisibility::Public);
         this->m_nextTickFunction.set(vm, this, nextTickFunction);

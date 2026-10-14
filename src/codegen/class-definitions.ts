@@ -119,10 +119,8 @@ export class ClassDefinition {
    */
   sharedThis?: boolean;
   /**
-   * Name of a method that calls every prototype function of the class:
-   * ```rust
-   * pub fn call_proto_fn(&self, global: &JSGlobalObject, frame: &CallFrame, function: fn(&Self, &JSGlobalObject, &CallFrame) -> JsResult<JSValue>) -> JsResult<JSValue>;
-   * ```
+   * Name of a Rust method that every prototype function is called through:
+   * `fn(&self, &JSGlobalObject, &CallFrame, fn(&Self, &JSGlobalObject, &CallFrame) -> JsResult<JSValue>) -> JsResult<JSValue>`
    */
   protoFnCaller?: string;
   /**
@@ -146,10 +144,7 @@ export class ClassDefinition {
    * callable.
    */
   call?: boolean;
-  /**
-   * Instances are callable: `typeof instance` is "function", and `instance(...)` runs the host function
-   * exported as `<Type>__callInstance`.
-   */
+  /** Instances are callable. `instance(...)` runs the host function exported as `<Type>__callInstance`. */
   callable?: boolean;
   /**
    * The instances of this class are intended to be inside the this of a bound function.

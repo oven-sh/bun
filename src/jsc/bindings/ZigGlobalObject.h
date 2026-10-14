@@ -270,7 +270,7 @@ public:
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* utilInspectOptionsStructure() const { return m_utilInspectOptionsStructure.getInitializedOnMainThread(this); }
-    // Null, with an exception, when node:util cannot be loaded.
+    // These two return null with an exception pending if internal/util/inspect fails to load.
     JSC::JSFunction* utilInspectFunction();
     JSC::JSFunction* utilInspectStylizeColorFunction();
     JSC::JSFunction* utilInspectStylizeNoColorFunction() const { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
@@ -827,7 +827,7 @@ public:
     napi_env makeNapiEnvForFFI();
     void adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal);
 
-    // `bun test`: the realms that script has made while this one was the thread's (ShadowRealm, node:vm). With --isolate they end with it.
+    // `bun test` only. ShadowRealm and node:vm realms created while this was the thread's global, so --isolate can retire them with it.
     WTF::Vector<JSC::Weak<JSC::JSGlobalObject>> m_derivedRealms;
     void addDerivedRealm(JSC::JSGlobalObject*);
 

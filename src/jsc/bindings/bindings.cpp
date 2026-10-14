@@ -667,7 +667,7 @@ static ALWAYS_INLINE bool hasEqualityTesters(JSGlobalObject* globalObject)
     return matcherUtils && uncheckedDowncast<JSExpectMatcherUtils>(matcherUtils)->m_equalityTesters;
 }
 
-// What the testers of `expect.addEqualityTesters()` say about a pair, which overrides every built-in rule but asymmetric matchers.
+// nullopt when every tester returned undefined, so the built-in rules decide.
 static NEVER_INLINE std::optional<bool> runEqualityTesters(JSGlobalObject* globalObject, ThrowScope& scope, JSValue a, JSValue b)
 {
     int8_t verdict = Expect__runEqualityTesters(globalObject, JSValue::encode(a ? a : jsUndefined()), JSValue::encode(b ? b : jsUndefined()));
@@ -677,14 +677,14 @@ static NEVER_INLINE std::optional<bool> runEqualityTesters(JSGlobalObject* globa
     return verdict != 0;
 }
 
-// A DOM written in JavaScript makes its nodes from classes, some of them behind a Proxy.
+// jsdom and happy-dom nodes are class instances, sometimes wrapped in a Proxy.
 static ALWAYS_INLINE bool mayBeDOMNode(JSGlobalObject* globalObject, JSObject* object)
 {
     JSC::JSType type = object->type();
     return type == ProxyObjectType || (type == FinalObjectType && object->getPrototypeDirect() != globalObject->objectPrototype());
 }
 
-// `isDomNode` of Jest and vitest. No code of the value runs unless it has an `isEqualNode`.
+// Jest's and vitest's `isDomNode`, but no getter or Proxy trap runs unless the value has an `isEqualNode`.
 static bool isDOMNode(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object, JSValue& isEqualNode)
 {
     VM& vm = globalObject->vm();
@@ -699,7 +699,7 @@ static bool isDOMNode(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
         target = proxy->target();
     }
     {
-        // The slot forbids entering the VM for as long as it lives.
+        // Scoped, because a VMInquiry slot forbids entering the VM while it's alive.
         PropertySlot inquiry(target, PropertySlot::InternalMethodType::VMInquiry, &vm);
         bool hasIsEqualNode = target->getPropertySlot(globalObject, names.isEqualNodePublicName(), inquiry);
         RETURN_IF_EXCEPTION(scope, false);
@@ -723,7 +723,7 @@ static bool isDOMNode(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
 enum class DOMNodeComparison : uint8_t {
     Equal,
     StrictEqual,
-    // toMatchObject: a node is still matched against a plain pattern by its properties.
+    // For toMatchObject, where a plain-object pattern still matches a node by its properties.
     Match,
 };
 
@@ -731,11 +731,11 @@ namespace Bun {
 JSC::JSString* objectPrototypeToStringOutOfLine(JSC::JSGlobalObject*, JSC::JSValue);
 }
 
-// What `equals` of Jest and vitest does before it compares properties. nullopt: compare the properties.
+// The DOM node step of Jest's and vitest's `equals`. nullopt means fall through to comparing properties.
 static NEVER_INLINE std::optional<bool> domNodesDequal(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* o1, JSObject* o2, DOMNodeComparison comparison)
 {
     VM& vm = globalObject->vm();
-    // A property and the code that names it each hold the name. While only the table of names does, no object has an `isEqualNode`.
+    // Any property or script that names `isEqualNode` refs this atom, so a single ref means no object has one.
     if (WebCore::builtinNames(vm).isEqualNodePublicName().impl()->hasOneRef())
         return std::nullopt;
     JSValue isEqualNode;
@@ -1319,7 +1319,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 return false;
             }
 
-            // An equality tester may say that a value does not equal itself.
+            // An equality tester can say a value doesn't equal itself, so identical pairs can't be skipped.
             bool sameIsEqual = true;
             if constexpr (enableAsymmetricMatchers)
                 sameIsEqual = !hasEqualityTesters(globalObject);
@@ -1835,7 +1835,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             return false;
         }
 
-        // The equality testers are asked about each element.
+        // Equality testers see every element, so the byte comparison below can't be used.
         if (mode.enableAsymmetricMatchers && hasEqualityTesters(globalObject)) [[unlikely]] {
             size_t length = left->length();
             for (size_t i = 0; i < length; i++) {
@@ -2055,7 +2055,7 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
     }
     case GlobalProxyType: {
         auto* gp1 = dynamicDowncast<JSC::JSGlobalProxy>(c1);
-        // The global of a node:vm context compares by its properties, as in Node, where only the main global has a tag of its own.
+        // A node:vm context's global is compared by its properties, as in Node.
         if (!gp1->target()->inherits<Zig::GlobalObject>())
             break;
         if (c1Type != c2Type) return false;
@@ -2326,7 +2326,7 @@ bool Bun__deepMatch(
     }
 
     if constexpr (enableAsymmetricMatchers) {
-        // The sample of expect.objectContaining() is a pattern, not a value to compare.
+        // expect.objectContaining()'s argument is a pattern, so the testers don't see it.
         if (!isMatchingObjectContaining && hasEqualityTesters(globalObject)) [[unlikely]] {
             if (auto verdict = runEqualityTesters(globalObject, throwScope, objValue, subsetValue))
                 return *verdict;
@@ -2425,7 +2425,7 @@ bool Bun__deepMatch(
                 state.gcBuffer.append(prop);
                 state.gcBuffer.append(subsetProp);
                 state.recordIfAsked(obj, subsetObj, property, prop, subsetProp);
-                // This value has met this pattern before: it matched, or the two are being compared (a cycle).
+                // This (value, pattern) pair already matched, or is still being compared (a cycle).
                 if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) continue;
                 bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, state, isMatchingObjectContaining);
                 RETURN_IF_EXCEPTION(throwScope, false);
@@ -3394,7 +3394,6 @@ bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::Encod
 
 #undef IMPL_DEEP_EQUALS_WRAPPER
 
-// A copy of `object` to put properties on, or null for an object that is more than its properties.
 static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3423,7 +3422,7 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
         copy->methodTable()->defineOwnProperty(copy, globalObject, name, descriptor, false);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
-    // Not with the others: it is not configurable. Holes at the end are only in it.
+    // The loop can't define `length` (it's not configurable), and trailing holes only exist through it.
     if (auto* array = dynamicDowncast<JSArray>(copy)) {
         array->setLength(globalObject, uncheckedDowncast<JSArray>(object)->length(), false);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -3431,7 +3430,7 @@ static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScop
     return copy;
 }
 
-// `root` with each property that matched an asymmetric matcher replaced by that matcher: copies, as far as that takes any.
+// Returns `root` with matched properties replaced by their asymmetric matchers, copying only the objects that change.
 static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue root, JSValue rootPattern)
 {
     using Pair = std::pair<EncodedJSValue, EncodedJSValue>;
@@ -3439,13 +3438,13 @@ static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope
     auto matchedMatcher = [&](size_t record) { return state.recorded.at(record * 4 + 3).isUndefined(); };
     size_t records = state.recordedNames.size();
 
-    // One for each object under each pattern: an object that occurs twice shows, in each place, what the pattern there says.
+    // Keyed by (object, pattern), since an object that appears twice can meet a different pattern in each place.
     std::map<Pair, JSObject*> copies;
     for (size_t i = 0; i < records; i++) {
         if (matchedMatcher(i))
             copies.emplace(pairAt(i * 4), nullptr);
     }
-    // And for what leads to those, cycles included.
+    // Also copy every object that leads to one of those. Runs to a fixed point because of cycles.
     for (bool changed = true; changed;) {
         changed = false;
         for (size_t i = records; i-- > 0;) {
@@ -3479,7 +3478,6 @@ static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope
     return copyOfRoot != copies.end() && copyOfRoot->second ? JSValue(copyOfRoot->second) : root;
 }
 
-// `replaced`, unless it is null: what a diff or a snapshot shows for `JSValue0` when the result is `replaceWhen`.
 bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replaceWhen, JSC::EncodedJSValue* replaced)
 {
     JSValue obj = JSValue::decode(JSValue0);
@@ -5571,7 +5569,6 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
     throwStackOverflowError(globalObject, scope);
 }
 
-// The Object.prototype or Function.prototype of any realm, or the global of another realm.
 static bool endsPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
 {
     auto* realm = prototype->realmMayBeNull();
@@ -5579,7 +5576,6 @@ static bool endsPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* 
         || (prototype->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(prototype)->target() != globalObject);
 }
 
-// callOwnGetters: an own accessor gives what its getter returns, and itself when the getter throws.
 template<bool nonIndexedOnly>
 static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callOwnGetters)
 {
@@ -5899,7 +5895,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
-// callGetters: as for JSC__JSValue__forEachPropertyImpl. All the properties of this walk are own.
 static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callGetters, bool withNonEnumerable = false)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -5913,7 +5908,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     {
 
-        // withNonEnumerable is what older versions printed: `Module {}` for a module namespace, whose names only its class knows.
+        // withNonEnumerable reproduces older Bun output. Skipping the method table prints a module namespace as `Module {}`.
         if (withNonEnumerable)
             JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
         else
@@ -5982,7 +5977,7 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, false);
 }
 
-// True when JSC__JSValue__forEachPropertyOrderedWithNonEnumerable is sure to give the same.
+// Returns true if JSC__JSValue__forEachPropertyOrderedWithNonEnumerable is sure to visit the same properties.
 extern "C" bool JSC__JSValue__forEachPropertyOrderedCallingGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();

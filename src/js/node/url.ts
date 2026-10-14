@@ -1254,13 +1254,13 @@ function getPathFromURLPosix(url: URL): string {
       }
     }
   }
-  // As in Node, a `pathname` that is not a string stays what it is, for the caller's path check to refuse.
+  // As in Node, a non-string `pathname` is returned as is, so the caller's path validation rejects it.
   return `${pathname}`.includes("%") ? decodeURIComponent(pathname) : pathname;
 }
 
 function fileURLToPath(url: string | URL, options?: { windows?: boolean }) {
   const windows = options?.windows;
-  // Bun.fileURLToPath takes a string or a native URL.
+  // Bun.fileURLToPath only accepts a string or a native URL, so foreign URLs are handled here.
   if ((windows !== undefined && windows !== null) || (typeof url !== "string" && !(url instanceof URL))) {
     let parsed: URL;
     if (typeof url === "string") {

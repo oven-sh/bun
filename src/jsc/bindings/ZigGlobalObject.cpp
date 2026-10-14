@@ -749,8 +749,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // they would keep it (and everything it loaded) alive for the rest of the run.
     oldGlobal->onLoadPlugins.clear();
     oldGlobal->onResolvePlugins.clear();
-    // JSC's CodeCache has an entry for each module. With room for fewer than a file loads, every file evicts what the
-    // next one is about to ask for. An entry keeps 20 to 100 KB of unlinked and Baseline code, hence the ceiling.
+    // If JSC's CodeCache holds fewer entries than a file loads modules, each file evicts what the next one needs.
+    // Capped because an entry keeps 20 to 100 KB of unlinked and Baseline code alive.
     size_t loadedModules = oldGlobal->moduleLoader()->moduleMap().size() + oldGlobal->requireMap()->size();
     if (size_t entries = std::min<size_t>(2 * loadedModules, 16384); entries > vm.codeCache()->workingSetMaxEntries())
         vm.codeCache()->setWorkingSetMaxEntries(entries);
@@ -816,8 +816,7 @@ static bool isModuleLoadSettled(JSC::ModuleRegistryEntry* entry)
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
-// What a load that can never finish left in the registry goes, so that the next importer loads it anew.
-// Returns a "\nnote: " line for each of the first few modules that the others were waiting for.
+// Lets the next importer load them again. Returns "\nnote: " lines naming the modules the others were stuck on.
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString Bun__evictUnfinishedModules(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -840,7 +839,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString Bun__evictUnfinishedModules(Zig::Gl
     for (auto& key : unfinished)
         loader->removeEntry(key);
 
-    // Among them are those that were to be evicted once they had loaded.
+    // Some of them were queued in modulesToEvictOnceLoaded, so flush that now.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Bun::evictModulesThatHaveLoaded(globalObject);
     if (scope.exception()) [[unlikely]]
@@ -1029,7 +1028,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     }
     }
 
-    // (A module that was evaluated may have evicted it: vi.resetModules().)
+    // Evaluation may have evicted the entry (vi.resetModules()), so fall back to the one from before.
     auto* entry = loader->registryEntry(key);
     if (!entry)
         entry = entryBefore;
@@ -1279,7 +1278,7 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
     JSC::JSPromiseRejectionOperation operation)
 {
     auto* globalObj = static_cast<GlobalObject*>(obj);
-    // handleRejectedPromises() is only asked of the thread's default realm. What a finished test file's realm rejects goes with it.
+    // Only the thread's default realm runs handleRejectedPromises(). Rejections in a retired test file's realm are dropped with it.
     if (!globalObj->isThreadLocalDefaultGlobalObject && !Bun::isRetiredTestIsolationRealm(globalObj)) [[unlikely]]
         globalObj = defaultGlobalObject(obj->vm());
 
@@ -2991,7 +2990,7 @@ JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
     return uncheckedDowncast<Zig::GlobalObject>(globalObject)->globalThis();
 }
 
-// These two run script, which can throw, so they have no LazyProperty initializer: that has to set a value.
+// Not LazyProperty initializers, because those must set a value and these two run JS that can throw.
 JSC::JSFunction* GlobalObject::utilInspectFunction()
 {
     if (auto* function = m_utilInspectFunction.getInitializedOnMainThread(this))
@@ -2999,7 +2998,7 @@ JSC::JSFunction* GlobalObject::utilInspectFunction()
 
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // Not node:util's `inspect`, which script can replace.
+    // Not node:util's `inspect`, which user code can replace.
     JSValue exports = internalModuleRegistry()->requireId(this, vm, Bun::InternalModuleRegistry::Field::InternalUtilInspect);
     RETURN_IF_EXCEPTION(scope, nullptr);
     JSValue inspect = exports.get(this, Identifier::fromString(vm, "inspect"_s));
@@ -3028,7 +3027,7 @@ JSC::JSFunction* GlobalObject::utilInspectStylizeColorFunction()
     return uncheckedDowncast<JSFunction>(result);
 }
 
-// `@natives`: what `Blob`, `URL`, `navigator`, ... are in src/js (nativeGlobals in src/codegen/replacements.ts), whatever script made of globalThis's.
+// `@natives`. Builtins in src/js read Blob, URL, ... (nativeGlobals in src/codegen/replacements.ts) from here, since user code can patch globalThis.
 class NativeGlobals final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -3048,7 +3047,7 @@ public:
         auto* structure = JSC::Structure::create(vm, globalObject, jsNull(), JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
         auto* object = new (NotNull, JSC::allocateCell<NativeGlobals>(vm)) NativeGlobals(vm, structure);
         object->finishCreation(vm);
-        // A Structure per property would be one per global object, and each would invalidate the code optimized for the one before.
+        // Otherwise each lazy putDirect makes a new Structure, per global object, and deopts code compiled against the last one.
         object->convertToDictionary(vm);
         return object;
     }
@@ -3694,7 +3693,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // (A factory goes on running when Bun.plugin.clearAll() has removed its mock, and all the others.)
+    // Not implied by hasVirtualModules(), since a factory keeps running after Bun.plugin.clearAll() removes every mock.
     bool moduleMocksRun = !globalObject->onLoadPlugins.runningModuleMocks.isEmpty();
     if (!isImportCall && !keyString.isEmpty() && !keyString[0] && Bun::moduleMockImportsByKey(globalObject, referrerString)) [[unlikely]]
         return Identifier::fromString(vm, moduleMocksRun ? Bun::keyOfImportWhileModuleMocksRun(globalObject, keyString.substring(1), referrerString, true) : keyString.substring(1));
@@ -3886,8 +3885,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         return !entry->record() && entry->ensureFetchPromise(globalObject)->status() == JSC::JSPromise::Status::Pending;
     };
 
-    // Script that the fetch runs (an onLoad() callback, the factory of a module mock) may require() a module that imports this one, which
-    // fetches it again from there. JSC takes an entry that is still new for one that nothing has been asked of.
+    // An onLoad() callback or mock factory run by this fetch can require() a module that imports this one and re-enter the fetch.
+    // JSC treats a New entry as never requested, so mark it Fetching first.
     auto& plugins = static_cast<Zig::GlobalObject*>(globalObject)->onLoadPlugins;
     bool runsScript = plugins.hasVirtualModules() || !plugins.isEmpty();
     JSC::ModuleRegistryEntry* entry = loader->getRegisteredMayBeNull(JSC::Identifier::fromString(vm, moduleKey), parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript);
@@ -3895,9 +3894,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     if (isFirstFetch && runsScript)
         entry->setStatus(EntryStatus::Fetching);
 
-    // A failure is thrown: that fails the load that asked. A rejection would settle the fetch promise of the entry, which belongs to every
-    // load that waits for it. But JSC leaves the entry that it has made for this fetch new, for good, and each module that imports this one
-    // would fetch it again: that entry is told.
+    // Throw instead of returning a rejected promise, which would settle the entry's fetch promise for every load waiting on it.
+    // After a throw JSC leaves the entry New and each later importer would refetch, so the first fetch records the error on the entry.
     const auto didThrow = [&]() -> JSC::JSPromise* {
         if (!isFirstFetch || entry->status() != (runsScript ? EntryStatus::Fetching : EntryStatus::New) || !isBeingFetched(entry))
             return nullptr;
@@ -3910,8 +3908,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         return nullptr;
     };
 
-    // JSC settles the fetch promise of the entry with a promise that has settled, whether or not script that this fetch ran has fetched the
-    // module meanwhile. If none has, the entry is as JSC left it: a load that script asked for provides the source to an entry that is new.
+    // JSC settles the entry's fetch promise with any settled promise returned here, even if a re-entrant fetch already did.
+    // In that case return a promise that never settles. Otherwise put the status back to New, which is what JSC expects.
     const auto unlessFetchedMeanwhile = [&](JSC::JSPromise* promise) -> JSC::JSPromise* {
         if (!runsScript || !entry)
             return promise;
@@ -4862,7 +4860,6 @@ void GlobalObject::addDerivedRealm(JSC::JSGlobalObject* realm)
     m_derivedRealms.append(JSC::Weak<JSC::JSGlobalObject>(realm));
 }
 
-// A ShadowRealm has a context of its own.
 static void stopActiveDOMObjectsOfDerivedRealms(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -4889,7 +4886,7 @@ extern "C" void Zig__GlobalObject__stopActiveDOMObjectsForTestIsolation(Zig::Glo
 extern "C" void Zig__GlobalObject__retireForTestIsolation(Zig::GlobalObject* globalObject)
 {
     globalObject->setMicrotaskRunnability(JSC::QueuedTaskResult::Discard);
-    // Also of those that its close handlers have made since.
+    // Again, to catch realms that close handlers created since the first pass.
     stopActiveDOMObjectsOfDerivedRealms(globalObject);
     for (auto& derived : std::exchange(globalObject->m_derivedRealms, {})) {
         if (derived)

@@ -58,7 +58,7 @@ describe("url.fileURLToPath", () => {
     assert.throws(() => url.fileURLToPath({ href: "https://a/b", protocol: "https:", hostname: "a", pathname: "/b" }), {
       code: "ERR_INVALID_URL_SCHEME",
     });
-    // What url.parse() returns is not a URL.
+    // A url.parse() result, which has `path` and `auth`, doesn't count as a URL.
     assert.throws(() => url.fileURLToPath({ href, protocol, hostname, pathname, path: pathname }), {
       code: "ERR_INVALID_ARG_TYPE",
       message: /^The "path" argument must be of type string or an instance of URL\. Received an instance of Object/,
@@ -66,7 +66,7 @@ describe("url.fileURLToPath", () => {
     assert.throws(() => url.fileURLToPath({ href, protocol, hostname, pathname, auth: null }), {
       code: "ERR_INVALID_ARG_TYPE",
     });
-    // Not made a string: whoever takes the path refuses it.
+    // A non-string pathname isn't coerced. Whatever consumes the path rejects it.
     assert.strictEqual(url.fileURLToPath({ href, protocol, hostname, pathname: 5 }, { windows: false }), 5);
     assert.throws(() => url.fileURLToPath({ href, protocol, hostname, pathname: 5 }, { windows: true }), {
       code: "ERR_INVALID_FILE_URL_PATH",

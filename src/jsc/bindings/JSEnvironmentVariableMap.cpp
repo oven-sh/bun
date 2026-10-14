@@ -688,7 +688,7 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
     if (value.length() < 32 && WTF::setTimeZoneOverride(value))
         resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
 }
-// Without TZ, `bun test` runs in UTC.
+// `bun test` defaults to UTC, so deleting TZ goes back to that.
 static void applyTZDeleted(JSGlobalObject* globalObject)
 {
     applyTZFromString(globalObject, isBunTest ? String("Etc/UTC"_s) : String());

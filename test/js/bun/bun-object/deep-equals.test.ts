@@ -92,9 +92,7 @@ describe("the global of a node:vm context compares by its properties", () => {
   };
   const same = notContextified({ a: 1 });
 
-  // loose: Bun.deepEquals(a, b), toEqual, assert.deepEqual. Node, Jest and vitest give these answers.
-  // strict: Bun.deepEquals(a, b, true), toStrictEqual. Equal class names are required.
-  // nodeStrict: assert.deepStrictEqual, util.isDeepStrictEqual. Node gives these answers.
+  // loose matches Node, Jest and vitest. nodeStrict matches Node. strict also requires equal class names.
   it.each([
     ["itself", same, same, true, true, true],
     ["an object with the same properties", notContextified({ a: 1 }), { a: 1 }, true, false, false],

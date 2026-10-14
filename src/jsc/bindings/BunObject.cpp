@@ -298,7 +298,7 @@ static JSValue constructBunVersionWithSha(VM& vm, JSObject*)
 
 static JSValue constructIsMainThread(VM& vm, JSObject*)
 {
-    // A ShadowRealm's global has a context of its own.
+    // A ShadowRealm's global has its own ScriptExecutionContext, so ask the thread's default global.
     return jsBoolean(defaultGlobalObject(vm)->scriptExecutionContext()->isMainThread());
 }
 

@@ -3,11 +3,11 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-// In pieces: `bun test` finds these comments anywhere in the text of a test file, this one included.
+// Split in two because `bun test` scans a test file's whole text for these names, this file's included.
 const VITEST = "@vitest" + "-environment";
 const JEST = "@jest" + "-environment";
 
-// Stand-ins that log what the runner does with the package: loading the real ones takes seconds in a debug build.
+// Fakes that log how the runner uses the package. The real ones take seconds to load in a debug build.
 const fakePackages = {
   "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
   "node_modules/happy-dom/index.js": `
@@ -58,7 +58,6 @@ const fakePackages = {
   `,
 };
 
-/** Logs the name of the file and the window it runs with. */
 const logEnvironment = `
   import { test } from "bun:test";
   import { basename } from "node:path";
@@ -76,11 +75,10 @@ async function bunTest(cwd: string, ...args: string[]) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // The first line is "bun test v1.2.3".
+  // slice(1) drops the "bun test v1.2.3" banner.
   return { stdout: stdout.split("\n").slice(1).filter(Boolean), stderr, exitCode };
 }
 
-/** How an error that is not a test's is printed, with nothing else: no source lines, no stack. */
 function errorBetweenTests(...lines: string[]) {
   const rule = Buffer.alloc(31, "-").toString();
   return ["# Unhandled error between tests", rule, ...lines, rule, ""].join("\n");
@@ -116,7 +114,6 @@ function summary(stderr: string) {
   return stderr.match(/^ *\d+ (?:pass|fail|error)s?$/gm)?.map(line => line.trim());
 }
 
-/** "pass" or "fail" by the name of the test. */
 function verdicts(stderr: string) {
   return Object.fromEntries(
     Array.from(stderr.matchAll(/^\((pass|fail)\) (.+?)(?: \[[\d.]+ms\])?$/gm), ([, verdict, name]) => [name, verdict]),
@@ -125,7 +122,7 @@ function verdicts(stderr: string) {
 
 describe.concurrent("test environment", () => {
   test("vitest's comment is found where vitest finds it, Jest's where Jest does", async () => {
-    // Expectations are what vitest 5.0.3's `detectCodeBlock` and jest-docblock 30's `extract` return for the same text.
+    // Expected values come from vitest 5.0.3's `detectCodeBlock` and jest-docblock 30's `extract` on the same text.
     const comments: Record<string, [text: string, environment: string]> = {
       "line": [`// ${VITEST} jsdom\n`, "jsdom#1"],
       "block": [`/** ${VITEST} happy-dom */\n`, "happy-dom#1"],
@@ -262,7 +259,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
-    // --parallel prints what its workers wrote to stdout on stderr.
+    // --parallel prints its workers' stdout on stderr.
     test.each(["--isolate", "--parallel=2", "--parallel=2 --no-isolate"])("%s", async flags => {
       using dir = tempDir("test-environment", { ...files, "bunfig.toml": `[test]\nenvironment = "jsdom"\n` });
       const { stdout, stderr, exitCode } = await bunTest(String(dir), ...flags.split(" "));
@@ -319,7 +316,7 @@ describe.concurrent("test environment", () => {
     expect(exitCode).toBe(0);
   });
 
-  // `bun test` ignored the comments for years, and suites that came from Jest or vitest still have them.
+  // Only a warning, because `bun test` ignored these comments for years and migrated suites still have them.
   describe("a comment that cannot be followed is a warning, and the file runs without an environment", () => {
     test.each(["jsdom", "happy-dom"])("%s is not installed", async name => {
       using dir = tempDir("test-environment", {
@@ -541,7 +538,7 @@ describe.concurrent("test environment", () => {
     test("every global is put back after a file", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,
-        // Reading a descriptor is what makes a lazy global of Bun's a plain property: do it before comparing.
+        // Reading a lazy global's descriptor turns it into a plain property, so read them all before comparing.
         "0.test.js": `
           import { test } from "bun:test";
           const natives = { self, URL, Request, Blob, Event, addEventListener, Uint8Array, onerror: Object.getOwnPropertyDescriptor(globalThis, "onerror") };
@@ -584,7 +581,7 @@ describe.concurrent("test environment", () => {
         ...Object.fromEntries(order.map((name, i) => [`${i}.test.js`, `// ${VITEST} ${name}\n${logEnvironment}`])),
       });
       const { stdout, stderr, exitCode } = await bunTest(String(dir), ...order.map((_, i) => `./${i}.test.js`));
-      // One window per environment: see "a module that read the document when it was imported".
+      // Files of one environment share a window. See "a module that read the document when it was imported" for why.
       expect(
         stdout.filter(line => !line.startsWith("open ")).map(line => line.split(" ").slice(0, 2).join(" ")),
       ).toEqual(order.map((name, i) => `${i}.test.js ${name === "node" ? "node" : `${name}#1`}`));
@@ -687,7 +684,7 @@ describe.concurrent("test environment", () => {
     });
 
     test("whatever a file leaves patched", async () => {
-      // Each file undoes it first thing: only what the runner does between two files sees the patches.
+      // Each file undoes the patches first thing, so only the runner's work between two files sees them.
       const patches = `
         import { afterAll } from "bun:test";
         process.undoPatches?.();
@@ -908,7 +905,7 @@ describe.concurrent("test environment", () => {
   test("--isolate: a file that leaves fake timers on does not keep its window from closing", async () => {
     using dir = tempDir("test-environment", {
       ...fakePackages,
-      // Like happy-dom, which waits for a timer of the setTimeout it took when it was loaded.
+      // The real happy-dom's abort() also waits on a timer from the setTimeout it captured at load.
       "node_modules/happy-dom/index.js": `${fakePackages["node_modules/happy-dom/index.js"]}
         const { setTimeout } = globalThis;
         const { Window } = exports;
@@ -1026,7 +1023,7 @@ describe.concurrent("test environment", () => {
             this.happyDOM.abort = () => new Promise(() => void setInterval(() => {}, 1));
           }
         };`,
-      // The tests have a timeout of their own: --timeout is only for the window.
+      // Each test sets its own timeout, so --timeout=50 only applies to closing the window.
       "1.test.js": `// ${VITEST} happy-dom
         import { test } from "bun:test";
         test("happy-dom", () => console.log(typeof document), 60_000);`,
@@ -1169,7 +1166,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
-    // What docs/test/dom.mdx has long recommended, in projects that kept the comments of their previous runner.
+    // The setup docs/test/dom.mdx has long recommended, in a project that kept its old runner's comments.
     test("that registers a DOM of its own keeps it", async () => {
       using dir = tempDir("test-environment", {
         "preload.js": `globalThis.document = { body: {} }; globalThis.environment = "preloaded";`,
@@ -1270,7 +1267,6 @@ describe.concurrent("test environment with the real", () => {
   `;
 
   const only = {
-    // fetch, Response, Headers and AbortController stay Bun's; Request takes the window's Blob and FormData.
     "jsdom": `
       import { readFileSync } from "node:fs";
       test("fetch is Bun's", async () => {
@@ -1376,7 +1372,7 @@ describe.concurrent("test environment with the real", () => {
     expect(exitCode).toBe(1);
   });
 
-  // While jsdom reports an error to the window it reports no other: no test runs meanwhile.
+  // jsdom drops errors raised while it's already reporting one, so the next test must not start inside that report.
   test("jsdom: an error that ends a test does not hide those of the next test", async () => {
     using dir = project({
       "a.test.js": `// ${VITEST} jsdom
@@ -1413,8 +1409,8 @@ describe.concurrent("test environment with the real", () => {
   `;
 
   describe("jsdom: an error goes to the runner unless the file listens for errors", () => {
-    // What a file does, and whether vitest 5.0.3 reports the error after it. Nothing is cleaned up: with one window
-    // for all the files, each still gets the answer it gets alone.
+    // [what the file does, whether vitest 5.0.3 then reports the error]. The files share one window and clean
+    // nothing up, yet each must get the answer it gets alone.
     const files: [code: string, isReported: boolean][] = [
       [``, true],
       [`window.addEventListener("error", event => event.stopPropagation(), true);`, false],
@@ -1445,7 +1441,7 @@ describe.concurrent("test environment with the real", () => {
       [``, true],
     ];
 
-    // The count alone decides. vitest reports none of these: its listener is not the first to be called, or throws.
+    // Only the listener count decides, so Bun reports these. vitest doesn't, as its own listener runs late or throws.
     const notCounted: typeof files = [
       [
         `const stop = event => event.stopPropagation(); window.addEventListener("error", stop, true); window.removeEventListener("error", stop, false);`,
@@ -1592,7 +1588,7 @@ describe.concurrent("test environment with the real", () => {
     });
   });
 
-  // Bun's builtin modules go on using Bun's own classes, and take the typed arrays of jsdom's realm.
+  // Builtin modules must keep using Bun's own classes and accept typed arrays from jsdom's realm.
   test.each(["jsdom", "happy-dom"])("%s: builtin modules work as without it", async name => {
     const file = `
       import { test, expect } from "bun:test";
@@ -1641,7 +1637,7 @@ describe.concurrent("test environment with the real", () => {
       "2.test.js": file,
     });
     await using proc = Bun.spawn({
-      // A debug build needs seconds to load node:http.
+      // Debug builds take seconds to load node:http.
       cmd: [bunExe(), "test", "--timeout=60000"],
       cwd: String(dir),
       env: { ...bunEnv, NODE_PATH: undefined, PARALLELISM: String(navigator.hardwareConcurrency) },

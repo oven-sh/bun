@@ -431,8 +431,8 @@ describe("@types/bun integration test", () => {
 
   // Runs on debug builds too, same as the Bun.mmap block above.
   describe("import.meta.glob", () => {
-    // fixture/vite-client/client.d.ts declares `ImportMeta.glob` too, so it needs a program
-    // of its own. The compiler loads the declarations in the order of `files`.
+    // fixture/vite-client/client.d.ts also declares `ImportMeta.glob`, so it needs its own tsc program.
+    // tsc loads the declarations in `files` order.
     test.each([
       ["bun-types", ["bun-types.d.ts", "client.d.ts", "main.ts"]],
       ["vite-client", ["client.d.ts", "bun-types.d.ts", "main.ts"]],

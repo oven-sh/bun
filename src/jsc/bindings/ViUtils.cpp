@@ -26,7 +26,7 @@ static JSMap* ensureMap(VM& vm, Zig::GlobalObject* globalObject, WriteBarrier<Un
     return map;
 }
 
-// JSC inlines these whole, kilobytes each, into every caller.
+// Out of line, because JSC would otherwise inline kilobytes of code into every caller.
 static NEVER_INLINE bool hasOriginal(JSGlobalObject* globalObject, JSMap* originals, JSValue key)
 {
     return originals->has(globalObject, key);
@@ -37,7 +37,6 @@ static NEVER_INLINE Identifier propertyKeyOf(JSGlobalObject* globalObject, JSVal
     return value.toPropertyKey(globalObject);
 }
 
-// Goes on after an exception, and throws the first one once it is through.
 template<typename Functor>
 static void forEachEntry(Zig::GlobalObject* globalObject, JSMap* map, const Functor& apply)
 {
@@ -154,7 +153,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViUnstubAllGlobals, (JSGlobalObject * lexicalGlobalOb
     return JSValue::encode(callFrame->thisValue().toThis(lexicalGlobalObject, ECMAMode::strict()));
 }
 
-// What `process.env` is now: tests replace it with a copy.
+// Reads `process.env` every time, because tests replace it with a copy.
 static JSObject* processEnv(Zig::GlobalObject* globalObject)
 {
     auto& vm = getVM(globalObject);
@@ -257,7 +256,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViUnstubAllEnvs, (JSGlobalObject * lexicalGlobalObjec
     return JSValue::encode(callFrame->thisValue().toThis(lexicalGlobalObject, ECMAMode::strict()));
 }
 
-// Forgets the imports that have settled, and returns one that has not.
+// Also drops the imports that have settled.
 static JSPromise* pendingDynamicImport(Zig::GlobalObject* globalObject)
 {
     auto& vm = getVM(globalObject);
@@ -286,7 +285,7 @@ void didStartDynamicImport(Zig::GlobalObject* globalObject, JSPromise* import)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSMap* imports = ensureMap(vm, globalObject, globalObject->mockModule.dynamicImports);
-    // Sweeping only at powers of two keeps the cost of a sweep proportional to what was added since the last one.
+    // Sweep only at power-of-two sizes, so a sweep's cost stays proportional to what was added since the last one.
     if (uint32_t size = imports->size(); size >= 16 && hasOneBitSet(size)) {
         pendingDynamicImport(globalObject);
         RETURN_IF_EXCEPTION(scope, );
@@ -296,7 +295,7 @@ void didStartDynamicImport(Zig::GlobalObject* globalObject, JSPromise* import)
 
 JSC_DECLARE_HOST_FUNCTION(jsViFulfillUnlessImporting);
 
-// After a real `setTimeout(0)`, so that what script scheduled before it has run.
+// Uses the real setTimeout(0), so anything the test scheduled earlier runs first.
 static void fulfillOnceImportsSettle(JSGlobalObject* globalObject, JSPromise* promise)
 {
     auto* fulfillUnlessImporting = JSFunction::create(getVM(globalObject), globalObject, 1, String(), jsViFulfillUnlessImporting, ImplementationVisibility::Private);
@@ -364,7 +363,7 @@ extern "C" void ViUtils__unstubAllGlobals(Zig::GlobalObject* globalObject)
     Bun::unstubAllGlobals(globalObject);
 }
 
-// After the two above: a test file may have undone or replaced them.
+// Call after the two above. A test file may have undone or replaced the preload's stubs.
 extern "C" void ViUtils__stubWhatPreloadStubbed(Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));

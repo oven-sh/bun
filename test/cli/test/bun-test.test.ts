@@ -2178,7 +2178,6 @@ async function runFilesWithEnv(env: Record<string, string>, files: Record<string
   return {
     stdout,
     stderr,
-    // The errors, with every path cut down to its last component.
     errors: stderr
       .split(/\r?\n/)
       .filter(line => /^(error|note): /.test(line))
@@ -2188,7 +2187,7 @@ async function runFilesWithEnv(env: Record<string, string>, files: Record<string
   };
 }
 
-// No test has started, so no timeout ends these waits of the runner.
+// No test has started yet, so no test timeout can end these waits.
 describe.concurrent("a test file that can never finish loading", () => {
   const nothingLeft =
     "note: it is waiting for something that can no longer happen: the event loop has nothing left to run";
@@ -2240,7 +2239,7 @@ describe.concurrent("a test file that can never finish loading", () => {
     });
   });
 
-  // Here both are pipes, whose writers the event loop knows from the start. They have nothing left to write.
+  // Both are pipes here, and their writers register with the event loop. An idle writer must not count as work left.
   test.each([
     ["process.stdout", []],
     ["process.stderr", []],
@@ -2470,7 +2469,7 @@ describe.concurrent("a test file that can never finish loading", () => {
     expect(exitCode).toBe(1);
   });
 
-  // On Windows the ref'd timers' hold on the loop, which the faked ones share, cannot be told from any other.
+  // On Windows faked timers share the ref'd timers' hold on the loop, which can't be told apart from any other ref.
   test.skipIf(isWindows)("waiting for a faked timer, which nothing fires", async () => {
     const { errors, counts, exitCode } = await runFiles({
       "a.test.ts": `
@@ -2519,7 +2518,7 @@ describe.concurrent("a test file that can never finish loading", () => {
     });
   });
 
-  // Each of these waits for the event itself. What does not keep the process alive can still settle a promise, as in Jest and vitest.
+  // An unref'd handle can still settle a promise, so the runner must wait for it, as Jest and vitest do.
   test.each(
     Object.entries({
       "timer": `await new Promise(resolve => setTimeout(resolve, 20, "ok"))`,
@@ -2581,8 +2580,8 @@ describe.concurrent("a test file that can never finish loading", () => {
     expect({ errors, counts, exitCode }).toEqual({ errors: [], counts: [" 1 pass", " 0 fail"], exitCode: 0 });
   });
 
-  // On macOS a watcher misses what changes before its event stream has started, so the directory changes until the run ends.
-  // It is changed from here: whatever did that in the test file would be one more thing to wait for.
+  // macOS watchers miss changes made before their event stream starts, so keep writing until the run ends.
+  // The writes come from here because a writer inside the test file would be one more thing to wait for.
   test("is not one that waits for: unref'd fs.watch", async () => {
     using dir = tempDir("bun-test-waits", {
       "a.test.ts": `
@@ -2612,7 +2611,7 @@ describe.concurrent("a test file that can never finish loading", () => {
     });
   });
 
-  // Where there is no pidfd_open(), a thread waits for the children instead of the event loop.
+  // Without pidfd_open(), a waiter thread waits for children instead of the event loop.
   test.skipIf(!isLinux)("counts an unref'd subprocess that a thread waits for, until it has exited", async () => {
     const { errors, counts, exitCode } = await runFilesWithEnv(
       { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
@@ -2694,7 +2693,7 @@ describe.concurrent("a test file that can never finish loading", () => {
   });
 });
 
-// Nor does a timeout end these.
+// No test timeout ends these waits either.
 describe.concurrent("a test file that can never finish running", () => {
   const nothingLeft =
     "note: it is waiting for something that can no longer happen: the event loop has nothing left to run";
@@ -2779,7 +2778,6 @@ describe.concurrent("a test file that can never finish running", () => {
   });
 });
 
-// Asleep in the poll until the next deadline, not polling in a loop until it is due.
 describe.concurrent("the runner sleeps while it waits", () => {
   const waitMs = 1000;
   const cpuMs = (stdout: string) => Number(stdout.match(/^cpu (\d+)$/m)?.[1]);
@@ -2838,7 +2836,6 @@ describe.concurrent("the runner sleeps while it waits", () => {
   });
 });
 
-// Script of the test is on the stack of what ends it here.
 describe.concurrent("the next test does not start beneath the call that ends a test", () => {
   const results = (stderr: string) => stderr.match(/^\((pass|fail)\) [\w ]+/gm)?.map(line => line.trimEnd());
 
@@ -2903,7 +2900,7 @@ describe.concurrent("the next test does not start beneath the call that ends a t
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(fail) ends", "(pass) next"], exitCode: 1 });
   });
 
-  // It ticks the event loop until the setup() of the plugin has settled, which the timeout of the test comes before.
+  // Bun.build() ticks the event loop until the plugin's setup() settles, so the test's timeout fires inside that call.
   test("Bun.build() that outlives the timeout of the test", async () => {
     const { stderr, exitCode } = await runFiles({
       "entry.ts": "",
@@ -2951,7 +2948,7 @@ describe.concurrent("the next test does not start beneath the call that ends a t
 
 describe.concurrent("an error that arrives while a test file loads", () => {
   const results = (stderr: string) => stderr.match(/^\((pass|fail)\) [\w >]+/gm)?.map(line => line.trimEnd());
-  // The file goes on one turn of the event loop after the error.
+  // Loading resumes one event-loop turn after the error.
   const file = (error: string) => `
     import { describe, test } from "bun:test";
     test("registered before", () => {});

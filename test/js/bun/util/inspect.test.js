@@ -532,8 +532,8 @@ it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });
 
-// Called by a bare name that is not a local variable, a native function is given the engine's own scope object as `this`.
-// These functions return a `this` that is not of their class as it is.
+// JSC passes its own scope object as `this` when a native function is called through a captured variable.
+// These functions return a `this` of the wrong class unchanged, which would leak that scope object to JS.
 it("[Bun.inspect.custom] of a built-in class returns undefined or throws when it is called by a bare name", () => {
   const returned = {};
   for (const name of Object.getOwnPropertyNames(globalThis)) {
@@ -1513,7 +1513,7 @@ describe("a value whose [nodejs.util.inspect.custom] cannot be read", () => {
     );
   });
 
-  // The report of an error does not fail.
+  // Printing an uncaught error must never throw itself.
   describe.each(["throw thrown;", "Promise.reject(thrown);", "reportError(thrown); process.exitCode = 1;"])(
     "%s",
     report => {

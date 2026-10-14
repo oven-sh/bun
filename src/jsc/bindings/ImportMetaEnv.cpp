@@ -12,7 +12,7 @@ namespace Bun {
 
 using namespace JSC;
 
-// In the order Vitest adds them to the environment.
+// Enumerated in Vitest's order. isBoolean() relies on the booleans coming last.
 enum class ViteVariable : uint8_t {
     BaseURL,
     Mode,
@@ -40,7 +40,7 @@ static bool isBoolean(std::optional<ViteVariable> variable)
     return variable && *variable >= ViteVariable::Dev;
 }
 
-// As in Vite, NODE_ENV decides, not MODE, and what a test assigns to it later does not count.
+// As in Vite, NODE_ENV at startup decides, not MODE or a later assignment by a test.
 static bool startedInProduction(Zig::GlobalObject* globalObject)
 {
     auto nodeEnv = "NODE_ENV"_s.span8();
@@ -49,7 +49,7 @@ static bool startedInProduction(Zig::GlobalObject* globalObject)
     return Bun__getEnvValue(globalObject, &name, &value) && WTF::equalSpans(std::span { Zig::untag(value.ptr), value.len }, "production"_s.span8());
 }
 
-// `import.meta.env` under `bun test`: a view of `process.env` that has Vite's variables. The cell holds nothing: its hooks never look at its own storage.
+// `import.meta.env` under `bun test`, a live view of `process.env` plus Vite's variables. Its hooks never use the cell's own storage.
 class ImportMetaEnv final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
@@ -98,20 +98,20 @@ private:
     }
 
     Zig::GlobalObject* zigGlobalObject() const { return uncheckedDowncast<Zig::GlobalObject>(globalObject()); }
-    // Kept in the one bit of a cell that is its class's to use.
+    // Stored in the per-cell bit, because a field would break sharing plainObjectSpace.
     bool isProduction() const { return perCellBit(); }
     JSValue defaultValueOf(ViteVariable) const;
 };
 
 const ClassInfo ImportMetaEnv::s_info = { "ImportMetaEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ImportMetaEnv) };
 
-// What `process.env` is now: tests replace it with a copy.
+// Reads `process.env` every time, because tests replace it with a copy.
 JSObject* ImportMetaEnv::processEnv(JSGlobalObject* lexicalGlobalObject) const
 {
     auto& vm = getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // `process.env` can be an exotic object that comes back here.
+    // A test can set `process.env` to an exotic object that re-enters here.
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
         throwStackOverflowError(lexicalGlobalObject, scope);
         return nullptr;
@@ -122,7 +122,7 @@ JSObject* ImportMetaEnv::processEnv(JSGlobalObject* lexicalGlobalObject) const
     auto& name = WebCore::builtinNames(vm).envPublicName();
     unsigned attributes = 0;
     JSValue env = process->getDirect(vm, name, attributes);
-    // Not made yet, or an accessor.
+    // Still a lazy static property, or redefined as an accessor.
     if (!env || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) [[unlikely]] {
         env = process->get(globalObject, name);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -170,17 +170,17 @@ bool ImportMetaEnv::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
 
     JSObject* env = thisObject->processEnv(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    // Its own slot, so that an accessor of `process.env` runs on `process.env` and only its result gets out.
+    // A separate slot, so a `process.env` accessor runs with `process.env` as `this` and only its value is exposed.
     PropertySlot envSlot(env, PropertySlot::InternalMethodType::GetOwnProperty);
     bool exists = env->getOwnPropertySlotInline(globalObject, propertyName, envSlot);
     RETURN_IF_EXCEPTION(scope, false);
 
     JSValue value;
     if (exists) {
-        // A getter that a Proxy answers with is one of its target: on Windows `process.env` is a Proxy, which keeps TZ that way.
+        // On Windows `process.env` is a Proxy and TZ is an accessor on its target, so read it through the Proxy.
         value = envSlot.isAccessor() && env->type() == ProxyObjectType ? env->get(globalObject, propertyName) : envSlot.getValue(globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, false);
-        // On Windows `process.env` keeps its `toJSON` and `Bun.inspect.custom` among its properties, and they show `process.env`.
+        // On Windows `process.env` has own `toJSON` and `Bun.inspect.custom` functions. Hide them, since they print `process.env`.
         exists = !value.isCallable();
     }
     auto variable = viteVariableNamed(propertyName);
@@ -209,7 +209,6 @@ bool ImportMetaEnv::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // A write to an object that inherits from this one is that object's.
     if (slot.thisValue() != cell) [[unlikely]]
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
 
@@ -256,7 +255,6 @@ void ImportMetaEnv::getOwnPropertyNames(JSObject* object, JSGlobalObject* global
     RETURN_IF_EXCEPTION(scope, );
     for (auto literal : viteVariableNames) {
         auto name = Identifier::fromString(vm, literal);
-        // One that `process.env` has and does not enumerate is not enumerable here either.
         if (mode == DontEnumPropertiesMode::Exclude) {
             PropertySlot slot(env, PropertySlot::InternalMethodType::GetOwnProperty);
             bool exists = env->methodTable()->getOwnPropertySlot(env, globalObject, name, slot);
@@ -282,13 +280,12 @@ JSObject* createImportMetaEnvForTests(Zig::GlobalObject* globalObject)
     return ImportMetaEnv::create(getVM(globalObject), globalObject);
 }
 
-// As with a Proxy, script never sees what native code puts in the storage of the cell.
+// Don't putDirect() on one. As with a Proxy, JS never sees the cell's own storage.
 bool isImportMetaEnvForTests(JSObject* object)
 {
     return object->inherits<ImportMetaEnv>();
 }
 
-// What a property of `object` is a property of, or null for an object that is not `import.meta.env` in a test.
 JSObject* processEnvOfImportMetaEnvForTests(JSGlobalObject* globalObject, JSObject* object)
 {
     auto* env = dynamicDowncast<ImportMetaEnv>(object);

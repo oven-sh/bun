@@ -17,7 +17,7 @@ extern "C" void ExpectDeferred__callWhenSettled(JSGlobalObject* globalObject, En
     uncheckedDowncast<JSPromise>(JSValue::decode(promise))->performPromiseThenWithContext(getVM(globalObject), globalObject, callback, callback, jsUndefined(), JSValue::decode(deferred));
 }
 
-// `promise.then(onFulfilled)`, whatever has been done to Promise.
+// `promise.then(onFulfilled)` without going through Promise.prototype, which user code can patch.
 extern "C" EncodedJSValue ExpectDeferred__then(JSGlobalObject* globalObject, EncodedJSValue promise, EncodedJSValue onFulfilled)
 {
     auto& vm = getVM(globalObject);
@@ -26,7 +26,6 @@ extern "C" EncodedJSValue ExpectDeferred__then(JSGlobalObject* globalObject, Enc
     return JSValue::encode(result);
 }
 
-// The ExpectDeferred that is being thrown, which is then no longer thrown. Empty when anything else is.
 extern "C" EncodedJSValue ExpectDeferred__takeThrown(JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(getVM(globalObject));
@@ -40,7 +39,6 @@ extern "C" EncodedJSValue ExpectDeferred__takeThrown(JSGlobalObject* globalObjec
     return JSValue::encode(thrown);
 }
 
-// `error.cause ??= cause`. What that throws is dropped: `error` is what matters.
 extern "C" void ExpectDeferred__setCauseIfNone(JSGlobalObject* globalObject, EncodedJSValue error, EncodedJSValue cause)
 {
     auto& vm = getVM(globalObject);
@@ -62,13 +60,13 @@ extern "C" bool ExpectDeferred__isHandled(EncodedJSValue promise)
     return uncheckedDowncast<JSPromise>(JSValue::decode(promise))->isHandled();
 }
 
-// An Exception, unlike an Error, keeps the code of its stack frames alive.
+// A JSC::Exception, because unlike an Error it keeps its stack frames' code alive.
 extern "C" EncodedJSValue ExpectDeferred__captureCallSite(JSGlobalObject* globalObject)
 {
     return JSValue::encode(JSC::Exception::create(getVM(globalObject), jsUndefined()));
 }
 
-// The stack `error` would have, had the matcher that was called at `callSite` thrown it there and then.
+// Rewrites `error`'s stack as if the matcher had thrown synchronously at `callSite`.
 extern "C" void ExpectDeferred__continueStackAt(JSGlobalObject* globalObject, EncodedJSValue encodedError, EncodedJSValue callSite)
 {
     auto* error = dynamicDowncast<ErrorInstance>(JSValue::decode(encodedError));

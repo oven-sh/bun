@@ -842,7 +842,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue objectArg = callFrame->argument(0);
-    // V8 refuses a Proxy too: script would never see the `stack` that is put in the storage of the cell.
+    // V8 rejects a Proxy too. JS would never see a `stack` written to the cell's own storage.
     if (!objectArg.isObject() || asObject(objectArg)->type() == JSC::ProxyObjectType || isImportMetaEnvForTests(asObject(objectArg))) {
         return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "invalid_argument"_s));
     }

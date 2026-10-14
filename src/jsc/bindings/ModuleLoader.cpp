@@ -204,7 +204,6 @@ PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObje
     return virtualModule;
 }
 
-// What a module is fetched with besides its specifier and referrer, and the onLoad callbacks that match it.
 struct ModuleFetch {
     Bun::JSModuleGraph* graph;
     JSC::JSString* specifierJS;
@@ -242,7 +241,7 @@ static void waitForOnLoad(Zig::GlobalObject* globalObject, PendingVirtualModuleR
     promise->performPromiseThenWithContext(vm, globalObject, globalObject->thenable(jsFunctionOnLoadObjectResultResolve), globalObject->thenable(jsFunctionOnLoadObjectResultReject), jsUndefined(), pendingModule);
 }
 
-// Bytes are what a file would hold: UTF-8. (Untagged, an EncodedSlice is Latin-1.)
+// Tags the slice as UTF-8, like a file's bytes. An untagged EncodedSlice is read as Latin-1.
 static EncodedSlice contentsFromBytes(const void* data, size_t length)
 {
     if (!length)
@@ -399,7 +398,7 @@ static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSV
     return handleOnLoadResultNotPromise(globalObject, objectValue, specifier, typeAttribute, wasModuleMock);
 }
 
-// What require() gives for a module whose exports are `object`. Empty: its module namespace object.
+// Returns empty when require() should return the module namespace object instead.
 static JSValue commonJSExportsOfObjectModule(Zig::GlobalObject* globalObject, JSC::JSObject* object, bool wasModuleMock)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -506,7 +505,7 @@ static JSValue handleVirtualModuleResult(
 
     case OnLoadResultTypePromise: {
         JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(onLoadResult.value.promise);
-        // require() throws instead of waiting.
+        // require() can't wait, so fetchCommonJSModule() throws when it gets a pending promise back.
         if (commonJSModule && !wasModuleMock && promise->status() == JSPromise::Status::Pending)
             return promise;
         JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
@@ -739,7 +738,7 @@ void evaluateCommonJSCustomExtension(
     RETURN_IF_EXCEPTION(scope, );
 }
 
-// A CommonJS module made from a ResolvedSource goes into IsolatedModuleCache as the file's (unless the wrapper is overridden).
+// JSCommonJSModule::evaluate(ResolvedSource&) would cache plugin contents as the file's own source, so make and cache the provider here.
 static RefPtr<JSC::SourceProvider> commonJSProviderOfPluginContents(Zig::GlobalObject* globalObject, const String& key, const BunString* typeAttribute, const CodeString* pluginContents, ResolvedSource& source)
 {
     if (!pluginContents || globalObject->hasOverriddenModuleWrapper)
@@ -750,7 +749,6 @@ static RefPtr<JSC::SourceProvider> commonJSProviderOfPluginContents(Zig::GlobalO
     return RefPtr<JSC::SourceProvider>(WTF::move(provider));
 }
 
-// require() of a module whose provider IsolatedModuleCache has. Empty if it does not.
 static JSValue requireFromIsolatedModuleCache(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader, JSCommonJSModule* target, const String& key, const BunString* typeAttribute, const CodeString* pluginContents)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1220,7 +1218,7 @@ static JSValue fetchESMSourceCode(
     const bool useIsolationCache = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
     if (useIsolationCache) {
         if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifier->toWTFString(BunString::ZeroCopy), pluginContents)) {
-            // As after a transpilation: didFulfillPendingVirtualModule tells a source from an error by it.
+            // didFulfillPendingVirtualModule checks this to tell a source from an error, so set it on a cache hit too.
             res->success = true;
             if (cached->sourceType() != JSC::SourceProviderSourceType::Program) {
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
@@ -1357,7 +1355,7 @@ JSValue fetchESMSourceCodeAsync(
     return fetchESMSourceCode<true>(globalObject, graph, specifierJS, res, specifier, referrer, typeAttribute);
 }
 
-// Returns the JSSourceCode, or a promise of the loader's own for it. Empty with nothing thrown: it waits for the promise of the next onLoad callback.
+// Returns the JSSourceCode or a promise for it. Empty without an exception means it's waiting on the next onLoad callback's promise.
 static JSValue didFulfillPendingVirtualModule(Zig::GlobalObject* globalObject, PendingVirtualModuleResult* pendingModule, JSValue value)
 {
     auto& vm = JSC::getVM(globalObject);

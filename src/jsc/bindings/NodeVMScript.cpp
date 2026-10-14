@@ -549,7 +549,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, optionNames(vm).contextCodeGeneration(vm), &importer);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // The handle of a vm.constants.DONT_CONTEXTIFY context is its global: there is nothing to wrap in a new one.
+    // A vm.constants.DONT_CONTEXTIFY context's handle is its own global, so run in that context instead of wrapping it in a new one.
     NodeVMGlobalObject* targetContext = context ? getGlobalObjectFromContext(globalObject, context, false) : nullptr;
     RETURN_IF_EXCEPTION(scope, {});
     if (!targetContext || targetContext->contextifiedObject()) {

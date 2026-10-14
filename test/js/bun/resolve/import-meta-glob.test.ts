@@ -16,7 +16,6 @@ async function run(cwd: string, args: string[], env: Record<string, string> = {}
   return { stdout, stderr, exitCode };
 }
 
-/** Evaluates every case in one module at `main` and returns what each one is. */
 async function evaluate(root: string, main: string, cases: Case[], args: string[] = []) {
   const harness = main
     .split("/")
@@ -150,7 +149,6 @@ table('package.json "imports"', packageImports, async () => {
   return await evaluate(join(String(dir), "proj"), "src/main.ts", packageImports);
 });
 
-/** Runs `code` as `proj/src/entry.ts`, the entry point. It prints JSON. */
 async function runEntry(code: string, files: Record<string, string> = {}, args: string[] = ["src/entry.ts"]) {
   using dir = tempDir("import-meta-glob", { ...tree, ...files, "proj/src/entry.ts": code });
   const { stdout, stderr, exitCode } = await run(join(String(dir), "proj"), args);
@@ -158,7 +156,7 @@ async function runEntry(code: string, files: Record<string, string> = {}, args: 
 }
 
 describe.concurrent("import.meta.glob", () => {
-  // The queries are what Vite appends.
+  // The expected query strings are what Vite appends.
   test.each([
     [`{ query: "?x=1" }`, `() => import("./dir/a.ts?x=1")`],
     [`{ query: "x=1" }`, `() => import("./dir/a.ts?x=1")`],
@@ -172,7 +170,7 @@ describe.concurrent("import.meta.glob", () => {
     [`{ query: "?x", import: "setup" }`, `() => import("./dir/a.ts?x").then((m) => m.setup)`],
     [`{ import: "not an identifier" }`, `() => import("./dir/a.ts").then((m) => m["not an identifier"])`],
     [`{ as: "other" }`, `() => import("./dir/a.ts?other")`],
-    // A minifier writes `!1` for `false`.
+    // Minifiers write `!1` for `false`.
     [`{ eager: !1, exhaustive: !0, caseSensitive: !!1 }`, `() => import("./dir/a.ts")`],
     [`{ query: { minus: -1, plus: +2, not: !0 } }`, `() => import("./dir/a.ts?minus=-1&plus=2&not=true")`],
   ])("a lazy entry with %s", async (options, expected) => {
@@ -183,7 +181,7 @@ describe.concurrent("import.meta.glob", () => {
     });
   });
 
-  // Vite's module runner has such a function too.
+  // Vite's module runner also defines an import.meta.glob() that throws.
   test("only a direct call is replaced, and any other finds a function that throws", async () => {
     const { stdout, stderr, exitCode } = await runEntry(`
       const message = call => { try { return call(); } catch (error) { return error.name + ": " + error.message; } };
@@ -211,7 +209,6 @@ describe.concurrent("import.meta.glob", () => {
     });
   });
 
-  // Each is a module of its own, in the project and in a package.
   async function evaluateEach(codes: string[]) {
     const modules = (dir: string) => codes.map((code, i) => [`${dir}/${i}.js`, `export default ${code};`]);
     const { stdout, stderr, exitCode } = await runEntry(
@@ -269,7 +266,7 @@ describe.concurrent("import.meta.glob", () => {
     ).toEqual(Array(5).fill(["/src/dir/a.ts", "/src/dir/b.ts"]));
   });
 
-  // Vite replaces each of these.
+  // Vite replaces all of these forms too.
   test("TypeScript syntax and parentheses do not hide a call", async () => {
     const calls = [
       `(import.meta.glob("./dir/[ab].ts"))`,
@@ -385,10 +382,10 @@ describe.concurrent("import.meta.glob", () => {
     ).toEqual({ stdout: "TypeError: " + message, stderr: "", exitCode: 0 });
   });
 
-  // No path on Windows is long enough.
+  // Windows paths can't get long enough to hit this limit.
   test.skipIf(isWindows)("a file that is too far away for a path", async () => {
     using dir = tempDir("import-meta-glob", { "x/a.js": "" });
-    // "../" is longer than a directory with a name of one letter.
+    // Each "d/" level needs a longer "../" to climb out, so the relative path overflows while the absolute one fits.
     const levels = Math.floor(((isMacOS ? 1024 : 4096) - String(dir).length - 16) / 2);
     const deep = join(String(dir), Buffer.alloc(levels * 2, "d/").toString());
     mkdirSync(deep, { recursive: true });
@@ -404,7 +401,7 @@ describe.concurrent("import.meta.glob", () => {
     });
   });
 
-  // Windows allows none of these names.
+  // Windows doesn't allow `?` or `\` in a file name.
   describe.skipIf(isWindows)("names", () => {
     const names = {
       "w/plain.js": `export default "plain";`,
@@ -457,7 +454,7 @@ describe.concurrent("import.meta.glob", () => {
       });
     });
 
-    // macOS does not store such names.
+    // macOS refuses file names that aren't UTF-8.
     test.skipIf(!isLinux).each(["", ", eager: true"])(
       "that are not UTF-8 are skipped: { import: 'default'%s }",
       async options => {
@@ -480,7 +477,7 @@ describe.concurrent("import.meta.glob", () => {
     );
   });
 
-  // Vite looks in the whole file system.
+  // Vite searches the whole file system instead.
   test("a pattern that starts with ** is looked for in the project", async () => {
     expect(await runEntry(`console.log(JSON.stringify(Object.keys(import.meta.glob("**/[dq].ts"))));`)).toEqual({
       stdout: `["/src/[id]/(group)/{x}/q.ts","/src/dir/sub/d.ts"]`,
@@ -573,7 +570,6 @@ describe.concurrent("import.meta.glob", () => {
   describe("in a CommonJS module", () => {
     const eager = `import.meta.glob("./dir/[ab].ts", { eager: true, import: "name" })`;
     const guarded = `typeof import.meta.glob === "function" ? ${eager} : "fallback"`;
-    /** What `require()` of each file gives. */
     async function requireEach(files: Record<string, string>) {
       const { stdout, stderr, exitCode } = await runEntry(
         `console.log(JSON.stringify(${JSON.stringify(Object.keys(files))}.map(file => {
@@ -603,7 +599,6 @@ describe.concurrent("import.meta.glob", () => {
           "eager.cjs": `module.exports = ${eager};`,
           "later.js": `const load = () => ${eager}; module.exports = load();`,
           "unreached.cjs": `module.exports = String(() => ${eager}).includes("CommonJS");`,
-          // Where an object literal would be taken apart.
           "unused.cjs": `
             let thrown;
             try { ${eager}; } catch (error) { thrown = error.name + ": " + error.message; }
@@ -611,7 +606,7 @@ describe.concurrent("import.meta.glob", () => {
           "property.cjs": `module.exports = ${eager}["./dir/a.ts"];`,
           "imports-nothing.cjs": `
             module.exports = [typeof import.meta.glob, Object.keys(${eager}), import.meta.glob("./none/*.ts", { eager: true })];`,
-          // Nothing in it is CommonJS but its name.
+          // A .cjs file with ESM syntax loads as ESM, so eager works.
           "module.cjs": `globalThis.found = ${eager}; export default globalThis.found;`,
         }),
       ).toEqual([
@@ -646,7 +641,7 @@ describe.concurrent("import.meta.glob", () => {
     });
   });
 
-  // The project root is read once for a call, so what is found is below one directory.
+  // Each call must read the project root (the cwd) once, so its results never mix two directories.
   test("process.chdir() while modules that call it load", async () => {
     using dir = tempDir("import-meta-glob", {
       "short/x/a.js": "",
@@ -729,7 +724,7 @@ describe.concurrent("import.meta.glob", () => {
     expect(exitCode).toBe(0);
   });
 
-  // As in Vitest.
+  // Same order as Vitest.
   test.each([
     ["does not hoist", ``],
     ["hoists a mock", `vi.mock("./nothing.ts", () => ({}));`],
@@ -813,7 +808,7 @@ describe.concurrent("import.meta.glob", () => {
   });
 });
 
-// A call that cannot be replaced throws when it is reached, at the argument that is wrong.
+// An invalid call throws only when it's reached, and the stack points at the bad argument.
 describe("errors", () => {
   // prettier-ignore
   const errors: [code: string, message: string, column: number][] = [
@@ -859,7 +854,7 @@ describe("errors", () => {
     ['import.meta.glob("./d\\0ir/*.ts")', 'Expected a glob pattern without a null byte', 33],
     ['import.meta.glob(["./dir/*.ts", "!/\\0/*.ts"])', 'Expected a glob pattern without a null byte', 48],
     ['import.meta.glob("./*.ts", { base: "./dir/\\0" })', 'Expected the "import.meta.glob" option "base" without a null byte', 51],
-    // What is inlined or folded is not a literal: `bun run` and `bun build` do not inline and fold the same.
+    // Inlined constants and folded expressions aren't literals, because `bun run` and `bun build` fold differently.
     ['import.meta.glob(constant)', 'Expected a glob pattern to be a string literal, but got identifier', 33],
     ['import.meta.glob([constant])', 'Expected a glob pattern to be a string literal, but got identifier', 34],
     ['import.meta.glob(Enum.member)', 'Expected a glob pattern to be a string literal, but got dot', 33],

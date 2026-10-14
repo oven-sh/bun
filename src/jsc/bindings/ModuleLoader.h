@@ -56,12 +56,12 @@ class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<8> {
 public:
     using Base = JSC::JSInternalFieldObjectImpl<8>;
 
-    // After the specifier, the referrer and the promise. Each is empty if there is none.
+    // Fields 0 to 2 are the specifier, the referrer and the promise. These are empty when unused.
     enum Field : unsigned {
         TypeAttribute = 3,
         ModuleGraph,
-        OnLoadPath, // Set while waiting for the promise of an onLoad callback, which may decline.
-        OnLoadCallbacks, // To ask next.
+        OnLoadPath, // Set while waiting on an onLoad callback's promise.
+        OnLoadCallbacks, // The callbacks to try next if that one declines.
         ModuleMock, // Set while waiting for Bun::runModuleMock().
     };
 
@@ -113,7 +113,6 @@ JSValue fetchCommonJSModule(
     BunString* referrer,
     BunString* typeAttribute);
 
-// `pluginContents`: what a plugin supplied in place of the file's, or null.
 template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(
     void* bunVM,

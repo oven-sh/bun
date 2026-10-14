@@ -2,7 +2,7 @@
 extern "C" JSC::EncodedJSValue Bun__Jest__createVitestModuleObject(JSC::JSGlobalObject*);
 
 namespace Zig {
-// What `import "vitest"` resolves to under `bun test`.
+// `import "vitest"` resolves to this under `bun test`.
 void generateNativeModule_BunTestVitest(
     JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,

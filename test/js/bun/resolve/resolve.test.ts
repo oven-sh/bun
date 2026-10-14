@@ -736,7 +736,7 @@ describe("package.json exports target percent-encoding", () => {
 
 describe.concurrent("an absolute specifier about as long as a path buffer", () => {
   const limit = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
-  // Its parent directory exists, so the resolver goes on to try the name with each extension.
+  // The parent directory exists, so the resolver goes on to append each extension to the long name.
   const specifiers = `
     const root = import.meta.dir + require("node:path").sep;
     const specifiers = [];

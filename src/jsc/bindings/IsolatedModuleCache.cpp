@@ -22,7 +22,6 @@ bool IsolatedModuleCache::canUse(JSC::VM&, void* bunVM, const BunString* typeAtt
 extern "C" uint64_t Bun__hashPluginContents(const EncodedSlice* contents, BunLoaderType loader);
 extern "C" bool Bun__VM__hasGlobalsOfVitest(void* bunVM);
 
-// What is transpiled now is made from: the file or the contents a plugin supplied, with the globals of "bun:test" or of "vitest".
 static uint64_t madeFromHash(JSC::VM& vm, const CodeString* pluginContents)
 {
     uint64_t hash = pluginContents ? Bun__hashPluginContents(&pluginContents->string, pluginContents->loader) : 0;

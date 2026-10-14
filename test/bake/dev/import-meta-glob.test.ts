@@ -1,4 +1,4 @@
-// `import.meta.glob()` is expanded each time the file that calls it is bundled.
+// `import.meta.glob()` is only re-expanded when the calling file is re-bundled, so each test rewrites that file.
 import { writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 

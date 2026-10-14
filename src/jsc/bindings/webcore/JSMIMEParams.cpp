@@ -28,7 +28,7 @@ namespace WebCore {
 using namespace JSC;
 using namespace WTF;
 
-// JSC inlines JSMap::has whole into every caller.
+// Out of line, because JSC would otherwise inline all of JSMap::has into every caller.
 static NEVER_INLINE bool hasParameter(JSGlobalObject* globalObject, JSMap* map, JSValue name)
 {
     return map->has(globalObject, name);

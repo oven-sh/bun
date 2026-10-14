@@ -18,7 +18,6 @@
 namespace Bun {
 using namespace JSC;
 
-// `thrown`: where to put what the callback throws; null to report it as uncaught.
 static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue, EncodedJSValue* thrown)
 {
     auto& vm = JSC::getVM(globalObject);

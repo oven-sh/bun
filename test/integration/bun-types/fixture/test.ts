@@ -485,7 +485,6 @@ unknownMatchers.toEqual(["a", "b"]);
 unknownMatchers.toBeCloseTo(2);
 unknownMatchers.toBe("a");
 
-// test.for(), test.extend() and the test context
 test.for([
   [1, "a"],
   [2, "b"],
@@ -552,7 +551,7 @@ extended.each([[1, "a"]])("options before the function", { timeout: 1000 }, (n, 
   expectType<number>(n);
   expectType<string>(s);
 });
-// A row that is an array is spread, whether or not it is a tuple
+// An array row is spread into arguments even when it isn't a tuple.
 extended.each([] as readonly (readonly string[])[])("test.extend", (...args) => {
   expectType<readonly string[]>(args);
 });
@@ -561,11 +560,11 @@ extended.each`
   a    | b
   ${1} | ${2}
 `("$a $b", async ({ a, b }) => expectType<any>(a + b));
-// `Parameters<>` reads (label, fn, options?), as for `test`
+// `Parameters<>` must see the (label, fn, options?) overload, same as for `test`.
 expectType<Parameters<typeof extended>[2]>().is<number | TestOptions | undefined>();
 expectType<Parameters<typeof extended.skip>[2]>().is<number | TestOptions | undefined>();
 expectType<Parameters<ReturnType<typeof extended.each>>[2]>().is<number | TestOptions | undefined>();
-// Options that are `any` do not take the type of the parameters away
+// `any` options must not break contextual typing of the callback's parameters.
 extended("options that are any", async ({ port }) => expectType<number>(port), {} as any);
 extended.skip("options that are any", async ({ port }) => expectType<number>(port), {} as any);
 extended.each([[1, "a"]])("options that are any", async (n, s) => expectType<string>(n + s), {} as any);
@@ -634,7 +633,6 @@ test.describe("test.describe", () => {
   test.afterAll(done => done());
 });
 
-// .resolves and .rejects
 expectType(expect(Promise.resolve(1)).resolves.toBe(1)).is<Promise<void>>();
 expectType(expect(Promise.resolve(1)).resolves.not.toBe(2)).is<Promise<void>>();
 expectType(expect(Promise.resolve(1)).not.resolves.toBe(2)).is<Promise<void>>();
@@ -647,7 +645,6 @@ expect(Promise.resolve(1)).resolves.toBe("1");
 // @ts-expect-error
 expect(async () => 1).resolves.toBe("1");
 
-// custom matchers after .resolves and .rejects
 declare module "bun:test" {
   interface Matchers<T> {
     toBeWithinRange(floor: number, ceiling: number): void;

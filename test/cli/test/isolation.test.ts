@@ -897,7 +897,7 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
-  // The close handlers of what a file leaves open are the last of its script to run.
+  // Close handlers for sockets a file leaves open are the last of that file's JS to run.
   test.each(["--isolate", "--parallel=1"])(
     "what a close handler of a finished file fakes is not faked in the next file: bun test %s",
     async flag => {
@@ -945,7 +945,7 @@ describe.concurrent("bun test --isolate", () => {
     },
   );
 
-  // What a close handler of a finished file starts cannot be over before the file's realm is retired.
+  // Work started from a finished file's close handler is still in flight when the file's realm is retired.
   test.each([
     ["a ShadowRealm", "new ShadowRealm().evaluate(code)"],
     ["a node:vm context", "vm.runInContext(code, vm.createContext({ console }))"],
@@ -1078,12 +1078,12 @@ describe.concurrent("bun test --isolate", () => {
           String(dir),
           ["--isolate"],
           Object.keys(files).map(file => "./" + file),
-          // A compilation in flight is a root of the code that it compiles.
+          // An in-flight JIT compilation roots the code it compiles, which would show up in the snapshot.
           { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
         );
         const printed = stdout.replace(/^bun test .*\n/, "");
         expect(printed, stderr).toStartWith("{");
-        // Of the file that counts: its global object, its 7 objects, their prototype and constructor.
+        // Only counts.test.ts is left. kept is 9 for its 7 URLSearchParams plus their prototype and constructor.
         expect({ ...JSON.parse(printed), exitCode }).toEqual({
           globals: ["root(ProtectedValues) GlobalObject"],
           contexts: [],
@@ -1094,11 +1094,11 @@ describe.concurrent("bun test --isolate", () => {
     });
   });
 
-  // Not on a debug build, where the temporaries of `vm.global().set_time_zone()` in the frame of `TestCommand::exec` keep the first file.
+  // On debug builds `vm.global().set_time_zone()` temporaries in `TestCommand::exec`'s frame keep the first file alive.
   test.skipIf(isDebug)(
     "with --isolate, of the finished files only the last two can be waiting for a collection",
     async () => {
-      // File i keeps 16 * 2 ** i objects of a native class on its global, so their number says which files are alive.
+      // File i keeps 16 * 2 ** i URLSearchParams on its global, so the live count is a bitmask of the live files.
       const keep = (file: number) =>
         `globalThis.kept = Array.from({ length: ${16 * 2 ** file} }, () => new URLSearchParams());`;
       const files: Record<string, string> = {};
@@ -1142,7 +1142,7 @@ describe.concurrent("bun test --isolate", () => {
     },
   );
 
-  // The runs of a file share one global, with --isolate too.
+  // --rerun-each runs of a file share one global, even with --isolate.
   test.each(["--rerun-each=3", "--isolate --rerun-each=3", "--parallel=1 --rerun-each=3"])(
     "every run of a file starts with nothing mocked: bun test %s",
     async flags => {
@@ -1650,8 +1650,8 @@ test.concurrent("--isolate: cached SourceProvider's module_info rebuilds correct
   expect(exitCode).toBe(0);
 });
 
-// JSC keeps the unlinked code of 2,000 sources unless it is given room for more. It also keeps no more than was added in
-// the 10 s before it prunes, and a debug or ASAN build can take longer than that to load one of these files.
+// JSC caches the unlinked code of 2,000 sources unless it's given room for more, hence 2,200 modules.
+// Pruning also only keeps the last 10 s of additions, and on debug or ASAN builds one file can take longer to load.
 test
   .skipIf(isDebug || isASAN)
   .concurrent(
@@ -2234,7 +2234,7 @@ test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProv
 });
 
 describe.concurrent("the SourceProvider cache does not keep what is made from more than the source", () => {
-  // Over and under the size from which the RuntimeTranspilerCache takes a file.
+  // One size below and one above the RuntimeTranspilerCache's minimum file size.
   const padding = { small: "", large: Buffer.alloc("// padding\n".length * 6000, "// padding\n").toString() };
   const files = (size: keyof typeof padding) => ({
     "globbed/a.ts": ``,
@@ -2472,7 +2472,7 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     expect({ results: results(stderr), exitCode }, stderr).toEqual({ results: ["(pass) b"], exitCode: 1 });
   });
 
-  // `onRestore` runs in the defineProperty trap of a spied-on Proxy once the test is over.
+  // Restoring the spy after the test hits the Proxy's defineProperty trap, which runs `onRestore`.
   const restoredThroughTrap = (onRestore: string) => `
     import { jest, spyOn, test } from "bun:test";
     test("a", () => {

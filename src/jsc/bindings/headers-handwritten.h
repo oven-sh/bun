@@ -137,7 +137,7 @@ typedef struct ResolvedSource {
     // An ES module of the executable's pre-resolved module graph: no module_info, its record comes from the graph
     // (Zig::SourceProvider still gets SourceProviderSourceType::BunTranspiledModule).
     bool is_prelinked_module;
-    // source_code holds what a macro returned or the files `import.meta.glob` matched: it is not what another load of the file gives.
+    // source_code depends on more than the file's text (macros, `import.meta.glob`), so IsolatedModuleCache must not cache it.
     bool depends_on_more_than_source;
     // -- Bytecode cache fields --
     // Owned (`ResolvedSource__freeBytecode`) iff `bytecode_cache_owned`; otherwise
@@ -437,12 +437,10 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSC::JSValue v1, JSC::JS
 
 namespace Bun {
 struct DeepMatchState {
-    // The (value, pattern) pairs that have been compared or are being compared.
     std::set<std::pair<JSC::EncodedJSValue, JSC::EncodedJSValue>> seen;
     JSC::MarkedArgumentBuffer gcBuffer;
-    // When `records`, four values for each property that was compared: the object it is a property of, the pattern that
-    // object was compared with, and either the asymmetric matcher it matched and undefined, or the object it holds and
-    // the pattern of that.
+    // If `records`, `recorded` gets 4 values per compared property (see recordIfAsked).
+    // An undefined patternOfValue means `value` is the asymmetric matcher the property matched.
     bool records { false };
     JSC::MarkedArgumentBuffer recorded;
     WTF::Vector<JSC::Identifier> recordedNames;

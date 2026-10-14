@@ -352,23 +352,20 @@ export async function expectMaxObjectTypeCount(
   expect(heapStats().objectTypeCounts[type] ?? 0).toBeLessThanOrEqual(count);
 }
 
-/** What "kept alive" means: a root reaches the cell through the heap. A collection
- *  alone cannot say that. JavaScriptCore also marks whatever a word on the native stack happens to
- *  point at, and a slot a live native frame never writes can hold a cell of an earlier callback's
- *  frames for as long as the loop re-enters that frame, so "it was not finalized" does not mean
- *  something holds it. The debugging heap snapshot has every edge and every root, and no entry for
- *  such words. A fixture embeds it as `${Heap}`, with `generateHeapSnapshotForDebugging` of "bun:jsc" in scope. */
+/** Reachability from GC roots, read from the debugging heap snapshot, which has no entry for conservative stack roots.
+ *  So unlike "was it finalized?", it only reports cells that something in the heap really holds.
+ *  Fixtures embed it as `${Heap}` with `generateHeapSnapshotForDebugging` from "bun:jsc" in scope. */
 export class Heap {
   readonly #className = new Map<number, string>();
   readonly #label = new Map<number, string>();
   readonly #idOfAddress = new Map<bigint, number>();
-  /** For each cell a root reaches: the cell it was reached from and the edge, on a shortest path. */
+  /** Reachable cell -> [parent cell, edge] on a shortest path from a root. Roots map to undefined. */
   readonly #reachedFrom = new Map<number, [number, string] | undefined>();
   readonly #rootReason = new Map<number, string>();
 
-  /** `followers: false` leaves out what is recorded as a root though it only follows from other cells being marked, with
-   *  no edge to say which: what a WeakMap holds for a marked key, what a WeakHandleOwner keeps while another cell is
-   *  marked. A word on the stack can be all that marks those. Ask for the cells they follow from as well. */
+  /** `followers: false` skips "roots" that are only marked because another cell is (a WeakMap value for a marked key,
+   *  a cell its WeakHandleOwner keeps). The snapshot has no edge from that other cell, which only the stack may hold,
+   *  so also query the cells they depend on. */
   constructor({ followers = true } = {}) {
     const { nodes, edges, roots, nodeClassNames, edgeTypes, edgeNames, labels } =
       generateHeapSnapshotForDebugging() as any;
@@ -388,8 +385,7 @@ export class Heap {
     const queue: number[] = [];
     for (let i = 0; i < roots.length; i += 3) {
       const reason = String(labels[roots[i + 1]] ?? roots[i + 1]);
-      // What an output constraint appends (the listeners of a marked EventTarget, ...) is recorded
-      // as a root, but only follows from its owner being marked, and the owner's edges say the same.
+      // DOMGCOutput roots (e.g. a marked EventTarget's listeners) duplicate edges their owner already has.
       if (this.#reachedFrom.has(roots[i]) || reason.includes("DOMGCOutput")) continue;
       const isOnItsOwn = reason === "WeakSets" && String(labels[roots[i + 2]]).includes("pending activity");
       if (!followers && (reason === "Output" || reason === "WeakSets") && !isOnItsOwn) continue;
@@ -402,7 +398,7 @@ export class Heap {
         if (!this.#reachedFrom.has(child)) (this.#reachedFrom.set(child, [queue[i], edge]), queue.push(child));
   }
 
-  /** The shortest path from a root to the cell at `address`, or undefined when no root reaches it. */
+  /** Shortest path from a root to the cell at `address`, or undefined if no root reaches it. */
   pathTo(address: bigint): string | undefined {
     const id = this.#idOfAddress.get(address);
     if (id === undefined || !this.#reachedFrom.has(id)) return undefined;
@@ -415,7 +411,6 @@ export class Heap {
     return [`root(${this.#rootReason.get(at)}) ${describe(at)}`, ...path].join(" ");
   }
 
-  /** The shortest path from a root to each cell of `type` that one reaches. */
   pathsTo(type: string): string[] {
     const paths: string[] = [];
     for (const [address, id] of this.#idOfAddress)
@@ -423,7 +418,6 @@ export class Heap {
     return paths;
   }
 
-  /** How many cells of each type a root reaches. */
   counts(types: string[]): Record<string, number> {
     const counts = Object.fromEntries(types.map(type => [type, 0]));
     for (const id of this.#reachedFrom.keys()) {

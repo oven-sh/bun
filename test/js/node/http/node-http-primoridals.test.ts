@@ -134,7 +134,7 @@ test("Overriding Request, Response, Headers, and Blob should not break node:http
 });
 
 async function withEchoServer(run: (http: typeof import("node:http"), origin: string) => Promise<void>) {
-  // Not imported: the test above is about loading node:http with the globals replaced.
+  // Not a top-level import, because the test above must be the first to load node:http, with the globals replaced.
   const http = require("node:http");
   const server = http.createServer((req, res) => {
     let body = "";

@@ -734,7 +734,7 @@ it("import(...) without __esModule", async () => {
   expect(mod).toBe("world");
 });
 
-// Called by a bare name that is not a local variable, a native function is given the engine's own scope object as `this`.
+// JSC passes its own scope object as `this` when a native function is called through a captured variable.
 it("onLoad(), onResolve() and module() return the builder, and undefined when they are called by a bare name", () => {
   let returned: unknown;
   plugin({
@@ -1908,7 +1908,6 @@ describe.concurrent("onLoad that declines", () => {
     }
   });
 
-  // What is thrown is all that happens: nothing is loaded, and nothing is rejected, once the promise is settled.
   it("later than require() can wait for leaves nothing behind", async () => {
     const setup = `
       globalThis.promises = [];
@@ -1976,7 +1975,7 @@ describe.concurrent("onLoad that declines", () => {
     expect(await run(setup, extra)).toEqual({ stdout: ["CommonJS", "ES module", "[]"], stderr: "", exitCode: 0 });
   });
 
-  // Only the request that waits holds on to them.
+  // After clearAll(), only the pending load keeps the remaining callbacks alive.
   it("has the callbacks that matched asked after Bun.plugin.clearAll() and a collection", async () => {
     const setup = `
       build.onLoad({ filter: /dep-import\\.ts$/ }, asked("1st", async () => {
@@ -2041,9 +2040,8 @@ describe.concurrent("onLoad that declines", () => {
   });
 });
 
-// A file that no onLoad serves is transpiled off the main thread, so microtasks alone do not finish its import().
+// A file no onLoad serves is transpiled off the main thread, so microtasks alone can't finish its import().
 describe.concurrent("a graph of modules is loaded the way it is without plugins", () => {
-  // Module i imports 3i+1, 3i+2 and 3i+3. Its value is i plus theirs.
   const count = 40;
   const children = (i: number) => [3 * i + 1, 3 * i + 2, 3 * i + 3].filter(child => child < count);
   const source = (i: number, own: number) =>
@@ -2099,7 +2097,7 @@ describe.concurrent("a graph of modules is loaded the way it is without plugins"
         ${loadedOffThread("late.ts")}
         console.log(JSON.stringify({ value, byMicrotasksAlone, loaded }));
       `,
-      // (Each its own: --isolate keeps what one file has loaded for the next.)
+      // One per test file, because --isolate caches a loaded file's source for the test files after it.
       ...Object.fromEntries(names.map(name => [`late-${name}.ts`, `export {};`])),
       ...Object.fromEntries(
         names.map(name => [
@@ -2249,7 +2247,6 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
       ".ts",
     ],
   ])("once, by %s", async (_, name, source, expected) => {
-    // Bun.resolveSync() and Bun.resolve() are given a directory.
     const importer = source.includes("import.meta.dir") ? "src/sub" : "src/sub/" + name;
     const asked = specifiers.map(specifier => `onResolve ${specifier} from ${importer}`);
     expect(
@@ -2307,7 +2304,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
     });
   });
 
-  // As in the documentation of onLoad.
+  // The example from the onLoad docs.
   it("and can move it into a namespace", async () => {
     const source = `
       Bun.plugin({
@@ -2399,7 +2396,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
     };
     const { stdout, stderr, exitCode } = await run(files, ["--preload", "./plugin.ts", "entry.mjs"]);
     expect({ stdout: stdout.slice(1), stderr, exitCode }).toEqual({
-      // (After the entry point.)
+      // slice(1) skips the onResolve call for the entry point.
       stdout: [
         "loaded",
         "fs,fs/promises,ws,undici,bun,node:fs,bun:jsc",
@@ -2412,7 +2409,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
     });
   });
 
-  // A catch-all that loads a package when it is first called would be called about that package, and so on.
+  // Otherwise a catch-all onResolve that lazily requires a package would recurse on that package forever.
   it("but not about what a callback, or a package it calls, loads while it runs", async () => {
     const files = {
       ...packages,
@@ -2581,7 +2578,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
   });
 });
 
-// Files are transpiled off the main thread, where there are no plugins. A macro is a module that plugins can serve.
+// Non-entry files are transpiled off the main thread, where plugins can't run, but a macro's module may need one.
 describe.concurrent("a macro called in a file that is not the entry point", () => {
   const files = {
     "macro.ts": `export function macro() { return "macro.ts"; }`,
@@ -2621,7 +2618,7 @@ describe.concurrent("a macro called in a file that is not the entry point", () =
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // (A debug build logs the calls.)
+    // Debug builds log every macro call to stdout.
     return { stdout: stdout.replace(/^\[macro\].*\n/gm, ""), stderr, exitCode };
   }
 
@@ -2655,7 +2652,7 @@ describe.concurrent("a macro called in a file that is not the entry point", () =
     expect(exitCode).toBe(0);
   });
 
-  // Each file of a chain is handed to another thread when the one before it is loaded, which is when the macro of another chain starts.
+  // Loading one link queues the next on another thread, just as another chain's macro starts running.
   it("in files that other threads transpile while a macro runs", async () => {
     const chains = Array.from({ length: 10 }, (_, chain) => chain);
     const links = Array.from({ length: 4 }, (_, link) => link);
@@ -2727,8 +2724,8 @@ it.concurrent(
 );
 
 describe.concurrent("what a plugin supplies as contents is loaded like a file that holds it", () => {
-  // [loader, extension of a file of that type, contents, what import() gives, what require() gives]
   const object = { a: 1, b: { c: 2 } };
+  // [loader, file extension, contents, import() result, require() result]
   const cases: Record<string, [string, string, string, unknown, unknown]> = {
     "an ES module": [
       "js",
@@ -2834,7 +2831,6 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
   const names = Object.keys(cases);
   const slug = (name: string) => name.replaceAll(" ", "-");
 
-  // Each case is loaded from "<way>-<case>.<extension>", a file, and from "<way>-<case>.<extension>.virtual", which is empty.
   const common = `
     const cases = ${JSON.stringify(Object.fromEntries(names.map(name => [slug(name), cases[name].slice(0, 3)])))};
     function supplied(path) {
@@ -2955,7 +2951,7 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
     expect(exitCode).toBe(0);
   });
 
-  // --isolate keeps the source of what one file has loaded for the next, by path.
+  // --isolate caches each loaded file's source by path for the test files after it.
   it("and is not taken for the file's by the next test file under --isolate", async () => {
     const extra = {
       "dep.ts": `export default "from disk";`,
@@ -3011,7 +3007,7 @@ describe.concurrent("what a plugin supplies as contents is loaded like a file th
       "imported-cjs.virtual": "",
       "required-esm.virtual": "",
       "required-cjs.virtual": "",
-      // That cache is for sources of 4 KiB and more.
+      // The on-disk transpiler cache skips sources under 4 KiB.
       "long.js": Array.from({ length: 400 }, (_, i) => `function f${i}() { return ${i}; }\n`).join(""),
       "plugin.ts": `
         import { existsSync, mkdirSync, readFileSync } from "node:fs";
@@ -3686,7 +3682,7 @@ describe.concurrent("script that has replaced the methods of Promise sees nothin
       },
       ["test", "--timeout=60000", "--preload", "./preload.ts", ...args],
     );
-    // With --parallel, what a test file logs is in stderr.
+    // Under --parallel a test file's console output goes to stderr.
     const kinds = new Set(
       (stdout + stderr)
         .split("\n")
@@ -3718,7 +3714,6 @@ describe.concurrent("what a plugin answers that cannot be followed is an error",
     return { stdout: stdout.trim().split("\n"), stderr, exitCode };
   }
 
-  // Logs what each way to ask about \`specifier\` throws or rejects with.
   const ask = `
     const ways = {
       "Bun.resolveSync()": specifier => Bun.resolveSync(specifier, import.meta.dir),
@@ -4078,13 +4073,13 @@ describe.concurrent("a module made from an object", () => {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "test", "--isolate", "--preload", "./preload.ts"],
         cwd: String(dir),
-        // A compilation in flight is a root of the code that it compiles.
+        // An in-flight JIT compilation roots the code it compiles, which would show up in the snapshot.
         env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
         stdout: "pipe",
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      // 9 when they are kept. The object follows from the JSSourceCode.
+      // On a leak there are 9 GlobalObjects, each kept by the object a leaked JSSourceCode still holds.
       expect(JSON.parse(stdout.slice(stdout.indexOf("{")))).toEqual({
         GlobalObject: ["root(ProtectedValues) GlobalObject"],
         JSSourceCode: [],
@@ -4094,7 +4089,7 @@ describe.concurrent("a module made from an object", () => {
     },
   );
 
-  // JavaScriptCore makes the module a second time for a require() that comes right after import() has made it.
+  // JSC creates the module again for a require() right after import() created it, so the object must outlive a GC.
   it("is there to make the module from again, whenever the collector runs", async () => {
     const files: Record<string, string> = {};
     for (let i = 0; i < 8; i++) {
@@ -4221,7 +4216,7 @@ describe.concurrent("an onLoad callback that loads a module which imports the on
     });
   });
 
-  // import(m) waits for call 1. require(m) asks again: call 2, which requires a module that imports k: call 3.
+  // Call 1 is import(m), left pending. Call 2 is require(m) asking again. Call 3 is call 2 requiring an importer of k.
   const askedAgain = `
     const fails = process.argv[2];
     const asked = Promise.withResolvers(), gate = Promise.withResolvers();

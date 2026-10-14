@@ -3,7 +3,7 @@ import { readdirSync } from "node:fs";
 import { cases, tree, type Entry } from "../js/bun/resolve/import-meta-glob-cases";
 import { itBundled } from "./expectBundled";
 
-// The bundle is made in the project root, so nothing is above it, and the bundler resolves no path with a query.
+// Nothing exists above the bundle's root, and the bundler can't resolve a path with a query, so skip those cases.
 const files = Object.fromEntries(
   Object.entries(tree)
     .filter(([path]) => path.startsWith("proj/"))
@@ -243,7 +243,7 @@ describe("bundler", () => {
     run: { stdout: [...invalid.map(message => "TypeError: " + message), "fallback"].join("\n") },
   });
 
-  // A constant that is inlined is not a literal.
+  // An inlined constant still doesn't count as a literal.
   itBundled("import-meta-glob/CallsThatCannotBeReplacedAreTheSameWithMinifySyntax", {
     entryPoints: ["/entry.ts"],
     files: { ...modules, "/entry.ts": invalidCalls },

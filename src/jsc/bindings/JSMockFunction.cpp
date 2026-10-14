@@ -237,7 +237,7 @@ DEFINE_VISIT_CHILDREN(JSMockImplementation);
 
 const ClassInfo JSMockImplementation::s_info = { "MockImpl"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockImplementation) };
 
-// The value of an own data property, the GetterSetter or CustomGetterSetter cell of an own accessor, or empty.
+// Returns a data property's value, an accessor's raw GetterSetter / CustomGetterSetter cell, or empty if there's no own property.
 static JSValue getOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object, PropertyName key, unsigned& attributes)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -266,8 +266,7 @@ static JSValue getOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* obj
 
 JSObject* processEnvOfImportMetaEnvForTests(JSGlobalObject*, JSObject*);
 
-// Script never sees what is put in the storage of the cell: of a Proxy,
-// and, for what the contextified object has, of the global object of a node:vm context.
+// Script never sees what putDirect() stores on a Proxy, or on a node:vm global for a key that the contextified object has.
 static bool isOpaqueProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName key)
 {
     if (!object->structure()->typeInfo().prohibitsPropertyCaching()) [[likely]]
@@ -279,7 +278,6 @@ static bool isOpaqueProperty(JSGlobalObject* globalObject, JSObject* object, Pro
     return object->type() == ProxyObjectType;
 }
 
-// Like putDirect(), it ignores `writable` and `configurable`, unless `isOpaque`.
 static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object, PropertyName key, JSValue storage, unsigned attributes, bool isOpaque)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -297,7 +295,7 @@ static void putOwnPropertyStorage(JSGlobalObject* globalObject, JSObject* object
         scope.release();
         object->putDirectAccessor(globalObject, key, uncheckedDowncast<GetterSetter>(storage), attributes);
     } else if (attributes & PropertyAttribute::CustomAccessorOrValue) {
-        // putDirectCustomAccessor() asserts that the property is new
+        // putDirectCustomAccessor() asserts that the property is new.
         {
             VM::DeletePropertyModeScope deleteNonConfigurable(vm, VM::DeletePropertyMode::IgnoreConfigurable);
             JSCell::deleteProperty(object, globalObject, key);
@@ -343,7 +341,6 @@ public:
 
         return function;
     }
-    // With `prototype` in it, which create() fills.
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
         Structure* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(InternalFunctionType, StructureFlags), info());
@@ -360,19 +357,16 @@ public:
     template<typename Visitor> void visitAdditionalChildrenInGCThread(Visitor&);
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
 
-    // What the calls have recorded
     struct Recorded {
         JSC::WriteBarrier<JSC::JSArray> calls;
         JSC::WriteBarrier<JSC::JSArray> contexts;
         JSC::WriteBarrier<JSC::JSArray> invocationCallOrder;
-        // Not kept until `new` or script needs it: it would hold what `contexts` holds.
+        // Would duplicate `contexts`, so it's only built once `new` or script needs it (materializeInstances).
         JSC::WriteBarrier<JSC::JSArray> instances;
         JSC::WriteBarrier<JSC::JSArray> returnValues;
-        // `mock`, once script has read it
         JSC::WriteBarrier<JSC::JSObject> state;
     };
 
-    // What mock*() have set
     struct Configuration {
         // three pointers to implementation objects
         // head of the list, this one is run next
@@ -381,14 +375,13 @@ public:
         JSC::WriteBarrier<JSC::Unknown> fallbackImplmentation;
         // the last once implementation
         JSC::WriteBarrier<JSC::Unknown> tail;
-        // what mockName() gave a mock of `jest` or `vi`, until it is reset
         JSC::WriteBarrier<JSC::JSString> mockName;
     };
 
     const Recorded& recorded() const { return m_recorded; }
     const Configuration& configuration() const { return m_configuration; }
 
-    // The only ways to write to them: clearAllMocks(), or resetAllMocks(), finds the mock from here on.
+    // Every write goes through these, which register the mock so that clearAllMocks() / resetAllMocks() can find it.
     Recorded& willRecord()
     {
         enter(List::Called);
@@ -400,25 +393,22 @@ public:
         return m_configuration;
     }
 
-    // of the mock an instance of an automocked class has for a method: the mock of that method on the class prototype
+    // Set on an automocked class instance's method mock: the mock of the same method on the class prototype.
     JSC::WriteBarrier<JSMockFunction> prototypeMock;
-    // made by mockObject(): every instance gets its own mocks of the methods on `prototype`
     bool isAutomock { false };
-    // made through `vi`, and behaves as Vitest's mocks do where those differ from Jest's
     bool isVitest { false };
-    // made through `jest`. Neither this nor isVitest: by mock() or spyOn() of "bun:test", whose mock name is its `name`
+    // Made through `jest`. With neither flag it comes from bun:test's mock() or spyOn(), and its mock name is its `name`.
     bool isJest { false };
-    // made by spyOn(): Vitest names it after the property
     bool isSpy { false };
-    // `prototype` is still the CustomValue that all mocks share, which makes the object when it is read
+    // `prototype` is still the CustomValue shared by all mocks, which creates the object on first read.
     bool hasLazyPrototype { true };
-    // While it loaded, or in a beforeAll() of it, which run once for all the test files: the end of a test file leaves it alone.
+    // Preloads and their beforeAll() hooks run once for all test files, so the end of a test file leaves it alone.
     bool isMadeByPreload { false };
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
-    // the spy is the getter or the setter of the property, or what its getter returns
+    // The spy is the property's getter or setter, or what its getter returns.
     static constexpr unsigned SpyAttributeAccessor = 1 << 29;
-    // isOpaqueProperty() when the spy was installed: it goes the way it came
+    // isOpaqueProperty() was true at install time, so restore the same way.
     static constexpr unsigned SpyAttributeOpaque = 1 << 28;
 
     JSString* jsName()
@@ -464,10 +454,10 @@ public:
         WTF::String nameToUse;
         if (auto* fn = dynamicDowncast<JSFunction>(value)) {
             nameToUse = fn->name(vm);
-            // `const f = () => {}` and `{ f: () => {} }` are only named this way
+            // `const f = () => {}` and `{ f: () => {} }` only have an ecmaName().
             if (nameToUse.isEmpty() && !fn->isHostFunction())
                 nameToUse = fn->jsExecutable()->ecmaName().string();
-            // `{ [symbol]() {} }` only has the property
+            // `{ [symbol]() {} }` only has the `name` property.
             if (nameToUse.isEmpty()) {
                 JSValue nameValue = fn->get(global, vm.propertyNames->name);
                 RETURN_IF_EXCEPTION(scope, );
@@ -499,7 +489,7 @@ public:
         return key == vm.propertyNames->length.impl() || key == vm.propertyNames->name.impl() || key == vm.propertyNames->prototype.impl();
     }
 
-    // Its structure lists its own keys, but for those three, which it makes when they are asked for.
+    // A plain JSFunction's structure lists all its own keys except the lazily reified length, name and prototype.
     static bool isOrdinaryFunction(JSObject* function)
     {
         return function->type() == JSC::JSFunctionType && !JSC::hasIndexedProperties(function->indexingType()) && !function->structure()->typeInfo().hasStaticPropertyTable();
@@ -549,7 +539,7 @@ public:
                 Identifier key = keys[i];
                 if (isOwnPropertyOfEveryFunction(vm, key.impl()))
                     continue;
-                // promisify(mock) has to call the mock
+                // Copying it would make promisify(mock) bypass the mock.
                 if (key.isSymbol() && key.impl() == vm.symbolRegistry().symbolForKey("nodejs.util.promisify.custom"_s).ptr())
                     continue;
                 bool exists = this->hasProperty(globalObject, key);
@@ -598,7 +588,7 @@ public:
         ensureArray(recorded.instances, values);
     }
 
-    // `mock`. Script can write to what it gets here.
+    // The `fn.mock` object. Script can write to the arrays in it, so reading it counts as recording.
     JSObject* state()
     {
         auto& vm = this->vm();
@@ -619,7 +609,6 @@ public:
         return state;
     }
 
-    // mockClear()
     void clear()
     {
         m_recorded.calls.clear();
@@ -632,9 +621,9 @@ public:
         if (state && !this->isVitest) {
             m_recorded.state.clear();
         } else if (state) {
-            // In Vitest `fn.mock` stays the same object.
+            // In Vitest `fn.mock` stays the same object across mockClear().
             auto& vm = this->vm();
-            // in the order of mockObjectStructure
+            // Same order as the offsets in mockObjectStructure.
             JSArray* arrays[] = { ensureArray(m_recorded.calls), ensureArray(m_recorded.contexts), ensureArray(m_recorded.instances), ensureArray(m_recorded.returnValues), ensureArray(m_recorded.invocationCallOrder) };
             static constexpr ASCIILiteral names[] = { "calls"_s, "contexts"_s, "instances"_s, "results"_s, "invocationCallOrder"_s };
             Structure* structure = state->structure();
@@ -651,7 +640,6 @@ public:
         leave(List::Called);
     }
 
-    // What mockReset() does besides mockClear().
     void resetConfiguration(JSGlobalObject* globalObject)
     {
         auto& vm = this->vm();
@@ -665,7 +653,7 @@ public:
             m_configuration.implementation.set(vm, this, fallback);
         if (initial)
             setFallbackImplementation(JSMockImplementation::Kind::Call, initial);
-        // Before script runs, which may configure it again.
+        // Must come before updatePrototype(), which can run script that configures the mock again.
         leave(List::Configured);
         this->updatePrototype(globalObject);
     }
@@ -676,7 +664,7 @@ public:
         this->resetConfiguration(globalObject);
     }
 
-    // What resetting a Vitest mock goes back to: the function given to vi.fn(), the original of a spy. Of a mock that has just been made.
+    // What mockReset() goes back to in Vitest: the function given to vi.fn(), or a spy's original. Only call it on a new mock.
     void setInitialImplementation(JSGlobalObject* globalObject, JSValue function)
     {
         ASSERT(!m_configuration.implementation && !m_initialImplementation);
@@ -710,7 +698,6 @@ public:
         this->updatePrototype(globalObject);
     }
 
-    // The one that the call that is being made runs
     JSMockImplementation* takeNextImplementation()
     {
         auto* impl = tryJSDynamicCast<JSMockImplementation*, Unknown>(m_configuration.implementation);
@@ -725,7 +712,6 @@ public:
         return impl;
     }
 
-    // withImplementation() swaps them, and swaps them back.
     void setImplementations(JSGlobalObject* globalObject, JSValue implementation, JSValue tail, JSValue fallback)
     {
         auto& vm = this->vm();
@@ -750,7 +736,6 @@ public:
         this->setPrototypeProperty(vm, prototype);
     }
 
-    // What script gets for `mock.prototype`, unless a spy has made that an accessor.
     JSValue prototypeProperty(JSGlobalObject* globalObject)
     {
         auto& vm = this->vm();
@@ -763,7 +748,7 @@ public:
         return this->getDirect(vm, vm.propertyNames->prototype);
     }
 
-    // Instances are made from `mock.prototype`; the prototype of the function that constructs them goes behind it.
+    // Instances are created from `mock.prototype`, so the implementation's `prototype` is chained behind it.
     void setPrototypeParent(JSGlobalObject* globalObject, JSValue constructor)
     {
         auto& vm = this->vm();
@@ -809,7 +794,7 @@ public:
         return getter && getter->boundThis() == this;
     }
 
-    // It has been put in the place of `original`: getOwnPropertyStorage() of the property, empty if the target inherited or lacked it.
+    // `original` is getOwnPropertyStorage() of the replaced property, or empty if the target had no own one.
     void didInstall(JSObject* target, const Identifier& key, JSValue original, unsigned attributes);
 
     // Puts the spied-on property back as it was; that can throw (a module namespace export, an indexed slot).
@@ -824,7 +809,7 @@ public:
         if (auto* target = m_spyTarget.get()) {
             this->putBackOriginal(globalObject, target);
             if (scope.exception()) [[unlikely]] {
-                // It is still installed: restoreAllMocks() finds it again.
+                // It's still installed, so keep it where restoreAllMocks() finds it.
                 enter(List::Spies);
                 return;
             }
@@ -851,7 +836,6 @@ public:
     }
 
 private:
-    // The sets of JSMockModule
     enum class List : uint8_t {
         Called = 1 << 0,
         Configured = 1 << 1,
@@ -889,7 +873,7 @@ private:
         m_lists |= static_cast<uint8_t>(list);
     }
 
-    // Only once what the set is there to find is gone. The set keeps its entry, which forEachIn() skips: removing one costs a rehash.
+    // Only clears the flag. The set keeps a stale entry, which forEachIn() skips, because removing one costs a rehash.
     void leave(List list)
     {
         m_lists &= ~static_cast<uint8_t>(list);
@@ -939,7 +923,7 @@ private:
         }
 
         if (attributes & SpyAttributeAccessor) {
-            // Restoring the spy on the other half of the accessor already put both halves back.
+            // Restoring the spy on the accessor's other half already put both halves back.
             unsigned currentAttributes = 0;
             JSValue current = getOwnPropertyStorage(globalObject, target, identifier, currentAttributes);
             RETURN_IF_EXCEPTION(scope, );
@@ -953,7 +937,7 @@ private:
         if (original) {
             putOwnPropertyStorage(globalObject, target, identifier, original, attributes & ~(SpyAttributeAccessor | SpyAttributeOpaque), isOpaque);
         } else if (!isOpaque && target->inherits<NodeVMGlobalObject>()) {
-            // Its own [[Delete]] deletes from the contextified object, where the spy never was.
+            // NodeVMGlobalObject::deleteProperty() deletes from the contextified object, where the spy never was.
             DeletePropertySlot slot;
             NodeVMGlobalObject::Base::deleteProperty(target, globalObject, identifier, slot);
         } else {
@@ -968,7 +952,6 @@ private:
     JSC::Weak<JSObject> m_spyTarget;
     JSC::Identifier m_spyIdentifier;
     unsigned m_spyAttributes { 0 };
-    // which `List`s it is in
     uint8_t m_lists { 0 };
 };
 
@@ -1095,9 +1078,8 @@ void JSMockFunction::didInstall(JSObject* target, const Identifier& key, JSValue
 
 const ClassInfo JSMockFunctionPrototype::s_info = { "Mock"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMockFunctionPrototype) };
 
-// Takes the set, and with it the entries of the mocks that have left it, and takes every mock out of it: `apply` enter()s the ones that stay.
-// The set is weak: a mock that has been collected is not in it. Script that `apply` runs may put mocks in the next set.
-// Goes on after an exception, and throws the first one once it is through.
+// Detaches the set first, which drops its stale entries and lets script that `apply` runs register mocks in a new set.
+// Every mock leaves, so `apply` must enter() the ones that stay. Keeps going after an exception and rethrows the first one at the end.
 template<typename Functor>
 void JSMockFunction::forEachIn(Zig::GlobalObject* globalObject, List list, const Functor& apply)
 {
@@ -1129,7 +1111,7 @@ void JSMockFunction::forEachIn(Zig::GlobalObject* globalObject, List list, const
 
 void JSMockFunction::restoreAll(Zig::GlobalObject* globalObject)
 {
-    // vi.restoreAllMocks() leaves the calls and the implementation of a spy as they are
+    // vi.restoreAllMocks() keeps a spy's calls and implementation.
     forEachIn(globalObject, List::Spies, [globalObject](JSMockFunction* spy) { spy->clearSpy(globalObject, !spy->isVitest); });
 }
 
@@ -1147,15 +1129,15 @@ void JSMockFunction::resetAll(Zig::GlobalObject* globalObject)
     forEachIn(globalObject, List::Configured, [globalObject](JSMockFunction* mock) { mock->resetConfiguration(globalObject); });
 }
 
-// The next test file shares the global object: it gets neither the spies nor the calls of this one.
-// It may share a module with it, though: what that has configured stays for resetAllMocks() to find.
+// The next test file shares the global object, so this file's spies and recorded calls have to go.
+// Configured mocks stay registered, because a module shared with the next file may own them.
 void JSMockFunction::didFinishTestFile(Zig::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer spiesOfPreload;
     JSC::Exception* firstException = nullptr;
-    // Until none is left: a trap that restoring one runs into may make another.
+    // Loop, because a Proxy trap hit while restoring one spy may install another.
     while (globalObject->mockModule.activeSpies) {
         forEachIn(globalObject, List::Spies, [&](JSMockFunction* spy) {
             if (spy->isMadeByPreload) {
@@ -1164,7 +1146,7 @@ void JSMockFunction::didFinishTestFile(Zig::GlobalObject* globalObject)
             }
             auto scope = DECLARE_THROW_SCOPE(vm);
             spy->clearSpy(globalObject, !spy->isVitest);
-            // This file is told; the next ones have nothing to do with it.
+            // Only this file gets the error. Forget the spy, so later files don't retry it.
             if (scope.exception()) [[unlikely]]
                 spy->didUninstall();
         });
@@ -1181,7 +1163,7 @@ void JSMockFunction::didFinishTestFile(Zig::GlobalObject* globalObject)
             spy->enter(List::Spies);
     }
 
-    // After the spies: a trap may have called a mock.
+    // Must run after restoring spies, since a Proxy trap may call a mock.
     forEachIn(globalObject, List::Called, [](JSMockFunction* mock) {
         if (mock->isMadeByPreload)
             mock->enter(List::Called);
@@ -1402,7 +1384,7 @@ static JSC::JSObject* createMockResult(JSC::VM& vm, Zig::GlobalObject* globalObj
     return result;
 }
 
-// `result` has been in script's hands since createMockResult().
+// Script has had access to `result` since createMockResult(), so its structure may have changed.
 static ALWAYS_INLINE void completeMockResult(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSObject* result, MockResultType type, JSC::JSValue value)
 {
     JSC::Structure* structure = result->structure();
@@ -1479,7 +1461,6 @@ static NEVER_INLINE JSC::JSArray* appendToMockStateSlow(Zig::GlobalObject* globa
     return array;
 }
 
-// Where `new` puts the instance once it exists.
 struct MockInvocation {
     JSC::JSArray* contexts { nullptr };
     JSC::JSArray* instances { nullptr };
@@ -1502,7 +1483,7 @@ static ALWAYS_INLINE void recordInvocation(Zig::GlobalObject* globalObject, JSMo
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSMockFunction::Recorded& recorded = fn->willRecord();
 
-    // Nothing but such an array, with room, takes an element without a chance for script to run.
+    // Only an unmodified contiguous array with spare capacity can take an element with no chance of running script.
     JSC::StructureID plainArray = globalObject->originalArrayStructureForIndexingType(JSC::ArrayWithContiguous)->id();
     auto append = [&](JSC::WriteBarrier<JSC::JSArray>& state, JSC::JSValue value) ALWAYS_INLINE_LAMBDA -> JSC::JSArray* {
         JSC::JSArray* array = state.get();
@@ -1517,7 +1498,7 @@ static ALWAYS_INLINE void recordInvocation(Zig::GlobalObject* globalObject, JSMo
             }
         }
         array = appendToMockStateSlow(globalObject, fn, state, value);
-        // Script may have run, and cleared the mock.
+        // Script may have run and cleared the mock, so register it again.
         fn->willRecord();
         return scope.exception() ? nullptr : array;
     };
@@ -1554,7 +1535,7 @@ static NEVER_INLINE void recordInvocationOutOfLine(Zig::GlobalObject* globalObje
     recordInvocation(globalObject, fn, arguments, thisValue, invocationId, result, invocationOfNew);
 }
 
-// Otherwise it cannot throw, or look at the "incomplete" result of the call it is in.
+// The other kinds can't throw or observe their own "incomplete" result, so their final result is recorded up front.
 static ALWAYS_INLINE bool runsScriptOrThrows(JSMockImplementation* impl)
 {
     return impl->kind == JSMockImplementation::Kind::Call || impl->kind == JSMockImplementation::Kind::ThrowValue;
@@ -1586,7 +1567,7 @@ static NEVER_INLINE JSC::JSValue runMockImplementationThatIsNoFunction(JSC::JSGl
     RELEASE_AND_RETURN(scope, valueOfMockImplementation(globalObject, impl, thisValue));
 }
 
-// Of any kind: script that ran while the call was recorded may have configured the mock, which changes `impl` in place.
+// Handles every kind: script that ran while the call was recorded may have reconfigured the mock, which mutates `impl` in place.
 static ALWAYS_INLINE JSC::JSValue runMockImplementation(JSC::JSGlobalObject* globalObject, JSMockImplementation* impl, JSC::JSValue thisValue, const JSC::ArgList& args)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -1631,7 +1612,6 @@ static void mockInstanceMethods(Zig::GlobalObject* globalObject, JSMockFunction*
         if (!prototypeMock)
             continue;
 
-        // a subclass or the constructor may have put something else there
         JSValue inherited = instance->get(globalObject, key);
         RETURN_IF_EXCEPTION(scope, );
         if (inherited != method)
@@ -1732,13 +1712,13 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGloba
     JSC::CallData constructData;
     if (constructor)
         constructData = JSC::getConstructData(constructor);
-    // Jest calls the implementation on the new object, which only a class refuses.
+    // Jest calls the implementation on the new object instead of constructing it, except for a class, which can't be called.
     if (!fn->isVitest && constructData.type == JSC::CallData::Type::JS && !constructData.js.functionExecutable->isClassConstructorFunction())
         constructData = {};
     bool constructs = constructData.type != JSC::CallData::Type::None;
     JSValue thisValue = jsUndefined();
     if (!constructs) {
-        // An arrow function, a method, mockReturnValue(), nothing: do what `new` does with a plain function wrapping it.
+        // Not constructible (arrow function, method, mockReturnValue(), nothing): act like `new` on a plain function that wraps it.
         JSC::Structure* structure = JSC::InternalFunction::createSubclassStructure(globalObject, newTarget, globalObject->objectStructureForObjectConstructor());
         RETURN_IF_EXCEPTION(scope, {});
         thisValue = JSC::constructEmptyObject(vm, structure);
@@ -1760,7 +1740,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionConstruct, (JSGlobalObject * lexicalGloba
         returnValue = JSC::construct(globalObject, constructor, constructData, args, newTarget);
     else if (impl)
         returnValue = runMockImplementation(globalObject, impl, thisValue, args);
-    // In Jest the result of `new` is what the implementation returned, in Vitest the instance.
+    // For `new`, Jest records what the implementation returned and Vitest records the instance.
     JSValue resultValue = returnValue;
     if (!scope.exception()) {
         if (!returnValue.isObject())
@@ -1830,7 +1810,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_mock, (JSC::JSGlobalObject * globa
 
 JSC_DEFINE_CUSTOM_GETTER(jsMockFunctionGetter_prototype, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    // A CustomValue: `thisValue` is the object that holds the property.
+    // For a CustomValue, `thisValue` is the object that holds the property, not the receiver.
     auto* mock = dynamicDowncast<JSMockFunction>(JSValue::decode(thisValue));
     return JSValue::encode(mock ? mock->prototypeProperty(globalObject) : jsUndefined());
 }
@@ -2174,7 +2154,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetter_mockGetLastCall, (JSC::JSGlobalObj
     return JSValue::encode(jsUndefined());
 }
 
-// Every index below `length`, or, where the storage does not grow with the length, the ones that `array` has. Stops at an exception.
+// With ArrayStorage, or on a non-JSArray, `length` can be huge with few elements, so only the indices that exist are visited.
 template<typename Functor>
 static void forEachElement(JSGlobalObject* globalObject, JSObject* array, unsigned length, const Functor& apply)
 {
@@ -2201,7 +2181,6 @@ static void forEachElement(JSGlobalObject* globalObject, JSObject* array, unsign
     }
 }
 
-// Derived from `results`: what each returned promise has settled to by now.
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetter_mockGetSettledResults, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
@@ -2421,20 +2400,16 @@ enum class AutomockKind : uint8_t {
 
 enum class AutomockRole : uint8_t {
     Member,
-    // what a module exports: `module.exports`, or a module namespace object
     Exports,
-    // the `prototype` of a function
     Prototype,
 };
 
 struct Automocker {
     Zig::GlobalObject* globalObject;
     bool spy;
-    // nothing that can be reached from the original is written to
     bool leaveOriginalAlone;
-    // original -> replacement: cycles end here and shared references stay shared
     JSC::JSMap* replacements;
-    // (original, replacement, AutomockKind) triples whose members are still to be mocked
+    // Work list of (original, replacement, AutomockKind) triples.
     JSC::MarkedArgumentBuffer pending {};
     JSC::JSFunction* accessor { nullptr };
 
@@ -2444,7 +2419,7 @@ struct Automocker {
     void mockMembers(JSObject* original, JSObject* replacement, AutomockKind);
 };
 
-// JSC inlines objectPrototypeToString whole, 5 KB, into every caller.
+// JSC inlines all 5 KB of objectPrototypeToString() into every caller.
 NEVER_INLINE JSString* objectPrototypeToStringOutOfLine(JSGlobalObject* globalObject, JSValue value)
 {
     return JSC::objectPrototypeToString(globalObject, value);
@@ -2456,7 +2431,7 @@ AutomockKind Automocker::kindOf(JSValue value)
 
     if (!value.isObject() || dynamicDowncast<JSMockFunction>(value))
         return AutomockKind::Keep;
-    // it has no Symbol.toStringTag to be kept for
+    // A global object has no Symbol.toStringTag that would make the check below keep it.
     if (asObject(value)->isGlobalObject() || asObject(value)->type() == JSC::GlobalProxyType)
         return AutomockKind::Keep;
 
@@ -2465,10 +2440,10 @@ AutomockKind Automocker::kindOf(JSValue value)
     if (isArray)
         return AutomockKind::Array;
 
-    // Symbol.toStringTag counts: a Map, a Date, a Promise or a tagged class instance is kept as it is.
+    // Goes by Object.prototype.toString(), so a Map, Date, Promise or instance with a Symbol.toStringTag is kept as it is.
     JSString* tag = objectPrototypeToStringOutOfLine(globalObject, value);
     if (scope.exception()) [[unlikely]] {
-        // The getter on a prototype throws when it needs an instance: as without a tag.
+        // A Symbol.toStringTag getter may throw when it's read on the prototype itself. Treat that as no tag.
         if (!scope.tryClearException())
             return AutomockKind::Keep;
         tag = std::get<JSString*>(JSC::inferBuiltinTag(globalObject, asObject(value)));
@@ -2512,7 +2487,7 @@ JSValue Automocker::replacementFor(JSValue value, AutomockRole role)
         RETURN_IF_EXCEPTION(scope, {});
         break;
     case AutomockKind::Object: {
-        // Spied methods have to find the private fields, internal slots and prototype of their `this`.
+        // Spy in place, so that spied methods still find the private fields, internal slots and prototype of their `this`.
         bool inPlace = spy;
         if (spy && leaveOriginalAlone && role == AutomockRole::Prototype) {
             replacement = JSC::constructEmptyObject(globalObject, original);
@@ -2599,7 +2574,7 @@ void Automocker::mockMembers(JSObject* original, JSObject* replacement, Automock
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // The exports of a transpiled module are getters; those are read, every other getter is left alone.
+    // A transpiled module (`__esModule`) exports through getters, so those are read. No other getter is called.
     bool isModule = kind == AutomockKind::Module;
     if (!isModule) {
         JSValue esModule = original->get(globalObject, vm.propertyNames->__esModule);
@@ -2609,7 +2584,7 @@ void Automocker::mockMembers(JSObject* original, JSObject* replacement, Automock
     bool isFunction = kind == AutomockKind::Function;
     bool inPlace = original == replacement;
 
-    // One builder for the whole chain: a key an earlier holder had is not added again.
+    // One builder for the whole prototype chain, so a key that a closer holder shadows isn't added twice.
     JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::StringsAndSymbols, JSC::PrivateSymbolMode::Exclude);
     JSObject* holder = original;
     while (holder != globalObject->objectPrototype() && holder != globalObject->functionPrototype() && holder != globalObject->regExpPrototype()) {
@@ -2667,7 +2642,7 @@ void Automocker::mockMembers(JSObject* original, JSObject* replacement, Automock
             RETURN_IF_EXCEPTION(scope, );
         }
 
-        // the prototype of a module namespace object only serves `__esModule` to CommonJS interop
+        // A module namespace object's prototype only exists to serve `__esModule` to CommonJS interop.
         if (kind == AutomockKind::Module)
             break;
         JSValue next = holder->getPrototype(globalObject);
@@ -2750,7 +2725,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSMock__getCurrentUnixTimeMs()
     return WTF::WallTime::now().secondsSinceEpoch().milliseconds();
 }
 
-// A call of a bare identifier gives a host function the scope the identifier was found in as `this`. Script must never get hold of it.
+// Calling a host function through a bare identifier passes the scope it was found in as `this`, which must never reach script.
 extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSMock__strictThis(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue)
 {
     return JSValue::encode(JSValue::decode(thisValue).toThis(globalObject, ECMAMode::strict()));
@@ -2821,7 +2796,6 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetAllMocks, (JSC::JSGlobalObject * globalO
     return JSMock__strictThis(globalObject, JSValue::encode(callframe->thisValue()));
 }
 
-// With `name` for a name, if given, instead of that of `function`.
 static void wrapFunction(Zig::GlobalObject* globalObject, JSMockFunction* mock, JSValue function, JSString* name = nullptr)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -2930,14 +2904,14 @@ static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     if (object->type() == JSC::JSType::GlobalProxyType)
         object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
 
-    // A property of `import.meta.env` in a test is one of `process.env`.
+    // In tests `import.meta.env` is backed by `process.env`, so spy there.
     if (object->structure()->typeInfo().prohibitsPropertyCaching()) [[unlikely]] {
         if (JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, object))
             object = env;
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // An export of a module mock is a property of the object its factory returned.
+    // A module mock's exports are read live from the object its factory returned, so spy on that object.
     while (auto* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(object)) {
         JSObject* exports = Bun::objectHoldingExportOfModuleMock(globalObject, moduleNamespaceObject, propertyKey);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2954,7 +2928,7 @@ static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::HasProperty);
     bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);
     RETURN_IF_EXCEPTION(scope, {});
-    // the characters and the length of a String object come without a slot base
+    // A String object's indices and `length` are own properties, but come without a slotBase().
     bool isOwn = hasValue && (!slot.slotBase() || slot.slotBase() == object);
     unsigned slotAttributes = hasValue ? slot.attributes() : 0;
     bool isEasy = access == SpyAccess::Value && (!hasValue || slot.isValue());
@@ -2965,7 +2939,7 @@ static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     if (hasValue && (!isEasy || isOpaque)) {
         JSObject* holder = findPropertyDescriptor(globalObject, object, propertyKey, descriptor);
         RETURN_IF_EXCEPTION(scope, {});
-        // all its slot says is that it has the property
+        // An opaque property's slot only says that the property exists, so go by the descriptor.
         if (isOpaque) {
             isOwn = holder == object;
             slotAttributes = descriptor.attributes() & descriptorAttributes;
@@ -2999,7 +2973,7 @@ static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::
 
         auto* mock = createMockFunction(vm, globalObject, isVitest);
         unsigned spyAttributes = slotAttributes;
-        // restoring deletes a property that only shadows an inherited one
+        // A spy that shadows an inherited property is deleted on restore, so it has to be configurable.
         unsigned attributes = isOwn ? spyAttributes : spyAttributes & ~PropertyAttribute::DontDelete;
         if (moduleNamespaceObject)
             spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
@@ -3039,7 +3013,7 @@ static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::
         return JSValue::encode(mock);
     }
 
-    // hardmode: the getter or the setter of a property, or the method a getter returns
+    // hardmode: a property's getter or setter, or the method a getter returns
     if (!hasValue) {
         throwTypeError(globalObject, scope, makeString("spyOn(target, prop, accessType) expects target to have the property `"_s, propertyKeyForMessage(propertyKey), '`'));
         return {};
@@ -3057,7 +3031,7 @@ static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     JSValue setter = descriptor.isAccessorDescriptor() ? descriptor.setter() : jsUndefined();
 
     JSValue original = access == SpyAccess::Set ? setter : getter;
-    // a spy that is both halves is what easymode makes of a property that holds no function
+    // One mock as both getter and setter is the spy easymode installs for a non-function value. It's returned as is below.
     if (access == SpyAccess::Value && !(getter == setter && dynamicDowncast<JSMockFunction>(getter))) {
         original = object->get(globalObject, propertyKey);
         RETURN_IF_EXCEPTION(scope, {});
@@ -3076,7 +3050,7 @@ static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     unsigned spyAttributes = 0;
     JSValue storage = getOwnPropertyStorage(globalObject, object, propertyKey, spyAttributes);
     RETURN_IF_EXCEPTION(scope, {});
-    // The length of an array, the elements of a typed array: the object answers for those before it looks at its storage.
+    // The object itself answers for an array's `length` or a typed array's elements, so an accessor in its storage would be ignored.
     if (storage && !isOpaque && (parseIndex(propertyKey) ? object->structure()->typeInfo().interceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero() : !object->getDirect(vm, propertyKey))) {
         throwTypeError(globalObject, scope, makeString("Cannot spy on the "_s, access == SpyAccess::Set ? "setter"_s : "getter"_s, " of the `"_s, propertyKeyForMessage(propertyKey), "` property because it cannot be redefined"_s));
         return {};
@@ -3107,7 +3081,7 @@ static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::
         break;
     }
 
-    // configurable, whatever the original is: putOwnPropertyStorage() may have to delete it
+    // Always configurable, so that restoring can delete or redefine it.
     putOwnPropertyStorage(globalObject, object, propertyKey, JSC::GetterSetter::create(vm, globalObject, getter, setter), PropertyAttribute::Accessor | (descriptor.attributes() & PropertyAttribute::DontEnum), isOpaque);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -3135,7 +3109,7 @@ static JSC::EncodedJSValue mockFn(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
         return JSValue::encode(callframe->argument(0));
 
     JSMockFunction* thisObject = createMockFunction(vm, globalObject, isVitest);
-    // What vi.fn() makes has one name, whatever it is given.
+    // Vitest names every vi.fn() "Mock", even one that wraps a named function.
     auto& name = isVitest ? globalObject->mockModule.vitestName : globalObject->mockModule.defaultName;
 
     if (callframe->argumentCount() > 0) {

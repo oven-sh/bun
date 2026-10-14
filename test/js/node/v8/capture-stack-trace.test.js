@@ -2115,7 +2115,7 @@ test("Error.captureStackTrace still takes what is not a Proxy", () => {
   function fn() {}
   Error.captureStackTrace(fn);
   expect({
-    // As in Node, neither throws and neither has a `stack` afterwards.
+    // Like Node, neither call throws and neither leaves a `stack` property behind.
     globalOfContextFromInside: runInContext("Error.captureStackTrace(globalThis); typeof globalThis.stack", context),
     globalOfContextFromOutside: Error.captureStackTrace(runInContext("this", context)),
     inherits: typeof inherits.stack,

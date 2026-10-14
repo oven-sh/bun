@@ -51,7 +51,7 @@ public:
     uint32_t m_tag { 0 };
     bool m_alreadyBundled { false };
     bool m_dependsOnMoreThanSource { false };
-    // What IsolatedModuleCache finds a provider that it holds by, besides the key: what a plugin supplied in place of the file, and the module its globals come from.
+    // Set by IsolatedModuleCache::insert() and compared by lookup().
     uint64_t m_madeFromHash { 0 };
 
 private:

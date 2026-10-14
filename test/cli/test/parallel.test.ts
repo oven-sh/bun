@@ -48,7 +48,7 @@ test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID
 
 test.each([
   ["--parallel=2", ["a.test.js", "b.test.js", "c.test.js"], /^(1,1,1,1|2,2,2,2)$/],
-  // The serial fallback.
+  // These two fall back to a serial run.
   ["--parallel=1", ["a.test.js", "b.test.js"], /^1,1,1,1$/],
   ["--parallel=4", ["a.test.js"], /^1,1,1,1$/],
 ])("%s: VITEST_POOL_ID and VITEST_WORKER_ID are the worker's index too", async (flag, files, ids) => {
@@ -56,7 +56,7 @@ test.each([
   using dir = tempDir("parallel-vitest-ids", Object.fromEntries(files.map(file => [file, fixture])));
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", flag],
-    // What the environment has is replaced.
+    // Inherited values must be overwritten.
     env: { ...bunEnv, VITEST_POOL_ID: "inherited", VITEST_WORKER_ID: "inherited" },
     cwd: String(dir),
     stderr: "pipe",

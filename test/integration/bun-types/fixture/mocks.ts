@@ -31,7 +31,7 @@ jest.fn().mockClear();
 jest.fn().mockReset();
 jest.fn().mockRejectedValueOnce(new Error());
 
-// a spy that is declared before it is created
+// `ReturnType<typeof spyOn>` must be usable for a spy that's declared before it's created.
 let spy: ReturnType<typeof spyOn>;
 spy = spyOn(console, "log");
 expect(spy.mock.calls[0][0]).toBe("hello");
@@ -46,7 +46,7 @@ expectType<ReturnType<typeof spyOn<DateConstructor, "now">>>().is<Mock<() => num
 expectType<ReturnType<typeof jest.spyOn<DateConstructor, "now">>>().is<Mock<() => number>>();
 expectType<ReturnType<typeof vi.spyOn<DateConstructor, "now">>>().is<Mock<() => number>>();
 
-// a mock that is declared before it is created
+// Same for `ReturnType<typeof mock>`.
 expectType<ReturnType<typeof mock>>().is<Mock<(...args: any[]) => any>>();
 expectType<ReturnType<typeof jest.fn>>().is<Mock<(...args: any[]) => any>>();
 expectType<ReturnType<typeof vi.fn>>().is<Mock<(...args: any[]) => any>>();
@@ -60,11 +60,11 @@ expectType<Parameters<typeof vi.mock>[0]>().is<string>();
 expectType<Parameters<typeof test.each>>().is<[table: readonly unknown[]]>();
 expectType<Parameters<typeof describe.each>>().is<[table: readonly unknown[]]>();
 
-// a table that is `any` is not taken for a tagged template
+// An `any` table must not resolve to the tagged-template overload.
 test.each({} as any)("%s", (a, b, c) => {});
 describe.each({} as any)("%s", (a, b) => {});
 
-// parameters without a type are `any`, not an implicit `any`
+// Untyped parameters get a contextual `any`, so noImplicitAny doesn't reject them.
 expectType(mock((a, b) => [a, b])).is<Mock<(a: any, b: any) => any[]>>();
 expectType(jest.fn(a => a)).is<Mock<(a: any) => any>>();
 expectType(vi.fn((a, ...rest) => rest.length)).is<Mock<(a: any, ...rest: any[]) => number>>();

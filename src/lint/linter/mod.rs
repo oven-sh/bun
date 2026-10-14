@@ -797,8 +797,9 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
-        // A rule gives way to the rule of typescript-eslint that does the same with types, where that one runs: the two would
-        // report the same thing twice, and fix it twice.
+        // A rule gives way to the rule of typescript-eslint that makes the same check with types, where that one runs. The
+        // places among `enabled` of the rules that still run and give way where both report, and of those with types.
+        let (mut giving_way, mut typed_at): (Vec<u16>, Vec<u16>) = (Vec::new(), Vec::new());
         if file.types.is_some() {
             let meta_at = |index: usize, it: &Enabled<S>| match is_plain {
                 true => (prepared.order.get(it.place as usize))
@@ -818,9 +819,14 @@ impl<S: RuleSet> Linter<S> {
                 .filter(|it| it.1.requires_types && it.1.plugin == crate::rule::Plugin::TypeScript);
             let typed: Vec<&'static Meta> = typed.map(|it| it.1).collect();
             for &(index, meta) in metas.iter().filter(|_| !typed.is_empty()) {
-                if self.registry.gives_way_to_one_of(meta, &typed) {
-                    enabled[index].severity = Severity::Off;
-                    rules_to_ignore.push(RuleId::Known(meta));
+                match self.registry.gives_way_to_one_of(meta, &typed) {
+                    Some(registry::GivesWay::Wholly) => {
+                        enabled[index].severity = Severity::Off;
+                        rules_to_ignore.push(RuleId::Known(meta));
+                    }
+                    Some(registry::GivesWay::WhereBothReport) => giving_way.push(index as u16),
+                    None if meta.requires_types => typed_at.push(index as u16),
+                    None => {}
                 }
             }
         }
@@ -845,6 +851,12 @@ impl<S: RuleSet> Linter<S> {
             })
         };
         let mut diagnostics = crate::runner::run(file, &enabled, wants_fixes);
+        if !giving_way.is_empty() {
+            let of_typed = diagnostics.iter().filter(|it| typed_at.contains(&it.rule));
+            let of_typed: Vec<u32> = of_typed.map(|it| it.span.start).collect();
+            diagnostics
+                .retain(|it| !(giving_way.contains(&it.rule) && of_typed.contains(&it.span.start)));
+        }
         if let Some(thrown) = file.sink.thrown.take() {
             // "error:" stands for the plain `Error:` where the run ends.
             let said = match (thrown.name, file.language().is_oxlint) {

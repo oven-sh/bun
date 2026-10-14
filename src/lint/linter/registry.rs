@@ -312,6 +312,15 @@ pub fn parse_rule_id(id: &[u8]) -> (&[u8], &[u8]) {
     }
 }
 
+/// How a rule without types gives way to the rule of typescript-eslint that makes the same check with types.
+pub(super) enum GivesWay {
+    /// That rule extends it and decides all that it decides: it does not run.
+    Wholly,
+    /// That rule is another one, silent in places where it is not, as for a value of type `any`. Both run, and what both
+    /// report at one place is reported once.
+    WhereBothReport,
+}
+
 impl Registry {
     /// `lists`: `RULES` of each crate that has rules.
     pub fn new(lists: &[&'static [RuleEntry]]) -> Registry {
@@ -450,18 +459,26 @@ impl Registry {
         Some((base, extension))
     }
 
-    /// Whether `meta` is a rule without types whose check one of `typed`, rules of typescript-eslint that need types, makes
-    /// too: the core rule that it extends, or unicorn's rule of the same name.
-    pub fn gives_way_to_one_of(&self, meta: &Meta, typed: &[&'static Meta]) -> bool {
+    /// How `meta`, if it is a rule without types, gives way to one of `typed`, rules of typescript-eslint that need types.
+    pub(super) fn gives_way_to_one_of(
+        &self,
+        meta: &Meta,
+        typed: &[&'static Meta],
+    ) -> Option<GivesWay> {
         if meta.requires_types {
-            return false;
+            return None;
         }
         match meta.plugin {
-            Plugin::Eslint => self.pair_of(meta).is_some_and(|(_, extension)| {
-                typed.iter().any(|it| std::ptr::eq(*it, extension.meta))
-            }),
-            Plugin::Unicorn => typed.iter().any(|it| it.name == meta.name),
-            _ => false,
+            Plugin::Eslint => {
+                let (_, extension) = self.pair_of(meta)?;
+                let runs = typed.iter().any(|it| std::ptr::eq(*it, extension.meta));
+                runs.then_some(GivesWay::Wholly)
+            }
+            Plugin::Unicorn => {
+                let runs = typed.iter().any(|it| it.name == meta.name);
+                runs.then_some(GivesWay::WhereBothReport)
+            }
+            _ => None,
         }
     }
 

@@ -4878,7 +4878,7 @@ describe.concurrent("bun lint", () => {
       });
 
       // oxlint reports such a thing twice, once for each of the two rules.
-      test("a rule gives way to the rule that does the same with types", async () => {
+      test("what a rule and the rule that does the same with types both report is reported once", async () => {
         const tsconfig = JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } });
         const config = (rules: object) =>
           JSON.stringify({ plugins: ["typescript", "unicorn"], categories: { correctness: "off" }, rules });
@@ -4894,15 +4894,20 @@ describe.concurrent("bun lint", () => {
             "typescript/prefer-string-starts-ends-with": "error",
           }),
           "tsconfig.json": tsconfig,
-          "a.ts": "declare const s: string;\nexport const a = /^abc/.test(s);\n",
+          // The rule with types says nothing about an `any`.
+          "a.ts":
+            "declare const s: string;\nexport const a = /^abc/.test(s);\ndeclare const t: any;\nexport const b = /^abc/.test(t);\n",
         };
         const withTypes = await lint(twins, ["--type-aware", "-f", "json"]);
-        expect(places(withTypes.raw)).toEqual(["a.ts:2:18 typescript(prefer-string-starts-ends-with)"]);
+        expect(places(withTypes.raw)).toEqual([
+          "a.ts:2:18 typescript(prefer-string-starts-ends-with)",
+          "a.ts:4:18 unicorn(prefer-string-starts-ends-with)",
+        ]);
         const withoutTypes = await lint(twins, ["-f", "json"]);
-        expect(places(withoutTypes.raw)).toEqual(["a.ts:2:18 unicorn(prefer-string-starts-ends-with)"]);
-        const fixed = await lint(twins, ["--fix", "--type-aware", "-f", "json"], { reads: ["a.ts"] });
-        expect(fixed.files).toEqual({ "a.ts": 'declare const s: string;\nexport const a = s.startsWith("abc");\n' });
-        expect(places(fixed.raw)).toEqual([]);
+        expect(places(withoutTypes.raw)).toEqual([
+          "a.ts:2:18 unicorn(prefer-string-starts-ends-with)",
+          "a.ts:4:18 unicorn(prefer-string-starts-ends-with)",
+        ]);
       });
 
       test("what is left after the fixes is reported once, where it was", async () => {

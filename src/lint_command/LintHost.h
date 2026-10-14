@@ -190,7 +190,6 @@ struct LintSpan {
 // and drop it in `endFile`. Asking again without details gives the same span. It's `{ nullptr, 0 }` if no file is being linted.
 extern "C" LintSpan Bun__Lint__ask(JSC::JSGlobalObject*, uint32_t kind, const uint8_t* details, size_t detailsLength);
 
-
 // Adds what the program in src/lint/js_plugin/worker calls to its `native` object.
 void addLintHostFunctions(JSC::JSGlobalObject*, JSC::JSObject* native);
 // `object[name] = function`

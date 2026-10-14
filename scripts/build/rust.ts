@@ -48,7 +48,7 @@ import {
   registerFeaturePassRule,
   type FeatureCrate,
 } from "./rust/features.ts";
-import { type PlanInput, planEnv, planPath, readPlan } from "./rust/plan.ts";
+import { planEnv, planPath, readPlan, type PlanInput } from "./rust/plan.ts";
 import { buildRustGraph, linkedRlibs } from "./rust/units.ts";
 
 // ───────────────────────────────────────────────────────────────────────────

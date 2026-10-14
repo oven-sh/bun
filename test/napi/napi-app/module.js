@@ -925,6 +925,19 @@ nativeTests.test_napi_create_object_structured_clone = () => {
   console.log("pass");
 };
 
+nativeTests.test_napi_create_object_strict_equals_proxy = () => {
+  // Bun.deepEquals(a, b, true) is the comparison of toStrictEqual. node has util.isDeepStrictEqual.
+  const strictEquals = process.isBun ? (a, b) => Bun.deepEquals(a, b, true) : require("node:util").isDeepStrictEqual;
+  const created = () => Object.assign(nativeTests.make_empty_object(), { foo: "bar" });
+  const proxy = target => new Proxy(target, {});
+  console.log(
+    strictEquals(proxy({ foo: "bar" }), created()),
+    strictEquals(created(), proxy({ foo: "bar" })),
+    strictEquals(proxy(created()), { foo: "bar" }),
+    strictEquals(proxy({ foo: "baz" }), created()),
+  );
+};
+
 nativeTests.test_napi_wrap = () => {
   const values = [
     {},

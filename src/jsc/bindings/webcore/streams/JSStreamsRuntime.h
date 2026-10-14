@@ -76,8 +76,7 @@ namespace WebCore {
 //   Tee: context = the JSStreamTeeState, except onByteTeeReaderClosedRejected whose context
 //     is an InternalFieldTuple{teeState, thisReader}.
 //   The two *Microtask entries are the tee chunk-steps "queue a microtask" jobs.
-//   TextDecode: onTextDecodeFailedMicrotask is the job of a failed Body.textStream() link: it
-//     cancels the source with the error (the value) and releases the source reader (the context).
+//   TextDecode: onTextDecodeFailedMicrotask's value = the error, context = the source reader.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_OPERATIONS(V) \
     V(onFromIterablePullFulfilled)                             \
     V(onFromIterableCancelFulfilled)                           \

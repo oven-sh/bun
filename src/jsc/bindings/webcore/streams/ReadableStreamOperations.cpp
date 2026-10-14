@@ -997,11 +997,7 @@ JSReadableStream* readableStreamTextDecodeFrom(JSGlobalObject* globalObject, JSR
     return stream;
 }
 
-// The link failed: a chunk it cannot decode, or a throw from a step it ran on the source or on the
-// text stream. The party that waits for the outcome waits on the text stream, so that stream takes
-// the error here. The source is cancelled and released from a microtask: the read request's steps
-// also run under the call that hands the source a chunk (enqueue(), a TransformStream write, a
-// tee), and that call returns before anything cancels the source.
+// Errors the text stream at once. A microtask cancels and releases the source, after the call that delivered the chunk returns.
 static void textDecodeFail(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSCell* sourceReader, JSValue error)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -1012,9 +1008,7 @@ static void textDecodeFail(JSGlobalObject* globalObject, JSReadableStreamDefault
         queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onTextDecodeFailedMicrotask(), error, reader);
 }
 
-// The [reaction-convention] body of onTextDecodeFailedMicrotask(error, reader). The text stream
-// errored first, so the closeSteps that the cancel fires on any other pending TextDecode read
-// request no-op on canCloseOrEnqueue.
+// The [reaction-convention] body of onTextDecodeFailedMicrotask(error, reader).
 static EncodedJSValue textDecodeFailedMicrotask(JSGlobalObject* globalObject, JSValue error, JSReadableStreamDefaultReader* reader)
 {
     auto& vm = getVM(globalObject);
@@ -1039,8 +1033,7 @@ JSPromise* textDecodePullAlgorithm(JSGlobalObject* globalObject, JSReadableStrea
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* reader = uncheckedDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
     auto* readRequest = WebCore::JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::TextDecode, controller);
-    // A throw from the read fails the link. As the rejection of this algorithm's promise it would
-    // only error the text stream, and the source would stay locked.
+    // A throw from the read fails the link: as a rejected pull promise it would leave the source locked.
     atStreamsBoundary(globalObject, [&] { readableStreamDefaultReaderRead(globalObject, reader, readRequest); }, [&](JSValue error) { textDecodeFail(globalObject, controller, reader, error); });
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
@@ -1113,13 +1106,12 @@ static void textDecodeClose(JSGlobalObject* globalObject, JSReadableStreamDefaul
     }
 }
 
-// Both steps are boundaries (atStreamsBoundary): nothing they throw reaches the frames above, which
-// belong to the source and to whoever feeds it. The text stream's error or close clears
-// algorithmContext, so the reader is read before the steps run.
+// A boundary, like the close steps: the frames above belong to whoever feeds the source, and a throw must not reach them.
 void textDecodeReadRequestChunkSteps(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk)
 {
     if (!readableStreamDefaultControllerCanCloseOrEnqueue(controller))
         return;
+    // ClearAlgorithms drops the reader when the text stream errors or closes, so it is read before the steps run.
     JSCell* sourceReader = controller->m_algorithms.algorithmContext.get();
     atStreamsBoundary(globalObject, [&] { textDecodeChunk(globalObject, controller, chunk); }, [&](JSValue error) { textDecodeFail(globalObject, controller, sourceReader, error); });
 }

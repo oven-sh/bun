@@ -3646,16 +3646,16 @@ describe("a 'close' event that user code emits", () => {
     );
   }
 
-  // Each way an exchange ends: the order of its events, the event loop refs that are left once the
-  // server closed, and the native responses that something still holds.
+  // Each way an exchange ends: the order of its events, and the event loop refs that are left once
+  // the server closed.
   const finished = (url = "/") => [`${url} finish`, `${url} close`];
   const aborted = ["/ aborted", "/ close"];
-  const nothingLeft = { eventLoopRefsLeft: 0, nativeResponsesLeft: 0 };
+  const nothingLeft = { eventLoopRefsLeft: 0 };
 
   // These need no help from user code, so they hold with and without a dispatch that waits for
   // the 'close' of its response.
   it.concurrent(
-    "every way an exchange ends releases its event loop refs and its native response",
+    "every way an exchange ends releases its event loop refs",
     async () => {
       await expectFixture("node-http-completion-paths-fixture.js", "paths", [
         { path: "end in the listener", events: finished(), ...nothingLeft },

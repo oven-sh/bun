@@ -44,6 +44,7 @@ const kCallbacks = Symbol("kCallbacks");
 const kFirstFragment = Symbol("kFirstFragment");
 const kForOnEventAttribute = Symbol("kIsForOnEventAttribute");
 const kHandshake = Symbol("kHandshake");
+const kCallerCatches = Symbol("kCallerCatches");
 const kHandshakeTimer = Symbol("kHandshakeTimer");
 const kHeaders = Symbol("kHeaders");
 const kInternalSocketData = Symbol.for("::bunternal::");
@@ -1180,7 +1181,8 @@ class WebSocket extends EventEmitter {
           protocol: this._protocol,
           extensions: this.extensions,
           maxPayload,
-          autoPong: !!this._autoPong,
+          // The `ping` handler answers: how much waits in a stream, only the stream knows.
+          autoPong: false,
           skipUTF8Validation: !!options.skipUTF8Validation,
           deflate: params
             ? {
@@ -1684,6 +1686,11 @@ const serverHandlers: ServerHandlers = {
     this.emit("message", isBinary ? binaryMessage(this, data) : data, isBinary);
   },
   ping(data) {
+    // The peer decides how many Pings there are, so their answers have a limit, which the messages of the application
+    // do not have. The native transports have the same one. RFC 6455 5.5.3 lets a Pong answer only the latest Ping.
+    if (this[kTransport] === STREAM && this._autoPong && nativeBufferedAmount(this) <= 16 * 1024 * 1024) {
+      this.pong(data, NOOP);
+    }
     this.emit("ping", data);
   },
   pong(data) {
@@ -2175,6 +2182,7 @@ class ClientRequest extends EventEmitter {
   declare reusedSocket: boolean;
   declare socket: null;
   declare [kAborted]: boolean;
+  declare [kCallerCatches]: boolean;
   declare [kHeaders]: Dictionary<[name: string, value: HeaderValue]>;
   declare [kNative]: NativeClient | null;
   declare [kNativeOptions]: NativeClientOptions;
@@ -2197,6 +2205,7 @@ class ClientRequest extends EventEmitter {
     this.reusedSocket = false;
     this.socket = null;
     this[kAborted] = false;
+    this[kCallerCatches] = false;
     this[kHeaders] = { __proto__: null as never };
     this[kNative] = null;
     this[kNativeOptions] = nativeOptions;
@@ -2277,19 +2286,12 @@ class ClientRequest extends EventEmitter {
     try {
       native = createWebSocket(this[kUrl], nativeOptions, websocket, clientHandlers);
     } catch (err) {
-      // The caller of the constructor catches it. After a redirect there is no caller.
-      if (websocket._redirects === 0) throw err;
+      if (this[kCallerCatches]) throw err;
 
       this.destroy(err as Error);
       return this;
     }
     this[kNative] = websocket[kNative] = native;
-
-    // Here and nowhere else, so that a request that was not dialled leaves no timer behind.
-    const { handshakeTimeout } = this[kOptions].opts;
-    if (handshakeTimeout) {
-      websocket[kHandshakeTimer] = setTimeout(handshakeOnTimeout, handshakeTimeout, websocket);
-    }
 
     if (this.listenerCount("socket") > 0) process.nextTick(emitSocket, this, native);
     return this;
@@ -2734,9 +2736,23 @@ function initAsClient(
     websocket.emit("redirect", websocket.url, req);
   }
 
-  // Throws for a header that cannot be sent.
-  if (opts.finishRequest) opts.finishRequest(req, websocket);
-  else req.end();
+  // It also runs for a request that `finishRequest` ends late or never.
+  if (handshakeTimeout) {
+    websocket[kHandshakeTimer] = setTimeout(handshakeOnTimeout, handshakeTimeout, websocket);
+  }
+
+  // The dial throws for a header that cannot be sent. That is for the caller of the constructor, while there is one:
+  // not after a redirect, and not once `finishRequest` has returned.
+  req[kCallerCatches] = websocket._redirects === 0;
+  try {
+    if (opts.finishRequest) opts.finishRequest(req, websocket);
+    else req.end();
+  } catch (err) {
+    clearTimeout(websocket[kHandshakeTimer]);
+    throw err;
+  } finally {
+    req[kCallerCatches] = false;
+  }
 }
 
 //

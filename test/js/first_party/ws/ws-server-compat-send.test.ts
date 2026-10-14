@@ -9,9 +9,11 @@ import type { WebSocket as Socket } from "ws";
 import {
   attempt,
   createServer,
+  encodeFrame,
   event,
   type Frame,
   implementations,
+  OP,
   openServer,
   type RawClient,
   show,
@@ -485,16 +487,29 @@ describe.each(implementations)("ws server, sending ($name)", ({ ws: implementati
   describe.skipIf(isWindows)("a peer that does not read", () => {
     // The peer decides how many Pings there are, so a flood of them must not fill the memory of the server.
     // RFC 6455 5.5.3 lets a Pong answer only the latest Ping. npm ws queues an answer to each.
-    test.skipIf(!builtin)("Pings are not answered while more than 16 MiB wait for the socket", async () => {
-      await using server = await openServer(implementation);
-      const { ws, client } = server;
+    test.skipIf(!builtin).each([
+      { over: "the native transport", early: false },
+      { over: "the stream transport", early: true },
+    ])("Pings are not answered while more than 16 MiB wait for the socket, over $over", async ({ early }) => {
+      await using server = await createServer(implementation);
+      const { wss } = server;
+      if (early) {
+        // With a frame that came before the upgrade, the frame engine runs over the socket of node:http.
+        const { handleUpgrade } = wss;
+        wss.handleUpgrade = (req, socket, head, done) =>
+          handleUpgrade.call(wss, req, socket, encodeFrame(OP.pong, "early", { mask: true }), done);
+      }
+      const connection = once(wss, "connection");
+      const client = server.connect();
+      const [ws] = (await connection) as [Socket];
+      await client.response;
       let sent = 0;
       const send = (size: number) => (ws.send(Buffer.alloc(size, sent)), sent++, size);
       client.socket.pause();
-      const sizes = [send(17 * MiB)];
-      // The kernel has taken a part of it.
-      while (ws.bufferedAmount <= 16 * MiB && sent < 32) sizes.push(send(MiB));
-      expect(ws.bufferedAmount).toBeGreaterThan(16 * MiB);
+      // Far more than the limit: the kernel has taken a part of it, and its buffers grow while the Pings arrive.
+      const sizes = [send(33 * MiB)];
+      while (ws.bufferedAmount <= 32 * MiB && sent < 16) sizes.push(send(MiB));
+      expect(ws.bufferedAmount).toBeGreaterThan(32 * MiB);
 
       const pings = 100;
       const { promise: heard, resolve } = Promise.withResolvers<void>();

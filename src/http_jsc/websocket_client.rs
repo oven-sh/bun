@@ -55,6 +55,9 @@ const MAX_CONTROL_PAYLOAD: usize = 125;
 /// The longest frame `ws` and undici take: a length that a JS number holds exactly.
 const MAX_PAYLOAD_LENGTH: u64 = (1 << 53) - 1;
 const MAX_CONTROL_FRAME_SIZE: usize = WebsocketHeader::frame_size(MAX_CONTROL_PAYLOAD, true);
+/// The peer decides how many Pings there are, so their answers have a limit, which the messages of the
+/// application do not have. RFC 6455 5.5.3 lets a Pong answer only the latest Ping.
+const MAX_UNSENT_FOR_A_PONG: usize = 16 * 1024 * 1024;
 
 /// Seconds from our Close frame until the connection is dropped (`closeTimeout` of the `ws` package).
 #[inline]
@@ -994,7 +997,10 @@ impl<const SSL: bool> WebSocket<SSL> {
             return Step::NeedMoreData;
         };
         // Before the event: a `ping` listener that closes must not get a Pong behind its Close frame.
-        if opcode == Opcode::Ping && self.options.auto_pong {
+        if opcode == Opcode::Ping
+            && self.options.auto_pong
+            && self.buffered_amount() <= MAX_UNSENT_FOR_A_PONG
+        {
             // we need to send all pongs to pass autobahn tests
             self.send_pong(&payload[..payload_len]);
         }

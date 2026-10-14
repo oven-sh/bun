@@ -1,6 +1,6 @@
 // send(), ping() and pong() of a `ws` client, against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { tls } from "harness";
+import { isWindows, tls } from "harness";
 import { constants, inflateRawSync } from "node:zlib";
 import {
   attempt,
@@ -9,6 +9,7 @@ import {
   event,
   Frame,
   implementations,
+  OP,
   openClient,
   response101,
   show,
@@ -280,7 +281,7 @@ const discarded: { call: string; act(ws: any, callback: Callback): void; counted
 ];
 const discardedTotal = discarded.reduce((sum, row) => sum + row.counted, 0);
 
-describe.each(implementations)("ws client, sending ($name)", ({ ws: implementation }) => {
+describe.each(implementations)("ws client, sending ($name)", ({ ws: implementation, builtin }) => {
   const { WebSocket } = implementation;
 
   describe("send(data)", () => {
@@ -622,6 +623,34 @@ describe.each(implementations)("ws client, sending ($name)", ({ ws: implementati
       "ping callback(null)",
       "pong callback(null)",
     ]);
+  });
+
+  // The peer decides how many Pings there are, so a flood of them must not fill the memory of the client.
+  // RFC 6455 5.5.3 lets a Pong answer only the latest Ping. npm ws queues an answer to each.
+  // Winsock takes all of it on loopback, so nothing ever waits there.
+  test.skipIf(!builtin || isWindows)("Pings are not answered while more than 16 MiB wait for the socket", async () => {
+    await using client = await openClient(implementation, { perMessageDeflate: false });
+    const { ws, conn } = client;
+    conn.socket.pause();
+    let sent = 1;
+    // Far more than the limit: the kernel has taken a part of it, and its buffers grow while the Pings arrive.
+    ws.send(Buffer.alloc(33 * MiB));
+    for (; ws.bufferedAmount <= 32 * MiB && sent < 16; sent++) ws.send(Buffer.alloc(MiB));
+    expect(ws.bufferedAmount).toBeGreaterThan(32 * MiB);
+
+    const pings = 100;
+    const { promise: heard, resolve } = Promise.withResolvers<void>();
+    let count = 0;
+    ws.on("ping", () => ++count === pings && resolve());
+    for (let i = 0; i < pings; i++) conn.ping("flood");
+    await heard;
+
+    conn.socket.resume();
+    const opcodes: (number | undefined)[] = [];
+    while (opcodes.length < sent) opcodes.push((await conn.nextFrame())?.opcode);
+    expect(opcodes).toEqual(opcodes.map(() => OP.binary));
+    // Nothing waits any more. The Pong of the round trip itself shows that Pings are answered again.
+    expect(await conn.roundTrip()).toEqual([]);
   });
 
   describe("bufferedAmount", () => {

@@ -1,6 +1,7 @@
 // The constructor and the opening handshake of a `ws` client, against a raw TCP peer. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir, tls } from "harness";
+import type { ClientRequest } from "node:http";
 import path from "node:path";
 import {
   attempt,
@@ -488,17 +489,49 @@ describe.each(implementations)("ws client, opening ($name)", ({ ws: implementati
       { label: "a constructor", options: "" },
       { label: "a `finishRequest`", options: "finishRequest: request => request.end()," },
       { label: "a `finishRequest`, through a proxy", options: 'finishRequest: request => request.end(), proxy: "http://127.0.0.1:9",' }, // prettier-ignore
-    ])("$label that throws leaves no `handshakeTimeout` timer behind", async ({ options }) => {
-      const { lines, exitCode } = await runScript(
-        { specifier },
-        `try {
+    ])(
+      "$label that throws leaves no `handshakeTimeout` timer behind",
+      async ({ options }) => {
+        const { lines, exitCode } = await runScript(
+          { specifier },
+          `try {
            new WebSocket("ws://127.0.0.1:9", { ${options} handshakeTimeout: 50, headers: { "X-Bad": "a\\r\\nb" } });
          } catch (error) {
            console.log("threw " + error.name);
          }`,
+        );
+        expect(lines).toEqual(["threw TypeError"]);
+        expect(exitCode).toBe(0);
+      },
+      scriptTimeout,
+    );
+
+    test.each([
+      { label: "", options: {} },
+      ...(builtin ? [{ label: ", through a proxy", options: { proxy: "http://127.0.0.1:9" } }] : []),
+    ])("handshakeTimeout also runs for a request that `finishRequest` never ends$label", async ({ options }) => {
+      await using client = await dial(
+        implementation,
+        { ...options, handshakeTimeout: 50, finishRequest() {} },
+        { respond: () => null },
       );
-      expect(lines).toEqual(["threw TypeError"]);
-      expect(exitCode).toBe(0);
+      await client.closed;
+      expect(client.events).toEqual(['error Error "Opening handshake has timed out" rs=2', lost]);
+    });
+
+    // Nobody is there to catch it any more. npm ws has thrown from the constructor, where node:http checks the headers.
+    test.skipIf(!builtin)("a dial that throws after `finishRequest` has returned is an 'error'", async () => {
+      await using client = await dial(
+        implementation,
+        {
+          proxy: "http://127.0.0.1:9",
+          headers: { "X-Bad": "a\r\nb" },
+          finishRequest: (request: ClientRequest) => void setImmediate(() => request.end()),
+        },
+        { respond: () => null },
+      );
+      await client.closed;
+      expect(client.events).toEqual([expect.stringMatching(/^error TypeError .* rs=2$/), lost]);
     });
 
     // The global WebSocket gives up on a handshake by itself. It is the clock here: made after the `ws` socket, so
@@ -684,17 +717,21 @@ describe.each(implementations)("ws client, opening ($name)", ({ ws: implementati
     });
 
     // The process ends once no timer is left, so one that still runs would be heard.
-    test.skipIf(!builtin)("..., and leaves no `handshakeTimeout` timer behind", async () => {
-      await using peer = await createPeer({ respond: () => redirect("ws+unix::/x") });
-      const { lines, exitCode } = await runScript(
-        { specifier },
-        `const ws = new WebSocket(${JSON.stringify(peer.url)}, { followRedirects: true, handshakeTimeout: 2000 });
+    test.skipIf(!builtin)(
+      "..., and leaves no `handshakeTimeout` timer behind",
+      async () => {
+        await using peer = await createPeer({ respond: () => redirect("ws+unix::/x") });
+        const { lines, exitCode } = await runScript(
+          { specifier },
+          `const ws = new WebSocket(${JSON.stringify(peer.url)}, { followRedirects: true, handshakeTimeout: 2000 });
          ws.on("error", error => console.log("error " + error.name));
          ws.on("close", code => console.log("close " + code));`,
-      );
-      expect(lines).toEqual(["error SyntaxError", "close 1006"]);
-      expect(exitCode).toBe(0);
-    });
+        );
+        expect(lines).toEqual(["error SyntaxError", "close 1006"]);
+        expect(exitCode).toBe(0);
+      },
+      scriptTimeout,
+    );
 
     const headers = { Authorization: "Basic Zm9vOmJhcg==", Cookie: "foo=bar", Host: "example.test", "X-Other": "1" };
     const all = { authorization: "Basic Zm9vOmJhcg==", cookie: "foo=bar", host: "example.test", other: "1" };

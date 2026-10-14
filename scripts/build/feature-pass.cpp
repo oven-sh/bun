@@ -75,6 +75,14 @@ struct NoConstructors : PassInfoMixin<NoConstructors> {
     static bool isRequired() { return true; }
 };
 
+// A sanitizer puts room around a variable, and these are read one after the other.
+void keepAsItIs(GlobalVariable* variable)
+{
+    GlobalValue::SanitizerMetadata metadata;
+    metadata.NoAddress = metadata.NoHWAddress = true;
+    variable->setSanitizerMetadata(metadata);
+}
+
 struct FeaturePass : PassInfoMixin<FeaturePass> {
     // "2,3"
     std::string features;
@@ -104,6 +112,7 @@ struct FeaturePass : PassInfoMixin<FeaturePass> {
         record->setInitializer(ConstantArray::get(type, words));
         record->setSection(section);
         record->setAlignment(Align(4));
+        keepAsItIs(record);
         appendToUsed(module, { record });
     }
 
@@ -177,6 +186,7 @@ struct FeaturePass : PassInfoMixin<FeaturePass> {
                 auto* byte = Type::getInt8Ty(context);
                 auto* variable = new GlobalVariable(byte, true, GlobalValue::InternalLinkage, ConstantInt::get(byte, 0), name);
                 variable->setSection(constants);
+                keepAsItIs(variable);
                 return variable;
             };
             GlobalVariable *begin = mark("bun_feature_constants_begin"), *end = mark("bun_feature_constants_end");

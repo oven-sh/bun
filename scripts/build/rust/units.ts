@@ -24,7 +24,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import type { Config } from "../config.ts";
 import { assert } from "../error.ts";
 import { dylibPathVar, envify } from "./cargo-env.ts";
-import { featureFlags, featuresThatNeed } from "./features.ts";
+import { featureFlags, featurePassSource, featuresThatNeed } from "./features.ts";
 import type { ManifestLints, MetadataPackage, RustPlan, RustcTargetInfo, UnitGraphUnit } from "./plan.ts";
 
 export type UnitKind = "lib" | "proc-macro" | "bin" | "build-script" | "build-script-run";
@@ -211,7 +211,8 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
       unit.platform,
       u.mode,
       [...unit.features].sort(),
-      neededBy.get(unit) ?? null,
+      // rustc does not know that the pass is an input, and would take what it compiled with another from its incremental cache.
+      neededBy.has(unit) ? [neededBy.get(unit), readFileSync(featurePassSource(plan.workspaceRoot), "utf8")] : null,
       u.profile,
       unit.isStd,
       plan.rustc.version,

@@ -14,7 +14,7 @@ import type { Ninja } from "../ninja.ts";
 import { quote } from "../shell.ts";
 import type { RustUnit } from "./units.ts";
 
-const source = (cfg: Config) => resolve(cfg.cwd, "scripts", "build", "feature-pass.cpp");
+export const featurePassSource = (root: string) => resolve(root, "scripts", "build", "feature-pass.cpp");
 /** rustc and clang are the same LLVM, which cross-language LTO takes anyway. */
 const llvmHeaders = (cfg: Config) => join(dirname(dirname(cfg.hostCxx)), "include");
 
@@ -35,7 +35,7 @@ export function registerFeaturePassRule(n: Ninja, cfg: Config): void {
 
 export function emitFeaturePass(n: Ninja, cfg: Config): void {
   const pass = featurePass(cfg);
-  if (pass !== undefined) n.build({ outputs: [pass], rule: "feature_pass", inputs: [source(cfg)] });
+  if (pass !== undefined) n.build({ outputs: [pass], rule: "feature_pass", inputs: [featurePassSource(cfg.cwd)] });
 }
 
 function closure(from: RustUnit): Set<RustUnit> {

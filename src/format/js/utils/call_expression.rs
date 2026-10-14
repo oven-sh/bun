@@ -1,7 +1,9 @@
 //! Calls that are written in a special way because of what they call: `it("..", () => {})`.
 
-use crate::js::trivia::{comments_stay_between_head_and_body, write_comments_between_blocks};
+use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use super::typecast::comments_of_expression;
 use crate::prelude::*;
+use crate::write;
 
 /// Prettier's `isCallExpression`.
 ///
@@ -33,96 +35,82 @@ pub(crate) fn strip_chain_element_wrappers(mut e: Expr<'_>) -> Expr<'_> {
     e
 }
 
-/// Of the comments between the callee of `call`, which ends at `callee_end` and is written, and the `<` or the `(`,
-/// those that trail the callee. `call` has a `(`.
-pub(crate) fn callee_trailing_comments<'a>(
-    call: Call<'a>,
-    callee_end: u32,
+/// oxfmt leaves the comments between a callee and the `(`, the `?.` or the `<` after it where they are. Prettier attaches most
+/// of them to the first argument.
+///
+/// ```js
+/// a // comment      a(
+/// (b);                // comment
+///                     b,
+///                   );
+/// ```
+///
+/// Not after `new A` without type arguments, not after `a[b]`, not between `a.b` and `?.`, and not after a call that is a link
+/// of a member chain.
+///
+/// `is_in_member_chain`: whether `callee` is written as a part of a member chain.
+pub(crate) fn comments_stay_behind_callee<'a>(
+    callee: Expr<'a>,
+    is_in_member_chain: bool,
     f: &Formatter<'a>,
-) -> &'a [Comment] {
-    if let Some(comments) = comments_trailing_computed_callee(call, f) {
-        return comments;
-    }
-    if comments_stay_between_head_and_body(f) {
-        let opener = match (call.is_optional(), call.type_args().is_empty()) {
-            (true, _) => b'?',
-            (false, false) => b'<',
-            (false, true) => b'(',
-        };
-        return f.comments().comments_before_character(callee_end, opener);
-    }
-    f.comments().comments_trailing_link(callee_end)
+) -> bool {
+    f.options().flavor.is_oxfmt()
+        && comments_stay_after_callee_for_oxfmt(callee, |_| is_in_member_chain)
 }
 
-/// `a["b"]( // comment⏎c)` is `a["b"](c); // comment` for oxfmt: to a callee like `a[b]` the `(` is nothing, and what is
-/// between it and the first argument is its own or the argument's as between any two nodes.
-fn comments_trailing_computed_callee<'a>(
-    call: Call<'a>,
-    f: &Formatter<'a>,
-) -> Option<&'a [Comment]> {
-    if !f.options().flavor.is_oxfmt() {
-        return None;
-    }
-    let callee = call.callee();
-    let (ExprKind::Index { .. }, AstNodes::CallExpression(parent)) =
-        (callee.kind(), callee.ast_parent())
-    else {
-        return None;
-    };
-    let following = (call.type_args().angle_brackets_span())
-        .or_else(|| call.args().first().map(|first| first.span()))?;
-    Some(
-        f.comments()
-            .get_trailing_comments(parent.span(), callee.span(), following.start),
-    )
+/// See [`comments_stay_behind_callee`]. The attachment of comments asks this too, and finds out from the tree whether a call
+/// is a link of a member chain.
+pub(crate) fn comments_stay_after_callee_for_oxfmt<'a>(
+    callee: Expr<'a>,
+    is_link_of_member_chain: impl FnOnce(Expr<'a>) -> bool,
+) -> bool {
+    matches!(callee.parent(), Node::Expr(parent) if match parent.kind() {
+        ExprKind::Call(call) => call.callee() == callee && match callee.tag() {
+            ExprTag::Index => false,
+            ExprTag::Dot => !call.is_optional(),
+            ExprTag::Call => !is_link_of_member_chain(parent),
+            _ => true,
+        },
+        ExprKind::New(call) => call.callee() == callee && !call.type_args().is_empty(),
+        _ => false,
+    })
 }
 
-/// Writes [`callee_trailing_comments`].
-pub(crate) fn write_callee_trailing_comments<'a>(
-    call: Call<'a>,
-    callee_end: u32,
-    f: &mut Formatter<'a>,
-) {
-    if let Some(comments) = comments_trailing_computed_callee(call, f) {
-        return FormatTrailingComments::Comments(comments).fmt(f);
-    }
-    let comments = callee_trailing_comments(call, callee_end, f);
-    match comments_stay_between_head_and_body(f) {
-        true => {
-            write_comments_between_blocks(comments, f);
+/// The callee of a call or a `new`, with its comments.
+pub(crate) struct FormatCallee<'a> {
+    pub(crate) callee: Expr<'a>,
+    pub(crate) is_in_member_chain: bool,
+}
+
+impl<'a> Format<'a> for FormatCallee<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let callee = self.callee;
+        if f.is_quiet() || !comments_stay_behind_callee(callee, self.is_in_member_chain, f) {
+            return write!(f, callee);
         }
-        false => FormatTrailingComments::Comments(comments).fmt(f),
+        write!(f, FormatNodeWithoutTrailingComments(&callee));
+        write_comments_behind_callee(comments_of_expression(callee, f).trailing, f);
     }
 }
 
-/// The comments that trail the type arguments of `call`, which end at `end`. One behind the `(` at
-/// the end of the line is among them: Prettier's `handleCallExpressionComments` only gives it to
-/// the first argument if what is before it is the callee.
-pub(crate) fn type_arguments_trailing_comments<'a>(
-    call: Call<'a>,
-    end: u32,
-    f: &Formatter<'a>,
-) -> &'a [Comment] {
-    match call.args().first() {
-        Some(first) => {
-            trailing_prefix(f.comments().comments_in(Span::before(end, first.span())), f)
+/// See [`comments_stay_behind_callee`]. The comments on the line of the callee trail it. The others keep their lines.
+pub(crate) fn write_comments_behind_callee<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
+    let same_line_count = (comments.iter())
+        .take_while(|comment| !comment.has_newline_before())
+        .count();
+    let (same_line, own_line) = comments.split_at(same_line_count);
+    FormatTrailingComments::Comments(same_line).fmt(f);
+    if let Some(first) = own_line.first() {
+        let previous_end =
+            (same_line.last()).map_or_else(|| first.prev_token_end(), |comment| comment.span().end);
+        match f.source_text().lines_after(previous_end) > 1 {
+            true => write!(f, empty_line()),
+            false => write!(f, hard_line_break()),
         }
-        None => f.comments().comments_before_character(end, b'('),
+        FormatLeadingComments::Comments(own_line).fmt(f);
+    } else if same_line.last().is_some_and(|comment| comment.is_line()) {
+        write!(f, hard_line_break());
     }
-}
-
-fn trailing_prefix<'a>(comments: &'a [Comment], f: &Formatter<'a>) -> &'a [Comment] {
-    let source_text = f.source_text();
-    let count = comments
-        .iter()
-        .rposition(|comment| {
-            !comment.preceded_by_newline()
-                && (comment.followed_by_newline()
-                    || source_text.next_non_whitespace_byte_is(comment.span.end, b'?')
-                    || source_text.next_non_whitespace_byte_is(comment.span.end, b')'))
-        })
-        .map_or(0, |index| index + 1);
-    comments.get(..count).unwrap_or_default()
 }
 
 /// Prettier's `isTestCall`. `e` is a call.
@@ -156,14 +144,14 @@ fn has_comments_around_arguments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let mut start = call.callee().span().end;
     for argument in call.args() {
         if f.comments()
-            .has_any_comment_in(Span::before(start, argument.span()))
+            .has_comment_in_span(Span::before(start, argument.span()))
         {
             return true;
         }
         start = argument.span().end;
     }
     f.comments()
-        .has_any_comment_in(Span::new(start, e.span().end))
+        .has_comment_in_span(Span::new(start, e.span().end))
 }
 
 /// oxfmt has a longer list than Prettier: `it.todo("name", () => {})`, `Deno.test("name", () => {})`.

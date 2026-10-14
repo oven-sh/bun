@@ -1,0 +1,13 @@
+------------------
+{ printWidth: 80 }
+------------------
+@a /* comment */
+export default class implements B {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+@a /* comment */
+export default class implements B {}
+
+===================== End =====================

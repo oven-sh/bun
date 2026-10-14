@@ -96,6 +96,40 @@ macro_rules! conversions {
         #[repr(u8)]
         enum Tag { File, $($variant,)* }
 
+        /// How many kinds of nodes there are.
+        pub(crate) const KINDS: usize = [Tag::File, $(Tag::$variant),*].len();
+
+        impl<'a> File<'a> {
+            /// The [`Node::index`] of the first node of each kind, and after them [`File::node_count`].
+            fn kind_index_offsets(&self) -> &[u32; KINDS + 1] {
+                self.lazy.kind_index_offsets.get_or_init(|| {
+                    let mut offsets = [0; KINDS + 1];
+                    let mut next = 1;
+                    $(
+                        offsets[Tag::$variant as usize] = next;
+                        next += <$handle as super::Handle>::count_in(self);
+                    )*
+                    offsets[KINDS] = next;
+                    offsets
+                })
+            }
+
+            /// How many nodes there are, of all kinds.
+            pub fn node_count(&self) -> u32 {
+                self.kind_index_offsets()[KINDS]
+            }
+        }
+
+        impl Node<'_> {
+            /// A number below [`File::node_count`] that no other node of the file has. For who keeps something for some of
+            /// the nodes, the way the file keeps which expressions are in parentheses.
+            #[inline]
+            pub fn index(self) -> u32 {
+                let Packed { tag, id } = self.packed();
+                self.file().kind_index_offsets()[tag as usize] + id
+            }
+        }
+
         impl Packed {
             #[inline]
             pub(crate) fn unpack<'a>(self, file: &'a File<'a>) -> Node<'a> {

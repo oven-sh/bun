@@ -1,0 +1,29 @@
+------------------
+{ printWidth: 80 }
+------------------
+interface A< // c
+  T extends object = {},
+> extends B<T> {
+  a: T;
+}
+interface C /* a */< // b
+  T extends object = {},
+> extends B<T> {
+  a: T;
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+interface A< // c
+  T extends object = {},
+> extends B<T> {
+  a: T;
+}
+interface C /* a */< // b
+  T extends object = {},
+> extends B<T> {
+  a: T;
+}
+
+===================== End =====================

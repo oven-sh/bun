@@ -7,12 +7,10 @@ pub(crate) mod chain_member;
 mod groups;
 pub(crate) mod simple_argument;
 
-use self::chain_member::{
-    CallExpressionPosition, ChainMember, call_of_callee, comments_are_attached_to_links,
-};
+use self::chain_member::{CallExpressionPosition, ChainMember};
 use self::groups::{FormatMemberChainGroup, should_insert_empty_line_after};
 use self::simple_argument::SimpleArgument;
-use super::call_expression::{callee_trailing_comments, is_call_expression, is_member_expression};
+use super::call_expression::{is_call_expression, is_member_expression};
 use super::is_long_curried_call;
 use super::typecast::is_cast_target;
 use crate::js::parentheses::expression::expression_needs_parentheses;
@@ -34,7 +32,11 @@ struct MemberChain<'a, 'b> {
 pub(crate) fn write_member_chain<'a>(call_expression: Expr<'a>, f: &mut Formatter<'a>) {
     let mut members = Members::new();
     let has_inner_call = push_chain_members(call_expression, &mut members, f);
-    if !is_one_group_after_the_head(has_inner_call, f) {
+    if !is_one_group_after_the_head(has_inner_call, f)
+        || (goes_by_position_of_comments(f)
+            && (members.iter())
+                .any(|member| needs_empty_line_before_for_oxfmt(std::slice::from_ref(member), f)))
+    {
         members.reverse();
         return MemberChain::new(call_expression, &members, f).fmt(f);
     }
@@ -116,9 +118,10 @@ impl<'a, 'b> MemberChain<'a, 'b> {
         let Some(first_member) = self.group(1).first() else {
             return false;
         };
-        if !f.is_quiet()
-            && (has_leading_comment(first_member, f) || has_trailing_comment(first_member, f))
-        {
+        if match goes_by_position_of_comments(f) {
+            true => !f.is_quiet() && has_comment_in_member_for_oxfmt(first_member, f),
+            false => has_leading_comment(first_member, f) || has_trailing_comment(first_member, f),
+        } {
             return false;
         }
         let has_computed_property = first_member.is_computed_expression();
@@ -166,6 +169,13 @@ impl<'a, 'b> MemberChain<'a, 'b> {
     /// call, which takes breaking the chain. One after the head, if that does not end with a call,
     /// is only kept if the chain breaks.
     fn find_empty_lines(&self, f: &Formatter<'a>) -> (SmallVec<[bool; 8]>, bool) {
+        if goes_by_position_of_comments(f) {
+            let needs_empty_line: SmallVec<[bool; 8]> = (self.groups().skip(1))
+                .map(|group| needs_empty_line_before_for_oxfmt(group, f))
+                .collect();
+            let breaks_chain = needs_empty_line.contains(&true);
+            return (needs_empty_line, breaks_chain);
+        }
         let mut has_empty_line_after_call = false;
         let mut previous = self.head().last();
         let needs_empty_line = (self.groups().skip(1).enumerate())
@@ -243,19 +253,18 @@ impl<'a, 'b> MemberChain<'a, 'b> {
 
     /// Prettier's `nodeHasComment`.
     fn has_comment(&self, f: &Formatter<'a>) -> bool {
-        !f.is_quiet()
-            && self.members.iter().any(|member| {
-                has_leading_comment(member, f)
-                    || (!matches!(
-                        member,
-                        ChainMember::CallExpression {
-                            position: CallExpressionPosition::End,
-                            ..
-                        }
-                    ) && !(matches!(member, ChainMember::ComputedMember(_))
-                        && comment_behind_brackets_breaks_no_chain(f))
-                        && has_trailing_comment(member, f))
-            })
+        if f.is_quiet() {
+            return false;
+        }
+        if goes_by_position_of_comments(f) {
+            return (self.members.iter()).any(|member| has_comment_in_member_for_oxfmt(member, f));
+        }
+        let Some((_, all_but_last)) = self.members.split_last() else {
+            return false;
+        };
+        (all_but_last.iter().skip(1)).any(|member| has_leading_comment(member, f))
+            || (all_but_last.iter()).any(|member| has_trailing_comment(member, f))
+            || (self.group(2).first()).is_some_and(|member| has_leading_comment(member, f))
     }
 }
 
@@ -331,81 +340,101 @@ impl<'a> Format<'a> for MemberChain<'a, '_> {
     }
 }
 
-/// Whether a comment leads `member`. For oxfmt: it is on a line of its own before the `.`, or before the `[` of
-/// `[name]`.
 fn has_leading_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
-    if comments_are_attached_to_links(f) {
-        return member
-            .inner_end()
-            .is_some_and(|end| f.comments().has_comment_leading_link(end));
-    }
-    let (object, character) = match member.expr().kind() {
-        ExprKind::Dot { obj, .. } if matches!(member, ChainMember::StaticMember(_)) => (obj, b'.'),
-        ExprKind::Index { obj, index, .. }
-            if matches!(member, ChainMember::ComputedMember(_))
-                && matches!(index.kind(), ExprKind::Ident(_)) =>
-        {
-            (obj, b'[')
-        }
-        _ => return false,
-    };
-    f.comments()
-        .comments_before_character(object.span().end, character)
-        .iter()
-        .any(|comment| comment.preceded_by_newline())
+    !f.is_quiet() && !member.comments(f).leading.is_empty()
 }
 
-/// `a["b"] // comment⏎(c)` is `a["b"](c); // comment` for oxfmt.
-fn comment_behind_brackets_breaks_no_chain(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
-}
-
-/// Whether a comment trails `member`, which is not the last of a chain.
+/// `a! /* comment */ !`: the comment dangles from `a!!`. For Prettier it trails the `a!` in it, which is a link too.
 fn has_trailing_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
-    let expression = member.expr();
-    let end = expression.span().end;
-    if comments_are_attached_to_links(f) {
-        // It is attached to what is in a `ChainExpression`, not to that.
-        let is_chain_expression = matches!(member, ChainMember::Node(node) if node.is_chain_root())
-            && !f.context().has_tree_of_babel();
-        return !is_chain_expression && f.comments().has_comment_trailing_link(end);
+    if f.is_quiet() {
+        return false;
     }
-    // See `comments_trailing_computed_callee`: those behind the `(` are among them, and separate nothing.
-    if expression.tag() == ExprTag::Index {
-        return (f.comments().comments_after(end).first()).is_some_and(|comment| {
-            (f.source_text())
-                .all_bytes(Span::before(end, comment.span), |b| b.is_ascii_whitespace())
-        });
-    }
-    match call_of_callee(expression) {
-        // All before the `(` are among them. A block comment on its line separates nothing.
-        Some(call) => callee_trailing_comments(call, end, f)
-            .iter()
-            .any(|comment| comment.preceded_by_newline() || comment.followed_by_newline()),
-        // A comment on its own line leads the next member, or what is in its brackets.
-        None => f
-            .comments()
-            .comments_after(end)
-            .first()
-            .is_some_and(|comment| {
-                !comment.preceded_by_newline()
-                    && f.source_text()
-                        .all_bytes(Span::before(end, comment.span), |b| {
-                            b.is_ascii_whitespace() || b == b')'
-                        })
-            }),
-    }
+    let comments = member.comments(f);
+    !comments.trailing.is_empty()
+        || (matches!(member, ChainMember::TSNonNullExpression(_)) && !comments.dangling.is_empty())
 }
 
-/// `a.b⏎// comment⏎.c()`: for oxfmt a group of the chain ends before the comment, which so stays on its line.
-fn is_before_comment_that_starts_line<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
-    let end = expression.span().end;
+/// oxfmt does not go by the owners of the comments to lay out a chain. It goes by where they are.
+fn goes_by_position_of_comments(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
-        && (f.comments().comments_after(end).first()).is_some_and(|comment| {
-            comment.preceded_by_newline()
-                && (f.source_text())
-                    .all_bytes(Span::before(end, comment.span), |b| b.is_ascii_whitespace())
-        })
+}
+
+/// Whether nothing but blanks and comments are between `expression` and `comment`, which comes after it.
+fn is_directly_behind(comment: Comment<'_>, expression: Expr<'_>) -> bool {
+    comment.prev_token_end() == expression.span().end
+}
+
+/// oxfmt's `has_comment_in_member`: `member` is `.b` and has a comment between its object and its name, or a comment behind
+/// it that ends the line.
+fn has_comment_in_member_for_oxfmt<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
+    let ChainMember::StaticMember(expression) = *member else {
+        return false;
+    };
+    let (Some(object), Some(name_start)) = (expression.object(), expression.member_name_start())
+    else {
+        return false;
+    };
+    (f.comments()).has_comment_in_span(Span::new(object.span().end, name_start))
+        || (member.comments(f).trailing.iter())
+            .take_while(|comment| {
+                !comment.has_newline_before() && is_directly_behind(*comment, expression)
+            })
+            .any(|comment| comment.is_line() || comment.has_newline_after())
+}
+
+/// oxfmt's `needs_empty_line_before`: `group` starts with `.b`, and there is an empty line between the object and the `.`, or
+/// the first comment between the object and the name.
+fn needs_empty_line_before_for_oxfmt<'a>(group: &[ChainMember<'a>], f: &Formatter<'a>) -> bool {
+    let Some(ChainMember::StaticMember(expression)) = group.first() else {
+        return false;
+    };
+    let (Some(object), Some(name_start)) = (expression.object(), expression.member_name_start())
+    else {
+        return false;
+    };
+    // Not after a call that the chain starts with: `fn()\n\n.bar()` is `fn().bar()`.
+    if matches!(object.kind(), ExprKind::Call(call)
+        if !matches!(call.callee().tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call))
+    {
+        return false;
+    }
+    let between = Span::new(object.span().end, name_start);
+    let end = match f.is_quiet() {
+        true => None,
+        false => f.comments().comments_in_span(between).first(),
+    }
+    .map_or(name_start, |comment| comment.span().start);
+    let mut start = between.start;
+    while let Some(line_break) =
+        bun_core::strings::index_of_any(f.source_text().text_for(&Span::new(start, end)), b"\r\n")
+    {
+        start += line_break as u32;
+        if f.source_text().lines_after(start) > 1 {
+            return true;
+        }
+        start += 1;
+    }
+    false
+}
+
+/// Whether a group of the chain ends behind `member`, which `next` follows, so that a comment stays behind what it is written
+/// behind. For oxfmt that is any comment directly behind `member`, also one that starts a line.
+fn is_followed_by_comment<'a>(
+    member: &ChainMember<'a>,
+    next: Option<&ChainMember<'a>>,
+    f: &Formatter<'a>,
+) -> bool {
+    if !goes_by_position_of_comments(f) {
+        return has_trailing_comment(member, f);
+    }
+    let first_before_next = next.and_then(|next| match next {
+        ChainMember::StaticMember(_) => next.leading_comments(f).first(),
+        ChainMember::ComputedMember(_) => next.comments(f).dangling.first(),
+        _ => None,
+    });
+    (member.comments(f).trailing.first().into_iter())
+        .chain(first_before_next)
+        .any(|comment| is_directly_behind(comment, member.expr()))
 }
 
 fn is_computed_array_member_access(member: &ChainMember<'_>) -> bool {
@@ -481,10 +510,7 @@ fn push_ends_of_remaining_groups<'a>(
         }
 
         // So that the comment stays behind what it is written behind.
-        if !f.is_quiet()
-            && (has_trailing_comment(member, f)
-                || is_before_comment_that_starts_line(member.expr(), f))
-        {
+        if !f.is_quiet() && is_followed_by_comment(member, members.get(index + 1), f) {
             group_ends.push(index as u32 + 1);
             group_start = index + 1;
             has_seen_call_expression = false;

@@ -186,14 +186,10 @@ const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const kMaxProxiesInPrototypeChain = 1000;
 
 // Node's internal isError: a native error of any realm, or an object that inherits from Error.prototype.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util.js#L99-L104
-// Error.isError is the native half. It differs from isNativeError only for ResolveMessage and
-// BuildMessage, and both inherit from Error.prototype.
-// The loop is `Function.prototype[Symbol.hasInstance].call(Error, e)` with a bound: JavaScriptCore's
-// own walk never returns for a prototype chain that cycles through a Proxy.
 function isError(e: unknown): e is Error {
   if (ErrorIsError(e)) return true;
   let proxies = 0;
+  // `e instanceof Error` with a bound: in JavaScriptCore it never returns for a chain that cycles through a Proxy.
   while ($isObject(e)) {
     if ($isProxyObject(e) && ++proxies > kMaxProxiesInPrototypeChain) return false;
     e = ObjectGetPrototypeOf(e);

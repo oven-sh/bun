@@ -40,7 +40,7 @@ macro_rules! file_fields {
                 export_specs modifiers names
             ]
             few: [
-                decorators references comment_directives with_bodies after_skipped
+                decorators references comment_directives with_bodies detached_semicolons after_skipped
                 modifiers_of_props unclosed_literals stray_decorators
                 deferred_import_calls import_call_type_args import_attributes
                 specifier_expressions exports_from_expressions non_null_ends

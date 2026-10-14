@@ -149,6 +149,9 @@ pub struct Options {
     pub dialect: bun_sema::resolve::Dialect,
     /// Not the whole text is parsed.
     pub part: Option<Part>,
+    /// Records what a formatter needs to attach comments to nodes: `enclosing_node`, `preceding_node` and `following_node` of
+    /// `hir::Comment`, and the HTML-like comments of a script.
+    pub attach_comments: bool,
 }
 
 /// A part of a text, as acorn's `parseExpressionAt` reads one: nothing is said about what follows it, and nothing of that

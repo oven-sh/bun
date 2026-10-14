@@ -88,6 +88,9 @@ const EXCLUDED: &[(&str, &str)] = &[
 /// Formatting their output again changes it, in Prettier too: `unstableTests` of
 /// `tests/config/format-test/failed-format-tests.js`.
 const UNSTABLE: &[&str] = &[
+    "flow/hook/declare-hook.js",
+    "flow/hook/hook-type-annotation.js",
+    "flow/comments/type_annotations.js",
     "js/ignore/semi/class-expression-decorator.js",
     "js/ignore/semi/head-ignored.js",
     "js/comments/return-statement.js",

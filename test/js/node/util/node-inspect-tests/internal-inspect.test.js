@@ -157,6 +157,60 @@ test.each([
   });
 });
 
+// A value is formatted as an error when it inherits from Error.prototype, so its `stack`, `name`,
+// `message` and `errors` can be getters that throw. The `name` and `message` of DOMException.prototype
+// throw for a receiver that is not a DOMException. The expected text is what node v26.3.0 prints.
+const throwingGetter = {
+  get() {
+    throw new RangeError("getter");
+  },
+};
+test.each([
+  [
+    "an own stack getter that throws",
+    () => Object.defineProperty(new Error("m"), "stack", throwingGetter),
+    "[Error: m]",
+  ],
+  [
+    "own stack and name getters that throw",
+    () => Object.defineProperties(new Error("m"), { stack: throwingGetter, name: throwingGetter }),
+    "[object Error]",
+  ],
+  [
+    "a stack getter that throws and Error.prototype as its prototype",
+    () => Object.defineProperty({ __proto__: Error.prototype }, "stack", throwingGetter),
+    "[Error]",
+  ],
+  [
+    "stack, name and message getters that throw and Error.prototype as its prototype",
+    () =>
+      Object.defineProperties(
+        { __proto__: Error.prototype },
+        { stack: throwingGetter, name: throwingGetter, message: throwingGetter },
+      ),
+    "[object Object]",
+  ],
+  ["DOMException.prototype as its prototype", () => ({ __proto__: DOMException.prototype }), "[object DOMException]"],
+  ...["name", "message"].map(key => [
+    `an enumerable ${key} getter that throws, a stack and Error.prototype as its prototype`,
+    () =>
+      Object.defineProperty({ __proto__: Error.prototype, stack: "Old: m\n    at x (y:1:1)" }, key, {
+        ...throwingGetter,
+        enumerable: true,
+      }),
+    `Old: m\n    at x (y:1:1) {\n  ${key}: [Getter]\n}`,
+  ]),
+])("util.inspect of an object with %s", (_, create, expected) => {
+  expect(util.inspect(create())).toBe(expected);
+});
+
+test("util.inspect of an error with an errors getter that throws, and of DOMException.prototype", () => {
+  expect(util.inspect(Object.defineProperty(new Error("m"), "errors", throwingGetter))).toStartWith(
+    "Error: m\n    at ",
+  );
+  expect(util.inspect(DOMException.prototype)).toStartWith("[object DOMException] {");
+});
+
 //! non-standard property, should this be kept?
 test.skip("util.stylizeWithHTML", () => {
   assert.strictEqual(

@@ -1700,7 +1700,13 @@ function identicalSequenceRange(a, b) {
 }
 
 function getStackString(error) {
-  return error.stack ? String(error.stack) : ErrorPrototypeToString(error);
+  let stack;
+  try {
+    stack = error.stack;
+  } catch {
+    // If stack is a getter that throws, ignore it.
+  }
+  return stack ? String(stack) : ErrorPrototypeToString(error);
 }
 
 function getStackFrames(ctx, err, stack) {
@@ -1770,8 +1776,16 @@ function removeDuplicateErrorKeys(ctx, keys, err, stack) {
   if (!ctx.showHidden && keys.length !== 0) {
     for (const name of ["name", "message", "stack"]) {
       const index = ArrayPrototypeIndexOf(keys, name);
+      if (index === -1) continue;
+      let value;
+      try {
+        value = err[name];
+      } catch {
+        // A getter that throws stays in the keys and prints as [Getter].
+        continue;
+      }
       // Only hide the property in case it's part of the original stack
-      if (index !== -1 && StringPrototypeIncludes(stack, err[name])) {
+      if (StringPrototypeIncludes(stack, value)) {
         ArrayPrototypeSplice(keys, index, 1);
       }
     }
@@ -1831,11 +1845,26 @@ function safeGetCWD() {
 }
 
 function formatError(err, constructor, tag, ctx, keys) {
-  const name = err.name != null ? String(err.name) : "Error";
-  let stack = getStackString(err);
+  let message, name, stack;
+  try {
+    stack = getStackString(err);
+  } catch {
+    return ObjectPrototypeToString(err);
+  }
+  try {
+    message = err.message;
+  } catch {
+    // If message is a getter that throws, ignore it.
+  }
+  try {
+    name = err.name;
+  } catch {
+    // If name is a getter that throws, ignore it.
+  }
+  name = name != null ? String(name) : "Error";
 
   //! temp fix for Bun losing the error name from inherited errors + extraneous ": " with no message
-  stack = stack.replace(/^Error: /, `${name}${err.message ? ": " : ""}`);
+  stack = stack.replace(/^Error: /, `${name}${message ? ": " : ""}`);
 
   removeDuplicateErrorKeys(ctx, keys, err, stack);
 
@@ -1844,15 +1873,19 @@ function formatError(err, constructor, tag, ctx, keys) {
   }
 
   // Print errors aggregated into AggregateError
-  if ($isJSArray(err.errors) && (keys.length === 0 || !ArrayPrototypeIncludes(keys, "errors"))) {
-    ArrayPrototypePush.$call(keys, "errors");
+  try {
+    if ($isJSArray(err.errors) && (keys.length === 0 || !ArrayPrototypeIncludes(keys, "errors"))) {
+      ArrayPrototypePush.$call(keys, "errors");
+    }
+  } catch {
+    // If errors is a getter that throws, ignore it.
   }
 
   stack = improveStack(stack, constructor, name, tag);
 
   // Ignore the error message if it's contained in the stack.
-  let pos = (err.message && StringPrototypeIndexOf(stack, err.message)) || -1;
-  if (pos !== -1) pos += err.message.length;
+  let pos = (message && StringPrototypeIndexOf(stack, message)) || -1;
+  if (pos !== -1) pos += message.length;
   // Wrap the error in brackets in case it has no stack trace.
   const stackStart = StringPrototypeIndexOf(stack, "\n    at", pos);
   if (stackStart === -1) {

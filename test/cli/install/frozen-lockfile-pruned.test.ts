@@ -1,14 +1,15 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { exists, lstat } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import { dirname, join } from "path";
+import { TestRegistry } from "registry";
 
 type Linker = "hoisted" | "isolated";
 type PackageJson = Record<string, unknown>;
 type Tree = { root: PackageJson; packages: Record<string, PackageJson>; files?: Record<string, string> };
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();

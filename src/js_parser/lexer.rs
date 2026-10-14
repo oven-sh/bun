@@ -8,6 +8,7 @@ use bun_ast::lexer_tables as tables;
 use bun_ast::{LexerLog, Loc, Log, Range, Source};
 use bun_core::Environment;
 use bun_core::fmt::hex_digit_value_u32;
+pub(crate) use bun_core::lexer::is_whitespace;
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use identifier as js_identifier;
@@ -1329,6 +1330,11 @@ impl<'a> Lexer<'a> {
                     continue;
                 }
                 0x09 | 0x20 => {
+                    // Consumes the remaining white space at once: an indented line has many of these
+                    // characters.
+                    while matches!(contents.get(self.current), Some(b' ' | b'\t')) {
+                        self.current += 1;
+                    }
                     self.step_with(contents);
                     continue;
                 }
@@ -3356,12 +3362,6 @@ pub fn is_identifier_start(codepoint: i32) -> bool {
 #[inline]
 pub fn is_identifier_continue(codepoint: i32) -> bool {
     js_identifier::is_identifier_part(codepoint)
-}
-
-pub(crate) fn is_whitespace(codepoint: CodePoint) -> bool {
-    // ECMAScript `WhiteSpace`: TAB VT FF SP ZWNBSP + Unicode Zs.
-    matches!(codepoint, 0x0009 | 0x000B | 0x000C | 0x0020 | 0xFEFF)
-        || strings::is_unicode_space_separator(codepoint as u32)
 }
 
 pub use bun_core::identifier::{is_identifier, is_identifier_utf16};

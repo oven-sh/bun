@@ -70,7 +70,7 @@ describe("Url.prototype.parse", () => {
 it("urlToHttpOptions returns a null-prototype object", () => {
   const options = urlToHttpOptions(new URL("http://user:pass@foo.bar.com:21/aaa/zzz?l=24#test"));
   expect(Object.getPrototypeOf(options)).toBe(null);
-  expect({ ...options }).toEqual({
+  expect<object>({ ...options }).toEqual({
     protocol: "http:",
     hostname: "foo.bar.com",
     hash: "#test",
@@ -92,7 +92,6 @@ it("URL constructor throws ERR_MISSING_ARGS", () => {
     err = e;
   }
 
-  // @ts-expect-error
   expect(err?.code).toEqual("ERR_MISSING_ARGS");
 });
 

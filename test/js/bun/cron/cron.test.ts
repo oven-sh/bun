@@ -50,7 +50,7 @@ const hasLaunchctl =
   (() => {
     try {
       const r = Bun.spawnSync({
-        cmd: ["launchctl", "print", "gui/" + String(process.getuid())],
+        cmd: ["launchctl", "print", "gui/" + String(process.getuid!())],
         stdout: "pipe",
         stderr: "pipe",
       });

@@ -148,11 +148,12 @@ pub(crate) fn exec(
     }
     if !filters.is_empty() {
         let (before_l, before_r) = (left.files.len(), right.files.len());
+        let prepared: Vec<Filter<'_>> = filters.iter().map(|it| Filter::new(it)).collect();
         for tree in [&mut left, &mut right] {
             tree.files
-                .retain(|path, _| filters.iter().any(|f| filter_matches(f, path)));
+                .retain(|path, _| prepared.iter().any(|f| f.matches(path)));
             tree.modes
-                .retain(|path, _| filters.iter().any(|f| filter_matches(f, path)));
+                .retain(|path, _| prepared.iter().any(|f| f.matches(path)));
         }
         if left.files.is_empty() && right.files.is_empty() && before_l + before_r > 0 {
             Status::clear();
@@ -182,20 +183,36 @@ fn split_filter(arg: &[u8]) -> Option<(&[u8], &[u8])> {
 }
 
 /// A filter names a file exactly, a directory (prefix), a bare file name anywhere in the package, or a glob.
-fn filter_matches(filter: &[u8], path: &[u8]) -> bool {
-    let filter = filter.strip_prefix(b"./").unwrap_or(filter);
-    let filter = filter.strip_suffix(b"/").unwrap_or(filter);
-    if path == filter
-        || (path.len() > filter.len() && path.starts_with(filter) && path[filter.len()] == b'/')
-    {
-        return true;
+struct Filter<'a> {
+    glob: bun_glob::Prepared<&'a [u8]>,
+    is_glob: bool,
+}
+
+impl<'a> Filter<'a> {
+    fn new(filter: &'a [u8]) -> Filter<'a> {
+        let filter = filter.strip_prefix(b"./").unwrap_or(filter);
+        let filter = filter.strip_suffix(b"/").unwrap_or(filter);
+        Filter {
+            glob: bun_glob::Prepared::new(filter),
+            is_glob: strings::index_of_any(filter, b"*?[{").is_some()
+                || bun_glob::has_extglob_prefix(filter),
+        }
     }
-    if strings::index_of_any(filter, b"*?[{").is_some() {
-        return bun_glob::r#match(filter, path).matches()
-            || (!strings::contains_char(filter, b'/')
-                && bun_glob::r#match(filter, bun_paths::basename(path)).matches());
+
+    fn matches(&self, path: &[u8]) -> bool {
+        let filter = self.glob.pattern();
+        if path == filter
+            || (path.len() > filter.len() && path.starts_with(filter) && path[filter.len()] == b'/')
+        {
+            return true;
+        }
+        if self.is_glob {
+            return self.glob.r#match(path).matches()
+                || (!strings::contains_char(filter, b'/')
+                    && self.glob.r#match(bun_paths::basename(path)).matches());
+        }
+        !strings::contains_char(filter, b'/') && bun_paths::basename(path) == filter
     }
-    !strings::contains_char(filter, b'/') && bun_paths::basename(path) == filter
 }
 
 // ─── spec resolution ────────────────────────────────────────────────────────

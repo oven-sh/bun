@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, mkdirSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
@@ -101,7 +101,7 @@ describe("bunshell", () => {
     });
   });
   describe("js_obj_test", async () => {
-    function runTest(name: string, builder: TestBuilder) {
+    function runTest(name: string, builder: InstanceType<typeof TestBuilder>) {
       test(`js_obj_test_name_${name}`, async () => {
         await builder.run();
       });
@@ -1047,6 +1047,62 @@ booga"
           expect(out).not.toContain("keep2.txt");
         })
         .runAsTest("long leading run of injected ! stays literal");
+
+      // `Bun.Glob` has extglob groups. In the shell, parentheses in a word are always data.
+      for (const injected of ["@()!(zzz)", "!(zzz)", "a!(zzz)", "@(a|aa|b)", "+(a)", "?(a)a", "*(a)", "*(a|b)"]) {
+        TestBuilder.command`echo ${injected}/f.*`
+          .ensureTempDir()
+          .directory("a")
+          .file("a/f.txt", "")
+          .directory("aa")
+          .file("aa/f.txt", "")
+          .directory("b")
+          .file("b/f.txt", "")
+          .exitCode(1)
+          .stderr(`bun: no matches found: ${injected}/f.*\n`)
+          .runAsTest(`injected ${injected} is literal`);
+      }
+
+      TestBuilder.command`V=${"@()!(zzz)"}; echo "$V"/f.* || echo $(echo ${"+(a)"})/f.*`
+        .ensureTempDir()
+        .directory("a")
+        .file("a/f.txt", "")
+        .exitCode(1)
+        .stderr("bun: no matches found: @()!(zzz)/f.*\nbun: no matches found: +(a)/f.*\n")
+        .runAsTest("an extglob group from a variable or a command substitution is literal");
+
+      const withParentheses = (out: string) => expect(out.replaceAll("\\", "/")).toBe("c++(old)/f.ts\n");
+      const inFolderWithParentheses = (builder: ReturnType<typeof TestBuilder.command>) =>
+        builder.ensureTempDir().directory("c++(old)").file("c++(old)/f.ts", "").directory("c").file("c/f.ts", "");
+
+      inFolderWithParentheses(TestBuilder.command`echo ${"c++(old)"}/*.ts`)
+        .stdout(withParentheses)
+        .runAsTest("an interpolated folder name with parentheses still matches that folder");
+      inFolderWithParentheses(TestBuilder.command`echo "c++(old)"/*.ts`)
+        .stdout(withParentheses)
+        .runAsTest("a double-quoted folder name with parentheses still matches that folder");
+      inFolderWithParentheses(TestBuilder.command`echo 'c++(old)'/*.ts`)
+        .stdout(withParentheses)
+        .runAsTest("a single-quoted folder name with parentheses still matches that folder");
+
+      test.skipIf(isWindows)("a quoted name with parentheses that is a symlink to a folder still expands", async () => {
+        using dir = tempDir("bunshell-symlink-parentheses", { "real/f.ts": "" });
+        symlinkSync("real", join(String(dir), "Dropbox (Personal)"));
+        const { stdout, exitCode } = await $`echo "Dropbox (Personal)"/f.* ${"Dropbox (Personal)"}/*.ts`
+          .cwd(String(dir))
+          .nothrow()
+          .quiet();
+        expect(stdout.toString()).toBe("Dropbox (Personal)/f.ts Dropbox (Personal)/f.ts\n");
+        expect(exitCode).toBe(0);
+      });
+
+      TestBuilder.command`echo *"(1)".ts`
+        .ensureTempDir()
+        .file("g(1).ts", "")
+        .file("g1.ts", "")
+        .file("1.ts", "")
+        .stdout("g(1).ts\n")
+        .runAsTest("a literal * before quoted parentheses isn't an extglob group");
     });
 
     test("glob on a nonexistent absolute directory does not crash the process", async () => {

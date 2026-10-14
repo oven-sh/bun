@@ -1693,9 +1693,10 @@ describe.concurrent(() => {
   const unshare = ["unshare", "--user", "--map-root-user", "--mount", "--propagation", "private"];
   // Not in every container.
   const canMount = () => {
+    if (!isLinux || !which("unshare")) return false;
     using dir = tempDir("process-cgroup", { "cgroup": "", "sys/a": "" });
     const script = inMadeUpCgroup.replace(/exec .*/, "true");
-    return isLinux && spawnSync({ cmd: [...unshare, "sh", "-c", script, "sh", String(dir)] }).exitCode === 0;
+    return spawnSync({ cmd: [...unshare, "sh", "-c", script, "sh", String(dir)] }).exitCode === 0;
   };
   const GiB = 1024 ** 3;
   const v2 = group => ({

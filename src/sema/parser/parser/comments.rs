@@ -139,35 +139,32 @@ impl CommentTracker {
         self.last_finished = (NodeOrName::None, 0);
     }
 
-    /// Half of the finished nodes that matter are around the following node of the last pending comments and start with it, as
-    /// `a.b`, `a.b()` and `a.b();` are around `a`, or are around the preceding node and end with it. If `finished` is one and
-    /// makes no difference to the comments before, replaces that node and returns true.
+    /// Most finished nodes that matter are after the last pending comments or before them, and make no difference to the
+    /// comments before those. Then all that can change is one node of the last ones. Returns false for any other node.
     #[inline(always)]
-    fn replace_candidate_by_outer_node(&mut self, finished: Candidate) -> bool {
+    fn update_only_last_pending_comments(&mut self, finished: Candidate) -> bool {
         let Some((last, earlier)) = self.pending.split_last_mut() else {
             return false;
         };
-        let is_around_following_node = !last.following.is_none()
-            && finished.start == last.following.start
-            && finished.end >= last.following.end;
-        let is_around_preceding_node = !last.preceding.is_none()
-            && finished.end == last.preceding.end
-            && finished.start <= last.preceding.start;
         // The comments before have a following node that starts earlier, so they are before `finished`, which is not closer.
         let is_after_earlier_comments = (earlier.last()).is_none_or(|comments| {
             !comments.following.is_none() && comments.following.start < finished.start
         });
-        if !(is_around_following_node || is_around_preceding_node)
-            || !is_after_earlier_comments
-            || !matches!(finished.node, NodeOrName::Node(_))
-        {
+        let is_after_last = finished.start > last.start;
+        if !is_after_earlier_comments || !(is_after_last || finished.end <= last.start) {
             return false;
         }
         self.last_finished = (finished.node, self.undo_log.len());
-        self.undo_log.push(*last);
-        match is_around_following_node {
-            true => last.following = finished,
-            false => last.preceding = finished,
+        let is_better = match is_after_last {
+            true => finished.is_better_following_node_than(last.following),
+            false => finished.is_better_preceding_node_than(last.preceding),
+        };
+        if is_better {
+            self.undo_log.push(*last);
+            match is_after_last {
+                true => last.following = finished,
+                false => last.preceding = finished,
+            }
         }
         true
     }
@@ -452,14 +449,16 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     #[inline(never)]
     fn add_pending_comments_since(&mut self, first_new: usize, finished: Candidate) {
-        // The usual case, `a; // comment`: the statement that is being finished ends at the token before the comments. No node
-        // ends later, and this one is around all that ended there before, so it is the preceding node. The caller sets it.
-        // Only for a statement: [`Parser::unfinish_node`] would leave the comments without the node that was best before. The
-        // one statement that is taken back is the inner one of `namespace a.b {}`, and the outer one ends at the same offset.
+        // The usual case, `a; // comment`: the node that is being finished ends at the token before the comments. No node ends
+        // later, and this one is around all that ended there before, so it is the preceding node. The caller sets it.
+        // Not for an expression or a type: [`Parser::unfinish_node`] would leave the comments without the node that was best
+        // before. The one other node that is taken back is the inner statement of `namespace a.b {}`, and the outer one ends
+        // at the same offset.
         if let Some(first) = self.lx.comments.get(first_new)
             && first.prev_token_end == finished.end
             && finished.start < finished.end
-            && matches!(finished.node, NodeOrName::Node(NodeData::Stmt(_)))
+            && matches!(finished.node, NodeOrName::Node(node)
+                if !matches!(node, NodeData::Expr(_) | NodeData::Type(_)))
             && (self.lx.comments.last())
                 .is_some_and(|last| last.next_token_start == first.next_token_start)
         {
@@ -480,13 +479,6 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// finished node, which is the last element of one of the node lists.
     #[inline(never)]
     fn add_pending_comments_after_any_node(&mut self, first_new: usize) {
-        fn candidate(node: NodeData, start: u32, end: u32) -> Candidate {
-            Candidate {
-                node: NodeOrName::Node(node),
-                start,
-                end,
-            }
-        }
         fn last_index<T>(list: &[T]) -> u32 {
             list.len().saturating_sub(1) as u32
         }
@@ -496,74 +488,78 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             !matches!(statement.kind, StmtKind::Empty)
         });
         let (name_start, name_end) = self.comments.last_name;
-        // The name comes first so that a node with the same range replaces it.
-        let last_finished = [
-            Some(Candidate {
-                node: NodeOrName::Name(name_start),
-                start: name_start,
-                end: name_end,
-            }),
-            last_expr
-                .and_then(|index| Some((index, file.exprs.get(index)?)))
-                .map(|(index, e)| candidate(NodeData::Expr(ExprId(index as u32)), e.pos, e.end)),
-            last_stmt
-                .and_then(|index| Some((index, file.stmts.get(index)?)))
-                .map(|(index, statement)| {
-                    let id = StmtId(index as u32);
-                    candidate(NodeData::Stmt(id), statement.start, statement.loc.end)
-                }),
-            (file.types.last()).map(|ty| {
-                candidate(
-                    NodeData::Type(TypeNodeId(last_index(&file.types))),
-                    ty.pos,
-                    ty.end,
-                )
-            }),
-            (file.pats.last()).map(|pat| {
-                candidate(
-                    NodeData::Pat(PatId(last_index(&file.pats))),
-                    pat.pos,
-                    pat.end,
-                )
-            }),
-        ];
         // A list element can end with a name: the `B` of `<B>(/* comment */ c) => d` is a type parameter.
         macro_rules! last_elements {
             ($($field:ident)*) => {
                 [$((file.$field.last())
-                    .and_then(|element| element.as_node(last_index(&file.$field), file))
-                    .map(|(node, start, end)| candidate(node, start, end))),*]
+                    .and_then(|element| element.as_node(last_index(&file.$field), file))),*]
             };
         }
-        let last_list_elements = || {
-            last_elements!(
-                var_decls params type_params props members cases pat_props pat_elems enum_members
-                import_specs export_specs tuple_elems
-            )
+        let best_node_before = |comment_start: u32| {
+            let mut best = Candidate::default();
+            let consider = |best: &mut Candidate, node: NodeOrName, start: u32, end: u32| {
+                let candidate = Candidate { node, start, end };
+                if start < end
+                    && end <= comment_start
+                    && candidate.is_better_preceding_node_than(*best)
+                {
+                    *best = candidate;
+                }
+            };
+            // The name comes first so that a node with the same range replaces it.
+            consider(
+                &mut best,
+                NodeOrName::Name(name_start),
+                name_start,
+                name_end,
+            );
+            if let Some((index, e)) =
+                last_expr.and_then(|index| Some((index, file.exprs.get(index)?)))
+            {
+                let node = NodeData::Expr(ExprId(index as u32));
+                consider(&mut best, NodeOrName::Node(node), e.pos, e.end);
+            }
+            if let Some((index, statement)) =
+                last_stmt.and_then(|index| Some((index, file.stmts.get(index)?)))
+            {
+                let node = NodeData::Stmt(StmtId(index as u32));
+                consider(
+                    &mut best,
+                    NodeOrName::Node(node),
+                    statement.start,
+                    statement.loc.end,
+                );
+            }
+            if let Some(ty) = file.types.last() {
+                let node = NodeData::Type(TypeNodeId(last_index(&file.types)));
+                consider(&mut best, NodeOrName::Node(node), ty.pos, ty.end);
+            }
+            if let Some(pat) = file.pats.last() {
+                let node = NodeData::Pat(PatId(last_index(&file.pats)));
+                consider(&mut best, NodeOrName::Node(node), pat.pos, pat.end);
+            }
+            if matches!(best.node, NodeOrName::Name(_)) {
+                let last_list_elements = last_elements!(
+                    var_decls params type_params props members cases pat_props pat_elems
+                    enum_members import_specs export_specs tuple_elems
+                );
+                for (node, start, end) in last_list_elements.into_iter().flatten() {
+                    consider(&mut best, NodeOrName::Node(node), start, end);
+                }
+            }
+            best
         };
         let mut new_comments = self.lx.comments.get(first_new..).unwrap_or_default();
         let mut first_id = first_new as u32;
         while let Some(first) = new_comments.first() {
-            let start = first.pos;
             let count = (new_comments.iter())
                 .take_while(|comment| comment.next_token_start == first.next_token_start)
                 .count();
-            let better_of = |best: Candidate, candidate: Candidate| {
-                let is_better = candidate.start < candidate.end
-                    && candidate.end <= start
-                    && candidate.is_better_preceding_node_than(best);
-                if is_better { candidate } else { best }
-            };
-            let mut preceding =
-                (last_finished.into_iter().flatten()).fold(Candidate::default(), better_of);
-            if matches!(preceding.node, NodeOrName::Name(_)) {
-                preceding = (last_list_elements().into_iter().flatten()).fold(preceding, better_of);
-            }
             self.comments.pending.push(PendingComments {
                 first_id,
                 count: count as u32,
-                start,
-                preceding,
+                start: first.pos,
+                preceding: best_node_before(first.pos),
                 following: Candidate::default(),
             });
             new_comments = new_comments.get(count..).unwrap_or_default();
@@ -585,12 +581,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(never)]
     fn update_pending_comments_for_node(&mut self, node: NodeOrName, start: u32, end: u32) {
         let finished = Candidate { node, start, end };
-        if self.comments.tracked_count as usize == self.lx.comments.len()
-            && self.comments.replace_candidate_by_outer_node(finished)
-        {
-            return;
-        }
         self.add_new_pending_comments(finished);
+        if start < end && self.comments.update_only_last_pending_comments(finished) {
+            return self.update_max_relevant_node_start();
+        }
         if start < end {
             self.comments.last_finished = (node, self.comments.undo_log.len());
             let CommentTracker {

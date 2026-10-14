@@ -423,7 +423,16 @@ impl<'a> Comments<'a> {
     // ───────────────────────────── by offset ─────────────────────────────
 
     /// The id of the first comment that starts at or after `offset`.
+    #[inline]
     fn first_id_at_or_after(&self, offset: u32) -> u32 {
+        let (first, last) = self.searched_offsets.get();
+        match first <= offset && offset <= last {
+            true => self.search_hint.get(),
+            false => self.search_first_id_at_or_after(offset),
+        }
+    }
+
+    fn search_first_id_at_or_after(&self, offset: u32) -> u32 {
         const MAX_STEPS: u32 = 4;
         let starts_before = |id: u32| {
             self.comment(id)
@@ -487,10 +496,7 @@ impl<'a> Comments<'a> {
 
     #[inline]
     pub(crate) fn has_comment_in_span(&self, span: Span) -> bool {
-        let (first, last) = self.searched_offsets.get();
-        if span.start < first || span.start > last {
-            self.first_id_at_or_after(span.start);
-        }
+        self.first_id_at_or_after(span.start);
         self.searched_offsets.get().1 < span.end
     }
 

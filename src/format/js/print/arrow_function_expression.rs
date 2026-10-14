@@ -665,20 +665,26 @@ impl<'a> Format<'a> for FormatArrowBody<'a> {
 
         let span = || AstNodes::FunctionBody(arrow).span();
         let content = format_with(|f| match arrow.body() {
-            FnBody::Expr(body) => write_expression_body(body, self.has_own_line_comment, f),
+            FnBody::Expr(body) => write_expression_body(arrow, body, self.has_own_line_comment, f),
             _ => write!(f, FormatFunctionBody(arrow)),
         });
         FormatContentWithCacheMode::new(span, content, cache_mode).fmt(f);
     }
 }
 
-/// `() =>⏎ /* comment */ (a, b)` for oxfmt, `() => /* comment */ (a, b)` for Prettier.
+/// `() =>⏎ /* comment */ (a, b)` for oxfmt, `() => /* comment */ (a, b)` for Prettier. For oxfmt a comment anywhere in the
+/// arrow function before the sequence counts: `(/* comment */ a) =>⏎ (b, c)`.
 fn sequence_behind_comments_is_on_its_own_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// `is_on_its_own_line`: a comment has moved it off the line of the `=>` already.
-fn write_expression_body<'a>(body: Expr<'a>, is_on_its_own_line: bool, f: &mut Formatter<'a>) {
+/// `body`: of `arrow`. `is_on_its_own_line`: a comment has moved it off the line of the `=>` already.
+fn write_expression_body<'a>(
+    arrow: Func<'a>,
+    body: Expr<'a>,
+    is_on_its_own_line: bool,
+    f: &mut Formatter<'a>,
+) {
     let is_sequence = is_sequence(body) && !is_cast_target(body, f);
     if !is_sequence {
         return write!(f, body);
@@ -697,8 +703,8 @@ fn write_expression_body<'a>(body: Expr<'a>, is_on_its_own_line: bool, f: &mut F
         write!(f, [")", FormatTrailingComments::Comments(owned.trailing)]);
     });
     match !is_on_its_own_line
-        && !owned.leading.is_empty()
         && sequence_behind_comments_is_on_its_own_line(f)
+        && (f.comments()).has_comment_in_span(Span::before(arrow.span().start, body.span()))
     {
         true => write!(f, group(&indent(&format_args!(hard_line_break(), content)))),
         false => write!(f, content),

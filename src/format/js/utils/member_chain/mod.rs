@@ -32,7 +32,11 @@ struct MemberChain<'a, 'b> {
 pub(crate) fn write_member_chain<'a>(call_expression: Expr<'a>, f: &mut Formatter<'a>) {
     let mut members = Members::new();
     let has_inner_call = push_chain_members(call_expression, &mut members, f);
-    if !is_one_group_after_the_head(has_inner_call, f) {
+    if !is_one_group_after_the_head(has_inner_call, f)
+        || (goes_by_position_of_comments(f)
+            && (members.iter())
+                .any(|member| needs_empty_line_before_for_oxfmt(std::slice::from_ref(member), f)))
+    {
         members.reverse();
         return MemberChain::new(call_expression, &members, f).fmt(f);
     }
@@ -165,6 +169,13 @@ impl<'a, 'b> MemberChain<'a, 'b> {
     /// call, which takes breaking the chain. One after the head, if that does not end with a call,
     /// is only kept if the chain breaks.
     fn find_empty_lines(&self, f: &Formatter<'a>) -> (SmallVec<[bool; 8]>, bool) {
+        if goes_by_position_of_comments(f) {
+            let needs_empty_line: SmallVec<[bool; 8]> = (self.groups().skip(1))
+                .map(|group| needs_empty_line_before_for_oxfmt(group, f))
+                .collect();
+            let breaks_chain = needs_empty_line.contains(&true);
+            return (needs_empty_line, breaks_chain);
+        }
         let mut has_empty_line_after_call = false;
         let mut previous = self.head().last();
         let needs_empty_line = (self.groups().skip(1).enumerate())
@@ -362,7 +373,42 @@ fn has_comment_in_member_for_oxfmt<'a>(member: &ChainMember<'a>, f: &Formatter<'
             .take_while(|comment| {
                 !comment.has_newline_before() && is_directly_behind(*comment, expression)
             })
-            .any(|comment| comment.has_newline_after())
+            .any(|comment| comment.is_line() || comment.has_newline_after())
+}
+
+/// oxfmt's `needs_empty_line_before`: `group` starts with `.b`, and there is an empty line between the object and the `.`, or
+/// the first comment between the object and the name.
+fn needs_empty_line_before_for_oxfmt<'a>(group: &[ChainMember<'a>], f: &Formatter<'a>) -> bool {
+    let Some(ChainMember::StaticMember(expression)) = group.first() else {
+        return false;
+    };
+    let (Some(object), Some(name_start)) = (expression.object(), expression.member_name_start())
+    else {
+        return false;
+    };
+    // Not after a call that the chain starts with: `fn()\n\n.bar()` is `fn().bar()`.
+    if matches!(object.kind(), ExprKind::Call(call)
+        if !matches!(call.callee().tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call))
+    {
+        return false;
+    }
+    let between = Span::new(object.span().end, name_start);
+    let end = match f.is_quiet() {
+        true => None,
+        false => f.comments().comments_in_span(between).first(),
+    }
+    .map_or(name_start, |comment| comment.span().start);
+    let mut start = between.start;
+    while let Some(line_break) =
+        bun_core::strings::index_of_any(f.source_text().text_for(&Span::new(start, end)), b"\r\n")
+    {
+        start += line_break as u32;
+        if f.source_text().lines_after(start) > 1 {
+            return true;
+        }
+        start += 1;
+    }
+    false
 }
 
 /// Whether a group of the chain ends behind `member`, which `next` follows, so that a comment stays behind what it is written

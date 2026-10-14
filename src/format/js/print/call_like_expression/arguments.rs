@@ -922,20 +922,21 @@ fn is_react_hook_with_deps_array<'a>(arguments: &FormatArguments<'a>, f: &Format
     {
         return false;
     }
-    !arguments
-        .iter()
-        .any(|argument| match comment_in_argument_is_none_of_it(f) {
-            true => {
-                let owned = comments_of_expression(argument, f);
-                !owned.leading.is_empty() || !owned.trailing.is_empty()
-            }
-            false => has_comment(argument, f),
-        })
+    f.is_quiet()
+        || !arguments
+            .iter()
+            .any(|argument| match only_comments_around_arguments_count(f) {
+                true => {
+                    let owned = comments_of_expression(argument, f);
+                    !owned.leading.is_empty() || !owned.trailing.is_empty()
+                }
+                false => has_comment(argument, f),
+            })
 }
 
 /// `useEffect(() => {}, [/* comment */])`: for Prettier the array has a comment, so this is a call like any other. oxfmt
 /// only looks at the comments around the arguments.
-fn comment_in_argument_is_none_of_it(f: &Formatter<'_>) -> bool {
+fn only_comments_around_arguments_count(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 

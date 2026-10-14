@@ -480,7 +480,7 @@ impl<'a> File<'a> {
     ///
     /// Unlike [`skip_trivia_back`](crate::tokens::skip_trivia_back) it is never fooled by what a
     /// comment or a string contains. Where there is only whitespace in between, it looks at nothing
-    /// else. Where there may be a comment, it asks the tokens of the file.
+    /// else. Where there is a comment, the comment knows. Otherwise it asks the tokens of the file.
     pub fn end_of_token_before(&'a self, at: u32) -> u32 {
         let text = self.hir.text;
         let mut end = (at as usize).min(text.len());
@@ -502,6 +502,15 @@ impl<'a> File<'a> {
                 Some(0x80..) => break,
                 Some(_) => return end as u32,
             }
+        }
+        let comments = self.hir.comments;
+        let count_before = comments.partition_point(|comment| comment.pos < at);
+        if let Some(last) = count_before
+            .checked_sub(1)
+            .and_then(|index| comments.get(index))
+            && last.next_token_start == at
+        {
+            return last.prev_token_end;
         }
         self.tokens_before(Span::empty(at))
             .next()

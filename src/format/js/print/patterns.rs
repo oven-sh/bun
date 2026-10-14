@@ -40,7 +40,10 @@ fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mu
                         f,
                     );
                 }
-                write!(f, rest);
+                // Prettier's `printArrayItems`: each element is a group.
+                if let Some(rest) = rest {
+                    write!(f, group(&rest));
+                }
             })))
         );
     }

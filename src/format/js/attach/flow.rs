@@ -137,15 +137,33 @@ fn last_of_inner_or_pattern(e: Expr<'_>) -> Option<Expr<'_>> {
     (is_inner && is_match_pattern(e)).then_some(right)
 }
 
-/// `MatchExpression`, `MatchStatement`, `MatchExpressionCase` and `MatchStatementCase`.
-pub(super) fn is_match_or_match_case(node: N<'_>) -> bool {
+/// A match expression or statement, a case of one, a pattern or a property of an object pattern.
+pub(super) fn is_part_of_match(node: N<'_>) -> bool {
     match node {
-        N::NewExpression(e) => as_match_expression(e).is_some(),
+        N::NewExpression(e) if as_match_expression(e).is_some() => true,
         N::SwitchStatement(statement) => head_of_match_statement(statement).is_some(),
-        N::ObjectProperty(case) => is_match_case(Node::Prop(case)),
         N::SwitchCase(case) => is_match_case(Node::Case(case)),
-        _ => false,
+        N::ObjectProperty(property) => {
+            is_match_case(Node::Prop(property))
+                || matches!(property.parent(), Node::Expr(object) if is_match_pattern(object))
+        }
+        _ => node.as_expression().is_some_and(is_match_pattern),
     }
+}
+
+/// `hook useA() {}` or `component A() {}`.
+pub(super) fn is_hook_or_component_declaration(func: Func<'_>) -> bool {
+    func.has_body() && keyword_of_declaration(func).is_some()
+}
+
+/// `hook` or `component`, if the declaration of `func` starts with the word.
+fn keyword_of_declaration(func: Func<'_>) -> Option<&[u8]> {
+    let Node::Stmt(statement) = func.owner() else {
+        return None;
+    };
+    (statement.modifiers().iter())
+        .map(|modifier| statement.file().slice(modifier.token_span()))
+        .find(|word| matches!(*word, b"hook" | b"component"))
 }
 
 /// The argument and the first case of a match expression or statement.
@@ -193,9 +211,7 @@ pub(super) fn function_type(func: Func<'_>) -> Option<FunctionType> {
         {
             None
         }
-        Node::Stmt(statement) if !func.has_body() => (statement.modifiers().iter())
-            .map(|modifier| statement.file().slice(modifier.token_span()))
-            .find(|word| matches!(*word, b"hook" | b"component")),
+        Node::Stmt(_) if !func.has_body() => keyword_of_declaration(func),
         _ => return None,
     };
     Some(match keyword {
@@ -231,6 +247,8 @@ pub(super) fn is_no_node(node: N<'_>) -> bool {
         N::BinaryExpression(e) => last_of_inner_or_pattern(e).is_some(),
         N::TSTypeAnnotation(ty) => {
             is_return_type_of_function_type(ty)
+                // `component A() renders T {}`
+                || ty.flow_type_operator_operand().is_some()
                 // The `T` of `: T %checks`
                 || matches!(ty.parent(), Node::Type(parent) if matches!(parent.kind(),
                     TypeKind::Predicate { param, .. } if param.is("%checks")))
@@ -243,6 +261,7 @@ pub(super) fn is_no_node(node: N<'_>) -> bool {
 /// - The `: T` around it, where Flow has a `TypeAnnotation` and TypeScript has no `TSTypeAnnotation`: the bound of a type
 ///   parameter, `(e: T)` and `declare module.exports: T`.
 /// - The class, for a type after `mixins`.
+/// - The return type, for the `T` of `: T %checks(e)`.
 pub(super) fn parent_of_type(node: N<'_>) -> Option<N<'_>> {
     let Node::Type(ty) = node.raw() else {
         return None;
@@ -260,6 +279,13 @@ pub(super) fn parent_of_type(node: N<'_>) -> Option<N<'_>> {
         Node::Class(class) if class.flow_mixins().iter().any(|it| it == ty) => {
             return Some(N::Class(class));
         }
+        // The `T` of `: T %checks(e)`, which is a type query with `T` as its type argument in the tree.
+        Node::Type(parent)
+            if matches!(parent.kind(), TypeKind::Typeof { .. })
+                && parent.first_token() != b"typeof" =>
+        {
+            return Some(parent.as_ast_nodes());
+        }
         _ => false,
     };
     has_type_annotation.then_some(N::TSTypeAnnotation(ty))
@@ -270,8 +296,11 @@ pub(super) fn parent_of_type(node: N<'_>) -> Option<N<'_>> {
 pub(super) fn preceding_node<'a>(
     node: NodeOrName<'a>,
     enclosing_node: Option<Node<'a>>,
+    comment_start: u32,
 ) -> Option<NodeOrName<'a>> {
     let node = match node {
+        // `declare function f(): /* comment */ A`: the enclosing node is the `FunctionTypeAnnotation`, which starts at the `(`.
+        NodeOrName::Name(_) if is_in_function_type(enclosing_node, comment_start) => return None,
         NodeOrName::Name(start) => {
             let is_no_node = is_name_of_type_parameter(enclosing_node, start)
                 || members_of_enum_with_explicit_type(enclosing_node, start).is_some();
@@ -320,6 +349,22 @@ fn members_of_enum_with_explicit_type(
     (declaration.flow_explicit_type()?.start == start).then(|| declaration.members())
 }
 
+/// Whether `offset` is behind the `(` of a function type that `enclosing_node` stands for together with its name.
+fn is_in_function_type(enclosing_node: Option<Node<'_>>, offset: u32) -> bool {
+    let func = match enclosing_node {
+        Some(Node::Func(func)) => Some(func),
+        Some(Node::Member(member)) => member.func(),
+        Some(Node::Stmt(statement)) => match statement.kind() {
+            StmtKind::Fn(func) => Some(func),
+            _ => None,
+        },
+        _ => None,
+    };
+    func.is_some_and(|func| {
+        function_type(func).is_some() && func.open_paren().is_some_and(|open| open < offset)
+    })
+}
+
 /// `<T>`: the name of a type parameter is a string in Flow's tree.
 fn is_name_of_type_parameter(enclosing_node: Option<Node<'_>>, start: u32) -> bool {
     matches!(enclosing_node, Some(Node::TypeParam(param)) if param.name().span().start == start)
@@ -350,7 +395,7 @@ pub(super) fn unrecorded_preceding_node(
     (variance.end <= offset).then_some(NodeOrName::Name(variance.start))
 }
 
-/// The same for the node after a comment.
+/// What Prettier's tree has in the place of `node`, which the parser recorded as the node after a comment in `enclosing_node`.
 pub(super) fn following_node<'a>(
     node: NodeOrName<'a>,
     enclosing_node: Option<Node<'a>>,

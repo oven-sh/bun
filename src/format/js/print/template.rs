@@ -35,7 +35,8 @@ fn can_be_in_another_language<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
 /// Prettier's `isJestEachTemplateLiteral`, and the test of `printJestEachTemplateLiteral` that the table has a header.
 fn is_jest_each_template_literal<'a>(e: Expr<'a>, template: Template<'a>) -> bool {
     matches!(e.parent(), Node::Expr(parent)
-        if matches!(parent.kind(), ExprKind::TaggedTemplate(call) if is_test_each_pattern(call.callee())))
+        if matches!(parent.kind(), ExprKind::TaggedTemplate(call)
+            if call.template() == Some(e) && is_test_each_pattern(call.callee())))
         && !template.raw(0).trim_ascii().is_empty()
 }
 

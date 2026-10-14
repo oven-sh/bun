@@ -62,9 +62,9 @@ pub(crate) fn comments_in_member_access_stay(f: &Formatter<'_>) -> bool {
 }
 
 /// See [`comments_in_member_access_stay`]: the comments of the property of `member`, if one of them ends its line. They are
-/// printed before the `.`.
+/// printed before the `.`. Not for `a.#b`, which oxfmt never breaks.
 fn comments_on_lines_before_property<'a>(member: Expr<'a>, f: &Formatter<'a>) -> CommentList<'a> {
-    if f.is_quiet() || !comments_in_member_access_stay(f) {
+    if f.is_quiet() || !comments_in_member_access_stay(f) || member.is_private_member() {
         return CommentList::empty();
     }
     (member.member_name_start())

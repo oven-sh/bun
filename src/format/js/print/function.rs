@@ -18,6 +18,12 @@ pub(crate) struct FormatFunctionOptions {
     pub(crate) cache_mode: FunctionCacheMode,
 }
 
+/// `a = function /* comment */⏎<T>() {}`: for Prettier the line break after the comment breaks with what the function is in. For
+/// oxfmt it goes if the type parameters fit behind the comment.
+fn comments_of_type_parameters_are_in_a_group_with_them(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// A function declaration or expression. Not a method: see `class.rs`.
 pub(crate) fn write_function<'a>(
     func: Func<'a>,
@@ -46,9 +52,13 @@ pub(crate) fn write_function<'a>(
                 func.is_generator().then_some("*"),
                 (!is_only_head).then_some(space()),
                 func.name().map(|name| identifier(name)),
-                group(&type_parameters(func.type_params(), Node::Func(func))),
             ]
         );
+        let type_parameters = type_parameters(func.type_params(), Node::Func(func));
+        match comments_of_type_parameters_are_in_a_group_with_them(f) {
+            true => write!(f, group(&type_parameters)),
+            false => write!(f, type_parameters),
+        }
     });
     FormatContentWithCacheMode::new(|| node.span(), head, options.cache_mode).fmt(f);
 

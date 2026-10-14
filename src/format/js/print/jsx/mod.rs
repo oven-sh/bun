@@ -10,7 +10,7 @@ use crate::js::format::{format_name, format_node, identifier};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::tailwindcss::{InTailwindContext, context_of_attribute};
 use crate::js::utils::typecast::{
-    comments_of_expression, has_comments, is_cast_target, is_chain_expression_without_comments,
+    comments_of_expression, is_cast_target, is_chain_expression_without_comments,
 };
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -218,6 +218,17 @@ fn comments_alone_in_braces_are_not_hugged(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
 
+/// Prettier's `hasComment(node)`, for what is in braces.
+fn has_comments<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
+    if f.is_quiet() || is_chain_expression_without_comments(expression, f) {
+        return false;
+    }
+    let comments = comments_of_expression(expression, f);
+    !comments.leading.is_empty()
+        || !comments.trailing.is_empty()
+        || (!comments.dangling.is_empty() && comments_alone_in_braces_are_not_hugged(f))
+}
+
 /// Prettier's `shouldInline` in `printJsxExpressionContainer`: it starts right after the `{` and
 /// ends right before the `}`, even if it breaks. `is_child`: the braces are among the children of
 /// an element.
@@ -227,15 +238,8 @@ fn should_inline_jsx_expression<'a>(
     f: &Formatter<'a>,
 ) -> bool {
     loop {
-        if !f.is_quiet() && !is_chain_expression_without_comments(expression, f) {
-            let comments = comments_of_expression(expression, f);
-            if !comments.leading.is_empty()
-                || !comments.trailing.is_empty()
-                || (!comments.dangling.is_empty() && comments_alone_in_braces_are_not_hugged(f))
-                || is_cast_target(expression, f)
-            {
-                return false;
-            }
+        if has_comments(expression, f) || is_cast_target(expression, f) {
+            return false;
         }
         match expression.as_ast_nodes() {
             AstNodes::ArrayExpression(_)
@@ -289,7 +293,7 @@ pub(crate) fn write_jsx_attribute<'a>(attribute: Prop<'a>, f: &mut Formatter<'a>
 
 /// `{...argument}`. Prettier's `printJsxSpreadAttributeOrChild`: the comments of the argument are written before the dots.
 fn write_jsx_spread<'a>(argument: Expr<'a>, f: &mut Formatter<'a>) {
-    if f.is_quiet() || !has_comments(argument, f) {
+    if !has_comments(argument, f) {
         return write!(f, ["{...", argument, "}"]);
     }
     write!(

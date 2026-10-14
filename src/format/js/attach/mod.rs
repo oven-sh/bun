@@ -107,7 +107,8 @@ pub(crate) struct Attached<'a> {
     pub(crate) attachments: Vec<Attachment<'a>>,
     /// Prettier's `node.prettierIgnore`: nodes that are ignored because of a comment attached to a different node.
     pub(crate) ignored_nodes: Vec<Owner<'a>>,
-    /// Start offsets of the owners that are not next to their comment. Sorted.
+    /// Start offsets of the owners that are not next to their comment, or do not contain their dangling comment. Sorted. While
+    /// a node is printed that has neither a comment nor one of these in it, nothing in it owns a comment.
     pub(crate) relocated_owner_starts: Vec<u32>,
     pub(crate) has_ignore_comments: bool,
 }
@@ -311,7 +312,10 @@ pub(crate) fn attach<'a>(
             following_node,
             Some(program),
         ];
-        if !nearby.contains(&Some(attachment.owner)) {
+        // `class A // comment ⏎ {}`: the comment dangles from the body, and is not in it.
+        let is_outside_of_owner = attachment.placement == Placement::Dangling
+            && !cx.span_of(attachment.owner).contains(comment.span());
+        if is_outside_of_owner || !nearby.contains(&Some(attachment.owner)) {
             (attached.relocated_owner_starts).push(cx.start_of(attachment.owner));
         }
         // `interface A {⏎ // prettier-ignore ⏎}`: for oxfmt a comment in an empty node ignores nothing.

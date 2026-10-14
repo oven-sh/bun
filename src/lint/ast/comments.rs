@@ -169,6 +169,11 @@ impl<'a> File<'a> {
         Comment { file: self, id }
     }
 
+    #[inline]
+    pub fn comment_count(&self) -> usize {
+        self.hir.comments.len()
+    }
+
     /// All comments in source order. The nodes around them are only known if the file was parsed with `attach_comments`.
     pub fn comments_by_id(&'a self) -> impl ExactSizeIterator<Item = Comment<'a>> {
         (0..self.hir.comments.len() as u32).map(move |id| Comment { file: self, id })

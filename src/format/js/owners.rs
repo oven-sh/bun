@@ -6,7 +6,7 @@
 
 use super::ast_nodes::AstNodes;
 use super::attach::{Attached, Owner, Placement};
-use bun_lint::ast::File;
+use bun_lint::ast::{File, Node};
 use bun_lint::span::Span;
 
 const LEADING: u8 = Placement::Leading as u8;
@@ -183,13 +183,19 @@ impl Owners {
 
     #[inline]
     pub(crate) fn of_node(&self, node: AstNodes<'_>) -> OwnedIds<'_> {
-        let index = node.raw().index();
-        let owns_comments = (self.owner_bitset.get(index as usize / 64))
-            .is_some_and(|word| word & (1 << (index % 64)) != 0);
-        match owns_comments {
-            true => self.lookup(&self.nodes, index, node.kind() as u8),
+        let raw = node.raw();
+        match self.is_owner(raw) {
+            true => self.lookup(&self.nodes, raw.index(), node.kind() as u8),
             false => OwnedIds::default(),
         }
+    }
+
+    /// Whether one of the `AstNodes` that are made of `raw` owns a comment or is ignored.
+    #[inline]
+    pub(crate) fn is_owner(&self, raw: Node<'_>) -> bool {
+        let index = raw.index();
+        (self.owner_bitset.get(index as usize / 64))
+            .is_some_and(|word| word & (1 << (index % 64)) != 0)
     }
 
     #[inline]

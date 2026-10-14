@@ -12,8 +12,8 @@ use super::ast_nodes::AstNodes;
 use super::attach::{self, Marker, Owner, Placement};
 use super::owners::Owners;
 use crate::options::{Flavor, FormatOptions};
-use bun_lint::ast::File;
 pub(crate) use bun_lint::ast::comments::Comment;
+use bun_lint::ast::{File, Node};
 use bun_lint::span::Span;
 use std::cell::Cell;
 
@@ -391,6 +391,13 @@ impl<'a> Comments<'a> {
     #[inline]
     pub(crate) fn of_node(&self, node: AstNodes<'_>) -> OwnedComments<'a> {
         self.owned(self.file_comments.owners.of_node(node))
+    }
+
+    /// Whether one of the `AstNodes` that are made of `raw` owns a comment or is ignored. Cheaper than making the `AstNodes`
+    /// to ask [`Comments::of_node`].
+    #[inline]
+    pub(crate) fn is_owner(&self, raw: Node<'_>) -> bool {
+        self.file_comments.owners.is_owner(raw)
     }
 
     /// The comments attached to the name or literal key that starts at `start`.

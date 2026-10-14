@@ -43,6 +43,7 @@ impl<'a> Format<'a> for FormatLeadingComments<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let comments = match *self {
+            Self::Owner(_) if f.is_quiet() => return,
             Self::Owner(node) => f.comments().of_node(node).leading,
             Self::Comments(comments) => comments,
         };
@@ -129,6 +130,7 @@ impl<'a> Format<'a> for FormatTrailingComments<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let comments = match *self {
+            Self::Owner(_) if f.is_quiet() => return,
             Self::Owner(node) => f.comments().of_node(node).trailing,
             Self::Comments(comments) => comments,
         };
@@ -266,6 +268,7 @@ impl<'a> Format<'a> for FormatDanglingComments<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let (comments, indent) = match *self {
+            Self::Owner { .. } if f.is_quiet() => return,
             Self::Owner { node, indent } => (f.comments().of_node(node).dangling, indent),
             Self::Comments { comments, indent } => (comments, indent),
         };

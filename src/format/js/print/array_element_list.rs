@@ -100,9 +100,20 @@ pub(crate) fn can_concisely_print_array_list<'a>(
                 } => matches!(operand.kind(), ExprKind::Number(_)) && !has_comment(operand, f),
                 _ => false,
             };
-            is_number
-                && (f.is_quiet()
-                    || !(f.comments().of_node(element.as_ast_nodes()).trailing.iter())
-                        .any(|comment| comment.is_line() && !comment.has_newline_before()))
+            is_number && !has_line_comment_behind_code(element, f)
         })
+}
+
+/// Whether a line comment trails `element` on its line. For oxfmt also one that leads it: `[ // comment⏎1, 2]`.
+fn has_line_comment_behind_code<'a>(element: Expr<'a>, f: &Formatter<'a>) -> bool {
+    if f.is_quiet() {
+        return false;
+    }
+    let owned = f.comments().of_node(element.as_ast_nodes());
+    let leading = match f.options().flavor.is_oxfmt() {
+        true => owned.leading,
+        false => CommentList::empty(),
+    };
+    (leading.iter().chain(owned.trailing))
+        .any(|comment| comment.is_line() && !comment.has_newline_before())
 }

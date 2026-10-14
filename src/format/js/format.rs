@@ -732,7 +732,16 @@ fn format_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     if !f.context_mut().has_stack_left() {
         return;
     }
-    format_node(statement.as_ast_nodes(), f, |f| {
+    if f.is_quiet() {
+        return write_statement(statement, f);
+    }
+    // The `AstNodes` of a function or a class declaration is made of the function or the class, not of the statement.
+    let is_made_of_statement = !matches!(statement.tag(), StmtTag::Fn | StmtTag::Class);
+    if is_made_of_statement && !f.comments().is_owner(Node::Stmt(statement)) {
+        f.context_mut().take_skip_trailing_comments();
+        return f.in_scope(statement.span(), |f| write_statement(statement, f));
+    }
+    format_node_with_comments(statement.as_ast_nodes(), f, |f| {
         write_statement(statement, f)
     });
 }

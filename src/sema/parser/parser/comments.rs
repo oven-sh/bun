@@ -23,11 +23,13 @@ struct Candidate {
 }
 
 impl Candidate {
+    #[inline(always)]
     fn is_none(self) -> bool {
         self.node == NodeOrName::None
     }
 
     /// An identifier can be reported both as a name and as the node that consists of it. The node counts.
+    #[inline(always)]
     fn is_name_of(self, other: Candidate) -> bool {
         matches!(self.node, NodeOrName::Name(_))
             && matches!(other.node, NodeOrName::Node(_))
@@ -36,6 +38,7 @@ impl Candidate {
 
     /// Both end before the comment. The better one ends later. If they end at the same offset, one contains the other, and
     /// the outer one is better.
+    #[inline(always)]
     fn is_better_preceding_node_than(self, other: Candidate) -> bool {
         if self.is_name_of(other) {
             return false;
@@ -46,6 +49,7 @@ impl Candidate {
     }
 
     /// Both start after the comment. The better one starts earlier, or is the outer one.
+    #[inline(always)]
     fn is_better_following_node_than(self, other: Candidate) -> bool {
         if self.is_name_of(other) {
             return false;
@@ -55,15 +59,19 @@ impl Candidate {
             || (self.start == other.start && self.end >= other.end)
     }
 
+    #[inline(always)]
     fn is_inside(self, start: u32, end: u32) -> bool {
         self.start >= start && self.end <= end
     }
 }
 
-/// A comment whose enclosing node is not finished yet.
+/// The comments between two tokens, whose enclosing node is not finished yet. Nodes start and end at tokens, so the same nodes
+/// are around all of them.
 #[derive(Copy, Clone)]
-struct PendingComment {
-    id: u32,
+struct PendingComments {
+    first_id: u32,
+    count: u32,
+    /// Where the first one starts.
     start: u32,
     preceding: Candidate,
     following: Candidate,
@@ -72,11 +80,11 @@ struct PendingComment {
 #[derive(Default)]
 pub(crate) struct CommentTracker {
     /// Sorted by id, which is source order.
-    pending: Vec<PendingComment>,
+    pending: Vec<PendingComments>,
     /// How many comments of the lexer have been added to `pending` so far.
     tracked_count: u32,
     /// The previous value of every pending comment that was changed or removed, so that a rollback can restore it.
-    undo_log: Vec<PendingComment>,
+    undo_log: Vec<PendingComments>,
     /// Start and end of the last identifier that was parsed as a name.
     last_name: (u32, u32),
     /// The last node that changed a pending comment, and the length of `undo_log` before it did. See
@@ -92,7 +100,7 @@ impl CommentTracker {
                 break;
             };
             let pending = &mut self.pending;
-            match pending.binary_search_by_key(&previous.id, |comment| comment.id) {
+            match pending.binary_search_by_key(&previous.first_id, |comments| comments.first_id) {
                 Ok(index) => pending[index] = previous,
                 Err(index) => pending.insert(index, previous),
             }
@@ -353,7 +361,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.add_new_pending_comments();
         let last_comment = (self.comments.pending.iter())
             .rfind(|comment| comment.start < end)
-            .and_then(|comment| self.lx.comments.get(comment.id as usize));
+            .and_then(|comments| self.lx.comments.get(comments.first_id as usize));
         match last_comment {
             Some(comment)
                 if comment.next_token_start + 1 == end
@@ -367,11 +375,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// Adds the comments that the lexer has scanned since the last call. No node was finished in between, so the best
     /// preceding node so far is the most recently finished node, which is the last element of one of the node lists.
+    #[inline(always)]
     fn add_new_pending_comments(&mut self) {
-        let first_new = self.comments.tracked_count as usize;
-        if first_new == self.lx.comments.len() {
-            return;
+        if self.comments.tracked_count as usize != self.lx.comments.len() {
+            self.add_pending_comments_since(self.comments.tracked_count as usize);
         }
+    }
+
+    #[inline(never)]
+    fn add_pending_comments_since(&mut self, first_new: usize) {
         fn candidate(node: NodeData, start: u32, end: u32) -> Candidate {
             Candidate {
                 node: NodeOrName::Node(node),
@@ -430,8 +442,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 import_specs export_specs tuple_elems
             )
         };
-        for id in first_new..self.lx.comments.len() {
-            let start = self.lx.comments[id].pos;
+        let mut new_comments = self.lx.comments.get(first_new..).unwrap_or_default();
+        let mut first_id = first_new as u32;
+        while let Some(first) = new_comments.first() {
+            let start = first.pos;
+            let count = (new_comments.iter())
+                .take_while(|comment| comment.next_token_start == first.next_token_start)
+                .count();
             let better_of = |best: Candidate, candidate: Candidate| {
                 let is_better = candidate.start < candidate.end
                     && candidate.end <= start
@@ -443,23 +460,31 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if matches!(preceding.node, NodeOrName::Name(_)) {
                 preceding = (last_list_elements().into_iter().flatten()).fold(preceding, better_of);
             }
-            self.comments.pending.push(PendingComment {
-                id: id as u32,
+            self.comments.pending.push(PendingComments {
+                first_id,
+                count: count as u32,
                 start,
                 preceding,
                 following: Candidate::default(),
             });
+            new_comments = new_comments.get(count..).unwrap_or_default();
+            first_id += count as u32;
         }
         self.comments.tracked_count = self.lx.comments.len() as u32;
     }
 
-    /// A node from `start` to `end` was finished.
+    /// A node from `start` to `end` was finished. The call is cold for `bun lint` and `bun check`, which never make it. The work
+    /// is in a function of its own, so that it is not compiled like cold code.
     #[cold]
     #[inline(never)]
     fn update_pending_comments(&mut self, node: NodeOrName, start: u32, end: u32) {
-        if !self.options.attach_comments {
-            return;
+        if self.options.attach_comments {
+            self.update_pending_comments_for_node(node, start, end);
         }
+    }
+
+    #[inline(never)]
+    fn update_pending_comments_for_node(&mut self, node: NodeOrName, start: u32, end: u32) {
         self.add_new_pending_comments();
         if start < end {
             let finished = Candidate { node, start, end };
@@ -484,17 +509,21 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             while index > 0 && pending[index - 1].start >= start {
                 index -= 1;
             }
-            for comment in pending.drain(index..after_node).rev() {
-                undo_log.push(comment);
+            if index < after_node {
                 // A candidate outside the enclosing node is not one of its children.
                 let child_or_none = |candidate: Candidate| match candidate.is_inside(start, end) {
                     true => candidate.node,
                     false => NodeOrName::None,
                 };
-                if let Some(resolved) = self.lx.comments.get_mut(comment.id as usize) {
-                    resolved.enclosing_node = node;
-                    resolved.preceding_node = child_or_none(comment.preceding);
-                    resolved.following_node = child_or_none(comment.following);
+                for comment in pending.drain(index..after_node).rev() {
+                    undo_log.push(comment);
+                    let ids =
+                        comment.first_id as usize..(comment.first_id + comment.count) as usize;
+                    for resolved in self.lx.comments.get_mut(ids).unwrap_or_default() {
+                        resolved.enclosing_node = node;
+                        resolved.preceding_node = child_or_none(comment.preceding);
+                        resolved.following_node = child_or_none(comment.following);
+                    }
                 }
             }
 
@@ -527,7 +556,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         self.add_new_pending_comments();
         for comment in self.comments.pending.drain(..) {
-            if let Some(resolved) = self.lx.comments.get_mut(comment.id as usize) {
+            let ids = comment.first_id as usize..(comment.first_id + comment.count) as usize;
+            for resolved in self.lx.comments.get_mut(ids).unwrap_or_default() {
                 resolved.enclosing_node = NodeOrName::None;
                 resolved.preceding_node = comment.preceding.node;
                 resolved.following_node = comment.following.node;
@@ -559,7 +589,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         } = &mut self.comments;
         // Comments that were first seen after the checkpoint will be seen again.
         *tracked_count = to.comments.tracked_count;
-        pending.truncate(pending.partition_point(|comment| comment.id < *tracked_count));
+        pending.truncate(pending.partition_point(|comments| comments.first_id < *tracked_count));
         *last_name = to.comments.last_name;
         self.lx.max_relevant_node_start = u32::MAX;
     }

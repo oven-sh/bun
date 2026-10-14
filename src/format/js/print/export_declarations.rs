@@ -4,8 +4,7 @@ use super::import_declaration::{
 };
 use super::semicolon::OptionalSemicolon;
 use crate::js::format::{FormatDeclaration, format_name, format_node, write_declaration};
-use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use crate::js::utils::typecast::is_cast_target;
+use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::write;
 
@@ -56,10 +55,23 @@ pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Format
                 [
                     FormatDecorators::new(class.decorators(), node),
                     hard_line_break(),
-                    keyword_and_space,
-                    FormatDeclaration(statement)
+                    keyword_and_space
                 ]
             );
+            // `@a export /* prettier-ignore */ class B {}`: the span of the class starts at its decorators, which are written
+            // by now. Only oxfmt attaches the comment to the class.
+            let class_node = AstNodes::Class(class);
+            match !f.is_quiet() && f.comments().is_ignored(class_node) {
+                true => write!(
+                    f,
+                    [
+                        leading_comments(class_node),
+                        FormatSuppressedNode(statement.span_without_export()),
+                        trailing_comments(class_node)
+                    ]
+                ),
+                false => write!(f, FormatDeclaration(statement)),
+            }
         }
         // They are part of the class, so its leading comments are written before them.
         Some((class, _)) => {
@@ -103,33 +115,13 @@ pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Format
     }
 }
 
-/// `export default a /* comment */;` is `export default a; /* comment */` for oxfmt, as after any other
-/// statement. Prettier leaves it.
-fn comments_before_semicolon_of_default_export_go_behind_it(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
-}
-
 /// `export default e`
 pub(crate) fn write_export_default_expression<'a>(
     _statement: Stmt<'a>,
     expression: Expr<'a>,
     f: &mut Formatter<'a>,
 ) {
-    write!(f, "export default ");
-    if f.is_quiet()
-        || !comments_before_semicolon_of_default_export_go_behind_it(f)
-        || is_cast_target(expression, f)
-    {
-        return write!(f, [expression, OptionalSemicolon]);
-    }
-    write!(
-        f,
-        [
-            FormatNodeWithoutTrailingComments(&expression),
-            OptionalSemicolon,
-            trailing_comments(expression.as_chain_element())
-        ]
-    );
+    write!(f, ["export default ", expression, OptionalSemicolon]);
 }
 
 /// Flow's `declare export { a }`. Not `export export { a }`, of which TypeScript's parser makes `export { a }`.

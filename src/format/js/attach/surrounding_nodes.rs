@@ -492,7 +492,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             recorded_nodes_without_import_attribute_braces(parsed_comment);
         if self.file.is_flow() {
             preceding_node = match preceding_node {
-                Some(node) => flow::preceding_node(node, enclosing_node),
+                Some(node) => flow::preceding_node(node, enclosing_node, comment.start),
                 None => flow::unrecorded_preceding_node(enclosing_node, comment.start),
             };
             following_node = following_node.and_then(|it| flow::following_node(it, enclosing_node));
@@ -707,9 +707,18 @@ impl<'a, 'c> AttachContext<'a, 'c> {
 
     /// Indexed by comment id.
     pub(super) fn surrounding_nodes_of_all_comments(&self) -> Vec<SurroundingNodes<'a>> {
-        (self.file.comments_by_id())
-            .map(|comment| self.surrounding_nodes(comment))
-            .collect()
+        let mut all: Vec<SurroundingNodes<'a>> = Vec::with_capacity(self.file.comment_count());
+        let mut next_token_start = u32::MAX;
+        for comment in self.file.comments_by_id() {
+            // Nodes start and end at tokens. If no token is between two comments, the same nodes are around both.
+            let nodes = match all.last() {
+                Some(&previous) if comment.next_token_start() == next_token_start => previous,
+                _ => self.surrounding_nodes(comment),
+            };
+            next_token_start = comment.next_token_start();
+            all.push(nodes);
+        }
+        all
     }
 
     /// Prettier's `isGap`: only whitespace and `(` between the two offsets.

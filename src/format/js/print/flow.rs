@@ -1613,6 +1613,11 @@ fn is_record<'a>(class: Class<'a>, f: &Formatter<'a>) -> bool {
     has_word(class.modifiers(), b"record", f)
 }
 
+/// The same, for a class of any file.
+pub(crate) fn is_flow_record(class: Class<'_>) -> bool {
+    class.file().is_flow() && has_word_in(class.file(), class.modifiers(), b"record")
+}
+
 /// The `{ }` of a record that has members. Prettier's `printClassBody`.
 fn write_record_body<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
     let members = class.members();

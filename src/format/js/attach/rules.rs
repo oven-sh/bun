@@ -17,7 +17,7 @@ use crate::js::ast_nodes::{AsAstNodes, AstNodes as N, ExpressionStatement};
 use crate::js::comments::{Comment, CommentExt};
 use crate::js::fields::ExprFields;
 use crate::js::format::is_in_head_of_for;
-use crate::js::print::flow::{is_declared_class, is_flow_opaque_type};
+use crate::js::print::flow::{is_declared_class, is_flow_opaque_type, is_flow_record};
 use crate::js::utils::call_expression::comments_stay_behind_callee_for_oxfmt;
 use crate::js::utils::expression::ExpressionLeftSide;
 use bun_lint::ast::{
@@ -77,11 +77,15 @@ fn is_block(owner: Owner<'_>) -> bool {
     )
 }
 
-/// Whether `e` is the `a.b`, or the `a.b` in the `a.b.c`, of `typeof a.b.c`.
-fn is_name_of_type_query(mut e: Expr<'_>) -> bool {
+/// Whether `e` is the `a.b`, or the `a.b` in the `a.b.c`, of `typeof a.b.c` or `<a.b.c />`.
+fn is_name_of_type_query_or_jsx_element(mut e: Expr<'_>) -> bool {
     loop {
         match e.parent() {
             Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { .. }) => e = parent,
+            Node::Expr(parent) => {
+                return matches!(parent.kind(), ExprKind::Jsx(jsx)
+                    if jsx.tag() == Some(e) || jsx.close_tag() == Some(e));
+            }
             Node::Type(ty) => return matches!(ty.kind(), TypeKind::Typeof { .. }),
             _ => return false,
         }
@@ -243,6 +247,12 @@ impl<'a> Rules<'_, 'a, '_> {
 
     fn is_function_like(&self, node: N<'a>) -> bool {
         match node {
+            // Flow's `HookDeclaration` and `ComponentDeclaration` are not in Prettier's list.
+            N::Function(func)
+                if self.cx.file.is_flow() && flow::is_hook_or_component_declaration(func) =>
+            {
+                false
+            }
             N::Function(func) => func.has_body() || !matches!(func.owner(), Node::Stmt(_)),
             N::MethodDefinition(member) => !self.is_private_member_of_babel(member),
             N::ObjectProperty(_) => self.cx.is_babel() && is_object_method(node),
@@ -386,6 +396,7 @@ impl<'a> Rules<'_, 'a, '_> {
             && let Some(attachment) = self
                 .handle_comment_behind_parenthesis_of_parameters_for_oxfmt()
                 .or_else(|| self.handle_comment_before_parenthesis_of_parameters_for_oxfmt())
+                .or_else(|| self.handle_comment_behind_last_parameter_for_oxfmt())
                 .or_else(|| self.handle_comment_before_type_annotation_of_pattern_for_oxfmt())
                 .or_else(|| self.handle_comment_before_semicolon_of_class_member_for_oxfmt())
                 .or_else(|| self.handle_comment_behind_keyword_of_decorated_class_for_oxfmt())
@@ -628,8 +639,10 @@ impl<'a> Rules<'_, 'a, '_> {
         let (open_paren, next_token_start) =
             (func.open_paren()?, self.context.comment.next_token_start());
         let is_before_parenthesis = match self.context.text_position {
-            // `[b⏎// comment⏎]() {}`
-            OwnLine if self.next_token_starts_with(b']') => next_token_start + 1 == open_paren,
+            // `[b⏎// comment⏎]() {}`, `b⏎// comment⏎?(): void`
+            OwnLine if self.next_token_starts_with(b']') || self.next_token_starts_with(b'?') => {
+                next_token_start + 1 == open_paren
+            }
             OwnLine | Remaining => next_token_start == open_paren,
             EndOfLine => false,
         };
@@ -656,7 +669,9 @@ impl<'a> Rules<'_, 'a, '_> {
     /// siblings. For Prettier the comment is inside the pattern and trails `a`.
     fn handle_comment_before_type_annotation_of_pattern_for_oxfmt(&self) -> Option<Attachment<'a>> {
         let (
-            pattern @ Owner::Node(N::ObjectPattern(_) | N::ArrayPattern(_)),
+            pattern @ Owner::Node(
+                N::ObjectPattern(_) | N::ArrayPattern(_) | N::BindingIdentifier(_),
+            ),
             type_annotation @ Owner::Node(N::TSTypeAnnotation(_)),
         ) = (self.preceding_node?, self.following_node?)
         else {
@@ -667,6 +682,18 @@ impl<'a> Rules<'_, 'a, '_> {
             EndOfLine => Some(Attachment::trailing(pattern)),
             Remaining => None,
         }
+    }
+
+    /// `class A { b(c /* comment */); }` stays as it is for oxfmt: the comment trails `c`. For Prettier it trails the method.
+    fn handle_comment_behind_last_parameter_for_oxfmt(&self) -> Option<Attachment<'a>> {
+        let parameter = self.preceding_node.filter(|it| {
+            matches!(
+                it,
+                Owner::Node(N::FormalParameter(_) | N::FormalParameterRest(_))
+            )
+        })?;
+        self.next_token_starts_with(b')')
+            .then(|| Attachment::trailing(parameter))
     }
 
     /// `function a(b) // comment ⏎ : C {}` stays as it is for oxfmt: the comment leads the return type. For Prettier it trails `b`.
@@ -1060,12 +1087,13 @@ impl<'a> Rules<'_, 'a, '_> {
         let text_position = self.context.text_position;
         let enclosing_node = Owner::Node(node);
         match node {
-            // Prettier has no rule for Flow's `match` and its cases, and none for `opaque type`.
-            _ if self.cx.file.is_flow() && flow::is_match_or_match_case(node) => None,
-            N::TSInterfaceDeclaration(statement) if is_flow_opaque_type(statement) => None,
             N::BinaryExpression(e) if self.cx.file.is_flow() && flow::is_match_or_pattern(e) => {
                 self.handle_match_or_pattern_comments(ignored_node)
             }
+            // Prettier has no other rule for Flow's `match`, and none for `opaque type` and `record`.
+            _ if self.cx.file.is_flow() && flow::is_part_of_match(node) => None,
+            N::TSInterfaceDeclaration(statement) if is_flow_opaque_type(statement) => None,
+            N::Class(class) if is_flow_record(class) => None,
             // Flow's `A</* comment */>`. For Prettier the enclosing node is the empty `TypeParameterInstantiation`.
             N::TSTypeReference(ty)
                 if self.cx.file.is_flow()
@@ -1097,8 +1125,8 @@ impl<'a> Rules<'_, 'a, '_> {
             {
                 self.handle_member_expression_comments_for_oxfmt(node)
             }
-            // The `a.b` of `typeof a.b` is a `TSQualifiedName` in ESTree.
-            N::StaticMemberExpression(e) if is_name_of_type_query(e) => None,
+            // The `a.b` of `typeof a.b` is a `TSQualifiedName` in ESTree, that of `<a.b />` a `JSXMemberExpression`.
+            N::StaticMemberExpression(e) if is_name_of_type_query_or_jsx_element(e) => None,
             // `handleMemberExpressionComments`
             N::StaticMemberExpression(_)
             | N::ComputedMemberExpression(_)
@@ -1634,6 +1662,13 @@ impl<'a> Rules<'_, 'a, '_> {
         let decorator = self
             .preceding_node
             .filter(|it| matches!(it, Owner::Node(N::Decorator(_))))?;
+        // `@a⏎/* comment */ @b() c;` stays as it is for oxfmt: the comment leads `@b()`.
+        if self.cx.options.flavor.is_oxfmt()
+            && !self.context.comment.has_newline_after()
+            && matches!(self.following_node, Some(Owner::Node(N::Decorator(_))))
+        {
+            return None;
+        }
         (self.context.comment.is_line() || text_position == OwnLine)
             .then(|| Attachment::trailing(decorator))
     }
@@ -2009,7 +2044,8 @@ impl<'a> Rules<'_, 'a, '_> {
     }
 
     /// `const { a } // comment⏎: T = b`. In ESTree the type annotation is a child of the pattern, so the pattern is the enclosing
-    /// node, and the preceding node is its last property or element.
+    /// node, and the preceding node is its last property or element. The type annotation of `...[a]: T` is a child of the
+    /// `RestElement`.
     fn handle_comments_in_destructuring_pattern(&self) -> Option<Attachment<'a>> {
         let (
             Owner::Node(N::ObjectPattern(pattern) | N::ArrayPattern(pattern)),
@@ -2018,7 +2054,9 @@ impl<'a> Rules<'_, 'a, '_> {
         else {
             return None;
         };
-        if self.context.text_position == Remaining {
+        if self.context.text_position == Remaining
+            || matches!(pattern.parent(), Node::Param(param) if param.is_rest())
+        {
             return None;
         }
         let last_child = match pattern.kind() {

@@ -129,6 +129,11 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     }
     write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
 
+    // `a(/* prettier-ignore */) {}`: typescript-estree has a `FunctionExpression` here, which is copied up to its end.
+    let function = AstNodes::Function(value);
+    if !f.is_quiet() && f.comments().is_ignored(function) {
+        return format_node(function, f, |_| {});
+    }
     format_grouped_parameters_with_return_type_for_method(value, f);
 
     if value.has_body() {
@@ -465,11 +470,13 @@ struct FormatSuperClass<'a> {
 impl<'a> Format<'a> for FormatSuperClass<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let FormatSuperClass { class, extends } = *self;
-        // A JSX element writes its own comments, and so does what is in a `ChainExpression`.
+        // A JSX element writes its own comments, and so does what is in a `ChainExpression`. One of the comments of what is
+        // ignored can be in the text that is copied.
         let comments = (!f.is_quiet()
             && extends.tag() != ExprTag::Jsx
             && !is_chain_expression_without_comments(extends, f))
-        .then(|| comments_of_expression(extends, f));
+        .then(|| comments_of_expression(extends, f))
+        .filter(|comments| !comments.is_ignored);
         let type_arguments = type_arguments(class.extends_args(), Node::Class(class));
         let are_type_arguments_in_parentheses =
             type_arguments_of_super_class_are_in_its_parentheses(f);

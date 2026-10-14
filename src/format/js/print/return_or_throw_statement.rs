@@ -140,22 +140,38 @@ fn left_side(e: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
+/// `return !(// comment⏎a) && b;`: Prettier finds the comment, because its `getLeftSide` goes into the operand of `!`, and writes
+/// parentheses around the argument. oxfmt stops at `!a`.
+fn left_edge_goes_on_in_operands(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
+}
+
+/// `return a⏎// comment⏎.b;`: for Prettier the comment leads `a.b`. For oxfmt it leads the name `b`, and counts all the same. Not
+/// after `yield`, which only oxfmt asks about.
+fn own_line_comment_before_property_counts<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
+    f.options().flavor.is_oxfmt() && !matches!(argument.ast_parent(), AstNodes::YieldExpression(_))
+}
+
+/// See [`own_line_comment_before_property_counts`].
+fn has_own_line_comment_before_property<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let ExprKind::Dot { name, .. } = e.kind() else {
+        return false;
+    };
+    let comments = f.comments().of_name(name.span().start).leading;
+    comments.iter().any(|comment| {
+        comment.has_newline_before()
+            && (comment.has_newline_after() || comment.is_multiline_block())
+    })
+}
+
 /// Prettier's `returnArgumentHasLeadingComment`: whether a leading comment of `argument` ends its line or spans several, or a
 /// leading comment of anything down its left edge ends its line.
 pub(crate) fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
-    // `yield a⏎// comment⏎.b()`: the comment leads `a.b`, and is in it. After `yield`, which only oxfmt asks about, it does not
-    // count.
-    let is_after_yield = matches!(argument.ast_parent(), AstNodes::YieldExpression(_));
-    let counts = |comment: Comment<'_>, owner: Expr<'a>| {
-        !is_after_yield || comment.span().start < owner.span().start
-    };
     let is_cast = is_cast_target(argument, f);
     let has_leading_comment = match argument.tag() == ExprTag::Jsx && !is_cast {
         true => has_leading_own_line_comment(argument, f),
-        false => (leading_comments_of_expression(argument, f).iter()).any(|comment| {
-            (comment.has_newline_after() || comment.is_multiline_block())
-                && counts(comment, argument)
-        }),
+        false => (leading_comments_of_expression(argument, f).iter())
+            .any(|comment| comment.has_newline_after() || comment.is_multiline_block()),
     };
     if has_leading_comment {
         return true;
@@ -163,16 +179,22 @@ pub(crate) fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatte
     if is_cast || !has_naked_left_side(argument) {
         return false;
     }
+    let looks_at_properties = own_line_comment_before_property_counts(argument, f);
     let has_own_line_comment = |e: Expr<'a>| {
         let comments = f.comments().of_node(e.as_chain_element()).leading;
-        (comments.iter()).any(|comment| comment.has_newline_after() && counts(comment, e))
+        comments.iter().any(|comment| comment.has_newline_after())
+            || (looks_at_properties && has_own_line_comment_before_property(e, f))
     };
     // The member access or the call in a `ChainExpression`.
-    if is_chain_expression_without_comments(argument, f) && has_own_line_comment(argument) {
+    if (is_chain_expression_without_comments(argument, f) || looks_at_properties)
+        && has_own_line_comment(argument)
+    {
         return true;
     }
     let mut current = argument;
-    while let Some(left) = left_side(current) {
+    while let Some(left) = left_side(current)
+        && (has_naked_left_side(current) || left_edge_goes_on_in_operands(f))
+    {
         // Every `ParenthesizedExpression` around it is a step of its own.
         let has_comment_before_parentheses = f.comments().has_type_cast_comments()
             && left.parens().any(|parentheses| {

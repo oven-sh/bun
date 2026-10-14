@@ -4,7 +4,6 @@ use super::function_type::{
     write_ts_call_signature_declaration, write_ts_construct_signature_declaration,
     write_ts_method_signature,
 };
-use super::import_declaration::FormatStringLiteral;
 use super::object_like::ObjectLike;
 use super::type_parameters::{FormatDanglingCommentsForInline, type_arguments};
 use super::union_type::union_writes_comments_behind_colon;
@@ -459,7 +458,7 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
             write!(f, group(&format_args!("import", arguments)));
         }
         // A long module name does not break.
-        None if !comments.has_comments_of_source(source, f) => {
+        None if comments.leading_source.is_empty() && comments.trailing_source.is_empty() => {
             write!(f, ["import(", format_source, ")"])
         }
         None => write!(
@@ -478,8 +477,9 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
     write!(f, type_arguments(args, Node::Type(ty)));
 }
 
-/// The comments in `typeof import("a", { with: { .. } })`, by the ESTree node that Prettier attaches them to. Only the inner
-/// object is a node here. It owns the comments around it, and the type owns the rest as dangling comments.
+/// The comments in `typeof import("a", { with: { .. } })`, by the ESTree node that Prettier attaches them to. Of those nodes only
+/// the module specifier and the inner object can own comments here, so they also own the comments of the import type after
+/// `typeof`, of the outer object and of its property.
 #[derive(Default)]
 struct ImportTypeComments<'a> {
     /// `typeof /* comment */ import("a")`
@@ -490,8 +490,8 @@ struct ImportTypeComments<'a> {
     leading_options: CommentList<'a>,
     /// Before `with`.
     leading_property: CommentList<'a>,
-    /// Before the `{` of `{ .. }`.
-    leading_attributes: CommentList<'a>,
+    /// Before the `{` of `{ .. }`: those that the module specifier owns, then those that the object owns.
+    leading_attributes: [CommentList<'a>; 2],
     /// Before the `}` of `{ with: { .. } }`.
     trailing_property: CommentList<'a>,
     trailing_options: CommentList<'a>,
@@ -513,7 +513,7 @@ impl<'a> ImportTypeComments<'a> {
             *comments = rest;
             taken
         }
-        let mut dangling = f.comments().of_node(ty.as_ast_nodes()).dangling;
+        let of_source = f.comments().of_name(source.start);
         let end_of_typeof = ty.span().start + "typeof".len() as u32;
         let is_typeof = matches!(
             ty.kind(),
@@ -522,49 +522,48 @@ impl<'a> ImportTypeComments<'a> {
                 ..
             }
         );
-        let is_behind_typeof =
-            |comment: &Comment<'a>| is_typeof && comment.prev_token_end() == end_of_typeof;
-        let behind_typeof = dangling.iter().take_while(is_behind_typeof).count();
-        let leading_import = dangling.slice(0, behind_typeof);
-        dangling = dangling.slice(behind_typeof, dangling.len());
-        let mut comments = ImportTypeComments {
-            leading_import,
-            leading_source: take_up_to(&mut dangling, source.start),
-            trailing_source: dangling,
-            ..ImportTypeComments::default()
+        let behind_typeof = (of_source.leading.iter())
+            .take_while(|comment| is_typeof && comment.prev_token_end() == end_of_typeof)
+            .count();
+        let (leading_import, leading_source) = of_source.leading.split_at(behind_typeof);
+        let Some(options) = options else {
+            return ImportTypeComments {
+                leading_import,
+                leading_source,
+                trailing_source: of_source.trailing,
+                ..ImportTypeComments::default()
+            };
         };
-        if let Some(options) = options {
-            let owned = f.comments().of_node(options.object().as_ast_nodes());
-            let (outer, mut leading, mut trailing) =
-                (options.options_span(), owned.leading, owned.trailing);
-            comments.leading_source = take_up_to(&mut leading, source.start);
-            comments.trailing_source = take_up_to(&mut leading, outer.start.saturating_sub(1));
-            comments.leading_options = take_up_to(&mut leading, outer.start);
-            comments.leading_property = take_up_to(&mut leading, options.keyword_span().start);
-            comments.leading_attributes = leading;
-            comments.trailing_property = take_up_to(&mut trailing, outer.end.saturating_sub(1));
-            comments.trailing_options = trailing;
+        let outer = options.options_span();
+        let of_attributes = f.comments().of_node(options.object().as_ast_nodes());
+        let (mut behind_source, mut behind_attributes) =
+            (of_source.trailing, of_attributes.trailing);
+        ImportTypeComments {
+            leading_import,
+            leading_source,
+            trailing_source: take_up_to(&mut behind_source, outer.start.saturating_sub(1)),
+            leading_options: take_up_to(&mut behind_source, outer.start),
+            leading_property: take_up_to(&mut behind_source, options.keyword_span().start),
+            leading_attributes: [behind_source, of_attributes.leading],
+            trailing_property: take_up_to(&mut behind_attributes, outer.end.saturating_sub(1)),
+            trailing_options: behind_attributes,
         }
-        comments
-    }
-
-    fn has_comments_of_source(&self, source: Span, f: &Formatter<'a>) -> bool {
-        let owned = f.comments().of_name(source.start);
-        !(self.leading_source.is_empty()
-            && self.trailing_source.is_empty()
-            && owned.leading.is_empty()
-            && owned.trailing.is_empty())
     }
 
     /// The module specifier at `source`, with its comments.
     fn format_source(&self, source: Span) -> impl Format<'a> {
         let (leading, trailing) = (self.leading_source, self.trailing_source);
         format_with(move |f: &mut Formatter<'a>| {
+            let string = f.source_text().text_for(&source);
             write!(
                 f,
                 [
                     FormatLeadingComments::Comments(leading),
-                    FormatStringLiteral { span: source },
+                    FormatLiteralStringToken::new(
+                        string,
+                        false,
+                        StringLiteralParentKind::Expression
+                    ),
                     FormatTrailingComments::Comments(trailing)
                 ]
             );
@@ -678,10 +677,9 @@ fn write_import_type_options<'a>(
     let has_space = f.options().bracket_spacing.value();
 
     let format_inner = format_with(|f| {
-        write!(
-            f,
-            FormatLeadingComments::Comments(comments.leading_attributes)
-        );
+        for comments in comments.leading_attributes {
+            write!(f, FormatLeadingComments::Comments(comments));
+        }
         let Some(first) = entries.first() else {
             let attributes = options.object().as_ast_nodes();
             return write!(

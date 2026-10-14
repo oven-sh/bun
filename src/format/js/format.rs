@@ -72,10 +72,10 @@ impl<'a> Formatter<'a> {
     }
 }
 
-/// The span of `node`. For a statement that ends with a `;`, without it: see
-/// [`Comments::without_semicolon`].
+/// From Prettier's `locStart` to its `locEnd`: with the decorators before an `export`, and without the `;` of a JavaScript
+/// statement.
 fn span_for_comments<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> Span {
-    let span = node.span();
+    let span = node.span_with_decorators();
     match node {
         AstNodes::ExpressionStatement(_)
         | AstNodes::Directive(_)
@@ -178,8 +178,8 @@ fn format_ignored_node<'a>(
     f: &mut Formatter<'a>,
     write_source_text: impl FnOnce(&mut Formatter<'a>),
 ) {
-    f.comments_mut()
-        .mark_printed_in(node.span_with_decorators());
+    let copied = span_for_comments(node, f);
+    f.comments_mut().mark_printed_in(copied);
     FormatLeadingComments::Comments(owned.leading).fmt(f);
     write_source_text(f);
     if !skip_trailing {
@@ -246,11 +246,7 @@ pub(crate) fn write_ignored_node<'a>(node: AstNodes<'a>, f: &mut Formatter<'a>) 
         _ => None,
     };
     if let Some(statement) = statement {
-        let span = Span::new(
-            node.span_with_decorators().start,
-            span_for_comments(node, f).end,
-        );
-        return write_ignored_statement(statement, span, f);
+        return write_ignored_statement(statement, span_for_comments(node, f), f);
     }
     match (node, node.raw()) {
         (AstNodes::TSTypeAnnotation(_), _) => {}
@@ -1103,7 +1099,19 @@ pub(crate) fn write_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
         TypeKind::IndexedAccess { obj, index } => write!(f, [obj, "[", index, "]"]),
         TypeKind::Keyof(operand) => write!(f, ["keyof", space(), operand]),
         TypeKind::Readonly(operand) => write!(f, ["readonly", space(), operand]),
-        TypeKind::UniqueSymbol => write!(f, ["unique", space(), "symbol"]),
+        // `unique /* comment */ symbol`
+        TypeKind::UniqueSymbol => {
+            let comments = f.comments().of_node(ty.as_ast_nodes()).dangling;
+            write!(
+                f,
+                [
+                    "unique",
+                    space(),
+                    FormatLeadingComments::Comments(comments),
+                    "symbol"
+                ]
+            );
+        }
         TypeKind::Unique(operand) => write!(f, ["unique", space(), operand]),
         TypeKind::Typeof { expr, args } => ts_types::write_ts_type_query(ty, expr, args, f),
         TypeKind::Import { .. } => ts_types::write_ts_import_type(ty, f),

@@ -41,6 +41,7 @@ pub(crate) fn list<'a>(
             Marker::CommentBeforeArrow => "commentBeforeArrow",
             Marker::Implements => "implements",
             Marker::Extends => "extends",
+            Marker::Mixins => "mixins",
         };
         let unignore = match attachment.is_unignored {
             true => " unignore",

@@ -31,6 +31,16 @@ fn has_modifier(param: Param<'_>) -> bool {
 
 /// Prettier's `printFunctionParameters`.
 fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
+    // Only oxfmt attaches comments to the parentheses: `class A { b ⏎// comment⏎ () {} }` is `b () {}⏎// comment`.
+    if !f.is_quiet() {
+        let comments = f
+            .comments()
+            .of_node(AstNodes::FormalParameters(func))
+            .leading;
+        if !comments.is_empty() {
+            write!(f, [space(), FormatTrailingComments::Comments(comments)]);
+        }
+    }
     if func.params().is_empty() && func.this_param().is_none() {
         write!(f, "(");
         write_dangling_comments_in_parentheses(func, f);
@@ -140,7 +150,28 @@ pub(crate) fn has_comment<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> bool {
 /// Prettier's `hasComment(parameter)`. A parameter without a default value is the same node as its pattern in ESTree.
 fn parameter_has_comment<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
     has_comment(param.as_ast_nodes(), f)
-        || (param.default().is_none() && has_comment(param.pat().as_ast_nodes(), f))
+        || (param.default().is_none()
+            && !hugs_pattern_with_comments(f)
+            && has_comment(param.pat().as_ast_nodes(), f))
+}
+
+/// ```js
+/// function a(          function a({
+///   {                    // comment
+///     // comment       }) {}
+///   },
+/// ) {}
+/// ```
+///
+/// Prettier on the left, oxfmt on the right.
+fn hugs_pattern_with_comments(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// `function a({ b } // comment⏎ = {}) {}` is `function a({⏎  b,⏎} = {}) {} // comment` for oxfmt, and
+/// `function a({ b } = {}) {} // comment` for Prettier.
+fn comment_behind_pattern_breaks_it(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// The modifiers of a parameter, in the order that they are written in.
@@ -180,6 +211,7 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
 
     let pattern = param.pat();
     let type_annotation = param.ty().map(FormatTypeAnnotation);
+    let is_group = !matches!(pattern.kind(), PatKind::Ident(_)) || every_parameter_is_a_group(f);
     let content = format_with(|f| {
         let left = format_with(|f| {
             let modifiers = param.modifiers();
@@ -193,7 +225,10 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
                 }
             }
             let optional = param.is_optional().then_some("?");
-            match param.default() {
+            match param
+                .default()
+                .filter(|_| !comment_behind_pattern_breaks_it(f))
+            {
                 Some(_) => write!(
                     f,
                     [
@@ -210,7 +245,11 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
             return write!(f, left);
         };
         // `({ a } // comment⏎ = {}) => {}`: the comment does not break the pattern.
-        write!(f, [group(&left), trailing_comments(pattern.as_ast_nodes())]);
+        match is_group {
+            true => write!(f, group(&left)),
+            false => write!(f, left),
+        }
+        write!(f, trailing_comments(pattern.as_ast_nodes()));
         if let Some(ty) = param.ty() {
             write!(f, trailing_comments(AstNodes::TSTypeAnnotation(ty)));
         }
@@ -218,7 +257,7 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
     });
 
     // A group makes no difference to what has no place to break at.
-    if !has_decorators && cannot_break(param, f) {
+    if !has_decorators && (!is_group || cannot_break(param, f)) {
         return write!(f, content);
     }
 
@@ -255,6 +294,20 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
 ///
 /// Prettier on the left: what does not fit breaks after the decorators first. oxfmt on the right.
 fn decorators_of_parameter_are_a_group_of_their_own(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// ```ts
+/// constructor(               constructor(
+///   private a: /* comment */   private a: /* comment */ B,
+///   B,                         c,
+///   c,                       ) {}
+/// ) {}
+/// ```
+///
+/// Prettier on the left, for `a: /* comment */⏎B`: only a pattern is a group, so the line break after the comment breaks with
+/// the parameters. oxfmt on the right.
+fn every_parameter_is_a_group(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 

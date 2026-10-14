@@ -279,6 +279,17 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
             _ => write!(f, ty),
         }
         f.context_mut().set_skip_trailing_comments(false);
+        // `type A = B[/* comment */];`
+        if moves_trailing_comments {
+            let trailing_comments = f.comments().of_node(right_node).trailing;
+            let in_type = (trailing_comments.iter())
+                .take_while(|comment| comment.span().end <= ty.span().end)
+                .count();
+            write!(
+                f,
+                FormatTrailingComments::Comments(trailing_comments.slice(0, in_type))
+            );
+        }
     });
     let content = format_with(|f| {
         match layout {
@@ -567,8 +578,7 @@ pub(crate) fn write_ts_module_declaration<'a>(
     let Some(span) = body_span else {
         return write!(f, OptionalSemicolon);
     };
-    // The `B` of `namespace A.B {}` is a statement of its own here, and the body is its body.
-    let body = AstNodes::TSModuleBlock(innermost.stmt());
+    let body = AstNodes::TSModuleBlock(statement);
     write_space_before_body(body, f);
     format_node(body, f, |f| {
         write!(f, "{");

@@ -281,6 +281,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             | StmtKind::While { body, .. }
             | StmtKind::DoWhile { body, .. }
             | StmtKind::Labeled { body, .. } => [body, StmtId::NONE],
+            // `with (a) b` is stored as a block of `a` and `b`.
+            StmtKind::Block(statements)
+                if (self.f.with_bodies.last()).is_some_and(|&(body_start, body_end)| {
+                    body_start > start && body_end == end
+                }) =>
+            {
+                [
+                    self.f.ids(statements).last().unwrap_or(StmtId::NONE),
+                    StmtId::NONE,
+                ]
+            }
             _ => [StmtId::NONE; 2],
         };
         for body in bodies {

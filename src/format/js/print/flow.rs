@@ -4,6 +4,7 @@
 //! The tree has the nodes of TypeScript (`flow.rs` of `bun_sema_parser` has the table), so most of a
 //! file of Flow is written by the functions for those. They call these where `File::is_flow`.
 
+use super::class::dangling_comments_with_marker;
 use super::function::FormatFunctionBody;
 use super::function_type::{write_ts_call_signature_declaration, write_ts_method_signature};
 use super::import_declaration::FormatStringLiteral;
@@ -105,7 +106,10 @@ pub(crate) fn is_interface_type(ty: TypeNode<'_>) -> bool {
 }
 
 /// `hook` or `component`, if the function type `ty` starts with the word.
-fn keyword_of_function_type<'a>(ty: TypeNode<'a>, func: Func<'a>) -> Option<&'static str> {
+pub(crate) fn keyword_of_function_type<'a>(
+    ty: TypeNode<'a>,
+    func: Func<'a>,
+) -> Option<&'static str> {
     // In `hook => void` it is the type of the parameter.
     if func.open_paren() == Some(ty.span().start) {
         return None;
@@ -596,82 +600,31 @@ pub(crate) fn write_tuple_element<'a>(element: TupleElem<'a>, f: &mut Formatter<
     write!(f, element.flow_type());
 }
 
-/// `[...]`. Prettier has no node for the dots, so the comments dangle in the tuple type, and `printArray` writes them after
-/// the dots. Returns whether `ty` is that.
+/// `[...]`. The comments dangle in the tuple type, and Prettier's `printArray` writes them after the dots. Returns whether
+/// `ty` is that.
 pub(crate) fn write_tuple_of_unknown_elements<'a>(
     ty: TypeNode<'a>,
     elements: List<'a, TupleElem<'a>>,
     f: &mut Formatter<'a>,
 ) -> bool {
-    let Some(dots) = elements.first().filter(|_| elements.len() == 1) else {
-        return false;
-    };
-    if !is_inexact_tuple(elements) {
+    if elements.len() != 1 || !is_inexact_tuple(elements) {
         return false;
     }
-    let comments = DanglingCommentsOfDots::new(ty.as_ast_nodes(), dots.as_ast_nodes(), f);
+    let comments = f.comments().of_node(ty.as_ast_nodes()).dangling;
+    let format_comments = FormatDanglingComments::Comments {
+        comments,
+        indent: DanglingIndentMode::None,
+    };
     write!(
         f,
         group(&format_args!(
             "[",
-            soft_block_indent(&format_args!("...", comments)),
+            soft_block_indent(&format_args!("...", format_comments)),
             "]"
         ))
-        .should_expand(comments.has_line_comment())
+        .should_expand(comments.iter().any(|comment| comment.is_line()))
     );
     true
-}
-
-/// The comments in `{ ... }` and `[...]`. The dots are a member or an element in the tree, which owns the comments next to it.
-/// For Prettier they are no node, and all of these comments dangle in the type around them.
-#[derive(Copy, Clone)]
-struct DanglingCommentsOfDots<'a> {
-    /// In source order: the comments before the dots, the comments after them, and the comments of the type around them.
-    lists: [CommentList<'a>; 3],
-}
-
-impl<'a> DanglingCommentsOfDots<'a> {
-    fn new(parent: AstNodes<'a>, dots: AstNodes<'a>, f: &Formatter<'a>) -> Self {
-        let owned = f.comments().of_node(dots);
-        DanglingCommentsOfDots {
-            lists: [
-                owned.leading,
-                owned.trailing,
-                f.comments().of_node(parent).dangling,
-            ],
-        }
-    }
-
-    fn iter(self) -> impl Iterator<Item = Comment<'a>> {
-        self.lists.into_iter().flatten()
-    }
-
-    fn is_empty(self) -> bool {
-        self.iter().next().is_none()
-    }
-
-    fn has_line_comment(self) -> bool {
-        self.iter().any(|comment| comment.is_line())
-    }
-}
-
-impl<'a> Format<'a> for DanglingCommentsOfDots<'a> {
-    /// Prettier's `printDanglingComments`.
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        let lists = self.lists.into_iter().filter(|list| !list.is_empty());
-        for (index, comments) in lists.enumerate() {
-            write!(
-                f,
-                [
-                    (index > 0).then_some(hard_line_break()),
-                    FormatDanglingComments::Comments {
-                        comments,
-                        indent: DanglingIndentMode::None
-                    }
-                ]
-            );
-        }
-    }
 }
 
 /// The `...` that ends an inexact tuple type, after which there is no comma.
@@ -704,16 +657,22 @@ pub(crate) fn write_object_type<'a>(
             f,
             dangling_comments(ty.as_ast_nodes()).with_soft_block_indent()
         ),
+        // `{ /* comment */ ... }`
         Some(first)
             if is_inexact_mark(first)
-                && !DanglingCommentsOfDots::new(ty.as_ast_nodes(), first.as_ast_nodes(), f)
-                    .is_empty() =>
+                && !(f.comments().of_node(ty.as_ast_nodes()).dangling).is_empty() =>
         {
-            let comments = DanglingCommentsOfDots::new(ty.as_ast_nodes(), first.as_ast_nodes(), f);
-            let has_line_comment = comments.has_line_comment();
-            let ends_line = (comments.iter().last()).is_some_and(|it| it.has_newline_after());
+            let comments = f.comments().of_node(ty.as_ast_nodes()).dangling;
+            let has_line_comment = comments.iter().any(|comment| comment.is_line());
+            let ends_line = comments.last().is_some_and(|it| it.has_newline_after());
             let content = format_with(|f| {
-                write!(f, comments);
+                write!(
+                    f,
+                    FormatDanglingComments::Comments {
+                        comments,
+                        indent: DanglingIndentMode::None
+                    }
+                );
                 match has_line_comment || ends_line {
                     true => write!(f, hard_line_break()),
                     false => write!(f, soft_line_break_or_space()),
@@ -825,6 +784,11 @@ pub(crate) fn is_opaque_type<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool
     has_word(statement.modifiers(), b"opaque", f)
 }
 
+/// The same, for a statement of any file.
+pub(crate) fn is_flow_opaque_type(statement: Stmt<'_>) -> bool {
+    statement.file().is_flow() && has_word_in(statement.file(), statement.modifiers(), b"opaque")
+}
+
 /// `opaque type A<T>: B = C`, `opaque type A super B extends C = D`
 pub(crate) fn write_opaque_type<'a>(
     statement: Stmt<'a>,
@@ -918,21 +882,6 @@ pub(crate) fn write_class<'a>(class: Class<'a>, f: &mut Formatter<'a>) -> bool {
     false
 }
 
-/// The dangling comments of `node` that have `marker`.
-fn dangling_comments_with_marker<'a>(
-    node: AstNodes<'a>,
-    marker: Marker,
-    f: &Formatter<'a>,
-) -> CommentList<'a> {
-    let comments = f.comments().of_node(node).dangling;
-    let has_marker = |comment: &Comment<'a>| {
-        (f.comments().attachment(*comment)).is_some_and(|attachment| attachment.marker == marker)
-    };
-    let start = comments.iter().take_while(|it| !has_marker(it)).count();
-    let count = comments.iter().skip(start).take_while(has_marker).count();
-    comments.slice(start, start + count)
-}
-
 /// `A, B`: the types after `mixins` or `implements`.
 struct FormatHeritageClauses<'a>(List<'a, TypeNode<'a>>);
 
@@ -985,25 +934,23 @@ fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut
     );
     // Prettier's `printHeritageClauses`
     let clauses = format_with(|f| {
-        let clauses: [(&'static str, Option<Marker>, bool, &dyn Format<'a>); 3] = [
+        let clauses: [(&'static str, Marker, bool, &dyn Format<'a>); 3] = [
             (
                 "extends",
-                Some(Marker::Extends),
+                Marker::Extends,
                 class.extends().is_some(),
                 &format_extends,
             ),
-            ("mixins", None, !mixins.is_empty(), &format_mixins),
+            ("mixins", Marker::Mixins, !mixins.is_empty(), &format_mixins),
             (
                 "implements",
-                Some(Marker::Implements),
+                Marker::Implements,
                 !implements.is_empty(),
                 &format_implements,
             ),
         ];
         for (keyword, marker, _, list) in clauses.into_iter().filter(|clause| clause.2) {
-            let comments = marker.map_or_else(CommentList::empty, |marker| {
-                dangling_comments_with_marker(node, marker, f)
-            });
+            let comments = dangling_comments_with_marker(node, marker, f);
             let format_comments = FormatDanglingComments::Comments {
                 comments,
                 indent: DanglingIndentMode::None,
@@ -1190,6 +1137,30 @@ pub(crate) fn import_kind(start: u32, f: &Formatter<'_>) -> &'static str {
 
 // ───────────────────────────── match ─────────────────────────────
 
+/// `match (a) { .. }` as an expression is a `new` expression in the tree, which does not start with `new`. Returns the
+/// `match (a)`, which is a call, and the `{ .. }`, which is an object.
+pub(crate) fn as_match_expression(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
+    let ExprKind::New(call) = e.kind() else {
+        return None;
+    };
+    let (head, braces) = (call.callee(), call.args().first()?);
+    (head.span().start == e.span().start
+        && head.tag() == ExprTag::Call
+        && braces.tag() == ExprTag::Object)
+        .then_some((head, braces))
+}
+
+/// `match (a) { .. }` as a statement is a `switch` statement in the tree, which does not start with `switch`. Returns the
+/// `match (a)`, which is a call.
+pub(crate) fn head_of_match_statement(statement: Stmt<'_>) -> Option<Expr<'_>> {
+    match statement.kind() {
+        StmtKind::Switch { expr, .. } => Some(expr).filter(|head| {
+            head.tag() == ExprTag::Call && head.span().start == statement.span().start
+        }),
+        _ => None,
+    }
+}
+
 /// `match (a) { }` and `R { a: 1 }` are `new` expressions in the tree, which do not start with
 /// `new`. Returns whether `e` is one of them, which is written.
 pub(crate) fn write_expression_with_braces<'a>(
@@ -1247,7 +1218,7 @@ pub(crate) fn write_match_statement<'a>(
 ) -> bool {
     let Some(head) = head
         .as_call()
-        .filter(|_| head.span().start == statement.span().start)
+        .filter(|_| head_of_match_statement(statement) == Some(head))
     else {
         return false;
     };
@@ -1294,8 +1265,7 @@ fn write_match<'a>(head: Call<'a>, is_empty: bool, cases: &impl Format<'a>, f: &
     write!(f, "}");
 }
 
-/// `pattern`, `pattern if (guard)`, which is a `&&` in the tree. Prettier has no node for the two together: the comments
-/// that lead the `&&` lead the pattern, and the comments that trail it trail the guard.
+/// `pattern`, `pattern if (guard)`, which is a `&&` in the tree.
 fn write_match_pattern_and_guard<'a>(pattern: Option<Expr<'a>>, f: &mut Formatter<'a>) {
     let Some(pattern) = pattern else {
         return;
@@ -1306,8 +1276,6 @@ fn write_match_pattern_and_guard<'a>(pattern: Option<Expr<'a>>, f: &mut Formatte
             left,
             right,
         } => {
-            let node = pattern.as_ast_nodes();
-            write!(f, leading_comments(node));
             write_match_pattern(left, PatternParent::Case, f);
             // It is in no `&&`.
             let guard = format_with(|f| {
@@ -1319,10 +1287,7 @@ fn write_match_pattern_and_guard<'a>(pattern: Option<Expr<'a>>, f: &mut Formatte
                 f,
                 group(&indent(&format_args!(
                     soft_line_break_or_space(),
-                    "if (",
-                    guard,
-                    trailing_comments(node),
-                    ")"
+                    "if (", guard, ")"
                 )))
             );
         }
@@ -1534,6 +1499,21 @@ fn is_simple_match_pattern(pattern: Expr<'_>) -> bool {
     }
 }
 
+/// One of the patterns of `a | b`.
+struct FormatAlternative<'a>(Expr<'a>);
+
+impl<'a> Format<'a> for FormatAlternative<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        write_match_pattern(self.0, PatternParent::Other, f);
+    }
+}
+
+impl Spanned for FormatAlternative<'_> {
+    fn span(&self) -> Span {
+        self.0.span()
+    }
+}
+
 /// Prettier's `printMatchOrPattern`.
 fn write_match_or_pattern<'a>(pattern: Expr<'a>, parent: PatternParent, f: &mut Formatter<'a>) {
     let patterns = alternatives(pattern);
@@ -1568,12 +1548,22 @@ fn write_match_or_pattern<'a>(pattern: Expr<'a>, parent: PatternParent, f: &mut 
             if index > 0 {
                 write!(f, [soft_line_break_or_space(), "| "]);
             }
+            // The pattern is aligned without its comments:
+            //
+            //     | a
+            //     // comment
+            //     | b
+            let node = it.as_chain_element();
             write!(
                 f,
-                align(
-                    2,
-                    &format_with(|f| write_match_pattern(it, PatternParent::Other, f))
-                )
+                [
+                    leading_comments(node),
+                    align(
+                        2,
+                        &FormatNodeWithoutTrailingComments(&FormatAlternative(it))
+                    ),
+                    trailing_comments(node)
+                ]
             );
         }
     });

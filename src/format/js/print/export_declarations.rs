@@ -3,7 +3,7 @@ use super::import_declaration::{
     FormatSpecifiers, format_import_and_export_source_with_clause, has_comments, module_export_name,
 };
 use super::semicolon::OptionalSemicolon;
-use crate::js::format::{FormatDeclaration, format_node, write_declaration};
+use crate::js::format::{FormatDeclaration, format_name, format_node, write_declaration};
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
@@ -140,19 +140,12 @@ pub(crate) fn write_export_all_declaration<'a>(statement: Stmt<'a>, f: &mut Form
         format_import_and_export_source_with_clause(statement, f);
         return write!(f, OptionalSemicolon);
     };
-    write!(
-        f,
-        [
-            "*",
-            space(),
-            "as",
-            space(),
-            module_export_name(name),
-            space(),
-            "from",
-            space()
-        ]
-    );
+    // For Babel `* as a` is an `ExportNamespaceSpecifier`, which can own comments.
+    let star = statement.export_star_offset().unwrap_or_default();
+    format_name(Span::new(star, name.span().end), f, |f| {
+        write!(f, ["*", space(), "as", space(), module_export_name(name)]);
+    });
+    write!(f, [space(), "from", space()]);
     format_import_and_export_source_with_clause(statement, f);
     write!(f, OptionalSemicolon);
 }

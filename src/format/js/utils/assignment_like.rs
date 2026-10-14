@@ -259,6 +259,24 @@ fn write_property_definition_left<'a>(member: Member<'a>, f: &mut Formatter<'a>)
     );
 }
 
+/// `let a /* comment */⏎: T`: for oxfmt the comment trails `a`, and stays before the type annotation. For Prettier it leads the
+/// type annotation.
+fn comments_between_name_and_type<'a>(
+    declarator: VarDecl<'a>,
+    f: &Formatter<'a>,
+) -> CommentList<'a> {
+    let Some(ty) = declarator.ty().filter(|_| !f.is_quiet()) else {
+        return CommentList::empty();
+    };
+    let comments = (f.comments())
+        .of_node(declarator.pat().as_ast_nodes())
+        .trailing;
+    let count = (comments.iter())
+        .take_while(|comment| comment.span().start < ty.span().start)
+        .count();
+    comments.slice(0, count)
+}
+
 /// A left side that is a name without comments. See [`AssignmentLike::name_on_the_left`].
 #[derive(Copy, Clone)]
 enum NameOnTheLeft<'a> {
@@ -346,6 +364,9 @@ impl<'a> AssignmentLike<'a> {
                         f,
                         [
                             FormatNodeWithoutTrailingComments(&id),
+                            FormatTrailingComments::Comments(comments_between_name_and_type(
+                                declarator, f
+                            )),
                             definite,
                             ty.map(FormatTypeAnnotation)
                         ]
@@ -432,6 +453,10 @@ impl<'a> AssignmentLike<'a> {
                             && !matches!(self, Self::AccessorProperty(_))
                             && !is_cast_target(right, f) =>
                     {
+                        // The conditional writes the indentation itself, so its comments are outside of it.
+                        if !f.is_quiet() {
+                            write!(f, leading_comments(right.as_ast_nodes()));
+                        }
                         match super::experimental_ternary::should_break(right, f) {
                             true => write!(f, indent(&right)),
                             false => {
@@ -493,7 +518,9 @@ impl<'a> AssignmentLike<'a> {
             {
                 return AssignmentLikeLayout::BreakAfterOperator;
             }
-            if has_leading_comment_that_breaks_after_operator(e, f) {
+            if has_leading_comment_that_breaks_after_operator(e, f)
+                || !self.comments_behind_operator(f).is_empty()
+            {
                 return AssignmentLikeLayout::BreakAfterOperator;
             }
             if e.tag() == ExprTag::Call
@@ -802,11 +829,7 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
         let left_may_break = !is_left_text
             && f.elements_from(left_group + 1)
                 .may_directly_break(f.options().flavor);
-        // See `comments_stay_around_operator`.
-        let comments_behind_operator = match !f.is_quiet() && comments_stay_around_operator(f) {
-            true => f.comments().of_node(self.node()).dangling,
-            false => CommentList::empty(),
-        };
+        let comments_behind_operator = self.comments_behind_operator(f);
         let has_line_comment_on_operator_line = !comments_behind_operator.is_empty()
             || (!f.is_quiet()
                 && comments_stay_around_operator(f)
@@ -868,6 +891,14 @@ impl<'a> AssignmentLike<'a> {
             Self::PropertyDefinition(member) | Self::AccessorProperty(member) => {
                 member.as_ast_nodes()
             }
+        }
+    }
+
+    /// See [`comments_stay_around_operator`].
+    fn comments_behind_operator(&self, f: &Formatter<'a>) -> CommentList<'a> {
+        match !f.is_quiet() && comments_stay_around_operator(f) {
+            true => f.comments().of_node(self.node()).dangling,
+            false => CommentList::empty(),
         }
     }
 

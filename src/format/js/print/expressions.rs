@@ -192,8 +192,7 @@ pub(crate) fn write_meta_property<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
             write!(f, meta);
         },
     );
-    let comments = f.comments().of_node(e.as_ast_nodes()).dangling;
-    write!(f, [".", FormatLeadingComments::Comments(comments)]);
+    write!(f, ".");
     // `new.targ` is an error.
     format_name(property, f, |f| write!(f, source_text(property)));
 }

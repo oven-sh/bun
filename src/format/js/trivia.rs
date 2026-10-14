@@ -85,6 +85,10 @@ fn is_nestled_jsdoc_comment(comment: Comment<'_>, next: Option<Comment<'_>>) -> 
     })
 }
 
+fn is_nestled_jsdoc_comment_after(previous: Option<Comment<'_>>, comment: Comment<'_>) -> bool {
+    previous.is_some_and(|previous| is_nestled_jsdoc_comment(previous, Some(comment)))
+}
+
 #[cold]
 fn write_leading_comments<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
     for (index, comment) in comments.iter().enumerate() {
@@ -151,6 +155,15 @@ fn write_trailing_comments<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>)
 
     for comment in comments {
         if !f.comments_mut().mark_printed(comment) {
+            continue;
+        }
+
+        if is_nestled_jsdoc_comment_after(previous_comment, comment) {
+            match total_lines_before > 0 {
+                true => write!(f, line_suffix(&comment)),
+                false => write!(f, comment),
+            }
+            previous_comment = Some(comment);
             continue;
         }
 
@@ -274,13 +287,9 @@ fn write_dangling_comments<'a>(
             if !f.comments_mut().mark_printed(comment) {
                 continue;
             }
-            write!(
-                f,
-                [
-                    previous_comment.is_some().then_some(hard_line_break()),
-                    comment
-                ]
-            );
+            let needs_line_break = previous_comment.is_some()
+                && !is_nestled_jsdoc_comment_after(previous_comment, comment);
+            write!(f, [needs_line_break.then_some(hard_line_break()), comment]);
             previous_comment = Some(comment);
         }
         if matches!(indent, DanglingIndentMode::Soft)

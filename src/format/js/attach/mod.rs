@@ -9,6 +9,7 @@
 //! Nothing here searches the tree or scans the source text.
 
 mod debug;
+mod flow;
 mod rules;
 mod surrounding_nodes;
 
@@ -38,6 +39,8 @@ pub(crate) enum Marker {
     Implements,
     /// Before the `extends` keyword of a class or an interface.
     Extends,
+    /// Before the `mixins` keyword of Flow's `declare class`.
+    Mixins,
     /// The comment is inside an ignored node, so it is copied along with the node's source text. Prettier does not attach such
     /// a comment at all.
     InIgnoredNode,
@@ -292,6 +295,12 @@ pub(crate) fn attach<'a>(
     break_ties(&cx, &mut ties, &nodes, &mut attached.attachments);
     let ignored_starts = attached.ignored_nodes.iter().map(|node| cx.start_of(*node));
     attached.relocated_owner_starts.extend(ignored_starts);
+    // `let a: /* comment */ | B`: the comment belongs to `B`, and the printers get to `B` by way of the union `| B`, which does not
+    // contain the comment.
+    let starts_in_unions = (attached.attachments.iter())
+        .filter(|attachment| cx.is_only_member_of_union(attachment.owner))
+        .map(|attachment| cx.start_of(attachment.owner));
+    attached.relocated_owner_starts.extend(starts_in_unions);
     crate::sort::sort(&mut attached.relocated_owner_starts);
     attached
 }

@@ -406,8 +406,8 @@ fn should_indent_union_type<'a>(ty: TypeNode<'a>, parent: AstNodes<'a>) -> bool 
     }
 }
 
-/// For oxfmt the comments after a type of a union are never aligned with it. For Prettier they are if there are comments
-/// before it.
+/// For oxfmt the comments after a type of a union are not aligned with it, unless it is a union in parentheses. For Prettier
+/// they are if there are comments before it.
 fn trailing_comments_are_outside_of_alignment(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -440,7 +440,13 @@ impl<'a> Format<'a> for UnionMembers<'a> {
             let member = without_lone_operator(member);
             let node = member.as_ast_nodes();
             let has_leading_comments = !f.comments().of_node(node).leading.is_empty();
-            if has_leading_comments && !trailing_comments_are_outside_of_alignment(f) {
+            let are_trailing_comments_aligned = match trailing_comments_are_outside_of_alignment(f)
+            {
+                // `| (A | B /* comment */)`
+                true => index > 0 && matches!(member.kind(), TypeKind::Union(_)),
+                false => has_leading_comments,
+            };
+            if are_trailing_comments_aligned {
                 write!(f, align(2, &member));
                 continue;
             }

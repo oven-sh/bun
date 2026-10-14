@@ -4,6 +4,7 @@ use super::parameters::{FormatFormalParameters, has_comment, has_only_simple_par
 use super::type_parameters::type_parameters;
 use crate::js::attach::Marker;
 use crate::js::format::{ExprOptions, FormatTypeAnnotation, write_expression};
+use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::expression::ExpressionLeftSide;
 use crate::js::utils::suppressed::FormatSuppressedNode;
@@ -92,6 +93,12 @@ fn conditional_body_breaks_with_the_chain(f: &Formatter<'_>) -> bool {
 ///
 /// oxfmt on the left, Prettier on the right: wherever the chain is, not only as an argument or an operand.
 fn first_signature_starts_where_chain_starts(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// `((a) /* comment */ => (b) =>⏎c⏎)()` for Prettier, for which any comment of the first arrow function counts.
+/// `(⏎(a) /* comment */ => (b) =>⏎c⏎)()` for oxfmt.
+fn only_leading_comment_replaces_line_break_before_chain(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
@@ -201,6 +208,9 @@ fn write_arrow<'a>(
                 ]
             );
         } else {
+            if !should_print_as_chain {
+                write_comments_on_line_of_arrow_for_oxfmt(tail, options.cache_mode, f);
+            }
             write!(
                 f,
                 [
@@ -234,9 +244,13 @@ fn write_arrow<'a>(
     // As a callee or on the right of an assignment, all signatures are indented by one level.
     let should_indent_signatures = is_callee || options.assignment_layout.is_some();
     // Prettier asks for `CommentCheckFlags.Leading & CommentCheckFlags.Line`, which is no flag at all.
+    let follows_comment = match only_leading_comment_replaces_line_break_before_chain(f) {
+        true => !(f.comments().of_node(arrow.as_ast_nodes()).leading).is_empty(),
+        false => has_comment(arrow.as_ast_nodes(), f),
+    };
     let should_print_soft_line = should_indent_signatures
         && options.assignment_layout != Some(AssignmentLikeLayout::BreakAfterOperator)
-        && !has_comment(arrow.as_ast_nodes(), f);
+        && !follows_comment;
     let should_break_signatures = options.assignment_layout
         == Some(AssignmentLikeLayout::ChainTailArrowFunction)
         || (is_callee && (!is_body_on_same_line || breaks_with_chain));
@@ -431,6 +445,32 @@ fn write_comments_once<'a>(
     if let Some(first) = comments.first() {
         FormatContentWithCacheMode::new(|| first.span(), content, cache_mode).fmt(f);
     }
+}
+
+/// For oxfmt the leading comments of a block that are on the line of the `=>` stay there. The block writes the others.
+///
+/// ```js
+/// a = () => // comment
+///   {};
+/// ```
+fn write_comments_on_line_of_arrow_for_oxfmt<'a>(
+    arrow: Func<'a>,
+    cache_mode: FunctionCacheMode,
+    f: &mut Formatter<'a>,
+) {
+    if f.is_quiet()
+        || !comments_stay_between_head_and_body(f)
+        || !matches!(arrow.body(), FnBody::Block(_))
+    {
+        return;
+    }
+    let leading_comments = f.comments().of_node(AstNodes::FunctionBody(arrow)).leading;
+    let count = (leading_comments.iter())
+        .take_while(|comment| !comment.has_newline_before())
+        .count();
+    let comments = leading_comments.slice(0, count);
+    let content = FormatTrailingComments::Comments(comments);
+    write_comments_once(comments, content, cache_mode, f);
 }
 
 /// `arrow` is the body of another arrow function: `(a) => /* comment */ (b) => c`

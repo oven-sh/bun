@@ -1006,8 +1006,10 @@ function _toUnixTimestamp(time: any, name = "time") {
   if (typeof time === "string" && +time == time) {
     return +time;
   }
+  // Node's NumberIsFinite: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/utils.js#L785
+  // `$isFinite` is the global isFinite, which converts its argument first.
   // @ts-ignore
-  if ($isFinite(time)) {
+  if (typeof time === "number" && $isFinite(time)) {
     if (time < 0) {
       return Date.now() / 1000;
     }

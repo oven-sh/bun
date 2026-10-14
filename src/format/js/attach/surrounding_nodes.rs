@@ -492,9 +492,9 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         }
     }
 
-    /// Most comments are before a statement of a block or a member of a class or an interface, and after the one before it or
-    /// after the `{`. The parser has recorded the nodes that Prettier finds, and the enclosing node is a `Program`, a
-    /// `BlockStatement`, a `ClassBody`, a `TSInterfaceBody` or a `TSTypeLiteral`, for which Prettier has no rule.
+    /// Most comments are before a statement of a body or a member of a class, an interface or an enum, and after the one before
+    /// it or after the `{`. The parser has recorded the nodes that Prettier finds, and the enclosing node is a `Program`, a
+    /// `BlockStatement`, a `ClassBody`, a `TSInterfaceBody`, a `TSTypeLiteral` or a `TSEnumBody`, for which Prettier has no rule.
     fn list_elements_around(&self, comment: comments::Comment<'a>) -> Option<SurroundingNodes<'a>> {
         if self.options.flavor.is_oxfmt() || self.file.is_flow() {
             return None;
@@ -503,16 +503,24 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             return None;
         };
         let text = self.file.text();
-        let is_list_of_following_node = match (comment.enclosing_node(), following_node) {
-            (None | Some(Node::Func(_)), Node::Stmt(_)) => true,
-            // `with (a) b` is a block of `a` and `b` in the HIR.
-            (Some(Node::Stmt(block)), Node::Stmt(_)) => {
-                block.tag() == StmtTag::Block
-                    && text.get(block.span().start as usize) == Some(&b'{')
-            }
+        let enclosing_node = comment.enclosing_node();
+        // The body is no node in the HIR, so the enclosing node is what has the body.
+        let is_list_of_following_node = match (enclosing_node, following_node) {
+            (None | Some(Node::Func(_) | Node::Member(_)), Node::Stmt(_)) => true,
+            (Some(Node::Stmt(statement)), Node::Stmt(_)) => match statement.tag() {
+                StmtTag::Fn => true,
+                // `with (a) b` is a block of `a` and `b` in the HIR.
+                StmtTag::Block => text.get(statement.span().start as usize) == Some(&b'{'),
+                _ => false,
+            },
+            (Some(Node::Expr(e)), Node::Stmt(_)) => matches!(e.kind(), ExprKind::Fn(_)),
             (Some(Node::Class(_)), Node::Member(_)) => true,
-            (Some(Node::Stmt(interface)), Node::Member(_)) => interface.tag() == StmtTag::Interface,
+            (Some(Node::Stmt(statement)), Node::Member(_)) => {
+                matches!(statement.tag(), StmtTag::Class | StmtTag::Interface)
+            }
+            (Some(Node::Expr(e)), Node::Member(_)) => matches!(e.kind(), ExprKind::Class(_)),
             (Some(Node::Type(ty)), Node::Member(_)) => matches!(ty.kind(), TypeKind::Object(_)),
+            (Some(Node::Stmt(statement)), Node::EnumMember(_)) => statement.tag() == StmtTag::Enum,
             _ => false,
         };
         if !is_list_of_following_node {
@@ -520,8 +528,11 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         }
         let preceding_node = match (comment.preceding_node(), following_node) {
             (Some(NodeOrName::Node(node @ Node::Stmt(_))), Node::Stmt(_))
-            | (Some(NodeOrName::Node(node @ Node::Member(_))), Node::Member(_)) => Some(node),
-            (None, _) if comment.enclosing_node().is_none() => None,
+            | (Some(NodeOrName::Node(node @ Node::Member(_))), Node::Member(_))
+            | (Some(NodeOrName::Node(node @ Node::EnumMember(_))), Node::EnumMember(_)) => {
+                Some(node)
+            }
+            (None, _) if enclosing_node.is_none() => None,
             // What is before the `{` is not in the body.
             _ if text.get((comment.prev_token_end() as usize).wrapping_sub(1)) == Some(&b'{') => {
                 None

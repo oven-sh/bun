@@ -3,8 +3,8 @@
 use super::surrounding_nodes::AttachContext;
 use super::{Marker, Options, Owner, Placement, attach};
 use crate::js::ast_nodes::AST_KIND_NAMES;
-use bun_lint::ast::File;
 use bun_lint::ast::comments::NodeOrName;
+use bun_lint::ast::{File, Node};
 use std::io::Write;
 
 /// A line for each comment: where it is, and what owns it. And one for each node that is ignored by a comment that another
@@ -63,7 +63,30 @@ pub(crate) fn list<'a>(
         let describe = |node: Option<NodeOrName<'a>>| match node {
             None => "-".to_owned(),
             Some(NodeOrName::Name(start)) => format!("name@{start}"),
-            Some(NodeOrName::Node(node)) => format!("{}..{}", node.span().start, node.span().end),
+            Some(NodeOrName::Node(node)) => {
+                let kind = match node {
+                    Node::File(_) => "File",
+                    Node::Expr(_) => "Expr",
+                    Node::Stmt(_) => "Stmt",
+                    Node::Type(_) => "Type",
+                    Node::Pat(_) => "Pat",
+                    Node::PatProp(_) => "PatProp",
+                    Node::PatElem(_) => "PatElem",
+                    Node::Func(_) => "Func",
+                    Node::Param(_) => "Param",
+                    Node::TypeParam(_) => "TypeParam",
+                    Node::Class(_) => "Class",
+                    Node::Member(_) => "Member",
+                    Node::Prop(_) => "Prop",
+                    Node::VarDecl(_) => "VarDecl",
+                    Node::Case(_) => "Case",
+                    Node::EnumMember(_) => "EnumMember",
+                    Node::ImportSpec(_) => "ImportSpec",
+                    Node::ExportSpec(_) => "ExportSpec",
+                    Node::TupleElem(_) => "TupleElem",
+                };
+                format!("{kind}@{}..{}", node.span().start, node.span().end)
+            }
         };
         let line = format!(
             "P {} tokens {}..{} enclosing {} preceding {} following {}",

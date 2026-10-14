@@ -17,6 +17,18 @@ import { describe, test } from "node:test";
 
 const toUnixTimestamp: (time: unknown) => number = (fs as any)._toUnixTimestamp;
 
+// Node's function calls the DateNow and DatePrototypeGetTime primordials, so a
+// replacement that user code installs later does not change its result.
+function withReplaced<T>(object: any, key: string, replacement: unknown, run: () => T): T {
+  const original = object[key];
+  object[key] = replacement;
+  try {
+    return run();
+  } finally {
+    object[key] = original;
+  }
+}
+
 describe("fs._toUnixTimestamp()", () => {
   test("returns a number and a numeric string as seconds", () => {
     const times = [1000, 1.5, "1000", "-1"];
@@ -31,12 +43,41 @@ describe("fs._toUnixTimestamp()", () => {
     assert.ok(Math.abs(seconds - Date.now() / 1000) < 60, `${seconds} is not the current time`);
   });
 
+  test("returns the current time for a negative number when Date.now is replaced", () => {
+    const seconds = withReplaced(
+      Date,
+      "now",
+      () => 0,
+      () => toUnixTimestamp(-5),
+    );
+    assert.ok(Math.abs(seconds - Date.now() / 1000) < 60, `${seconds} is not the current time`);
+  });
+
   test("returns the seconds of a Date", () => {
     const dates = [new Date(5000), new Date(0), new Date(1500), new Date("2026-01-01T00:00:00Z"), new Date(-5000)];
     assert.deepStrictEqual(
       dates.map(date => toUnixTimestamp(date)),
       [5, 0, 1.5, 1767225600, -5],
     );
+  });
+
+  test("returns the seconds of a Date when getTime is overridden or replaced", () => {
+    class OverriddenDate extends Date {
+      getTime() {
+        return 42_000;
+      }
+    }
+    const withOwnGetTime = new Date(5000);
+    withOwnGetTime.getTime = () => 42_000;
+    const dates = [new OverriddenDate(5000), withOwnGetTime, new Date(5000)];
+
+    const seconds = withReplaced(
+      Date.prototype,
+      "getTime",
+      () => 42_000,
+      () => dates.map(date => toUnixTimestamp(date)),
+    );
+    assert.deepStrictEqual(seconds, [5, 5, 5]);
   });
 
   test("throws ERR_INVALID_ARG_TYPE for a value that is not a number, a numeric string or a Date", () => {

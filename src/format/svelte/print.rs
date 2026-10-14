@@ -524,12 +524,35 @@ impl<'a, 'o> Printer<'a, 'o> {
         Some(value.strip_prefix(b"text/").unwrap_or(&value[..]))
     }
 
+    /// What `type` says, in whatever letters the name is written: a text, or a string between braces.
+    fn text_of_type(&self, attributes: &[Id]) -> Option<&[u8]> {
+        let value = attributes
+            .iter()
+            .find_map(|&it| match &self.tree[it].kind {
+                Kind::Attribute { name, value } if name.eq_ignore_ascii_case(b"type") => {
+                    Some(value)
+                }
+                _ => None,
+            })?;
+        match self.lone_mustache_tag(value).map(|it| &self.tree[it].kind) {
+            Some(Kind::ExpressionTag(it)) if it.kind == ExpressionKind::StringLiteral => {
+                let string = it.span.of(self.text);
+                string.get(1..string.len() - 1)
+            }
+            Some(_) => None,
+            None => match value {
+                Value::True | Value::Tag(_) => None,
+                Value::Parts(parts) => parts.iter().find_map(|&it| Some(&self.raw(it)?[..])),
+            },
+        }
+    }
+
     /// Whether a script with these attributes has code in it: it has a `lang`, no `type`, or a `type` that stands for code.
     /// What is behind a `;` in the `type`, and which letters are capitals, makes no difference.
     fn has_type_of_code(&self, attributes: &[Id]) -> bool {
-        let text_of = |name: &[u8]| self.attribute_text_value(attributes, name);
+        let lang = self.attribute_text_value(attributes, b"lang");
         let Some(kind) =
-            text_of(b"type").filter(|_| text_of(b"lang").is_none_or(|it| it.is_empty()))
+            (self.text_of_type(attributes)).filter(|_| lang.is_none_or(|it| it.is_empty()))
         else {
             return true;
         };

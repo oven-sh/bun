@@ -16,7 +16,8 @@ use crate::syntax_error::{Message, SyntaxError};
 use crate::{FormatError, write};
 use bun_core::strings;
 use bun_lint::linter::{TypesInJavaScript, refusal_of_prettier};
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
+use std::cmp::Reverse;
 
 pub(crate) struct How<'o> {
     pub(crate) options: &'o FormatOptions,
@@ -223,27 +224,56 @@ fn write_js_function(
                     .open_paren()
                     .is_some_and(|open| it.span.start < open)
                     || (!it.is_line()
-                        && it.followed_by_newline()
+                        && (it.followed_by_newline() || {
+                            let behind = file.text().get(it.span.end as usize..);
+                            strings::trim_js_whitespace_start(behind.unwrap_or_default())
+                                .starts_with(b"//")
+                        })
                         && first.is_some_and(|first| it.span.start < first.span().start))
             };
             // Where the only parameter is hugged no line ends before the `)`, and a comment that waits for the end of one is
             // printed behind that, where Svelte wants the `}`: `{#snippet a({ b } = {}) // c\n}`. Between the brackets of the
             // pattern or of the default, and between the braces of a type, a line ends behind it.
             let hugged = first.filter(|_| should_hug_function_parameters(function, false, f));
+            // Those that are in no other, in order.
+            let types_with_braces = OnceCell::new();
+            let types_with_braces = || {
+                types_with_braces.get_or_init(|| {
+                    let tags = [TypeTag::Object, TypeTag::Mapped];
+                    let all = tags.iter().flat_map(|&tag| file.types_of_kind(tag));
+                    let mut spans: Vec<Span> = all.map(|it| it.span()).collect();
+                    crate::sort::sort_by_key(&mut spans, |it| (it.start, Reverse(it.end)));
+                    spans.dedup_by(|it, outer| it.end <= outer.end);
+                    spans
+                })
+            };
             let is_behind_hugged = |it: &Comment| {
                 let is_in = |part: Span| part.start <= it.span.start && it.span.end <= part.end;
                 (it.is_line() || it.preceded_by_newline())
                     && hugged.is_some_and(|hugged| {
                         !is_in(hugged.pat().span())
                             && !hugged.default().is_some_and(|it| is_in(it.span()))
-                            && ![TypeTag::Object, TypeTag::Mapped]
-                                .iter()
-                                .flat_map(|&tag| file.types_of_kind(tag))
-                                .any(|it| is_in(it.span()))
+                            && !{
+                                let types = types_with_braces();
+                                let behind =
+                                    types.partition_point(|part| part.start <= it.span.start);
+                                behind.checked_sub(1).is_some_and(|at| is_in(types[at]))
+                            }
                     })
             };
             // Prettier puts a comment behind the `=` of a default into the parentheses that the default starts with, and takes it
             // out of them the next time, and so on: `a = // b\n(c as D).e`.
+            let starts = OnceCell::new();
+            let starts = || {
+                starts.get_or_init(|| {
+                    let tags = [ExprTag::Dot, ExprTag::Index, ExprTag::Call];
+                    let all = tags.iter().flat_map(|&tag| file.exprs_of_kind(tag));
+                    let outermost = all.filter(|it| !matches!(it.parent(), Node::Expr(_)));
+                    let mut starts: Vec<u32> = outermost.map(|it| it.span().start).collect();
+                    crate::sort::sort(&mut starts[..]);
+                    starts
+                })
+            };
             let is_before_parenthesis = |it: &Comment| {
                 let behind = file.text().get(it.span.end as usize..).unwrap_or_default();
                 let code = strings::trim_js_whitespace_start(behind);
@@ -251,10 +281,7 @@ fn write_js_function(
                 it.is_line()
                     && !it.preceded_by_newline()
                     && code.starts_with(b"(")
-                    && [ExprTag::Dot, ExprTag::Index, ExprTag::Call]
-                        .iter()
-                        .flat_map(|&tag| file.exprs_of_kind(tag))
-                        .any(|e| e.span().start == at && !matches!(e.parent(), Node::Expr(_)))
+                    && starts().binary_search(&at).is_ok()
             };
             let comments = f.comments().unprinted_comments();
             if (comments.iter())

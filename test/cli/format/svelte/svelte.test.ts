@@ -858,6 +858,12 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{#snippet row</* c */\n  T>(b: T)}y{/snippet}\n`,
         `${typescript}{#snippet row /* c */<T>(b: T)}y{/snippet}\n`,
       ],
+      // The line ends behind another comment.
+      [
+        "{#snippet row(/* c */ // d\n  b)}y{/snippet}\n",
+        "{#snippet row(/* c */ // d\n  b)}y{/snippet}\n",
+        "{#snippet row /* c */( // d\n  b,\n)}y{/snippet}\n",
+      ],
       ["{#snippet  row(b   /* c */)}y{/snippet}\n", "{#snippet row(b /* c */)}y{/snippet}\n", null],
     ],
     "no comment is behind the parameters of a snippet": [
@@ -1170,6 +1176,27 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ].map((type): [string, string, null] => [
         `<script type="${type}">let  b=1</script>\n`,
         `<script type="${type}">\n  let b = 1;\n</script>\n`,
+        null,
+      ]),
+      // In whatever letters the name of the attribute is written, and as a string between braces.
+      ...['TYPE="math/tex"', 'type={"math/tex"}'].flatMap((type): [string, string, string, false][] => [
+        [
+          `<script ${type}>x^2 + y^2</script>\n`,
+          `<script ${type}>x^2 + y^2</script>\n`,
+          `<script ${type}>\n  x ^ (2 + y) ^ 2;\n</script>\n`,
+          false,
+        ],
+        [
+          `<p><script ${type}>x^2 + y^2</script></p>\n`,
+          `<p><script ${type}>x^2 + y^2</script></p>\n`,
+          `<p>\n  <script ${type}>\n    x ^ (2 + y) ^ 2;\n  </script>\n</p>\n`,
+          false,
+        ],
+      ]),
+      // What another expression gives is not known.
+      ...['TYPE="module"', 'type={"module"}', "type={kind}"].map((type): [string, string, null] => [
+        `<p><script ${type}>let  b=1</script></p>\n`,
+        `<p>\n  <script ${type}>\n    let b = 1;\n  </script>\n</p>\n`,
         null,
       ]),
       // A `lang` counts for more.

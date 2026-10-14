@@ -2804,7 +2804,7 @@ impl Package<u64> {
                         .get_or_put(semver::string::Builder::string_hash(&entry.name)
                             as TruncatedPackageNameHash)?;
                     if gop.found_existing {
-                        // this path does alot of extra work to format the error message
+                        // this path does a lot of extra work to format the error message
                         // but this is ok because the install is going to fail anyways, so this
                         // has zero effect on the happy path.
                         let mut cwd_buf = bun_paths::path_buffer_pool::get();

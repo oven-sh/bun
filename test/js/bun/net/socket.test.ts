@@ -5629,11 +5629,14 @@ it("a socket whose peer refills the receive buffer during data() does not hold t
     ],
     env: { ...bunEnv, PORT: String(server.port) },
     stdout: "pipe",
-    stderr: "inherit",
+    stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([child.stdout.text(), child.exited]);
-  expect(Number(stdout)).toBeWithin(1, 12);
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: expect.stringMatching(/^([1-9]|1[01])\n$/),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // A paused socket polls for nothing, but a peer reset still reaches it (epoll reports EPOLLERR

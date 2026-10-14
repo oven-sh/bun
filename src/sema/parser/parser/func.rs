@@ -37,7 +37,7 @@ fn signature_context(flags: Flags) -> u32 {
     context
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseFunctionDeclaration`
     pub(crate) fn function_declaration(
         &mut self,

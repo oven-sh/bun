@@ -5,7 +5,7 @@ use crate::token::T;
 use bun_sema::atom::known;
 use bun_sema::hir::*;
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseIdentifierOrPattern`
     #[inline]
     pub(crate) fn identifier_or_pattern(&mut self) -> PatId {

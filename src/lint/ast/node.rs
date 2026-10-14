@@ -100,7 +100,7 @@ macro_rules! conversions {
         pub(crate) const KINDS: usize = [Tag::File, $(Tag::$variant),*].len();
 
         impl<'a> File<'a> {
-            /// The [`Node::index`] of the first node of each kind, and behind them [`File::node_count`].
+            /// The [`Node::index`] of the first node of each kind, and after them [`File::node_count`].
             fn kind_index_offsets(&self) -> &[u32; KINDS + 1] {
                 self.lazy.kind_index_offsets.get_or_init(|| {
                     let mut offsets = [0; KINDS + 1];

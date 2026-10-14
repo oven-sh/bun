@@ -87,7 +87,7 @@ fn property_of_record(
     }
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     // ───────────────────────────── tokens ─────────────────────────────
 
     /// Whether the token is the name `word`, which is no keyword of TypeScript's.

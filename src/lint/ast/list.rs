@@ -120,15 +120,6 @@ impl<'a, T: Handle<'a>> List<'a, T> {
     }
 }
 
-/// Which elements of a long list are asked for.
-#[derive(Copy, Clone)]
-pub(super) struct Near {
-    /// The last one that starts at or before this.
-    pub(super) offset: u32,
-    /// And the one behind it.
-    pub(super) include_next: bool,
-}
-
 /// For a list whose elements are in the order of the source and do not overlap. Each takes the logarithm of its length.
 impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
     /// How many elements start at or before `offset`, those that lists leave out too.
@@ -144,35 +135,23 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
         from
     }
 
-    /// The whole list, or if it is long and `near` is given, only what is near.
+    /// The whole list, or if it is long and `offset` is given, only the last element that starts at or before `offset`.
     #[inline]
-    pub(super) fn near(self, near: Option<Near>) -> Iter<'a, T> {
-        match near {
-            Some(near) if self.len > 8 => self.near_in_long_list(near),
+    pub(super) fn near(self, offset: Option<u32>) -> Iter<'a, T> {
+        match offset {
+            Some(offset) if self.len > 8 => self.near_in_long_list(offset),
             _ => self.iter(),
         }
     }
 
     #[inline(never)]
-    fn near_in_long_list(self, near: Near) -> Iter<'a, T> {
+    fn near_in_long_list(self, offset: u32) -> Iter<'a, T> {
         let mut all = self.iter();
         if !all.hides {
-            let until = self.count_until(near.offset);
-            all.front = until.saturating_sub(1);
-            all.back = (until + u32::from(near.include_next)).min(self.len);
+            all.back = self.count_until(offset);
+            all.front = all.back.saturating_sub(1);
         }
         all
-    }
-
-    /// The last element that starts at or before `offset`, and the one behind it. `None` in a file whose lists leave
-    /// elements out.
-    pub fn neighbors(self, offset: u32) -> Option<(Option<T>, Option<T>)> {
-        if self.file.has_synthetic_nodes() {
-            return None;
-        }
-        let until = self.count_until(offset);
-        let before = until.checked_sub(1).map(|at| self.at(at));
-        Some((before, (until < self.len).then(|| self.at(until))))
     }
 
     /// The element that `offset` is in.

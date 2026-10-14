@@ -9,6 +9,8 @@
 //! node. The closest candidate wins, and the larger one if two are equally close.
 //!
 //! This only compares offsets. It knows nothing about the grammar.
+//!
+//! All of it is behind the parameter `COMMENTS` of the [`Parser`], so who does not ask for the nodes runs code without it.
 
 use super::{Checkpoint, Parser};
 use bun_sema::atom::Atom;
@@ -243,13 +245,15 @@ macro_rules! finish_list {
     ($p:expr, $field:ident, $start:expr, $len:expr) => {{
         use $crate::parser::comments::ListElement;
         let (start, len): (u32, u32) = ($start, $len);
-        let first = ($p.f.$field.get(start as usize)).and_then(|it| it.as_node(start, &$p.f));
-        if first.is_some_and(|(_, node_start, _)| node_start <= $p.lx.max_relevant_node_start) {
-            for index in start..start + len {
-                let node =
-                    ($p.f.$field.get(index as usize)).and_then(|it| it.as_node(index, &$p.f));
-                if let Some((node, node_start, node_end)) = node {
-                    $p.finish_node(node, node_start, node_end);
+        if COMMENTS {
+            let first = ($p.f.$field.get(start as usize)).and_then(|it| it.as_node(start, &$p.f));
+            if first.is_some_and(|(_, node_start, _)| node_start <= $p.lx.max_relevant_node_start) {
+                for index in start..start + len {
+                    let node =
+                        ($p.f.$field.get(index as usize)).and_then(|it| it.as_node(index, &$p.f));
+                    if let Some((node, node_start, node_end)) = node {
+                        $p.finish_node(node, node_start, node_end);
+                    }
                 }
             }
         }
@@ -257,19 +261,19 @@ macro_rules! finish_list {
 }
 pub(crate) use finish_list;
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// Must be called for every node, before the node is pushed to its list. This is on the hot path: it is one comparison
     /// unless the node can affect a pending comment.
     #[inline(always)]
     pub(crate) fn finish_node(&mut self, node: NodeData, start: u32, end: u32) {
-        if start <= self.lx.max_relevant_node_start {
+        if COMMENTS && start <= self.lx.max_relevant_node_start {
             self.update_pending_comments(NodeOrName::Node(node), start, end);
         }
     }
 
     #[inline(always)]
     pub(crate) fn finish_statement(&mut self, id: StmtId, kind: &StmtKind, start: u32, end: u32) {
-        if start <= self.lx.max_relevant_node_start {
+        if COMMENTS && start <= self.lx.max_relevant_node_start {
             self.update_pending_comments_for_statement(id, *kind, start, end);
         }
     }
@@ -277,6 +281,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// Call after consuming an identifier that is a name. Names are fields of nodes in the HIR, but nodes in ESTree.
     #[inline(always)]
     pub(crate) fn finish_name(&mut self, start: u32, end: u32) {
+        if !COMMENTS {
+            return;
+        }
         if start <= self.lx.max_relevant_node_start {
             self.update_pending_comments(NodeOrName::Name(start), start, end);
         }
@@ -290,7 +297,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// comment may keep it. Also call it for a node that stays but is not a node in ESTree, or has another range there.
     #[inline(always)]
     pub(crate) fn unfinish_node(&mut self, node: NodeData) {
-        if self.comments.last_finished.0 == NodeOrName::Node(node) {
+        if COMMENTS && self.comments.last_finished.0 == NodeOrName::Node(node) {
             self.undo_last_finished_node();
         }
     }
@@ -299,8 +306,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[inline(always)]
     pub(crate) fn pop_expr(&mut self) -> Option<Expr> {
         let last = self.f.exprs.len().saturating_sub(1);
-        self.unfinish_node(NodeData::Expr(ExprId(last as u32)));
-        self.comments.last_expr_with_width.truncate(last);
+        if COMMENTS {
+            self.unfinish_node(NodeData::Expr(ExprId(last as u32)));
+            self.comments.last_expr_with_width.truncate(last);
+        }
         self.f.exprs.pop()
     }
 
@@ -315,6 +324,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// The same for a word that was taken as a name and turns out to be a keyword: `import type a = b`.
     #[inline(always)]
     pub(crate) fn unfinish_name(&mut self, start: u32) {
+        if !COMMENTS {
+            return;
+        }
         if self.comments.last_finished.0 == NodeOrName::Name(start) {
             self.undo_last_finished_node();
         }
@@ -655,7 +667,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// Call at the end of the file. The comments that are still pending are not inside any node.
     pub(crate) fn resolve_top_level_comments(&mut self) {
-        if !self.options.attach_comments {
+        if !COMMENTS || !self.options.attach_comments {
             return;
         }
         self.add_new_pending_comments(Candidate::default());
@@ -673,6 +685,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     #[inline(always)]
     pub(crate) fn comment_checkpoint(&self) -> CommentCheckpoint {
+        if !COMMENTS {
+            return CommentCheckpoint::default();
+        }
         CommentCheckpoint {
             tracked_count: self.comments.tracked_count,
             undo_log_len: self.comments.undo_log.len() as u32,
@@ -681,7 +696,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     }
 
     pub(crate) fn rollback_comments(&mut self, to: &Checkpoint) {
-        if !self.options.attach_comments {
+        if !COMMENTS || !self.options.attach_comments {
             return;
         }
         self.comments.undo_until(to.comments.undo_log_len as usize);

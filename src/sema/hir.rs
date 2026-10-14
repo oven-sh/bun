@@ -2142,7 +2142,7 @@ pub struct FileIn<S: Storage> {
     /// The span of the statement of each `with (e) statement`, from right after the `)` to its end.
     pub with_bodies: S::Few<(u32, u32)>,
     /// The `;` terminators that do not directly follow the previous token, as in `a() /* comment */ ;`. Each entry is the
-    /// offset of the `;` and the end of the previous token. Sorted.
+    /// offset of the `;` and the end of the previous token. Sorted. Only with `Options::attach_comments`.
     pub detached_semicolons: S::Few<(u32, u32)>,
     /// The position of the `{` of each function whose body is a block, except for a static block,
     /// where it is the `anchor`. Sorted.

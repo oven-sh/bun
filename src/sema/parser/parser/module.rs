@@ -67,7 +67,7 @@ fn relate_to_open_brace(diagnostics: &mut [Diagnostic], open: u32) {
     }
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// Whether the text is read as acorn or Babel read it: what TypeScript's parser leaves to the
     /// checker is an error of their parsers.
     #[inline]

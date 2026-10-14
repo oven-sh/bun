@@ -340,7 +340,7 @@ fn is_only_of_jsdoc(at: JSDocScannerState) -> bool {
 
 // ───────────────────────────── what jsdoc.go asks of parser.go ─────────────────────────────
 
-impl<const GENERAL: bool> Syntax for Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Syntax for Parser<'_, GENERAL, COMMENTS> {
     fn next_token(&mut self, from: usize) -> JSDocScannerState {
         if self.has_failed() {
             return self.given_up();
@@ -469,7 +469,7 @@ impl<const GENERAL: bool> Syntax for Parser<'_, GENERAL> {
     }
 }
 
-impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
+impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS> {
     /// `ScannerState`, of the lexer.
     fn state(&self) -> JSDocScannerState {
         if self.has_failed() {

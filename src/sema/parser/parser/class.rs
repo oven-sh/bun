@@ -54,7 +54,7 @@ fn is_class_member_modifier(token: T) -> bool {
     )
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseClassDeclaration`
     pub(crate) fn class_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         // Only its modifiers say that `default class {}` has `default`.

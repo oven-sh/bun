@@ -23,7 +23,7 @@ fn text_between(src: &[u8], (start, end): (u32, u32)) -> &[u8] {
     src.get(start as usize..end as usize).unwrap_or_default()
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// What `parseUpdateExpression` does at a `<`.
     pub(crate) fn jsx_element_or_fragment(&mut self) -> ExprId {
         if self.recovers() && !self.is_at_jsx_element() {
@@ -829,7 +829,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// Call at the `}` of `{expression}`, which starts at `open` and ends at `end`.
     #[inline(always)]
     fn finish_jsx_expression_container(&mut self, expression: ExprId, open: u32, end: u32) {
-        if open <= self.lx.max_relevant_node_start {
+        if COMMENTS && open <= self.lx.max_relevant_node_start {
             self.finish_jsx_expression_container_near_comment(expression, open, end);
         }
     }

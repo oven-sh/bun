@@ -23,7 +23,7 @@ fn flags_of_type_member_name(name_token: T, name_kind: NameKind, key: PropKey) -
     }
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn add_type(&mut self, kind: TypeNodeKind, pos: u32, end: u32) -> TypeNodeId {
         let id = TypeNodeId(self.f.types.len() as u32);

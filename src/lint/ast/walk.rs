@@ -1,6 +1,5 @@
 //! The way down: the children of a node, and a walk over a whole file in source order.
 
-use super::list::Near;
 use super::{ExprKind, File, FnBody, Modifier, Node, PatKind, StmtKind, TypeKind};
 
 impl<'a> Node<'a> {
@@ -17,20 +16,7 @@ impl<'a> Node<'a> {
     /// Calls `visit` with the children that `offset` can be in, in source order: of a long list, only with the last element
     /// that starts at or before `offset`. So it takes the logarithm of the number of children.
     pub fn for_each_child_near(self, offset: u32, mut visit: impl FnMut(Node<'a>)) {
-        let near = Near {
-            offset,
-            include_next: false,
-        };
-        self.children_into(Some(near), &mut visit);
-    }
-
-    /// The same, and of a long list also the element behind that one: the children on either side of `offset`.
-    pub fn for_each_child_around(self, offset: u32, mut visit: impl FnMut(Node<'a>)) {
-        let near = Near {
-            offset,
-            include_next: true,
-        };
-        self.children_into(Some(near), &mut visit);
+        self.children_into(Some(offset), &mut visit);
     }
 
     /// The children, in source order.
@@ -41,7 +27,7 @@ impl<'a> Node<'a> {
     }
 
     #[inline]
-    fn children_into(self, near: Option<Near>, visit: &mut dyn FnMut(Node<'a>)) {
+    fn children_into(self, near: Option<u32>, visit: &mut dyn FnMut(Node<'a>)) {
         match self {
             Node::Expr(e) if e.is_name_or_literal() => {}
             _ => self.children_of_what_can_have_some_into(near, visit),
@@ -50,7 +36,7 @@ impl<'a> Node<'a> {
 
     fn children_of_what_can_have_some_into(
         self,
-        near: Option<Near>,
+        near: Option<u32>,
         visit: &mut dyn FnMut(Node<'a>),
     ) {
         macro_rules! one {

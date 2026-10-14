@@ -221,10 +221,10 @@ The algorithm is Prettier's, not oxc's. Before printing starts, every comment is
 | the parser    | the enclosing, preceding and following node                                                                                                                 |
 
 - The parser finds the three nodes while it parses (`src/sema/parser/parser/comments.rs`). Each time a node is finished, its range is compared with the comments that are still pending. Nothing walks the tree afterwards.
-- This only happens with `Options::attach_comments`, which only the formatter sets. `bun lint` and `bun check` pay one comparison per node: 0.1% of the instructions of `bun check` on vscode. Putting the hooks in the `GENERAL` variant of the parser removes that, but the formatter then has to run that variant, which costs it 0.7%.
+- This only happens with `Options::attach_comments`, which only the formatter sets. The hooks are behind the parameter `COMMENTS` of the `Parser`, so `bun lint` and `bun check` run a parser that is compiled without them. One comparison per node was 0.1% of the instructions of `bun check` on vscode.
 - `bun_lint::ast::comments::Comment<'a>` is the handle to the record, `Copy` like `Expr<'a>`.
 - The formatter stores only what it decides itself, by comment id (`js/comments.rs`): placement and marker, the table from a node to its comment ids (`js/owners.rs`), and one "printed" bit.
-- `hir::File::detached_semicolons` lists each `;` that ends a statement but does not directly follow the previous token. `File::without_semicolon(span)` uses it to give Prettier's `locEnd` without looking at the text.
+- `hir::File::detached_semicolons` lists each `;` that ends a statement but does not directly follow the previous token. `File::without_semicolon(span)` uses it to give Prettier's `locEnd` without looking at the text. It is recorded with `attach_comments` too.
 
 **Do not scan the source text** to find a token, or to skip whitespace and comments. If a position is missing, have the lexer or the parser record it.
 

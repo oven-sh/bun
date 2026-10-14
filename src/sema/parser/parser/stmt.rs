@@ -59,7 +59,7 @@ pub(crate) enum ModifiersOf {
     ClassMember,
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn start(&self) -> Start {
         Start {

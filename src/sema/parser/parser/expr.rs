@@ -176,7 +176,7 @@ fn assignment_operator(token: T) -> Option<BinOp> {
     })
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     pub(crate) fn add_expr(&mut self, kind: ExprKind, pos: u32, end: u32) -> ExprId {
         let id = ExprId(self.f.exprs.len() as u32);

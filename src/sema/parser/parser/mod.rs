@@ -181,7 +181,10 @@ pub(crate) struct Checkpoint {
 
 /// `GENERAL`: it can recover from errors, read JSDoc comments and read Flow, if the options say so. Without it
 /// it does none of that, and a text without errors pays nothing for it.
-pub(crate) struct Parser<'a, const GENERAL: bool> {
+///
+/// `COMMENTS`: it finds the nodes around each comment, if the options say so. See [`comments`]. Without it `bun check` and
+/// `bun lint`, which do not ask for them, pay nothing for it.
+pub(crate) struct Parser<'a, const GENERAL: bool, const COMMENTS: bool> {
     pub(crate) lx: Lexer<'a>,
     pub(crate) f: FileBuilder,
     pub(crate) s: Stacks,
@@ -390,9 +393,10 @@ pub(crate) fn run<'a>(
         end,
         has_top_level_await,
         has_plain_top_level_await,
-    } = match is_general {
-        true => Parser::<true>::new(seed).parse_into(&mut f),
-        false => Parser::<false>::new(seed).parse_into(&mut f),
+    } = match (is_general, options.attach_comments) {
+        (true, _) => Parser::<true, true>::new(seed).parse_into(&mut f),
+        (false, true) => Parser::<false, true>::new(seed).parse_into(&mut f),
+        (false, false) => Parser::<false, false>::new(seed).parse_into(&mut f),
     };
     let (refusal, refused_at) = (lx.refusal, lx.refused_at);
     let (comment_directives, leading_comments) = (lx.comment_directives, lx.leading_comments);
@@ -439,7 +443,7 @@ pub(crate) fn run<'a>(
     })
 }
 
-impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
+impl<'a, const GENERAL: bool, const COMMENTS: bool> Parser<'a, GENERAL, COMMENTS> {
     #[inline(always)]
     fn new(seed: Seed<'a>) -> Self {
         let Seed {
@@ -869,7 +873,7 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         if self.lx.token != T::Semicolon {
             return false;
         }
-        if self.lx.full_start != self.lx.start {
+        if COMMENTS && self.lx.full_start != self.lx.start {
             self.record_detached_semicolon();
         }
         self.lx.next();
@@ -879,7 +883,9 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
     #[cold]
     #[inline(never)]
     fn record_detached_semicolon(&mut self) {
-        (self.f.detached_semicolons).push((self.lx.start, self.lx.full_start));
+        if self.options.attach_comments {
+            (self.f.detached_semicolons).push((self.lx.start, self.lx.full_start));
+        }
     }
 
     /// `parseSemicolon`

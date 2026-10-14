@@ -277,11 +277,14 @@ describe("css tests", () => {
     // A zero value is not positive and not negative, so `up` and `down` give a zero too.
     minify_test(`a { margin-left: calc(1px + round(up, 0px, calc(infinity * 1px))) }`, `a{margin-left:1px}`);
     minify_test(`a { margin-left: calc(1px + round(down, 0px, calc(infinity * 1px))) }`, `a{margin-left:1px}`);
-    // That zero has the sign of the value: atan2(+0, -1) is 180deg and atan2(-0, -1) is -180deg.
-    minify_test(`a { rotate: atan2(round(up, 0, infinity), -1) }`, `a{rotate:180deg}`);
-    minify_test(`a { rotate: atan2(round(up, -1 * 0, infinity), -1) }`, `a{rotate:-3.14159rad}`);
-    minify_test(`a { rotate: atan2(round(down, 0, infinity), -1) }`, `a{rotate:180deg}`);
-    minify_test(`a { rotate: atan2(round(down, -1 * 0, infinity), -1) }`, `a{rotate:-3.14159rad}`);
+    // That zero has the sign of the value: pow(+0, -1) is +∞ and pow(-0, -1) is -∞.
+    minify_test(`a { margin-left: calc(1px * pow(round(up, 0, infinity), -1)) }`, `a{margin-left:3.40282e38px}`);
+    minify_test(`a { margin-left: calc(1px * pow(round(up, -1 * 0, infinity), -1)) }`, `a{margin-left:-3.40282e38px}`);
+    minify_test(`a { margin-left: calc(1px * pow(round(down, 0, infinity), -1)) }`, `a{margin-left:3.40282e38px}`);
+    minify_test(
+      `a { margin-left: calc(1px * pow(round(down, -1 * 0, infinity), -1)) }`,
+      `a{margin-left:-3.40282e38px}`,
+    );
     // An infinite value keeps its infinity. A zero step is NaN, and so are two infinite
     // arguments with every strategy. NaN prints as zero.
     minify_test(`a { margin-left: round(calc(-infinity * 1px), -5px) }`, `a{margin-left:-3.40282e38px}`);
@@ -311,8 +314,8 @@ describe("css tests", () => {
     minify_test(`a { margin-left: calc(round(-2.5px, 1px) * 2) }`, `a{margin-left:-4px}`);
     minify_test(`a { margin-left: max(round(-2.5px, 1px), -2.75px) }`, `a{margin-left:-2px}`);
     // A zero result has a sign: round(-.5, 1) and round(-.4, 1) are both -0.
-    minify_test(`a { rotate: atan2(round(-.5, 1), -1) }`, `a{rotate:-3.14159rad}`);
-    minify_test(`a { rotate: atan2(round(-.4, 1), -1) }`, `a{rotate:-3.14159rad}`);
+    minify_test(`a { margin-left: calc(1px * pow(round(-.5, 1), -1)) }`, `a{margin-left:-3.40282e38px}`);
+    minify_test(`a { margin-left: calc(1px * pow(round(-.4, 1), -1)) }`, `a{margin-left:-3.40282e38px}`);
   });
   describe("calc stack overflow", () => {
     // https://github.com/oven-sh/bun/issues/20128

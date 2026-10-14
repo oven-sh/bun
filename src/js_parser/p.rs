@@ -348,6 +348,16 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// beside the real count rather than decremented from it so the minifier's
     /// single-use substitution still sees every use.
     pub(crate) namespace_tracked_uses: HashMap<Ref, u32>,
+    /// The refs that `namespace_tracked_uses` counted in the current part,
+    /// once per count. A part that leaves no statement takes its counts back.
+    pub(crate) part_tracked_namespace_uses: Vec<Ref>,
+    /// On while `append_part` asks whether the part can be removed if unused.
+    /// A marked read off a `require()` / `import()` local then counts as free
+    /// of side effects, which it is when the linker binds it
+    /// (`Part::removable_if_namespace_reads_bind`).
+    pub(crate) part_removal_assumes_namespace_reads_bind: bool,
+    /// Whether the answer relied on such a read.
+    pub(crate) part_removal_relies_on_namespace_reads: bool,
     pub(crate) unwrap_all_requires: bool,
 
     pub(crate) commonjs_named_exports: bun_ast::ast_result::CommonJSNamedExports,
@@ -1257,6 +1267,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let n = self.namespace_tracked_uses.entry(ns).or_default();
         *n = n.saturating_add(1);
+        self.part_tracked_namespace_uses.push(ns);
     }
 
     /// `ns` in a position that only tests it for null/truthiness (`if (ns)`,
@@ -1795,6 +1806,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let declared_refs = part.declared_symbols.refs();
         for declared in declared_refs {
             symbols[declared.inner_index() as usize].use_count_estimate = 0;
+        }
+        // `u32::MAX` marks a namespace that escaped (`visit_stmts`), not a count.
+        for ns in self.part_tracked_namespace_uses.drain(..) {
+            if let Some(tracked) = self.namespace_tracked_uses.get_mut(&ns)
+                && *tracked != u32::MAX
+            {
+                *tracked = tracked.saturating_sub(1);
+            }
         }
     }
 
@@ -5511,6 +5530,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // decorator-metadata types) belong to no part.
         self.part_uses.clear();
         self.part_generation += 1;
+        self.part_tracked_namespace_uses.clear();
         self.declared_symbols.clear_retaining_capacity();
         self.scopes_for_current_part.clear();
         self.import_records_for_current_part.clear();
@@ -5572,7 +5592,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // shared), then decay it to a raw `*mut` for storage in `Part` so no
             // outstanding `&mut` aliases the stored pointer afterwards.
             let final_stmts = bun_ast::StoreSlice::from_bump(part_stmts);
-            let can_be_removed_if_unused = self.stmts_can_be_removed_if_unused(final_stmts.slice());
+            self.part_removal_assumes_namespace_reads_bind =
+                !self.dynamic_import_namespace_locals.is_empty();
+            let removable = self.stmts_can_be_removed_if_unused(final_stmts.slice());
+            self.part_removal_assumes_namespace_reads_bind = false;
+            let relies_on_namespace_reads =
+                core::mem::take(&mut self.part_removal_relies_on_namespace_reads);
 
             let symbol_uses = self.take_symbol_uses()?;
             parts.push(js_ast::Part {
@@ -5602,7 +5627,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     )
                     .into_bump_slice_mut(),
                 ),
-                can_be_removed_if_unused,
+                can_be_removed_if_unused: removable && !relies_on_namespace_reads,
+                removable_if_namespace_reads_bind: removable && relies_on_namespace_reads,
                 tag: if self.had_commonjs_named_exports_this_visit {
                     bun_ast::PartTag::CommonjsNamedExport
                 } else {
@@ -6196,7 +6222,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return self.expr_can_be_removed_if_unused_without_dce_check(&e.value);
             }
 
-            js_ast::ExprData::EDot(ex) => return ex.can_be_removed_if_unused,
+            js_ast::ExprData::EDot(ex) => {
+                return ex.can_be_removed_if_unused
+                    || (self.part_removal_assumes_namespace_reads_bind
+                        && ex.is_import_property_use
+                        && self.rely_on_namespace_read(expr));
+            }
+            js_ast::ExprData::EIndex(ex) => {
+                return self.part_removal_assumes_namespace_reads_bind
+                    && ex.is_import_property_use
+                    && self.rely_on_namespace_read(expr);
+            }
             js_ast::ExprData::EClass(ex) => return self.class_can_be_removed_if_unused(&**ex),
             js_ast::ExprData::EIdentifier(ex) => {
                 debug_assert!(!ex.ref_.is_source_contents_slice()); // was not visited
@@ -6690,6 +6726,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         };
         self.namespace_local_import_item(id.ref_, name)
+    }
+
+    /// `expr` is a marked read off a `require()` / `import()` local, in a
+    /// position that runs when the part runs. The part can still be removed if
+    /// the linker binds the read, so its use of the import item says so
+    /// (`symbol::Use::runs_namespace_read`).
+    fn rely_on_namespace_read(&mut self, expr: &Expr) -> bool {
+        let Some(item) = self.namespace_local_read_item(expr) else {
+            return false;
+        };
+        let Some(use_) = self.existing_part_use(item) else {
+            return false;
+        };
+        use_.set_runs_namespace_read();
+        self.part_removal_relies_on_namespace_reads = true;
+        true
     }
 
     pub(crate) fn ignore_usage(&mut self, r#ref: Ref) {
@@ -8996,6 +9048,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // declare top-level symbols must be kept since the eval'd code may
                             // reference those symbols.
                             part.can_be_removed_if_unused = false;
+                            part.removable_if_namespace_reads_bind = false;
                         }
                         if part.declared_symbols.len() == 0 {
                             // SAFETY: `part` is a bitwise duplicate of `parts[idx]`
@@ -9814,6 +9867,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             dynamic_import_copied_locals: Default::default(),
             dynamic_import_destructured_locals: Default::default(),
             namespace_tracked_uses: Default::default(),
+            part_tracked_namespace_uses: Vec::new(),
+            part_removal_assumes_namespace_reads_bind: false,
+            part_removal_relies_on_namespace_reads: false,
             unwrap_all_requires,
             commonjs_named_exports: Default::default(),
             commonjs_module_exports_assigned_deoptimized: false,

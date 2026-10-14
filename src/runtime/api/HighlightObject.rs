@@ -134,11 +134,7 @@ fn styles_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Styles> {
         };
     }
     let Some(object) = value.get_object() else {
-        return Err(global.throw_invalid_argument_type_value(
-            "styles",
-            "string or object",
-            value,
-        ));
+        return Err(global.throw_invalid_argument_type_value("styles", "string or object", value));
     };
     let (mut foreground, mut background) = (None, None);
     let mut styles = [PartialStyle::default(); Token::COUNT];
@@ -201,9 +197,7 @@ impl HighlightTheme {
         let depth = match options.is_undefined() {
             true => JSValue::UNDEFINED,
             false if !options.is_object() => {
-                return Err(global.throw_invalid_argument_type_value(
-                    "options", "object", options,
-                ));
+                return Err(global.throw_invalid_argument_type_value("options", "object", options));
             }
             false => (options.get(global, "colorDepth")?).unwrap_or(JSValue::UNDEFINED),
         };

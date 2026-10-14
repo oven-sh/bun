@@ -115,7 +115,9 @@ impl Theme {
         let mut styles = [Style::PLAIN; Token::COUNT];
         // `Token::ALL` lists a parent before its children.
         for &token in Token::ALL {
-            let inherited = token.parent().map_or(Style::PLAIN, |it| styles[it as usize]);
+            let inherited = token
+                .parent()
+                .map_or(Style::PLAIN, |it| styles[it as usize]);
             let own = given[token as usize];
             styles[token as usize] = Style {
                 color: own.color.or(inherited.color),

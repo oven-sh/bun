@@ -5,7 +5,7 @@
   "private": true,
   "nothing": null,
   "numbers": [0, -1, 2.5e10, 0xFF, +1, .5, Infinity, NaN],
-  "escapes": "a\n\"b\"é",
+  "escapes": "a\n\"b\"\u00e9",
   "nested": { "a": { "b": [] }, "c": {} },
   unquoted: 'single',
   /* block */

@@ -158,8 +158,11 @@ struct Out<'s> {
 impl Out<'_> {
     #[inline]
     fn add(&mut self, start: u32, end: u32, token: Token) {
-        self.spans
-            .add(start.saturating_sub(self.shift), end.saturating_sub(self.shift), token);
+        self.spans.add(
+            start.saturating_sub(self.shift),
+            end.saturating_sub(self.shift),
+            token,
+        );
     }
 }
 
@@ -301,13 +304,15 @@ impl<'a> Highlighter<'a> {
     fn expr(&mut self, e: Expr<'a>) {
         match e.tag() {
             ExprTag::Dot => {
-                let Some(at) = e.member_name_start() else { return };
+                let Some(at) = e.member_name_start() else {
+                    return;
+                };
                 let is_enum = |symbol: Symbol| {
                     let kinds = symbol.declaration_kinds();
                     kinds.contains(DeclarationKinds::TS_ENUM_NAME)
                 };
-                let of_enum = self.has_enums
-                    && e.object().and_then(Expr::symbol).is_some_and(is_enum);
+                let of_enum =
+                    self.has_enums && e.object().and_then(Expr::symbol).is_some_and(is_enum);
                 self.mark(
                     at,
                     match of_enum {
@@ -939,7 +944,11 @@ fn add_with_escapes(out: &mut Out, written: &[u8], start: u32, token: Token) {
         let escape = from + found;
         let end = (escape + escape_len(&written[escape..])).min(written.len());
         out.add(start + from as u32, start + escape as u32, token);
-        out.add(start + escape as u32, start + end as u32, Token::StringEscape);
+        out.add(
+            start + escape as u32,
+            start + end as u32,
+            Token::StringEscape,
+        );
         from = end;
     }
     out.add(start + from as u32, start + written.len() as u32, token);
@@ -1027,7 +1036,11 @@ fn add_jsx_text(out: &mut Out, written: &[u8], start: u32, mark: Option<Token>) 
         if let Some(token) = mark {
             out.add(start + from as u32, start + entity as u32, token);
         }
-        out.add(start + entity as u32, start + end as u32, Token::StringEscape);
+        out.add(
+            start + entity as u32,
+            start + end as u32,
+            Token::StringEscape,
+        );
         (from, search) = (end, end);
     }
     if let Some(token) = mark {

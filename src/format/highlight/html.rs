@@ -149,7 +149,11 @@ fn write_declarations(out: &mut Vec<u8>, style: Style, inherited: Style) {
         let _ = write!(out, "font-weight:{};", value(Font::BOLD, "bold", "normal"));
     }
     if changed.contains(Font::ITALIC) {
-        let _ = write!(out, "font-style:{};", value(Font::ITALIC, "italic", "normal"));
+        let _ = write!(
+            out,
+            "font-style:{};",
+            value(Font::ITALIC, "italic", "normal")
+        );
     }
     if changed.intersects(Font::UNDERLINE | Font::STRIKETHROUGH) {
         let lines = match (

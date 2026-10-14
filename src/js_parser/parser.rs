@@ -1645,7 +1645,7 @@ impl Jest {
         }
     }
 
-    pub(crate) fn is_of_bun_only(global: &str) -> bool {
+    pub fn is_of_bun_only(global: &str) -> bool {
         matches!(global, "jest" | "xit" | "xtest" | "xdescribe")
     }
 

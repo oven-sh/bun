@@ -115,6 +115,7 @@ globals = "vitest" # default "bun"
 
 The `--globals` flag overrides `bunfig.toml`.
 
+- With `globals = "vitest"`, the names are also properties of `globalThis`, as in Vitest. Some packages look for `globalThis.afterEach` there.
 - Imports from `"bun:test"` and `"@jest/globals"` keep those modules' behavior.
 - If a preload script sets one of these globals itself (`globalThis.expect = chai.expect`), files that import from `"bun:test"`, `"@jest/globals"` or `"vitest"` keep the preload's value.
 - As in Vitest, the `"vitest"` globals don't include `jest`, `xit`, `xtest` or `xdescribe`.

@@ -746,6 +746,13 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
 
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
     let global: *mut JSGlobalObject = unsafe { &*vm }.global;
+    // SAFETY: per fn contract; `global` is the live global of `vm`.
+    unsafe {
+        if (*vm).transpiler.options.rewrite_jest_for_tests && (*vm).transpiler.options.vitest_globals {
+            crate::test_runner::jest::Jest::define_vitest_globals(&*global)
+                .map_err(|_| bun_jsc::CrateError::JSError)?;
+        }
+    }
     // `vm.transpiler` (hence `transpiler.fs`) is always initialized here:
     // `init_runtime_state` returns `Err` on `Transpiler::init`
     // failure and `VirtualMachine::init` propagates it via `?`, so a VM that

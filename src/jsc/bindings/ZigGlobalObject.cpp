@@ -2112,6 +2112,20 @@ extern "C" JSC::EncodedJSValue Bun__Jest__testModuleObject(Zig::GlobalObject* gl
     return JSValue::encode(object);
 }
 
+extern "C" JSC::EncodedJSValue Bun__Jest__createVitestModuleObject(JSC::JSGlobalObject*);
+extern "C" JSC::EncodedJSValue Bun__Jest__vitestModuleObject(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& cached = globalObject->nativeModuleDefaultObject(NativeModuleDefaultSlot::BunTestVitest);
+    if (!cached) {
+        JSValue created = JSValue::decode(Bun__Jest__createVitestModuleObject(globalObject));
+        RETURN_IF_EXCEPTION(scope, {});
+        cached.set(vm, globalObject, created.getObject());
+    }
+    return JSValue::encode(cached.get());
+}
+
 extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* globalObject)
 {
     return globalObject->makeNapiEnvForFFI();

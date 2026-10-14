@@ -342,6 +342,23 @@ pub(crate) mod Jest {
         Ok(found)
     }
 
+    /// `globals = "vitest"`: as with Vitest's `globals: true`, the names are also properties of `globalThis`. Packages look for them there.
+    pub(crate) fn define_vitest_globals(global: &JSGlobalObject) -> JsResult<()> {
+        let module = jsc::from_js_host_call(global, || Bun__Jest__vitestModuleObject(global))?;
+        for &name in bun_js_parser::Jest::GLOBALS {
+            if bun_js_parser::Jest::is_of_bun_only(name) {
+                continue;
+            }
+            let key = bun_core::String::static_(name).to_js(global)?;
+            if !global.to_js_value().has_own_property_value(global, key)?
+                && let Some(value) = module.get(global, name)?
+            {
+                global.to_js_value().put(global, name.as_bytes(), value);
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn file_generation(global: &JSGlobalObject) -> u32 {
         if global.bun_vm().worker_ref().is_some() {
             return 0;
@@ -514,6 +531,7 @@ pub(crate) mod Jest {
 
     unsafe extern "C" {
         pub(crate) safe fn Bun__Jest__testModuleObject(global: &JSGlobalObject) -> JSValue;
+        safe fn Bun__Jest__vitestModuleObject(global: &JSGlobalObject) -> JSValue;
         safe fn JSMock__putModuleMockFunctions(global: &JSGlobalObject, mock_fn: JSValue, jest: JSValue, vi: JSValue);
         safe fn JSMock__putMockFunctionUtilities(global: &JSGlobalObject, mock_fn: JSValue, jest: JSValue, vi: JSValue);
     }

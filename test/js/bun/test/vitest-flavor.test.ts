@@ -1830,6 +1830,69 @@ describe.concurrent(`[test] globals = "vitest"`, () => {
     expect({ log, exitCode }).toEqual({ log: ofVitest, exitCode: 0 });
   });
 
+  describe("the globals are properties of globalThis", () => {
+    const names =
+      "afterAll,afterEach,assertType,beforeAll,beforeEach,describe,expect,expectTypeOf,it,onTestFailed,onTestFinished,suite,test,vi,vitest";
+    const files = {
+      // @testing-library/user-event registers its clipboard cleanup this way.
+      "node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+      "node_modules/pkg/index.js": `
+        let resets = 0;
+        if (typeof globalThis.afterEach === "function") globalThis.afterEach(() => void resets++);
+        if (typeof globalThis.afterAll === "function") globalThis.afterAll(() => console.log("afterAll of the package"));
+        module.exports = () => resets;
+      `,
+      "setup.js": `console.log("preload:", typeof globalThis.expect, typeof globalThis.vi, typeof globalThis.jest);`,
+      "a.test.js": `
+        import * as api from "vitest";
+        import resets from "pkg";
+        test("one", () => {
+          console.log(Object.keys(api).filter(name => Object.hasOwn(globalThis, name) && globalThis[name] === api[name]).sort().join());
+          console.log(JSON.stringify(Object.getOwnPropertyDescriptor(globalThis, "afterEach")));
+        });
+        test("two", () => console.log(resets(), "reset"));
+      `,
+    };
+
+    test.each([[[]], [["--isolate"]], [["--parallel=2"]]])("as with globals: true in Vitest %j", async args => {
+      const { log, exitCode } = await runTests({ ...files, "bunfig.toml": bunfig("vitest") }, [
+        "--preload=./setup.js",
+        ...args,
+      ]);
+      expect({ log, exitCode }).toEqual({
+        log: [
+          "preload: function object undefined",
+          names,
+          `{"writable":true,"enumerable":true,"configurable":true}`,
+          "1 reset",
+          "afterAll of the package",
+        ],
+        exitCode: 0,
+      });
+    });
+
+    test("but not by default", async () => {
+      const { log, exitCode } = await runTests(files, ["--preload=./setup.js"]);
+      expect({ log, exitCode }).toEqual({
+        log: ["preload: undefined undefined undefined", "undefined", "0 reset"],
+        exitCode: 0,
+      });
+    });
+
+    test("one that a preload has set is kept", async () => {
+      const { log, exitCode } = await runTests(
+        {
+          "bunfig.toml": bunfig("vitest"),
+          "setup.js": `globalThis.suite = "mine";`,
+          "a.test.js": `test("one", () => console.log(globalThis.suite, typeof globalThis.describe));`,
+          "b.test.js": `test("two", () => console.log(globalThis.suite, typeof globalThis.describe));`,
+        },
+        ["--preload=./setup.js"],
+      );
+      expect({ log, exitCode }).toEqual({ log: ["mine function", "mine function"], exitCode: 0 });
+    });
+  });
+
   test.each([
     ["--globals=vitest", undefined, ["--globals=vitest"]],
     [`globals = "vitest"`, "vitest", []],

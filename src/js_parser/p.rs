@@ -1150,7 +1150,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// The import record `ns.name` reads an export of, when `ns` holds that one
-    /// module's namespace, so the read can become an import item.
+    /// module's namespace, so the read can have an import item.
     pub(crate) fn dynamic_import_item_record(&self, ns: Ref, name: &[u8]) -> Option<u32> {
         if !self.options.bundle
             || self.options.output_format == options::Format::InternalBakeDev

@@ -175,7 +175,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 js_ast::ExprData::EIdentifier(id) => {
                     // A local holding one module's namespace (`const ns = await
                     // import(…)`) reads its exports as `import * as ns` does:
-                    // `ns.a` becomes an import item of that record, below.
+                    // `ns.a` gets an import item of that record, below.
                     let mut dynamic_record = None;
                     if p.dynamic_import_namespace_locals.contains_key(&id.ref_) {
                         if can_track_dynamic_import_member {

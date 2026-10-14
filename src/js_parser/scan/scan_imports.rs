@@ -662,13 +662,16 @@ impl<'a> ImportScanner<'a> {
                     if st.origin.is_ts_import_equals() && !st.is_export && st.decls.len_u32() > 0 {
                         let decl = &st.decls.slice()[0];
 
-                        // Skip to the underlying reference. A read the linker
-                        // may bind to an export is that reference, as the
-                        // import item of `import * as ns; import a = ns.a` is.
+                        // Skip to the underlying reference. `x.a` off `import x =
+                        // require()` is that reference when the linker may bind it
+                        // to an export, as the import item of `import * as x` is.
                         let mut value: Option<Expr> = decl.value;
                         if decl.value.is_some() {
                             while let js_ast::ExprData::EDot(dot) = value.unwrap().data {
-                                if dot.is_import_property_use {
+                                if dot.is_import_property_use
+                                    && matches!(dot.target.data, js_ast::ExprData::EIdentifier(id)
+                                        if p.dynamic_import_namespace_locals.contains_key(&id.ref_))
+                                {
                                     break;
                                 }
                                 value = Some(dot.target);

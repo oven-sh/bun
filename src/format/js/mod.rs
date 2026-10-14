@@ -1,6 +1,7 @@
 //! JavaScript, JSX and TypeScript.
 
 pub(crate) mod ast_nodes;
+pub(crate) mod attach;
 pub(crate) mod builders;
 pub(crate) mod comments;
 pub(crate) mod context;

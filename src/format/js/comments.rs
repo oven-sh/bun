@@ -131,6 +131,24 @@ impl Comment {
         self.leads_until != 0 && self.leads_until < span.end
     }
 
+    /// Prettier's `isTypeCastComment`.
+    #[inline]
+    pub(crate) fn looks_like_type_cast(self) -> bool {
+        self.flags & LOOKS_LIKE_TYPE_CAST != 0
+    }
+
+    /// The same, in a file where the parentheses after it are kept.
+    #[inline]
+    pub(crate) fn is_type_cast(self) -> bool {
+        self.flags & TYPE_CAST != 0
+    }
+
+    /// See [`Flavor::is_ignore_comment`].
+    #[inline]
+    pub(crate) fn is_ignore_comment(self) -> bool {
+        self.flags & SUPPRESSION != 0
+    }
+
     /// Prettier's `isIndentableBlockComment`: it has several lines, and every line but the first
     /// starts with a `*`, so the stars can be lined up.
     #[inline]
@@ -161,10 +179,35 @@ pub(crate) fn collect<'a>(
     parsed_by: ParsedBy,
     comments: &mut Vec<Comment>,
 ) {
+    let first = comments.len();
+    let has_tree_of_babel = parsed_by == ParsedBy::Babel || file.is_javascript();
+    read(file, flavor, has_tree_of_babel, comments);
+    move_comments(
+        file,
+        flavor,
+        has_tree_of_babel,
+        comments.get_mut(first..).unwrap_or_default(),
+    );
+}
+
+/// The same, and none is moved.
+pub(crate) fn collect_where_they_are<'a>(
+    file: &'a File<'a>,
+    flavor: Flavor,
+    comments: &mut Vec<Comment>,
+) {
+    read(file, flavor, file.is_javascript(), comments);
+}
+
+fn read<'a>(
+    file: &'a File<'a>,
+    flavor: Flavor,
+    has_tree_of_babel: bool,
+    comments: &mut Vec<Comment>,
+) {
     let text = file.text();
     let source = SourceText::new(text);
     let first = comments.len();
-    let has_tree_of_babel = parsed_by == ParsedBy::Babel || file.is_javascript();
     let has_type_casts = has_tree_of_babel || type_casts_are_kept_in_typescript(flavor);
     for token in file.comments() {
         let span = token.span();
@@ -222,12 +265,6 @@ pub(crate) fn collect<'a>(
             flags,
         });
     }
-    move_comments(
-        file,
-        flavor,
-        has_tree_of_babel,
-        comments.get_mut(first..).unwrap_or_default(),
-    );
 }
 
 /// `\s` for one byte. `u8::is_ascii_whitespace` does not know the vertical tab.

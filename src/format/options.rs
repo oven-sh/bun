@@ -99,6 +99,8 @@ pub struct FormatOptions {
     pub tailwind: Option<std::sync::Arc<crate::tailwind::Tailwind>>,
     /// Format TOML even in Prettier's flavor. Only the caller that detects file types reads this.
     pub toml: bool,
+    /// For the tests. The result is not the formatted text but a list of the comments and what each is attached to.
+    pub lists_comments: bool,
 }
 
 /// Formats JavaScript or TypeScript, which this crate cannot parse by itself. It is given the name of a file that

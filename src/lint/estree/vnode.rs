@@ -1,6 +1,7 @@
 //! A node of the virtual ESTree: what it is, and where it is.
 
 use super::{Dialect, NodeType};
+use crate::ast::Packed;
 use crate::ast::{
     EntityName, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Ident, ImportEqualsTarget, Key,
     KeyKind, Keyword, Member, MemberKind, Modifier, Module, ModuleName, Node, Param, Pat, PatElem,
@@ -16,7 +17,7 @@ use bun_sema::hir::{ModifierId, PropId};
 /// and everything about it is computed from that when it is asked for. Two are equal if they are
 /// the same node of the ESTree.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub(crate) struct VNode<'a> {
+pub struct VNode<'a> {
     pub(super) base: Node<'a>,
     pub(super) part: Part,
 }
@@ -121,6 +122,23 @@ pub(super) enum Part {
     NamePart(u32),
 }
 
+/// A [`VNode`] without the reference to the file.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct PackedVNode {
+    base: Packed,
+    part: Part,
+}
+
+impl PackedVNode {
+    #[inline]
+    pub fn in_file<'a>(self, file: &'a File<'a>) -> VNode<'a> {
+        VNode {
+            base: self.base.unpack(file),
+            part: self.part,
+        }
+    }
+}
+
 /// A node without children that is made of a token.
 #[derive(Copy, Clone)]
 pub(super) enum Leaf<'a> {
@@ -201,13 +219,31 @@ impl<'a> VNode<'a> {
 
     /// The root.
     #[inline]
-    pub(crate) fn program(file: &'a File<'a>) -> VNode<'a> {
+    pub fn program(file: &'a File<'a>) -> VNode<'a> {
         VNode::new(file, Part::Main)
     }
 
     #[inline]
-    pub(crate) fn file(self) -> &'a File<'a> {
+    pub fn file(self) -> &'a File<'a> {
         self.base.file()
+    }
+
+    #[inline]
+    pub fn packed(self) -> PackedVNode {
+        PackedVNode {
+            base: self.base.packed(),
+            part: self.part,
+        }
+    }
+
+    /// The expression whose parentheses, if it is written in some, are around this node and around nothing else.
+    pub fn expr_in_parentheses(self) -> Option<Expr<'a>> {
+        let e = match self.base {
+            Node::Expr(e) => e,
+            Node::Func(_) | Node::Class(_) => self.base.parent().as_expr()?,
+            _ => return None,
+        };
+        (VNode::in_container(e) == Some(self)).then_some(e)
     }
 
     #[inline]
@@ -645,7 +681,7 @@ impl<'a> VNode<'a> {
 
 impl<'a> VNode<'a> {
     /// ESTree's `type`.
-    pub(crate) fn node_type(self) -> NodeType {
+    pub fn node_type(self) -> NodeType {
         use NodeType::*;
         if self.part != Part::Main
             && let Some((leaf, _)) = self.leaf()
@@ -1010,7 +1046,7 @@ impl<'a> VNode<'a> {
     }
 
     /// ESTree's `range`, in bytes.
-    pub(crate) fn span(self) -> Span {
+    pub fn span(self) -> Span {
         if self.part != Part::Main
             && let Some((_, span)) = self.leaf()
         {

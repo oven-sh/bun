@@ -999,6 +999,15 @@ pub fn format_for_tests(
     })
 }
 
+/// What each comment of the file at `path` is attached to, a line for each. `None` if the file has a syntax error.
+pub fn comments_for_tests(path: &[u8], text: &[u8]) -> Option<Vec<u8>> {
+    let options = FormatOptions {
+        lists_comments: true,
+        ..FormatOptions::default()
+    };
+    Some(format_for_tests(path, text, &options).ok()?.0)
+}
+
 /// What `--debug-check` says about the Svelte component `before` if `after` is what it is formatted to: whether both say the
 /// same. For the tests of the check, which the formatter gives nothing to complain about.
 pub fn is_same_svelte_for_tests(before: &[u8], after: &[u8]) -> bool {

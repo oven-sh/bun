@@ -210,7 +210,7 @@ impl<'a> VNode<'a> {
     }
 
     /// ESTree's `parent`. `None` for the `Program`.
-    pub(crate) fn parent(self) -> Option<VNode<'a>> {
+    pub fn parent(self) -> Option<VNode<'a>> {
         use Part::*;
         let main = self.with(Main);
         Some(match (self.base, self.part) {

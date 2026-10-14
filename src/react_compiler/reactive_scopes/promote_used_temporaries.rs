@@ -1254,7 +1254,11 @@ fn promote_all_instances_scope_identifiers(
         .iter()
         .map(|d| d.identifier)
         .collect();
-    let reassign_ids: Vec<IdentifierId> = scope_data.reassignments.to_vec();
+    let reassign_ids: Vec<IdentifierId> = scope_data
+        .reassignments
+        .iter()
+        .map(|d| d.identifier)
+        .collect();
 
     for id in decl_ids {
         let identifier = &env.identifiers[id.0 as usize];

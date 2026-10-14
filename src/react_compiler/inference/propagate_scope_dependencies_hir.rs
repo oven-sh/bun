@@ -2076,29 +2076,39 @@ impl<'a> DependencyCollectionContext<'a> {
     fn visit_reassignment(&mut self, place: &Place, env: &mut Environment) {
         // Not in upstream: a store that dead_code_elimination.rs retains can be in a later scope.
         self.declare_outside_original_scope(place.identifier, env);
+        let Some(innermost) = self.current_scope() else {
+            return;
+        };
+        let reassignment = crate::hir::ReactiveScopeDeclaration {
+            identifier: place.identifier,
+            scope: innermost,
+        };
+        let declaration_id = env.identifiers[place.identifier.0 as usize].declaration_id;
         // Upstream asks the innermost scope alone. A scope around it that is not run again then leaves the variable unset.
         for index in 0..self.scope_stack.len() {
             let current_scope = self.scope_stack[index];
             let scope = &env.scopes[current_scope.0 as usize];
-            let already = scope.reassignments.iter().any(|id| {
-                env.identifiers[id.0 as usize].declaration_id
-                    == env.identifiers[place.identifier.0 as usize].declaration_id
+            let already = scope.reassignments.iter().position(|it| {
+                env.identifiers[it.identifier.0 as usize].declaration_id == declaration_id
             });
-            if !already
-                && self.check_valid_dependency_of(
-                    Some(current_scope),
-                    &ReactiveScopeDependency {
-                        identifier: place.identifier,
-                        reactive: place.reactive,
-                        path: hir_vec![],
-                        loc: place.loc,
-                    },
-                    env,
-                )
-            {
+            if let Some(already) = already {
+                let scope = &mut env.scopes[current_scope.0 as usize];
+                if current_scope == innermost && scope.reassignments[already].scope != innermost {
+                    scope.reassignments[already] = reassignment.clone();
+                }
+            } else if self.check_valid_dependency_of(
+                Some(current_scope),
+                &ReactiveScopeDependency {
+                    identifier: place.identifier,
+                    reactive: place.reactive,
+                    path: hir_vec![],
+                    loc: place.loc,
+                },
+                env,
+            ) {
                 env.scopes[current_scope.0 as usize]
                     .reassignments
-                    .push(place.identifier);
+                    .push(reassignment.clone());
             }
         }
     }

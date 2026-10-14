@@ -1535,8 +1535,9 @@ pub struct ReactiveScope {
     /// The set of values produced by this scope (populated by later passes)
     pub declarations: HirVec<(IdentifierId, ReactiveScopeDeclaration)>,
 
-    /// Identifiers which are reassigned by this scope (populated by later passes)
-    pub reassignments: HirVec<IdentifierId>,
+    /// Identifiers which are reassigned by this scope (populated by later passes).
+    /// Not in upstream: also those of the scopes in it, each with the innermost scope around the assignment.
+    pub reassignments: HirVec<ReactiveScopeDeclaration>,
 
     /// If the scope contains an early return, this stores info about it (populated by later passes)
     pub early_return_value: Option<ReactiveScopeEarlyReturn>,
@@ -1546,6 +1547,17 @@ pub struct ReactiveScope {
 
     /// Source location spanning the scope
     pub loc: Option<SourceLocation>,
+}
+
+impl ReactiveScope {
+    /// What upstream has as `reassignments`. The others are outputs that do not keep the scope, like
+    /// the declarations that `has_own_declaration` leaves out.
+    pub fn own_reassignments(&self) -> impl Iterator<Item = IdentifierId> + '_ {
+        self.reassignments
+            .iter()
+            .filter(|it| it.scope == self.id)
+            .map(|it| it.identifier)
+    }
 }
 
 /// A dependency of a reactive scope.

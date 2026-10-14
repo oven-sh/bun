@@ -700,7 +700,7 @@ fn codegen_reactive_scope(
         // Not in upstream: the scope assigns it, so it is kept as it was. Not stored at once: the scope may throw.
         if scope_reassignments
             .iter()
-            .any(|id| cx.env.identifiers[id.0 as usize].declaration_id == declaration)
+            .any(|it| cx.env.identifiers[it.identifier.0 as usize].declaration_id == declaration)
         {
             let before = cx.alloc_cache_index();
             values_before.push(Expr::init(
@@ -770,12 +770,12 @@ fn codegen_reactive_scope(
         ));
     }
 
-    for reassignment_id in scope_reassignments {
+    for reassignment in scope_reassignments {
         let index = cx.alloc_cache_index();
         if first_output_index.is_none() {
             first_output_index = Some(index);
         }
-        let (name_ref, name_loc) = convert_identifier(cx, reassignment_id)?;
+        let (name_ref, name_loc) = convert_identifier(cx, reassignment.identifier)?;
         cache_loads.push((name_ref, index, Expr::init_identifier(name_ref, name_loc)));
     }
 

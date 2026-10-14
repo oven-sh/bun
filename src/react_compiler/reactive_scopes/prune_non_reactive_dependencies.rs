@@ -230,8 +230,8 @@ impl<'a> ReactiveFunctionTransform for PruneVisitor<'a> {
             for id in decl_ids {
                 state.insert(id);
             }
-            for id in scope_data.reassignments.iter() {
-                state.insert(*id);
+            for reassignment in scope_data.reassignments.iter() {
+                state.insert(reassignment.identifier);
             }
         }
         Ok(())

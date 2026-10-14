@@ -1054,8 +1054,8 @@ describe("bundler", () => {
     },
   });
 
-  // The scope around each loop has the variable as an output and as a dependency. Upstream gives the variable to a scope
-  // in the loop alone, and prunes the one around it.
+  // In `Sum` the scope around the loop has the variable as an output and as a dependency. In the others the variable is
+  // assigned in a scope in the loop, and the one around it is pruned: see ReassignedInALoopInAScope.
   itBundled("react-compiler/LoopThatAssignsWhatItReads", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -1129,6 +1129,96 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // `anchor` is assigned in the scope of `c`, which is pruned because it is in a loop. The scope around the outer loop has
+  // it as an output, but is only kept for an output of its own, as it is for declarations. `Anchor` has none, so the loop is
+  // not memoized, as in babel-plugin-react-compiler 1.0.0. `AnchorOrLast` also assigns it outside the scope of `c`, which
+  // makes it the outer scope's own, as in 1.0.0. With `seen`, 1.0.0 gives 0 in the second render of `AnchorAndSeen`, and
+  // runs the scope of `LatestAndSeen` in every render.
+  itBundled("react-compiler/ReassignedInALoopInAScope", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Anchor(props) {
+          let anchor = 0;
+          for (const m of props.msgs) {
+            const c = m.ids.length ? [m] : [];
+            for (const a of c) {
+              if (props.live.has(a.ids[0])) anchor = a.ts;
+            }
+          }
+          return <div>{anchor}</div>;
+        }
+        function AnchorOrLast(props) {
+          let anchor = 0;
+          for (const m of props.msgs) {
+            const c = m.ids.length ? [m] : [];
+            for (const a of c) {
+              if (props.live.has(a.ids[0])) anchor = a.ts;
+            }
+            if (m.last) anchor = m.ts;
+          }
+          return <div>{anchor}</div>;
+        }
+        function AnchorAndSeen(props) {
+          let anchor = 0;
+          const seen = [];
+          for (const m of props.msgs) {
+            const c = m.ids.length ? [m] : [];
+            for (const a of c) {
+              if (props.live.has(a.ids[0])) anchor = a.ts;
+            }
+            seen.push(m.ts);
+          }
+          return <div>{anchor}{seen}</div>;
+        }
+        function LatestAndSeen(props) {
+          let latest = 0;
+          const seen = [];
+          for (const m of props.msgs) {
+            const c = m.ids.length ? [m] : [];
+            for (const a of c) {
+              if (props.live.has(a.ids[0]) && a.ts > latest) latest = a.ts;
+            }
+            seen.push(m.ts);
+          }
+          return <div>{latest}{seen}</div>;
+        }
+        const msgs = [{ ids: ["a"], ts: 100 }, { ids: ["b"], ts: 200 }, { ids: [], ts: 300 }];
+        const a = new Set(["a"]), both = new Set(["a", "b"]);
+        const renders = [{ msgs, live: a }, { msgs, live: a }, { msgs, live: both }, { msgs, live: a }, { msgs: [], live: a }];
+        for (const component of [Anchor, AnchorOrLast, AnchorAndSeen, LatestAndSeen]) {
+          globalThis.rendering = component;
+          const rendered = renders.map(props => component(props));
+          console.log(rendered.map(it => JSON.stringify(it.p.children)).join(", "), rendered[0] === rendered[1]);
+        }
+        console.log(globalThis.slots(Anchor), globalThis.slots(AnchorOrLast));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        globalThis.slots = component => caches.get(component).length;
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: [
+        "100, 100, 200, 100, 0 true",
+        "100, 100, 200, 100, 0 true",
+        "[100,[100,200,300]], [100,[100,200,300]], [200,[100,200,300]], [100,[100,200,300]], [0,[]] true",
+        "[100,[100,200,300]], [100,[100,200,300]], [200,[100,200,300]], [100,[100,200,300]], [0,[]] true",
+        "2 5",
+      ].join("\n"),
     },
   });
 

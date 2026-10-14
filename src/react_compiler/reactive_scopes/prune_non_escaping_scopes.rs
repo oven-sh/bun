@@ -1075,7 +1075,7 @@ impl<'a> ReactiveFunctionVisitor for CollectDependenciesVisitor<'a> {
 
         // If a scope reassigns any variables, set the chain of active scopes as a dependency
         // of those variables.
-        for reassignment_id in &scope_data.reassignments {
+        for reassignment_id in scope_data.own_reassignments() {
             let reassignment = &env.identifiers[reassignment_id.0 as usize];
             let Some(identifier_node) = state.0.identifiers.get_mut(reassignment.declaration_id)
             else {
@@ -1215,7 +1215,7 @@ impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
 
         // Keep scopes that appear empty (value being memoized may be early-returned)
         // or have early return values
-        if (scope_data.declarations.is_empty() && scope_data.reassignments.is_empty())
+        if (scope_data.declarations.is_empty() && scope_data.own_reassignments().next().is_none())
             || scope_data.early_return_value.is_some()
         {
             return Ok(Transformed::Keep);
@@ -1224,7 +1224,7 @@ impl<'a> ReactiveFunctionTransform for PruneScopesTransform<'a> {
         let has_memoized_output = scope_data.declarations.iter().any(|(_, decl)| {
             let decl_id = self.env.identifiers[decl.identifier.0 as usize].declaration_id;
             state.contains(decl_id)
-        }) || scope_data.reassignments.iter().any(|reassign_id| {
+        }) || scope_data.own_reassignments().any(|reassign_id| {
             let decl_id = self.env.identifiers[reassign_id.0 as usize].declaration_id;
             state.contains(decl_id)
         });

@@ -131,9 +131,12 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                         self.unmemoized_values.insert(*id);
                     }
                 }
-                for id in scope_data.reassignments.iter() {
-                    if self.always_invalidating_values.contains(*id) {
-                        self.unmemoized_values.insert(*id);
+                for reassignment in scope_data.reassignments.iter() {
+                    if self
+                        .always_invalidating_values
+                        .contains(reassignment.identifier)
+                    {
+                        self.unmemoized_values.insert(reassignment.identifier);
                     }
                 }
 

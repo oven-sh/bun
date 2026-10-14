@@ -70,7 +70,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         let scope_data = &self.env.scopes[scope_id.0 as usize];
 
         if !scope_state.has_return_statement
-            && scope_data.reassignments.is_empty()
+            && scope_data.own_reassignments().next().is_none()
             && (scope_data.declarations.is_empty() || !has_own_declaration(scope_data, scope_id))
         {
             // Replace with pruned scope

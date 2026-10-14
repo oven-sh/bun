@@ -1,7 +1,18 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import { chmodSync, chownSync, linkSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isLinux,
+  isMacOS,
+  isWindows,
+  joinP,
+  spawnLookupLoop,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1803,6 +1814,36 @@ it.skipIf(isWindows)("reports a resolution error for an absolute specifier of th
   expect(stdout).toBe("ResolveMessage ERR_MODULE_NOT_FOUND\n");
   expect(exitCode).toBe(0);
 });
+
+// fcntl(F_GETPATH) names a file that has several hard links by the link that any process looked up
+// last. Linux names the link that was opened.
+it.skipIf(!isMacOS)(
+  "resolves a symlink to a hard link to the link that the symlink names while another process looks up a different link",
+  async () => {
+    using dir = tempDir("resolver-symlink-to-hard-link", {
+      original: { "original.js": "" },
+      linked: {},
+      symlinks: {},
+    });
+    const root = realpathSync(String(dir));
+    const original = join(root, "original", "original.js");
+    const link = join(root, "linked", "link.js");
+    linkSync(original, link);
+    // The resolver resolves each symlink one time, so every symlink is one sample.
+    const symlinks = 500;
+    for (let i = 0; i < symlinks; i++) symlinkSync("../linked/link.js", join(root, "symlinks", `${i}.js`));
+
+    await using lookups = await spawnLookupLoop(original);
+
+    const seen: Record<string, number> = {};
+    for (let i = 0; i < symlinks; i++) {
+      const resolved = Bun.resolveSync(`./symlinks/${i}.js`, root);
+      seen[resolved] = (seen[resolved] ?? 0) + 1;
+    }
+    expect(lookups.exitCode).toBeNull();
+    expect(seen).toEqual({ [link]: symlinks });
+  },
+);
 
 // https://github.com/oven-sh/bun/issues/36968
 describe.concurrent("dot specifiers resolve to the directory index, not a sibling file", () => {

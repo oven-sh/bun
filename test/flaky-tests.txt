@@ -14,7 +14,6 @@
 test/bake/deinitialization.test.ts  # 13 of 80 builds; windows
 test/bake/dev-and-prod.test.ts  # 1 of 80 builds; debian; error: Selector 'body' was not found
 test/bundler/transpiler/decorators.test.ts  # 2 of 80 builds; lowering many decorated instance fields into a large constructor body stays linear: ex...
-test/cli/bun.test.ts  # 20 of 80 builds; mac; completions > installs a bunx symlink: the symlink pointed at bin/bun in the temp dir i...
 test/cli/hot/hot.test.ts  # 3 of 80 builds; debian, ubuntu
 test/cli/inspect/inspect.test.ts  # 3 of 80 builds; debian, ubuntu
 test/cli/install/bun-add.test.ts  # 5 of 80 builds

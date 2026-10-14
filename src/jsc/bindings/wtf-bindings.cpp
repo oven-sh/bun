@@ -252,9 +252,7 @@ String base64URLEncodeToString(const Vector<uint8_t>& data)
     if (!encodedLength)
         return String();
 
-    // String::createUninitialized CRASH()es over String::MaxLength. The key
-    // material that reaches this can be user-length (an HMAC key), so the
-    // caller sees a null String instead.
+    // String::createUninitialized CRASH()es over String::MaxLength.
     if (encodedLength > std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(String::MaxLength))) [[unlikely]]
         return String();
 

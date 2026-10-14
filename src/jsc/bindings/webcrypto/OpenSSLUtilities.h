@@ -38,11 +38,7 @@
 
 namespace WebCore {
 
-// Sizes an output buffer whose length comes from user data (plaintext + tag,
-// padded block count, wrapped key + 8). SubtleCrypto caps the input at the
-// Vector limit, but the output can still be over it, and the Vector size
-// constructor CRASH()es instead of failing. A false return becomes an
-// OperationError rejection in the caller.
+// For output sizes derived from user data. Vector(size_t) CRASH()es over the cap.
 [[nodiscard]] inline bool tryAllocateOutputBuffer(Vector<uint8_t>& buffer, size_t size)
 {
     ASSERT(buffer.isEmpty());

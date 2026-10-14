@@ -352,7 +352,7 @@ describe("oversized outputs", () => {
   // size constructor aborts the process when the size is over the cap. The
   // synthetic limit lowers the cap to 1 MiB so each path is tested on both
   // sides of it with small buffers.
-  it("rejects an output over the buffer limit and accepts one at the limit", async () => {
+  it.concurrent("rejects an output over the buffer limit and accepts one at the limit", async () => {
     const script = `
       import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
       const limit = 1024 * 1024;
@@ -434,7 +434,7 @@ describe("oversized outputs", () => {
   // input copy alone takes 2 GiB, so the child needs a machine with room for
   // it. The accept side of the boundary is an encrypt of 2 GiB, which takes
   // over 30 s in a debug ASAN build, so the synthetic test above covers it.
-  it.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 8 * 1024 ** 3)(
+  it.concurrent.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 8 * 1024 ** 3)(
     "AES-GCM rejects an output of 2^31 bytes",
     async () => {
       const script = `
@@ -459,7 +459,6 @@ describe("oversized outputs", () => {
       expect(JSON.parse(stdout)).toEqual({ encrypt: "OperationError" });
       expect(exitCode).toBe(0);
     },
-    30_000,
   );
 });
 

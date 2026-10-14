@@ -18,8 +18,7 @@ JSC::EncodedJSValue customInspect(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::JS
 // getConstructorOf(obj).name (node lib/internal/util.js) with `fallback` when
 // no named constructor is found on the prototype chain.
 WTF::String constructorNameOf(JSC::JSGlobalObject*, JSC::JSValue thisValue, ASCIILiteral fallback);
-// `${name} ${inspect(data, options)}`, the last step of customInspect. For a hook that
-// makes the options itself: node's URL hook passes its caller's options on as they are.
+// `${name} ${inspect(data, options)}`: the last step of customInspect, for a hook that makes the options itself.
 JSC::EncodedJSValue inspectWithName(JSC::JSGlobalObject*, const WTF::String& name, JSC::JSObject* data, JSC::JSValue options);
 
 // Installs the host function on a prototype under Symbol.for("nodejs.util.inspect.custom").

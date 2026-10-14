@@ -1454,8 +1454,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
         return base;
       }
     } else if (
-      // node's isURL() arm (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L1402).
-      // $inheritsDOMURL is true only for a native URL object, whatever `globalThis.URL` is.
+      // node's isURL() arm. $inheritsDOMURL is the native class test: a program can replace `globalThis.URL`.
       typeof (href = value.href) === "string" &&
       $inheritsDOMURL(value) &&
       !(recurseTimes > ctx.depth && ctx.depth !== null)

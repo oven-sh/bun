@@ -134,6 +134,7 @@ pub fn install_with_manager(
     // this defaults to false
     // but we force allowing updates to the lockfile when you do bun add
     let mut had_any_diffs = false;
+    let mut loaded_manifest_sections: Option<lockfile::ManifestSections> = None;
     let mut direct_deps_before = DirectDependencies::default();
     manager.progress = Default::default();
 
@@ -235,6 +236,14 @@ pub fn install_with_manager(
                 };
 
                 had_any_diffs = manager.summary.has_diffs();
+                // For the frozen-lockfile check; the loaded sections are replaced below.
+                if had_any_diffs
+                    && manager.options.enable.frozen_lockfile()
+                    && ok.format == lockfile::Format::Text
+                    && ok.migrated == lockfile::Migrated::None
+                {
+                    loaded_manifest_sections = Some(manager.lockfile.manifest_sections());
+                }
                 // The lockfile does not store the set. Every install takes it from the manifests.
                 manager
                     .lockfile
@@ -789,6 +798,8 @@ pub fn install_with_manager(
     {
         'frozen_lockfile: {
             let changed_section = frozen_changed_section(manager, root_package_json_path);
+            // A section bun.lock records differently, and the directory of its package.json.
+            let mut mismatch: Option<(&'static str, Box<[u8]>)> = None;
             if changed_section.is_none() {
                 if load_result.loaded_from_text_lockfile() {
                     if bun_core::handle_oom(Lockfile::eql(
@@ -796,7 +807,16 @@ pub fn install_with_manager(
                         &lockfile_before_clean,
                         lockfile_before_clean.loaded_package_count as usize,
                     )) {
-                        break 'frozen_lockfile;
+                        if let Some(loaded) = &loaded_manifest_sections {
+                            mismatch = manager
+                                .lockfile
+                                .manifest_sections()
+                                .changed_since(loaded)
+                                .map(|(section, dir)| (section, Box::from(dir)));
+                        }
+                        if mismatch.is_none() {
+                            break 'frozen_lockfile;
+                        }
                     }
                 } else if !(manager
                     .lockfile
@@ -820,6 +840,14 @@ pub fn install_with_manager(
                         "{} in package.json changed since {} was saved",
                         section,
                         loaded_lockfile_name(&load_result)
+                    );
+                } else if let Some((section, dir)) = &mismatch {
+                    bun_core::note!(
+                        "{} does not match {} in {}{}package.json",
+                        loaded_lockfile_name(&load_result),
+                        section,
+                        bstr::BStr::new(dir),
+                        if dir.is_empty() { "" } else { "/" },
                     );
                 }
                 bun_core::note!(

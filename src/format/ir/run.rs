@@ -25,6 +25,16 @@ pub(crate) fn format_with_marks<'a>(
     out: &mut Vec<u8>,
     write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
 ) -> Result<[Option<u32>; 2], FormatError> {
+    if options.lists_comments {
+        let mut comments = Vec::new();
+        crate::js::comments::collect_where_they_are(file, options.flavor, &mut comments);
+        let how = crate::js::attach::Options {
+            has_tree_of_babel: file.is_javascript(),
+            experimental_ternaries: options.experimental_ternaries,
+        };
+        crate::js::attach::list(file, &comments, how, out);
+        return Ok([None; 2]);
+    }
     let root = write_document(file, options, cursor, scratch, write)?;
     print(root, file.text(), options, scratch, out)?;
     Ok(scratch.printer.marks)

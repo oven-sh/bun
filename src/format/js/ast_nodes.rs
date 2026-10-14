@@ -199,7 +199,7 @@ fn is_comma(e: Expr<'_>) -> bool {
 }
 
 /// Whether `e` is the `a, b` of `a, b, c`, which is not a node of its own in ESTree.
-fn is_inner_comma(e: Expr<'_>) -> bool {
+pub(crate) fn is_inner_comma(e: Expr<'_>) -> bool {
     is_comma(e)
         && !e.is_parenthesized()
         && matches!(e.parent(), Node::Expr(parent) if is_comma(parent) && parent.left() == Some(e))
@@ -512,7 +512,7 @@ impl<'a> AsAstNodes<'a> for VarDecl<'a> {
 }
 
 /// The statement without the `export` around it.
-fn inner_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
+pub(crate) fn inner_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
     use AstNodes as N;
     match statement.tag() {
         StmtTag::Var => return N::VariableDeclaration(statement),

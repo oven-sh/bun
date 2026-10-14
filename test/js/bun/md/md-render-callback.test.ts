@@ -406,6 +406,21 @@ describe("Bun.markdown.render", () => {
     });
     expect(result).toBe("&");
   });
+
+  test("noHtmlSpans: link callback runs for an autolink in angle brackets", () => {
+    const links: { children: string; href: string }[] = [];
+    const result = Markdown.render(
+      "Docs: <https://example.com/docs>, mail <me@example.com>, and a <b>raw</b> tag.\n",
+      {
+        link: (children: string, { href }: any) => (links.push({ children, href }), `[${children}]`),
+        paragraph: (children: string) => children,
+      },
+      { noHtmlSpans: true },
+    );
+    expect(links.map(link => link.children)).toEqual(["https://example.com/docs", "me@example.com"]);
+    expect(links[0].href).toBe("https://example.com/docs");
+    expect(result).toBe("Docs: [https://example.com/docs], mail [me@example.com], and a <b>raw</b> tag.");
+  });
 });
 
 describe("Bun.markdown buffer input", () => {

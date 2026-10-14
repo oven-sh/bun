@@ -1621,7 +1621,18 @@ declare module "bun" {
       noIndentedCodeBlocks?: boolean;
       /** Disable HTML blocks. Default: `false`. */
       noHtmlBlocks?: boolean;
-      /** Disable inline HTML spans. Default: `false`. */
+      /**
+       * Treat inline HTML as text. `Bun.markdown.html()` escapes a tag such
+       * as `<b>`. An autolink in angle brackets (`<https://example.com>`,
+       * `<me@example.com>`) stays a link, and the scheme of a link is not
+       * filtered. HTML blocks have their own option, `noHtmlBlocks`.
+       *
+       * `Bun.markdown.render()` and `Bun.markdown.react()` do not escape
+       * text, with or without this option: a tag reaches the `text` callback
+       * of `render()` and is a string child in `react()`.
+       *
+       * Default: `false`.
+       */
       noHtmlSpans?: boolean;
       /**
        * Enable the GFM tag filter, which replaces `<` with `&lt;` for disallowed

@@ -814,14 +814,18 @@ impl Parser<'_> {
                     None => (pos + ticks, HiddenKind::Backticks),
                 }
             }
-            b'<' if !self.flags.no_html_spans => match self.find_html_tag(content, pos) {
-                Some(end) => (end, HiddenKind::Html),
-                None => {
+            // `no_html_spans` turns off the tag, not the autolink (mity/md4c#61).
+            b'<' => {
+                if !self.flags.no_html_spans
+                    && let Some(end) = self.find_html_tag(content, pos)
+                {
+                    (end, HiddenKind::Html)
+                } else {
                     let autolink = self.find_autolink(content, pos)?;
                     let is_email = autolink.is_email;
                     (autolink.end_pos, HiddenKind::Autolink { is_email })
                 }
-            },
+            }
             b'[' if self.flags.footnotes => (
                 self.footnote_reference_end(content, pos)?,
                 HiddenKind::FootnoteReference,

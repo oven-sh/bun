@@ -909,8 +909,18 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{#await b}wait{:then c: /* d */ E}{/await}\n`,
         `${typescript}{#await b}wait{/await}\n`,
       ],
+      [
+        `${typescript}{#await b}wait{:then c: E</* d */ F>}{/await}\n`,
+        `${typescript}{#await b}wait{:then c: E</* d */ F>}{/await}\n`,
+        `${typescript}{#await b}wait{/await}\n`,
+      ],
       // Without one it goes as before.
       ["{#await b}wait{:then c}{/await}\n", "{#await b}wait{/await}\n", null],
+      ["{#await b}wait{:then { c = 1 / 2 }}{/await}\n", "{#await b}wait{/await}\n", null],
+      ["{#await b}wait{:then { c = /d/ }}{/await}\n", "{#await b}wait{/await}\n", null],
+      ['{#await b}wait{:then { c = "/* d */" }}{/await}\n', "{#await b}wait{/await}\n", null],
+      ["{#await b then { c = `// d` }}{/await}\n", "{#await b}{/await}\n", null],
+      [`${typescript}{#await b}wait{:then c: "d/e"}{/await}\n`, `${typescript}{#await b}wait{/await}\n`, null],
     ],
     "the parameters of a snippet end where their parentheses do": [
       [

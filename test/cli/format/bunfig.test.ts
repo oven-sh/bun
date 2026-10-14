@@ -265,6 +265,43 @@ preserveDuplicates = true
     expect(result.exitCode).toBe(0);
   });
 
+  test("a path starts where it is written: at bunfig.toml, or at the .oxfmtrc.json", async () => {
+    const files = { ...tailwind, "packages/app/a.jsx": `${sorted}cn("m-2 p-4");\nother("m-2 p-4");\n` };
+    const reversed = `${input}cn("p-4 m-2");\nother("m-2 p-4");\n`;
+    const results = await Promise.all([
+      format({
+        ...files,
+        "bunfig.toml": `[fmt.sortTailwindcss]\nstylesheet = "./styles/app.css"\n`,
+        "styles/app.css": "/* reversed */\n",
+        "packages/app/.oxfmtrc.json": "{}\n",
+      }),
+      format({
+        ...files,
+        "packages/app/.oxfmtrc.json": `{ "sortTailwindcss": { "stylesheet": "./styles/app.css", "functions": ["cn"] } }\n`,
+        "packages/app/styles/app.css": "/* reversed */\n",
+      }),
+      // Each has a part of it.
+      format({
+        ...files,
+        "bunfig.toml": `[fmt.sortTailwindcss]\nfunctions = ["cn"]\n`,
+        "packages/app/.oxfmtrc.json": `{ "sortTailwindcss": { "stylesheet": "./styles/app.css" } }\n`,
+        "packages/app/styles/app.css": "/* reversed */\n",
+      }),
+      format(
+        {
+          ...files,
+          "bunfig.toml": `[fmt.sortTailwindcss]\nstylesheet = "./styles/app.css"\n`,
+          "styles/app.css": "/* reversed */\n",
+          "packages/app/.oxfmtrc.json": `{ "sortTailwindcss": { "functions": ["cn"] } }\n`,
+        },
+        ["--config-precedence=file-override", "."],
+      ),
+    ]);
+    for (const result of results) {
+      expect(result).toMatchObject({ stderr: "", files: { "packages/app/a.jsx": reversed }, exitCode: 0 });
+    }
+  });
+
   test("sorts classes in clsx, cn, cva and similar calls by default, unless `functions` is set", async () => {
     const calls = ["clsx", "cn", "cva", "cx", "classNames", "classnames", "twMerge", "twJoin", "tv", "other"];
     const code = (classes: (name: string) => string) => calls.map(name => `${name}("${classes(name)}");\n`).join("");
@@ -646,6 +683,23 @@ let a = 1;
       input,
       input,
     ]);
+  });
+
+  test("with --config-precedence=prefer-file an .editorconfig counts for the files that it says something about", async () => {
+    const run = (section: string) =>
+      format(
+        {
+          ...bunfig("svelte = false\nsemi = false"),
+          ".editorconfig": `root = true\n[${section}]\nindent_size = 4\n`,
+          "a.svelte": input,
+          "b.js": "let b = 1\n",
+        },
+        ["--config-precedence=prefer-file", "."],
+      );
+    const [forOthers, forAll] = await Promise.all([run("*.ts"), run("*")]);
+    expect(forOthers).toMatchObject({ stderr: "", files: { "a.svelte": input, "b.js": "let b = 1\n" }, exitCode: 0 });
+    const wider = formatted.replace(/^ +/gm, it => it + it);
+    expect(forAll).toMatchObject({ stderr: "", files: { "a.svelte": wider, "b.js": "let b = 1;\n" }, exitCode: 0 });
   });
 
   test("the plugin's own options in a .prettierrc still count, and the table counts for more", async () => {

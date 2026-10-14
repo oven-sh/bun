@@ -509,9 +509,7 @@ impl Check<'_, '_> {
                 self.expression(*expression);
                 // `{#await a}{:then b}` is `{#await a then b}`, and `{#await a then b}{/await}` is `{#await a}{/await}`. A
                 // `{:catch}` with nothing in it is not nothing, nor is a `{:then b /* c */}`.
-                let has_comment = value.is_some_and(|it| {
-                    strings::contains_char(it.with_annotation().of(self.text), b'/')
-                });
+                let has_comment = value.is_some_and(|it| it.has_comments);
                 let pending = pending.filter(|&it| !self.is_blank(it));
                 let then = then.filter(|&it| has_comment || !self.is_blank(it));
                 self.pattern(value.filter(|_| then.is_some()));

@@ -72,6 +72,8 @@ pub(crate) struct Pattern {
     pub(crate) span: Span,
     /// `typeAnnotation.typeAnnotation`, from the first comment behind the `:` on.
     pub(crate) annotation: Option<Span>,
+    /// In the pattern or in the annotation.
+    pub(crate) has_comments: bool,
 }
 
 impl Pattern {

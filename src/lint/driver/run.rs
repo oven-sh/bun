@@ -509,7 +509,10 @@ impl Run<'_> {
         );
         loader.name(paths::dirname(&path));
         let loaded = loader.for_directory(paths::dirname(&path))?;
-        let status: Status = loader.config_of(&loaded, &path).into();
+        let status: Status = match loader.is_ignored_by_the_run(&path, &loaded) {
+            true => Status::Ignored,
+            false => loader.config_of(&loaded, &path).into(),
+        };
         let Status::Matched(config) = &status else {
             let results = self
                 .options
@@ -929,13 +932,6 @@ impl Run<'_> {
             &paths::to_native(environment.cwd.clone()),
         )
         .measuring(options.timing);
-        let store = bun_lint_graph::Store::new(&environment.cwd)
-            .in_project(&options.start_of_bunfig(&environment.cwd));
-        let modules = bun_lint_graph::Graph::new(&store);
-        modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
-            let of_the_run = (&linter, environment, &js_plugins);
-            discover::list_as_eslint_8(of_the_run, &pool, patterns, extensions)
-        }));
         let loader = Loader::new(&linter, options, environment, &js_plugins);
         // `--rules` prints the same list either way, and `--doctor` has this in its report.
         let is_told = !options.rules && !options.doctor && !options.silent;
@@ -973,6 +969,13 @@ impl Run<'_> {
             return self.out;
         }
         let is_native = (of_cwd.as_ref()).is_some_and(|it| it.flavor == Flavor::BuiltIn);
+        let store = bun_lint_graph::Store::new(&environment.cwd);
+        let store = if is_native { store.by_file() } else { store };
+        let modules = bun_lint_graph::Graph::new(&store);
+        modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
+            let of_the_run = (&linter, environment, &js_plugins);
+            discover::list_as_eslint_8(of_the_run, &pool, patterns, extensions)
+        }));
         let format = match self.format(is_oxlint, is_native) {
             Ok(format) => format,
             Err(error) => return self.refuse(&error),

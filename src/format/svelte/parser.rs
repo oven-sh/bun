@@ -62,10 +62,10 @@ pub(crate) trait Js {
     fn ends_of_expressions(&mut self, text: &[u8], at: usize, until: usize) -> Vec<usize>;
     /// One statement.
     fn statement_at(&mut self, text: &[u8], at: usize) -> std::result::Result<Statement, usize>;
-    /// One type. Returns where it is.
-    fn type_at(&mut self, text: &[u8], at: usize) -> std::result::Result<Span, usize>;
-    /// `pattern`, which is in brackets or braces, as the left side of an assignment.
-    fn check_pattern(&mut self, text: &[u8], pattern: Span) -> std::result::Result<(), usize>;
+    /// One type. Returns where it is, and whether there is a comment before it or in it.
+    fn type_at(&mut self, text: &[u8], at: usize) -> std::result::Result<(Span, bool), usize>;
+    /// `pattern`, which is in brackets or braces, as the left side of an assignment. Returns whether there is a comment in it.
+    fn check_pattern(&mut self, text: &[u8], pattern: Span) -> std::result::Result<bool, usize>;
     /// `parameters`, from a `<` or a `(` to a `)`, as those of an arrow function.
     fn check_parameters(&mut self, text: &[u8], parameters: Span)
     -> std::result::Result<(), usize>;
@@ -646,8 +646,8 @@ impl<'a> Parser<'a, '_> {
 
     // ───────────── read/context.js ─────────────
 
-    /// `read_type_annotation`
-    fn read_type_annotation(&mut self) -> Result<Option<Span>> {
+    /// `read_type_annotation`. Returns where it is, and whether there is a comment in it.
+    fn read_type_annotation(&mut self) -> Result<Option<(Span, bool)>> {
         let start = self.index;
         self.allow_whitespace();
         if !self.eat(b":") {
@@ -659,12 +659,13 @@ impl<'a> Parser<'a, '_> {
         }
         let (template, index) = (self.template(), self.index);
         match self.js.type_at(template, index) {
-            Ok(span) => {
+            Ok((span, has_comments)) => {
                 self.index = span.end as usize;
                 // The plugin loses the comment in `a: /* b */ C`.
                 let before = template.get(index..span.start as usize).unwrap_or_default();
                 let comments = strings::trim_js_whitespace_start(before).len();
-                Ok(Some(Span::new(span.start as usize - comments, self.index)))
+                let span = Span::new(span.start as usize - comments, self.index);
+                Ok(Some((span, has_comments)))
             }
             Err(at) => fail(Message::UnexpectedToken, at),
         }
@@ -678,7 +679,8 @@ impl<'a> Parser<'a, '_> {
             let annotation = self.read_type_annotation()?;
             return Ok(Pattern {
                 span: name,
-                annotation,
+                annotation: annotation.map(|it| it.0),
+                has_comments: annotation.is_some_and(|it| it.1),
             });
         }
         if !matches!(self.text.get(start), Some(b'{' | b'[')) || start >= self.len {
@@ -687,13 +689,15 @@ impl<'a> Parser<'a, '_> {
         self.index = self.match_bracket(start, false)?;
         let span = Span::new(start, self.index);
         let template = self.template();
-        if let Err(at) = self.js.check_pattern(template, span) {
-            return fail(Message::UnexpectedToken, at);
-        }
+        let has_comments = match self.js.check_pattern(template, span) {
+            Ok(has_comments) => has_comments,
+            Err(at) => return fail(Message::UnexpectedToken, at),
+        };
         let annotation = self.read_type_annotation()?;
         Ok(Pattern {
             span: Span::new(start, self.index),
-            annotation,
+            annotation: annotation.map(|it| it.0),
+            has_comments: has_comments || annotation.is_some_and(|it| it.1),
         })
     }
 

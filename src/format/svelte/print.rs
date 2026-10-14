@@ -2037,9 +2037,7 @@ impl<'a, 'o> Printer<'a, 'o> {
                 };
                 // The plugin leaves out a `{:catch}` with nothing in it too. Without one, Svelte throws the error again. And with
                 // a `{:then a /* b */}` the comment goes.
-                let has_comment = value.map(Pattern::with_annotation);
-                let has_comment =
-                    has_comment.is_some_and(|it| self.has_comment_between(it.start, it.end));
+                let has_comment = value.is_some_and(|it| it.has_comments);
                 let has_full_then = full(self, then).is_some();
                 let (pending, then) = (
                     full(self, pending),

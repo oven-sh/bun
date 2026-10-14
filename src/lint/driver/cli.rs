@@ -749,7 +749,18 @@ impl Options {
                     }
                 })
             }
-            b"rule" => object(name, text, &mut self.rule)?,
+            b"rule" => {
+                let mut said = Vec::new();
+                object(name, text, &mut said)?;
+                // What bunfig.toml has about them is no longer what counts.
+                for (at, place) in self.rules_of_bunfig.iter_mut().enumerate() {
+                    if (self.rule.get(at)).is_some_and(|it| said.iter().any(|said| said.0 == it.0))
+                    {
+                        place.setting = Json::Null;
+                    }
+                }
+                merge(&mut self.rule, said);
+            }
             b"global" => self.global.extend(list(text)),
             b"parser-options" => object(name, text, &mut self.parser_options)?,
             b"ext" => self.ext.get_or_insert_default().extend(list(text)),
@@ -932,7 +943,7 @@ impl Options {
 
     /// `self`: what the bunfig at `path` says, which is a path from the working directory. What is a path in it starts at
     /// [`Options::start_of_bunfig`]. `is_named`: [`Options::is_bunfig_named`].
-    pub fn of_bunfig_at(mut self, path: &[u8], is_named: bool) -> Options {
+    pub fn of_bunfig_at(mut self, path: &[u8], is_named: bool, cwd: &[u8]) -> Options {
         self.bunfig = paths::from_native(path);
         self.has_section_of_bunfig = true;
         self.is_bunfig_named = is_named;
@@ -956,7 +967,7 @@ impl Options {
                 }
             }
         }
-        self.start_settings_at_bunfig();
+        self.start_settings_at_bunfig(cwd);
         self
     }
 
@@ -967,6 +978,7 @@ impl Options {
         rules: &[(Vec<u8>, Json)],
         places: &[crate::bunfig::RuleOfBunfig],
         is_oxlint: bool,
+        cwd: &[u8],
     ) -> Vec<(Vec<u8>, Json)> {
         let mut rules = rules.to_vec();
         let Some(directory) = self.way_to_bunfig() else {
@@ -1017,16 +1029,35 @@ impl Options {
             if let Some((key, value)) = usual.filter(|it| !options.iter().any(|at| at.0 == it.0)) {
                 options.push((key.to_vec(), value));
             }
-            for (_, value) in options.iter_mut().filter(|it| keys.contains(&&it.0[..])) {
-                let written = value.clone();
-                start_at(directory, value, finds_files);
-                // The name of a package is held against them too, as it is written: `dotenv/config`.
-                if let (b"no-unassigned-import", Json::Array(all), Json::Array(written)) =
-                    (name, value, &written)
-                {
-                    let others = written.iter().filter(|it| !all.contains(it));
-                    let others: Vec<Json> = others.cloned().collect();
-                    all.extend(others);
+            for (key, value) in options.iter_mut().filter(|it| keys.contains(&&it.0[..])) {
+                match (name, &key[..], &mut *value) {
+                    // The name of a package is held against them too, as it is written: `dotenv/config`. It is one if there is
+                    // nothing of that name beside bunfig.toml.
+                    (b"no-unassigned-import", _, Json::Array(all)) => {
+                        let is_path = |it: &[u8]| {
+                            let first = it.strip_prefix(b"!").unwrap_or(it);
+                            let first = strings::split(first, b"/").next().unwrap_or_default();
+                            strings::contains_any(first, b"*?[{(")
+                                || matches!(first, b"." | b"..")
+                                || {
+                                    let beside = paths::join_normalized(directory, first);
+                                    bun_sys::exists(&paths::resolve(cwd, &beside))
+                                }
+                        };
+                        let paths = all.iter_mut().filter(|it| it.as_str().is_some_and(is_path));
+                        paths.for_each(|it| start_at(directory, it, finds_files));
+                    }
+                    // `path.resolve(cwd, "")`
+                    (_, b"basePath", Json::String(it)) if it.is_empty() => *it = directory.to_vec(),
+                    (_, b"packageDir", Json::Array(all)) => {
+                        for it in all {
+                            match it {
+                                Json::String(it) if it.is_empty() => *it = directory.to_vec(),
+                                it => start_at(directory, it, finds_files),
+                            }
+                        }
+                    }
+                    _ => start_at(directory, value, finds_files),
                 }
             }
         }
@@ -1045,7 +1076,7 @@ impl Options {
     }
 
     /// `settings` and `parserOptions`, which only bunfig.toml has so far: see [`Options::from_the_working_directory`].
-    fn start_settings_at_bunfig(&mut self) {
+    fn start_settings_at_bunfig(&mut self, cwd: &[u8]) {
         let Some(directory) = self.way_to_bunfig().map(<[u8]>::to_vec) else {
             return;
         };
@@ -1055,17 +1086,35 @@ impl Options {
             };
             Some(&mut entries.iter_mut().find(|it| it.0 == key)?.1)
         }
-        fn start_resolver_at(directory: &[u8], resolver: &mut Json) {
-            if let Json::Array(all) = resolver {
-                return all
-                    .iter_mut()
-                    .for_each(|it| start_resolver_at(directory, it));
-            }
-            for (name, key) in [(&b"typescript"[..], &b"project"[..]), (b"node", b"paths")] {
-                let options = options_of(resolver, name);
-                if let Some(value) = options.and_then(|it| options_of(it, key)) {
+        // All that `require_resolver` of the rules reads and that is a path.
+        fn start_options_at(directory: &[u8], cwd: &[u8], name: &[u8], options: &mut Json) {
+            // By its short name, by the name of its package, or by a path into that.
+            let is =
+                |it: &[u8]| name == it || strings::contains(name, &[b"-resolver-", it].concat());
+            if is(b"node") {
+                // Whole: `resolve` goes about one that is relative in a way of its own.
+                if let Some(value) = options_of(options, b"paths") {
+                    start_at(&paths::resolve(cwd, directory), value, true);
+                }
+            } else if is(b"typescript") {
+                if let Some(value) = options_of(options, b"project") {
                     start_at(directory, value, true);
                 }
+                let file =
+                    options_of(options, b"tsconfig").and_then(|it| options_of(it, b"configFile"));
+                if let Some(value) = file {
+                    start_at(directory, value, true);
+                }
+            }
+        }
+        fn start_resolver_at(directory: &[u8], cwd: &[u8], resolver: &mut Json) {
+            match resolver {
+                Json::Array(all) => all
+                    .iter_mut()
+                    .for_each(|it| start_resolver_at(directory, cwd, it)),
+                Json::Object(all) => (all.iter_mut())
+                    .for_each(|it| start_options_at(directory, cwd, &it.0, &mut it.1)),
+                _ => {}
             }
         }
         let of_overrides = self.overrides.iter_mut().map(|it| &mut it.settings);
@@ -1073,8 +1122,13 @@ impl Options {
             .chain(of_overrides)
             .flatten()
         {
-            if matches!(&key[..], b"import/resolver" | b"import-x/resolver") {
-                start_resolver_at(&directory, value);
+            match &key[..] {
+                b"import/resolver" | b"import-x/resolver" => {
+                    start_resolver_at(&directory, cwd, value);
+                }
+                // "backward compatibility"
+                b"import/resolve" => start_options_at(&directory, cwd, b"node", value),
+                _ => {}
             }
         }
         // `project` starts at `tsconfigRootDir`.

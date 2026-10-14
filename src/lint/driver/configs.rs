@@ -489,7 +489,7 @@ fn globals_of(options: &Options) -> Option<Json> {
 
 /// Rule settings from oxlint's `-A`, `-W` and `-D` (when they name a rule), then from ESLint's `--rule`. The oxlint flags
 /// only set a severity, so the rule keeps whatever options it has.
-fn rules_of(options: &Options) -> Vec<(Vec<u8>, Json)> {
+fn rules_of(options: &Options, cwd: &[u8]) -> Vec<(Vec<u8>, Json)> {
     let filters = options.filters.iter();
     let filters = filters.filter(|it| !is_category(&it.1));
     let mut rules = Vec::new();
@@ -498,7 +498,7 @@ fn rules_of(options: &Options) -> Vec<(Vec<u8>, Json)> {
     }
     merge(
         &mut rules,
-        options.from_the_working_directory(&options.rule, &options.rules_of_bunfig, false),
+        options.from_the_working_directory(&options.rule, &options.rules_of_bunfig, false, cwd),
     );
     rules
 }
@@ -983,8 +983,12 @@ impl<'l> Loader<'l> {
             }
             if !it.rules.is_empty() {
                 let is_oxlint = shape == Shape::Oxlint;
-                let rules =
-                    (self.options).from_the_working_directory(&it.rules, &it.places, is_oxlint);
+                let rules = (self.options).from_the_working_directory(
+                    &it.rules,
+                    &it.places,
+                    is_oxlint,
+                    self.cwd(),
+                );
                 entries.push((b"rules", Json::Object(rules)));
             }
             match (it.globals.is_empty(), Json::Object(it.globals.clone())) {
@@ -1002,7 +1006,7 @@ impl<'l> Loader<'l> {
         let alone = self.options.of_command_line.as_deref();
         let last = alone.map(|alone| Override {
             files: vec![b"**/*".to_vec()],
-            rules: rules_of(alone),
+            rules: rules_of(alone, self.cwd()),
             globals: (globals_of(alone).and_then(Json::into_object)).unwrap_or_default(),
             ..Override::default()
         });
@@ -1032,7 +1036,7 @@ impl<'l> Loader<'l> {
         if !language_options.is_empty() {
             first.push((&b"languageOptions"[..], object(language_options)));
         }
-        first.push((b"rules", Json::Object(rules_of(options))));
+        first.push((b"rules", Json::Object(rules_of(options, self.cwd()))));
         if !options.settings.is_empty() {
             first.push((b"settings", Json::Object(options.settings.clone())));
         }
@@ -1232,7 +1236,8 @@ impl<'l> Loader<'l> {
             )];
             if !options.rule.is_empty() {
                 let places = &options.rules_of_bunfig;
-                let rules = options.from_the_working_directory(&options.rule, places, true);
+                let rules =
+                    options.from_the_working_directory(&options.rule, places, true, self.cwd());
                 last.push((b"rules", Json::Object(rules)));
             }
             if let Some(globals) = globals_of(options) {
@@ -2240,7 +2245,7 @@ impl<'l> Loader<'l> {
         if !options.settings.is_empty() {
             entries.push((b"settings", Json::Object(options.settings.clone())));
         }
-        let rules = rules_of(options);
+        let rules = rules_of(options, self.cwd());
         if !rules.is_empty() {
             entries.push((b"rules", Json::Object(rules)));
         }
@@ -2674,9 +2679,14 @@ impl<'l> Loader<'l> {
         let is_in_file = self.ignore_file_name(loaded).is_some_and(|file| {
             gitignore::has_argument(self.cwd(), &paths::from_native(file), argument)
         });
-        is_in_file
-            || self.options.ignore
-                && gitignore::is_ignored(&self.patterns_of_the_run(), path, false)
+        is_in_file || self.is_ignored_by_the_run(path, loaded)
+    }
+
+    /// The same for the name of what is read from standard input, about which the files are not asked.
+    pub(crate) fn is_ignored_by_the_run(&self, path: &[u8], loaded: &Loaded) -> bool {
+        loaded.flavor == Flavor::Oxlint
+            && self.options.ignore
+            && gitignore::is_ignored(&self.patterns_of_the_run(), path, false)
     }
 
     /// For oxlint `--ignore-pattern` is for the whole run, whatever configuration file is nearest.

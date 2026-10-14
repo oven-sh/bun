@@ -183,9 +183,6 @@ function serializeConfigObject(given, index) {
     out.$otherPlugins = Object.fromEntries(others.map(([prefix, plugin]) => [prefix, locateDeep(plugin) ?? null]));
     const modules = Object.entries(plugins).map(([prefix, plugin]) => [prefix, otherModulesOf(plugin)]);
     if (modules.some(it => it[1] !== undefined)) out.$pluginModules = Object.fromEntries(modules);
-    // A package can have one build to import and one to require: two objects, and one plugin.
-    const idsOfPlugins = Object.entries(plugins).map(([prefix, plugin]) => [prefix, idOf(plugin)]);
-    if (idsOfPlugins.some(it => it[1] !== undefined)) out.$pluginIds = Object.fromEntries(idsOfPlugins);
     // `index`: that of the object in what the file exports.
     out.$jsPlugins = Object.fromEntries(
       withRules.map(([prefix, plugin]) => [

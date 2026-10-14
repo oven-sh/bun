@@ -259,6 +259,32 @@ pub(crate) enum SetBy<'a> {
     Plugin(&'a [u8]),
 }
 
+impl<'a> SetBy<'a> {
+    fn base(self) -> &'a [u8] {
+        match self {
+            SetBy::Bun(base) | SetBy::Oxfmt(base) | SetBy::Plugin(base) => base,
+        }
+    }
+}
+
+/// `value`, which is `sortTailwindcss` as JSON, with its paths from the root: it goes into one that something else sets.
+pub(crate) fn with_whole_paths(value: &[u8], set_by: SetBy) -> Vec<u8> {
+    let Some(mut entries) = bun_lint::json::parse(value).and_then(Json::into_object) else {
+        return value.to_vec();
+    };
+    for (name, value) in &mut entries {
+        if let Json::String(path) = value
+            && matches!(&name[..], b"config" | b"stylesheet" | b"entryPoint")
+            && !path.is_empty()
+        {
+            *path = paths::resolve(set_by.base(), &paths::from_native(path));
+        }
+    }
+    let mut text = Vec::new();
+    write_json(&mut text, &Json::Object(entries));
+    text
+}
+
 const PLUGIN: &[u8] = b"prettier-plugin-tailwindcss";
 
 /// The options of `prettier-plugin-tailwindcss` and what they are called in `sortTailwindcss`: four strings, two lists of
@@ -326,9 +352,7 @@ pub(crate) fn for_file(
     value: &[u8],
     (set_by, directory): (SetBy, &[u8]),
 ) -> Tailwind {
-    let base = match set_by {
-        SetBy::Bun(base) | SetBy::Oxfmt(base) | SetBy::Plugin(base) => base,
-    };
+    let base = set_by.base();
     // `true` has no keys.
     let json = bun_lint::json::parse(value);
     let get = |key: &[u8]| json.as_ref()?.get(key);

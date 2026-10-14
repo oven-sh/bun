@@ -358,7 +358,8 @@ impl LintCommand {
                 b"lint",
                 &mut |file, path, is_named| {
                     if defaults.is_none() {
-                        defaults = bunfig::lint(file)?.map(|it| it.of_bunfig_at(path, is_named));
+                        defaults = bunfig::lint(file)?
+                            .map(|it| it.of_bunfig_at(path, is_named, &environment.cwd));
                     }
                     if of_bun_format.is_none() {
                         of_bun_format =

@@ -74,19 +74,29 @@ function locate(plugin) {
   return located.get(plugin) ?? locateWrapped(plugin);
 }
 
+// What a package starts with for who requires it and for who imports it, if `module` is one of the two: two builds of one thing.
+function buildsOf(module) {
+  const [, above, name] =
+    /^(.*[\\/])node_modules[\\/]((?:@[^\\/]+[\\/])?[^\\/]+)[\\/](?!.*[\\/]node_modules[\\/])/.exec(module) ?? [];
+  if (name === undefined) return [];
+  const found = [];
+  for (const find of [
+    () => require("node:module").createRequire(`${above}noop.js`).resolve(name),
+    () => Bun.resolveSync(name, above),
+  ]) {
+    try {
+      found.push(fs.realpathSync(find()));
+    } catch {}
+  }
+  return found.includes(module) ? found : [];
+}
+
 // The modules that are `plugin`, if there is more than the one that `locate` has.
 function otherModulesOf(plugin) {
   scan();
   const modules = exportedBy.get(plugin) ?? [];
-  return modules.length > 1 ? modules : undefined;
-}
-
-// ESLint's `getObjectId`, for a plugin that says what it is called and which version it is.
-function idOf(plugin) {
-  try {
-    const { name, version } = plugin.meta ?? {};
-    if (typeof name === "string" && name && typeof version === "string" && version) return `${name}@${version}`;
-  } catch {}
+  const all = [...new Set([...modules, ...modules.flatMap(buildsOf)])];
+  return all.length > 1 ? all : undefined;
 }
 
 // By plugin, parser or processor: what `locateDeep` has found.

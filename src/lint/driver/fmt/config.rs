@@ -127,6 +127,9 @@ const OTHER_KEYS: [&[u8]; 4] = [b"$schema", b"overrides", b"plugins", b"filepath
 /// The name [`SortSettings`] uses for `sortImports` when a flag or `[fmt]` sets it.
 const SORT_IMPORTS_OF_BUN: &[u8] = b"bun.sortImports";
 
+/// `sortTailwindcss` when a flag or `[fmt]` sets it.
+const SORT_TAILWINDCSS_OF_BUN: &[u8] = b"bun.sortTailwindcss";
+
 /// The largest number that is read. It stands for `Infinity` and for `max_line_length = off`.
 pub(super) const NO_END: &[u8] = b"4294967295";
 
@@ -1577,6 +1580,34 @@ impl<'c> Configs<'c> {
         }
     }
 
+    /// What the `.editorconfig` files of `scope` say about the file at `path`. `use_tabs`: what its configuration file says.
+    fn of_editorconfig(
+        &self,
+        scope: &Scope,
+        path: Option<&[u8]>,
+        use_tabs: Option<bool>,
+    ) -> editorconfig::Found {
+        match (self.options.config_lookup, self.flavor, path) {
+            (false, ..) | (true, Flavor::Prettier, None) => Vec::new(),
+            (true, Flavor::Prettier, Some(path)) => {
+                editorconfig::options_for(scope.editorconfigs.iter().map(|it| &**it), path)
+            }
+            (true, Flavor::Oxfmt, _) => (scope.editorconfigs.first())
+                .map(|it| match path {
+                    Some(path) => editorconfig::options_for_oxfmt(it, path, use_tabs),
+                    None => editorconfig::options_of_root_for_oxfmt(it, use_tabs),
+                })
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Whether a file says something about the file at `path`, which is what `--config-precedence=prefer-file` asks: there is
+    /// a configuration file, or a section of an `.editorconfig` is for it.
+    fn has_files_for(&self, scope: &Scope, path: Option<&[u8]>) -> bool {
+        self.config_of(scope).is_ok_and(|it| it.is_some())
+            || !self.of_editorconfig(scope, path, None).is_empty()
+    }
+
     /// Whether the files that have `scope` are printed as oxfmt prints them: the run is like oxfmt, or their
     /// configuration file is one of oxfmt's, in a directory below where the run has started.
     pub(crate) fn is_oxfmt_for(&self, scope: &Scope) -> bool {
@@ -1750,12 +1781,10 @@ impl<'c> Configs<'c> {
             false if self.has_svelte_plugin_of_bun() => Some(Svelte::Bun),
             false => Some(Svelte::Prettier),
         };
-        let has_files =
-            || self.config_of(scope).is_ok_and(|it| it.is_some()) || scope.has_editorconfig();
         let said = match self.options.config_precedence {
             Precedence::CliOverride => of_flags().or_else(of_files),
             Precedence::FileOverride => of_files().or_else(of_flags),
-            Precedence::PreferFile if has_files() => of_files(),
+            Precedence::PreferFile if self.has_files_for(scope, path) => of_files(),
             Precedence::PreferFile => of_flags(),
         };
         said.unwrap_or_else(|| by(self.is_native_in(scope)))
@@ -1865,21 +1894,8 @@ impl<'c> Configs<'c> {
             }
         }
         let mut from_files: Vec<(&[u8], &[u8])> = Vec::new();
-        let from_editorconfig = match (self.options.config_lookup, self.flavor, path) {
-            (false, ..) | (true, Flavor::Prettier, None) => Vec::new(),
-            (true, Flavor::Prettier, Some(path)) => {
-                editorconfig::options_for(scope.editorconfigs.iter().map(|it| &**it), path)
-            }
-            (true, Flavor::Oxfmt, _) => {
-                let use_tabs = use_tabs_in(from_config.iter().copied());
-                (scope.editorconfigs.first())
-                    .map(|it| match path {
-                        Some(path) => editorconfig::options_for_oxfmt(it, path, use_tabs),
-                        None => editorconfig::options_of_root_for_oxfmt(it, use_tabs),
-                    })
-                    .unwrap_or_default()
-            }
-        };
+        let use_tabs = use_tabs_in(from_config.iter().copied());
+        let from_editorconfig = self.of_editorconfig(scope, path, use_tabs);
         // oxfmt does not know `max_line_length = off`, Prettier does not know `insert_final_newline`.
         let counts = |it: &&(&[u8], Vec<u8>)| match is_oxfmt {
             true => (it.0, &it.1[..]) != (b"printWidth", NO_END),
@@ -1895,7 +1911,6 @@ impl<'c> Configs<'c> {
             from_files.push((b"printWidth", b"100"));
         }
         from_files.extend(from_config);
-        let has_files = config.is_some() || !from_editorconfig.is_empty();
         let mut from_flags: Vec<(&[u8], &[u8])> =
             (self.options.format.iter().map(|it| (it.0, &it.1[..]))).collect();
         if let Some(path) = path.filter(|_| !self.overrides.is_empty()) {
@@ -1908,11 +1923,18 @@ impl<'c> Configs<'c> {
         for it in from_flags.iter_mut().filter(|it| it.0 == b"sortImports") {
             it.0 = SORT_IMPORTS_OF_BUN;
         }
+        // Its paths start somewhere else than those of a configuration file.
+        for it in from_flags
+            .iter_mut()
+            .filter(|it| it.0 == b"sortTailwindcss")
+        {
+            it.0 = SORT_TAILWINDCSS_OF_BUN;
+        }
         let of_flags = from_flags.iter().copied();
         let all: Vec<(&[u8], &[u8])> = match self.options.config_precedence {
             Precedence::CliOverride => from_files.into_iter().chain(of_flags).collect(),
             Precedence::FileOverride => of_flags.chain(from_files).collect(),
-            Precedence::PreferFile if has_files => from_files,
+            Precedence::PreferFile if self.has_files_for(scope, path) => from_files,
             Precedence::PreferFile => of_flags.collect(),
         };
         // Prettier looks at the flags first, also at one that a file takes the place of.
@@ -1939,8 +1961,22 @@ impl<'c> Configs<'c> {
         }
         let mut sort_imports: Option<Vec<u8>> = None;
         let mut sort_tailwindcss: Option<Vec<u8>> = None;
+        // Whether the last one that was read is a flag's or of `[fmt]`.
+        let mut is_tailwindcss_of_bun = false;
+        let tailwindcss_set_by = |is_of_bun: bool| match config {
+            Some(config) if config.is_oxfmt && !is_of_bun => {
+                SetBy::Oxfmt(paths::dirname(&config.path))
+            }
+            _ => SetBy::Bun(&self.start_of_bunfig),
+        };
         // oxfmt-only options are also valid under a Prettier config when a flag or `[fmt]` sets them.
-        let is_known = |name: &[u8]| is_oxfmt || from_flags.iter().any(|it| it.0 == name);
+        let is_known = |name: &[u8]| {
+            let name = match name {
+                b"sortTailwindcss" => SORT_TAILWINDCSS_OF_BUN,
+                _ => name,
+            };
+            is_oxfmt || from_flags.iter().any(|it| it.0 == name)
+        };
         // Prettier knows the options of the plugins that it has loaded.
         let knows_all_options = !is_oxfmt && !self.names_other_plugins(scope, path);
         let names_plugin_for_svelte = self.names_plugin_for_svelte(scope, path);
@@ -2008,8 +2044,14 @@ impl<'c> Configs<'c> {
                     }
                 }
                 // An override changes the keys that it has.
-                name if is_tailwind(name) && is_known(name) => {
+                name if name == SORT_TAILWINDCSS_OF_BUN || is_tailwind(name) && is_known(name) => {
+                    let was_of_bun = is_tailwindcss_of_bun;
+                    is_tailwindcss_of_bun = name == SORT_TAILWINDCSS_OF_BUN;
                     sort_tailwindcss = Some(match &sort_tailwindcss {
+                        Some(before) if was_of_bun != is_tailwindcss_of_bun => {
+                            let set_by = tailwindcss_set_by(was_of_bun);
+                            merged_objects(&tailwind::with_whole_paths(before, set_by), value)
+                        }
                         Some(before) => merged_objects(before, value),
                         None => value.to_vec(),
                     });
@@ -2071,12 +2113,9 @@ impl<'c> Configs<'c> {
         }
         resolved.options.sort_imports = self.sort_imports(sort)?;
         // A flag or `[fmt]` counts for more than the plugin.
-        let (value, set_by) = match (sort_tailwindcss, of_plugin, config) {
-            (Some(value), _, Some(config)) if config.is_oxfmt => {
-                (value, SetBy::Oxfmt(paths::dirname(&config.path)))
-            }
-            (Some(value), ..) => (value, SetBy::Bun(&self.start_of_bunfig)),
-            (None, Some(entries), _) => {
+        let (value, set_by) = match (sort_tailwindcss, of_plugin) {
+            (Some(value), _) => (value, tailwindcss_set_by(is_tailwindcss_of_bun)),
+            (None, Some(entries)) => {
                 if let Some(warning) = tailwind::warning_of_plugin(&entries) {
                     self.warn(&[&warning]);
                 }
@@ -2086,7 +2125,7 @@ impl<'c> Configs<'c> {
                 let found = scope.config.as_ref().map(|it| paths::dirname(&it.path));
                 (value, SetBy::Plugin(found.unwrap_or(&self.environment.cwd)))
             }
-            (None, None, _) => (b"false".to_vec(), SetBy::Bun(&self.start_of_bunfig)),
+            (None, None) => (b"false".to_vec(), SetBy::Bun(&self.start_of_bunfig)),
         };
         if value != b"false" {
             let places = (set_by, directory);

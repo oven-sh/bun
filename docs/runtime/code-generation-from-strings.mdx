@@ -168,7 +168,6 @@ Bun makes this check in the engine. It does not depend on the API that the code 
 | `import()`, `require()` or `new Worker()` of an embedded module                                     | works                                                 |
 | `import()`, `require()` or `new Worker()` of a JavaScript or TypeScript file on disk                | refused, including a file that the program just wrote |
 | `--preload`, `--import` or `--require` in `BUN_OPTIONS`                                             | refused: Bun prints the error and exits               |
-| `import()` of an embedded file that is not JavaScript, such as an asset                             | refused                                               |
 | [Macros](/bundler/macros), in text given to `Bun.Transpiler` or in a file given to `Bun.build()`    | refused, with a build error                           |
 | `Bun.serve()` with the experimental `app` option                                                    | refused                                               |
 | A [plugin](/runtime/plugins) that returns `contents`, for any loader                                | refused: return an `exports` object instead           |

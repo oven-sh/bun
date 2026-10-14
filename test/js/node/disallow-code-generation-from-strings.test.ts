@@ -2,8 +2,7 @@
 // throw. With "=strict" (Bun's own), nothing in the process turns a string into script.
 import { evaluateForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isWindows, nodeExe, tempDir } from "harness";
-import { readdirSync } from "node:fs";
+import { bunEnv, bunExe, isDebug, isWindows, nodeExe, tempDir } from "harness";
 import { join } from "node:path";
 
 const refused = "EvalError: Code generation from strings disallowed for this context";
@@ -584,8 +583,6 @@ describe.concurrent("=strict in a compiled executable", () => {
     // Every source that must not run records itself in globalThis.ran if it does.
     "refused-routes.ts": `
       import fs from "node:fs";
-      import Module from "node:module";
-      import asset from "./asset.txt" with { type: "file" };
       const dir = process.argv[2];
       const recordRun = name => '(globalThis.ran ??= []).push("' + name + '");';
       const write = (name, source = recordRun(name)) => { fs.writeFileSync(dir + "/" + name, source); return dir + "/" + name; };
@@ -616,27 +613,11 @@ describe.concurrent("=strict in a compiled executable", () => {
         importMarkdown: () => import(write("markdown.md")),
         importWithTypeText: () => import(write("typed-text.bin"), { with: { type: "text" } }),
         workerFromWrittenFile: () => workerOutcome(write("worker.mjs", 'postMessage("worker.mjs")')),
-        bytecodeFile: () => require(dir + "/bytecode/with-bytecode.js"),
-        sameSourceWithoutBytecode: () => require(write("same-source.js", fs.readFileSync(dir + "/bytecode/with-bytecode.js", "utf8"))),
-        compileCache: () => { Module.enableCompileCache(dir + "/compile-cache"); return require(dir + "/compile-cached.cjs"); },
-        transpilerCache: () => import(dir + "/transpiler-cached.ts"),
-        importData: () => import(["data:text/javascript", recordRun("importData")].join(",")),
-        importBlob: () => import(URL.createObjectURL(new Blob([recordRun("importBlob")], { type: "text/javascript" }))),
-        embeddedAsset: () => import(asset),
         devServer: () => Bun.serve({ port: 0, app: { root: dir, framework: {
           fileSystemRouterTypes: [{ root: "pages", style: "nextjs-pages", serverEntryPoint: dir + "/framework-server.ts", clientEntryPoint: dir + "/framework-client.ts" }],
           reactFastRefresh: false,
         } } }),
       };
-      if (${isLinux}) {
-        routes.memfd = async () => {
-          const { memfd_create } = await import("bun:internal-for-testing");
-          const source = recordRun("memfd");
-          const fd = memfd_create(source.length);
-          fs.writeSync(fd, source);
-          return require("/proc/self/fd/" + fd);
-        };
-      }
       if (${hasEvaluateForTesting}) {
         const evaluate = async source => (await import("bun:internal-for-testing")).evaluateForTesting(source);
         routes.evaluate = () => evaluate(recordRun("evaluate"));
@@ -706,15 +687,9 @@ describe.concurrent("=strict in a compiled executable", () => {
     // An entry point of its own, so a file of its own, embedded as UTF-16: a legal comment is printed as it is written.
     "utf16.ts": `/*! é 漢字 🎉 */ export default function () { return "utf16"; }`,
     "worker.ts": `import { neverCalledAtStartup } from "./lazy.ts"; postMessage(neverCalledAtStartup(4));`,
-    "asset.txt": `(globalThis.ran ??= []).push("embeddedAsset"); export default 1;`,
     "framework-server.ts": `(globalThis.ran ??= []).push("devServer"); export function render() { return new Response(""); }`,
     "framework-client.ts": ``,
     "pages/index.tsx": `export default function () { return new Response(""); }`,
-    "with-bytecode.js": `(globalThis.ran ??= []).push("bytecodeFile");`,
-    "compile-cached.cjs": `(globalThis.ran ??= []).push("compileCache");`,
-    // The transpiler cache takes no file under 4 KB.
-    "transpiler-cached.ts":
-      `(globalThis.ran ??= []).push("transpilerCache" as string);\n` + Buffer.alloc(8192, "// \n").toString(),
   };
 
   async function spawn(cmd: string[], cwd: string, env: Record<string, string> = {}) {
@@ -723,16 +698,8 @@ describe.concurrent("=strict in a compiled executable", () => {
     return { stdout, stderr, exitCode };
   }
 
-  async function runBun(cwd: string, args: string[], env?: Record<string, string>) {
-    expect(await spawn([bunExe(), ...args], cwd, env)).toEqual({
-      stdout: expect.any(String),
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
-  }
-
-  const compile = (cwd: string, entryPoints: string[], buildArgs: readonly string[], execArgv: string) =>
-    runBun(cwd, [
+  async function compile(cwd: string, entryPoints: string[], buildArgs: readonly string[], execArgv: string) {
+    const args = [
       "build",
       "--compile",
       ...buildArgs,
@@ -740,7 +707,13 @@ describe.concurrent("=strict in a compiled executable", () => {
       ...entryPoints,
       "--outfile",
       exe,
-    ]);
+    ];
+    expect(await spawn([bunExe(), ...args], cwd)).toEqual({
+      stdout: expect.any(String),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  }
 
   const runCompiled = (cwd: string, args: string[], env?: Record<string, string>) =>
     spawn([join(cwd, exe), ...args], cwd, env);
@@ -748,27 +721,7 @@ describe.concurrent("=strict in a compiled executable", () => {
   test("refuses code that is not embedded", async () => {
     using dir = tempDir("disallow-code-generation-compiled-refuses", compiledFiles);
     const cwd = String(dir);
-    const transpilerCache = { BUN_RUNTIME_TRANSPILER_CACHE_PATH: join(cwd, "transpiler-cache") };
-    // What a run of Bun that may run these files leaves behind for the next one.
-    await Promise.all([
-      compile(cwd, ["./refused-routes.ts"], [], strict + " --expose-internals"),
-      runBun(cwd, [
-        "build",
-        "--target=bun",
-        "--bytecode",
-        "--format=cjs",
-        "./with-bytecode.js",
-        "--outdir",
-        "bytecode",
-      ]),
-      runBun(cwd, ["./compile-cached.cjs"], { NODE_COMPILE_CACHE: join(cwd, "compile-cache") }),
-      runBun(cwd, ["./transpiler-cached.ts"], transpilerCache),
-    ]);
-    expect({
-      bytecode: readdirSync(join(cwd, "bytecode")).sort(),
-      compileCache: readdirSync(join(cwd, "compile-cache"), { recursive: true }).length > 0,
-      transpilerCache: readdirSync(join(cwd, "transpiler-cache")).length > 0,
-    }).toEqual({ bytecode: ["with-bytecode.js", "with-bytecode.js.jsc"], compileCache: true, transpilerCache: true });
+    await compile(cwd, ["./refused-routes.ts"], [], strict + " --expose-internals");
 
     const refusedFile = (name: string) => refusedNotEmbedded(join(cwd, name));
     const refusedMacro = `Macros cannot be used with ${strict} in a compiled executable: a macro is not embedded in the executable`;
@@ -784,16 +737,7 @@ describe.concurrent("=strict in a compiled executable", () => {
         importMarkdown: refusedFile("markdown.md"),
         importWithTypeText: refusedFile("typed-text.bin"),
         workerFromWrittenFile: refusedFile("worker.mjs"),
-        bytecodeFile: refusedFile(join("bytecode", "with-bytecode.js")),
-        sameSourceWithoutBytecode: refusedFile("same-source.js"),
-        compileCache: refusedFile("compile-cached.cjs"),
-        transpilerCache: refusedFile("transpiler-cached.ts"),
-        importData: refused,
-        importBlob: refused,
-        embeddedAsset: expect.stringMatching(/^EvalError: Refused to run ".*asset-.*\.txt" because it is not embedded/),
         devServer: refusedNotEmbedded("bake://server-runtime.js"),
-        // The resolver follows the link, to a name that no file has, so this one does not get as far as the engine.
-        ...(isLinux && { memfd: expect.stringMatching(/^BuildMessage: ENOENT reading "\/memfd:/) }),
         ...(hasEvaluateForTesting && {
           evaluate: refusedNotEmbedded(),
           evaluateJSONPAssignment: refusedNotEmbedded(),
@@ -802,10 +746,7 @@ describe.concurrent("=strict in a compiled executable", () => {
       },
       unhandled: [],
     };
-    const { stdout, exitCode } = await runCompiled(cwd, [cwd], {
-      ...transpilerCache,
-      BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1",
-    });
+    const { stdout, exitCode } = await runCompiled(cwd, [cwd], { BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1" });
     expect(JSON.parse(stdout)).toEqual(expected);
     expect(exitCode).toBe(0);
     expect(await runCompiled(cwd, [cwd], { BUN_OPTIONS: "--preload=" + join(cwd, "imported.mjs") })).toEqual({

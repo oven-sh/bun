@@ -25,12 +25,12 @@ pub(crate) fn static_source_code(source: &'static [u8]) -> bun_core::String {
     bun_core::String::create_static_external(source, true)
 }
 
-/// Whether `source` is all of a module's source.
+/// Whether `source` is all of a file of the executable, or of a module that Bun has the source of.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__isEmbeddedModule(source: *const u8, source_len: usize) -> bool {
     let source = core::ptr::slice_from_raw_parts(source, source_len);
     if bun_standalone_graph::Graph::get_ref()
-        .is_some_and(|graph| graph.find_javascript_module_by_address(source).is_some())
+        .is_some_and(|graph| graph.find_by_address(source).is_some())
     {
         return true;
     }

@@ -63,8 +63,8 @@ pub struct StandaloneModuleGraph {
     /// point's static import closure, i.e. what loads before the first `import()`.
     pub startup_module_count: u32,
     pub runtime_options: RuntimeOptions,
-    /// Indices into `files` of those that are [`File::is_javascript_module`], by the address of their `contents`.
-    javascript_modules_by_address: std::sync::OnceLock<Vec<u32>>,
+    /// Indices into `files`, by the address of their `contents`.
+    files_by_address: std::sync::OnceLock<Vec<u32>>,
 }
 
 /// Runtime defaults chosen at build time (`Flags::HAS_RUNTIME_OPTIONS` record: `u32 flags`, `u32 value`).
@@ -721,11 +721,6 @@ impl File {
             && (self.side == FileSide::Client || !self.loader.is_javascript_like())
     }
 
-    /// JavaScript this executable runs, so stored as the string body the engine reads in place (`is_stored_as_string`).
-    fn is_javascript_module(&self) -> bool {
-        self.loader.is_javascript_like() && self.side != FileSide::Client
-    }
-
     /// An `Encoding::Utf16` body as code units.
     fn utf16_units(&self) -> &'static [u16] {
         debug_assert!(self.encoding == Encoding::Utf16);
@@ -985,7 +980,7 @@ impl StandaloneModuleGraph {
                 prelinked_module_files: Vec::new(),
                 startup_module_count: 0,
                 runtime_options: RuntimeOptions::default(),
-                javascript_modules_by_address: std::sync::OnceLock::new(),
+                files_by_address: std::sync::OnceLock::new(),
             });
         }
 
@@ -1337,25 +1332,23 @@ impl StandaloneModuleGraph {
             prelinked_module_files,
             startup_module_count: startup_module_count.min(module_count as u32),
             runtime_options,
-            javascript_modules_by_address: std::sync::OnceLock::new(),
+            files_by_address: std::sync::OnceLock::new(),
         })
     }
 
-    /// The [`File::is_javascript_module`] whose `contents` are these very bytes, not a copy of them or a part of them.
-    pub fn find_javascript_module_by_address(&self, contents: *const [u8]) -> Option<&File> {
+    /// The file whose `contents` are these very bytes, not a copy of them or a part of them.
+    pub fn find_by_address(&self, contents: *const [u8]) -> Option<&File> {
         let files = self.files.values();
         let address_of = |&index: &u32| files[index as usize].contents.as_bytes().as_ptr().addr();
-        let modules = self.javascript_modules_by_address.get_or_init(|| {
-            let mut modules: Vec<u32> = (0..files.len() as u32)
-                .filter(|&index| files[index as usize].is_javascript_module())
-                .collect();
-            modules.sort_unstable_by_key(address_of);
-            modules
+        let by_address = self.files_by_address.get_or_init(|| {
+            let mut indices: Vec<u32> = (0..files.len() as u32).collect();
+            indices.sort_unstable_by_key(address_of);
+            indices
         });
-        let found = modules
+        let found = by_address
             .binary_search_by_key(&contents.cast::<u8>().addr(), address_of)
             .ok()?;
-        let file = &files[modules[found] as usize];
+        let file = &files[by_address[found] as usize];
         (file.contents.len() == contents.len()).then_some(file)
     }
 

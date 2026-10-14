@@ -139,7 +139,7 @@ impl<'a> Translation<'a> {
     pub fn begin(&self, program: &Checked<'_>, entry_points: &[Vec<FileId>], in_parallel: InParallel<'_>) {
         let mut without_whole_trees = program.files_without_whole_trees();
         without_whole_trees.retain(|&file| program.files.hir(file).kind != FileKind::Declaration);
-        let translating = without_whole_trees.is_empty().then(|| (build::Shared::new(program, entry_points, self.constants, in_parallel).counting_literals(self.explain.literals, self.explain.literal_at), Fragments::new(program.files.modules.len())));
+        let translating = without_whole_trees.is_empty().then(|| (build::Shared::new(program, entry_points, self.constants, in_parallel), Fragments::new(program.files.modules.len())));
         let most = usize::from(u16::MAX);
         let mut suspects: Vec<(FileId, Option<u32>)> = match &translating {
             Some((shared, _)) if !self.constants.notes_spans => {

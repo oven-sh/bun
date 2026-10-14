@@ -1,9 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ runDefault("-m", "--compileMainScriptAheadOfTime=1")
-//@ runDefault("-m", "--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
-//@ runDefault("-m", "--compileMainScriptAheadOfTime=1", "--useAOTDataStubs=0")
-//@ runDefault("-m", "--compileMainScriptAheadOfTime=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1")
-//@ runDefault("-m")
 
 function check(actual, expected, what)
 {

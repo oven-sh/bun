@@ -259,7 +259,7 @@
           {
             "group": "Single File Executable",
             "icon": "binary",
-            "pages": ["/bundler/executables", "/bundler/aot-adoption"]
+            "pages": ["/bundler/executables", "/bundler/aot-adoption", "/bundler/aot-debugging"]
           },
           {
             "group": "Extensions",

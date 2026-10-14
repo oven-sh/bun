@@ -46,9 +46,6 @@ pub(crate) struct UnsoundUse {
     pub(crate) what: String,
     /// The type of the value and the type it is used as.
     types: (TyId, TyId),
-    /// A layout of the type of the value, and the layouts of the type it is used as, none of which has all its subtypes.
-    pub(crate) sub: LayoutId,
-    pub(crate) supertypes: Vec<LayoutId>,
 }
 
 /// How many functions a task looks at.
@@ -85,7 +82,7 @@ pub(crate) fn unsound_uses(program: &Program, most: usize, in_parallel: InParall
                         if supertypes.is_empty() { "no object".to_owned() } else { supertypes.join(" | ") },
                         if lost == sub { "it".to_owned() } else { format!("its subtype {}", name_of(program, lost)) },
                     );
-                    found.push(UnsoundUse { what, types: (have, want), sub, supertypes: layouts_in(program, want).collect() });
+                    found.push(UnsoundUse { what, types: (have, want) });
                     if found.len() == most {
                         return;
                     }

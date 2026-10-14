@@ -1520,22 +1520,33 @@ fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
     out
 }
 
+const ENVIRONMENT_NAMES_OF_AOT_WITH_EFFECT: [&[u8]; 6] = [
+    b"AOT_SWITCH_OUTLINE",
+    b"BUN_AOT_TYPED_FILE",
+    b"BUN_AOT_TYPED_SNAPSHOT",
+    b"BUN_AOT_TYPE_ERROR_LOG",
+    b"BUN_AOT_TYPE_ERROR_LOG_FORMAT",
+    b"BUN_AOT_VERBOSE",
+];
+const FAMILIES_OF_ENVIRONMENT_NAMES_OF_AOT: [&[u8]; 4] = [b"BUN_AOT", b"AOT_SWITCH_", b"AOT_X_", b"BUN_SOUND_"];
+
+pub(crate) fn environment_names_of_aot_without_effect() -> impl Iterator<Item = &'static [u8]> {
+    bun_sys::environ().iter().filter_map(|&entry| {
+        // SAFETY: environ entries are NUL-terminated C strings from the OS
+        let entry: &'static [u8] = unsafe { bun_core::ffi::cstr(entry) }.to_bytes();
+        let name = entry.split(|&byte| byte == b'=').next().unwrap_or(entry);
+        let is_of_aot = FAMILIES_OF_ENVIRONMENT_NAMES_OF_AOT.iter().any(|family| name.starts_with(family));
+        (is_of_aot && !ENVIRONMENT_NAMES_OF_AOT_WITH_EFFECT.contains(&name)).then_some(name)
+    })
+}
+
 impl<'a> BundleOptions<'a> {
     pub(crate) fn is_test(&self) -> bool {
         self.rewrite_jest_for_tests
     }
 
     pub fn compiles_ahead_of_time(&self) -> bool {
-        match bun_core::env_var::BUN_AOT.get() {
-            Some(false) => false,
-            Some(true) => {
-                self.aot
-                    || (self.bytecode
-                        && self.compile_mode.is_executable()
-                        && self.output_format == Format::Esm)
-            }
-            None => self.aot,
-        }
+        self.aot
     }
 
     pub(crate) fn set_production(&mut self, value: bool) {

@@ -1,7 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ runDefault("--compileMainScriptAheadOfTime=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTDataStubs=0")
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
 const usesDataStubs = (typeof aotRemarks === "function" && aotRemarks("readsProperty") || []).includes("calls:GetById");

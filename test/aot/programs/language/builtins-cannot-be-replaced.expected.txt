@@ -52,4 +52,4 @@ Uint8ClampedArray.prototype: 1: store: refused (TypeError) | defineProperty: ref
 WeakMap.prototype: 6: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
 WeakRef.prototype: 1: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
 WeakSet.prototype: 3: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeError)
-console: 1: store: REPLACED | defineProperty: REPLACED | delete: DELETED: log
+console: store: REPLACED | defineProperty: REPLACED | delete: DELETED

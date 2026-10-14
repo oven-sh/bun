@@ -1,5 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ runDefault("--compileMainScriptAheadOfTime=1")
 function throwsValue() { throw 1; }
 function catchesValue() { try { throwsValue(); } catch (e) { return 1; } return 0; }
 function atDepth(depth, count) {

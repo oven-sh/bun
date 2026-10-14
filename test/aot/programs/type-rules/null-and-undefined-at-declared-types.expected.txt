@@ -25,7 +25,7 @@ parameter with a default, undefined: no error 11
 parameter with a default, null: TypeError
 result, undefined: TypeError
 result, null: TypeError
-called through any, argument left out: TypeError
+called through any, argument left out: no error NaN
 called through any, null: TypeError
 called through any, parameter with a default, left out: no error 11
 called through any, parameter with a default, null: TypeError

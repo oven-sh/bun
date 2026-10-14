@@ -1,0 +1,180 @@
+---
+title: "Debugging and profiling with --aot"
+description: "Stack traces, crashes, CPU and heap profiles, the inspector and instrumentation in an executable that was compiled ahead of time"
+---
+
+<Warning>Ahead-of-time compilation is experimental. It works on macOS arm64 and on Linux x64 with glibc.</Warning>
+
+An executable built with [`--aot`](/bundler/executables#ahead-of-time-compilation) has no bytecode and no JIT. Most tools work as they do for any other executable. The debugger does not. This page lists what to expect from each.
+
+Every runtime flag below can be passed to an executable that is already built, through [`BUN_OPTIONS`](/bundler/executables#runtime-arguments-via-bun_options).
+
+## Stack traces
+
+Stack traces have the file, line and column of your sources. You do not need a source map.
+
+```ts app.ts icon="/icons/typescript.svg"
+class Repo {
+  find(id: number): string {
+    if (id < 0) throw new RangeError("bad id " + id);
+    return "x";
+  }
+}
+new Repo().find(-1);
+```
+
+```bash terminal icon="terminal"
+bun build --compile --aot --minify ./app.ts --outfile app && ./app
+```
+
+```txt
+1 | class Repo {
+2 |   find(id: number): string {
+3 |     if (id < 0) throw new RangeError("bad id " + id);
+                              ^
+RangeError: bad id -1
+      at find (app.ts:3:27)
+      at app.ts:7:12
+```
+
+- **Names survive `--minify`.** A trace shows `find`, not `a`.
+- **`--sourcemap` adds nothing.** `bun build` prints a note, and any map that it writes is empty.
+- **The source excerpt is read from disk.** Bun prints it when the file lies at the path in the frame, relative to the working directory. On a machine without your sources you get the frames alone.
+- **Inlined functions keep their frames**, and so do callers whose last act is a call. A build without `--aot` leaves those out, because it makes [tail calls](/bundler/executables#ahead-of-time-compilation).
+- `Error.captureStackTrace`, `Error.prepareStackTrace`, `Error.stackTraceLimit`, `console.trace`, async frames, `process.on("uncaughtException")` and `process.on("unhandledRejection")` work as they do without `--aot`.
+
+What differs:
+
+| | without `--aot` | with `--aot` |
+| --- | --- | --- |
+| Reading a property of `null` | `null is not an object (evaluating 'a.b')` | `Cannot read properties of null (reading 'b')` |
+| Calling what is not a function | `a.b is not a function. (In 'a.b()', 'a.b' is undefined)` | `b is not a function, it is undefined` |
+| Frames of `eval` and `new Function` | `file:///$bunfs/root/app:1:35` | `unknown:1:35` |
+
+If you group errors by message, in Sentry for example, expect new groups for the first two.
+
+## Crashes
+
+When the process crashes, Bun prints its crash report. With `--aot`, the report ends with the functions of your program that were on the stack:
+
+```txt
+panic(main thread): Segmentation fault at address 0x8
+oh no: Bun has crashed. This indicates a bug in Bun, not your code.
+
+To send a redacted crash report to Bun's team,
+please file a GitHub issue using the link below:
+
+ https://bun.report/1.4.4/M_24eaedc6E…CGaotmh6QCGaot+kmTCGaot+7iT…
+
+Compiled JavaScript on the stack:
+    at peek (app.ts:6:17)
+    at sum (app.ts:11:47)
+    at start (app.ts:15:17)
+    at app.ts:19:13
+```
+
+These lines go to stderr only. The link holds offsets into your executable, and none of your names or paths.
+
+If all you have is the link, give it back to the same executable. It prints the lines and exits without running your program:
+
+```bash terminal icon="terminal"
+BUN_OPTIONS='--aot-decode-crash-report=https://bun.report/1.4.4/M_24eaedc6E…' ./app
+```
+
+Keep each executable that you deploy. A link can only be read by the build that produced it.
+
+Infinite recursion is not a crash. It throws a `RangeError` that you can catch.
+
+## CPU profiles
+
+```bash terminal icon="terminal"
+BUN_OPTIONS="--cpu-prof" ./app      # a .cpuprofile for Chrome DevTools or VS Code
+BUN_OPTIONS="--cpu-prof-md" ./app   # the same as Markdown
+```
+
+Profiles name your functions and your source files. `Profiler.start` and `Profiler.stop` of `node:inspector`, and `profile()` of `bun:jsc`, do the same from inside the program.
+
+Time spent in a function that the compiler inlined is counted for its caller.
+
+### perf and gdb
+
+On Linux, the executable has a symbol table and unwind information for your functions, as a C or Go program does, and compiled code keeps frame pointers. `perf` and `gdb` show your functions by name:
+
+```bash terminal icon="terminal"
+perf record -g ./app
+perf report
+```
+
+```bash terminal icon="terminal"
+gdb ./app -ex 'break fibonacci' -ex run
+```
+
+None of it is loaded when the program runs. `strip ./app` removes it, and the executable still works.
+
+On macOS, native tools such as Instruments, `sample` and `lldb` walk through compiled frames and show addresses, not names. Use `--cpu-prof`.
+
+## Memory
+
+`Bun.generateHeapSnapshot()`, `v8.getHeapSnapshot()`, `v8.writeHeapSnapshot()`, `--heap-prof` and `--heap-prof-md` work. Objects appear under the names of their classes, with the names of their properties.
+
+```bash terminal icon="terminal"
+BUN_OPTIONS="--heap-prof" ./app
+```
+
+- The variables that a function captures appear by number, `[0]`, `[1]`, not by name.
+- A function that your program only ever calls has no object, so it is not in the snapshot.
+- `process.memoryUsage()`, `heapStats()` of `bun:jsc`, `v8.getHeapStatistics()` and `node:perf_hooks` work as they do without `--aot`.
+
+## The inspector
+
+`--inspect`, `--inspect-wait` and `--inspect-brk` start the inspector, and VS Code and `debug.bun.sh` connect to it.
+
+| Works | Does not work |
+| --- | --- |
+| The console, with objects you can open | Breakpoints |
+| Evaluating expressions, calling your functions, reading your objects | Stepping and pausing |
+| Heap snapshots and garbage collection | `debugger` statements |
+| The CPU timeline | The list of sources |
+
+The console shows a warning that says so when a debugger attaches. Code that the build did not compile, such as `eval` and files loaded from disk at run time, can be debugged.
+
+To use breakpoints, run your program from its sources:
+
+```bash terminal icon="terminal"
+bun --inspect-brk ./app.ts
+```
+
+To find out whether a bug only shows with `--aot`, compare that with `bun run --aot ./app.ts`.
+
+## Instrumentation
+
+`AsyncLocalStorage`, `AsyncResource`, `node:diagnostics_channel` and tracing channels work as they do without `--aot`.
+
+Libraries that trace by replacing functions, such as OpenTelemetry's instrumentations, can replace some things and not others:
+
+| | |
+| --- | --- |
+| What Bun and Node.js provide: `fetch`, `setTimeout`, `console.*`, `process.*`, `Bun.serve`, `fs.readFileSync`, `http.request`, `EventEmitter.prototype.emit` | can be replaced |
+| Classes and exports of JavaScript packages: `pg.Client.prototype.query` | can be replaced |
+| Objects of the language: `Promise.prototype.then`, `JSON.parse`, `Date.now`, `Array.prototype.push` | throws a `TypeError` |
+| Classes written in TypeScript, in your program or in a [typed version of a package](/bundler/executables#typed-versions-of-packages) | throws a `TypeError`, unless TypeScript code of your program assigns to that method |
+
+To wrap a method of one of your own classes, use a subclass or a `Proxy`, or assign to the method in TypeScript: `Db.prototype.query = traced(Db.prototype.query)`.
+
+As in any bundle, the modules of your program are resolved when you build. `Module._load`, `Module.prototype.require` and `module.register` are not asked for them. They are asked for built-in modules such as `node:os`.
+
+In `bun test --aot`, `mock.module()`, `setSystemTime()` and fake timers work. `spyOn()` throws a `TypeError` for a method of a TypeScript class, on the prototype or on an instance. `--coverage` is ignored, and Bun prints a warning: compiled code is not counted. Measure coverage without `--aot`.
+
+## `Function.prototype.toString()`
+
+By default the executable keeps the text of your functions, after TypeScript's types are removed, and `toString()` returns it. The functions of a file that calls `eval()` directly at its top level are the exception: they have no text.
+
+`--no-compile-function-source` leaves the text out, which makes the executable smaller and keeps your code out of it:
+
+```ts
+String(function add(a, b) { return a + b; }); // "function add() { [native code] }"
+String(class Point {});                       // "class Point { [native code] }"
+String(async () => {});                       // "async () => { [native code] }"
+```
+
+`name` and `length` stay as they are. Code that reads parameter names out of the text, as some dependency injection libraries do, finds none.

@@ -1,5 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => true, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ runDefault("--compileMainScriptAheadOfTime=1")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));

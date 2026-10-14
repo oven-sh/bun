@@ -1,5 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ runDefault("-m", "--compileMainScriptAheadOfTime=1")
 import * as self from "./impl.js";
 import * as other from "./other.js";
 function check(actual, expected, what) {

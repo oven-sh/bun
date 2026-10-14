@@ -47,8 +47,6 @@ use std::collections::hash_map::Entry;
 use std::hash::Hash;
 use std::time::{Duration, Instant};
 
-mod boundary;
-mod disagreement;
 mod nil;
 mod reads;
 mod reuse;
@@ -80,47 +78,19 @@ pub struct Linked {
 pub struct Explain {
     /// Why each view that admits objects that are not laid out does: `Checker::explain_foreign`.
     pub foreign: bool,
-    /// Which views have members only because a test has been left out, and from where: `Checker::explain_members`.
-    pub members: bool,
     /// How many layouts a built-in may freeze or give another prototype, and how many stores test for it, in numbers alone: `Checker::explain_alterations`.
     pub alterations: bool,
-    /// Which variables of numbers and booleans may be read before anything is stored to them: `Checker::explain_uninitialized`.
-    pub uninitialized: bool,
-    /// What each function captures, which variables are copied and which activations have an environment, and why: `Checker::explain_captures`.
-    pub captures: bool,
     /// Which fields have a name that nothing stores: `explain_fields`.
     pub fields: bool,
-    /// In what a fragment and the program differ, and what a class is that nobody defines: `disagreement`.
-    pub disagreements: bool,
     /// Under which names of fields the numbers are expected to be int32s, and why not under the others: `Checker::explain_int32_fields`.
     pub integers: bool,
-    /// Where a declaration without a body was taken for a prediction: `Checker::explain_predictions`.
-    pub predictions: bool,
-    /// Which variables and fields that may hold a function have no one function, or none that is a fact, and why: `Checker::explain_callees`.
-    pub callees: bool,
     /// Where the soundness closure is and how large its tables are, on stderr as it goes, and `Subtypes::report` at the end.
     pub progress: bool,
-    /// Which views data of which origin is held to: `Checker::explain_parsed`.
-    pub parsed: bool,
-    /// How many functions have what only sloppy code has, in counts: `Checker::explain_arguments`.
-    pub arguments: bool,
-    /// What kinds of values the variables hold, going by what is stored to them alone, in counts: `Checker::explain_kinds`.
-    pub kinds: bool,
     /// How much of what the modules do when they are evaluated may be deferred: `Checker::explain_deferred`.
     pub deferred: bool,
-    /// The one function that is stored under a constant key: `Checker::explain_functions_by_key`.
-    pub keys: bool,
-    /// How the object literals are made, and what stands in the way where one is not made as the type it stands under, in numbers alone: `build::literals::explain`.
-    pub literals: bool,
-    /// How far the objects that are not laid out get, by place, from where they come into being; nothing is applied: `strangers::explain`.
-    pub strangers: bool,
     pub rows: bool,
-    pub firsts: bool,
-    /// The end of the path of a file, and a line: the object literals that begin on it, each with its row of `literals`, and the functions that have an operation of that line, as they are in the end.
-    pub literal_at: Option<(&'static str, u32)>,
     /// How many of the places and of the reads of typed code go by a fact: `explain_given`.
     pub given: bool,
-    pub boundary: bool,
     pub throws: bool,
     pub throws_json: bool,
     pub throws_all: bool,
@@ -128,37 +98,23 @@ pub struct Explain {
 
 impl Explain {
     pub const REPORTS: [&'static str; 4] = ["throws", "throws-all", "throws-json", "throws-all-json"];
-    pub const WORDS: [&'static str; 25] = ["alterations", "arguments", "boundary", "callees", "captures", "deferred", "disagreements", "fields", "firsts", "foreign", "given", "integers", "keys", "kinds", "literals", "members", "parsed", "predictions", "rows", "strangers", "throws", "throws-all", "throws-all-json", "throws-json", "uninitialized"];
+    pub const WORDS: [&'static str; 11] = ["alterations", "deferred", "fields", "foreign", "given", "integers", "rows", "throws", "throws-all", "throws-all-json", "throws-json"];
 
     pub fn set(&mut self, word: &[u8]) -> bool {
         let asked = match word {
             b"alterations" => &mut self.alterations,
-            b"arguments" => &mut self.arguments,
-            b"boundary" => &mut self.boundary,
-            b"callees" => &mut self.callees,
-            b"captures" => &mut self.captures,
             b"deferred" => &mut self.deferred,
-            b"disagreements" => &mut self.disagreements,
             b"fields" => &mut self.fields,
-            b"firsts" => &mut self.firsts,
             b"foreign" => &mut self.foreign,
             b"given" => &mut self.given,
             b"integers" => &mut self.integers,
-            b"keys" => &mut self.keys,
-            b"kinds" => &mut self.kinds,
-            b"literals" => &mut self.literals,
-            b"members" => &mut self.members,
-            b"parsed" => &mut self.parsed,
-            b"predictions" => &mut self.predictions,
             b"rows" => &mut self.rows,
-            b"strangers" => &mut self.strangers,
             b"throws" => &mut self.throws,
             b"throws-json" => &mut self.throws_json,
             b"throws-all" | b"throws-all-json" => {
                 self.throws_all = true;
                 if word == b"throws-all" { &mut self.throws } else { &mut self.throws_json }
             }
-            b"uninitialized" => &mut self.uninitialized,
             _ => return false,
         };
         *asked = true;
@@ -1236,9 +1192,8 @@ impl Finder<'_> {
     }
 }
 
-/// What code of the fragment that is reached relies on, and that is not so. With `kept`, each with what `disagreement` says of it.
-/// `number`: that of the fragment.
-fn disagreements(number: usize, fragment: &Fragment, maps: &Maps, all: &Final<'_>, nowhere: FileId, kept: Option<&disagreement::Kept<'_>>) -> Vec<(Problem, Vec<String>)> {
+/// What code of the fragment that is reached relies on, and that is not so.
+fn disagreements(fragment: &Fragment, maps: &Maps, all: &Final<'_>, nowhere: FileId) -> Vec<Problem> {
     let mut finder = Finder { fragment, all, tys: vec![None; fragment.tys.list.len()] };
     let file = if fragment.file == NO_FILE { nowhere } else { fragment.file };
     let mut problems = Vec::new();
@@ -1248,8 +1203,7 @@ fn disagreements(number: usize, fragment: &Fragment, maps: &Maps, all: &Final<'_
             && maps.funcs[i].is_some()
             && !finder.is_func(func, maps.funcs[i])
         {
-            let why = kept.map_or_else(Vec::new, |kept| disagreement::of_func(&mut finder, kept, number, function, func, maps.funcs[i]));
-            problems.push((Problem { file, pos: 0, what: format!("the function `{}` ({:?}), which is not what this file takes it for", text_of(&fragment.strs, func.name), function.key).into() }, why));
+            problems.push(Problem { file, pos: 0, what: format!("the function `{}` ({:?}), which is not what this file takes it for", text_of(&fragment.strs, func.name), function.key).into() });
         }
     }
     for (shape, &id) in fragment.layouts.iter().zip(&maps.layouts) {
@@ -1257,8 +1211,7 @@ fn disagreements(number: usize, fragment: &Fragment, maps: &Maps, all: &Final<'_
             && id.is_some()
             && !finder.is_layout(&definition.layout, id)
         {
-            let why = kept.map_or_else(Vec::new, |kept| disagreement::of_layout(&mut finder, kept, number, shape, &definition.layout, id));
-            problems.push((Problem { file, pos: 0, what: format!("the layout `{}` ({:x?}), which is not what this file takes it for", text_of(&fragment.strs, shape.name), shape.key).into() }, why));
+            problems.push(Problem { file, pos: 0, what: format!("the layout `{}` ({:x?}), which is not what this file takes it for", text_of(&fragment.strs, shape.name), shape.key).into() });
         }
     }
     for (variable, &id) in fragment.globals.iter().zip(&maps.globals) {
@@ -1270,8 +1223,7 @@ fn disagreements(number: usize, fragment: &Fragment, maps: &Maps, all: &Final<'_
             || finder.ty(variable.global.declared) != Some(out.declared)
             || !finder.is_only_function(variable.global.only_function, variable.global.only_function_flags, out.only_function, out.only_function_flags)
         {
-            let why = kept.map_or_else(Vec::new, |kept| disagreement::of_variable(&mut finder, kept, number, variable, id));
-            problems.push((Problem { file, pos: 0, what: format!("the variable `{}` ({:?}), which is not what this file takes it for", text_of(&fragment.strs, variable.global.name), variable.key).into() }, why));
+            problems.push(Problem { file, pos: 0, what: format!("the variable `{}` ({:?}), which is not what this file takes it for", text_of(&fragment.strs, variable.global.name), variable.key).into() });
         }
     }
     problems
@@ -1292,8 +1244,15 @@ fn add_kept_types(program: &Checked<'_>, seen: &mut FxHashSet<TypeId>, types: &m
         *identities = slice.iter().map(|&ty| c.identity_of_type(ty)).collect();
     });
     types.reserve(kept.len());
+    let c = program.checker();
     for (&ty, &identity) in kept.iter().zip(slices.iter().flat_map(|slice| &slice.1)) {
-        types.entry(identity).or_insert(ty);
+        let first = types.entry(identity).or_insert(ty);
+        if *first != ty
+            && let (Some(written_at), Some(so_far)) = (c.place_of_object_literal(ty), c.place_of_object_literal(*first))
+            && written_at < so_far
+        {
+            *first = ty;
+        }
     }
 }
 
@@ -1752,8 +1711,6 @@ pub fn link(
     let translated: Vec<FileId> = fragments.iter().map(|fragment| fragment.file).filter(|&file| file != NO_FILE).collect();
     let is_opaque = |file: FileId| file != NO_FILE && checked.files.module(file).is_opaque();
     let is_of_runtime = |file: FileId| file != NO_FILE && checked.files.module(file).builtin.is_some();
-    let mut literals_shown: Vec<String> = fragments.iter_mut().flat_map(|fragment| std::mem::take(&mut fragment.literals_shown)).collect();
-    let mut literals = crate::build::literals::explain(fragments.iter().filter(|_| explain.literals).map(|fragment| (is_of_runtime(fragment.file), &fragment.literals[..])));
     // For a problem that is in no file.
     let nowhere = roots.first().copied().unwrap_or(FileId(0));
     let mut problems: Vec<Problem> = Vec::new();
@@ -1917,17 +1874,11 @@ pub fn link(
         reach.work.extend(defined.map(|found| Work::Layout(found.at)));
     }
     take_out_parts_that_do_not_run(&mut fragments, &reach, in_parallel);
-    // `Explain::disagreements`: for each of the problems it is about, in their order.
-    let mut why_they_disagree: Vec<Vec<String>> = Vec::new();
     for &(key, by) in &reach.undefined_funcs {
         problems.push(by.problem(&fragments, nowhere, format!("function {key:?} (used by {}): internal error: no file defines it; please report it", by.name(&fragments))));
-        why_they_disagree.push(vec![format!("the function {key:?}, which no fragment defines")]);
     }
     for &(at, by) in &reach.undefined_layouts {
         problems.push(by.problem(&fragments, nowhere, format!("type {} (used by {}): internal error: no file defines it; please report it", name_of_layout(&fragments, at), by.name(&fragments))));
-        if explain.disagreements {
-            why_they_disagree.push(disagreement::of_undefined_layout(checked, &fragments, &index, &reach, at, by));
-        }
     }
     let Errors { places, in_dropped_imports, imported_by } = errors;
     let mut imported_for_types: Option<FxHashSet<FileId>> = None;
@@ -2246,21 +2197,11 @@ pub fn link(
             globals: &global_ids,
             is_stub: &is_stub,
         };
-        let about: Vec<String> = fragments.iter().filter(|_| explain.disagreements).map(|fragment| disagreement::about_fragment(checked, &index, &reach, fragment)).collect();
-        let explain_identities = |here: Identity, kept: Identity| match (types.get(&here), types.get(&kept)) {
-            (Some(&here), Some(&kept)) => checked.checker().explain_identities(here, kept),
-            (here, kept) => format!("no task has kept the type: here {}, kept {}", here.is_none(), kept.is_none()),
-        };
-        let kept = disagreement::Kept { fragments: &fragments, layouts: &layouts, globals: &globals, entries: entry_points.len(), funcs: &included, about: &about, explain_identities: &explain_identities, about_function: &|file, func| disagreement::about_function(checked, file, func) };
-        let kept = explain.disagreements.then_some(&kept);
-        let mut found: Vec<(usize, Vec<(Problem, Vec<String>)>)> = (0..fragments.len()).map(|number| (number, Vec::new())).collect();
+        let mut found: Vec<(usize, Vec<Problem>)> = (0..fragments.len()).map(|number| (number, Vec::new())).collect();
         for_each_mut(&mut found, in_parallel, &|(number, found)| {
-            *found = disagreements(*number, &fragments[*number], &maps[*number], &all, nowhere, kept);
+            *found = disagreements(&fragments[*number], &maps[*number], &all, nowhere);
         });
-        for (problem, why) in found.into_iter().flat_map(|(_, found)| found) {
-            problems.push(problem);
-            why_they_disagree.push(why);
-        }
+        problems.extend(found.into_iter().flat_map(|(_, found)| found));
     }
     times.add("compare", &mut since);
 
@@ -2403,21 +2344,23 @@ pub fn link(
     times.add("flows", &mut since);
     let mut has_run_out = false;
     let mut cut_short = Vec::new();
-    for run in 0..4 {
+    let mut opened_for_the_log = Vec::new();
+    for run in 0..6 {
         if run == 1 {
             subtypes = subtypes.begin_again();
         }
-        if run == 2 {
+        if run >= 2 {
             if !subtypes.logs_type_errors() {
                 break;
             }
-            subtypes = subtypes.begin_the_final_run_again(true);
-        }
-        if run == 3 {
-            if !subtypes.has_opened_too_much_for_the_log() {
-                break;
+            if run >= 3 {
+                opened_for_the_log.push(subtypes.explain_what_opened_for_the_log());
+                if !subtypes.has_opened_too_much_for_the_log() {
+                    break;
+                }
             }
-            subtypes = subtypes.begin_the_final_run_again(false);
+            use bun_sema::check::OpensForTheLog::{FromOutsideWithinTheBound, Nothing, UntypedWithinTheBound, WhateverComesFromOutside};
+            subtypes = subtypes.begin_the_final_run_again([WhateverComesFromOutside, FromOutsideWithinTheBound, UntypedWithinTheBound, Nothing][run - 2]);
         }
         while !subtypes.questions().is_empty() || !subtypes.own_questions().is_empty() {
             let (answers, has_this_run_out) = answers_to(checked, subtypes.questions(), subtypes.stored(), &mut cut_short, in_parallel);
@@ -2588,11 +2531,11 @@ pub fn link(
     times.add("answers", &mut since);
     let deleted = nil::make_room_for_deletions(&mut program, in_parallel);
     reads::type_by_the_members(&mut program, in_parallel);
-    let roomier = nil::make_room_for_nil(&mut program, in_parallel);
+    nil::make_room_for_nil(&mut program, in_parallel);
     times.add("nil", &mut since);
     say("the subtypes are in the program");
     times.add("members", &mut since);
-    let unsound_uses = crate::verify::unsound_uses(&program, if explain.disagreements { 10 } else { 1 }, in_parallel);
+    let unsound_uses = crate::verify::unsound_uses(&program, 1, in_parallel);
     if let Some(first) = unsound_uses.first() {
         problems.push(Problem { file: nowhere, pos: 0, what: first.what.clone().into() });
     }
@@ -2629,58 +2572,8 @@ pub fn link(
     times.add("type texts", &mut since);
     say("the texts of the types");
     let mut explained = Vec::new();
-    if explain.disagreements {
-        let index_of = |layout: LayoutId| views.iter().position(|view| view.0 == layout);
-        let names_of = |layout: LayoutId| -> Vec<StrId> { program.layouts[layout.idx()].fields.iter().map(|field| field.name).collect() };
-        for (number, unsound) in unsound_uses.iter().enumerate() {
-            let sub = index_of(unsound.sub);
-            let out_of: Vec<u32> = membership.upcasts.iter().filter(|upcast| Some(upcast.0 as usize) == sub).map(|upcast| upcast.1).collect();
-            explained.push(format!(
-                "unsound use {}: the layout {}: view number {sub:?}, {} members, {} upcasts lead out of it, to the layouts {:?}",
-                number + 1,
-                unsound.sub.0,
-                program.layouts[unsound.sub.idx()].members.len(),
-                out_of.len(),
-                out_of.iter().take(12).map(|&to| views[to as usize].0.0).collect::<Vec<u32>>(),
-            ));
-            for &supertype in &unsound.supertypes {
-                let at = index_of(supertype);
-                let same_type = at.map_or(0, |at| views.iter().filter(|view| view.1 == views[at].1).count());
-                let into = membership.upcasts.iter().filter(|upcast| Some(upcast.1 as usize) == at).count();
-                explained.push(format!(
-                    "unsound use {}: used as the layout {}: view number {at:?}, {} fields, {} members, views of the same type: {same_type}, upcasts that lead into it: {into}",
-                    number + 1,
-                    supertype.0,
-                    program.layouts[supertype.idx()].fields.len(),
-                    program.layouts[supertype.idx()].members.len(),
-                ));
-                // Another layout with the same fields that the upcasts of the layout lead to.
-                for &to in out_of.iter().filter(|&&to| views[to as usize].0 != supertype && names_of(views[to as usize].0) == names_of(supertype)).take(3) {
-                    let apart = at.map_or_else(|| "the layout is no view".to_owned(), |at| c.explain_identities(views[at].1, views[to as usize].1));
-                    explained.push(format!("unsound use {}: the upcasts lead to the layout {} instead, which has the same fields; here: what the value is used as, kept: that layout; {apart}", number + 1, views[to as usize].0.0));
-                }
-            }
-        }
-        for (number, why) in why_they_disagree.iter().enumerate() {
-            explained.extend(why.iter().map(|line| format!("disagreement {}: {line}", number + 1)));
-        }
-    }
-    if explain.uninitialized {
-        explained.push(format!(
-            "nil: room in {} parameters, {} results, {} fields, {} module variables that are kept unboxed; {} uses narrowed behind a test",
-            roomier.parameters, roomier.results, roomier.fields, roomier.variables, roomier.narrowed
-        ));
-    }
     if explain.foreign {
         explained.append(&mut c.explain_foreign(&asked, &membership));
-    }
-    if explain.members {
-        explained.push(format!("members: {} casts to views that have no member are no tests", roomier.casts_to_empty_views.len()));
-        for &(func, value, to) in &roomier.casts_to_empty_views {
-            let views: Vec<String> = program.tys.get(to).parts.iter().filter_map(|part| if let Part::Class(view) = part { Some(view.idx().to_string()) } else { None }).collect();
-            explained.push(format!("members: no test: f{func} v{value} to shape {}", views.join(" ")));
-        }
-        explained.append(&mut c.explain_members(&asked, &membership));
     }
     if explain.alterations {
         explained.append(&mut c.explain_alterations(&membership));
@@ -2705,12 +2598,6 @@ pub fn link(
         let records = |is_marked: bool| program.layouts.iter().filter(|layout| layout.is_allocated && layout.kind == LayoutKind::Record && (!is_marked || layout.class_flags & class_flags::MAY_HAVE_OTHER_PROTOTYPE != 0)).count();
         explained.push(format!("alterations: {} of {} allocated records may inherit from anything", records(true), records(false)));
     }
-    if explain.parsed {
-        explained.append(&mut c.explain_parsed(&asked, &membership));
-    }
-    if explain.keys {
-        explained.append(&mut c.explain_functions_by_key());
-    }
     for (property, key, (file, func)) in c.functions_by_key() {
         let strings = [property, key].map(|atom| program.strs.find(checked.files.atoms.bytes(atom)));
         if let ([Some(property), Some(key)], Some(&func)) = (strings, func_ids.get(&FuncKey::Function(file, func))) {
@@ -2733,45 +2620,20 @@ pub fn link(
         });
     }
     times.add("by key", &mut since);
-    if explain.predictions {
-        explained.append(&mut c.explain_predictions(&membership.predictions));
-    }
-    if explain.callees {
-        explained.append(&mut c.explain_callees(&asked, &membership));
-    }
-    if explain.uninitialized {
-        explained.append(&mut c.explain_uninitialized());
-    }
-    if explain.arguments {
-        explained.append(&mut c.explain_arguments());
-    }
-    if explain.kinds {
-        explained.append(&mut c.explain_kinds());
-    }
     if explain.deferred {
         explained.append(&mut c.explain_deferred(&translated));
         explained.append(&mut explain_start(&program, &evaluating));
         explained.append(&mut c.explain_modules(&roots.iter().map(|root| root.file()).collect::<Vec<FileId>>(), &translated));
         explained.append(&mut c.explain_commonjs());
     }
-    if explain.captures {
-        for &file in &translated {
-            explained.append(&mut c.explain_captures(file));
-        }
-    }
     if explain.fields {
         explained.append(&mut explain_fields(&program, &names));
     }
-    if explain.boundary {
-        explained.append(&mut boundary::explain(&program));
-    }
     if explain.given {
+        explained.append(&mut opened_for_the_log);
         explained.append(&mut explain_given(&program));
         let (in_part, by_looks, all) = checked.checker().count_unions_given_in_part();
         explained.push(format!("given: written unions of records that are given in part: {in_part} of {all}; in {by_looks} of them no member was found: one only looks like what is given"));
-    }
-    if explain.strangers {
-        explained.append(&mut strangers::explain(&program));
     }
     if explain.throws || explain.throws_json {
         let mut starts: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
@@ -2787,21 +2649,6 @@ pub fn link(
         };
         explained.append(&mut throws::explain(&program, checked.checker().logs_type_errors(), explain.throws_json, explain.throws_all, &line_and_column, in_parallel));
     }
-    if explain.literals {
-        explained.append(&mut literals);
-        explained.append(&mut crate::build::literals::explain_births(&program));
-    }
-    if let Some((name, line)) = explain.literal_at {
-        explained.append(&mut literals_shown);
-        for (module, &file) in modules.iter().enumerate().filter(|&(_, &file)| checked.files.module(file).file_name().ends_with(name.as_bytes())) {
-            let starts = compute_ecma_line_starts(&checked.files.hir(file).text);
-            let from = starts.get(line as usize - 1).copied().unwrap_or(u32::MAX);
-            let to = starts.get(line as usize).copied().unwrap_or(u32::MAX);
-            let is_shown = |func: &Func| func.module.idx() == module && func.values.iter().any(|value| from <= value.pos && value.pos < to);
-            let shown: Vec<usize> = program.funcs.iter().enumerate().filter(|(_, func)| func.module.is_some() && is_shown(func)).map(|(index, _)| index).collect();
-            explained.extend(program.dump_functions(&shown).lines().map(|text| format!("literal: {text}")));
-        }
-    }
     if explain.integers {
         let mut is_name_of_field = vec![false; program.strs.len()];
         let fields = program.layouts.iter().filter(|layout| layout.kind != LayoutKind::Environment).flat_map(|layout| &layout.fields);
@@ -2814,19 +2661,12 @@ pub fn link(
         explained.push(format!("integers: under {} of the {} names of fields that numbers are seen to get to, they are expected to be int32s", by_text.iter().filter(|verdict| verdict.is_expected_int32()).count(), by_text.len()));
         explained.append(&mut c.explain_int32_fields(&by_text));
     }
-    let (marked_values, mut remarks_on_collections) = crate::build::literals::sizes_of_sets_of_strings(&program, in_parallel);
-    program.marked_values = marked_values;
-    if explain.literals {
-        explained.append(&mut remarks_on_collections);
-    }
+    program.marked_values = crate::build::sets_of_strings::sizes_of_sets_of_strings(&program, in_parallel);
     times.add("collections", &mut since);
     let mut rows = strangers::label_receivers_of_one_row(&mut program, in_parallel);
     times.add("rows", &mut since);
-    let mut firsts = strangers::find_first_stores(&mut program, in_parallel);
+    strangers::find_first_stores(&mut program, in_parallel);
     times.add("firsts", &mut since);
-    if explain.firsts {
-        explained.append(&mut firsts);
-    }
     if explain.rows {
         explained.append(&mut rows);
     }

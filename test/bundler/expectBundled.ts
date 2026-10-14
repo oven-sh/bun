@@ -6,7 +6,7 @@ import { callerSourceOrigin } from "bun:jsc";
 import type { Matchers } from "bun:test";
 import * as esbuild from "esbuild";
 import filenamify from "filenamify";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isCI, isDebug, isWindows } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -142,6 +142,8 @@ const tempDirectoryTemplate = path.join(realpathSync(tmpdir()), "bun-build-tests
 if (!existsSync(path.dirname(tempDirectoryTemplate)))
   mkdirSync(path.dirname(tempDirectoryTemplate), { recursive: true });
 const tempDirectory = mkdtempSync(tempDirectoryTemplate);
+mkdirSync(path.join(tempDirectory, "node_modules", "@types"), { recursive: true });
+symlinkSync(path.join(import.meta.dir, "..", "..", "packages", "bun-types"), path.join(tempDirectory, "node_modules", "@types", "bun"), "junction");
 const testsRan = new Set();
 
 const originalCwd = process.cwd();

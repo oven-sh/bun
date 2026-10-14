@@ -2450,6 +2450,7 @@ pub(crate) mod __gated_printer {
             !symbol.must_not_be_renamed()
         }
 
+        #[inline]
         pub(crate) fn add_source_mapping(&mut self, location: bun_ast::Loc) {
             if !GENERATE_SOURCE_MAP {
                 return;

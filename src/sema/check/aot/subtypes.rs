@@ -32,7 +32,7 @@
 //! an indirect or a generic call yields, is VOUCHED for by that type. Whether every flow into such a place has been noted does not
 //! show before the program runs: function types, instantiated type parameters and containers carry flows within them. So the
 //! target of a vouched cast is completed by fit, from posting lists by name and by constant, never from all pairs. Every yes is a
-//! layout that FITS, BUT NO FLOW brings it: counted, and listed by `Checker::explain_members`. Here to fit is to be assignable as the language
+//! layout that FITS, BUT NO FLOW brings it: counted. Here to fit is to be assignable as the language
 //! has it, which an honest flow is. That reference fields do not count (`Checker::has_same_fields`) is for a cast that meets a canonical
 //! layout, which phase A sees, and would make every two layouts with the same field names subtypes of each other. A target that requires no live field has no
 //! posting list to go by, and nearly everything fits it: it admits untyped objects instead, which costs its accesses a test of the
@@ -45,12 +45,11 @@
 //! **A budget.** The tables grow with the flows, and a program may have flows that make them grow beyond all use: `Subtypes::is_over_budget`.
 //! Then nothing is followed any further, the link fails, and `Subtypes::report` says on stderr what has grown, in numbers alone.
 
-use super::callees::{Callee, Hole};
+use super::callees::Callee;
 use super::creation::CreationsByView;
 use super::escape_closure::Escapes;
 use super::first_stores::ConstructionsByView;
-use super::flows::{Answer, Membership, OriginOfData, Place, Question, Reach, WhyForeign};
-use super::trust::Claim;
+use super::flows::{Answer, Membership, Place, Question, Reach, WhyForeign};
 use crate::atom::Atom;
 use crate::types::TypeId;
 use crate::util::{FxHashMap, FxHashSet};
@@ -94,6 +93,8 @@ const MANY_CANDIDATES: usize = 64;
 const LARGE: usize = 8;
 /// What fits brings a target no more subtypes than this in all. `Element<any>` fits every `Element<P>`, and brings all the others to each.
 const MOST_SUBTYPES_BY_FIT: usize = 1024;
+const SET_WITH_BITS: usize = 128;
+const MOST_WORDS_OF_BITS: usize = 1 << 22;
 
 const MOST_MEMBERSHIPS: usize = 50_000_000;
 const MOST_PAIRS_MET: usize = 500_000_000;
@@ -160,17 +161,6 @@ pub struct FieldTypes {
     pub unions_in: Vec<Vec<u32>>,
     /// The types that a cast leads to that makes a copy of plain data. Ascending.
     pub copied_to: Vec<u32>,
-}
-
-/// How a supertype is told from a layout that has to be made: `Subtypes::tell_apart`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(super) enum ToldApart {
-    /// A type guard or a test leads from the one to the other.
-    Tested,
-    /// They are parts of one union that plain data may be held to.
-    Beside,
-    /// The one is upcast to the other, which is told apart itself.
-    Upcast,
 }
 
 /// Why a layout is a subtype of a supertype: the first reason that was come by. The order of the steps is fixed, so it is always the same.
@@ -307,15 +297,15 @@ pub(super) struct Gathered {
     pub guards: Vec<(u32, u32)>,
     /// Those of `casts` that refuse nothing: `Checker::note_forced_cast`. Ascending.
     pub forced: Vec<(u32, u32)>,
-    /// For `Checker::explain_parsed` alone.
-    pub data_held_to: Vec<(u32, OriginOfData, Place)>,
     pub tests: Vec<(u32, u32)>,
     /// The targets of vouched casts and of casts of what is untyped, each with the first place. Ascending.
     pub vouched: Vec<(u32, Place)>,
     /// The views that the value of an expression is held to whose type says nothing, themselves and not what they hold. Ascending.
     pub held_untyped: Vec<(u32, Place)>,
+    pub checked: Vec<(u32, Place)>,
+    pub checked_by_road: [usize; 7],
     pub logs_type_errors: bool,
-    pub opens_for_the_log: bool,
+    pub opens_for_the_log: OpensForTheLog,
     pub admitting_when_closed: Vec<bool>,
     pub about_kinds_once_more: Vec<(Question, u32, WhyForeign)>,
     /// What is not laid out and let in: the view, the type of the object if that is known, and why.
@@ -326,10 +316,8 @@ pub(super) struct Gathered {
     pub(super) altered: [AlteredViews; 2],
     pub fields: FieldTypes,
     pub stored: FxHashSet<Atom>,
-    pub predictions: Vec<(Place, Claim)>,
     pub callees_at_birth: Vec<(u32, Atom, Callee)>,
     pub callees_stored: Vec<(u32, Atom, Callee)>,
-    pub callee_holes: Vec<(Place, Atom, Option<Hole>)>,
     pub creations: CreationsByView,
     pub constructions: ConstructionsByView,
     pub escapes: Escapes,
@@ -360,6 +348,8 @@ pub struct Subtypes {
     /// By supertype: its subtypes, ascending, and why each is one.
     sets: Vec<Vec<u32>>,
     causes: Vec<Vec<Cause>>,
+    bits: Vec<Vec<u64>>,
+    words_of_bits_left: usize,
     /// By subtype: the supertypes that hold it, in the order they came to.
     holders: Vec<Vec<u32>>,
     /// By layout: what a cast turns it into. Ascending.
@@ -394,8 +384,6 @@ pub struct Subtypes {
     is_vouched: Vec<bool>,
     to_complete: Vec<(u32, Place)>,
     newly_admitting: Vec<u32>,
-    /// `Membership::told_apart`.
-    told_apart: Vec<(u32, u32, ToldApart)>,
     /// By view: something that is not laid out is in its set.
     is_admitting: Vec<bool>,
     /// By view: `give_up_completing`.
@@ -438,7 +426,7 @@ fn may_fit(made: &Facts, view: &Facts) -> bool {
     if view.flags & IS_MADE_BY_COERCION != 0 {
         return true;
     }
-    if !is_subset(&view.required, &made.declared) || (view.flags & IS_WEAK != 0 && !made.declared.is_empty() && !shares_one(&view.declared, &made.declared)) {
+    if !is_subset(&view.required, &made.declared) || (view.flags & IS_WEAK != 0 && !view.declared.is_empty() && !made.declared.is_empty() && !shares_one(&view.declared, &made.declared)) {
         return false;
     }
     view.constants.chunk_by(|a, b| a.0 == b.0).all(|taken| {
@@ -452,6 +440,14 @@ fn may_fit(made: &Facts, view: &Facts) -> bool {
 }
 
 const MOST_VIEWS_OPENED_WITH_ONE: usize = 32;
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum OpensForTheLog {
+    Nothing,
+    WhateverComesFromOutside,
+    FromOutsideWithinTheBound,
+    UntypedWithinTheBound,
+}
 
 impl Subtypes {
     pub(super) fn new(gathered: Gathered, clock: Clock) -> Subtypes {
@@ -476,15 +472,30 @@ impl Subtypes {
 
     pub fn has_opened_too_much_for_the_log(&self) -> bool {
         let admitting = |list: &[bool]| list.iter().filter(|&&is_admitting| is_admitting).count();
-        self.gathered.opens_for_the_log && admitting(&self.is_admitting) > admitting(&self.gathered.admitting_when_closed) + (self.nodes as usize / 8).max(128)
+        self.gathered.opens_for_the_log != OpensForTheLog::Nothing && admitting(&self.is_admitting) > admitting(&self.gathered.admitting_when_closed) + (self.nodes as usize / 8).max(128)
     }
 
-    pub fn begin_the_final_run_again(self, opens_for_the_log: bool) -> Subtypes {
+    pub fn explain_what_opened_for_the_log(&self) -> String {
+        let admitting = |list: &[bool]| list.iter().filter(|&&is_admitting| is_admitting).count();
+        format!(
+            "given: for the log: {:?}: {} views admit strangers, {} as a throw build has them, of {}; {} come from outside, {} are untyped; checks by road: untyped, call, construction, free name, caught or resumed, receiver, parameter: {:?}: {}",
+            self.gathered.opens_for_the_log,
+            admitting(&self.is_admitting),
+            admitting(&self.gathered.admitting_when_closed),
+            self.nodes,
+            self.gathered.checked.len(),
+            self.gathered.held_untyped.len(),
+            self.gathered.checked_by_road,
+            if self.has_opened_too_much_for_the_log() { "too many" } else { "kept" }
+        )
+    }
+
+    pub fn begin_the_final_run_again(self, opens: OpensForTheLog) -> Subtypes {
         let (members_by_flow, mut gathered) = (self.members_by_flow, self.gathered);
-        if opens_for_the_log {
+        if gathered.opens_for_the_log == OpensForTheLog::Nothing {
             gathered.admitting_when_closed = self.is_admitting;
         }
-        gathered.opens_for_the_log = opens_for_the_log;
+        gathered.opens_for_the_log = opens;
         gathered.about_kinds = gathered.about_kinds_once_more.clone();
         let mut again = Subtypes::new_run(gathered, self.clock, true);
         again.members_by_flow = members_by_flow;
@@ -503,6 +514,8 @@ impl Subtypes {
             seen,
             sets: vec![Vec::new(); nodes],
             causes: vec![Vec::new(); nodes],
+            bits: vec![Vec::new(); nodes],
+            words_of_bits_left: MOST_WORDS_OF_BITS,
             holders: vec![Vec::new(); all],
             becomes: vec![Vec::new(); nodes],
             untested: vec![Vec::new(); nodes],
@@ -524,7 +537,6 @@ impl Subtypes {
             is_vouched: vec![false; nodes],
             to_complete: Vec::new(),
             newly_admitting: Vec::new(),
-            told_apart: Vec::new(),
             is_admitting: vec![false; nodes],
             is_given_up: vec![false; nodes],
             why_let_in: FxHashMap::default(),
@@ -609,7 +621,7 @@ impl Subtypes {
                 self.let_in(view, self.nodes, WhyForeign::Flat { at: place });
             }
         }
-        if self.gathered.opens_for_the_log {
+        if self.gathered.opens_for_the_log != OpensForTheLog::Nothing {
             self.open_for_the_log();
         }
         self.questions.extend(self.gathered.about_kinds.iter().map(|about| about.0));
@@ -621,12 +633,16 @@ impl Subtypes {
     }
 
     fn open_for_the_log(&mut self) {
-        for at in 0..self.gathered.held_untyped.len() {
-            let (view, place) = self.gathered.held_untyped[at];
+        let stage = self.gathered.opens_for_the_log;
+        let mut candidates = self.gathered.held_untyped.clone();
+        if stage != OpensForTheLog::UntypedWithinTheBound {
+            candidates.extend_from_slice(&self.gathered.checked);
+        }
+        for (view, place) in candidates {
             if self.gathered.admitting_when_closed[view as usize] || self.flags(view) & IS_MADE_BY_COERCION != 0 {
                 continue;
             }
-            if self.views_opened_with(view, MOST_VIEWS_OPENED_WITH_ONE).is_some() {
+            if stage == OpensForTheLog::WhateverComesFromOutside || self.views_opened_with(view, MOST_VIEWS_OPENED_WITH_ONE).is_some() {
                 self.let_in(view, self.stranger_of_the_log(), WhyForeign::ForTheLog { at: place });
             }
         }
@@ -706,26 +722,24 @@ impl Subtypes {
         }
         let mut pending: Vec<u32> = (0..self.nodes).filter(|&view| has_to_be_made[view as usize]).collect();
         while let Some(made) = pending.pop() {
-            let mut told_from_it: Vec<(u32, ToldApart)> = cast_from[made as usize].iter().map(|&other| (other, ToldApart::Tested)).collect();
+            let mut told_from_it: Vec<u32> = cast_from[made as usize].clone();
             if self.flags(made) & IS_TOLD_APART != 0 {
-                told_from_it.extend(upcast_from[made as usize].iter().map(|&other| (other, ToldApart::Upcast)));
+                told_from_it.extend_from_slice(&upcast_from[made as usize]);
             }
             for &number in &beside[made as usize] {
-                told_from_it.extend(self.gathered.fields.together[number as usize].iter().map(|&other| (other, ToldApart::Beside)));
+                told_from_it.extend_from_slice(&self.gathered.fields.together[number as usize]);
             }
-            for (other, how) in told_from_it {
+            for other in told_from_it {
                 let facts = &mut self.gathered.facts[other as usize];
                 if !takes_any_object[other as usize] {
                     facts.flags &= !IS_FLAT_BUT_FOR_FUNCTIONS;
                 }
                 if facts.admits_by_structure() && !takes_any_object[other as usize] {
                     facts.flags = (facts.flags & !IS_FLAT) | IS_TOLD_APART;
-                    self.told_apart.push((other, made, how));
                     pending.push(other);
                 }
             }
         }
-        self.told_apart.sort_unstable_by_key(|told| told.0);
     }
 
     /// The questions of this round, for any checker of the program, if the views are published. None, and none of its own: it is done.
@@ -803,8 +817,49 @@ impl Subtypes {
         let Err(at) = self.sets[view as usize].binary_search(&member) else { return false };
         self.sets[view as usize].insert(at, member);
         self.causes[view as usize].insert(at, cause);
+        self.note_in_bits(view, &[member]);
         self.follow(view, member);
         true
+    }
+
+    fn note_in_bits(&mut self, view: u32, new: &[u32]) {
+        let nodes = self.nodes;
+        let set_in = |bits: &mut [u64], members: &[u32]| {
+            for &member in members.iter().take_while(|&&member| member < nodes) {
+                bits[(member / 64) as usize] |= 1 << (member % 64);
+            }
+        };
+        if !self.bits[view as usize].is_empty() {
+            return set_in(&mut self.bits[view as usize], new);
+        }
+        let words = (nodes as usize).div_ceil(64);
+        if self.sets[view as usize].len() < SET_WITH_BITS || self.words_of_bits_left < words {
+            return;
+        }
+        self.words_of_bits_left -= words;
+        let mut bits = vec![0u64; words];
+        set_in(&mut bits, &self.sets[view as usize]);
+        self.bits[view as usize] = bits;
+    }
+
+    fn new_among(&self, target: u32, members: &[u32], as_bits: &[u64]) -> Vec<u32> {
+        let has = &self.bits[target as usize];
+        if has.is_empty() {
+            let set = &self.sets[target as usize];
+            return members.iter().copied().filter(|member| set.binary_search(member).is_err()).collect();
+        }
+        if as_bits.is_empty() || as_bits.len() > members.len() * 4 {
+            return members.iter().copied().filter(|&member| has[(member / 64) as usize] >> (member % 64) & 1 == 0).collect();
+        }
+        let mut new = Vec::new();
+        for (word, (&brought, &held)) in as_bits.iter().zip(has.iter()).enumerate() {
+            let mut left = brought & !held;
+            while left != 0 {
+                new.push(word as u32 * 64 + left.trailing_zeros());
+                left &= left - 1;
+            }
+        }
+        new
     }
 
     /// `members`: ascending. One walk over the set, however many there are.
@@ -822,6 +877,10 @@ impl Subtypes {
             };
             members.iter().copied().filter(is_new).collect()
         };
+        self.insert_new(view, new, cause);
+    }
+
+    fn insert_new(&mut self, view: u32, new: Vec<u32>, cause: Cause) {
         if new.len() < 4 {
             for member in new {
                 self.insert(view, member, cause);
@@ -846,6 +905,7 @@ impl Subtypes {
         set.extend_from_slice(&new[next..]);
         causes.resize(set.len(), cause);
         (self.sets[view as usize], self.causes[view as usize]) = (set, causes);
+        self.note_in_bits(view, &new);
         for &member in &new {
             self.follow(view, member);
         }
@@ -1183,12 +1243,20 @@ impl Subtypes {
                 self.is_queued[view as usize] = false;
                 let mut fresh = std::mem::take(&mut self.fresh[view as usize]);
                 fresh.sort_unstable();
+                let views_among = fresh.partition_point(|&member| member < self.nodes);
+                let mut fresh_as_bits: Vec<u64> = Vec::new();
+                if views_among >= SET_WITH_BITS && self.untested[view as usize].iter().any(|edge| edge.1 == FITS) {
+                    fresh_as_bits.resize((self.nodes as usize).div_ceil(64), 0);
+                    for &member in &fresh[..views_among] {
+                        fresh_as_bits[(member / 64) as usize] |= 1 << (member % 64);
+                    }
+                }
                 for at in 0..self.untested[view as usize].len() {
                     let (to, number) = self.untested[view as usize][at];
                     // That untyped objects get to the one does not show that they get to the other.
                     match number {
                         NONE => self.insert_all(to, &fresh, Cause::Declared(view)),
-                        FITS => self.bring_what_fits(view, to, &fresh[..fresh.partition_point(|&member| member < self.nodes)]),
+                        FITS => self.bring_what_fits(view, to, &fresh[..views_among], &fresh_as_bits),
                         number => self.insert_all(to, &fresh, Cause::Upcast(number)),
                     }
                 }
@@ -1450,9 +1518,12 @@ impl Subtypes {
                 // Whatever is in a place of the one may get to a place of the other, now and later.
                 if fits {
                     self.untested[member as usize].push((target, FITS));
+                    if self.admits_untyped(target) || self.is_given_up[target as usize] {
+                        continue;
+                    }
                     let set = &self.sets[member as usize];
-                    let brought = set[..set.partition_point(|&subtype| subtype < self.nodes)].to_vec();
-                    self.bring_what_fits(member, target, &brought);
+                    let new = self.new_among(target, &set[..set.partition_point(|&subtype| subtype < self.nodes)], &self.bits[member as usize]);
+                    self.bring_what_is_new(member, target, new);
                 }
                 continue;
             }
@@ -1470,14 +1541,17 @@ impl Subtypes {
     }
 
     /// Phase B has found that `from` fits `target`. `members`: subtypes of `from`, ascending.
-    fn bring_what_fits(&mut self, from: u32, target: u32, members: &[u32]) {
+    fn bring_what_fits(&mut self, from: u32, target: u32, members: &[u32], as_bits: &[u64]) {
         if self.admits_untyped(target) || self.is_given_up[target as usize] {
             return;
         }
-        let has = &self.sets[target as usize];
-        let new = members.iter().filter(|member| has.binary_search(member).is_err()).count();
-        if has.len() + new <= MOST_SUBTYPES_BY_FIT {
-            return self.insert_all(target, members, Cause::Fit(from));
+        let new = self.new_among(target, members, as_bits);
+        self.bring_what_is_new(from, target, new);
+    }
+
+    fn bring_what_is_new(&mut self, from: u32, target: u32, new: Vec<u32>) {
+        if self.sets[target as usize].len() + new.len() <= MOST_SUBTYPES_BY_FIT {
+            return self.insert_new(target, new, Cause::Fit(from));
         }
         let at = self.gathered.vouched.binary_search_by_key(&target, |vouched| vouched.0).map_or_else(|_| Place::default(), |found| self.gathered.vouched[found].1);
         self.give_up_completing(target, at);
@@ -1711,7 +1785,7 @@ impl Subtypes {
             reach.is_allocated = set.binary_search(&(view as u32)).is_ok();
             reach.is_transition_target_only = reach.is_allocated && self.gathered.facts[view].flags & (HAS_SITE | IS_COPIED) == 0;
             reach.admits_foreign = laid_out < set.len();
-            reach.is_opened_for_the_log = reach.admits_foreign && self.gathered.opens_for_the_log && !self.gathered.admitting_when_closed[view];
+            reach.is_opened_for_the_log = reach.admits_foreign && self.gathered.opens_for_the_log != OpensForTheLog::Nothing && !self.gathered.admitting_when_closed[view];
             if reach.admits_foreign {
                 why_foreign[view] = Some(match self.causes[view][laid_out] {
                     Cause::Upcast(number) => WhyForeign::Inherited { from: self.gathered.upcasts[number as usize].0, at: self.gathered.upcasts[number as usize].2 },
@@ -1810,8 +1884,7 @@ impl Subtypes {
         let (alteration_sites, untyped_alterations) = self.gathered.escapes.with_alterations(|noted| (noted.sites(), noted.untyped_places()));
         let (widest_alterations, doors) = self.gathered.escapes.with_alterations(|noted| (noted.widest(), noted.doors()));
         // Then by supertype: a read through it finds an object of any subtype.
-        let mut callees_unresolved: Vec<(u32, Atom, Callee)> = Vec::new();
-        for (view, reach) in reached.iter_mut().enumerate() {
+        for reach in reached.iter_mut() {
             let mut read: FxHashMap<Atom, Callee> = FxHashMap::default();
             for &layout in &reach.members {
                 for &(name, callee) in &held_by[layout as usize] {
@@ -1820,9 +1893,8 @@ impl Subtypes {
                 }
             }
             for (name, callee) in read {
-                match callee {
-                    Callee::One(file, func) => reach.callees.push((name, file, func)),
-                    callee => callees_unresolved.push((view as u32, name, callee)),
+                if let Callee::One(file, func) = callee {
+                    reach.callees.push((name, file, func));
                 }
             }
             reach.callees.sort_unstable_by_key(|&(name, file, func)| (file, func, name.0));
@@ -1846,11 +1918,6 @@ impl Subtypes {
             causes: self.causes,
             upcasts: self.gathered.upcasts,
             vouched: self.gathered.vouched,
-            data_held_to: self.gathered.data_held_to,
-            told_apart: self.told_apart,
-            predictions: self.gathered.predictions,
-            callee_holes: self.gathered.callee_holes,
-            callees_unresolved,
         }
     }
 }

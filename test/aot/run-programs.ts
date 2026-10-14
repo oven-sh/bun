@@ -16,11 +16,12 @@
 //                                         "skipInShell": why shell/quick.py skips the program; not read here
 //   programs/**/tsconfig.json             the compiler options for the programs below it
 //   programs/jsc-shell-functions.ts       noInline(), gc() and similar functions, for the programs that import it
+//   packages/, packages-<topic>.test.ts   programs that import packages, with a runner of their own: packages/run-packages.ts
 //
-//   bun test test/aot                                     everything
+//   bun test test/aot                                     every program; of packages/, one importer in ten and at least one per case
 //   bun test test/aot/strings                             one topic
 //   AOT_PROGRAMS=quick bun test test/aot                  one program in ten, the same ones every time
-//   AOT_PROGRAMS= bun test test/aot                       everything, even with a debug or ASAN build of Bun
+//   AOT_PROGRAMS= bun test test/aot                       everything, packages/ too, even with a debug or ASAN build of Bun
 //   AOT_PROGRAMS=replace bun test test/aot/strings        the programs whose path contains the text
 //   AOT_PROGRAMS_JOBS=4 bun test ..                       how many programs run at once (default: one per core)
 //   AOT_PROGRAMS_UPDATE=1 bun test ..                     rewrites the .expected.txt and .build-errors.txt files

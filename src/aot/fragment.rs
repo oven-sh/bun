@@ -385,10 +385,6 @@ pub struct Fragment {
     pub stores_to_methods: Vec<MethodStore<Identity>>,
     /// Of a file of builtin functions: what native code asks for a function by, the function, its `ImplementationVisibility` as a number.
     pub builtin_functions: Vec<(u32, FuncKey, u32)>,
-    /// If `Explain::literals` is asked for: by `build::literals::WAYS`, how many object literals of the file are made with a layout, and how many as ordinary objects.
-    pub literals: Vec<[u32; 2]>,
-    /// `Explain::literal_at`: a line for each literal that is asked about.
-    pub literals_shown: Vec<String>,
     /// How many times the file has been translated, this time included: more than once if a task was invalid.
     pub times_translated: u32,
 }

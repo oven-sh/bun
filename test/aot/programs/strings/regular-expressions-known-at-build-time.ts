@@ -1,4 +1,4 @@
-// Regular expressions that are not literals but are still known at build time, built the way the packages ansi-regex and wrap-ansi build them, and some that are not known.
+// Regular expressions that are not literals but are still known at build time, built the way the packages ansi-regex and wrap-ansi build them.
 // KNOWN regexp2 (?:(?:\u001B\]|\u009D)[^\u0007\u001B\u009C\u009D]*(?:\u0007|\u001B\u005C|\u009C))|[\u001B\u009B][[\]()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]
 // KNOWN regexp2 cho+sen
 // PARTLY regexp2 unkno+wnflags
@@ -6,10 +6,10 @@
 // KNOWN fold1 (?:a\[|b)(?:(?<sgr>[0-9;:]*)m|[0-?]*[ -/]*[@-~])|a\](?:8;(?<parameters>[^;\u0000-\u001F\u007F-\u009F]*);(?<uri>[^\u0000-\u001F\u007F-\u009F]*)(?:c|a\\)|[^\u0000-\u001F\u007F-\u009F]*(?:c|a\\))
 // KNOWN fold1 ra+w\d1\n
 // KNOWN fold1 nu+mber12-0.5
-// UNKNOWN assi+gned
-// UNKNOWN fromca+ll
-// UNKNOWN [ab]joi+ned
-// UNKNOWN obje+ct7
+// KNOWN fold1 assi+gned
+// KNOWN fold1 fromca+ll
+// KNOWN fold1 [ab]joi+ned
+// KNOWN fold1 obje+ct7
 declare const console: { log(...values: unknown[]): void };
 function make(text: string): string { return Array.from(text).join(""); }
 function ansiRegex({ onlyFirst = false } = {}): RegExp {

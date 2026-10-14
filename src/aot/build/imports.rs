@@ -403,7 +403,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 },
                 // `import a = require("m")`
                 Decl::ImportEquals(import) => match hir[import].target {
-                    hir::ImportEqualsTarget::Require(spec) if spec.is_some() => (spec, Some(known::default)),
+                    hir::ImportEqualsTarget::Require(spec) if spec.is_some() => {
+                        match self.imported_file(file, spec).filter(|&imported| !self.exports_an_object(imported) && self.builtin_id(imported).is_none()) {
+                            Some(imported) => {
+                                let stands_for_all = self.c.atoms().intern(b"module.exports");
+                                (spec, self.exports_of_file(imported).iter().any(|export| export.0 == stands_for_all).then_some(stands_for_all))
+                            }
+                            None => (spec, Some(known::default)),
+                        }
+                    }
                     _ => return ImportSource::Entity,
                 },
                 _ => continue,

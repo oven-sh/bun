@@ -27,7 +27,7 @@ mod subtypes;
 mod trust;
 mod undeclared_fields;
 
-pub use callees::{Callee, Hole, OnlyFunction};
+pub use callees::{Callee, OnlyFunction};
 pub use captures::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCopied, Receiver};
 pub use escape::argument_use;
 pub use classes::{ClassFacts, MethodStore, ReplacedMethods};
@@ -38,7 +38,7 @@ pub use int32_fields::{Contrary, FlowNode, FlowSource, Int32Verdict, NumberFlow,
 pub use javascript::CodeOfImport;
 pub use kinds::kind;
 pub use flows::{Answer, BuiltIn, Candidate, GaveUp, Literal, Meeting, Membership, Noted, OriginOfData, Place, Question, Reach, Share, WhyForeign};
-pub use subtypes::{Cause, FieldTypes, Sizes, Subtypes};
+pub use subtypes::{Cause, FieldTypes, OpensForTheLog, Sizes, Subtypes};
 pub use storage::{Evaluates, Primitive, Recovery, ReferenceRead, Storage};
 pub use trust::{Claim, is_builtin_of_the_engine, is_locked_global_of_the_engine};
 

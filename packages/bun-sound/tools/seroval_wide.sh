@@ -16,7 +16,7 @@ if [ "$STEP" = build ]; then mkdir -p "$W/out"; : > "$W/columns"
   tree() { tree1 "$1"; cp "$WIDE/wide.ts" "$W/$1/"; tree1 "$1.born"; tree1 "$1.doors"; cp "$WIDE/carried.js" "$WIDE/carried.d.ts" "$W/$1.doors/"
     python3 -c 'import re,sys; t=open(sys.argv[1]).read(); open(sys.argv[2],"w").write(re.sub(r"/\*C\*/.*?/\*C\*/", "", t, flags=re.S)); open(sys.argv[3],"w").write(re.sub(r"/\*L\*/.*?/\*L\*/", "", re.sub(r"/\*D\*/.*?/\*D\*/", "import { carry } from \"./carried.js\";", t, flags=re.S), flags=re.S))' "$WIDE/wide.ts" "$W/$1.born/wide.ts" "$W/$1.doors/wide.ts"; }
   build() { build1 "$1" "$2" "$3" ""; build1 "$1" "$2" "$3" .born; build1 "$1" "$2" "$3" .doors; }
-  build1() { local out="$1$2$4"; ( cd "$W/$1$4" && BUN_AOT_OPTIONS="$3" BUN_AOT_TYPED_SNAPSHOT="$W/out/$out.snapshot" "$BUN" build --compile --aot --target=bun --define 'process.env.NODE_ENV="production"' wide.ts --outfile "$W/out/$out" < /dev/null > "$W/out/$out.build" 2>&1 )
+  build1() { local out="$1$2$4"; ( cd "$W/$1$4" && env ${3:+"BUN_JSC_$3"} BUN_AOT_TYPED_SNAPSHOT="$W/out/$out.snapshot" "$BUN" build --compile --aot --target=bun --define 'process.env.NODE_ENV="production"' wide.ts --outfile "$W/out/$out" < /dev/null > "$W/out/$out.build" 2>&1 )
     if grep -a -q TS100009 "$W/out/$out.build"; then echo "$out: A TYPED PACKAGE HAS FALLEN: $(grep -a -m1 TS100009 "$W/out/$out.build" | cut -c1-200)"; return; fi
     if [ -x "$W/out/$out" ]; then echo "$out: built: $(wc -c < "$W/out/$out" | tr -d ' ') B"; echo "$out" >> "$W/columns"; else echo "$out: NOT BUILT:"; grep -a -E -A2 'error|not compiled' "$W/out/$out.build" | head -30 | cut -c1-220; fi; }
   tree untyped; build untyped "" ""

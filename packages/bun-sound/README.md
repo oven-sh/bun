@@ -147,7 +147,7 @@ python3 run.py answers path/to/aot-bun path/to/node_modules out/   # runs them a
 `run.py` answers the question the static gates cannot: *are the types true?* Each tree is a long list of
 scenarios, each in its own `try`, printing what the package produced. The same source is run plainly on
 the untouched package (twice, to prove it is deterministic), compiled with `--aot` untyped, typed, and
-typed with `auditAOTTypedAssertions=1` (a value that contradicts its type is reported instead of thrown).
+typed with `BUN_JSC_auditAOTTypedAssertions=1` at the build (a value that contradicts its type is reported instead of thrown).
 Every scenario must print the same text in every column. `trees/entries` asks each replaced entry what it
 is to its importers: `require()`, `import d`, `import * as ns`, named imports including a name nobody exports.
 

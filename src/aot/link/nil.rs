@@ -572,6 +572,7 @@ struct Report<'a> {
     /// The fields that are connected with those that share their place.
     connected: FxHashSet<(LayoutId, u32)>,
     as_values: FunctionsAsValues,
+    methods_by_name: &'a FxHashMap<StrId, Vec<FuncId>>,
 }
 
 impl Report<'_> {
@@ -855,6 +856,16 @@ impl Report<'_> {
                                 _ => None,
                             };
                             if let Some((obj, name, handed)) = by_name {
+                                if may_reach_the_program(program, func, v) {
+                                    for &method in self.methods_by_name.get(&name).into_iter().flatten() {
+                                        let called = &program.funcs[method.idx()];
+                                        let Some(entered) = called.blocks.first() else { continue };
+                                        let ahead = entered.params.len().saturating_sub(called.params.len());
+                                        for &parameter in entered.params.iter().skip(ahead + handed.len()) {
+                                            self.origins.push((nodes.value(method.idx(), parameter), UNDEFINED));
+                                        }
+                                    }
+                                }
                                 let receiver = func.ty(obj);
                                 let is_array = receiver.is_some() && !program.tys.get(receiver).any_object && program.tys.get(receiver).parts.iter().all(|part| matches!(part, Part::Array(_)));
                                 self.hand_elements_to_functions(func, handed, parameters_handed_elements(program.strs.get(name), is_array), matches!(func.op(v), Some(Op::CallMethod { .. })));
@@ -893,6 +904,9 @@ impl Report<'_> {
                                 } else {
                                     self.as_values.leaks.extend(seen(argument));
                                 }
+                            }
+                            for &parameter in called.blocks.first().into_iter().flat_map(|entered| entered.params.iter().skip(ahead + args.len())) {
+                                self.origins.push((nodes.value(callee.idx(), parameter), UNDEFINED));
                             }
                             if returns_what_it_yields(callee) {
                                 self.edges.push((nodes.result(callee.idx()), node(v)));
@@ -987,23 +1001,16 @@ struct Slice<'a> {
     funcs: &'a mut [Func],
     has_wider_values: &'a mut [bool],
     tys: Overlay<'a>,
-    roomier: Roomier,
 }
 
-fn for_each_slice(tys: &mut DeclaredTable, funcs: &mut [Func], has_wider_values: &mut [bool], roomier: &mut Roomier, in_parallel: InParallel<'_>, work: &(dyn Fn(&mut Slice<'_>) + Sync)) {
+fn for_each_slice(tys: &mut DeclaredTable, funcs: &mut [Func], has_wider_values: &mut [bool], in_parallel: InParallel<'_>, work: &(dyn Fn(&mut Slice<'_>) + Sync)) {
     let known = tys.list.len();
     let added: Vec<Vec<Declared>> = {
         let tys: &DeclaredTable = tys;
         let mut slices: Vec<Slice<'_>> = (funcs.chunks_mut(FUNCTIONS_OF_A_TASK).zip(has_wider_values.chunks_mut(FUNCTIONS_OF_A_TASK)).enumerate())
-            .map(|(number, (funcs, has_wider_values))| Slice { first: number * FUNCTIONS_OF_A_TASK, funcs, has_wider_values, tys: Overlay::over(tys), roomier: Roomier::default() })
+            .map(|(number, (funcs, has_wider_values))| Slice { first: number * FUNCTIONS_OF_A_TASK, funcs, has_wider_values, tys: Overlay::over(tys) })
             .collect();
         for_each_mut(&mut slices, in_parallel, &|slice| work(slice));
-        for slice in &slices {
-            roomier.parameters += slice.roomier.parameters;
-            roomier.results += slice.roomier.results;
-            roomier.narrowed += slice.roomier.narrowed;
-            roomier.casts_to_empty_views.extend_from_slice(&slice.roomier.casts_to_empty_views);
-        }
         slices.into_iter().map(|slice| slice.tys.added).collect()
     };
     let renamed: Vec<Vec<TyId>> = added.into_iter().map(|added| added.into_iter().map(|declared| tys.intern(declared)).collect()).collect();
@@ -1086,17 +1093,6 @@ fn as_boolean(func: &mut Func, tys: &Overlay<'_>, ops: &mut Vec<V>, boolean: TyI
     tested
 }
 
-/// How many places that are kept unboxed have been given room.
-#[derive(Default)]
-pub(super) struct Roomier {
-    pub(super) parameters: usize,
-    pub(super) results: usize,
-    pub(super) fields: usize,
-    pub(super) variables: usize,
-    pub(super) narrowed: usize,
-    pub(super) casts_to_empty_views: Vec<(u32, u32, TyId)>,
-}
-
 fn is_empty_view(layout: &Layout) -> bool {
     layout.members.is_empty() && !layout.admits_foreign && !layout.is_allocated
 }
@@ -1117,12 +1113,19 @@ fn has_only_empty_views(tys: &DeclaredTable, layouts: &[Layout], ty: TyId) -> bo
 const FUNCTIONS_OF_A_TASK: usize = 256;
 const NODES_OF_A_RUN: usize = 1 << 14;
 
-pub(super) fn make_room_for_nil(program: &mut Program, in_parallel: InParallel<'_>) -> Roomier {
+pub(super) fn make_room_for_nil(program: &mut Program, in_parallel: InParallel<'_>) {
     let nodes = Nodes::of(program);
     let initialize = program.strs.intern(b"Initialize");
     let reaching = {
         let program: &Program = program;
-        let report = || Report { program, nodes: &nodes, initialize, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default(), as_values: FunctionsAsValues::default() };
+        let mut methods_by_name: FxHashMap<StrId, Vec<FuncId>> = FxHashMap::default();
+        for method in program.layouts.iter().flat_map(|layout| &layout.methods) {
+            if method.name.is_some() && method.kind == MethodKind::Method && method.flags & method_flags::STATIC == 0 {
+                methods_by_name.entry(method.name).or_default().push(method.func);
+            }
+        }
+        let methods_by_name = &methods_by_name;
+        let report = || Report { program, nodes: &nodes, initialize, edges: Vec::new(), origins: Vec::new(), connected: FxHashSet::default(), as_values: FunctionsAsValues::default(), methods_by_name };
         let mut slices: Vec<(usize, Report<'_>, NilEdges)> = (0..program.funcs.len()).step_by(FUNCTIONS_OF_A_TASK).map(|first| (first, report(), NilEdges::default())).collect();
         for_each_mut(&mut slices, in_parallel, &|(first, report, found)| {
             for index in (*first..program.funcs.len()).take(FUNCTIONS_OF_A_TASK) {
@@ -1180,29 +1183,23 @@ pub(super) fn make_room_for_nil(program: &mut Program, in_parallel: InParallel<'
         }
         reaching
     };
-    let mut roomier = Roomier::default();
-    let is_unboxed = |tys: &Overlay<'_>, ty: TyId| ty.is_some() && ty != tys.anything && !tys.get(ty).has_objects() && tys.get(ty).prims & prim::CELLS == 0 && !tys.get(ty).is_never();
     let Program { tys: table, funcs, layouts, globals, .. } = program;
     let mut over = Overlay::over(table);
     let tys = &mut over;
     for (index, layout) in layouts.iter_mut().enumerate() {
         for (number, field) in layout.fields.iter_mut().enumerate() {
-            let wider = with_room(tys, field.declared, reaching[nodes.field(LayoutId::new(index), number as u32) as usize]);
-            roomier.fields += usize::from(wider != field.declared && is_unboxed(tys, field.declared));
-            field.declared = wider;
+            field.declared = with_room(tys, field.declared, reaching[nodes.field(LayoutId::new(index), number as u32) as usize]);
         }
     }
     for (index, global) in globals.iter_mut().enumerate() {
-        let wider = with_room(tys, global.declared, reaching[nodes.globals as usize + index]);
-        roomier.variables += usize::from(wider != global.declared && is_unboxed(tys, global.declared));
-        global.declared = wider;
+        global.declared = with_room(tys, global.declared, reaching[nodes.globals as usize + index]);
     }
     for declared in over.added {
         table.intern(declared);
     }
     let (layouts, globals): (&[Layout], &[crate::ir::Global]) = (layouts, globals);
     let mut has_wider_values = vec![false; funcs.len()];
-    for_each_slice(table, funcs, &mut has_wider_values, &mut roomier, in_parallel, &|Slice { first, funcs, has_wider_values, tys, roomier }| {
+    for_each_slice(table, funcs, &mut has_wider_values, in_parallel, &|Slice { first, funcs, has_wider_values, tys }| {
       for (offset, func) in funcs.iter_mut().enumerate() {
         let index = *first + offset;
         // The values whose types had neither `undefined` nor `null` and have now.
@@ -1221,9 +1218,6 @@ pub(super) fn make_room_for_nil(program: &mut Program, in_parallel: InParallel<'
             }
             value.ty = with_room(tys, value.ty, nil);
             if let Def::Op(Op::Coerce { to, why, .. }) = &mut value.def {
-                if nil & STRANGER != 0 && matches!(why, Why::Flow | Why::Claim | Why::Store | Why::Cast | Why::CastFresh) && has_only_empty_views(tys.known, layouts, *to) {
-                    roomier.casts_to_empty_views.push((index as u32, number as u32, *to));
-                }
                 *to = with_room(tys, *to, nil);
                 if *why == Why::Forced || nil & STRANGER != 0 {
                     *why = Why::Upcast;
@@ -1273,9 +1267,7 @@ pub(super) fn make_room_for_nil(program: &mut Program, in_parallel: InParallel<'
                 }
             }
         }
-        let wider = with_room(tys, func.result, reaching[nodes.result(index) as usize]);
-        roomier.results += usize::from(wider != func.result && is_unboxed(tys, func.result));
-        func.result = wider;
+        func.result = with_room(tys, func.result, reaching[nodes.result(index) as usize]);
         // What it is handed: the captures, `this`, the parameters.
         let entered: SmallVec<[V; 8]> = func.blocks.first().map_or_else(SmallVec::new, |block| block.params.iter().copied().collect());
         let ahead = func.captures.len() + usize::from(func.has(func_flags::HAS_THIS));
@@ -1286,9 +1278,7 @@ pub(super) fn make_room_for_nil(program: &mut Program, in_parallel: InParallel<'
             } else if number < ahead {
                 func.this_declared = with_room(tys, func.this_declared, nil);
             } else if let Some(declared) = func.params.get_mut(number - ahead) {
-                let wider = with_room(tys, *declared, nil);
-                roomier.parameters += usize::from(wider != *declared && is_unboxed(tys, *declared));
-                *declared = wider;
+                *declared = with_room(tys, *declared, nil);
             }
         }
       }
@@ -1301,7 +1291,7 @@ pub(super) fn make_room_for_nil(program: &mut Program, in_parallel: InParallel<'
             called.captures.iter().copied().chain(receiver).chain(called.params.iter().copied()).collect()
         })
         .collect();
-    for_each_slice(table, funcs, &mut has_wider_values, &mut roomier, in_parallel, &|Slice { funcs, has_wider_values, tys, roomier, .. }| {
+    for_each_slice(table, funcs, &mut has_wider_values, in_parallel, &|Slice { funcs, has_wider_values, tys, .. }| {
       for (_, func) in funcs.iter_mut().enumerate().filter(|&(offset, _)| has_wider_values[offset]) {
         let counts_tests = !has_handlers(func);
         for block in 0..func.blocks.len() {
@@ -1380,39 +1370,36 @@ pub(super) fn make_room_for_nil(program: &mut Program, in_parallel: InParallel<'
                 }
                 Some(Term::Jump(target)) => fit_arguments(func, tys, &mut ops, &mut made, target),
                 Some(Term::Branch { then, otherwise, .. }) => {
-                    roomier.narrowed += fit_arguments_on_the_way(func, tys, then);
-                    roomier.narrowed += fit_arguments_on_the_way(func, tys, otherwise);
+                    fit_arguments_on_the_way(func, tys, then);
+                    fit_arguments_on_the_way(func, tys, otherwise);
                 }
                 Some(Term::Switch { cases, default, .. }) => {
                     for case in cases {
-                        roomier.narrowed += fit_arguments_on_the_way(func, tys, &mut case.1);
+                        fit_arguments_on_the_way(func, tys, &mut case.1);
                     }
-                    roomier.narrowed += fit_arguments_on_the_way(func, tys, default);
+                    fit_arguments_on_the_way(func, tys, default);
                 }
                 _ => {}
             }
-            roomier.narrowed += made.len();
             func.blocks[block].term = term;
             func.blocks[block].ops = ops;
         }
       }
     });
-    roomier
 }
 
 /// The same for one way out of several. What the test shows that decides between them holds on that way alone: `Branch typeof x === "string" ? b1(x) : b2()`. So the narrowing stands in a block of
 /// its own on the way. How many values were narrowed.
-fn fit_arguments_on_the_way(func: &mut Func, tys: &mut Overlay<'_>, target: &mut Target) -> usize {
+fn fit_arguments_on_the_way(func: &mut Func, tys: &mut Overlay<'_>, target: &mut Target) {
     let (mut ops, mut made) = (Vec::new(), FxHashMap::default());
     let mut fitted = Target { block: target.block, args: target.args.clone() };
     fit_arguments(func, tys, &mut ops, &mut made, &mut fitted);
     if ops.is_empty() {
-        return 0;
+        return;
     }
     let on_the_way = crate::id::BlockId::new(func.blocks.len());
     func.blocks.push(crate::ir::Block { params: Vec::new(), ops, term: Some(Term::Jump(fitted)) });
     *target = Target::new(on_the_way);
-    made.len()
 }
 
 fn fit_arguments(func: &mut Func, tys: &mut Overlay<'_>, ops: &mut Vec<V>, made: &mut FxHashMap<(V, TyId), V>, target: &mut Target) {

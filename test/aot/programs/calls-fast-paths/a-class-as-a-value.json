@@ -1,3 +1,0 @@
-{
-  "skipInShell": "its counts of heap cells change with every build of JavaScriptCore"
-}

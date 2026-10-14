@@ -1,5 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ requireOptions("--compileMainScriptAheadOfTime=1")
 
 function shouldBe(actual, expected) {
     if (actual !== expected)

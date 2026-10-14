@@ -1,5 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ runDefault("-m", "--compileMainScriptAheadOfTime=1")
 import * as self from "./impl.js";
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))

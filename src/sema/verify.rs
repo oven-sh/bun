@@ -456,7 +456,6 @@ pub fn verify_compiler_options(
 
     for name in [
         b"strictPropertyInitialization".as_slice(),
-        b"strictVariableInitialization",
         b"exactOptionalPropertyTypes",
     ] {
         if is_true(name) && !options.strict_null_checks {

@@ -1,8 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useMiniVMModeWithoutJIT=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useMiniVMModeWithoutJIT=0", "--useConcurrentGC=1", "--collectContinuously=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useMiniVMModeWithoutJIT=0", "--useConcurrentGC=1", "--slowPathAllocsBetweenGCs=20")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useMiniVMModeWithoutJIT=0", "--useAOTDataStubs=0")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));

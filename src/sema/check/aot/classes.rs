@@ -1354,10 +1354,6 @@ impl<'p, 's> Checker<'p, 's> {
         (known.every, known.every_since, all.iter().filter(|it| self.has_mutable_prototype(it.function.0, it.function.1)).count(), all.len())
     }
 
-    pub fn number_of_constructor_functions(&self) -> usize {
-        self.discriminants().constructor_functions.len()
-    }
-
     /// From the trees and the symbols alone, of all files that are loaded, TypeScript and JavaScript, compiled with the program or not.
     fn mutable_prototypes(&self) -> &'p MutablePrototypes {
         self.p.aot.classes.mutable_prototypes.get_or_init(|| {

@@ -71,12 +71,8 @@ fn parse() -> Vec<(u32, Category, &'static str)> {
 /// The greatest code that TypeScript uses.
 const LAST_OF_TYPESCRIPT: u32 = 100000;
 
-/// The messages that TypeScript does not have, sorted by code, from 100001 on.
+/// The messages that TypeScript does not have, sorted by code.
 static OWN_MESSAGES: &[(u32, Category, &str)] = &[
-    (100001, Category::Error, "Variable '{0}' has no initializer and may be read before it is assigned."),
-    (100002, Category::Message, "It is read here, in a function that may run before the assignment."),
-    (100003, Category::Message, "It is read here, and not every path to here assigns it."),
-    (100004, Category::Message, "It is exported, and another file may read it before the assignment."),
     (100009, Category::Warning, "'{0}' has {1} type errors, the first at {2}: it is compiled untyped."),
     (100010, Category::Warning, "'{0}' has {1} type errors, the first at {2}: it is compiled untyped, which costs speed, not correctness."),
     (100011, Category::Warning, "'{0}' is compiled untyped, which costs speed, not correctness: the types that cross between it and untyped code through '{1}' at {2} are too many to go through."),

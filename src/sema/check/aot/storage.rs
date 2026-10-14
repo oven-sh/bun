@@ -17,7 +17,6 @@ use crate::bind::{AccessKind, ClassOwner, Decl, Flow, FlowId, FlowTarget, FnOwne
 use crate::check::decl::{number_operation, to_int32};
 use crate::check::errors_names_and_exports::root_declaration;
 use crate::check::shape::{self, Found};
-use crate::check::sink::Arg;
 use crate::check::{Checker, ContextFlags};
 use crate::hir::{
     BinOp, CallId, Chain, ClassId, EnumId, ExprId, ExprKind, ExprTag, FileKind, Flags, FnBody, FnId, FnKind, Keyword, MemberId, MemberKind, ModifierId, ModifierKind, ParamId, PatId, PatKind,
@@ -209,24 +208,6 @@ struct SetAside {
 /// `Object.defineProperty(target, key, descriptor)`, where the descriptor is not seen to leave a writable, enumerable and configurable data property: the type of `target`, and the names that
 /// `key` can be. `None`: any.
 type Redefinition = (TypeId, Option<Vec<Atom>>);
-
-/// See `uninitialized_variables_of`.
-struct Uninitialized {
-    declaration: VarDeclId,
-    name: Atom,
-    ty: TypeId,
-    read: EarlyRead,
-}
-
-/// A read of a variable that may come before every store to it.
-enum EarlyRead {
-    /// By other code than declares the variable: a function, which may be called at any time.
-    ByOtherCode(ExprId),
-    /// By the code that declares it, on a path that passes no store.
-    OnSomePath(ExprId),
-    /// None in its file: it is exported.
-    ByOtherFiles,
-}
 
 /// A value that is no object, no symbol and no bigint.
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -685,8 +666,6 @@ struct Search {
     /// label whose antecedents are those that lead to leaving it that way, and the number of the block around it, as in `seen`.
     reduced: Vec<(FlowId, FlowId, u32)>,
     pending: Vec<(FlowId, u32)>,
-    exhaustive: FxHashSet<StmtId>,
-    goes_on_from_where_a_function_is_made: bool,
 }
 
 /// Where the code that constructs an object uses `this`.
@@ -2047,95 +2026,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// that is what the checker has held the program to, so no place of the program has less room.
     pub fn admits_nil(&self, ty: TypeId) -> bool {
         !self.p.files.options.strict_null_checks && !ty.is_never()
-    }
-
-    /// The `let` and `var` of a file of TypeScript that are declared with a type, without a value and without `!`, whose type has numbers
-    /// or booleans, which are kept unboxed, and no `undefined`, and that may be found to hold `undefined` all the same. With a read that
-    /// may come before every store. The checker reports such a read only in the function that declares the variable (2454). A
-    /// reference may be nil as it is kept here, so a variable of strings or objects is not among them. In the order of the symbols.
-    fn uninitialized_variables_of(&mut self, file: FileId) -> Vec<Uninitialized> {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        let mut found = Vec::new();
-        if self.is_untyped_file(file) || hir.kind == FileKind::Declaration {
-            return found;
-        }
-        let index = self.exprs_by_kind(file);
-        for (local, symbol) in bound.symbols.iter().enumerate() {
-            let local = SymbolId(local as u32);
-            let Some(&Decl::Var(pat)) = symbol.decls.iter().next() else { continue };
-            let PatParent::Var(d) = root_declaration(bound, pat) else { continue };
-            if hir[d].pat != pat || hir[d].ty.is_none() || hir[d].flags.intersects(Flags::DEFINITE | Flags::AMBIENT) || !self.is_declared_without_value(file, d) {
-                continue;
-            }
-            let sym = self.files().sym(file, local);
-            let ty = self.type_of_symbol(sym);
-            if !self.has_unboxed_part(ty) || self.contains_undefined(ty) || self.admits_nil(ty) || !self.may_find_variable_unassigned(sym, file, pat) {
-                continue;
-            }
-            let site = self.dead_zone_of(file, Decl::Var(pat)).map(|found| found.0);
-            let reads = || index.of(ExprTag::Ident).iter().copied().filter(|&e| bound.expr_symbol[e.idx()] == local && !bound.is_in_type_query(e) && bound.access_kind(hir, e) != AccessKind::Write);
-            let without_clause: Vec<StmtId> = bound.flow.iter().filter_map(|flow| if let Flow::Switch { stmt, from, to, .. } = *flow { (from == to).then_some(stmt) } else { None }).collect();
-            let exhaustive: FxHashSet<StmtId> = without_clause.into_iter().filter(|&stmt| self.is_exhaustive_switch(file, stmt)).collect();
-            let mut search = Search { exhaustive: exhaustive.clone(), ..Search::default() };
-            let mut outward = Search { exhaustive, goes_on_from_where_a_function_is_made: true, ..Search::default() };
-            let is_elsewhere = |c: &Self, e: ExprId| c.site_of(file, bound.expr_parent[e.idx()]) != site;
-            let read = match reads().find(|&e| is_elsewhere(self, e) && self.is_reached_without(file, bound.expr_flow[e.idx()], Store::Variable(local), &mut outward)) {
-                Some(e) => EarlyRead::ByOtherCode(e),
-                None => match reads().find(|&e| !is_elsewhere(self, e) && self.is_reached_without(file, bound.expr_flow[e.idx()], Store::Variable(local), &mut search)) {
-                    Some(e) => EarlyRead::OnSomePath(e),
-                    None if reads().any(|e| is_elsewhere(self, e) || self.is_reached_without(file, bound.expr_flow[e.idx()], Store::Variable(local), &mut Search::default())) => continue,
-                    None => EarlyRead::ByOtherFiles,
-                },
-            };
-            found.push(Uninitialized { declaration: d, name: symbol.name, ty, read });
-        }
-        found
-    }
-
-    /// 100001, under `strictVariableInitialization`: what `strictPropertyInitialization` is for properties.
-    pub(in crate::check) fn check_variable_initialization(&mut self, file: FileId) {
-        let hir = self.hir(file);
-        for variable in self.uninitialized_variables_of(file) {
-            let name = &hir[hir[variable.declaration].pat];
-            let at = |e: ExprId| (file, hir[e].pos, hir[e].end);
-            let related = match variable.read {
-                EarlyRead::ByOtherCode(e) => self.new_diagnostic(at(e), 100002, &[]),
-                EarlyRead::OnSomePath(e) => self.new_diagnostic(at(e), 100003, &[]),
-                EarlyRead::ByOtherFiles => self.new_diagnostic((file, name.pos, name.end), 100004, &[]),
-            };
-            self.error_at((file, name.pos, name.end), 100001, &[Arg::Atom(variable.name)]).add_related_info(related);
-        }
-    }
-
-    /// A line for each of those in the program, whether or not they are reported: the declaration, the type, the read. In the order of
-    /// the files.
-    pub fn explain_uninitialized(&mut self) -> Vec<String> {
-        let mut modules: Vec<FileId> = self.p.aot.storage.modules.get().map(|modules| modules.cycle.keys().copied().collect()).unwrap_or_default();
-        modules.sort_unstable();
-        let mut lines = Vec::new();
-        for file in modules {
-            let hir = self.hir(file);
-            for variable in self.uninitialized_variables_of(file) {
-                let why = match variable.read {
-                    EarlyRead::ByOtherCode(e) => format!("read by other code than declares it at {}", self.line_for_people(file, hir[e].pos)),
-                    EarlyRead::OnSomePath(e) => format!("not stored to on every way to the read at {}", self.line_for_people(file, hir[e].pos)),
-                    EarlyRead::ByOtherFiles => "seen by other files".to_owned(),
-                };
-                let d = variable.declaration;
-                let keyword = if hir[d].kind == VarKind::Var { "var" } else { "let" };
-                let (name, ty) = (String::from_utf8_lossy(self.atoms().bytes(variable.name)).into_owned(), self.type_to_string(variable.ty));
-                lines.push(format!("uninitialized: {}: {keyword} {name}: {}; {why}", self.line_for_people(file, hir[d].loc.end), String::from_utf8_lossy(&ty)));
-            }
-        }
-        lines
-    }
-
-    pub(super) fn line_for_people(&self, file: FileId, pos: u32) -> String {
-        let name = self.files().module(file).file_name();
-        let name = name.rsplit(|&byte| byte == b'/').next().unwrap_or(name);
-        let text = &self.hir(file).text;
-        let line = text[..(pos as usize).min(text.len())].iter().filter(|&&byte| byte == b'\n').count() + 1;
-        format!("{}:{line}", String::from_utf8_lossy(name))
     }
 
     // ───────────────────────────── whether a type is written down ─────────────────────────────
@@ -5796,7 +5686,6 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 flow = match bound.flow[flow.idx()] {
                     Flow::Unreachable => break,
-                    Flow::Start { outer, .. } if search.goes_on_from_where_a_function_is_made && outer.is_some() => outer,
                     Flow::Start { .. } => return true,
                     // What is called where it is written starts where the code around it has got to.
                     Flow::StartInvoked { outer, .. } => outer,
@@ -5821,7 +5710,6 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                         before
                     }
-                    Flow::Switch { stmt, from, to, .. } if from == to && search.exhaustive.contains(&stmt) => break,
                     Flow::Cond { before, .. } | Flow::Switch { before, .. } | Flow::ArrayMutation { before, .. } => before,
                     Flow::Reduce { before, label, instead } => {
                         search.reduced.push((label, instead, block));

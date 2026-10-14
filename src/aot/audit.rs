@@ -402,6 +402,8 @@ pub mod class {
     pub const OBJECT: u32 = 1 << 8;
     pub const FUNCTION: u32 = 1 << 9;
     pub const ALL: u32 = (1 << 10) - 1;
+    /// No class of its own: an object with the tag that the audit gives to what typed code has made and to what has entered a record type.
+    pub const TAGGED: u32 = 1 << 10;
 }
 
 fn is_closed(program: &Program, layout: crate::id::LayoutId) -> bool {
@@ -410,15 +412,109 @@ fn is_closed(program: &Program, layout: crate::id::LayoutId) -> bool {
     is_named_class(described) && !described.admits_foreign && !described.members.is_empty() && described.members.iter().all(|member| is_named_class(&program.layouts[member.idx()]))
 }
 
-fn passes(program: &Program, declared: &Declared) -> u32 {
-    let is_any_object_taken = declared.any_object || declared.parts.iter().any(|part| matches!(part, Part::Class(layout) if !is_closed(program, *layout)));
-    declared.prims
-        | if is_any_object_taken { class::OBJECT } else { 0 }
-        | if declared.any_object || declared.any_function || declared.parts.iter().any(|part| !matches!(part, Part::Array(_))) { class::FUNCTION } else { 0 }
+/// What is made once of a linked program, for the types that only the link knows about.
+struct Linked {
+    /// By layout: `key_of_shape()`, with a number behind it where two records read alike but for the views they name.
+    keys: Vec<String>,
+    /// By layout: an operation of the program allocates it. `Layout::is_allocated` also says so of what only a cast makes.
+    is_made_by_an_operation: Vec<bool>,
 }
 
-fn write_type(program: &Program, out: &mut String, ty: TyId, depth: u32) {
+impl Linked {
+    fn of(program: &Program) -> Linked {
+        let mut alike: FxHashMap<String, u32> = FxHashMap::default();
+        let keys = (0..program.layouts.len())
+            .map(|index| {
+                let layout = crate::id::LayoutId::new(index);
+                if !keeps_its_fields(program, layout) {
+                    return String::new();
+                }
+                let key = key_of_shape(program, layout);
+                if program.layouts[index].kind == LayoutKind::Instance {
+                    return key;
+                }
+                let earlier = alike.entry(key.clone()).or_insert(0);
+                *earlier += 1;
+                if *earlier == 1 { key } else { format!("{key}.{earlier}") }
+            })
+            .collect();
+        let mut is_made_by_an_operation = vec![false; program.layouts.len()];
+        for func in &program.funcs {
+            for &v in func.blocks.iter().flat_map(|block| &block.ops) {
+                if let Some(&Op::New(layout)) = func.op(v) {
+                    is_made_by_an_operation[layout.idx()] = true;
+                }
+            }
+        }
+        Linked { keys, is_made_by_an_operation }
+    }
+}
+
+/// A record type that admits no strangers.
+fn is_closed_record(program: &Program, layout: crate::id::LayoutId) -> bool {
+    let described = &program.layouts[layout.idx()];
+    described.kind == LayoutKind::Record && !described.admits_foreign
+}
+
+/// Whether an object that typed code has not made is held to the members of the closed records among the parts. Only the link knows which
+/// those are. Where there are several and only a cast makes one of them, a build is seen to let in what fits none: nothing is said there.
+/// Nor where nothing can be made, or one of more shapes than are worth trying at every value that comes by: a view over a whole family.
+fn is_held_to_members(program: &Program, declared: &Declared, linked: Option<&Linked>) -> bool {
+    const MOST_SHAPES_TRIED: usize = 8;
+    let Some(linked) = linked else { return false };
+    let closed: Vec<crate::id::LayoutId> = (declared.parts.iter())
+        .filter_map(|part| match part {
+            Part::Class(layout) if is_closed_record(program, *layout) => Some(*layout),
+            _ => None,
+        })
+        .collect();
+    let made: Vec<crate::id::LayoutId> = closed.iter().flat_map(|&view| made_as(program, view)).collect();
+    !made.is_empty() && made.len() <= MOST_SHAPES_TRIED && closed.iter().all(|&view| !made_as(program, view).is_empty()) && (closed.len() == 1 || made.iter().all(|made| linked.is_made_by_an_operation[made.idx()]))
+}
+
+/// What plain data is made one of so that it is of the view: `Coercion::forEachLayoutToMakeObjectsOf()` in AOTTypedObject.cpp.
+fn made_as(program: &Program, view: crate::id::LayoutId) -> Vec<crate::id::LayoutId> {
+    let is_made = |layout: crate::id::LayoutId| program.layouts[layout.idx()].kind == LayoutKind::Record && program.layouts[layout.idx()].is_allocated;
+    if program.layouts[view.idx()].is_allocated {
+        return vec![view];
+    }
+    program.layouts[view.idx()].members.iter().copied().filter(|&member| member != view && is_made(member)).collect()
+}
+
+/// What the helper asks for by the `view` of a part that is a closed record: once a view, not at every mention.
+fn text_of_view(program: &Program, view: crate::id::LayoutId, keys: &[String]) -> String {
+    let mut text = String::from("{\"made\":[");
+    for (i, made) in made_as(program, view).into_iter().enumerate() {
+        if i > 0 {
+            text.push(',');
+        }
+        quoted(&mut text, keys[made.idx()].as_bytes());
+    }
+    text.push_str("]}");
+    text
+}
+
+/// Whether a place of the type can hold an object that typed code has not made. Where it cannot, what is cast from it brings no stranger.
+fn may_be_a_stranger(program: &Program, declared: &Declared) -> bool {
+    declared.any_object || declared.parts.iter().any(|part| matches!(part, Part::Class(layout) if program.layouts[layout.idx()].admits_foreign))
+}
+
+fn passes(program: &Program, declared: &Declared, linked: Option<&Linked>) -> u32 {
+    let is_held = is_held_to_members(program, declared, linked);
+    let is_any_object_taken = declared.any_object || declared.parts.iter().any(|part| matches!(part, Part::Class(layout) if !is_closed(program, *layout) && !(is_held && is_closed_record(program, *layout))));
+    let is_any_function_taken = declared.any_object
+        || declared.any_function
+        || declared.parts.iter().any(|part| match part {
+            Part::Array(_) => false,
+            Part::Class(layout) => !(is_held && is_closed_record(program, *layout)),
+            Part::Global(..) => true,
+        });
+    declared.prims | if is_any_object_taken { class::OBJECT } else { 0 } | if is_any_function_taken { class::FUNCTION } else { 0 } | if is_any_object_taken || is_held { class::TAGGED } else { 0 }
+}
+
+fn write_type(program: &Program, out: &mut String, ty: TyId, depth: u32, linked: Option<&Linked>) {
     let declared = program.tys.get(ty);
+    let is_held = is_held_to_members(program, declared, linked);
     let _ = write!(out, "{{\"p\":{},\"o\":{},\"fn\":{}", declared.prims, declared.any_object, declared.any_function);
     if let Some((least, most)) = declared.ints {
         let _ = write!(out, ",\"i\":[{least},{most}]");
@@ -443,6 +539,9 @@ fn write_type(program: &Program, out: &mut String, ty: TyId, depth: u32) {
                     }
                     out.push(']');
                 }
+                if is_held && is_closed_record(program, *layout) {
+                    let _ = write!(out, ",\"view\":\"view {}\"", layout.idx());
+                }
                 out.push('}');
             }
             Part::Global(name, _) => {
@@ -454,7 +553,7 @@ fn write_type(program: &Program, out: &mut String, ty: TyId, depth: u32) {
                 out.push_str("{\"k\":\"array\"");
                 if elements.is_some() && depth < 2 {
                     out.push_str(",\"of\":");
-                    write_type(program, out, *elements, depth + 1);
+                    write_type(program, out, *elements, depth + 1, linked);
                 }
                 out.push('}');
             }
@@ -720,18 +819,18 @@ fn keeps_its_fields(program: &Program, layout: crate::id::LayoutId) -> bool {
     }
 }
 
-fn text_of_shape(program: &Program, layout: crate::id::LayoutId) -> String {
+fn text_of_shape(program: &Program, layout: crate::id::LayoutId, linked: Option<&Linked>) -> String {
     let described = &program.layouts[layout.idx()];
     let mut text = String::from("{\"name\":");
     quoted(&mut text, name_of_layout(program, layout).as_bytes());
     text.push_str(",\"fields\":{");
-    for (i, field) in described.fields.iter().filter(|field| field.flags & crate::ir::field_flags::METHOD == 0).enumerate() {
+    for (i, field) in described.fields.iter().filter(|field| field.flags & (crate::ir::field_flags::METHOD | crate::ir::field_flags::NEVER_STORED) == 0).enumerate() {
         if i > 0 {
             text.push(',');
         }
         quoted(&mut text, program.strs.get(field.name));
         let _ = write!(text, ":{{\"optional\":{},\"to\":", field.flags & crate::ir::field_flags::OPTIONAL != 0);
-        write_type(program, &mut text, if field.declared.is_some() { field.declared } else { program.tys.anything }, 0);
+        write_type(program, &mut text, if field.declared.is_some() { field.declared } else { program.tys.anything }, 0, linked);
         text.push('}');
     }
     text.push_str("}}");
@@ -742,11 +841,12 @@ fn key_of_shape(program: &Program, layout: crate::id::LayoutId) -> String {
     let described = &program.layouts[layout.idx()];
     match described.kind {
         LayoutKind::Instance => format!("class {}", String::from_utf8_lossy(program.strs.get(described.name))),
-        _ => format!("record {}", id_of(text_of_shape(program, layout).as_bytes(), 0, 0, "", 0)),
+        _ => format!("record {}", id_of(text_of_shape(program, layout, None).as_bytes(), 0, 0, "", 0)),
     }
 }
 
 pub fn shapes(program: &Program) -> Vec<(String, String)> {
+    let linked = Linked::of(program);
     let mut found: Vec<(String, String)> = Vec::new();
     for index in 0..program.layouts.len() {
         let layout = crate::id::LayoutId::new(index);
@@ -757,14 +857,23 @@ pub fn shapes(program: &Program) -> Vec<(String, String)> {
         if described.kind == LayoutKind::Instance && (described.name.is_none() || program.strs.get(described.name).is_empty()) {
             continue;
         }
-        let text = text_of_shape(program, layout);
-        let key = key_of_shape(program, layout);
+        let text = text_of_shape(program, layout, Some(&linked));
+        let key = linked.keys[index].clone();
         match found.iter_mut().find(|known| known.0 == key) {
             Some(known) if known.1 != text => known.1 = String::from("null"),
             Some(_) => {}
             None => found.push((key, text)),
         }
     }
+    let mut views: Vec<crate::id::LayoutId> = (program.tys.list.iter().flat_map(|declared| &declared.parts))
+        .filter_map(|part| match part {
+            Part::Class(layout) if is_closed_record(program, *layout) && (1..=8).contains(&made_as(program, *layout).len()) => Some(*layout),
+            _ => None,
+        })
+        .collect();
+    views.sort_unstable();
+    views.dedup();
+    found.extend(views.into_iter().map(|view| (format!("view {}", view.idx()), text_of_view(program, view, &linked.keys))));
     found
 }
 
@@ -790,7 +899,7 @@ fn is_function_of_object(program: &Program, func: &Func, v: V) -> Option<&'stati
     ["setPrototypeOf", "defineProperty", "defineProperties", "assign"].into_iter().find(|known| known.as_bytes() == program.strs.get(name))
 }
 
-fn rules(program: &Program, func: &Func, v: V, spans: &FxHashMap<V, Span>, operands: &FxHashMap<(V, i32), Span>, is_linked: bool) -> Vec<(Rule, Option<Span>, u32)> {
+fn rules(program: &Program, func: &Func, v: V, spans: &FxHashMap<V, Span>, operands: &FxHashMap<(V, i32), Span>, keys: Option<&[String]>) -> Vec<(Rule, Option<Span>, u32)> {
     let objects_alone = class::ALL & !(class::OBJECT | class::FUNCTION);
     let is_seen_through = |obj: V| {
         let declared = program.tys.get(func.ty(obj));
@@ -804,9 +913,9 @@ fn rules(program: &Program, func: &Func, v: V, spans: &FxHashMap<V, Span>, opera
     let suspends_within = |span: &Span| func.blocks.iter().flat_map(|block| &block.ops).any(|&other| matches!(func.op(other), Some(Op::Await(_) | Op::Yield(_))) && (span.start..span.end).contains(&func.values[other.idx()].pos));
     let mut found = Vec::new();
     match func.op(v) {
-        Some(&Op::New(layout)) if is_linked && program.layouts[layout.idx()].kind == LayoutKind::Record && keeps_its_fields(program, layout) => {
+        Some(&Op::New(layout)) if keys.is_some() && program.layouts[layout.idx()].kind == LayoutKind::Record && keeps_its_fields(program, layout) => {
             let mut rest = String::from(",\"shape\":");
-            quoted(&mut rest, key_of_shape(program, layout).as_bytes());
+            quoted(&mut rest, keys.map_or(&b""[..], |keys| keys[layout.idx()].as_bytes()));
             found.push((Rule { kind: Kind::Made, what: "NewObjectWithShape", rest }, spans.get(&v).copied(), objects_alone));
         }
         Some(&Op::PropDelete { obj, name }) if !is_seen_through(obj) => {
@@ -919,6 +1028,8 @@ pub fn sites(program: &Program) -> Vec<Site> {
 
 fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Option<&'t [u8]>) -> (Vec<Module>, Vec<Site>) {
     let lines: Vec<Option<Lines>> = program.modules.iter().map(|module| Lines::read(&module.line_table)).collect();
+    let linked = is_linked.then(|| Linked::of(program));
+    let linked = linked.as_ref();
     let mut numbers = Numbers::default();
     let mut chains_by_module: Vec<Vec<Chain>> = program.modules.iter().map(|_| Vec::new()).collect();
     let mut modules: Vec<Module> = (program.modules.iter())
@@ -970,18 +1081,19 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                 if pos == 0 {
                     continue;
                 }
-                for (row, at, passing) in rules(program, func, v, &spans, &operands, is_linked) {
+                for (row, at, passing) in rules(program, func, v, &spans, &operands, linked.map(|linked| &linked.keys[..])) {
                     let line = step(pos, row.kind, row.what, &[&row.rest[..], if is_linked { "" } else { ",\"unsure\":2" }].concat(), None);
                     if let Some(at) = at {
                         chains_by_module[module].push(Chain { start: at.start, end: at.end, step: 0, passes: passing, whole_numbers: None, steps: vec![(v, line)] });
                     }
                 }
                 let Some(held) = held(program, func, v, is_linked) else { continue };
+                let linked = linked.filter(|_| held.from.is_none() || func.ty(held.from).is_none() || may_be_a_stranger(program, program.tys.get(func.ty(held.from))));
                 let mut line = String::from(",\"to\":");
-                write_type(program, &mut line, held.to, 0);
+                write_type(program, &mut line, held.to, 0, linked);
                 if held.result != held.to {
                     line.push_str(",\"result\":");
-                    write_type(program, &mut line, held.result, 0);
+                    write_type(program, &mut line, held.result, 0, linked);
                 }
                 if held.text.is_some() {
                     line.push_str(",\"text\":");
@@ -1023,13 +1135,13 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                 };
                 let passing = match &*held.what {
                     "IteratorOpen" => prim::NULLISH,
-                    "Coerce" => passes(program, program.tys.get(held.to)) | passes(program, program.tys.get(held.result)),
-                    _ => passes(program, program.tys.get(held.to)),
+                    "Coerce" => passes(program, program.tys.get(held.to), linked) | passes(program, program.tys.get(held.result), linked),
+                    _ => passes(program, program.tys.get(held.to), linked),
                 };
                 let chains = &mut chains_by_module[module];
                 let earlier = chain_of.get(&held.from).copied().filter(|&chain| span.start <= chains[chain].start && chains[chain].end <= span.end && chains[chain].step == span.step);
                 let chain = earlier.unwrap_or_else(|| {
-                    chains.push(Chain { start: span.start, end: span.end, step: span.step, passes: class::ALL, whole_numbers: Some(EVERY_INT32).filter(|_| span.step == 0), steps: Vec::new() });
+                    chains.push(Chain { start: span.start, end: span.end, step: span.step, passes: class::ALL | class::TAGGED, whole_numbers: Some(EVERY_INT32).filter(|_| span.step == 0), steps: Vec::new() });
                     chains.len() - 1
                 });
                 (chains[chain].start, chains[chain].end) = (span.start, span.end);
@@ -1055,7 +1167,7 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                     continue;
                 }
                 let mut rest = format!(",\"index\":{index},\"to\":");
-                write_type(program, &mut rest, param, 0);
+                write_type(program, &mut rest, param, 0, None);
                 if !is_linked {
                     rest.push_str(if func.has(func_flags::IS_VALUE) || func.kind == crate::ir::FuncKind::Method { ",\"unsure\":1" } else { ",\"unsure\":2" });
                 }
@@ -1063,7 +1175,7 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                 let (Some(body), Some(span)) = (body, spans.get(&v)) else { continue };
                 let declared = program.tys.get(param);
                 let objects = if declared.has_objects() { class::OBJECT | class::FUNCTION } else { 0 };
-                parameters.push(Parameter { function: body.step as u32, index: index as u32, start: span.start, end: span.end, body: (body.start, body.end), passes: passes(program, declared) | objects, least: as_int32s(whole_numbers_within(Some(EVERY_INT32), declared)).0, most: as_int32s(whole_numbers_within(Some(EVERY_INT32), declared)).1, step });
+                parameters.push(Parameter { function: body.step as u32, index: index as u32, start: span.start, end: span.end, body: (body.start, body.end), passes: passes(program, declared, None) | objects, least: as_int32s(whole_numbers_within(Some(EVERY_INT32), declared)).0, most: as_int32s(whole_numbers_within(Some(EVERY_INT32), declared)).1, step });
             }
         }
         modules[module].without_span.append(&mut lacking);
@@ -1077,7 +1189,7 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
             if key != Some((chain.start, chain.end, chain.step)) {
                 key = Some((chain.start, chain.end, chain.step));
                 seen.clear();
-                module.groups.push(Group { start: chain.start, end: chain.end, step: chain.step, passes: class::ALL, least: i32::MIN, most: i32::MAX, steps: String::new() });
+                module.groups.push(Group { start: chain.start, end: chain.end, step: chain.step, passes: class::ALL | class::TAGGED, least: i32::MIN, most: i32::MAX, steps: String::new() });
             }
             let group = module.groups.last_mut().expect("one was pushed");
             group.passes &= chain.passes;

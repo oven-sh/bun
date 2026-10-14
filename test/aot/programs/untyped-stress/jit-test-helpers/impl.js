@@ -1,6 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ skip if $architecture != "arm64"
-//@ requireOptions("--compileMainScriptAheadOfTime=1")
 
 function plain() { return 1; }
 class WithConstructor { constructor() { this.x = 2; } method() { return 3; } }

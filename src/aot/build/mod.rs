@@ -20,13 +20,13 @@ mod fit;
 mod imports;
 mod intrinsics;
 mod jsx;
-pub(crate) mod literals;
 mod mocks;
 mod parts;
 mod pattern;
 mod predict;
 pub mod react;
 mod scope;
+pub(crate) mod sets_of_strings;
 mod stmt;
 mod types;
 
@@ -346,10 +346,6 @@ pub struct Shared<'a> {
     pub(crate) using_arguments: Vec<OnceLock<UsingArguments>>,
     pub(crate) calls_marked_pure: Vec<OnceLock<Vec<u32>>>,
     pub(crate) stars: Vec<OnceLock<imports::Stars>>,
-    /// `Explain::literals`
-    pub(crate) counts_literals: bool,
-    /// `Explain::literal_at`
-    pub(crate) literal_at: Option<(&'static str, u32)>,
     modules_put_off: FxHashSet<FileId>,
     modules_that_wait_for_their_place: FxHashSet<FileId>,
     behind_put_off: Vec<OnceLock<Vec<(FileId, Dependency)>>>,
@@ -367,10 +363,6 @@ pub(crate) struct UsingArguments {
 }
 
 impl<'a> Shared<'a> {
-    pub fn counting_literals(self, counts_literals: bool, literal_at: Option<(&'static str, u32)>) -> Shared<'a> {
-        Shared { counts_literals: counts_literals || literal_at.is_some(), literal_at, ..self }
-    }
-
     /// Once the program is loaded, before any of it is translated. It goes by the trees and the symbols alone. The checker is told what
     /// is for the bundler to say: where the code of the imports is, and which module evaluates which.
     pub fn new(program: &Checked<'_>, entry_points: &[Vec<FileId>], constants: &'a crate::Constants, in_parallel: InParallel<'_>) -> Shared<'a> {
@@ -409,8 +401,6 @@ impl<'a> Shared<'a> {
             using_arguments: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
             calls_marked_pure: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
             stars: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
-            counts_literals: false,
-            literal_at: None,
             modules_put_off: FxHashSet::default(),
             modules_that_wait_for_their_place: FxHashSet::default(),
             behind_put_off: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
@@ -607,9 +597,6 @@ pub(crate) struct FileBuild<'c, 'p, 's> {
     pub(crate) parts_within: FxHashMap<(TyId, TyId), Option<(Rc<[(LayoutId, LayoutId)]>, bool)>>,
     pub(crate) checked_globals: FxHashMap<GlobalId, TypeId>,
     pub(crate) checked_fields: FxHashMap<(LayoutId, u32), TypeId>,
-    /// `Fragment::literals`
-    pub(crate) literals: Vec<[u32; 2]>,
-    pub(crate) literals_shown: Vec<String>,
     /// The fields of objects whose type is written down.
     pub(crate) annotated_fields: FxHashSet<(LayoutId, u32)>,
     /// By the layout of its objects: the class.
@@ -810,8 +797,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             parts_within: FxHashMap::default(),
             checked_globals: FxHashMap::default(),
             checked_fields: FxHashMap::default(),
-            literals: Vec::new(),
-            literals_shown: Vec::new(),
             annotated_fields: FxHashSet::default(),
             laid_out_classes: FxHashMap::default(),
             parts_of_views: FxHashMap::default(),
@@ -2218,7 +2203,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
         let of_file = self.shared.builtin_functions.list.iter().filter(|function| function.file == file);
         let builtin_functions = of_file.filter_map(|function| Some((function.id?, FuncKey::Function(file, function.func), function.visibility))).collect();
-        let FileBuild { out, sources, layout_keys, global_keys, bodies, mut problems_of_layouts, constructs, files_of_modules, named_functions, named_default_constructors, literals, literals_shown, parts_of_views, .. } = self;
+        let FileBuild { out, sources, layout_keys, global_keys, bodies, mut problems_of_layouts, constructs, files_of_modules, named_functions, named_default_constructors, parts_of_views, .. } = self;
         let only_named: FxHashSet<FuncId> = named_functions.into_values().chain(named_default_constructors.into_values()).collect();
         let mut mentioning = Mentioning::default();
         let funcs = (out.funcs.into_iter().zip(sources).zip(bodies).enumerate())
@@ -2256,7 +2241,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             })
             .collect();
         let globals = out.globals.into_iter().zip(global_keys).map(|(global, key)| Variable { key, global }).collect();
-        Box::new(Fragment { file, path, strs: out.strs, tys: out.tys, modules: files_of_modules, globals, layouts, funcs, altered_globals, prototype_property_names, regexp_literals, stores_to_methods, builtin_functions, literals, literals_shown, times_translated: 1 })
+        Box::new(Fragment { file, path, strs: out.strs, tys: out.tys, modules: files_of_modules, globals, layouts, funcs, altered_globals, prototype_property_names, regexp_literals, stores_to_methods, builtin_functions, times_translated: 1 })
     }
 
     fn build_func(&mut self, id: FuncId) {

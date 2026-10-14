@@ -67,20 +67,6 @@ impl Callee {
     }
 }
 
-/// Why a variable has no `OnlyFunction`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Hole {
-    /// It is no variable that one declaration of a module of the program gives a name of its own: a parameter, a name in a pattern, a merged
-    /// or ambient declaration, what a script, a declaration file or a namespace declares, the variable of a loop.
-    Declaration,
-    /// It is stored to otherwise than as `name = value`: by a pattern, a loop, `++`, `+=`, `(name as T) = value`.
-    Store(Place),
-    /// What the stores put there is not closures of one function.
-    Stored(Callee),
-    /// It is stored to itself by way of another variable.
-    Cycle,
-}
-
 /// See `Checker::only_function_of_variable`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct OnlyFunction {
@@ -121,7 +107,7 @@ impl Yielded {
 
 #[derive(Default)]
 pub(super) struct State {
-    of_variables: FxHashMap<Sym, Result<OnlyFunction, Hole>>,
+    of_variables: FxHashMap<Sym, Option<OnlyFunction>>,
     /// While the stores to a variable are gone through: `OnlyFunction::outermost` of the variables that they name.
     came_by: Option<Vec<Sym>>,
     /// `parameter_handed_back_by`, as far as it has been asked.
@@ -135,16 +121,11 @@ impl<'p, 's> Checker<'p, 's> {
     ///
     /// It goes by the trees and the symbols alone: every task finds the same.
     pub fn only_function_of_variable(&mut self, sym: Sym) -> Option<OnlyFunction> {
-        self.callee_of_variable(sym).ok()
-    }
-
-    /// The same, or why there is none.
-    pub(super) fn callee_of_variable(&mut self, sym: Sym) -> Result<OnlyFunction, Hole> {
         if let Some(&known) = self.aot.callees.of_variables.get(&sym) {
             return known;
         }
         // One that is stored to itself by way of another has none, whichever of them is asked about first.
-        self.aot.callees.of_variables.insert(sym, Err(Hole::Cycle));
+        self.aot.callees.of_variables.insert(sym, None);
         let around = self.aot.callees.came_by.replace(Vec::new());
         let found = self.find_callee_of_variable(sym);
         let came_by = std::mem::replace(&mut self.aot.callees.came_by, around).unwrap_or_default();
@@ -195,41 +176,41 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    fn find_callee_of_variable(&mut self, sym: Sym) -> Result<OnlyFunction, Hole> {
+    fn find_callee_of_variable(&mut self, sym: Sym) -> Option<OnlyFunction> {
         // `export default EventEmitter as any`, by way of an import. Nothing else is ever bound to it. It is left a prediction.
         if let Some((file, value)) = self.expression_exported_as(sym) {
             if self.only_declares(file) {
-                return Err(Hole::Declaration);
+                return None;
             }
             let exported = self.callee_yielded_by(file, value, 0);
-            let Callee::One(file, func) = exported.callee else { return Err(Hole::Stored(exported.callee)) };
-            return Ok(OnlyFunction { file, func, may_be_nil: exported.may_be_nil, outermost: sym, is_predicted: true });
+            let Callee::One(file, func) = exported.callee else { return None };
+            return Some(OnlyFunction { file, func, may_be_nil: exported.may_be_nil, outermost: sym, is_predicted: true });
         }
-        let (file, decl) = self.declaration_of_variable(sym).ok_or(Hole::Declaration)?;
+        let (file, decl) = self.declaration_of_variable(sym)?;
         let (hir, bound) = (self.hir(file), self.bound(file));
         // What a declaration file declares, other code stores to. What a script declares, the other scripts see.
         if self.only_declares(file) || !self.files().module(file).is_module() {
-            return Err(Hole::Declaration);
+            return None;
         }
         let local = bound.symbol_of_declaration(decl);
-        let symbol = bound.symbols.get(local.idx()).ok_or(Hole::Declaration)?;
+        let symbol = bound.symbols.get(local.idx())?;
         if symbol.flags.contains(SymFlags::MERGED) {
-            return Err(Hole::Declaration);
+            return None;
         }
         let (declared_by, mut stored) = match decl {
             Decl::Var(pat) => {
-                let PatParent::Var(d) = root_declaration(bound, pat) else { return Err(Hole::Declaration) };
+                let PatParent::Var(d) = root_declaration(bound, pat) else { return None };
                 let is_declared_by_statement = bound.var_stmt[d.idx()].some().is_some_and(|stmt| matches!(hir[stmt].kind, StmtKind::Var(_)));
                 if !is_declared_by_statement || symbol.decls.iter().filter(|&&decl| !self.declares_only_a_type(sym, decl)).count() != 1 || hir[d].flags.contains(Flags::AMBIENT) {
-                    return Err(Hole::Declaration);
+                    return None;
                 }
                 let first = if hir[d].pat != pat {
                     // `const { Stream } = legacy`: what the literal has by the name, which may have been replaced since.
-                    let PatParent::Prop(outer, prop) = bound.pat_parent[pat.idx()] else { return Err(Hole::Declaration) };
+                    let PatParent::Prop(outer, prop) = bound.pat_parent[pat.idx()] else { return None };
                     let name = match (hir[prop].key, hir[pat].kind) {
-                        _ if outer != hir[d].pat || hir[prop].is_rest || hir[prop].default.is_some() || hir[d].init.is_none() => return Err(Hole::Declaration),
+                        _ if outer != hir[d].pat || hir[prop].is_rest || hir[prop].default.is_some() || hir[d].init.is_none() => return None,
                         (PropKey::Name(name), _) | (PropKey::None, PatKind::Ident(name)) => name,
-                        _ => return Err(Hole::Declaration),
+                        _ => return None,
                     };
                     Yielded { is_predicted: true, ..Yielded::of(self.callee_in_literal_held_by(file, hir[d].init, name, 0), false) }
                 } else if hir[d].init.is_some() {
@@ -246,31 +227,31 @@ impl<'p, 's> Checker<'p, 's> {
                     let func = match *decl {
                         Decl::Fn(func) => func,
                         _ if self.declares_only_a_type(sym, *decl) => continue,
-                        _ => return Err(Hole::Declaration),
+                        _ => return None,
                     };
                     if !matches!(hir[func].body, FnBody::None) && with_body.replace(func).is_some() {
-                        return Err(Hole::Declaration);
+                        return None;
                     }
                 }
-                let func = with_body.ok_or(Hole::Declaration)?;
-                let FnOwner::Stmt(stmt) = bound.fns[func.idx()].owner else { return Err(Hole::Declaration) };
+                let func = with_body?;
+                let FnOwner::Stmt(stmt) = bound.fns[func.idx()].owner else { return None };
                 (stmt, Yielded::of(Callee::One(file, func), false))
             }
-            _ => return Err(Hole::Declaration),
+            _ => return None,
         };
         if declared_by.is_none() || self.is_stored_to_otherwise(file, declared_by, bound.modifier_flags(hir, decl).contains(Flags::EXPORT)) {
-            return Err(Hole::Declaration);
+            return None;
         }
         if self.is_stored_through_casts(file, local) {
-            return Err(Hole::Store(Place { file, pos: hir[declared_by].start }));
+            return None;
         }
         for &(_, target) in bound.assignments_to(local) {
-            let Some(super::integers::Store::Value(value)) = self.store_to_target(file, target) else { return Err(Hole::Store(Place { file, pos: hir[target].pos })) };
+            let Some(super::integers::Store::Value(value)) = self.store_to_target(file, target) else { return None };
             stored = stored.join(self.callee_yielded_by(file, value, 0));
         }
-        let Callee::One(file, func) = stored.callee else { return Err(Hole::Stored(stored.callee)) };
+        let Callee::One(file, func) = stored.callee else { return None };
         let is_predicted = stored.is_predicted || self.is_made_anew_by_a_second_body(file, func, sym);
-        Ok(OnlyFunction { file, func, may_be_nil: stored.may_be_nil || self.starts_undefined(sym), outermost: sym, is_predicted })
+        Some(OnlyFunction { file, func, may_be_nil: stored.may_be_nil || self.starts_undefined(sym), outermost: sym, is_predicted })
     }
 
     fn is_made_anew_by_a_second_body(&self, file: FileId, func: FnId, sym: Sym) -> bool {

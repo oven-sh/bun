@@ -1,6 +1,6 @@
 use crate::atom::{Atom, Interner};
 use crate::bind::{Bound, Decl, PatParent, ScopeId, ScopeKind, SymFlags, SymbolId};
-use crate::hir::{Chain, ExprId, ExprKind, File, FnBody, FnKind, IdList, StmtId, StmtKind, VarKind};
+use crate::hir::{Chain, ClassId, ExprId, ExprKind, File, FnBody, FnKind, IdList, PropKey, StmtId, StmtKind, VarKind};
 use crate::util::FxHashSet;
 
 pub const KEY_OF_SCOPE: &[u8] = b"\0eval";
@@ -62,7 +62,7 @@ impl<'a, 's> Rewriting<'a, 's> {
             if matches!(hir[source].kind, ExprKind::Spread(_) | ExprKind::Missing) {
                 continue;
             }
-            let object = self.object_for_scope(scope);
+            let object = self.object_for_scope(scope, hir[source].pos);
             self.insertions.push((hir[source].pos, object));
             self.insertions.push((hir[source].end, b")".to_vec()));
         }
@@ -100,13 +100,24 @@ impl<'a, 's> Rewriting<'a, 's> {
         false
     }
 
-    fn object_for_scope(&self, innermost: ScopeId) -> Vec<u8> {
+    fn is_in_field_initializer(&self, class: ClassId, pos: u32) -> bool {
+        let hir = self.hir;
+        hir[class].members.iter().any(|member| {
+            let init = hir[member].init;
+            init.is_some() && hir[init].pos <= pos && pos < hir[init].end
+        })
+    }
+
+    fn object_for_scope(&self, innermost: ScopeId, pos: u32) -> Vec<u8> {
         let (hir, bound) = (self.hir, self.bound);
         let mut is_sloppy = bound.commonjs_indicator.is_some() && !self.starts_with_use_strict(hir.body);
         let mut names: Vec<(Atom, SymbolId)> = Vec::new();
         let mut seen: FxHashSet<Atom> = FxHashSet::default();
         let mut has_arguments = None;
-        let mut has_new_target = None;
+        let mut new_target: Option<Option<&[u8]>> = None;
+        let mut is_in_field = false;
+        let mut has_super = false;
+        let mut private_names: Vec<u8> = Vec::new();
         let mut scope = innermost;
         while scope.is_some() {
             let at = &bound.scopes[scope.idx()];
@@ -128,11 +139,37 @@ impl<'a, 's> Rewriting<'a, 's> {
                 ScopeKind::Fn(func) => !matches!(hir[func].body, FnBody::Block(body) if self.starts_with_use_strict(body)),
                 _ => true,
             };
-            if has_new_target.is_none() {
+            if new_target.is_none() {
                 match at.kind {
-                    ScopeKind::Fn(func) => has_new_target = Some(matches!(hir[func].kind, FnKind::Decl | FnKind::Expr | FnKind::Constructor)),
-                    ScopeKind::Class(_) => has_new_target = Some(false),
+                    ScopeKind::Fn(func) => match hir[func].kind {
+                        FnKind::Arrow => {}
+                        FnKind::Decl | FnKind::Expr => new_target = Some(Some(b"new.target")),
+                        FnKind::Constructor => {
+                            new_target = Some(Some(b"new.target"));
+                            has_super = true;
+                        }
+                        FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::StaticBlock => {
+                            new_target = Some(Some(b"void 0"));
+                            has_super = true;
+                        }
+                        _ => new_target = Some(None),
+                    },
+                    ScopeKind::Class(class) if self.is_in_field_initializer(class, pos) => {
+                        is_in_field = true;
+                        has_super = true;
+                        new_target = Some(Some(b"void 0"));
+                    }
                     _ => {}
+                }
+            }
+            if let ScopeKind::Class(class) = at.kind {
+                for member in hir[class].members.iter() {
+                    if let PropKey::Private(name) = hir[member].key {
+                        let name = self.atoms.bytes(name);
+                        let name = name.strip_prefix(b"\xFE").unwrap_or(name);
+                        private_names.extend_from_slice(name.split(|&c| c == b'@').next().unwrap_or(name));
+                        private_names.push(b' ');
+                    }
                 }
             }
             if matches!(at.kind, ScopeKind::Class(_)) && has_arguments.is_none() {
@@ -152,8 +189,20 @@ impl<'a, 's> Rewriting<'a, 's> {
         if is_sloppy {
             text.extend_from_slice(b",\"\\u0000sloppy\":1");
         }
-        if has_new_target == Some(true) {
-            text.extend_from_slice(b",\"\\u0000target\":new.target");
+        if let Some(Some(new_target)) = new_target {
+            text.extend_from_slice(b",\"\\u0000target\":");
+            text.extend_from_slice(new_target);
+        }
+        if is_in_field {
+            text.extend_from_slice(b",\"\\u0000field\":1");
+        }
+        if has_super {
+            text.extend_from_slice(b",\"\\u0000super\":1");
+        }
+        if !private_names.is_empty() && !private_names.iter().any(|&c| c == b'"' || c == b'\\') {
+            text.extend_from_slice(b",\"\\u0000private\":\"");
+            text.extend_from_slice(&private_names);
+            text.push(b'"');
         }
         if bound.commonjs_indicator.is_some() {
             for (name, is_in_bundles) in [(&b"module"[..], true), (b"exports", true), (b"require", false), (b"__filename", false), (b"__dirname", false)] {

@@ -1,0 +1,17 @@
+{
+  "elision.loud.import_equals_type.ts": {
+    "errors": "error: <folder>/elision.loud.import_equals_type.ts:1: --aot does not support `import = require(..)`\n"
+  },
+  "elision.loud.import_equals_unused.ts": {
+    "errors": "error: <folder>/elision.loud.import_equals_unused.ts:1: --aot does not support `import = require(..)`\n"
+  },
+  "elision.loud.import_equals_used.ts": {
+    "errors": "error: <folder>/elision.loud.import_equals_used.ts:1: --aot does not support `import = require(..)`\n"
+  },
+  "elision.loud.reexport_type.ts": {
+    "output": "[\"loud\"]\n"
+  },
+  "elision.loud_esm.reexport_type.ts": {
+    "output": "[\"loud_esm\"]\n"
+  }
+}

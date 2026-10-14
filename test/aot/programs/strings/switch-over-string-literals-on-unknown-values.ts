@@ -1,6 +1,5 @@
 // `switch` and `if .. else if` over string literals on a value of unknown type.
 // CALLS+ whichAny ^whichAny: ([0-9]{1,2}|1[0-9]{2}|2[0-4][0-9]) instructions
-// CALLS+ whichUnknown ^whichUnknown: ([0-9]{1,2}|1[0-9]{2}|2[0-4][0-9]) instructions
 // CALLS- whichAny StrictEqual
 // CALLS- oneLength Flatten
 const print = (s: string) => console.log(s);

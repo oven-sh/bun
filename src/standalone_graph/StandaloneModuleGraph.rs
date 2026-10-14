@@ -2315,7 +2315,7 @@ fn write_elf_in_pieces(original: &mut [u8], payload: &[u8], fd: Fd) -> Result<bo
 }
 
 #[cfg(unix)]
-fn add_elf_symbols(fd: Fd, image: &[u8], image_in_payload: usize) {
+fn symbols_of_aot_image(image: &[u8]) -> Option<Vec<u8>> {
     extern "C" fn reserve(table: *mut core::ffi::c_void, size: usize) -> *mut u8 {
         let table = unsafe { &mut *table.cast::<Vec<u8>>() };
         table.resize(size, 0);
@@ -2332,9 +2332,14 @@ fn add_elf_symbols(fd: Fd, image: &[u8], image_in_payload: usize) {
     };
     let mut table: Vec<u8> = Vec::new();
     if !unsafe { Bun__AOT__symbolsOfImage(image.as_ptr(), image.len(), (&raw mut table).cast(), reserve) } {
-        bun_core::scoped_log!(StandaloneModuleGraph, "ELF symbols: the engine lists no functions for this image");
-        return;
+        bun_core::scoped_log!(StandaloneModuleGraph, "symbols: the engine lists no functions for this image");
+        return None;
     }
+    Some(table)
+}
+
+#[cfg(unix)]
+fn add_elf_symbols(fd: Fd, table: &[u8], image_in_payload: usize) {
     let Some(size) = Syscall::fstat(fd).ok().and_then(|stat| u64::try_from(stat.st_size).ok()) else {
         return;
     };
@@ -2343,7 +2348,7 @@ fn add_elf_symbols(fd: Fd, image: &[u8], image_in_payload: usize) {
         let wanted = into.len();
         file.pread_all(into, offset).is_ok_and(|count| count == wanted)
     };
-    let Some(tail) = bun_elf::symbols_tail(size, read, &table, image_in_payload as u64) else {
+    let Some(tail) = bun_elf::symbols_tail(size, read, table, image_in_payload as u64) else {
         bun_core::scoped_log!(StandaloneModuleGraph, "ELF symbols: none added (the executable has a .symtab, or is not as expected)");
         return;
     };
@@ -2359,6 +2364,7 @@ fn add_elf_symbols(fd: Fd, image: &[u8], image_in_payload: usize) {
 pub(crate) fn inject<'a>(
     bytes: &[u8],
     has_aot_image: bool,
+    aot_symbols: Option<(&[u8], usize)>,
     self_exe: &ZStr,
     inject_options: &InjectOptions,
     target: &CompileTarget,
@@ -2613,6 +2619,11 @@ pub(crate) fn inject<'a>(
                     return None;
                 }
             };
+            if let Some((table, image_in_payload)) = aot_symbols {
+                if macho_file.add_symbols(table, image_in_payload as u64).is_none() {
+                    bun_core::scoped_log!(StandaloneModuleGraph, "Mach-O symbols: none added (the tables do not lie as expected)");
+                }
+            }
             if let Err(e) = macho_file.write_section(bytes, has_aot_image) {
                 bun_core::pretty_errorln!("Error writing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
@@ -3296,12 +3307,22 @@ pub fn to_executable(
         Err(e) => return Ok(CompileResult::Err(e)),
     };
 
+    #[cfg(unix)]
+    let aot_symbols: Option<(Vec<u8>, usize)> = aot_image_at.and_then(|at| {
+        let image = output_files
+            .iter()
+            .find(|file| file.output_kind == options::OutputKind::AotImage)?;
+        Some((symbols_of_aot_image(image.value.as_slice())?, at))
+    });
+    #[cfg(not(unix))]
+    let aot_symbols: Option<(Vec<u8>, usize)> = None;
     let mut temp_path_buf = bun_paths::path_buffer_pool::get();
     let Some(injected) = inject(
         &bytes,
         output_files
             .iter()
             .any(|file| file.output_kind == options::OutputKind::AotImage),
+        aot_symbols.as_ref().map(|(table, at)| (table.as_slice(), *at)),
         &self_exe,
         windows_options,
         target,
@@ -3315,13 +3336,8 @@ pub fn to_executable(
     };
     let fd = injected.fd;
     #[cfg(unix)]
-    if let (Some(at), CompileTargetOs::Linux | CompileTargetOs::Freebsd) = (aot_image_at, target.os) {
-        if let Some(image) = output_files
-            .iter()
-            .find(|file| file.output_kind == options::OutputKind::AotImage)
-        {
-            add_elf_symbols(fd, image.value.as_slice(), at);
-        }
+    if let (Some((table, at)), CompileTargetOs::Linux | CompileTargetOs::Freebsd) = (&aot_symbols, target.os) {
+        add_elf_symbols(fd, table, *at);
     }
     // Closed explicitly at every return below rather than by a guard: on Windows
     // the handle has to be closed mid-function, before `MoveFileExW`.

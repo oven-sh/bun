@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """run.py build | answers <a whole Bun that knows --aot> <node_modules> <out folder> [--elements=shared|plain]: THE HALF THAT RUNS: THE WIDE TREES: a gate of CORRECTNESS for the typed texts, not a measure.
-`build` RUNS NO PACKAGE CODE: it calls check.py (every static gate; <out>/node_modules is the typed tree) and builds, for each tree whose packages <node_modules> holds: untyped (your node_modules as it is) · typed · typed.audit (BUN_AOT_OPTIONS=auditAOTTypedAssertions=1: what contradicts a type is REPORTED on stderr and the program goes on).
+`build` RUNS NO PACKAGE CODE: it calls check.py (every static gate; <out>/node_modules is the typed tree) and builds, for each tree whose packages <node_modules> holds: untyped (your node_modules as it is) · typed · typed.audit (BUN_JSC_auditAOTTypedAssertions=1 at the build: what contradicts a type is REPORTED on stderr and the program goes on).
+THE AUDIT IS SEEN TO SPEAK BEFORE ITS SILENCE COUNTS: trees/lie/lie.ts (five lines of our own; a string where its type says number) is built as the audit's column is and run by `answers`: it must print an `AOT:` line and go on. (From 10-14 04:06 to 09:4x the option went by BUN_AOT_OPTIONS, a name that nothing read any more: the column was a second `typed` and its gate passed by saying nothing.)
 `answers` RUNS THEM, AND THE SAME SOURCE PLAINLY (`bun wide.tsx` on the untouched packages, twice: the tree must be determinate), and compares scenario by scenario (a scenario begins with a line `== name`; each runs inside a try, so ONE RUN NAMES EVERY MINE).
   trees/client/wide.tsx  27 scenarios, 55 heads: react + react-reconciler on a host of its own (host2.ts): 24 + react's own API
   trees/server/wide.tsx  26 scenarios, run twice (52 heads): react-dom/server's Bun bundle, then every scenario once more through the legacy bundle (`"" string`)
-DUE: plain: 0 THREW, the same text twice · every column: 0 heads differ · no `AOT:` line in an audit but the trees' own (said below).
+DUE: the lie is reported · plain: 0 THREW, the same text twice · every column: 0 heads differ · no `AOT:` line in an audit but the trees' own (said below).
 IT WANTS check.py's ENVIRONMENT (SEMA, BUN, BUN_SEMA_TS_LIB). EXIT 1 IF ANYTHING IS NOT AS DUE."""
 import json, os, re, shutil, subprocess, sys
 H = os.path.dirname(os.path.abspath(__file__))
@@ -12,6 +13,7 @@ args = [a for a in sys.argv[1:] if not a.startswith('--')]; flags = [a for a in 
 if len(args) < 4: sys.exit(__doc__)
 STEP, AOT, N, OUT = args[0], os.path.abspath(args[1]), os.path.abspath(args[2]), os.path.abspath(args[3])
 ENV = dict(os.environ, NO_COLOR='1', BUN_ENABLE_CRASH_REPORTING='0', NODE_ENV='production', TZ='America/Los_Angeles')
+AUDIT = {'BUN_JSC_auditAOTTypedAssertions': '1'}
 TREES = {'client': (['react', 'react-reconciler', 'scheduler'], [[]]), 'server': (['react', 'react-dom'], [[], ['', 'string']])}
 # A MARKED TREE IS THREE PROGRAMS OUT OF ONE FILE (the compiler judges the whole program: one `fromJSON(JSON.parse(..))` makes every node outside data and no layout is left to test): as it is · born: what stands between /*C*/ marks is cut out: nothing comes in from outside · doors: what stands between /*D*/ marks becomes `import { carry } from "./carried.js"` (an untyped file behind `carry<T>(x: T): T`) and what stands between /*L*/ marks is cut: the layouts stay AND plain data reaches every door
 MARKED = {'seroval': ['seroval'], 'fuse': ['fuse.js']}
@@ -31,11 +33,11 @@ FACTS = {  # tree -> the package it judges and the pins (percent, percent, a rat
     'sdk': dict(of='@anthropic-ai/sdk', strangers='', by={'0.112.': dict(receiver=35.9, read=35.3, bytes=1.29), '0.128.': dict(receiver=35.8, read=35.3, bytes=1.015)}),
 }
 ENTRIES = (('react-reconciler', 'react-reconciler'), ('react-compiler-runtime', 'react'), ('react-dom-server', 'react-dom'), ('seroval', 'seroval'), ('fuse', 'fuse.js'))
-KNOWN = {'server': [r"AOT: Coerce at <anonymous> \(wide\.tsx:\d+:\d+\): 'as Function' left plain object unchanged", r"AOT: Coerce at UNSAFE_componentWillMount \(wide\.tsx:\d+:\d+\): 'as \{ enqueueReplaceState \}' left plain object unchanged"], 'client': [r"AOT: Coerce at <anonymous> \(wide\.tsx:\d+:\d+\): 'as \{ defaultProps \}' left function D unchanged", r"AOT: Claim at Counted \(wide\.tsx:\d+:\d+\): expected \{ id, children \}, got plain object; .*",
+KNOWN = {'server': [r"AOT: Coerce at <anonymous> \(wide\.tsx:\d+:\d+\): 'as Function' left untyped object unchanged", r"AOT: Coerce at UNSAFE_componentWillMount \(wide\.tsx:\d+:\d+\): 'as \{ enqueueReplaceState \}' left untyped object unchanged"], 'client': [r"AOT: Coerce at <anonymous> \(wide\.tsx:\d+:\d+\): 'as \{ defaultProps \}' left function D unchanged", r"AOT: Claim at Counted \(wide\.tsx:\d+:\d+\): expected \{ id, children \}, got untyped object; .*",
     # React's OWN DATA MODEL: a root's state is born a RootState (createFiberRoot: laid out) AND IS REPLACED AT THE FIRST UPDATE BY `assign({}, prevState, payload)` (getStateFromUpdate): a plain object with the same three members: `memoizedState as RootState` leaves it as it is: true, harmless, three reads by the general way a root's render
-    r"AOT: Coerce at (attemptEarlyBailoutIfNoScheduledUpdate|beginWork|completeWork) \(\S*react-reconciler\.production\.ts:\d+:\d+\): 'as RootState' left plain object unchanged"]}  # the trees' own casts, and what is known and said
+    r"AOT: Coerce at (attemptEarlyBailoutIfNoScheduledUpdate|beginWork|completeWork) \(\S*react-reconciler\.production\.ts:\d+:\d+\): 'as RootState' left untyped object unchanged"]}  # the trees' own casts, and what is known and said
 # fuse.js: an index that comes in from outside (Fuse.parseIndex of what JSON carried; malformed ones too) holds plain objects where the text's own index holds IndexRecords: each is read as it is, by the general way: said by the audit, true, and the answers are plain's
-FUSE = [r"AOT: (Claim|GetById) at <anonymous> \(\S*fuse\.sound\.ts:\d+:\d+\): expected (IndexRecord \| undefined|object), got .*", r"AOT: Coerce at <anonymous> \(wide\.ts:\d+:\d+\): 'as \{ \$ \}' left plain object unchanged"]
+FUSE = [r"AOT: (Claim|GetById) at <anonymous> \(\S*fuse\.sound\.ts:\d+:\d+\): expected (IndexRecord \| undefined|object), got .*", r"AOT: Coerce at <anonymous> \(wide\.ts:\d+:\d+\): 'as \{ \$ \}' left untyped object unchanged"]
 FUSE.append(r"AOT: Store at \w+ \(\S*fuse\.sound\.ts:\d+:\d+\): expected Fuse, got native ProxyObject; a native object cannot become Fuse")  # scenario 18: a Proxy over an instance as the receiver of its methods: handed to the second body: the answers are plain's
 KNOWN['fuse'] = KNOWN['fuse.doors'] = KNOWN['fuse.born'] = FUSE
 UNTYPED_RED = dict.fromkeys(('fuse', 'fuse.born', 'fuse.doors'), 'the untyped --aot build of untouched fuse.js 7.0.0 aborts in scenario 03 (includeMatches with a key through an array): "panic(main thread): abort() called": the compiler\'s fault; the typed build and plain Bun are fine')
@@ -48,9 +50,11 @@ def fail(s):
 if STEP == 'build':
     r = subprocess.run([sys.executable, H + '/check.py', N, OUT] + flags, env=ENV);
     if r.returncode: sys.exit('run.py: the static gates fail: nothing is built')
+    shutil.copytree(H + '/trees/lie', OUT + '/rooms/lie')
+    subprocess.run([AOT, 'build', '--compile', '--aot', '--target=bun', 'lie.ts', '--outfile', OUT + '/rooms/lie/lie'], cwd=OUT + '/rooms/lie', env=dict(ENV, **AUDIT), capture_output=True, stdin=subprocess.DEVNULL)
     for tree, (needs, _) in TREES.items():
         if not all(os.path.isdir(N + '/' + p) for p in needs): print('--   %s: not in this node_modules: %s' % (tree, ' '.join(p for p in needs if not os.path.isdir(N + '/' + p)))); continue
-        for column, modules, options in (('untyped', N, ''), ('typed', OUT + '/node_modules', ''), ('typed.audit', OUT + '/node_modules', 'auditAOTTypedAssertions=1')):
+        for column, modules, options in (('untyped', N, {}), ('typed', OUT + '/node_modules', {}), ('typed.audit', OUT + '/node_modules', AUDIT)):
             R = '%s/rooms/%s/%s' % (OUT, tree, column); os.makedirs(R)
             for f in os.listdir(H + '/trees/' + tree.split('.')[0]):
                 if f.startswith('carried.') and not tree.endswith('.doors'): continue
@@ -66,7 +70,7 @@ if STEP == 'build':
             os.symlink(modules, R + '/node_modules')
             counted = column == 'typed' and tree in FACTS
             listed = column == 'typed.audit' and tree in FACTS  # one --aot-explain a build: the audit's build, which is made anyway, carries the second
-            b = subprocess.run([AOT, 'build', '--compile', '--aot'] + (['--aot-explain=given'] if counted else ['--aot-explain=foreign'] if listed else []) + ['--target=bun', '--define', 'process.env.NODE_ENV="production"', FILE(tree), '--outfile', R + '/wide'], cwd=R, env=dict(ENV, BUN_AOT_OPTIONS=options, BUN_AOT_TYPED_SNAPSHOT=R + '/snapshot', BUN_JSC_aotMapFilePath=R + '/map'), capture_output=True, text=True, stdin=subprocess.DEVNULL)
+            b = subprocess.run([AOT, 'build', '--compile', '--aot'] + (['--aot-explain=given'] if counted else ['--aot-explain=foreign'] if listed else []) + ['--target=bun', '--define', 'process.env.NODE_ENV="production"', FILE(tree), '--outfile', R + '/wide'], cwd=R, env=dict(ENV, **options, BUN_AOT_TYPED_SNAPSHOT=R + '/snapshot', BUN_JSC_aotMapFilePath=R + '/map'), capture_output=True, text=True, stdin=subprocess.DEVNULL)
             if listed:  # THE FOURTH MEASURE: WHICH NAMED RECORDS ADMIT FOREIGN OBJECTS: a new name on that list is a layout whose every read got dearer (`Fiber`, once)
                 now = set(re.findall(r'^aot: foreign: ([A-Z][\w$<>]*): ', b.stdout + b.stderr, re.M)); new = sorted(now - set(FACTS[tree]['strangers'].split()))
                 if new: fail('%s: facts: THESE RECORDS ADMIT FOREIGN OBJECTS NOW: %s (why: --aot-explain=foreign)' % (tree, ' '.join(new)))
@@ -96,6 +100,10 @@ if STEP == 'build':
             b = subprocess.run([AOT, 'build', '--compile'] + flags2 + ['--target=bun', '--define', 'process.env.NODE_ENV="production"', stem + '.ts', '--outfile', R + '/entry'], cwd=R, env=ENV, capture_output=True, text=True, stdin=subprocess.DEVNULL); open(R + '/build.txt', 'w').write(b.stdout + b.stderr)
             if not os.access(R + '/entry', os.X_OK): fail('entries %s %s: NOT BUILT: %s' % (stem, column, ' '.join(re.findall(r'.*(?:error|not compiled).*', b.stdout + b.stderr)[:3])[:300]))
 elif STEP == 'answers':
+    lie = subprocess.run([OUT + '/rooms/lie/lie'], cwd=OUT + '/rooms/lie', env=ENV, capture_output=True, text=True, errors='replace', stdin=subprocess.DEVNULL) if os.access(OUT + '/rooms/lie/lie', os.X_OK) else None
+    said = [l for l in lie.stderr.split('\n') if l.startswith('AOT: ')] if lie else []
+    if lie and not lie.returncode and said and 'went on' in lie.stdout: print('ok   the audit speaks: %s' % said[0][:150])
+    else: fail('THE AUDIT SAYS NOTHING OF A LIE: EVERY typed.audit BELOW IS VOID: trees/lie/lie.ts: %s' % ('exit %d: %s' % (lie.returncode, (lie.stderr.strip().split('\n') or [''])[-3:]) if lie else 'no executable'))
     for stem, pkg in ENTRIES:
         base = '%s/rooms/entries/%s' % (OUT, stem)
         if not os.path.isdir(base): continue

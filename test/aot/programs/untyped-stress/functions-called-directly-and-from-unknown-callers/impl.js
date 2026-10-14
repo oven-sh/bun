@@ -1,8 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1")
 // Typed bodies are switched off (AOT::mayHaveGeneralBody admits no function) until every exact call site is checked against the types its callee's typed body was compiled for. The assertions that a function has one are skipped meanwhile. Every value must hold either way.
 const typedBodiesAreSwitchedOff = true;
 function check(actual, expected, what) {

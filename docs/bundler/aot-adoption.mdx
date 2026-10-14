@@ -174,8 +174,30 @@ const result = await Bun.build({
 Tests do not see all the data that production sees. Build with `--aot-type-errors=log`, and the executable writes a line where it would throw.
 
 <Warning>
-  A log build does not keep going everywhere yet. It goes on, the way plain JavaScript does, after a string, number or boolean of the wrong kind is passed to a function (`continued`), and after `as` on such a value (`converted`). **An object that does not match its type still throws** after its line is written (`threw`): parsed JSON that lacks a required property, or an object from a package where your type says something else. Such a request fails as it does in step 4. The log tells you where.
+  A log build does not keep going everywhere yet. Where it does not, it writes its line and then throws, so that request fails as it does in step 4.
 </Warning>
+
+| What happens                                                                                                                                              | The line says            | Then                                                        |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------- |
+| A string, number or boolean of the wrong type is passed in a call that names a function or an arrow function declared at the top level of a file: `double(x)` | `continued`              | The call runs as plain JavaScript                           |
+| The same is passed to a function that is called as a value: a callback, a listener, a handler in a table or a `Map`, above all one from another file     | `continued` or `threw`   | Most still throw                                            |
+| The same is passed to a function that is written inside another function, a method, an object literal or a class field, to a named function expression, or to a function that reads `arguments` | `threw`                  | `TypeError`                                                 |
+| The same is passed to an `async` function, a generator, a method, or a function that has `this` or a rest parameter                                       | `threw`                  | `TypeError`                                                 |
+| A string, number, boolean, `null` or `undefined` of the wrong type reaches a variable, a property or a return type, or comes out of a call or an `await` | `threw`                  | `TypeError`                                                 |
+| `as number`, `as string` or `as boolean` on a value of another of these types                                                                             | `converted`              | The value is converted, as in step 4                        |
+| An object does not match its interface, type literal or class: parsed JSON without a property, an object from a package                                   | `continued` or `threw`   | It depends on the type. Where it goes on, a missing property reads `undefined` |
+| Such an object has no value for a `number` or `boolean` property, and your code reads it                                                                  | `threw`                  | `TypeError`. If the object was passed to a function or an arrow function, that call runs as plain JavaScript instead, and the property reads `undefined` |
+| Something else arrives where an array, a function or a built-in class such as `Map` is expected                                                           | `threw`                  | `TypeError`                                                 |
+| `x!` on `null` or `undefined`                                                                                                                             | `threw`                  | `TypeError`                                                 |
+| A write to a built-in object                                                                                                                              | `threw`                  | `TypeError`                                                 |
+
+To let an object in that does not match, the compiler gives up what it knows about that type, and about every type that can hold one. It does so for a type that data from outside the type system reaches, such as `any`, `unknown` or the result of an untyped function, unless too many other types would follow. Add `--aot-explain=throws` to the build to see what it decided. Each line says what this build does at that place, and the last line counts the places. The report does not list every call of a function as a value yet. The call `double(body.visits)` has no line, because it cannot throw in this build:
+
+```txt
+[aot] type-check c2be03ebd76c as-late-use app.ts:7:13 (module): what the cast let through is used as the type it names: expected number, may get object | number; warning; this log build throws here; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
+[aot] type-check 0d0dde539306 as-convert app.ts:7:14 (module): expected number, may get any; warning; this log build converts here; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
+[aot] type-check summary: 2 checks can fail when the program runs, 0 always fail; behind its line in the log, this build continues at 0, converts at 1 and still throws at 1
+```
 
 <Tabs>
   <Tab title="CLI">

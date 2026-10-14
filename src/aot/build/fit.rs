@@ -478,6 +478,15 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if to != want.id {
             self.is_within(Ty { id: to, checked: want.checked }, want);
         }
+        if self.shared.constants.logs_type_errors
+            && let Some(road) = if self.c.is_untyped(have.checked) { Some(0) } else { self.comes_from_outside(fx, value, 4) }
+        {
+            let mut views = Vec::new();
+            self.types_of_layouts_within(to, 3, &mut views);
+            for view in views {
+                self.c.note_check_of_a_log_build(view, road);
+            }
+        }
         let block = fx.b.block;
         let held = self.emit_throwing(fx, Op::Coerce { value, to, why });
         fx.fitted.insert((block, value, want.id), held);
@@ -577,15 +586,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             fx.checked.insert(value, have);
         }
         self.fit(fx, value, Ty { id: to, checked }, asserts)
-    }
-
-    /// For `--aot-explain=predictions`.
-    fn note_prediction(&mut self, fx: &Fx, e: ExprId) {
-        if fx.is_typed
-            && let Some(claim) = self.c.unvouched_claim(fx.file, e)
-        {
-            self.c.note_prediction(fx.file, e, claim);
-        }
     }
 
     /// `(x as T).name`: `value` is what has been read for the expression `e`. The object need not be a `T`, so the read is a coercion itself.
@@ -768,6 +768,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && self.c.has_declared_type(fx.file, e)
             && !(self.is_asked_to_be_dynamic(fx, e) || self.defines_accessor(fx, e) || self.is_assigned_onto(fx, e) || self.is_only_copied_from(fx, e))
             && !self.c.contextual_type_of_literal(fx.file, e).is_some_and(|expected| self.c.is_checked_against_what_is_inferred(fx.file, e, expected))
+            && self.methods_needing_home_object(fx, props).is_empty()
     }
 
     fn defines_accessor(&self, fx: &Fx, e: ExprId) -> bool {
@@ -934,7 +935,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             // A prediction enters a place that the user annotated: it is asserted here. A host object is no subtype of a record type, so
             // the supertypes that its predicted type is assignable to admit foreign objects.
             if fx.is_typed && self.c.is_predicted(fx.file, e) {
-                self.note_prediction(fx, e);
                 let (predicted, supertypes) = (self.c.type_of_expr(fx.file, e), self.types_of_layouts_in(want.id));
                 self.c.admits_foreign(predicted, &supertypes);
                 for (held, held_as) in self.c.types_held_entering(predicted, want.checked) {
@@ -952,10 +952,19 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             return held;
         }
         if !fx.is_typed || !self.c.has_declared_type(fx.file, e) {
-            self.note_prediction(fx, e);
             // The engine holds a value to its type again wherever it resolves the operation. So a prediction has none.
             // The value of a name or of a cast was made for another expression: it may be known for more than this one says, and may have been used as that: `const s = c.d!; if (guard(s)) s.m()` with an `s` that the guard narrows to a tainted type.
-            let is_made_for_another = matches!(self.hir(fx.file)[e].kind, ExprKind::Ident(_) | ExprKind::As { .. });
+            let is_made_for_another = matches!(
+                self.hir(fx.file)[e].kind,
+                ExprKind::Ident(_)
+                    | ExprKind::As { .. }
+                    | ExprKind::Satisfies { .. }
+                    | ExprKind::NonNull(_)
+                    | ExprKind::AsConst(_)
+                    | ExprKind::Assign { op: None, .. }
+                    | ExprKind::Cond { .. }
+                    | ExprKind::Binary { op: hir::BinOp::Comma | hir::BinOp::And | hir::BinOp::Or | hir::BinOp::Nullish, .. }
+            );
             if !is_made_for_another && matches!(fx.b.func.op(value), Some(Op::PropGet { .. })) {
                 self.leave_unheld(fx, value);
             }
@@ -1043,7 +1052,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let made = value;
         let value = self.fit(fx, value, want, why);
-        if matches!(self.hir(fx.file)[e].kind, ExprKind::Object(_)) {
+        let mut written = e;
+        while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) = self.hir(fx.file)[written].kind {
+            written = expr;
+        }
+        if let ExprKind::Object(props) = self.hir(fx.file)[written].kind
+            && self.methods_needing_home_object(fx, props).is_empty()
+        {
             self.mark_cast_of_what_is_fresh(fx, value, made);
         }
         let value = self.as_written(fx, value, want);
@@ -1755,6 +1770,38 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             for &held in &held {
                 self.note_cast_within(Ty::of(held), held_as, why, depth + 1);
             }
+        }
+    }
+
+    fn types_of_layouts_within(&self, ty: TyId, further: u32, found: &mut Vec<TypeId>) {
+        found.extend(self.types_of_layouts_in(ty));
+        if ty.is_none() || further == 0 {
+            return;
+        }
+        for part in &self.out.tys.get(ty).parts {
+            match part {
+                Part::Class(_) => {}
+                Part::Array(elements) => self.types_of_layouts_within(*elements, further - 1, found),
+                Part::Global(_, arguments) => arguments.iter().for_each(|&argument| self.types_of_layouts_within(argument, further - 1, found)),
+            }
+        }
+    }
+
+    fn comes_from_outside(&self, fx: &Fx, value: V, further: u32) -> Option<usize> {
+        let says_nothing = |v: V| {
+            let ty = self.ty(fx, v);
+            ty.is_none() || ty == self.out.tys.anything || self.out.tys.get(ty).parts.is_empty()
+        };
+        let behind = |from: V| if further > 0 { self.comes_from_outside(fx, from, further - 1) } else { None };
+        match fx.b.func.op(value) {
+            Some(&Op::Call { callee, .. }) => behind(callee).map(|_| 1),
+            Some(&Op::Construct { callee, .. }) => behind(callee).map(|_| 2),
+            Some(Op::FreeGet { .. } | Op::ExternalModule(_)) => Some(3),
+            Some(Op::Caught | Op::CaughtException | Op::Yield(_)) => Some(4),
+            Some(&(Op::PropGet { obj, .. } | Op::ElemGet { obj, .. } | Op::CallMethod { obj, .. })) => says_nothing(obj).then_some(5),
+            Some(&(Op::Await(from) | Op::IterGet { iter: from, .. } | Op::IterOpen(from) | Op::Coerce { value: from, .. })) => behind(from),
+            None => (self.ty(fx, value) == self.out.tys.anything && fx.b.func.blocks[0].params.contains(&value)).then_some(6),
+            _ => None,
         }
     }
 

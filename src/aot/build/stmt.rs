@@ -1030,7 +1030,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                         }
                     }
                 }
-                ImportEqualsTarget::Require(_) => self.problem(fx.file, s.start, "`import = require(..)`"),
+                ImportEqualsTarget::Require(specifier) => self.emit_import_by_require(fx, specifier, s.start),
             },
             // Of a name: whoever imports it refers to what the name stands for.
             StmtKind::ExportDefault(e) if self.binding_exported_as_default(fx.file, e).is_some_and(|sym| self.c.is_default_export_as_good_as_binding(fx.file, e, sym)) => {

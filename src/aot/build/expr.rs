@@ -198,7 +198,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         while let ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) | ExprKind::AsConst(expr) = self.hir(fx.file)[written].kind {
             written = expr;
         }
-        if matches!(self.hir(fx.file)[written].kind, ExprKind::Object(_)) {
+        if let ExprKind::Object(props) = self.hir(fx.file)[written].kind
+            && self.methods_needing_home_object(fx, props).is_empty()
+        {
             self.mark_cast_of_what_is_fresh(fx, held, value);
         }
         held
@@ -625,11 +627,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 array
             }
             ExprKind::Object(props) => {
-                let made = self.object_literal(fx, e, props);
-                if self.shared.counts_literals {
-                    self.count_literal(fx, e, props, made);
-                }
-                made
+                self.object_literal(fx, e, props)
             }
             ExprKind::Fn(func) => {
                 let named_by_key = std::mem::replace(&mut self.name_by_key, V::NONE);
@@ -1569,6 +1567,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         // It has no prototype, and nothing but what the module exports.
         if let Some(module) = self.module_namespace_under_assertions(fx, obj)
             && self.is_known_not_to_export(module.file, name)
+            && self.c.atoms().bytes(name) != b"__esModule"
         {
             return self.emit(fx, Op::Undefined);
         }
@@ -1921,7 +1920,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         obj
     }
 
-    fn methods_needing_home_object(&mut self, fx: &Fx, props: Span<PropId>) -> Vec<FnId> {
+    pub(crate) fn methods_needing_home_object(&mut self, fx: &Fx, props: Span<PropId>) -> Vec<FnId> {
         let hir = self.hir(fx.file);
         let methods = props.iter().filter_map(|p| if let ExprKind::Fn(function) = hir[hir[p].value].kind { Some(function) } else { None });
         methods.filter(|&function| self.c.captures_of_fn(fx.file, function).contains(&Capture::HomeObject(function))).collect()
@@ -2922,7 +2921,13 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 && self.out.funcs[func.idx()].kind != ir::FuncKind::Method
                 && (args.iter().zip(&self.out.funcs[func.idx()].params)).any(|(&given, &held_to)| {
                     let have = self.ty(fx, given);
-                    held_to.is_some() && held_to != anything && (have.is_none() || have == anything || !self.out.tys.get(have).has_objects() && !self.out.tys.get(have).is_described_within(self.out.tys.get(held_to)))
+                    let is_cast_of_anything = matches!(fx.b.func.op(given), Some(&Op::Coerce { value: raw, .. }) if self.ty(fx, raw) == anything);
+                    held_to.is_some()
+                        && held_to != anything
+                        && (have.is_none()
+                            || have == anything
+                            || !self.out.tys.get(have).has_objects() && !self.out.tys.get(have).is_described_within(self.out.tys.get(held_to))
+                            || self.shared.constants.logs_type_errors && is_cast_of_anything && self.out.tys.get(held_to).parts.iter().any(|part| matches!(part, Part::Class(_))))
                 })
         });
         let func = entry.unwrap_or_else(|| self.typed_bodies.get(&func).copied().filter(|_| fx.is_typed).unwrap_or(func));

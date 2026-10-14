@@ -1,4 +1,4 @@
-// Variables and constants that are read before their initializer has run (compiled with `strictVariableInitialization` off).
+// Variables and constants that are read before their initializer has run.
 function attempt(f: () => unknown): string { try { return String(f()) } catch (e) { return (e as Error).constructor.name } }
 function readConst(): number { return tooEarly }
 let r: string = "none"

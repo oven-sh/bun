@@ -1,14 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1", "--failEveryNthAOTGuardForTesting=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=2")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=3")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=7")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1", "--failEveryNthAOTGuardForTesting=3")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=5")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=11")
-//@ runDefault
 
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))

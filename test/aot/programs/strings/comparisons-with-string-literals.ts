@@ -11,7 +11,6 @@
 // CALLS- branch3 StringHasAt|Flatten
 // CALLS- inLoop StringIsText
 // CALLS+ ofAny StringIsText
-// CALLS+ ofUnion StringIsText
 // CALLS- isEmpty StringIsText
 // CALLS- isAccented StringIsText
 const print = (s: string) => console.log(s);

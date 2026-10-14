@@ -16,7 +16,6 @@ use crate::atom::{Atom, SYMBOL_NAME_PREFIX};
 use crate::bind::{Decl, MemberOwner, PatParent, SymFlags};
 use crate::check::Checker;
 use super::builtins_generated::BUILTINS;
-use super::flows::Place;
 use super::storage::Query;
 use crate::hir::{ExprId, ExprKind, FnBody, MemberKind, VarKind};
 use crate::program::{FileId, Sym};
@@ -506,27 +505,5 @@ impl<'p, 's> Checker<'p, 's> {
         // The iterator protocol has no entries: the engine's iterators and the program's generators implement it.
         let is_protocol = holder == b"Iterator" && matches!(name, b"next" | b"return" | b"throw");
         is_protocol || has_entry(holder, name) || is_typed_array && has_entry(b"TypedArray", name) || has_entry(b"Object", name)
-    }
-
-    /// A line for each place where a declaration without a body was taken for a prediction, in the order of the source, after a line with
-    /// the counts.
-    pub fn explain_predictions(&mut self, predictions: &[(Place, Claim)]) -> Vec<String> {
-        let mut counts: Vec<(Claim, usize)> = Vec::new();
-        for &(_, claim) in predictions {
-            match counts.iter_mut().find(|count| count.0 == claim) {
-                Some(count) => count.1 += 1,
-                None => counts.push((claim, 1)),
-            }
-        }
-        counts.sort_unstable();
-        let total: Vec<String> = counts.iter().map(|(claim, count)| format!("{count} {}", claim.text())).collect();
-        let mut lines = vec![format!("predictions: {} places: {}", predictions.len(), total.join(", "))];
-        for &(at, claim) in predictions {
-            let text = &self.hir(at.file).text;
-            let from = (at.pos as usize).min(text.len());
-            let line: Vec<u8> = text[from..].iter().copied().take_while(|&byte| byte != b'\n').take(60).collect();
-            lines.push(format!("predictions: {}: {}: {}", self.place_for_people(at), claim.text(), String::from_utf8_lossy(&line)));
-        }
-        lines
     }
 }

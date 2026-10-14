@@ -1,2 +1,3 @@
 // Objects with fields named like keywords or like methods of `Object.prototype`.
-import "./impl.js";
+import "../../jsc-shell-functions.ts";
+import "./program.ts";

@@ -31,15 +31,14 @@ use crate::check::{Checker, ContextFlags, Program};
 use crate::check::relate::Relation;
 use crate::check::task::Finished;
 use super::identity::Identity;
-use super::callees::{Callee, Hole};
-use super::subtypes::{self, AlteredViews, Cause, Facts, FieldTypes, Gathered, Sizes, Subtypes, ToldApart};
+use super::callees::Callee;
+use super::subtypes::{self, AlteredViews, Cause, Facts, FieldTypes, Gathered, OpensForTheLog, Sizes, Subtypes};
 use super::creation::Creations;
 use super::alterations::{Alteration, DoorsCounted, NUMBER_OF_OPERANDS, UntypedAlterations, WidestAlterations};
 use super::escape_closure::Escapes;
 use super::first_stores::Constructions;
-use super::trust::Claim;
 use super::storage::Made;
-use crate::hir::{BinOp, Chain, ClassId, ExprId, ExprKind, ExprTag, FileKind, FnId, MappedModifier, MemberKind, PatKind, TypeNodeId, TypeNodeKind};
+use crate::hir::{BinOp, Chain, ClassId, ExprId, ExprKind, ExprTag, FileKind, FnId, MappedModifier, MemberKind, PatKind, PropKey, PropKind, TypeNodeId, TypeNodeKind, UnOp};
 use crate::program::{FileId, Sym};
 use crate::types::{ComponentsId, EnumValue, Follow, Intrinsic, MapperId, Origin, Prop, PropFlags, PropSource, Shape, SigId, TypeData, TypeId, Visitor};
 use crate::util::{FxHashMap, FxHashSet};
@@ -128,8 +127,6 @@ pub struct Noted<T = TypeId> {
     guards: FxHashSet<(T, T)>,
     /// Those of them that the program forces, `x as unknown as T`, here or inside generic code that the cast is at the way out of: they refuse nothing.
     forced: FxHashSet<(T, T)>,
-    /// `Checker::note_what_stays_untyped`: the view, where the data comes from, the first place.
-    data_held_to: FxHashMap<(T, OriginOfData), Place>,
     /// The same, but it is only made sure that it is one: it passes or it does not.
     tests: FxHashSet<(T, T)>,
     /// A value that the operations say nothing of is held to it: an element, what an indirect or a generic call yields, an argument of
@@ -140,19 +137,16 @@ pub struct Noted<T = TypeId> {
     foreign: FxHashMap<T, (Option<T>, Place)>,
     /// The value of an expression whose type says nothing of it, `any`, `unknown`, `object`, `{}`, is held to it.
     untyped_into: FxHashMap<T, Place>,
+    checked_into: FxHashMap<T, Place>,
+    checked_by_road: [usize; 7],
     /// Types that no declaration names and whose objects are not laid out: `(() => number) & { unit: string }`, `number[] & { tag: string }`.
     not_laid_out: FxHashSet<T>,
-    /// Where a declaration without a body was taken for a prediction: `Checker::unvouched_claim`.
-    predictions: FxHashMap<Place, Claim>,
     cut_short: FxHashMap<Place, [u32; 4]>,
     most_looked_into: [u32; 3],
     /// By field, which is a layout and a name: the functions whose closures the allocation sites of the layout store there.
     callees_at_birth: FxHashMap<(T, Atom), Callee>,
     /// The same for the stores through a supertype, which reach the objects of every subtype.
     callees_stored: FxHashMap<(T, Atom), Callee>,
-    /// By declaration: the name of a variable that may hold a function and has no `OnlyFunction` that is a fact, and why it has none. `None`: it
-    /// has one, and may be nil. For `explain_callees` alone.
-    callee_holes: FxHashMap<Place, (Atom, Option<Hole>)>,
     /// Which fields objects get right after their allocation: see `creation.rs`.
     creations: Creations<T>,
     /// The constructor functions: see `first_stores.rs`.
@@ -174,18 +168,17 @@ impl<T> Default for Noted<T> {
             casts: FxHashSet::default(),
             guards: FxHashSet::default(),
             forced: FxHashSet::default(),
-            data_held_to: FxHashMap::default(),
             tests: FxHashSet::default(),
             vouched_into: FxHashMap::default(),
             foreign: FxHashMap::default(),
             untyped_into: FxHashMap::default(),
+            checked_into: FxHashMap::default(),
+            checked_by_road: [0; 7],
             not_laid_out: FxHashSet::default(),
-            predictions: FxHashMap::default(),
             cut_short: FxHashMap::default(),
             most_looked_into: [0; 3],
             callees_at_birth: FxHashMap::default(),
             callees_stored: FxHashMap::default(),
-            callee_holes: FxHashMap::default(),
             creations: Creations::default(),
             constructions: Constructions::default(),
             escapes: Escapes::default(),
@@ -215,12 +208,8 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         self.casts.extend(other.casts);
         self.guards.extend(other.guards);
         self.forced.extend(other.forced);
-        for ((view, origin), at) in other.data_held_to {
-            self.add_data_held_to(view, origin, at);
-        }
         self.tests.extend(other.tests);
         self.not_laid_out.extend(other.not_laid_out);
-        self.predictions.extend(other.predictions);
         for (at, times) in other.cut_short {
             for (sum, more) in self.cut_short.entry(at).or_default().iter_mut().zip(times) {
                 *sum += more;
@@ -229,7 +218,6 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         for (most, other) in self.most_looked_into.iter_mut().zip(other.most_looked_into) {
             *most = (*most).max(other);
         }
-        self.callee_holes.extend(other.callee_holes);
         self.creations.absorb(other.creations);
         self.constructions.absorb(other.constructions);
         self.escapes.absorb(other.escapes);
@@ -238,6 +226,12 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         }
         for (view, (source, at)) in other.foreign {
             self.add_foreign(view, source, at);
+        }
+        for (view, at) in other.checked_into {
+            self.add_check(view, at);
+        }
+        for (sum, more) in self.checked_by_road.iter_mut().zip(other.checked_by_road) {
+            *sum += more;
         }
         for (view, at) in other.untyped_into {
             self.add_untyped_inflow(view, at);
@@ -253,11 +247,6 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         }
     }
 
-    fn add_data_held_to(&mut self, view: T, origin: OriginOfData, at: Place) {
-        let first = self.data_held_to.entry((view, origin)).or_insert(at);
-        *first = at.min(*first);
-    }
-
     fn add_upcast(&mut self, upcast: (T, T), at: Place) {
         let first = self.upcasts.entry(upcast).or_insert(at);
         *first = at.min(*first);
@@ -268,6 +257,11 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         if at < first.1 {
             *first = (source, at);
         }
+    }
+
+    fn add_check(&mut self, view: T, at: Place) {
+        let first = self.checked_into.entry(view).or_insert(at);
+        *first = at.min(*first);
     }
 
     fn add_untyped_inflow(&mut self, view: T, at: Place) {
@@ -288,11 +282,11 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         let casts = self.casts.into_iter().filter_map(|(from, to)| Some((rename(from)?, rename(to)?))).collect();
         let guards = self.guards.into_iter().filter_map(|(from, to)| Some((rename(from)?, rename(to)?))).collect();
         let forced = self.forced.into_iter().filter_map(|(from, to)| Some((rename(from)?, rename(to)?))).collect();
-        let data_held_to = self.data_held_to.into_iter().filter_map(|((view, origin), at)| Some(((rename(view)?, origin), at))).collect();
         let tests = self.tests.into_iter().filter_map(|(from, to)| Some((rename(from)?, rename(to)?))).collect();
         let upcasts = self.upcasts.into_iter().filter_map(|((from, to), at)| Some(((rename(from)?, rename(to)?), at))).collect();
         let foreign = self.foreign.into_iter().filter_map(|(view, (source, at))| Some((rename(view)?, (source.and_then(&mut rename), at)))).collect();
         let untyped_into = self.untyped_into.into_iter().filter_map(|(view, at)| Some((rename(view)?, at))).collect();
+        let checked_into = self.checked_into.into_iter().filter_map(|(view, at)| Some((rename(view)?, at))).collect();
         let vouched_into = self.vouched_into.into_iter().filter_map(|(view, at)| Some((rename(view)?, at))).collect();
         let mut of_fields = |callees: FxHashMap<(T, Atom), Callee>| -> FxHashMap<(U, Atom), Callee> {
             let mut renamed = FxHashMap::default();
@@ -307,7 +301,7 @@ impl<T: Copy + Eq + Hash> Noted<T> {
         let creations = self.creations.renamed(&mut rename);
         let constructions = self.constructions.renamed(&mut rename);
         let escapes = self.escapes.renamed(&mut rename);
-        Noted { allocated_at_site, copied_into, upcasts, casts, guards, forced, data_held_to, tests, vouched_into, foreign, untyped_into, not_laid_out, predictions: self.predictions, cut_short: self.cut_short, most_looked_into: self.most_looked_into, callees_at_birth, callees_stored, callee_holes: self.callee_holes, creations, constructions, escapes }
+        Noted { allocated_at_site, copied_into, upcasts, casts, guards, forced, tests, vouched_into, foreign, untyped_into, checked_into, checked_by_road: self.checked_by_road, not_laid_out, cut_short: self.cut_short, most_looked_into: self.most_looked_into, callees_at_birth, callees_stored, creations, constructions, escapes }
     }
 }
 
@@ -366,6 +360,7 @@ pub(super) struct State {
     /// Cache of `canonical_type`.
     canonical: FxHashMap<TypeId, TypeId>,
     laid_out: FxHashMap<TypeId, TypeId>,
+    first_of_structure: FxHashMap<Identity, TypeId>,
     nested_too_deeply: FxHashMap<TypeId, bool>,
     with_room_for_what_nothing_is_said_of: FxHashMap<TypeId, bool>,
     seen_before: Option<Arc<FxHashSet<Identity>>>,
@@ -542,16 +537,6 @@ pub struct Membership {
     pub upcasts: Vec<(u32, u32, Place)>,
     /// The targets of vouched casts, each with the first place. Ascending.
     pub vouched: Vec<(u32, Place)>,
-    /// `Noted::data_held_to`, by view. Ascending.
-    pub(super) data_held_to: Vec<(u32, OriginOfData, Place)>,
-    /// The views that take nothing by their structure, each with the view it is told from, and how. Ascending.
-    pub(super) told_apart: Vec<(u32, u32, ToldApart)>,
-    /// `Noted::predictions`, in the order of the source.
-    pub predictions: Vec<(Place, Claim)>,
-    /// `Noted::callee_holes`, in the order of the source.
-    pub callee_holes: Vec<(Place, Atom, Option<Hole>)>,
-    /// By view and name of a field: what the stores that are seen put there, where that is not closures of one function. In no order.
-    pub callees_unresolved: Vec<(u32, Atom, Callee)>,
 }
 
 /// Where a value of type `any` or `unknown` comes from, going by the text: `Checker::origin_of_data`. The first three are known for data that nobody has made anything of.
@@ -577,24 +562,8 @@ pub enum OriginOfData {
 }
 
 impl OriginOfData {
-    const ALL: [OriginOfData; 9] = [OriginOfData::Parsed, OriginOfData::Prediction, OriginOfData::JsonModule, OriginOfData::Annotated, OriginOfData::Inferred, OriginOfData::Function, OriginOfData::BuiltIn, OriginOfData::Property, OriginOfData::Awaited];
-
     pub fn is_known_for_data(self) -> bool {
         self <= OriginOfData::JsonModule
-    }
-
-    fn text(self) -> &'static str {
-        match self {
-            OriginOfData::Parsed => "JSON.parse",
-            OriginOfData::Prediction => "a declaration without a body",
-            OriginOfData::JsonModule => "a JSON module",
-            OriginOfData::Annotated => "a name annotated any or unknown",
-            OriginOfData::Inferred => "a name inferred any or unknown",
-            OriginOfData::Function => "what a function of the program yields",
-            OriginOfData::BuiltIn => "what another built-in yields",
-            OriginOfData::Property => "a property declared any or unknown",
-            OriginOfData::Awaited => "what is awaited",
-        }
     }
 }
 
@@ -932,9 +901,61 @@ impl<'p, 's> Checker<'p, 's> {
             _ => {
                 let ty = self.regular(ty);
                 let ty = self.regular_type_of_object_literal(ty);
-                self.canonical_type(ty)
+                let ty = self.canonical_type(ty);
+                if self.structure_of_plain_literal(ty).is_none() {
+                    return ty;
+                }
+                self.keep_type(ty);
+                let identity = self.identity_of_type(ty);
+                *self.aot.flows.first_of_structure.entry(identity).or_insert(ty)
             }
         }
+    }
+
+    pub fn place_of_object_literal(&self, ty: TypeId) -> Option<(u32, u32)> {
+        match *self.data(ty) {
+            TypeData::Anon { origin: Origin::ObjectLiteral(file, e, ..), .. } => Some((file.0, self.hir(file)[e].pos)),
+            _ => None,
+        }
+    }
+
+    fn is_plain_data(&self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::Null | ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::String(_) | ExprKind::BigInt(_) | ExprKind::Object(_) => true,
+            ExprKind::Unary { op: UnOp::Minus, operand } => matches!(hir[operand].kind, ExprKind::Number(_) | ExprKind::BigInt(_)),
+            ExprKind::Array(elements) => hir.ids(elements).all(|element| self.is_plain_data(file, element)),
+            _ => false,
+        }
+    }
+
+    pub(super) fn structure_of_plain_literal(&mut self, ty: TypeId) -> Option<Vec<(Atom, u8, TypeId)>> {
+        let TypeData::Anon { origin: Origin::ObjectLiteral(file, literal, false, _, _, _, false), mapper: MapperId::IDENTITY } = *self.data(ty) else { return None };
+        if self.types().provenance(ty).is_some() || self.is_untyped_file(file) {
+            return None;
+        }
+        let hir = self.hir(file);
+        let ExprKind::Object(written) = hir[literal].kind else { return None };
+        if !written.iter().all(|p| hir[p].kind == PropKind::Init && matches!(hir[p].key, PropKey::Name(_)) && self.is_plain_data(file, hir[p].value)) {
+            return None;
+        }
+        let members = self.members(ty)?;
+        let shape = members.shape();
+        if shape.props.is_empty() || !shape.call.is_empty() || !shape.construct.is_empty() || !shape.index.is_empty() {
+            return None;
+        }
+        let mut fields = Vec::with_capacity(shape.props.len());
+        for prop in shape.props.iter() {
+            let name = self.atoms().bytes(prop.name);
+            if !matches!(prop.source, PropSource::Literal(..)) || prop.flags.intersects(PropFlags::METHOD | PropFlags::ACCESSOR) || prop.name_type != TypeId::UNRESOLVED || name == b"__proto__" || name.first().is_none_or(u8::is_ascii_digit) {
+                return None;
+            }
+            let of_field = self.type_of_prop(prop, MapperId::IDENTITY);
+            let of_field = self.regular(of_field);
+            let flags = prop.flags.contains(PropFlags::OPTIONAL) as u8 | (prop.flags.contains(PropFlags::READONLY) as u8) << 1;
+            fields.push((prop.name, flags, self.regular_type_of_object_literal(of_field)));
+        }
+        Some(fields)
     }
 
     /// The supertype whose layout `ty` shares. `interface AssignmentExpression extends BinaryExpression { left: LeftHandSideExpression }`
@@ -1294,71 +1315,6 @@ impl<'p, 's> Checker<'p, 's> {
             referred.types.extend(type_arguments.iter().copied());
         }
         referred.types
-    }
-
-    /// For `--aot-explain=literals`: which counter says that the type `is_nested_too_deeply`: 0 a generic class or interface, 1 a type that is written where type parameters are in scope, 2 a function
-    /// type, 3 what is computed, 4 a tuple, 5 a text, 6 a generic alias, 7 what waits for a type parameter.
-    pub fn counter_nested_too_deeply(&mut self, ty: TypeId) -> Option<usize> {
-        self.find_applications_in(ty);
-        let &(applied, _) = self.aot.flows.applications[&ty].iter().find(|known| known.1 > MOST_APPLICATIONS_WITHIN_EACH_OTHER)?;
-        Some(match applied {
-            Applied::Named(_) => 0,
-            Applied::Written(_) => 1,
-            Applied::Function(..) => 2,
-            Applied::Computed => 3,
-            Applied::Tuple => 4,
-            Applied::Text => 5,
-            Applied::Alias(_) => 6,
-            Applied::Conditional(..) | Applied::IndexedAccess | Applied::StringMapping => 7,
-        })
-    }
-
-    /// The way from the type inwards along which that counter counts: at each step the kind of the record, what the counter says from there on, and through which of the types that the record refers to
-    /// the way goes on. No text of the program.
-    pub fn explain_nesting(&mut self, ty: TypeId) -> String {
-        self.find_applications_in(ty);
-        let Some(&(applied, _)) = self.aot.flows.applications[&ty].iter().find(|known| known.1 > MOST_APPLICATIONS_WITHIN_EACH_OTHER) else { return String::new() };
-        let times_in = |this: &Self, ty: TypeId| this.aot.flows.applications[&ty].iter().find(|known| known.0 == applied).map_or(0, |known| known.1);
-        let (mut steps, mut at) = (Vec::new(), ty);
-        while times_in(self, at) != 0 && steps.len() < 64 {
-            let kind = match self.data(at) {
-                TypeData::Ref { .. } => "a class or an interface that is applied",
-                TypeData::Anon { origin: Origin::TypeLiteral(..), .. } => "a type literal under type parameters",
-                TypeData::Anon { origin: Origin::Mapped(..), .. } => "a mapped type",
-                TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. } => "the type of a literal under type parameters",
-                TypeData::Anon { .. } => "another written type",
-                TypeData::Fns { .. } => "a function type",
-                TypeData::Synth(shape) if shape.created_from.is_some() && !shape.is_object_rest_type => "a spread",
-                TypeData::Synth(shape) if shape.is_object_rest_type => "a rest",
-                TypeData::Synth(shape) if shape.instantiation_target.is_some() => "an instantiation of what is computed",
-                TypeData::Synth(shape) if !shape.call.is_empty() || !shape.construct.is_empty() => "a signature that is computed",
-                TypeData::Synth(_) => "a record that is computed",
-                TypeData::ReverseMapped { .. } => "what a mapped type is inferred from",
-                TypeData::Tuple { .. } => "a tuple",
-                TypeData::Union(_) => "a union",
-                TypeData::Intersection(_) => "an intersection",
-                TypeData::Cond { .. } => "a conditional type",
-                TypeData::IndexedAccess { .. } => "an indexed access",
-                TypeData::Keyof(_) => "keyof",
-                TypeData::Substitution { .. } => "a substitution",
-                TypeData::Template { .. } | TypeData::StringMapping { .. } => "a template",
-                TypeData::StringLit { .. } => "a text",
-                TypeData::TypeParam(..) | TypeData::ThisParam(_) => "a type parameter",
-                _ => "another kind",
-            };
-            let referred = self.types_referred_to_by(at);
-            match referred.iter().copied().enumerate().max_by_key(|&(_, argument)| times_in(self, argument)) {
-                Some((index, argument)) if times_in(self, argument) != 0 => {
-                    steps.push(format!("{kind} ({}), on through #{} of {}", times_in(self, at), index + 1, referred.len()));
-                    at = argument;
-                }
-                _ => {
-                    steps.push(format!("{kind} ({})", times_in(self, at)));
-                    break;
-                }
-            }
-        }
-        steps.join(" | ")
     }
 
     /// For each declaration: how often at most it is applied, one application within the other, in `ty` and its type arguments. It goes by
@@ -1828,12 +1784,6 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self.aot.flows.noted.constructions
     }
 
-    /// The value of `e` is a prediction because of a declaration without a body.
-    pub fn note_prediction(&mut self, file: FileId, e: ExprId, claim: Claim) {
-        let at = Place { file, pos: self.hir(file)[e].pos };
-        self.aot.flows.noted.predictions.insert(at, claim);
-    }
-
     /// The value of the expression `value` is stored to the field `name` of an object. `holder`: with `is_birth`, the layout that it is being
     /// allocated as. Else the supertype that it is looked at as.
     pub fn note_callee_stored(&mut self, holder: TypeId, name: Atom, file: FileId, value: ExprId, is_birth: bool) {
@@ -1847,24 +1797,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// The same for a closure of the function, which a declaration stores there: `namespace N { export function f() {} }`.
     pub fn note_callee_declared(&mut self, holder: TypeId, name: Atom, file: FileId, func: FnId) {
         join_callee(&mut self.aot.flows.noted.callees_stored, (holder, name), Callee::One(file, func));
-    }
-
-    /// `sym`: a variable in an environment or of a module that may hold a function. For `explain_callees`.
-    pub fn note_callee_of_variable(&mut self, sym: Sym) {
-        let why = match self.callee_of_variable(sym) {
-            Ok(only) if !only.may_be_nil && !only.is_predicted => return,
-            Ok(_) => None,
-            Err(hole) => Some(hole),
-        };
-        let Some((file, decl)) = self.files().value_declaration(sym) else { return };
-        let hir = self.hir(file);
-        let pos = match decl {
-            Decl::Var(pat) | Decl::Param(pat) => hir[pat].pos,
-            Decl::Fn(func) => hir[func].start,
-            _ => return,
-        };
-        let name = self.files().symbol(sym).name;
-        self.aot.flows.noted.callee_holes.insert(Place { file, pos }, (name, why));
     }
 
     /// An object is made as `ty` says.
@@ -2035,17 +1967,15 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// Data of the origin is held to `ty`, by a cast or by a place whose type is written down. `is_in_container`: nothing is made of it from the top, as with the value of a
     /// JSON module. A cast walks no container, so what is in one stays what it is, with all that it holds: the views that it is looked at as from
-    /// then on take it as it is, if it is known for data. Of any other origin it is only counted.
+    /// then on take it as it is, if it is known for data.
     pub fn note_what_stays_untyped(&mut self, ty: TypeId, is_in_container: bool, origin: OriginOfData) {
         if ty == TypeId::UNRESOLVED {
             return;
         }
         let (mut seen, mut views) = (FxHashSet::default(), Vec::new());
         self.add_what_stays_untyped(ty, is_in_container, &mut seen, &mut views);
-        let at = self.aot.flows.place;
-        for view in views {
-            self.aot.flows.noted.add_data_held_to(view, origin, at);
-            if origin.is_known_for_data() {
+        if origin.is_known_for_data() {
+            for view in views {
                 self.note_foreign(view, TypeId::UNRESOLVED);
             }
         }
@@ -3424,41 +3354,16 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
-    /// `--aot-explain=parsed`. The first lines, one for each origin, are numbers alone.
-    pub fn explain_parsed(&mut self, views: &[TypeId], membership: &Membership) -> Vec<String> {
-        let mut lines = Vec::new();
-        let mut named = Vec::new();
-        for origin in OriginOfData::ALL {
-            let of_origin: Vec<(u32, Place)> = membership.data_held_to.iter().filter(|held| held.1 == origin).map(|held| (held.0, held.2)).collect();
-            let mut by_place: FxHashMap<Place, u32> = FxHashMap::default();
-            for held in &of_origin {
-                *by_place.entry(held.1).or_default() += 1;
-            }
-            let mut by_place: Vec<(Place, u32)> = by_place.into_iter().collect();
-            by_place.sort_unstable_by_key(|&(at, number)| (std::cmp::Reverse(number), at));
-            let flagged_anyway = of_origin.iter().filter(|held| membership.views[held.0 as usize].admits_foreign).count();
-            lines.push(format!(
-                "parsed: {}: {}: {} views from {} places, {} of them admit untyped objects as it is; views by place, the first 10: {:?}",
-                origin.text(),
-                if origin.is_known_for_data() { "FLAGS" } else { "only counted" },
-                of_origin.len(),
-                by_place.len(),
-                flagged_anyway,
-                by_place.iter().take(10).map(|place| place.1).collect::<Vec<u32>>(),
-            ));
-            for &(at, number) in by_place.iter().take(6) {
-                let such_as = of_origin.iter().find(|held| held.1 == at).map_or_else(String::new, |held| self.name_for_people(views[held.0 as usize]));
-                named.push(format!("parsed: {}: {number} views at {}, such as {such_as}", origin.text(), self.place_for_people(at)));
-            }
-        }
-        lines.append(&mut named);
-        lines
-    }
-
     /// The value of an expression whose type `is_untyped` is held to `target`, which says how objects are laid out.
     pub fn note_untyped_inflow(&mut self, target: TypeId) {
         let at = self.aot.flows.place;
         self.aot.flows.noted.add_untyped_inflow(target, at);
+    }
+
+    pub fn note_check_of_a_log_build(&mut self, target: TypeId, road: usize) {
+        let at = self.aot.flows.place;
+        self.aot.flows.noted.add_check(target, at);
+        self.aot.flows.noted.checked_by_road[road] += 1;
     }
 
     /// The type that the checker has for where the value of `e` goes, if `e` is an argument, an element of an array literal, the value of
@@ -4972,8 +4877,6 @@ impl<'p, 's> Checker<'p, 's> {
         guards.sort_unstable();
         let mut forced: Vec<(u32, u32)> = noted.forced.iter().filter_map(|(from, to)| Some((*index_of.get(from)?, *index_of.get(to)?))).collect();
         forced.sort_unstable();
-        let mut data_held_to: Vec<(u32, OriginOfData, Place)> = noted.data_held_to.iter().filter_map(|(&(ty, origin), &at)| Some((*index_of.get(&ty)?, origin, at))).collect();
-        data_held_to.sort_unstable();
         let mut tests: Vec<(u32, u32)> = noted.tests.iter().filter_map(|(from, to)| Some((*index_of.get(from)?, *index_of.get(to)?))).collect();
         tests.sort_unstable();
         // What is altered need not be a view: nothing may be looked at as it. It has no number then, and no set. What is seen to get to it may
@@ -4990,13 +4893,11 @@ impl<'p, 's> Checker<'p, 's> {
             AlteredViews { views, besides, is_untyped: altered[alteration].is_untyped, is_anything: altered[alteration].is_anything }
         });
         let mut held_untyped: Vec<(u32, Place)> = noted.untyped_into.iter().filter_map(|(ty, &at)| Some((*index_of.get(ty)?, at))).collect();
+        let mut checked: Vec<(u32, Place)> = noted.checked_into.iter().filter_map(|(ty, &at)| Some((*index_of.get(ty)?, at))).collect();
+        checked.sort_unstable();
         held_untyped.sort_unstable();
-        let mut predictions: Vec<(Place, Claim)> = noted.predictions.iter().map(|(&at, &claim)| (at, claim)).collect();
-        predictions.sort_unstable();
         let by_view = |callees: &FxHashMap<(TypeId, Atom), Callee>| -> Vec<(u32, Atom, Callee)> { callees.iter().filter_map(|(&(holder, name), &callee)| Some((*index_of.get(&holder)?, name, callee))).collect() };
         let (callees_at_birth, callees_stored) = (by_view(&noted.callees_at_birth), by_view(&noted.callees_stored));
-        let mut callee_holes: Vec<(Place, Atom, Option<Hole>)> = noted.callee_holes.iter().map(|(&at, &(name, why))| (at, name, why)).collect();
-        callee_holes.sort_unstable_by_key(|hole| hole.0);
         let creations = noted.creations.by_view(&index_of);
         let constructions = noted.constructions.by_view(&index_of);
         clock.say(format_args!("the edges: {} questions about kinds", about_kinds.len()));
@@ -5009,12 +4910,13 @@ impl<'p, 's> Checker<'p, 's> {
             casts,
             guards,
             forced,
-            data_held_to,
             tests,
             vouched,
             held_untyped,
+            checked,
+            checked_by_road: noted.checked_by_road,
             logs_type_errors: self.logs_type_errors(),
-            opens_for_the_log: false,
+            opens_for_the_log: OpensForTheLog::Nothing,
             admitting_when_closed: Vec::new(),
             about_kinds_once_more: Vec::new(),
             foreign,
@@ -5022,10 +4924,8 @@ impl<'p, 's> Checker<'p, 's> {
             altered,
             fields,
             stored,
-            predictions,
             callees_at_birth,
             callees_stored,
-            callee_holes,
             escapes: noted.escapes,
             creations,
             constructions,
@@ -5193,44 +5093,6 @@ impl<'p, 's> Checker<'p, 's> {
 
     // ───────────────────────────── why ─────────────────────────────
 
-    fn callee_for_people(&self, callee: Callee) -> String {
-        let at = |(file, func): (FileId, FnId)| self.place_for_people(Place { file, pos: self.hir(file)[func].start });
-        match callee {
-            Callee::Nothing => "no function is stored".to_owned(),
-            Callee::One(file, func) => format!("the function at {}", at((file, func))),
-            Callee::Several(first, second) => format!("several functions: at {} and at {}", at(first), at(second)),
-            Callee::Unknown(place) => format!("a value that is not seen through at {}", self.place_for_people(place)),
-        }
-    }
-
-    /// The counts. Then a line for each variable in an environment or of a module that may hold a function and whose one function is no fact,
-    /// in the order of the source, and one for each field under whose name the stores put something else than closures of one function,
-    /// by its text. Each with the hole in the proof.
-    pub fn explain_callees(&mut self, views: &[TypeId], membership: &Membership) -> Vec<String> {
-        let mut lines = Vec::new();
-        for &(at, name, why) in &membership.callee_holes {
-            let why = match why {
-                None => "one function, but a read may find undefined or null".to_owned(),
-                Some(Hole::Declaration) => "no variable that one declaration of a module gives a name of its own".to_owned(),
-                Some(Hole::Store(by)) => format!("stored to otherwise than as `name = value` at {}", self.place_for_people(by)),
-                Some(Hole::Stored(callee)) => self.callee_for_people(callee),
-                Some(Hole::Cycle) => "stored to itself by way of another variable".to_owned(),
-            };
-            lines.push(format!("callees: variable {} at {}: {why}", String::from_utf8_lossy(self.atoms().bytes(name)), self.place_for_people(at)));
-        }
-        let mut of_fields = Vec::new();
-        for &(view, name, callee) in &membership.callees_unresolved {
-            let holder = self.name_for_people(views[view as usize]);
-            of_fields.push(format!("callees: field {holder}.{}: {}", String::from_utf8_lossy(self.atoms().bytes(name)), self.callee_for_people(callee)));
-        }
-        of_fields.sort_unstable();
-        let resolved: usize = membership.views.iter().map(|reach| reach.callees.len()).sum();
-        let counts = format!("callees: {} variables that may hold a function without a fact; fields by supertype: {resolved} with one function (a prediction: an untyped store is not seen), {} without", lines.len(), of_fields.len());
-        lines.insert(0, counts);
-        lines.append(&mut of_fields);
-        lines
-    }
-
     /// A line for each of `views` that admits objects that are not laid out, in their order: the view, and how it has come to that, back to
     /// where such an object was let in or something untyped was held to a view.
     pub fn explain_foreign(&mut self, views: &[TypeId], membership: &Membership) -> Vec<String> {
@@ -5281,101 +5143,8 @@ impl<'p, 's> Checker<'p, 's> {
         lines
     }
 
-    /// First a line for each layout that fits the target of a vouched cast and that no flow brings there (`subtypes.rs`, phase B). Then a line
-    /// for each of `views` that has a subtype besides itself, in their order: how many, by what they have come over, and the way of one
-    /// of them back to where it is made.
-    pub fn explain_members(&mut self, views: &[TypeId], membership: &Membership) -> Vec<String> {
-        let mut lines = Vec::new();
-        let of_views = || membership.subtypes.iter().zip(&membership.causes).take(views.len()).enumerate();
-        for (view, (_, causes)) in of_views() {
-            // By supertype that fits: how many subtypes it has brought.
-            let mut fitting: Vec<u32> = causes.iter().filter_map(|cause| if let Cause::Fit(fitting) = cause { Some(*fitting) } else { None }).collect();
-            fitting.sort_unstable();
-            for brought in fitting.chunk_by(|a, b| a == b) {
-                let at = membership.vouched.binary_search_by_key(&(view as u32), |target| target.0).map_or(Place::NOWHERE, |found| membership.vouched[found].1);
-                lines.push(format!("members: fits, but no flow: {} with {} subtypes into {}, which is vouched for at {}", self.name_of_view(views, brought[0]), brought.len(), self.name_for_people(views[view]), self.place_for_people(at)));
-            }
-        }
-        for &(view, from, how) in &membership.told_apart {
-            let how = match how {
-                ToldApart::Tested => "a type guard or a test leads there",
-                ToldApart::Beside => "they are parts of one union that plain data may be held to",
-                ToldApart::Upcast => "it is upcast to that, which is told apart itself",
-            };
-            lines.push(format!("members: told apart: {} from {}: {how}", self.name_of_view(views, view), self.name_of_view(views, from)));
-        }
-        for (view, (subtypes, causes)) in of_views() {
-            let laid_out = subtypes.partition_point(|&subtype| (subtype as usize) < membership.subtypes.len());
-            if laid_out == 0 || subtypes[..laid_out] == [view as u32] {
-                continue;
-            }
-            let number_of = |is_meant: fn(&Cause) -> bool| causes[..laid_out].iter().filter(|cause| is_meant(cause)).count();
-            let mut line = format!("members: {}: {laid_out} subtypes", self.name_for_people(views[view]));
-            let kinds: [(&str, fn(&Cause) -> bool); 6] = [
-                ("declared", |cause| matches!(cause, Cause::Declared(_))),
-                ("over upcasts", |cause| matches!(cause, Cause::Upcast(_))),
-                ("through casts", |cause| matches!(cause, Cause::Cast(_))),
-                ("admitted as they are", |cause| matches!(cause, Cause::Admitted(_))),
-                ("that a subtype becomes", |cause| matches!(cause, Cause::Became(_))),
-                ("that fit without a flow", |cause| matches!(cause, Cause::Fit(_))),
-            ];
-            for (text, is_meant) in kinds {
-                let number = number_of(is_meant);
-                if number != 0 {
-                    line += &format!("; {number} {text}");
-                }
-            }
-            let is_telling = |cause: &Cause| !matches!(cause, Cause::Birth | Cause::Transition(_) | Cause::Declared(_));
-            if let Some(at) = causes[..laid_out].iter().position(is_telling) {
-                line += &format!("; such as {}{}", self.name_of_view(views, subtypes[at]), self.way_of_subtype(views, membership, view as u32, subtypes[at]));
-            }
-            lines.push(line);
-        }
-        lines
-    }
-
     fn name_of_view(&mut self, views: &[TypeId], view: u32) -> String {
         views.get(view as usize).map_or_else(|| "what is not laid out".to_owned(), |&view| self.name_for_people(view))
-    }
-
-    /// How the layout has come to be a subtype of the view, back to where it is made.
-    fn way_of_subtype(&mut self, views: &[TypeId], membership: &Membership, mut view: u32, mut subtype: u32) -> String {
-        let mut way = String::new();
-        for _ in 0..12 {
-            let Ok(at) = membership.subtypes[view as usize].binary_search(&subtype) else { break };
-            match membership.causes[view as usize][at] {
-                Cause::Birth => return way + ", where it is allocated",
-                Cause::Fit(fitting) if fitting == subtype || fitting == view => return way + ", which it fits, but no flow brings it there",
-                Cause::Fit(fitting) => {
-                    way += &format!(", which {} fits, but no flow brings it there", self.name_of_view(views, fitting));
-                    view = fitting;
-                }
-                Cause::Transition(from) => return format!("{way}, which a cast makes of {}", self.name_of_view(views, from)),
-                Cause::Declared(from) => {
-                    way += &format!(", declared by {}", self.name_of_view(views, from));
-                    view = from;
-                }
-                Cause::Upcast(number) => {
-                    let (from, _, noted_at) = membership.upcasts[number as usize];
-                    way += &format!(", over an upcast noted at {} from {}", self.place_for_people(noted_at), self.name_of_view(views, from));
-                    view = from;
-                }
-                Cause::Cast(from) | Cause::Admitted(from) if from == view => break,
-                Cause::Cast(from) => {
-                    way += &format!(", through a cast from {}", self.name_of_view(views, from));
-                    view = from;
-                }
-                Cause::Admitted(from) => {
-                    way += &format!(", admitted as it is at a cast from {}", self.name_of_view(views, from));
-                    view = from;
-                }
-                Cause::Became(layout) => {
-                    way += &format!(", because {} becomes it", self.name_of_view(views, layout));
-                    subtype = layout;
-                }
-            }
-        }
-        way
     }
 
     pub(super) fn name_for_people(&mut self, ty: TypeId) -> String {

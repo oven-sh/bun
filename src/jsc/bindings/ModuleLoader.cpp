@@ -38,6 +38,7 @@
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
 #include "JavaScriptCore/AOTFunction.h"
+#include "JavaScriptCore/SyntheticModuleRecord.h"
 #include "IsolatedModuleCache.h"
 #include "ModuleGraph.h"
 #include "../modules/_NativeModule.h"
@@ -803,6 +804,24 @@ JSC::JSPromise* importFileOfCompiledProgram(Zig::GlobalObject* globalObject, JSC
     return imported.isCell() ? dynamicDowncast<JSC::JSPromise>(imported.asCell()) : nullptr;
 }
 
+static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateSourceOfCompiledNamespace(JSC::JSObject* object)
+{
+    gcProtectNullTolerant(object);
+    return [object](JSC::JSGlobalObject* globalObject, JSC::Identifier, Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues) -> void {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSC::EnsureStillAliveScope stillAlive(object);
+        JSC::PropertyNameArrayBuilder names(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+        object->methodTable()->getOwnPropertyNames(object, globalObject, names, JSC::DontEnumPropertiesMode::Include);
+        gcUnprotectNullTolerant(object);
+        RETURN_IF_EXCEPTION(scope, void());
+        for (auto& name : names.releaseData()->propertyNameVector()) {
+            exportNames.append(name);
+            exportValues.append(JSC::SyntheticModuleRecord::createLiveBinding(globalObject, object, name));
+        }
+    };
+}
+
 JSC::JSSourceCode* sourceOfFileOfCompiledProgram(Zig::GlobalObject* globalObject, const String& key)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -819,7 +838,7 @@ JSC::JSSourceCode* sourceOfFileOfCompiledProgram(Zig::GlobalObject* globalObject
     JSObject* object = namespaceObject.getObject();
     if (!object)
         return nullptr;
-    auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateObjectModuleSourceCode(globalObject, object), JSC::SourceOrigin(), key));
+    auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateSourceOfCompiledNamespace(object), JSC::SourceOrigin(), key));
     return JSSourceCode::create(vm, WTF::move(source));
 }
 

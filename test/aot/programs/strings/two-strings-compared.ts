@@ -3,7 +3,6 @@
 // CALLS+ sameL StringEq
 // CALLS- sameOrNilL StringsAreEqual
 // CALLS+ same StringsAreEqual
-// CALLS+ sameOrNil StringsAreEqual
 // CALLS+ different StringsAreEqual
 // CALLS+ branched StringsAreEqual
 // CALLS- counted StringsAreEqual

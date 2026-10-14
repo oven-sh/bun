@@ -2614,6 +2614,7 @@ fn check_project_of(
     // other is as `bun check` finds it.
     let names_javascript =
         |it: (Extent, &[Vec<u8>])| it.1.iter().any(|file| is_javascript_file(disk, file));
+    let allows_javascript_itself = project.options.allow_js;
     if request.are_entry_points && named.is_some_and(names_javascript) {
         project.options.allow_js = true;
     }
@@ -2632,7 +2633,7 @@ fn check_project_of(
             project.options.libs = vec![b"esnext.full".to_vec()];
         }
         project.errors.retain(|error| !(error.is_about_options && project.options.is_removed_option_error(error.code)));
-        project.options.follows_javascript_only_as_code = !project.options.allow_js;
+        project.options.follows_javascript_only_as_code = !allows_javascript_itself;
         project.options.allow_js = true;
         project.options.module_detection = bun_sema::resolve::ModuleDetection::Force;
         project.references.clear();
@@ -3903,8 +3904,6 @@ fn check_named_files(
     project.options.names_make_commonjs = request.is_one_program;
     project.options.one_name_is_one_binding = request.is_one_program;
     project.options.undefined_properties_name_nobody = request.is_one_program;
-    project.options.reports_uninitialized_variables = project.options.strict_null_checks
-        && (project.options.strict_variable_initialization).unwrap_or(false);
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that is allocated in it, so it is dropped last.

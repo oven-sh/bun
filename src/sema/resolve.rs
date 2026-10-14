@@ -626,11 +626,6 @@ pub struct Options {
     pub strict_bind_call_apply: bool,
     pub use_unknown_in_catch_variables: bool,
     pub strict_property_initialization: bool,
-    /// `strictVariableInitialization`, which TypeScript does not have, as it is specified. It is no part of the `strict` family.
-    pub strict_variable_initialization: Option<bool>,
-    /// Whether 100001 is reported: `strict_variable_initialization`, with `strict_null_checks`. Where the option is not specified the
-    /// driver says: it is off: what such a variable is kept as does not go by the report.
-    pub reports_uninitialized_variables: bool,
     /// JavaScript without imports and exports that names `exports` or `module` is a CommonJS module, as it is for the runtime. TypeScript wants `require(..)`, `module.exports = ..` or
     /// `exports.a = ..`, and takes a file with `var util = exports;` for a script. Not a TypeScript option. The driver says: it is on for a program that is compiled.
     pub names_make_commonjs: bool,
@@ -1032,9 +1027,6 @@ impl Options {
         options.strict_bind_call_apply = strict_flag(b"strictBindCallApply");
         options.use_unknown_in_catch_variables = strict_flag(b"useUnknownInCatchVariables");
         options.strict_property_initialization = strict_flag(b"strictPropertyInitialization");
-        options.strict_variable_initialization = specified(b"strictVariableInitialization");
-        options.reports_uninitialized_variables =
-            options.strict_variable_initialization == Some(true) && options.strict_null_checks;
         options.no_implicit_this = strict_flag(b"noImplicitThis");
         options.no_unchecked_side_effect_imports =
             specified(b"noUncheckedSideEffectImports").unwrap_or(!before_6);

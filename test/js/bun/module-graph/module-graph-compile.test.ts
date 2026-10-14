@@ -188,7 +188,7 @@ const combos: Combo[] = [
   { name: "esm+splitting+bytecode", args: ["--format=esm", "--splitting", "--bytecode"] },
   { name: "esm+splitting+bytecode+minify", args: ["--format=esm", "--splitting", "--bytecode", "--minify"] },
   { name: "esm+splitting+bytecode+sourcemap", args: ["--format=esm", "--splitting", "--bytecode", "--sourcemap"] },
-  { name: "esm+splitting+aot", args: ["--format=esm", "--splitting", "--compile-aot"] },
+  { name: "esm+splitting+aot", args: ["--format=esm", "--splitting", "--aot"] },
 ];
 
 // All executables are built up front, concurrently; each describe awaits its own.

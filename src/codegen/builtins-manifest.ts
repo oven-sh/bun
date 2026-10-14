@@ -316,6 +316,9 @@ if (archive) {
     fs.readFileSync(locate(file)),
   ]);
   files.push(["manifest", Buffer.from(manifest)]);
+  const table = /BUILTINS_HASH: u32 = 0x([0-9a-f]{8});/.exec(fs.readFileSync(path.join(import.meta.dir, "../aot/builtins_generated.rs"), "utf8"));
+  if (!table) throw new Error("src/aot/builtins_generated.rs has no BUILTINS_HASH");
+  files.push([`table-${table[1]}`, Buffer.alloc(0)]);
   files.sort(([a], [b]) => (a < b ? -1 : 1));
   const frames = files.map(([, text]) =>
     zstdCompressSync(text, {

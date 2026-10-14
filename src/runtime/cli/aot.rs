@@ -156,6 +156,60 @@ pub(crate) fn is_only_comments(mut text: &[u8]) -> bool {
     }
 }
 
+const FLAGS_OF_BUILD: [&[u8]; 3] = [b"--aot", b"--aot-explain", b"--aot-type-errors"];
+const FLAGS_OF_RUN: [&[u8]; 3] = [b"--aot", b"--aot-audit", b"--aot-type-errors"];
+const INTERNAL_FLAGS_OF_RUN: [&[u8]; 3] = [b"--aot-decode-crash-report", b"--aot-graph-fd", b"--aot-stamp"];
+pub(crate) const OPTIONS_OF_COMPILE: [&[u8]; 3] = [b"aot", b"aotExplain", b"aotTypeErrors"];
+
+pub(crate) fn did_you_mean(prefix: &str, known: &[&[u8]], written: &[u8]) -> String {
+    let distance = |name: &[u8]| bun_core::strings::edit_distance(written.iter().copied(), name);
+    let nearest = known.iter().copied().min_by_key(|name| distance(name));
+    match nearest.filter(|name| distance(name) <= written.len().max(3) / 3) {
+        Some(name) => format!(" Did you mean {prefix}{}?", bstr::BStr::new(name)),
+        None => String::new(),
+    }
+}
+
+pub(crate) fn refuse_unknown_flags(is_build: bool, passed_through: usize) {
+    let (known, of_others, others) = if is_build {
+        (FLAGS_OF_BUILD, FLAGS_OF_RUN, "bun run and bun test")
+    } else {
+        (FLAGS_OF_RUN, FLAGS_OF_BUILD, "bun build")
+    };
+    let end_of_options = bun_core::argv().len().saturating_sub(passed_through);
+    for (index, arg) in bun_core::argv().iter().enumerate().take(end_of_options).skip(1) {
+        let arg: &[u8] = arg;
+        if arg == b"--" {
+            break;
+        }
+        let name = arg.split(|&byte| byte == b'=').next().unwrap_or(arg);
+        if !name.starts_with(b"--aot") || known.contains(&name) || (!is_build && INTERNAL_FLAGS_OF_RUN.contains(&name)) {
+            continue;
+        }
+        let is_of_others = of_others.contains(&name);
+        if is_of_others && index <= bun_core::bun_options_argc() {
+            continue;
+        }
+        let list = known.join(&b", "[..]);
+        if is_of_others {
+            pretty_errorln!(
+                "<r><red>error<r>: <b>{}<r> is a flag of {}. The flags that start with --aot here are {}",
+                bstr::BStr::new(name),
+                others,
+                bstr::BStr::new(&list),
+            );
+        } else {
+            pretty_errorln!(
+                "<r><red>error<r>: unknown flag <b>{}<r>.{} The flags that start with --aot here are {}",
+                bstr::BStr::new(name),
+                did_you_mean("", &known, name),
+                bstr::BStr::new(&list),
+            );
+        }
+        Global::exit(1);
+    }
+}
+
 #[cfg(unix)]
 pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: bool) -> ! {
     if let Some(why) = why_unsupported(&CompileTarget::default()) {
@@ -306,6 +360,12 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
     }
 
     args.extend(entry_points.iter().map(|path| path.to_vec()));
+    for preload in &ctx.preloads {
+        let path: &[u8] = preload.strip_prefix(b"file://".as_slice()).unwrap_or(&**preload);
+        if !path.starts_with(b"node:") && !path.starts_with(b"bun:") {
+            args.push(path.to_vec());
+        }
+    }
     let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
     let errno = bun_core::exec_self(&args, None);
     pretty_errorln!(

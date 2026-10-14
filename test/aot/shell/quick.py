@@ -116,8 +116,6 @@ def one(program):
     flags = ["--allowJs", "--resolveJsonModule", "--no-builtin-modules"]
     if compiler_options.get("strict"):
         flags.append("--strict")
-    if compiler_options.get("strictVariableInitialization") is False:
-        flags += ["--strictVariableInitialization", "false"]
     _, said = run([SEMA, "cli", source, *flags, "--aot", "--aot-out=" + ir], cwd, 60)
     if not os.path.isfile(ir):
         return "NO IR: " + " | ".join(said.strip().split("\n")[:2])[:200]

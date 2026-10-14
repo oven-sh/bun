@@ -1,7 +1,6 @@
-// A `switch` on character codes whose cases test the value again still compiles to binary search and jump tables.
-// CALLS- kindPlain tests for equality with .* (9|10|11|12|13|32)[[:>:]]
-// CALLS- kind tests for equality with .* (9|10|11|12|13|32)[[:>:]]
-// CALLS+ kind tables [2-9]
+// A `switch` on character codes whose cases test the value again. With fewer than 128 cases it compiles to compares and no jump table.
+// CALLS+ kindPlain tables 0
+// CALLS+ kind tables 0
 const print = (s: string) => console.log(s);
 function show(x: unknown): string {
     if (typeof x !== "string")

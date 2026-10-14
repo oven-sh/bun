@@ -23,4 +23,4 @@ for (const [holder, isMethod, name] of table) {
     if (!byHolder.has(where)) byHolder.set(where, new Map());
     const counts = byHolder.get(where); if (!counts.has(text)) counts.set(text, []); counts.get(text).push(name);
 }
-for (const [where, counts] of byHolder) for (const [text, names] of counts) print.line(where + ": " + names.length + ": " + text + (counts.size > 1 || /REPLACED|DELETED/.test(text) ? ": " + names.join(" ") : ""));
+for (const [where, counts] of byHolder) for (const [text, names] of counts) print.line(where === "console" ? where + ": " + text : where + ": " + names.length + ": " + text + (counts.size > 1 || /REPLACED|DELETED/.test(text) ? ": " + names.join(" ") : ""));

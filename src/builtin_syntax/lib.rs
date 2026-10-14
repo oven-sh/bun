@@ -5,7 +5,8 @@
 //! And the archive `bun build --compile --aot` compiles the internal modules from, written by the same
 //! script: the number of files as a `u32`, as many records sorted by name, then the files. Each file
 //! is a zstd frame of its own, so only what a program reaches is decompressed. Numbers are
-//! little-endian. The names are paths relative to `src/js`, and `manifest`.
+//! little-endian. The names are paths relative to `src/js`, `manifest`, and `table-` with `BUILTINS_HASH` of
+//! `src/aot/builtins_generated.rs`, an empty file: the hash covers the ids of the engine's functions, and build.rs compares it.
 
 use std::borrow::Cow;
 use std::sync::OnceLock;

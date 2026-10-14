@@ -856,8 +856,8 @@ fn analyze_on_this_thread(
     if rewrite_jest_for_tests {
         let path = bun_aot::prelude::path_of(cwd, "test-globals.d.ts");
         let also = br#"
-declare module "@jest/globals" { export * from "bun:test"; }
-declare module "vitest" { export * from "bun:test"; }
+declare module "@jest/globals*" { export * from "bun:test"; }
+declare module "vitest*" { export * from "bun:test"; }
 "#;
         provided.already_read.insert(from_native(&path), [&b"// @ts-nocheck\n"[..], &include_bytes!("../../../packages/bun-types/test-globals.d.ts")[..], &also[..]].concat());
         paths.push(path);

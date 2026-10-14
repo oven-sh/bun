@@ -460,9 +460,6 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot-explain <STR>...           With --aot: print a report. --aot-explain=throws lists every type check that can fail when the program runs"
         ),
         parse_param!(
-            "--compile-aot                    (deprecated) The former name of --aot"
-        ),
-        parse_param!(
             "--aot-type-errors <STR>          With --aot: what the executable does when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue"
         ),
         parse_param!(
@@ -1092,6 +1089,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             | CommandTag::BuildCommand
             | CommandTag::TestCommand
     ) {
+        crate::cli::aot::refuse_unknown_flags(cmd == CommandTag::BuildCommand, ctx.passthrough.len());
         if !args.options(b"--conditions").is_empty() {
             opts.conditions = slice_to_owned(args.options(b"--conditions"));
         }
@@ -2162,7 +2160,7 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.check = args.flag(b"--check");
-    ctx.bundler_options.aot = args.flag(b"--aot") || args.flag(b"--compile-aot");
+    ctx.bundler_options.aot = args.flag(b"--aot");
     ctx.bundler_options.aot_explain = slice_to_owned(args.options(b"--aot-explain"));
     if let Some(word) = ctx.bundler_options.aot_explain.iter().find(|word| !bun_aot::Explain::default().set(word)) {
         Output::err_generic("--aot-explain does not take \"{}\": it is one of {}", (BStr::new(word), bun_aot::Explain::REPORTS.join(", ")));
@@ -2587,6 +2585,8 @@ fn parse_build_command_options(
             ("--drop", args.options(b"--drop").iter().any(|dropped| *dropped != b"debugger")),
             ("--banner with code", args.option(b"--banner").is_some_and(|text| !crate::cli::aot::is_only_comments(text))),
             ("--footer with code", args.option(b"--footer").is_some_and(|text| !crate::cli::aot::is_only_comments(text))),
+            ("--bytecode-depth", args.option(b"--bytecode-depth").is_some()),
+            ("--bytecode-order", !args.options(b"--bytecode-order").is_empty()),
         ];
         if let Some((option, _)) = not_honoured.iter().find(|option| option.1) {
             Output::err_generic("--aot does not support {}", format_args!("{}", option));

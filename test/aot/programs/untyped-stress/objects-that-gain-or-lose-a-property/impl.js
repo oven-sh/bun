@@ -1,9 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--numberOfAOTFamiliesWithByteForTesting=2")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--numberOfAOTFamiliesWithByteForTesting=2", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--numberOfAOTFamiliesWithByteForTesting=2", "--failEveryNthAOTGuardForTesting=2")
-//@ runDefault("--compileMainScriptAheadOfTime=1")
-//@ runDefault
 
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))

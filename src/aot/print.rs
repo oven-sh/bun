@@ -27,21 +27,6 @@ impl Program {
         self.dump_where(&|_| true, &|_| true, &|_| true, true)
     }
 
-    /// The functions, the types they mention, the shapes those mention, and the types of the fields of those.
-    pub fn dump_functions(&self, shown: &[usize]) -> String {
-        fn numbers_behind(text: &str, mark: &str) -> Vec<usize> {
-            text.match_indices(mark).filter_map(|(at, _)| text[at + mark.len()..].split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()).collect()
-        }
-        let functions = self.dump_where(&|_| false, &|_| false, &|i| shown.contains(&i), false);
-        let mut types = numbers_behind(&functions, "#");
-        let described = self.dump_where(&|i| types.contains(&i), &|_| false, &|_| false, false);
-        let shapes = numbers_behind(&described, "class ");
-        types.extend(numbers_behind(&described, "<#"));
-        types.extend(numbers_behind(&described, ", #"));
-        types.extend(numbers_behind(&self.dump_where(&|_| false, &|i| shapes.contains(&i), &|_| false, false), " #"));
-        self.dump_where(&|i| types.contains(&i), &|i| shapes.contains(&i), &|i| shown.contains(&i), false)
-    }
-
     fn dump_where(&self, shows_type: &dyn Fn(usize) -> bool, shows_shape: &dyn Fn(usize) -> bool, shows_function: &dyn Fn(usize) -> bool, shows_the_rest: bool) -> String {
         let mut out = String::new();
         let o = &mut out;

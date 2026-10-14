@@ -17,7 +17,7 @@ use crate::bind::{ScopeKind, SymFlags};
 use crate::hir::{Keyword, TypeNodeId, TypeNodeKind};
 use crate::types::{ComponentsId, Follow, Lanes, Literalness, MapperId, Origin, Prop, PropFlags, PropSource, Provenance, Shape, SigId, TypeData, TypeId, Types, UnionOrigin, Visitor, tf};
 use crate::util::FxHashMap;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 
 /// 128 bits. Two types with one identity are taken for the same type.
 pub type Identity = [u64; 2];
@@ -40,14 +40,14 @@ trait Normalizer {
 
     /// `Checker::pairs_of_named_type_parameters`
     fn pairs_that_matter(&mut self, mapper: MapperId, file: FileId, node: TypeNodeId) -> Vec<(TypeId, TypeId)>;
+
+    fn structure_of_literal(&mut self, ty: TypeId) -> Option<Vec<(Atom, u8, TypeId)>>;
 }
 
 /// What a walk has at hand besides the records.
 struct Known<'a> {
     state: &'a mut State,
     checker: &'a mut dyn Normalizer,
-    /// The types with the mappers that `add_divergence` has gone into from them, here and kept.
-    mappers_entered: Vec<[(TypeId, MapperId); 2]>,
 }
 
 /// Which kind of record is hashed: no two kinds share an identity.
@@ -340,8 +340,20 @@ impl Records<'_, '_> {
                 return only;
             }
         }
+        let structure = known.checker.structure_of_literal(ty);
         let mut it = Identify::new(self, known, Of::Type);
-        self.walk_type(ty, &mut it);
+        match structure {
+            Some(fields) => {
+                it.plain("a literal, by its structure");
+                it.plain(&fields.len());
+                for (name, flags, of_field) in fields {
+                    it.atom(name);
+                    it.plain(&flags);
+                    it.ty(of_field);
+                }
+            }
+            None => self.walk_type(ty, &mut it),
+        }
         let identity = it.lanes.0;
         known.state.types.insert(ty, identity);
         identity
@@ -388,467 +400,7 @@ impl Records<'_, '_> {
     }
 }
 
-// ───────────────────────────── why two identities differ ─────────────────────────────
-
-/// What a `Walker` is told, call by call.
-enum Item {
-    Atom(Atom),
-    Components(ComponentsId),
-    Mapper(MapperId),
-    Sig(SigId),
-    Type(TypeId),
-    File(FileId),
-    /// The Rust type of the value, and the bytes it is hashed as.
-    Plain(&'static str, Vec<u8>),
-    /// Each member with what it is hashed to by itself.
-    Set(Vec<(Identity, Vec<Labelled>)>),
-}
-
-/// With the field of the provenance it belongs to. Empty: it is of the data of the record.
-type Labelled = (&'static str, Item);
-
-impl Item {
-    fn kind(&self) -> &'static str {
-        match self {
-            Item::Atom(_) => "an atom",
-            Item::Components(_) => "index components",
-            Item::Mapper(_) => "a mapper",
-            Item::Sig(_) => "a signature",
-            Item::Type(_) => "a type",
-            Item::File(_) => "a file",
-            Item::Plain(..) => "plain data",
-            Item::Set(_) => "a set",
-        }
-    }
-}
-
-/// The bytes a value is hashed as.
-#[derive(Default)]
-struct Bytes(Vec<u8>);
-
-impl Hasher for Bytes {
-    fn finish(&self) -> u64 {
-        0
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        self.0.extend_from_slice(bytes);
-    }
-}
-
-/// Lists what `Identify` hashes.
-struct List<'a, 'k, 'p, 's> {
-    items: Vec<Labelled>,
-    field: &'static str,
-    records: Records<'p, 's>,
-    known: &'a mut Known<'k>,
-}
-
-impl Visitor for List<'_, '_, '_, '_> {
-    fn atom(&mut self, atom: Atom) {
-        self.items.push((self.field, Item::Atom(atom)));
-    }
-
-    fn components(&mut self, id: ComponentsId) {
-        self.items.push((self.field, Item::Components(id)));
-    }
-
-    fn mapper(&mut self, id: MapperId) {
-        self.items.push((self.field, Item::Mapper(id)));
-    }
-
-    fn sig(&mut self, id: SigId) {
-        self.items.push((self.field, Item::Sig(id)));
-    }
-
-    fn ty(&mut self, id: TypeId) {
-        self.items.push((self.field, Item::Type(id)));
-    }
-
-    fn file(&mut self, file: FileId) {
-        self.items.push((self.field, Item::File(file)));
-    }
-
-    fn plain<T: Hash + ?Sized>(&mut self, value: &T) {
-        let mut bytes = Bytes::default();
-        value.hash(&mut bytes);
-        self.items.push((self.field, Item::Plain(std::any::type_name::<T>(), bytes.0)));
-    }
-}
-
-impl List<'_, '_, '_, '_> {
-    /// Each of the items that is not hashed like one before it, with what it is hashed to by itself.
-    fn each_once<T: Follow>(&mut self, items: &[T]) -> Vec<(Identity, Vec<Labelled>)> {
-        let mut each: Vec<(Identity, Vec<Labelled>)> = Vec::with_capacity(items.len());
-        for item in items {
-            let mut one = Identify { lanes: Lanes::START, records: self.records, known: &mut *self.known };
-            item.visit(&mut one);
-            let hashed = one.lanes.0;
-            if each.iter().any(|other| other.0 == hashed) {
-                continue;
-            }
-            let mut list = List { items: Vec::new(), field: self.field, records: self.records, known: &mut *self.known };
-            item.visit(&mut list);
-            each.push((hashed, list.items));
-        }
-        each
-    }
-}
-
-impl Walker for List<'_, '_, '_, '_> {
-    fn unordered<T: Follow>(&mut self, items: &[T]) {
-        let set = self.each_once(items);
-        self.items.push((self.field, Item::Set(set)));
-    }
-
-    fn distinct<T: Follow>(&mut self, items: &[T]) {
-        let each = self.each_once(items);
-        self.plain(&each.len());
-        self.items.extend(each.into_iter().flat_map(|one| one.1));
-    }
-
-    fn intersected(&mut self, members: &[TypeId]) {
-        let members = self.known.checker.members_of_intersection(members);
-        self.distinct(&members);
-    }
-
-    fn applied(&mut self, mapper: MapperId, file: FileId, node: TypeNodeId) {
-        let pairs = self.known.checker.pairs_that_matter(mapper, file, node);
-        self.unordered(&pairs);
-    }
-
-    fn field(&mut self, name: &'static str) {
-        self.field = name;
-    }
-}
-
-fn hexadecimal(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-/// `core::mem::Discriminant<bun_sema::types::TypeData<'_>>` as `Discriminant<TypeData<'_>>`.
-fn without_paths(name: &str) -> String {
-    let mut pieces: Vec<&str> = name.split("::").collect();
-    let last = pieces.pop().unwrap_or_default();
-    let kept = pieces.into_iter().map(|piece| piece.rfind(['<', ' ', '(', ',', '&']).map_or("", |at| &piece[..=at]));
-    kept.chain([last]).collect()
-}
-
-/// `Records::add_lists`
-const MOST_ITEMS_LISTED: usize = 48;
-
-impl Records<'_, '_> {
-    fn list(self, known: &mut Known<'_>, walk: impl FnOnce(&mut List<'_, '_, '_, '_>)) -> Vec<Labelled> {
-        let mut list = List { items: Vec::new(), field: "", records: self, known };
-        walk(&mut list);
-        list.items
-    }
-
-    /// In a word that says nothing of the program. Where `Checker::kind_of_view` has a word, it is that one.
-    fn kind_of_type(self, ty: TypeId) -> &'static str {
-        match self.types.get(ty) {
-            TypeData::Intrinsic(_) => "intrinsic",
-            TypeData::UnresolvedName { .. } => "an unresolved name",
-            TypeData::StringLit { .. } | TypeData::NumberLit { .. } | TypeData::BigIntLit { .. } | TypeData::BoolLit { .. } | TypeData::EnumLit { .. } => "a literal",
-            TypeData::Enum { .. } => "an enum",
-            TypeData::EvolvingArray(_) => "an evolving array",
-            TypeData::UniqueSymbol { .. } => "a unique symbol",
-            TypeData::TypeParam(..) => "a type parameter",
-            TypeData::ThisParam(_) => "a `this` type",
-            TypeData::Marker(_) => "a marker",
-            TypeData::Union(_) => "a union",
-            TypeData::Intersection(_) => "an intersection",
-            TypeData::Ref { .. } => "a reference",
-            TypeData::Tuple { .. } => "a tuple",
-            TypeData::Anon { origin: Origin::TypeLiteral(..), .. } => "a type literal",
-            TypeData::Anon { origin: Origin::Mapped(..), .. } => "mapped",
-            TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. } => "an object literal",
-            TypeData::Anon { .. } => "of a declaration",
-            TypeData::Fns { .. } => "of functions",
-            TypeData::Synth(_) => "synthesized",
-            TypeData::ReverseMapped { .. } => "reverse mapped",
-            TypeData::Cond { .. } => "conditional",
-            TypeData::IndexedAccess { .. } => "an indexed access",
-            TypeData::Keyof(_) => "a `keyof`",
-            TypeData::Substitution { .. } => "a substitution",
-            TypeData::Template { .. } => "a template",
-            TypeData::StringMapping { .. } => "a string mapping",
-        }
-    }
-
-    /// `Known::mappers_entered`
-    fn note_mappers(self, known: &mut Known<'_>, here: TypeId, kept: TypeId) {
-        let mapper_of = |ty: TypeId| match *self.types.get(ty) {
-            TypeData::Anon { mapper, .. } | TypeData::Cond { mapper, .. } | TypeData::Fns { mapper, .. } | TypeData::TypeParam(_, _, mapper) => Some(mapper),
-            _ => None,
-        };
-        if let (Some(mapper_here), Some(mapper_kept)) = (mapper_of(here), mapper_of(kept))
-            && self.of_mapper(known, mapper_here) != self.of_mapper(known, mapper_kept)
-        {
-            known.mappers_entered.push([(here, mapper_here), (kept, mapper_kept)]);
-        }
-    }
-
-    /// Appends the way from two lists that are hashed differently down to the first thing that is in one and not in the other.
-    /// `compares_neighbors`: see `add_lists`.
-    fn add_divergence(self, known: &mut Known<'_>, here: &[Labelled], kept: &[Labelled], compares_neighbors: bool, way: &mut Vec<String>) {
-        for (index, ((field, a), (_, b))) in here.iter().zip(kept).enumerate() {
-            let at = if field.is_empty() { format!("item {index}") } else { format!("item {index}, of `{field}`") };
-            let (next_here, next_kept) = match (a, b) {
-                (&Item::Type(a), &Item::Type(b)) => {
-                    if self.of_type(known, a) == self.of_type(known, b) {
-                        continue;
-                    }
-                    way.push(format!("{at}: a type, here {}, kept {}", self.kind_of_type(a), self.kind_of_type(b)));
-                    let lists = (self.list(known, |list| self.walk_type(a, list)), self.list(known, |list| self.walk_type(b, list)));
-                    if compares_neighbors {
-                        self.note_mappers(known, a, b);
-                    }
-                    lists
-                }
-                (&Item::Sig(a), &Item::Sig(b)) => {
-                    if self.of_sig(known, a) == self.of_sig(known, b) {
-                        continue;
-                    }
-                    way.push(format!("{at}: a signature"));
-                    (self.list(known, |list| self.types.sig(a).visit(list)), self.list(known, |list| self.types.sig(b).visit(list)))
-                }
-                (&Item::Mapper(a), &Item::Mapper(b)) => {
-                    if self.of_mapper(known, a) == self.of_mapper(known, b) {
-                        continue;
-                    }
-                    let is_identity = |mapper: MapperId| if mapper == MapperId::IDENTITY { "the identity" } else { "not the identity" };
-                    way.push(format!("{at}: a mapper, here {}, kept {}", is_identity(a), is_identity(b)));
-                    if a == MapperId::IDENTITY || b == MapperId::IDENTITY {
-                        return self.add_lists(known, here, kept, compares_neighbors, way);
-                    }
-                    (self.list(known, |list| list.unordered(self.types.mapping(a))), self.list(known, |list| list.unordered(self.types.mapping(b))))
-                }
-                (&Item::Components(a), &Item::Components(b)) => {
-                    if self.of_components(known, a) == self.of_components(known, b) {
-                        continue;
-                    }
-                    way.push(format!("{at}: index components"));
-                    if a == ComponentsId::NONE || b == ComponentsId::NONE {
-                        way.push("one side has none".to_owned());
-                        return self.add_lists(known, here, kept, compares_neighbors, way);
-                    }
-                    (self.list(known, |list| self.types.components(a).visit(list)), self.list(known, |list| self.types.components(b).visit(list)))
-                }
-                (&Item::Atom(a), &Item::Atom(b)) => {
-                    let text = |atom: Atom| atom.is_some().then(|| self.atoms.bytes(atom));
-                    if text(a) == text(b) {
-                        continue;
-                    }
-                    let length = |atom: Atom| text(atom).map_or_else(|| "none".to_owned(), |text| format!("of {} bytes", text.len()));
-                    way.push(format!("{at}: an atom, here {}, kept {}", length(a), length(b)));
-                    return self.add_lists(known, here, kept, compares_neighbors, way);
-                }
-                (&Item::File(a), &Item::File(b)) => {
-                    if a == b {
-                        continue;
-                    }
-                    way.push(format!("{at}: a file, here {}, kept {}", a.0, b.0));
-                    return self.add_lists(known, here, kept, compares_neighbors, way);
-                }
-                (Item::Plain(type_here, a), Item::Plain(type_kept, b)) => {
-                    if type_here == type_kept && a == b {
-                        continue;
-                    }
-                    way.push(format!("{at}: plain data, here `{}` {}, kept `{}` {}", without_paths(type_here), hexadecimal(a), without_paths(type_kept), hexadecimal(b)));
-                    return self.add_lists(known, here, kept, compares_neighbors, way);
-                }
-                (Item::Set(a), Item::Set(b)) => {
-                    // Each member of one side that the other side has is taken off once.
-                    let mut only_kept: Vec<&(Identity, Vec<Labelled>)> = b.iter().collect();
-                    let mut only_here: Vec<&(Identity, Vec<Labelled>)> = Vec::new();
-                    for member in a {
-                        match only_kept.iter().position(|other| other.0 == member.0) {
-                            Some(found) => {
-                                only_kept.remove(found);
-                            }
-                            None => only_here.push(member),
-                        }
-                    }
-                    if only_here.is_empty() && only_kept.is_empty() {
-                        continue;
-                    }
-                    way.push(format!("{at}: a set, of {} here, of {} kept; only here {}, only kept {}", a.len(), b.len(), only_here.len(), only_kept.len()));
-                    if let (Some(first_here), Some(first_kept)) = (only_here.first(), only_kept.first()) {
-                        way.push("the first of each".to_owned());
-                        self.add_divergence(known, &first_here.1, &first_kept.1, compares_neighbors, way);
-                    }
-                    return;
-                }
-                (a, b) => {
-                    way.push(format!("{at}: here {}, kept {}", a.kind(), b.kind()));
-                    return self.add_lists(known, here, kept, compares_neighbors, way);
-                }
-            };
-            return self.add_divergence(known, &next_here, &next_kept, compares_neighbors, way);
-        }
-        if here.len() != kept.len() {
-            way.push(format!("{} items here, {} kept", here.len(), kept.len()));
-            self.add_lists(known, here, kept, compares_neighbors, way);
-        }
-    }
-
-    /// Where the way ends: all that is hashed on either side, each record with its own identity. `compares_neighbors`: and for a type that only one
-    /// side has, what tells it from each type of its kind next to it, one of which the other side may have taken it for.
-    fn add_lists(self, known: &mut Known<'_>, here: &[Labelled], kept: &[Labelled], compares_neighbors: bool, way: &mut Vec<String>) {
-        let mut text_of = |items: &[Labelled]| -> String {
-            let name = |identity: Identity| format!("{:016x}{:016x}", identity[0], identity[1]);
-            let mut texts: Vec<String> = (items.iter().take(MOST_ITEMS_LISTED))
-                .map(|(_, item)| match item {
-                    &Item::Type(ty) => format!("{} {}", self.kind_of_type(ty), name(self.of_type(known, ty))),
-                    &Item::Sig(sig) => format!("a signature {}", name(self.of_sig(known, sig))),
-                    &Item::Mapper(mapper) => format!("a mapper {}", name(self.of_mapper(known, mapper))),
-                    &Item::Components(components) => format!("index components {}", name(self.of_components(known, components))),
-                    &Item::Atom(atom) if atom.is_none() => "no atom".to_owned(),
-                    &Item::Atom(atom) => format!("an atom of {} bytes", self.atoms.bytes(atom).len()),
-                    &Item::File(file) => format!("file {}", file.0),
-                    Item::Plain(ty, bytes) => format!("`{}` {}", without_paths(ty), hexadecimal(bytes)),
-                    Item::Set(members) => format!("a set of {}", members.len()),
-                })
-                .collect();
-            if items.len() > MOST_ITEMS_LISTED {
-                texts.push(format!("and {} more", items.len() - MOST_ITEMS_LISTED));
-            }
-            texts.join(", ")
-        };
-        let texts = (text_of(here), text_of(kept));
-        way.push(format!("all of it: here [{}]; kept [{}]", texts.0, texts.1));
-        if !compares_neighbors {
-            return;
-        }
-        let types_of = |items: &[Labelled]| -> Vec<TypeId> { items.iter().filter_map(|(_, item)| if let &Item::Type(ty) = item { Some(ty) } else { None }).collect() };
-        for (side, own, other) in [("here", types_of(here), types_of(kept)), ("kept", types_of(kept), types_of(here))] {
-            for &extra in &own {
-                let identity = self.of_type(known, extra);
-                if other.iter().any(|&ty| self.of_type(known, ty) == identity) {
-                    continue;
-                }
-                for &neighbor in own.iter().filter(|&&neighbor| neighbor != extra && self.kind_of_type(neighbor) == self.kind_of_type(extra)) {
-                    let lists = (self.list(known, |list| self.walk_type(extra, list)), self.list(known, |list| self.walk_type(neighbor, list)));
-                    let mut apart = Vec::new();
-                    self.add_divergence(known, &lists.0, &lists.1, false, &mut apart);
-                    let names = (self.of_type(known, extra), self.of_type(known, neighbor));
-                    way.push(format!("only {side}: {:016x}{:016x}, told from {:016x}{:016x} next to it (as here and kept) by ({})", names.0[0], names.0[1], names.1[0], names.1[1], apart.join(" > ")));
-                }
-            }
-        }
-    }
-}
-
 impl Checker<'_, '_> {
-    /// Why two types that were expected to be one are called differently: what each of them is, and the way down to the first thing that is
-    /// hashed for one and not for the other. Kinds and numbers only: nothing of the text of the program.
-    pub fn explain_identities(&mut self, here: TypeId, kept: TypeId) -> String {
-        let mut about = |ty: TypeId| {
-            let properties = self.members(ty).map_or_else(|| "no members".to_owned(), |members| format!("{} properties", members.shape().props.len()));
-            let alias = |alias: Option<usize>| alias.map_or_else(|| "none".to_owned(), |arguments| format!("with {arguments} type arguments"));
-            let stored = self.types().provenance(ty).and_then(|provenance| provenance.alias.as_ref().map(|alias| alias.1.len()));
-            let records = Records { types: self.types(), atoms: self.atoms() };
-            let made = match self.data(ty) {
-                TypeData::Synth(shape) => {
-                    let sources: Vec<&str> = (shape.props.iter())
-                        .map(|prop| match prop.source {
-                            PropSource::Type(_) => "Type",
-                            PropSource::Literal(..) => "Literal",
-                            PropSource::Symbol(_) => "Symbol",
-                            PropSource::Intersected(..) => "Intersected",
-                            PropSource::Mapped(..) => "Mapped",
-                            _ => "another",
-                        })
-                        .collect();
-                    format!(", made as {:?}, with a mapper: {}, sources of the properties [{}]", shape.literal, shape.mapper != MapperId::IDENTITY, sources.join(" "))
-                }
-                _ => String::new(),
-            };
-            format!(
-                "{}, flags {:?}, {properties}, alias {}, stored alias {}{made}",
-                records.kind_of_type(ty),
-                self.types().object_flags(ty),
-                alias(self.alias_of_type(ty).map(|alias| alias.1.len())),
-                alias(stored),
-            )
-        };
-        let (about_here, about_kept) = (about(here), about(kept));
-        let mut way = Vec::new();
-        let mappers_entered = self.with_known(|records, known| {
-            let lists = (records.list(known, |list| records.walk_type(here, list)), records.list(known, |list| records.walk_type(kept, list)));
-            records.note_mappers(known, here, kept);
-            records.add_divergence(known, &lists.0, &lists.1, true, &mut way);
-            std::mem::take(&mut known.mappers_entered)
-        });
-        for [here, kept] in mappers_entered {
-            let about = self.about_mappers(here, kept);
-            way.push(about);
-        }
-        if way.is_empty() {
-            way.push("nowhere".to_owned());
-        }
-        format!("the types: here {about_here}; kept {about_kept}; they diverge at {}", way.join(" > "))
-    }
-
-    /// Two mappers that differ, of two types that are otherwise alike: where what they are applied to is declared, and each pair with the type
-    /// parameter it is for.
-    fn about_mappers(&mut self, here: (TypeId, MapperId), kept: (TypeId, MapperId)) -> String {
-        let declared = match *self.data(here.0) {
-            TypeData::Anon { origin: Origin::Mapped(file, node) | Origin::TypeLiteral(file, node), .. } | TypeData::Cond { file, node, .. } => Some((file, node)),
-            _ => None,
-        };
-        let about_declaration = match declared {
-            Some((file, node)) => {
-                let bound = self.bound(file);
-                let (mut scope, mut around) = (bound.type_scope[node.idx()], Vec::new());
-                while scope.is_some() && around.len() < 16 {
-                    around.push(format!("{:?}", bound.scopes[scope.idx()].kind));
-                    scope = bound.scopes[scope.idx()].parent;
-                }
-                format!("declared in file {} at type node {}, in the scopes [{}]", file.0, node.0, around.join(", "))
-            }
-            None => "declared by no type node".to_owned(),
-        };
-        let name = |identity: Identity| format!("{:016x}{:016x}", identity[0], identity[1]);
-        let pairs_kept: Vec<(TypeId, TypeId)> = self.types().mapping(kept.1).to_vec();
-        let sources_kept: Vec<Identity> = pairs_kept.iter().map(|pair| self.identity_of_type(pair.0)).collect();
-        let mut pairs = Vec::new();
-        for (source, target) in self.types().mapping(here.1).to_vec() {
-            let about_source = match *self.data(source) {
-                TypeData::TypeParam(file, param, mapper) => {
-                    let (hir, bound) = (self.hir(file), self.bound(file));
-                    let symbol = self.files().sym(file, bound.type_param_symbol[param.idx()]);
-                    let is_named = declared.is_some_and(|(of, node)| {
-                        let (tree, scopes) = (self.hir(of), &self.bound(of).type_scope);
-                        let (start, end) = (tree[node].pos, tree[node].end);
-                        tree.types.iter().enumerate().any(|(index, inner)| {
-                            let TypeNodeKind::Ref { name, .. } = inner.kind else { return false };
-                            start <= inner.pos && inner.end <= end && name.len() == 1 && tree.texts(name).next() == Some(hir[param].name) && self.files().resolve_name(of, scopes[index], hir[param].name, SymFlags::TYPE) == Some(symbol)
-                        })
-                    });
-                    let scope = bound.type_param_scope[param.idx()];
-                    let owner = if scope.is_some() { format!("{:?}", bound.scopes[scope.idx()].kind) } else { "none".to_owned() };
-                    format!("type parameter {} of file {}, of the scope {owner}, a clone: {}, named within the declaration: {is_named}", param.0, file.0, mapper != MapperId::IDENTITY)
-                }
-                TypeData::ThisParam(owner) => format!("the `this` type of symbol {} of file {}", owner.id.0, owner.file.0),
-                _ => "no type parameter".to_owned(),
-            };
-            let records = Records { types: self.types(), atoms: self.atoms() };
-            let identity = self.identity_of_type(source);
-            let about_targets = match sources_kept.iter().position(|&other| other == identity) {
-                Some(at) => {
-                    let names = (self.identity_of_type(target), self.identity_of_type(pairs_kept[at].1));
-                    format!("to, here {} {}, kept {} {}, the same: {}", records.kind_of_type(target), name(names.0), records.kind_of_type(pairs_kept[at].1), name(names.1), names.0 == names.1)
-                }
-                None => "which the kept mapper has no pair for".to_owned(),
-            };
-            pairs.push(format!("({about_source}; {about_targets})"));
-        }
-        let records = Records { types: self.types(), atoms: self.atoms() };
-        format!("the mappers of what is {}, {about_declaration}: {} pairs here, {} kept: {}", records.kind_of_type(here.0), pairs.len(), pairs_kept.len(), pairs.join(", "))
-    }
-
     /// What the type is called by what outlives the task.
     pub fn identity_of_type(&mut self, ty: TypeId) -> Identity {
         match self.aot.identity.types.get(&ty) {
@@ -862,7 +414,7 @@ impl Checker<'_, '_> {
         // The checker keeps what it looks up itself.
         let mut state = std::mem::take(&mut self.aot.identity);
         self.aot.identity.named_within = std::mem::take(&mut state.named_within);
-        let result = walk(records, &mut Known { state: &mut state, checker: self, mappers_entered: Vec::new() });
+        let result = walk(records, &mut Known { state: &mut state, checker: self });
         state.named_within = std::mem::take(&mut self.aot.identity.named_within);
         self.aot.identity = state;
         result
@@ -986,6 +538,10 @@ impl Normalizer for Checker<'_, '_> {
     fn pairs_that_matter(&mut self, mapper: MapperId, file: FileId, node: TypeNodeId) -> Vec<(TypeId, TypeId)> {
         self.pairs_of_named_type_parameters(mapper, file, node)
     }
+
+    fn structure_of_literal(&mut self, ty: TypeId) -> Option<Vec<(Atom, u8, TypeId)>> {
+        self.structure_of_plain_literal(ty)
+    }
 }
 
 #[cfg(test)]
@@ -1010,10 +566,14 @@ mod tests {
         fn pairs_that_matter(&mut self, mapper: MapperId, _: FileId, _: TypeNodeId) -> Vec<(TypeId, TypeId)> {
             self.0.mapping(mapper).to_vec()
         }
+
+        fn structure_of_literal(&mut self, _: TypeId) -> Option<Vec<(Atom, u8, TypeId)>> {
+            None
+        }
     }
 
     fn with<T>(records: Records<'_, '_>, state: &mut State, walk: impl FnOnce(&mut Known<'_>) -> T) -> T {
-        walk(&mut Known { state, checker: &mut AsItIs(records.types), mappers_entered: Vec::new() })
+        walk(&mut Known { state, checker: &mut AsItIs(records.types) })
     }
 
     fn forwards(count: usize, work: &(dyn Fn(usize) + Sync)) {

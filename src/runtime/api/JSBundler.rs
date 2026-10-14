@@ -468,6 +468,30 @@ pub(crate) mod js_bundler {
                 this.autoload_package_json = autoload_package_json;
             }
 
+            if let Some(options) = object.get_object() {
+                let keys = jsc::JSPropertyIterator::init(
+                    global_this,
+                    options,
+                    jsc::JSPropertyIteratorOptions {
+                        skip_empty_name: true,
+                        include_value: true,
+                        ..Default::default()
+                    },
+                )?;
+                while let Some((key, _)) = keys.next()? {
+                    let key = key.to_owned_slice();
+                    let known = crate::cli::aot::OPTIONS_OF_COMPILE;
+                    if key.starts_with(b"aot") && !known.contains(&&key[..]) {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "compile.{} is not an option.{} The options that start with aot are {}",
+                            bstr::BStr::new(&key[..]),
+                            crate::cli::aot::did_you_mean("compile.", &known, &key),
+                            bstr::BStr::new(&known.join(&b", "[..])),
+                        )));
+                    }
+                }
+            }
+
             if let Some(aot) = object.get_boolean_loose(global_this, "aot")? {
                 this.aot = aot;
             }
@@ -514,7 +538,7 @@ pub(crate) mod js_bundler {
                 };
             }
 
-            if !this.aot && bun_core::env_var::BUN_AOT.get() != Some(true) {
+            if !this.aot {
                 let needs_aot = if this.logs_type_errors { Some("aotTypeErrors") } else { (!this.aot_explain.is_empty()).then_some("aotExplain") };
                 if let Some(option) = needs_aot {
                     return Err(global_this.throw_invalid_arguments(format_args!("compile.{option} requires compile.aot: true")));
@@ -1466,6 +1490,8 @@ pub(crate) mod js_bundler {
                     ("drop", this.drop.keys().iter().any(|dropped| **dropped != *b"debugger")),
                     ("banner with code", !crate::cli::aot::is_only_comments(&this.banner.list)),
                     ("footer with code", !crate::cli::aot::is_only_comments(&this.footer.list)),
+                    ("bytecodeDepth", this.bytecode_depth != u32::MAX),
+                    ("compile.bytecodeOrder", !compile.bytecode_order.is_empty()),
                 ];
                 if let Some((option, _)) = not_honoured.iter().find(|option| option.1) {
                     return Err(global_this.throw_invalid_arguments(format_args!("compile.aot does not support {option}")));

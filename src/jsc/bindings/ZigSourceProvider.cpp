@@ -26,6 +26,7 @@ JS_EXPORT_PRIVATE uint64_t imageStamp();
 #endif
 #include <JavaScriptCore/AuditSites.h>
 #include <JavaScriptCore/PrivateName.h>
+#include <JavaScriptCore/Symbol.h>
 #include <JavaScriptCore/ProxyObject.h>
 #include <JavaScriptCore/StrongInlines.h>
 #include <zstd.h>
@@ -899,12 +900,18 @@ static AOTAuditShortcut& auditShortcut(uint32_t id)
     return shortcut;
 }
 
+static JSC::PrivateName& auditTag()
+{
+    if (!s_auditTag)
+        s_auditTag = new JSC::PrivateName(JSC::PrivateName::PrivateSymbol, "aotAuditShape"_s);
+    return *s_auditTag;
+}
+
 static void tagForAudit(JSC::VM& vm, JSC::JSValue value, uint32_t id)
 {
     if (!value.isCell() || value.asCell()->type() != JSC::FinalObjectType)
         return;
-    if (!s_auditTag)
-        s_auditTag = new JSC::PrivateName(JSC::PrivateName::PrivateSymbol, "aotAuditShape"_s);
+    auditTag();
     JSC::asObject(value)->putDirect(vm, JSC::PropertyName(*s_auditTag), JSC::jsNumber(id), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 }
 
@@ -1027,6 +1034,7 @@ extern "C" void Bun__AOTAudit__install(Zig::GlobalObject* globalObject, const ui
         s_auditHelpers = new UncheckedKeyHashMap<JSC::JSGlobalObject*, JSC::Strong<JSC::JSObject>>();
     s_auditHelpers->set(globalObject, JSC::Strong<JSC::JSObject>(vm, asObject(check)));
     globalObject->setAuditFunction(vm, JSC::JSFunction::create(vm, globalObject, 2, "check"_s, jsAOTAuditCheck, JSC::ImplementationVisibility::Private));
+    globalObject->setAuditTag(vm, JSC::Symbol::create(vm, auditTag().uid()));
 }
 
 extern "C" void Bun__AOTAudit__writeRefusedChange(const uint8_t* kind, size_t lengthOfKind, const BunString* message, const BunString* functionName, const BunString* sourceURL, int32_t line, int32_t column);

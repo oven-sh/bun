@@ -1585,19 +1585,39 @@ pub fn get_spelling_suggestion<'c, T: Copy>(
             .flat_map(|c| c.valid().chars().chain(invalid(&c).then_some('\u{FFFD}')))
             .collect()
     };
-    let name_runes = runes(name);
-    let maximum_length_difference = 2.max((name_runes.len() as f64 * 0.34) as usize);
+    let is_ascii = name.is_ascii();
+    let name_runes = if is_ascii { Vec::new() } else { runes(name) };
+    let length = if is_ascii { name.len() } else { name_runes.len() };
+    let maximum_length_difference = 2.max((length as f64 * 0.34) as usize);
     // A candidate with a greater distance is not suggested.
-    let mut best_distance = (name_runes.len() as f64 * 0.4).floor() + 0.9;
+    let mut best_distance = (length as f64 * 0.4).floor() + 0.9;
     let mut best: Option<T> = None;
     for candidate in candidates {
         let candidate_name = get_name(candidate);
         if candidate_name.is_empty()
-            || candidate_name.len().abs_diff(name_runes.len()) > maximum_length_difference
+            || candidate_name.len().abs_diff(length) > maximum_length_difference
             || candidate_name == name
         {
             continue;
         }
+        if is_ascii && candidate_name.is_ascii() {
+            if candidate_name.len() < 3 && !candidate_name.eq_ignore_ascii_case(name) {
+                continue;
+            }
+            let differs_by_case = |a: u8, b: u8| a.to_ascii_lowercase() == b.to_ascii_lowercase();
+            let Some(distance) = levenshtein_with_max(name, candidate_name, best_distance, differs_by_case) else {
+                continue;
+            };
+            if distance < best_distance {
+                best_distance = distance;
+                best = Some(candidate);
+            } else if best.is_none_or(|best| compare(candidate, best).is_lt()) {
+                best = Some(candidate);
+            }
+            continue;
+        }
+        let of_ascii_name = if is_ascii { runes(name) } else { Vec::new() };
+        let name_runes = if is_ascii { &of_ascii_name } else { &name_runes };
         let candidate_runes = runes(candidate_name);
         // Two-letter names are easy to distinguish, unless they differ only by case.
         let lower = |runes: &[char]| {
@@ -1606,10 +1626,11 @@ pub fn get_spelling_suggestion<'c, T: Copy>(
                 .flat_map(|c| c.to_lowercase())
                 .collect::<Vec<_>>()
         };
-        if candidate_name.len() < 3 && lower(&candidate_runes) != lower(&name_runes) {
+        if candidate_name.len() < 3 && lower(&candidate_runes) != lower(name_runes) {
             continue;
         }
-        let Some(distance) = levenshtein_with_max(&name_runes, &candidate_runes, best_distance)
+        let differs_by_case = |a: char, b: char| a.to_lowercase().eq(b.to_lowercase());
+        let Some(distance) = levenshtein_with_max(name_runes, &candidate_runes, best_distance, differs_by_case)
         else {
             continue;
         };
@@ -1633,9 +1654,9 @@ pub(super) fn spelling_suggestion<'c>(
 
 /// `levenshteinWithMax`: a substitution costs 2, and a case change costs almost nothing. `None` for
 /// its -1: more than `max_value`.
-fn levenshtein_with_max(s1: &[char], s2: &[char], max_value: f64) -> Option<f64> {
-    let mut previous: Vec<f64> = (0..=s2.len()).map(|j| j as f64).collect();
-    let mut current = vec![0.0; s2.len() + 1];
+fn levenshtein_with_max<C: Copy + PartialEq>(s1: &[C], s2: &[C], max_value: f64, differs_by_case: impl Fn(C, C) -> bool) -> Option<f64> {
+    let mut previous: smallvec::SmallVec<[f64; 40]> = (0..=s2.len()).map(|j| j as f64).collect();
+    let mut current: smallvec::SmallVec<[f64; 40]> = smallvec::smallvec![0.0; s2.len() + 1];
     let big = max_value + 0.01;
     for (i, &c1) in s1.iter().enumerate() {
         let row = (i + 1) as f64;
@@ -1656,7 +1677,7 @@ fn levenshtein_with_max(s1: &[char], s2: &[char], max_value: f64) -> Option<f64>
                 previous[j - 1]
             } else {
                 let substitution = previous[j - 1]
-                    + if c1.to_lowercase().eq(c2.to_lowercase()) {
+                    + if differs_by_case(c1, c2) {
                         0.1
                     } else {
                         2.0

@@ -18,6 +18,21 @@ struct BlockState {
     is_sealed: bool,
     /// Parameters added before the predecessors were all known.
     incomplete: Vec<(Var, V)>,
+    above: Option<Above>,
+}
+
+#[derive(Copy, Clone)]
+struct Above {
+    parent: BlockId,
+    jump: BlockId,
+    depth: u32,
+}
+
+#[derive(Copy, Clone)]
+enum Stored {
+    Never,
+    Once(V, BlockId),
+    Often,
 }
 
 /// Where `read_in` goes on once it has the value of the variable at the end of a predecessor.
@@ -36,6 +51,7 @@ pub struct FuncBuilder {
     /// By variable: what it holds, and what it probably holds. Where definitions meet, those are the type and the prediction of the
     /// block parameter.
     vars: Vec<(TyId, Prediction)>,
+    stored: Vec<Stored>,
     /// By variable whose type has no room for `undefined`: see `start_var_as`.
     blanks: FxHashMap<Var, (Op, TyId)>,
     undefined: TyId,
@@ -44,7 +60,7 @@ pub struct FuncBuilder {
 impl FuncBuilder {
     /// `func` has no block yet. The entry block is made, current and sealed. `undefined`: the type of that.
     pub fn new(func: Func, undefined: TyId) -> FuncBuilder {
-        let mut builder = FuncBuilder { func, block: BlockId(0), pos: 0, states: Vec::new(), vars: Vec::new(), blanks: FxHashMap::default(), undefined };
+        let mut builder = FuncBuilder { func, block: BlockId(0), pos: 0, states: Vec::new(), vars: Vec::new(), stored: Vec::new(), blanks: FxHashMap::default(), undefined };
         let entry = builder.new_block();
         builder.seal(entry);
         builder
@@ -58,6 +74,7 @@ impl FuncBuilder {
     /// A variable that holds values of the type.
     pub fn new_var(&mut self, ty: TyId) -> Var {
         self.vars.push((ty, Prediction::None));
+        self.stored.push(Stored::Never);
         Var(self.vars.len() as u32 - 1)
     }
 
@@ -129,6 +146,49 @@ impl FuncBuilder {
     /// The value is of the type of the variable: see `Build::write`.
     pub fn write(&mut self, var: Var, value: V) {
         self.states[self.block.idx()].defs.insert(var, value);
+        self.stored[var.0 as usize] = match self.stored[var.0 as usize] {
+            Stored::Never => Stored::Once(value, self.block),
+            Stored::Once(_, home) if home == self.block && self.is_open() => Stored::Once(value, home),
+            _ => Stored::Often,
+        };
+    }
+
+    fn ancestor_at(&self, mut block: BlockId, depth: u32) -> Option<BlockId> {
+        loop {
+            let above = self.states[block.idx()].above?;
+            if above.depth <= depth {
+                return Some(block);
+            }
+            block = if self.states[above.jump.idx()].above?.depth >= depth { above.jump } else { above.parent };
+        }
+    }
+
+    fn lowest_common(&self, a: BlockId, b: BlockId) -> Option<BlockId> {
+        let depth = self.states[a.idx()].above?.depth.min(self.states[b.idx()].above?.depth);
+        let (mut a, mut b) = (self.ancestor_at(a, depth)?, self.ancestor_at(b, depth)?);
+        while a != b {
+            let (above_a, above_b) = (self.states[a.idx()].above?, self.states[b.idx()].above?);
+            if above_a.depth == 0 {
+                return None;
+            }
+            (a, b) = if above_a.jump != above_b.jump { (above_a.jump, above_b.jump) } else { (above_a.parent, above_b.parent) };
+        }
+        Some(a)
+    }
+
+    fn place(&mut self, block: BlockId) {
+        let preds = &self.states[block.idx()].preds;
+        let mut parent = preds.first().copied().filter(|pred| self.states[pred.idx()].above.is_some());
+        for &pred in preds.iter().skip(1) {
+            parent = parent.and_then(|parent| self.lowest_common(parent, pred));
+        }
+        let placed = parent.and_then(|parent| {
+            let above = self.states[parent.idx()].above?;
+            let jump = self.states[above.jump.idx()].above?;
+            let is_even = above.depth - jump.depth == jump.depth - self.states[jump.jump.idx()].above?.depth;
+            Some(Above { parent, jump: if is_even { jump.jump } else { parent }, depth: above.depth + 1 })
+        });
+        self.states[block.idx()].above = Some(placed.unwrap_or(Above { parent: block, jump: block, depth: 0 }));
     }
 
     pub fn read(&mut self, var: Var) -> V {
@@ -145,6 +205,12 @@ impl FuncBuilder {
 
     /// It keeps its own list of where it has to go on: a function has as many blocks in a row as it has statements.
     fn read_in(&mut self, var: Var, block: BlockId) -> V {
+        if let Stored::Once(value, home) = self.stored[var.0 as usize]
+            && let Some(above) = self.states[home.idx()].above
+            && self.ancestor_at(block, above.depth) == Some(home)
+        {
+            return value;
+        }
         let mut awaiting: Vec<Awaiting> = Vec::new();
         let mut found_held: FxHashSet<V> = FxHashSet::default();
         let mut block = block;
@@ -163,6 +229,7 @@ impl FuncBuilder {
                     let param = self.add_param_for(var, block);
                     self.states[block.idx()].incomplete.push((var, param));
                     self.states[block.idx()].defs.insert(var, param);
+                    self.stored[var.0 as usize] = Stored::Often;
                     break param;
                 }
                 // Or it has come round a circle of blocks that nothing leads into: a loop after a `return`. Each of those has one
@@ -174,6 +241,7 @@ impl FuncBuilder {
                     let v = self.func.add_value(blank, pos, ty);
                     self.func.blocks[block.idx()].ops.insert(0, v);
                     self.states[block.idx()].defs.insert(var, v);
+                    self.stored[var.0 as usize] = Stored::Often;
                     break v;
                 }
                 if preds == 1 {
@@ -210,7 +278,10 @@ impl FuncBuilder {
                                 self.states[join.idx()].defs.insert(var, only);
                                 only
                             }
-                            _ => param,
+                            _ => {
+                                self.stored[var.0 as usize] = Stored::Often;
+                                param
+                            }
                         };
                     }
                 }
@@ -267,6 +338,7 @@ impl FuncBuilder {
             return;
         }
         self.states[block.idx()].is_sealed = true;
+        self.place(block);
         let incomplete = std::mem::take(&mut self.states[block.idx()].incomplete);
         for (var, _) in incomplete {
             self.fill(var, block);

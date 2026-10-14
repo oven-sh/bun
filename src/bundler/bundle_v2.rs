@@ -4134,6 +4134,15 @@ pub mod bv2_impl {
             this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
             this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
             this.linker.options.aot = this.transpiler.options.compiles_ahead_of_time();
+            if this.transpiler.options.compile_mode.is_executable() {
+                for name in crate::options::environment_names_of_aot_without_effect() {
+                    this.transpiler.log_mut().add_warning_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!("{} is set and has no effect", bstr::BStr::new(name)),
+                    );
+                }
+            }
             this.linker.options.preserve_source_paths =
                 this.transpiler.options.preserve_source_paths;
             // Read now, once and in full (a pipe will do): a path that is wrong fails the build here, before anything

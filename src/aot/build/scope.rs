@@ -233,7 +233,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             let is_stored_once = self.c.is_constant(sym) && !self.is_evaluated_when_touched(sym.file);
             self.out.globals[g.idx()].initialization = if is_stored_once { ir::Initialization::NeverSeenAndStoredOnce } else { ir::Initialization::NeverSeen };
         }
-        let (only_function, only_function_flags) = self.only_function_of(sym, declared.id);
+        let (only_function, only_function_flags) = self.only_function_of(sym);
         self.out.globals[g.idx()].only_function = only_function;
         // The slot of a lazy variable holds nil at first.
         self.out.globals[g.idx()].only_function_flags = if is_lazy && only_function_flags & ir::only_function_flags::IS_FACT != 0 { ir::only_function_flags::OR_NIL } else { only_function_flags };
@@ -242,10 +242,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// `Field::only_function` and `Field::only_function_flags` for a variable. Every store to a variable is seen, so each function that it ever
     /// holds is a closure of that one. It is a fact unless a read may find nil, which is then the only other value.
-    fn only_function_of(&mut self, sym: Sym, declared: TyId) -> (FuncId, u8) {
-        if declared.is_none() || self.out.tys.get(declared).any_function {
-            self.c.note_callee_of_variable(sym);
-        }
+    fn only_function_of(&mut self, sym: Sym) -> (FuncId, u8) {
         // A class object is a closure of the constructor.
         if let Some((file, class)) = self.c.class_held_by_variable(sym) {
             return (self.name_constructor(file, class), ir::only_function_flags::IS_FACT);
@@ -337,7 +334,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             if self.c.is_never_seen_uninitialized(sym) {
                 flags = ir::field_flags::NEVER_SEEN_UNINITIALIZED | if self.c.is_constant(sym) { ir::field_flags::STORED_ONCE } else { 0 };
             }
-            let (only_function, only_function_flags) = self.only_function_of(sym, declared.id);
+            let (only_function, only_function_flags) = self.only_function_of(sym);
             fields.push(Field { only_function, only_function_flags, ..Field::new(name, declared.id, flags) });
             self.checked_fields.insert((layout, index), declared.checked);
             let was = self.places.insert(sym, Place::Env(layout, index));

@@ -1,7 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useMiniVMModeWithoutJIT=0", "--verifyGC=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useMiniVMModeWithoutJIT=0", "--useZombieMode=1", "--sweepSynchronously=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useMiniVMModeWithoutJIT=0", "--useAOTDataStubs=0", "--verifyGC=1")
 
 (function () {
     function shouldBe(actual, expected, what) {

@@ -373,7 +373,7 @@ console.log(JSON.stringify(result.logs.filter(log => log.level === "verbose").ma
 }
 `,
     });
-    expect((await spawned([bunExe(), "build.ts"], dir, { BUN_AOT: "" })).stdout).toBe(
+    expect((await spawned([bunExe(), "build.ts"], dir)).stdout).toBe(
       "compile.aotTypeErrors requires compile.aot: true\ncompile.aotExplain requires compile.aot: true\n",
     );
   }, 120_000);
@@ -468,6 +468,66 @@ try { unwrap(JSON.parse('{"name":"b","inner":{"n":"hunter2"}}')); } catch {}
       const { stderr } = await spawned([join(dir, "app")], dir);
       expect(stderr).toContain("; reason property 'inner.n': expected number, got string;");
       expect(stderr).not.toContain("hunter2");
+    }, 120_000);
+
+    const roads = `interface Ctx { cwd: string }
+interface Session { type: "session"; id: string; ctx: Ctx }
+function fresh(id: string): Session { return { type: "session", id, ctx: { cwd: "/" } }; }
+const parse = (text: string): any => JSON.parse(text);
+const show = (n: number, f: () => unknown[]) => { try { console.log(n, ...f()); } catch { console.log(n, "thrown"); } };
+console.log(fresh("a").id);
+show(1, () => { const s: Session = parse('{"id":"y"}'); return [s.id, s.ctx]; });
+show(2, () => { function give(): Session { return parse('{"id":"y"}'); } return [give().id]; });
+show(3, () => { const box: { s: Session } = { s: fresh("b") }; box.s = parse('{"id":"y"}'); return [box.s.id, box.s.type]; });
+show(4, () => { const list: Session[] = parse('[{"id":"y"}]'); return [list[0].id]; });
+show(5, () => { function idOf(s: Session): number { return s.id.length + 1; } return [idOf(parse('{"id":"y"}'))]; });
+`;
+
+    test("an object that does not match its type: a line, and the program goes on as plain Bun does", async () => {
+      const dir = await built("aot-log-object", roads);
+      const plain = await bun(dir, "app.ts");
+      expect(plain.stdout).toBe("a\n1 y undefined\n2 y\n3 y undefined\n4 y\n5 2\n");
+      const { stdout, stderr, exitCode } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe(plain.stdout);
+      expect(brief(lines(stderr, "type-error").filter(line => !line.text.endsWith("; total")))).toEqual([
+        "enter-variable app.ts:7:36 continued",
+        "enter-return app.ts:8:51 continued",
+        "enter-field app.ts:9:72 continued",
+        "read-element app.ts:10:72 continued",
+        "enter-argument app.ts:11:92 continued",
+      ]);
+      expect(stderr).toContain("; reason property 'type' is missing in untyped object but required in Session");
+      expect(exitCode).toBe(0);
+      expect((await bun(dir, "build", "--compile", "--aot", "app.ts", "--outfile", "throws")).exitCode).toBe(0);
+      expect((await spawned([join(dir, "throws")], dir)).stdout).toBe("a\n1 thrown\n2 thrown\n3 thrown\n4 thrown\n5 thrown\n");
+    }, 240_000);
+
+    test("the report says where this build goes on", async () => {
+      const dir = project("aot-log-report", { "app.ts": roads });
+      const build = await bun(dir, "build", "--compile", "--aot", "--aot-type-errors=log", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      const report = lines(build.stdout + build.stderr, "type-check").map(line => line.text);
+      expect(report.filter(text => text.includes("; this log build continues here")).length).toBe(4);
+      expect(report.filter(text => text.includes("; this log build throws here")).map(text => /expected ([^,]+),/.exec(text)![1])).toEqual(["Session[]", "number"]);
+      expect(build.stdout + build.stderr).toContain("this build continues at 4, converts at 0 and still throws at 2");
+      const other = await bun(dir, "build", "--compile", "--aot", "--aot-explain=throws", "app.ts", "--outfile", "app");
+      expect(other.stdout + other.stderr).not.toContain("log build");
+    }, 240_000);
+
+    test("a record without its number, as an argument", async () => {
+      const dir = await built(
+        "aot-log-flat",
+        `interface Row { id: string; n: number }
+function fresh(): Row { return { id: "a", n: 1 }; }
+function next(row: Row): string { return row.id + " " + (row.n + 1); }
+const parse = (text: string): any => JSON.parse(text);
+console.log(next(fresh()));
+console.log(next(parse('{"id":"y"}')));
+console.log(next(parse('{"id":"z","n":3}')));
+`,
+      );
+      const { stdout, exitCode } = await spawned([join(dir, "app")], dir);
+      expect(stdout).toBe("a 2\ny NaN\nz 4\n");
+      expect(exitCode).toBe(0);
     }, 120_000);
 
     test("Bun.build: aotTypeErrors", async () => {

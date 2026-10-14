@@ -1,10 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useMiniVMModeWithoutJIT=0", "--aotTypeCoveragePath=")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useMiniVMModeWithoutJIT=0", "--aotTypeCoveragePath=", "--collectContinuously=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useMiniVMModeWithoutJIT=0", "--aotTypeCoveragePath=", "--forceFencedBarrier=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useMiniVMModeWithoutJIT=0", "--aotTypeCoveragePath=", "--verifyGC=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useMiniVMModeWithoutJIT=0", "--aotTypeCoveragePath=", "--useZombieMode=1", "--sweepSynchronously=1", "--scribbleFreeCells=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useMiniVMModeWithoutJIT=0", "--aotTypeCoveragePath=", "--smallHeapSize=65536", "--largeHeapSize=65536", "--useZombieMode=1", "--sweepSynchronously=1")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));

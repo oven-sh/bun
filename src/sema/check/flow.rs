@@ -195,6 +195,13 @@ pub(super) struct FlowMemo {
     /// Indexed by flow node of the same file, or empty. For a call from which a walk has passed many calls of which that
     /// is `None`: the node at which it arrived, and how many it passed. See `before_idle_calls`.
     idle_runs: Vec<(FlowId, u32)>,
+    quiet_of: Option<FileId>,
+    quiet_head: Vec<u32>,
+    quiet_place: Vec<u32>,
+    quiet_stop: Vec<u32>,
+    quiet_call: Vec<u32>,
+    quiet_earlier_call: Vec<u32>,
+    quiet_about: FxHashMap<u32, Vec<u32>>,
     ends_of_idle_runs: Vec<u32>,
     ends_of_idle_runs_of: Option<FileId>,
     /// The subjects of each test of the file `tests_of`, indexed by the flow node of the test.
@@ -6587,6 +6594,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut shared_flow = FlowId::NONE;
         let (depth, crossed) = (walk.depth, walk.crossed);
         let mut incomplete = false;
+        let quiet_key = self.quiet_key_of(walk);
         let mut ty = loop {
             walk.steps += 1;
             if walk.steps >= MAX_STEPS {
@@ -6604,6 +6612,16 @@ impl<'p, 's> Checker<'p, 's> {
                     break known.ty;
                 }
                 shared_flow = flow;
+            }
+            if quiet_key != 0 && walk.steps > 64 {
+                if self.flow_memo.quiet_of != Some(file) {
+                    self.index_quiet_nodes(file);
+                }
+                if let Some((arrived_at, passed)) = self.before_quiet_nodes(file, quiet_key, flow) {
+                    walk.steps = walk.steps.saturating_add(passed);
+                    flow = arrived_at;
+                    continue;
+                }
             }
             match bound.flow[flow.idx()] {
                 // "Simply return the non-auto declared type to reduce follow-on errors."
@@ -7937,6 +7955,127 @@ impl<'p, 's> Checker<'p, 's> {
         true
     }
 
+    fn quiet_key_of(&self, walk: &Walk) -> u32 {
+        let reference = &walk.reference;
+        if !reference.path.is_empty()
+            || reference.unresolved.get() != 0
+            || reference.assigned != usize::MAX
+            || reference.satisfies != usize::MAX
+            || self.task.file != Some(reference.file)
+            || self.is_automatic_type(walk.declared)
+        {
+            return 0;
+        }
+        match reference.root {
+            Root::Symbol(_) | Root::Global(_) => root_key(reference.root),
+            _ => 0,
+        }
+    }
+
+    fn quiet_subject(&self, file: FileId, target: FlowTarget) -> Option<u32> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let of_pattern = |pat: PatId| match bound.pat_symbol[pat.idx()] {
+            symbol if symbol.is_none() => 0,
+            symbol => root_key(Root::Symbol(symbol)),
+        };
+        match target {
+            FlowTarget::Var(d) => {
+                let stmt = bound.var_stmt[d.idx()];
+                let is_of_for_in = stmt.is_some()
+                    && matches!(bound.stmt_parent[stmt.idx()], Parent::Stmt(owner) if matches!(hir[owner].kind, StmtKind::ForIn { .. }));
+                (!is_of_for_in).then(|| of_pattern(hir[d].pat))
+            }
+            FlowTarget::Pat(p) => Some(of_pattern(p)),
+            FlowTarget::Expr(e) => {
+                let mut at = e;
+                loop {
+                    match hir[at].kind {
+                        ExprKind::NonNull(x) => at = x,
+                        ExprKind::Assign { target, .. } => at = target,
+                        ExprKind::Binary { op: BinOp::Comma, right, .. } => at = right,
+                        ExprKind::Ident(name) => {
+                            let is_resolved_here = bound.unchecked_assignment_targets.contains(&at);
+                            return (!is_resolved_here).then(|| root_key(self.root_of_identifier(file, at, name)));
+                        }
+                        _ => return Some(0),
+                    }
+                }
+            }
+        }
+    }
+
+    #[inline(never)]
+    fn index_quiet_nodes(&mut self, file: FileId) {
+        let bound = self.bound(file);
+        let nodes = bound.flow.len();
+        let (mut head, mut place) = (vec![u32::MAX; nodes], vec![0u32; nodes]);
+        let (mut stop, mut call, mut earlier_call) = (vec![u32::MAX; nodes], vec![u32::MAX; nodes], vec![u32::MAX; nodes]);
+        let mut about: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
+        for (i, &node) in bound.flow.iter().enumerate() {
+            let (Flow::Assign { before, .. } | Flow::ArrayMutation { before, .. } | Flow::Call { before, .. }) = node else {
+                continue;
+            };
+            if bound.is_shared(FlowId(i as u32)) {
+                continue;
+            }
+            let b = before.idx();
+            (head[i], place[i]) = (i as u32, 0);
+            if before.is_some() && b < i && head[b] != u32::MAX {
+                (head[i], place[i], stop[i], call[i]) = (head[b], place[b] + 1, stop[b], call[b]);
+            }
+            match node {
+                Flow::Call { .. } => (earlier_call[i], call[i]) = (call[i], i as u32),
+                Flow::Assign { target, .. } => match self.quiet_subject(file, target) {
+                    None => stop[i] = i as u32,
+                    Some(0) => {}
+                    Some(key) => about.entry(key).or_default().push(i as u32),
+                },
+                _ => {}
+            }
+        }
+        let memo = &mut self.flow_memo;
+        memo.quiet_of = Some(file);
+        (memo.quiet_head, memo.quiet_place, memo.quiet_stop) = (head, place, stop);
+        (memo.quiet_call, memo.quiet_earlier_call, memo.quiet_about) = (call, earlier_call, about);
+    }
+
+    fn before_quiet_nodes(&mut self, file: FileId, key: u32, flow: FlowId) -> Option<(FlowId, u32)> {
+        let bound = self.bound(file);
+        let memo = &mut self.flow_memo;
+        let head = memo.quiet_head[flow.idx()];
+        if head == u32::MAX {
+            return None;
+        }
+        let first_call = memo.quiet_call[flow.idx()];
+        let mut call = first_call;
+        while call != u32::MAX && memo.is_idle_call(file, FlowId(call)) {
+            call = memo.quiet_earlier_call[call as usize];
+        }
+        let mut shortened = first_call;
+        while shortened != call {
+            shortened = std::mem::replace(&mut memo.quiet_earlier_call[shortened as usize], call);
+        }
+        memo.quiet_call[flow.idx()] = call;
+        let about = memo.quiet_about.get(&key).and_then(|nodes| {
+            nodes[..nodes.partition_point(|&node| node <= flow.0)]
+                .iter()
+                .rev()
+                .take_while(|&&node| node >= head)
+                .find(|&&node| memo.quiet_head[node as usize] == head)
+                .copied()
+        });
+        let nearest = [memo.quiet_stop[flow.idx()], call, about.unwrap_or(u32::MAX)].into_iter().filter(|&node| node != u32::MAX).max();
+        let place = memo.quiet_place[flow.idx()];
+        match nearest {
+            Some(node) if node == flow.0 => None,
+            Some(node) => Some((FlowId(node), place - memo.quiet_place[node as usize] - 1)),
+            None => match bound.flow[head as usize] {
+                Flow::Assign { before, .. } | Flow::ArrayMutation { before, .. } | Flow::Call { before, .. } => Some((before, place)),
+                _ => None,
+            },
+        }
+    }
+
     /// FOR SPEED. Where a walk arrives that goes on from `before`, the antecedent of the idle call `flow`, through the idle
     /// calls that only one node follows, and how many of them it passes. They do nothing to any walk. Each reference in n
     /// call statements in a row walks back through those before it: so that this does not take n * n steps, the
@@ -7980,6 +8119,7 @@ impl<'p, 's> Checker<'p, 's> {
             memo.settled_calls.clear();
             memo.settled_calls.resize(words, (0, 0));
             memo.idle_runs.clear();
+            memo.quiet_of = None;
         }
         let (word, bit) = (flow.idx() / 64, 1 << (flow.idx() % 64));
         memo.settled_calls[word].0 |= bit;

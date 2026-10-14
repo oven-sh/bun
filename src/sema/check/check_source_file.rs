@@ -352,9 +352,6 @@ impl<'s> Checker<'_, 's> {
         self.check_merged_symbols(file);
         self.check_exprs_visited_by_queries(file);
         self.note_assignments_marked_by_check(file);
-        if self.p.files.options.reports_uninitialized_variables {
-            self.check_variable_initialization(file);
-        }
         self.reported_unreachable_nodes.clear();
     }
 

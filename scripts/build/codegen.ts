@@ -904,10 +904,12 @@ function emitBuiltinSources({ n, cfg, sources, o, dirStamp }: Ctx): void {
       script,
       ...sources.js,
       ...sources.jsCodegen,
+      ...sources.aotEngineBuiltins,
       resolve(bindings, "ErrorCode.ts"),
       resolve(bindings, "js_classes.ts"),
       resolve(cfg.cwd, "src", "jsc", "modules", "NativeModuleList.h"),
       resolve(cfg.cwd, "src", "aot", "build", "intrinsics.txt"),
+      resolve(cfg.cwd, "src", "aot", "builtins_generated.rs"),
     ],
     // builtin-name-census.ts imports typescript from the root install.
     implicitInputs: [o.rootInstall],

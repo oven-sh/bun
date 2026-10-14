@@ -7,13 +7,13 @@ function census(label: string): void {
     gc(); gc(); const s = generateHeapSnapshot(); const names: string[] = s.nodeClassNames; const nodes: number[] = s.nodes; const now: number[] = [0, 0, 0, 0];
     for (let i = 0; i < nodes.length; i += 4) { const n = names[nodes[i + 2]]; for (let k = 0; k < 4; k++) if (n === kinds[k]) now[k]++; }
     let line = label + ":"; for (let k = 0; k < 4; k++) line += (k ? ", " : " ") + kinds[k] + " +" + (now[k] - before[k]);
-    console.log(line);
+    if (label) console.log(line);
     before = now;
 }
 class A { constructor(public v: number) {} m1(): number { return this.v; } m2(): number { return 2; } m3(): number { return 3; } m4(): number { return 4; } m5(): number { return 5; } m6(): number { return 6; } m7(): number { return 7; } m8(): number { return 8; } get g1(): number { return 1; } get g2(): number { return 2; } static s1(): number { return 1; } static s2(): number { return 2; } }
 class B extends A { n1(): number { return 1; } n2(): number { return 2; } n3(): number { return 3; } n4(): number { return 4; } }
 class C { constructor(public v: number) {} m1(): number { return this.v; } m2(): number { return 2; } m3(): number { return 3; } m4(): number { return 4; } }
-census("start"); census("nothing happened");
+console.log("heap cells of four kinds, more than at the line before"); census(""); census(""); census("nothing happened");
 const c = new C(3); let s = c.m1() + c.m2() + c.m3() + c.m4();
 census("new C and four typed calls");
 census("the snapshot has looked at C");

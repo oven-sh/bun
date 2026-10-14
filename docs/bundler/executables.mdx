@@ -418,16 +418,16 @@ Bun.unsafe.setJITPolicy(1); // back to the normal JIT policy
   </Tab>
 </Tabs>
 
-`--aot` implies `--bytecode` and `--format=esm`. CommonJS files in your program work as they do in any other bundle.
+`--aot` implies `--bytecode` and `--format=esm`. `--bytecode-depth` and `--bytecode-order` have nothing to act on, because the executable has machine code in the place of bytecode, and `bun build` reports an error for them. CommonJS files in your program work as they do in any other bundle.
 
 The compiler sees your whole program at once, and the executable differs from one built without `--aot` in these ways:
 
 - **Types are enforced.** The compiler relies on your TypeScript types, so a value that does not match its type throws a `TypeError`, and `as` between primitive types converts. [Adopting `--aot`](/bundler/aot-adoption) shows how to find the places this affects before you ship.
 - **The JIT is off.** Bun interprets code that the build cannot see: `eval`, `new Function`, files that your program loads from disk when it runs, and Workers created from a blob URL.
-- **Built-in objects are immutable.** Assigning to an existing property of a built-in object, such as `Array.prototype.push` or `Math.random`, throws a `TypeError` in strict mode and does nothing in sloppy mode. So does adding a property to `Object.prototype`. Objects that Bun or your program defines, such as `console` and `process`, stay mutable.
+- **Built-in objects are immutable.** Assigning to an existing property of a built-in object, such as `Array.prototype.push` or `Math.random`, throws a `TypeError` in strict mode and does nothing in sloppy mode. So does adding a property to `Object.prototype`. Objects that Bun or your program defines, such as `console` and `process`, stay mutable. So do the built-in objects of a context that your program creates with `node:vm`, and of a `ShadowRealm`: each has its own.
 - **There are no tail calls.** Without `--aot`, a strict-mode function that ends in `return f(x)` gives its stack frame to `f`, so such a recursion can be as deep as you like. Compiled code keeps a frame for every call, as Node.js does, and a very deep recursion throws `RangeError: Maximum call stack size exceeded`.
 - **`bun:ffi` callbacks are unavailable.** `dlopen` and calls into native code work. `JSCallback` needs the JIT, and throws a `TypeError` that says so.
-- **Breakpoints are unavailable.** The inspector connects, and its console, heap snapshots and CPU profiles work. Breakpoints, stepping and `debugger` statements do not.
+- **Breakpoints are unavailable.** The inspector connects, and its console, heap snapshots and CPU profiles work. Breakpoints, stepping and `debugger` statements do not. [Debugging and profiling with `--aot`](/bundler/aot-debugging) lists what each tool shows.
 - **[Macros](/bundler/macros) are unavailable**, and so are `bun --aot -e` and `bun --aot -p`.
 - **The executable has no bytecode.** It keeps the text of your functions for `Function.prototype.toString()`. With `--no-compile-function-source` it does not, and `toString()` returns `function name() { [native code] }`. Stack traces have the files, lines and columns of your sources either way.
 - **Some error messages differ.** `null is not an object (evaluating 'o.a.c')` becomes `Cannot read properties of null (reading 'c')`, and `o.b is not a function` becomes `b is not a function, it is undefined`. A service that groups errors by message sees new groups.

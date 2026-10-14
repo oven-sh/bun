@@ -1413,33 +1413,6 @@ impl<'p, 's> Checker<'p, 's> {
         table
     }
 
-    /// `--aot-explain=keys`
-    pub fn explain_functions_by_key(&mut self) -> Vec<String> {
-        let stores = self.uses_of_functions().keyed_stores.clone();
-        let table = self.functions_by_key();
-        let mut lines = vec![format!("keys: {} keyed stores; {} pairs of a property and a constant key hold one function", stores.len(), table.len())];
-        let text = |c: &Self, atom: Atom| if atom.is_some() { String::from_utf8_lossy(c.atoms().bytes(atom)).into_owned() } else { String::new() };
-        let function = |c: &Self, (file, func): Function| {
-            let path = String::from_utf8_lossy(c.files.module(file).file_name()).into_owned();
-            format!("function \"{}\" of {} at {}", text(c, c.hir(file)[func].name), path.rsplit('/').next().unwrap_or_default(), c.hir(file)[func].start)
-        };
-        for (property, key, only) in table {
-            lines.push(format!("keys: {}[\"{}\"]: {}", text(self, property), text(self, key), function(self, only)));
-        }
-        let mut written: Vec<String> = Vec::new();
-        for (property, key, stored) in stores {
-            let passed = |c: &Self, passed: Passed| match passed {
-                Passed::Key(key) => format!("\"{}\"", text(c, key)),
-                Passed::Closure(closure) => function(c, closure),
-                Passed::Parameter(of, index) => format!("parameter {index} of {}", function(c, of)),
-            };
-            written.push(format!("keys: a store: {}[{}] = {}", text(self, property), passed(self, key), passed(self, stored)));
-        }
-        written.sort();
-        lines.append(&mut written);
-        lines
-    }
-
     /// `heir`, `base`: expressions of the file that name two functions.
     fn add_heir(&mut self, file: FileId, heir: ExprId, base: ExprId, uses: &mut UsesInFile) {
         let functions = [heir, base].map(|named| self.function_that_is_named_by(file, named));

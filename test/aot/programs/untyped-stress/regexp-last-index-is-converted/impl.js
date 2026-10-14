@@ -1,5 +1,4 @@
 const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
-//@ requireOptions("--compileMainScriptAheadOfTime=1")
 
 let count = 0;
 const counting = () => ({ valueOf() { count++; return 0; } });

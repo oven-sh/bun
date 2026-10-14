@@ -1,4 +1,4 @@
-// A variable declared `number` or `boolean` without an initializer throws when it is read before anything is stored (compiled with `strictVariableInitialization` off).
+// A variable declared `number` or `boolean` without an initializer holds `undefined` until something is stored: a read yields it, and it is refused where it enters a place declared `number` or `boolean`.
 function kind(v: unknown): string { return v === undefined ? "undefined" : v === null ? "null" : typeof v }
 function double(n: number): number { return n * 2 }
 function orTen(n: number = 10): number { return n }

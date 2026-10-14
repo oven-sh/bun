@@ -147,7 +147,6 @@ def one(name):
     config = os.path.dirname(path) + '/tsconfig.json'
     if path.count('/') > PROGRAMS.count('/') + 2 and os.path.isfile(config):
         if '"strict": true' in open(config).read(): options.append('--strict')
-        if '"strictVariableInitialization": false' in open(config).read(): options += ['--strictVariableInitialization', 'false']
     for suffix in ('.bin', '.img', '.map'):
         if os.path.exists(room + suffix): os.remove(room + suffix)
     subprocess.run([SEMA, 'cli', path, '--allowJs', '--resolveJsonModule', *options, '--no-builtin-modules', '--aot', '--aot-out=' + room + '.bin'], capture_output=True, cwd=os.path.dirname(path), timeout=120)

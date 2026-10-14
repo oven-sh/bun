@@ -18,10 +18,10 @@
 // KNOWN hints1 intry+x
 // KNOWN hints1 afterthro+w
 // KNOWN hints1 infina+lly
-// UNKNOWN fromca+ll
-// UNKNOWN byfu+nctionX
-// UNKNOWN na+med
-// UNKNOWN ti+me
+// KNOWN hints1 fromca+ll
+// KNOWN hints1 byfu+nctionX
+// KNOWN hints1 na+med
+// KNOWN hints1 ti+me
 declare const console: { log(...values: unknown[]): void };
 function make(text: string): string { return Array.from(text).join(""); }
 const other = { caret: /(^|[^\[])\^/g };

@@ -1,1 +1,0 @@
-Error.captureStackTrace, which is Bun's, can be replaced, redefined and deleted where every other built-in refuses. Expected: "Error: 2: store: refused (TypeError) | defineProperty: refused (TypeError) | delete: refused (TypeEr". --aot prints: "Error: 1: store: REPLACED | defineProperty: REPLACED | delete: DELETED: captureStackTrace".

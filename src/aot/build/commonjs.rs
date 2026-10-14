@@ -1340,7 +1340,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     /// `require` of a module that reports its own path and is no entry point: the host's is the entry point's.
     fn own_require_function(&mut self, fx: &mut Fx) -> Option<V> {
-        let path = self.own_path(fx.file, b"path").filter(|_| !self.shared.roots().contains(&fx.file))?;
+        let path = self.own_path(fx.file, b"path").filter(|_| self.shared.roots().len() > 1 || !self.shared.roots().contains(&fx.file))?;
         let (module, create, path) = (self.out.strs.intern(b"node:module"), self.out.strs.intern(b"createRequire"), self.out.strs.intern(&path));
         let module = self.emit(fx, Op::Str(module));
         let module = self.operation(fx, "RequireExternalModule", &[module]);
@@ -1567,6 +1567,42 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         }
         let pos = hir[c.callee].pos;
         Some(self.required_es_module(fx, imported, pos))
+    }
+
+    pub(crate) fn emit_import_by_require(&mut self, fx: &mut Fx, specifier: Atom, pos: u32) {
+        if specifier.is_none() || self.is_dropped_import(fx.file, specifier) || self.text_imported_as(fx.file, specifier).is_some() {
+            return;
+        }
+        let Some(imported) = self.imported_file(fx.file, specifier) else {
+            let global = self.external_module_global(fx.file, specifier);
+            let known = self.emit(fx, Op::GlobalGet(global));
+            let undefined = self.emit(fx, Op::Undefined);
+            let is_missing = self.emit(fx, Op::StrictEq { a: known, b: undefined });
+            let (first, there) = (fx.b.new_block(), fx.b.new_block());
+            self.branch(fx, is_missing, first, there);
+            fx.b.seal(first);
+            fx.b.switch_to(first);
+            let asked_for = self.as_the_host_finds_it(fx.file, specifier);
+            let asked_for = self.str(asked_for);
+            let namespace = self.emit_throwing(fx, Op::ExternalModule(asked_for));
+            self.emit(fx, Op::GlobalSet(global, namespace));
+            fx.b.jump(there);
+            fx.b.seal(there);
+            fx.b.switch_to(there);
+            return;
+        };
+        if let Some(id) = self.builtin_id(imported) {
+            let id = self.emit(fx, Op::Int(id as i64));
+            self.operation(fx, "RequireBuiltinModule", &[id]);
+            return;
+        }
+        if self.is_async_module(imported) {
+            return self.problem(fx.file, pos, "a `require` of a module that has a top-level `await` or imports one that has");
+        }
+        self.emit_module_evaluation_by_require(fx, imported);
+        if !self.exports_an_object(imported) {
+            self.required_es_module(fx, imported, pos);
+        }
     }
 
     fn required_es_module(&mut self, fx: &mut Fx, imported: FileId, pos: u32) -> V {

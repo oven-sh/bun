@@ -997,35 +997,6 @@ JSReadableStream* readableStreamTextDecodeFrom(JSGlobalObject* globalObject, JSR
     return stream;
 }
 
-// Errors the text stream at once. A microtask cancels and releases the source, after the call that delivered the chunk returns.
-static void textDecodeFail(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSCell* sourceReader, JSValue error)
-{
-    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    readableStreamDefaultControllerError(globalObject, controller, error);
-    RETURN_IF_EXCEPTION(scope, void());
-    auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(sourceReader);
-    if (reader && reader->m_stream)
-        queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onTextDecodeFailedMicrotask(), error, reader);
-}
-
-// The [reaction-convention] body of onTextDecodeFailedMicrotask(error, reader).
-static EncodedJSValue textDecodeFailedMicrotask(JSGlobalObject* globalObject, JSValue error, JSReadableStreamDefaultReader* reader)
-{
-    auto& vm = getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!reader->m_stream)
-        return JSValue::encode(jsUndefined());
-    auto* cancelResult = readableStreamReaderGenericCancel(globalObject, reader, error);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (cancelResult)
-        markPromiseAsHandled(vm, cancelResult);
-    if (reader->m_stream) {
-        readableStreamDefaultReaderRelease(globalObject, reader);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    return JSValue::encode(jsUndefined());
-}
-
 JSPromise* textDecodePullAlgorithm(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller)
 {
     auto& vm = getVM(globalObject);
@@ -1033,10 +1004,13 @@ JSPromise* textDecodePullAlgorithm(JSGlobalObject* globalObject, JSReadableStrea
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* reader = uncheckedDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
     auto* readRequest = WebCore::JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::TextDecode, controller);
-    // A throw from the read fails the link: as a rejected pull promise it would leave the source locked.
-    atStreamsBoundary(globalObject, [&] { readableStreamDefaultReaderRead(globalObject, reader, readRequest); }, [&](JSValue error) { textDecodeFail(globalObject, controller, reader, error); });
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    // A pull algorithm returns a promise: a throw from the read is its rejection.
+    RELEASE_AND_RETURN(scope, promiseFromSteps(globalObject, [&] -> JSPromise* {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        readableStreamDefaultReaderRead(globalObject, reader, readRequest);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, promiseFulfilledWith(globalObject, JSC::jsUndefined()));
+    }));
 }
 
 JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue reason)
@@ -1054,6 +1028,41 @@ JSPromise* textDecodeCancelAlgorithm(JSGlobalObject* globalObject, JSReadableStr
     readableStreamDefaultReaderRelease(globalObject, reader);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return result;
+}
+
+// Errors the text stream at once. A microtask cancels and releases the source, after the call that delivered the chunk returns.
+static void textDecodeFail(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSCell* sourceReader, JSValue error)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    readableStreamDefaultControllerError(globalObject, controller, error);
+    RETURN_IF_EXCEPTION(scope, void());
+    auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(sourceReader);
+    if (!reader || !reader->m_stream)
+        return;
+    // Nothing waits for the cancel, as in pipeThrough(): its outcome goes to a handled promise.
+    auto* result = JSPromise::create(vm, globalObject->promiseStructure());
+    markPromiseAsHandled(vm, result);
+    auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), reader, result);
+    queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onTextDecodeCancelDeferred(), error, context);
+}
+
+// The [reaction-convention] body of onTextDecodeCancelDeferred(reason, {source reader, result promise}).
+static void textDecodeCancelDeferred(JSGlobalObject* globalObject, JSValue reason, InternalFieldTuple* context)
+{
+    auto& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* reader = uncheckedDowncast<JSReadableStreamDefaultReader>(context->getInternalField(0));
+    JSValue cancelResult = jsUndefined();
+    if (reader->m_stream) {
+        cancelResult = readableStreamReaderGenericCancel(globalObject, reader, reason);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (reader->m_stream) {
+            readableStreamDefaultReaderRelease(globalObject, reader);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
+    RELEASE_AND_RETURN(scope, resolvePromise(globalObject, uncheckedDowncast<JSPromise>(context->getInternalField(1)), cancelResult));
 }
 
 static void textDecodeChunk(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, JSValue chunk)
@@ -1595,9 +1604,10 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onByteTeeReaderClosedRejected, (JSG
     return Streams::byteTeeReaderClosedRejected(globalObject, callFrame->argument(0), uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1)));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTextDecodeFailedMicrotask, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onTextDecodeCancelDeferred, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return Streams::textDecodeFailedMicrotask(globalObject, callFrame->argument(0), uncheckedDowncast<JSReadableStreamDefaultReader>(callFrame->argument(1)));
+    auto* context = uncheckedDowncast<InternalFieldTuple>(callFrame->argument(1));
+    return Streams::enterStreams(globalObject, [&] { Streams::textDecodeCancelDeferred(globalObject, callFrame->argument(0), context); }, [&](JSValue error) { Streams::rejectPromise(globalObject, uncheckedDowncast<JSPromise>(context->getInternalField(1)), error); });
 }
 
 } // namespace WebCore

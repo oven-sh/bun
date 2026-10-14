@@ -76,7 +76,7 @@ namespace WebCore {
 //   Tee: context = the JSStreamTeeState, except onByteTeeReaderClosedRejected whose context
 //     is an InternalFieldTuple{teeState, thisReader}.
 //   The two *Microtask entries are the tee chunk-steps "queue a microtask" jobs.
-//   TextDecode: onTextDecodeFailedMicrotask's value = the error, context = the source reader.
+//   onTextDecodeCancelDeferred: context = an InternalFieldTuple{source reader, result promise}.
 #define FOR_EACH_WEB_STREAMS_REACTION_HANDLER_RS_OPERATIONS(V) \
     V(onFromIterablePullFulfilled)                             \
     V(onFromIterableCancelFulfilled)                           \
@@ -85,7 +85,7 @@ namespace WebCore {
     V(onByteTeeReadChunkMicrotask)                             \
     V(onByteTeeReadIntoChunkMicrotask)                         \
     V(onByteTeeReaderClosedRejected)                           \
-    V(onTextDecodeFailedMicrotask)
+    V(onTextDecodeCancelDeferred)
 
 // owner: BunAsyncIterableSource.cpp. context = the JSAsyncIteratorSourceOperation, EXCEPT
 // onAsyncIterableSourceErrorRethrow, whose context is

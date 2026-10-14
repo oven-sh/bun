@@ -420,50 +420,6 @@ pub mod semver_string {
             }
         }
 
-        pub fn init_append_if_needed(buf: &mut Vec<u8>, in_: &[u8]) -> Result<String, AllocError> {
-            Ok(match in_.len() {
-                0 => String::default(),
-                1 => String {
-                    bytes: [in_[0], 0, 0, 0, 0, 0, 0, 0],
-                },
-                2 => String {
-                    bytes: [in_[0], in_[1], 0, 0, 0, 0, 0, 0],
-                },
-                3 => String {
-                    bytes: [in_[0], in_[1], in_[2], 0, 0, 0, 0, 0],
-                },
-                4 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], 0, 0, 0, 0],
-                },
-                5 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], 0, 0, 0],
-                },
-                6 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], 0, 0],
-                },
-                7 => String {
-                    bytes: [in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], 0],
-                },
-
-                Self::MAX_INLINE_LEN => {
-                    // If they use the final bit, then it's a big string.
-                    // This should only happen for non-ascii strings that are exactly 8 bytes.
-                    // so that's an edge-case
-                    if in_[Self::MAX_INLINE_LEN - 1] >= 128 {
-                        Self::init_append(buf, in_)?
-                    } else {
-                        String {
-                            bytes: [
-                                in_[0], in_[1], in_[2], in_[3], in_[4], in_[5], in_[6], in_[7],
-                            ],
-                        }
-                    }
-                }
-
-                _ => Self::init_append(buf, in_)?,
-            })
-        }
-
         pub(crate) fn init_append(buf: &mut Vec<u8>, in_: &[u8]) -> Result<String, AllocError> {
             // Vec::extend_from_slice
             // panics on OOM under the global mimalloc allocator instead of returning an error.

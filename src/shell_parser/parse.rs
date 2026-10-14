@@ -2180,7 +2180,6 @@ struct BacktrackSnapshot<'bump, const ENCODING: StringEncoding> {
     chars: ShellCharIter<'bump, ENCODING>,
     j: u32,
     word_start: u32,
-    delimit_quote: bool,
 }
 
 pub struct Lexer<'bump, const ENCODING: StringEncoding> {
@@ -2196,7 +2195,6 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
 
     pub(crate) strpool: bun_alloc::ArenaVec<'bump, u8>,
     pub(crate) tokens: bun_alloc::ArenaVec<'bump, Token>,
-    pub(crate) delimit_quote: bool,
     pub(crate) in_subshell: Option<SubShellKind>,
     pub(crate) subshell_depth: u32,
     pub(crate) errors: bun_alloc::ArenaVec<'bump, LexError>,
@@ -2230,7 +2228,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             js_string_ranges: bun_alloc::ArenaVec::new_in(bump),
             word_start: 0,
             j: 0,
-            delimit_quote: false,
             in_subshell: None,
             subshell_depth: 0,
             string_refs: strings_to_escape,
@@ -2277,7 +2274,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             subshell_depth: self.subshell_depth + 1,
             word_start: self.word_start,
             j: self.j,
-            delimit_quote: false,
             string_refs: self.string_refs,
             jsobjs_len: self.jsobjs_len,
         };
@@ -2299,7 +2295,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.chars = sublexer.chars;
         self.word_start = sublexer.word_start;
         self.j = sublexer.j;
-        self.delimit_quote = sublexer.delimit_quote;
     }
 
     fn make_snapshot(&self) -> BacktrackSnapshot<'bump, ENCODING> {
@@ -2309,7 +2304,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             chars: self.chars,
             j: self.j,
             word_start: self.word_start,
-            delimit_quote: self.delimit_quote,
         }
     }
 
@@ -2317,7 +2311,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.chars = snap.chars;
         self.j = snap.j;
         self.word_start = snap.word_start;
-        self.delimit_quote = snap.delimit_quote;
     }
 
     fn last_tok_tag(&self) -> Option<TokenTag> {
@@ -2996,7 +2989,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             }
         {
             self.tokens.push(Token::Delimit);
-            self.delimit_quote = false;
         }
         self.word_start = self.j;
         Ok(())

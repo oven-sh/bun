@@ -6,7 +6,7 @@ use std::sync::Arc;
 use bstr::BStr;
 
 use bun_core::{self as bstring, strings};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _};
 use bun_sourcemap::{Mapping, Ordinal, ParsedSourceMap, mapping};
 
 // generate-classes.ts does not emit Rust accessors yet, so the
@@ -236,13 +236,9 @@ impl JSSourceMap {
     fn mapping_name_to_js(&self, global: &JSGlobalObject, mapping: &Mapping) -> JsResult<JSValue> {
         let name_index = mapping.name_index;
         if name_index >= 0 {
-            if let Some(name) = self.sourcemap.mappings.get_name(name_index) {
-                return bun_string_jsc::create_utf8_for_js(global, name);
-            } else {
-                let index = usize::try_from(name_index).expect("int cast");
-                if index < self.names.len() {
-                    return self.names[index].to_js(global);
-                }
+            let index = usize::try_from(name_index).expect("int cast");
+            if index < self.names.len() {
+                return self.names[index].to_js(global);
             }
         }
         Ok(JSValue::UNDEFINED)

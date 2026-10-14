@@ -40,7 +40,6 @@
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
-// #include "JSDOMWindowBase.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
 
@@ -49,12 +48,10 @@
 #include "JSPerformanceMarkOptions.h"
 #include "JSPerformanceMeasure.h"
 #include "JSPerformanceMeasureOptions.h"
-// #include "JSPerformanceNavigation.h"
 #include "JSPerformanceTiming.h"
 
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-// #include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -231,8 +228,6 @@ size_t JSPerformance::estimatedSize(JSCell* cell, VM& vm)
     JSPerformance* thisObject = uncheckedDowncast<JSPerformance>(cell);
     return Base::estimatedSize(cell, vm) + thisObject->wrapped().memoryCost();
 }
-
-// static_assert(!std::is_base_of<ActiveDOMObject, Performance>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 
 void JSPerformance::finishCreation(VM& vm)
 {

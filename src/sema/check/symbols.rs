@@ -2772,8 +2772,43 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             self.type_of_expr(file, e)
         };
+        self.check_expression_in_flow_loop(file, e);
         self.type_only_node = outside;
         ty
+    }
+
+    /// After `type_of_expr(e)`. tsgo's `checkExpression` is the whole check of `e`, and nothing it reports is dropped. Where a
+    /// loop is being analysed it reports with the types the loop has collected so far, which the walk, with the final types,
+    /// does not: `last = last.next = node` after `last === null` assigns to `never`.
+    pub(super) fn check_expression_in_flow_loop(&mut self, file: FileId, e: ExprId) {
+        if self.is_in_flow_loop() {
+            let reported = self.reported.len();
+            self.check_expression(file, e);
+            self.check_calls_within(file, e);
+            self.log_reported_in_flow_loop(reported, file, e);
+        }
+    }
+
+    /// `check_call_like` for the calls that `checkExpression(e)` resolves: not those in a function or a class in `e`, whose
+    /// bodies are checked later.
+    fn check_calls_within(&mut self, file: FileId, e: ExprId) {
+        let hir = self.hir(file);
+        let mut pending = vec![hir.node(e)];
+        while let Some(node) = pending.pop() {
+            let kind = hir.kind(node);
+            if kind.is_function_like()
+                || matches!(kind, Kind::ClassExpression | Kind::ClassDeclaration)
+            {
+                continue;
+            }
+            if let NodeData::Expr(e) = hir.data(node) {
+                self.check_call_like(file, e);
+            }
+            hir.for_each_child(node, &mut |child| {
+                pending.push(child);
+                false
+            });
+        }
     }
 
     /// The tail of `getBindingElementTypeFromParentType`: the type bound to `pat`, an element of a

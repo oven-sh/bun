@@ -751,7 +751,6 @@ impl<'s> Program<'s> {
             is_emitting: false,
             cached_by_emit: Vec::new(),
             reported: Vec::new(),
-            silent_never_target_errors: 0,
             never_checked: Default::default(),
             never_in_progress: Vec::new(),
             never_in_progress_from: Vec::new(),
@@ -901,6 +900,9 @@ struct Scope {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 enum Query {
     Expr(FileId, ExprId),
+    /// Never entered. The owner of what `getTypeOfExpression` of the expression reports while a loop is analysed: every task
+    /// that analyses the loop reports it, and the final check of the expression, which owns `Expr`, does not.
+    ExprInFlowLoop(FileId, ExprId),
     Symbol(Sym),
     Declared(Sym),
     Return(FileId, FnId),
@@ -975,7 +977,7 @@ impl Query {
     #[inline]
     fn syntax(self) -> Option<(FileId, usize)> {
         Some(match self {
-            Query::Expr(file, _) => (file, 0),
+            Query::Expr(file, _) | Query::ExprInFlowLoop(file, _) => (file, 0),
             Query::Call(file, _) => (file, 1),
             Query::LiteralProp(file, _) => (file, 2),
             Query::Return(file, _) => (file, 3),
@@ -1444,8 +1446,6 @@ pub struct Checker<'p, 's> {
     cached_by_emit: Vec<ExprId>,
     /// The diagnostics reported for the queries in progress, and with none in progress: see `sink`.
     reported: Vec<Reported>,
-    /// How many comparisons have failed whose target is `silentNeverType`: see `look_at_with`.
-    silent_never_target_errors: u32,
     /// The spans of `task.file` that `checkSourceFile` never visits. The passes that iterate over
     /// all nodes of a kind do visit them.
     never_checked: std::cell::RefCell<Vec<(u32, u32)>>,

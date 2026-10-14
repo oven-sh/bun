@@ -211,6 +211,67 @@ test("util.inspect of an error with an errors getter that throws, and of DOMExce
   expect(util.inspect(DOMException.prototype)).toStartWith("[object DOMException] {");
 });
 
+test("util.inspect keeps the first line of a stack that was read before the message getter throws", () => {
+  class Foo extends Error {}
+  const errors = [new Error("m"), new TypeError("m"), new Foo("m")];
+  for (const error of errors) {
+    void error.stack;
+    Object.defineProperty(error, "message", throwingGetter);
+  }
+  expect(errors.map(error => util.inspect(error).split("\n")[0])).toEqual([
+    "Error: m",
+    "TypeError: m",
+    "Foo [Error]: m",
+  ]);
+});
+
+// Node v26.3.0 throws for the two causes. For the other values it prints other text: V8 makes the
+// stack when it is first read, and that read throws.
+const throwingToString = {
+  toString() {
+    throw new RangeError("toString");
+  },
+};
+test.each([
+  [
+    "a cause that inherits from DOMException.prototype",
+    () => new Error("a", { cause: { __proto__: DOMException.prototype } }),
+    "Error: a\n    at ",
+    " {\n  [cause]: [object DOMException]\n}",
+  ],
+  [
+    "a cause with stack and name getters that throw",
+    () =>
+      new Error("a", {
+        cause: Object.defineProperties(new Error("c"), { stack: throwingGetter, name: throwingGetter }),
+      }),
+    "Error: a\n    at ",
+    " {\n  [cause]: [object Error]\n}",
+  ],
+  [
+    "a name whose toString throws",
+    () => Object.defineProperty(new Error("m"), "name", { value: throwingToString }),
+    "Error: m\n    at ",
+    "",
+  ],
+  [
+    "a message whose toString throws",
+    () => Object.defineProperty(new Error("m"), "message", { value: throwingToString }),
+    "Error\n    at ",
+    "",
+  ],
+  [
+    "an enumerable stack that is a Symbol",
+    () => Object.defineProperty(new Error("m"), "stack", { value: Symbol("s"), enumerable: true }),
+    "[Symbol(s)] { stack: Symbol(s) }",
+    "[Symbol(s)] { stack: Symbol(s) }",
+  ],
+])("util.inspect does not throw for an error with %s", (_, create, start, end) => {
+  const text = util.inspect(create());
+  expect(text).toStartWith(start);
+  expect(text).toEndWith(end);
+});
+
 //! non-standard property, should this be kept?
 test.skip("util.stylizeWithHTML", () => {
   assert.strictEqual(

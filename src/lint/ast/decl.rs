@@ -928,6 +928,7 @@ impl<'a> Class<'a> {
     pub fn body_span(self) -> Span {
         // The last thing before the `{`.
         let head_end = (self.implements().last().map(|ty| ty.span().end))
+            .or_else(|| self.flow_mixins().last().map(|ty| ty.span().end))
             .or_else(|| self.extends_args().angle_brackets_span().map(|it| it.end))
             .or_else(|| self.extends().map(|e| e.outer_span().end))
             .or_else(|| self.type_params().angle_brackets_span().map(|it| it.end))

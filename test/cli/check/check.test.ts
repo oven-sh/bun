@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isRoot, isWindows, tempDir } from "harness";
 import {
   chmodSync,
   existsSync,
@@ -15387,7 +15387,7 @@ export function f<T>(rest: T) {
     });
 
     // The superuser can read every file.
-    const canReadEverything = process.platform === "win32" || process.getuid?.() === 0;
+    const canReadEverything = isWindows || isRoot;
     test.skipIf(canReadEverything)("a source file that cannot be read is reported", async () => {
       using dir = project({ "a.ts": `import "./secret";\n`, "secret.ts": `export {};\n` });
       chmodSync(join(String(dir), "secret.ts"), 0o000);

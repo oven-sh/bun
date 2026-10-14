@@ -128,10 +128,11 @@ impl Rule for NoImpliedEval {
                 .ts_symbol()
                 .is_some_and(|symbol| symbol.declarations().any(|declaration| declaration.is_in_linted_file()));
             if !is_declared_in_file {
-                match handler.is_parenthesized() {
+                let report = match handler.is_parenthesized() {
                     true => cx.report(handler.outer_span(), NO_IMPLIED_EVAL_ERROR),
                     false => cx.report(handler, NO_IMPLIED_EVAL_ERROR),
                 };
+                report.claims(node);
             }
             return;
         }

@@ -37,7 +37,7 @@ fn signature_context(flags: Flags) -> u32 {
     context
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseFunctionDeclaration`
     pub(crate) fn function_declaration(
         &mut self,
@@ -1092,7 +1092,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         start: u32,
         allow_return_type: bool,
     ) -> ExprId {
-        let pat = self.f.pat(PatKind::Ident(name), pos, end);
+        let pat = self.add_pat(PatKind::Ident(name), pos, end);
         let param = self.f.add_param(Param {
             pat,
             ty: TypeNodeId::NONE,

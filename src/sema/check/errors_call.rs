@@ -43,30 +43,42 @@ impl ArgumentCounts {
 
 impl Checker<'_, '_> {
     pub(super) fn check_calls(&mut self, file: FileId) {
-        let (hir, bound) = (self.hir(file), self.bound(file));
-        for i in 0..hir.exprs.len() {
-            if !matches!(
-                hir.exprs[i].kind,
+        let hir = self.hir(file);
+        for (i, e) in hir.exprs.iter().enumerate() {
+            if matches!(
+                e.kind,
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
-            ) || bound.is_unchecked(i)
-                || self.is_never_checked(hir.exprs[i].pos)
-            {
-                continue;
+            ) {
+                self.check_call_like(file, ExprId(i as u32));
             }
-            // `checkVariableLikeDeclaration` returns after `checkAliasSymbol` for `const x = require("m")`, so it never checks the call.
-            if let Parent::VarInit(d) = bound.expr_parent[i]
-                && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
-                && self.external_module_require_argument(file, d).is_some()
-            {
-                continue;
-            }
-            let e = ExprId(i as u32);
-            match hir.exprs[i].kind {
-                ExprKind::Call(c) => self.check_call(file, e, c, false),
-                ExprKind::New(c) => self.check_call(file, e, c, true),
-                ExprKind::TaggedTemplate(c) => self.check_tagged_template(file, e, c),
-                _ => {}
-            }
+        }
+    }
+
+    /// `checkCallExpression`, `checkNewExpression` or `checkTaggedTemplateExpression`, if `e` is one of them.
+    pub(super) fn check_call_like(&mut self, file: FileId, e: ExprId) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let i = e.idx();
+        if !matches!(
+            hir.exprs[i].kind,
+            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_)
+        ) || bound.is_unchecked(i)
+            // The ranges are those of the file of the task.
+            || self.task.file == Some(file) && self.is_never_checked(hir.exprs[i].pos)
+        {
+            return;
+        }
+        // `checkVariableLikeDeclaration` returns after `checkAliasSymbol` for `const x = require("m")`, so it never checks the call.
+        if let Parent::VarInit(d) = bound.expr_parent[i]
+            && matches!(hir[hir[d].pat].kind, PatKind::Ident(_))
+            && self.external_module_require_argument(file, d).is_some()
+        {
+            return;
+        }
+        match hir.exprs[i].kind {
+            ExprKind::Call(c) => self.check_call(file, e, c, false),
+            ExprKind::New(c) => self.check_call(file, e, c, true),
+            ExprKind::TaggedTemplate(c) => self.check_tagged_template(file, e, c),
+            _ => {}
         }
     }
 

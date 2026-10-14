@@ -78,18 +78,17 @@ pub(crate) fn line_ops<'a>(old: &'a [u8], new: &'a [u8]) -> Vec<Op<'a>> {
     ops
 }
 
-struct Side<'a> {
+struct Side {
     /// Per original line (0-based): the printed lines it produced.
     images: Vec<Vec<u32>>,
     /// Per original line: the original columns that carry a mapping (token starts that survived).
     cols: Vec<Vec<u32>>,
     /// Per printed line: did the key diff mark it changed.
     key_changed: Vec<bool>,
-    _text: &'a [u8],
 }
 
-impl<'a> Side<'a> {
-    fn new(original: &'a [u8], norm: &Normalized, mut key_changed: Vec<bool>) -> Side<'a> {
+impl Side {
+    fn new(original: &[u8], norm: &Normalized, mut key_changed: Vec<bool>) -> Side {
         // Comments the printer kept (`/*!`, `@license`) are judged by the text skeleton, not the key: a changed
         // banner must not mark the statement mapped next to it.
         for (g, line) in super::pm_diff_command::Lines(&norm.text).enumerate() {
@@ -127,7 +126,6 @@ impl<'a> Side<'a> {
             images,
             cols,
             key_changed,
-            _text: original,
         }
     }
     /// The line produced canonical output and none of it changed.

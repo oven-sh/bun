@@ -25,7 +25,6 @@ use bun_lint::ast::{
     PropKind, Stmt, StmtKind, StmtTag, TupleElem, TypeKind, TypeNode, TypeParam, UnOp, VarDecl,
 };
 use bun_lint::span::{Span, Spanned};
-use bun_lint::tokens::skip_trivia_back;
 use bun_sema::hir::ExprTag;
 
 /// An expression statement, or the body of an arrow function that is an expression, which oxc has
@@ -65,12 +64,51 @@ impl<'a> ExpressionStatement<'a> {
     }
 }
 
+impl<'a> From<ExpressionStatement<'a>> for Node<'a> {
+    fn from(statement: ExpressionStatement<'a>) -> Node<'a> {
+        match statement {
+            ExpressionStatement::Stmt(statement) => Node::Stmt(statement),
+            ExpressionStatement::ArrowBody(func) => Node::Func(func),
+        }
+    }
+}
+
 macro_rules! ast_nodes {
     ($($payload:ty { $($variant:ident)* })*) => {
         #[derive(Copy, Clone, PartialEq, Eq, Debug)]
         pub(crate) enum AstNodes<'a> {
             Program(Program<'a>),
             $($($variant($payload),)*)*
+        }
+
+        /// Which variant of [`AstNodes`].
+        #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+        #[repr(u8)]
+        pub(crate) enum AstKind {
+            Program,
+            $($($variant,)*)*
+        }
+
+        /// The names of the variants of [`AstKind`], by their number.
+        pub(crate) const AST_KIND_NAMES: &[&str] = &["Program", $($(stringify!($variant),)*)*];
+
+        impl<'a> AstNodes<'a> {
+            #[inline]
+            pub(crate) fn kind(self) -> AstKind {
+                match self {
+                    AstNodes::Program(_) => AstKind::Program,
+                    $($(AstNodes::$variant(_) => AstKind::$variant,)*)*
+                }
+            }
+
+            /// The node of `bun_lint::ast` that it is made of.
+            #[inline]
+            pub(crate) fn raw(self) -> Node<'a> {
+                match self {
+                    AstNodes::Program(file) => Node::File(file.0),
+                    $($(AstNodes::$variant(it) => Node::from(it),)*)*
+                }
+            }
         }
     };
 }
@@ -199,7 +237,7 @@ fn is_comma(e: Expr<'_>) -> bool {
 }
 
 /// Whether `e` is the `a, b` of `a, b, c`, which is not a node of its own in ESTree.
-fn is_inner_comma(e: Expr<'_>) -> bool {
+pub(crate) fn is_inner_comma(e: Expr<'_>) -> bool {
     is_comma(e)
         && !e.is_parenthesized()
         && matches!(e.parent(), Node::Expr(parent) if is_comma(parent) && parent.left() == Some(e))
@@ -399,7 +437,7 @@ fn parent_of_expr<'a>(e: Expr<'a>, above: Level) -> AstNodes<'a> {
             _ => inner_of_stmt(statement),
         },
         Node::VarDecl(declaration) => declaration.as_ast_nodes(),
-        Node::Param(param) if param.default() == Some(e) => param.as_ast_nodes(),
+        Node::Param(param) if param.default() == Some(e) => parent_in_parameter(param),
         Node::Param(_) => N::Decorator(e),
         Node::PatProp(prop) if prop.default() == Some(e) => {
             N::AssignmentPattern(Node::PatProp(prop))
@@ -407,7 +445,9 @@ fn parent_of_expr<'a>(e: Expr<'a>, above: Level) -> AstNodes<'a> {
         Node::PatProp(prop) => N::BindingProperty(prop),
         Node::PatElem(element) => N::AssignmentPattern(Node::PatElem(element)),
         Node::Prop(prop) => prop.as_ast_nodes(),
-        Node::Member(member) if member.decorators().any(|it| it == e) => N::Decorator(e),
+        Node::Member(member) if member.modifiers().around(e.span().start).is_some() => {
+            N::Decorator(e)
+        }
         Node::Member(member) => member.as_ast_nodes(),
         Node::Func(func) => N::ExpressionStatement(ExpressionStatement::ArrowBody(func)),
         Node::EnumMember(member) => N::TSEnumMember(member),
@@ -512,7 +552,7 @@ impl<'a> AsAstNodes<'a> for VarDecl<'a> {
 }
 
 /// The statement without the `export` around it.
-fn inner_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
+pub(crate) fn inner_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
     use AstNodes as N;
     match statement.tag() {
         StmtTag::Var => return N::VariableDeclaration(statement),
@@ -730,8 +770,18 @@ impl<'a> AsAstNodes<'a> for Pat<'a> {
                 AstNodes::AssignmentPattern(Node::PatElem(element))
             }
             Node::PatElem(element) => node_as_ast_nodes(element.parent()),
+            Node::Param(param) => parent_in_parameter(param),
             other => node_as_ast_nodes(other),
         }
+    }
+}
+
+/// What the pattern, the type annotation and the default value of `param` are in. `constructor(private a = 1) {}` is two nodes
+/// in ESTree: a `TSParameterProperty`, which is the `FormalParameter` here, and the `AssignmentPattern` `a = 1` in it.
+fn parent_in_parameter(param: Param<'_>) -> AstNodes<'_> {
+    match param.is_parameter_property() && param.default().is_some() {
+        true => AstNodes::AssignmentPattern(Node::Param(param)),
+        false => param.as_ast_nodes(),
     }
 }
 
@@ -778,6 +828,26 @@ fn parent_of_owner<'a>(owner: Node<'a>) -> AstNodes<'a> {
 }
 
 impl<'a> AstNodes<'a> {
+    /// The expression that it is, if it is one: what parentheses can be written around.
+    pub(crate) fn as_expression(self) -> Option<Expr<'a>> {
+        use AstNodes as N;
+        match self {
+            N::Function(func) | N::ArrowFunctionExpression(func) => func.owner().as_expr(),
+            N::Class(class) => class.owner().as_expr(),
+            N::SpreadElement(_)
+            | N::JSXExpressionContainer(_)
+            | N::JSXSpreadChild(_)
+            | N::JSXOpeningElement(_)
+            | N::Decorator(_)
+            | N::ChainExpression(_)
+            | N::AssignmentTargetRest(_) => None,
+            _ => match self.raw() {
+                Node::Expr(e) => Some(e),
+                _ => None,
+            },
+        }
+    }
+
     /// What it is directly in. `Program` is in itself.
     pub(crate) fn parent(self) -> AstNodes<'a> {
         use AstNodes as N;
@@ -954,11 +1024,15 @@ impl<'a> AstNodes<'a> {
             }
             N::BindingProperty(prop) => node_as_ast_nodes(prop.parent()),
             N::AssignmentPattern(Node::PatProp(prop)) => N::BindingProperty(prop),
+            N::AssignmentPattern(Node::Param(param)) => param.as_ast_nodes(),
             N::AssignmentPattern(node) | N::BindingRestElement(node) => {
                 node_as_ast_nodes(node.parent())
             }
 
-            N::TSTypeAnnotation(ty) => node_as_ast_nodes(ty.parent()),
+            N::TSTypeAnnotation(ty) => match ty.parent() {
+                Node::Param(param) => parent_in_parameter(param),
+                parent => node_as_ast_nodes(parent),
+            },
             N::TSKeywordType(ty)
             | N::TSThisType(ty)
             | N::TSTypeReference(ty)
@@ -1027,6 +1101,28 @@ impl<'a> AstNodes<'a> {
         }
     }
 
+    /// [`AstNodes::span`], starting at Prettier's `locStart`. The decorators of a class can come before its `export`, and
+    /// belong to the class and to the export: `@decorator export class A {}`.
+    pub(crate) fn span_with_decorators(self) -> Span {
+        use AstNodes as N;
+        let span = self.span();
+        let class = match self {
+            N::Class(class) => Some(class),
+            N::ExportNamedDeclaration(statement) | N::ExportDefaultDeclaration(statement) => {
+                match statement.kind() {
+                    StmtKind::Class(class) => Some(class),
+                    StmtKind::ExportDefault(e) => e.as_class(),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        match class.and_then(|class| class.decorators().next()) {
+            Some(first) => Span::new(N::Decorator(first).span().start.min(span.start), span.end),
+            None => span,
+        }
+    }
+
     /// The range that the node has in oxc.
     pub(crate) fn span(self) -> Span {
         use AstNodes as N;
@@ -1040,9 +1136,14 @@ impl<'a> AstNodes<'a> {
                 _ => e.span(),
             },
             N::Decorator(e) => {
-                let outer = e.outer_span();
-                let at = skip_trivia_back(e.file().text(), outer.start).saturating_sub(1);
-                Span::new(at, outer.end)
+                let modifiers = match e.parent() {
+                    Node::Class(class) => class.modifiers(),
+                    Node::Member(member) => member.modifiers(),
+                    Node::Param(param) => param.modifiers(),
+                    _ => return e.outer_span(),
+                };
+                (modifiers.around(e.span().start))
+                    .map_or_else(|| e.outer_span(), |modifier| modifier.span())
             }
             N::AssignmentTargetRest(e) => match (e.kind(), e.parent()) {
                 (ExprKind::Spread(_), _) => e.span(),
@@ -1096,8 +1197,12 @@ impl<'a> AstNodes<'a> {
             | N::AssignmentTargetWithDefault(e)
             | N::TypeCastExpression(e) => e.span(),
             N::AssignmentPattern(Node::PatProp(prop)) => match prop.default() {
-                Some(default) => prop.value().span().to(default.span()),
+                Some(default) => prop.value().span().to(default.outer_span()),
                 None => prop.span(),
+            },
+            N::AssignmentPattern(Node::Param(param)) => match param.default() {
+                Some(default) => param.pat().span().to(default.outer_span()),
+                None => param.span(),
             },
             N::SpreadElement(node) | N::AssignmentPattern(node) | N::BindingRestElement(node) => {
                 node.span()
@@ -1115,7 +1220,11 @@ impl<'a> AstNodes<'a> {
                 let end = arrow_behind_parameters(func).unwrap_or(span.end);
                 Span::new(span.start, end)
             }
-            N::Class(class) => class.estree_span(),
+            N::Class(class) => match class.owner() {
+                // `estree_span` looks at every decorator for an `export`.
+                Node::Stmt(statement) if !class.flags().contains(Flags::EXPORT) => statement.span(),
+                _ => class.estree_span(),
+            },
             N::ClassBody(class) => class.body_span(),
             N::FormalParameter(param)
             | N::FormalParameterRest(param)
@@ -1196,6 +1305,13 @@ impl<'a> AstNodes<'a> {
             N::ExportSpecifier(spec) => spec.span(),
             N::BindingIdentifier(pat) | N::ObjectPattern(pat) | N::ArrayPattern(pat) => pat.span(),
             N::BindingProperty(prop) => prop.span(),
+            // The `T` of `a is T` has no `:` to start at.
+            N::TSTypeAnnotation(ty)
+                if matches!(ty.parent(), Node::Type(parent)
+                    if matches!(parent.kind(), TypeKind::Predicate { .. })) =>
+            {
+                ty.outer_span()
+            }
             N::TSTypeAnnotation(ty) => ty.annotation_span(),
             N::TSKeywordType(ty)
             | N::TSThisType(ty)

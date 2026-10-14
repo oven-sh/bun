@@ -27,6 +27,7 @@
 //! - The default of the shorthand `{ a = 1 }` is an [`ExprKind::Assign`] that is the value of the
 //!   property. A [`TupleElem`] is there for every element of a tuple type, also for a plain `T`.
 
+pub mod comments;
 mod decl;
 mod entities;
 mod expr;
@@ -123,10 +124,11 @@ slices! {
         modifiers_of_params: hir::Span<hir::ModifierId>,
         modifiers_of_props: (hir::PropId, hir::Span<hir::ModifierId>),
         with_bodies: (u32, u32),
+        detached_semicolons: (u32, u32),
         import_attributes: (u32, hir::ExprId),
         deferred_import_calls: (hir::ExprId, u32),
         jsdoc_comments: (u32, u32),
-        comments: (u32, u32),
+        comments: hir::Comment,
         keyword_identifier_positions: u32,
         mentioned: u64,
         diagnostics: hir::Diagnostic,
@@ -185,8 +187,12 @@ pub(crate) struct Lazy {
     unicode_escape_range: UnicodeEscapeRange,
     /// A bit for each expression: it is in parentheses.
     parenthesized: OnceCell<Box<[u64]>>,
+    /// [`Node::index`]
+    pub(crate) kind_index_offsets: OnceCell<[u32; node::KINDS + 1]>,
     /// [`Stmt::directive`]
     pub(crate) directives: Cell<Option<(u32, u32)>>,
+    /// The array or the object of the last expression that [`Expr::is_assignment_target`] was asked about, and the answer.
+    pub(crate) last_assignment_target: Cell<Option<(hir::ExprId, bool)>>,
     /// For each `a, b` that is the start of a long `a, b, c, ..`: all of that.
     pub(crate) sequence_roots: OnceCell<rustc_hash::FxHashMap<hir::ExprId, hir::ExprId>>,
     /// Where the `a.b` of each `<a.b>` and `</a.b>` starts and ends, in order.
@@ -476,7 +482,7 @@ impl<'a> File<'a> {
     ///
     /// Unlike [`skip_trivia_back`](crate::tokens::skip_trivia_back) it is never fooled by what a
     /// comment or a string contains. Where there is only whitespace in between, it looks at nothing
-    /// else. Where there may be a comment, it asks the tokens of the file.
+    /// else. Where there is a comment, the comment knows. Otherwise it asks the tokens of the file.
     pub fn end_of_token_before(&'a self, at: u32) -> u32 {
         let text = self.hir.text;
         let mut end = (at as usize).min(text.len());
@@ -498,6 +504,15 @@ impl<'a> File<'a> {
                 Some(0x80..) => break,
                 Some(_) => return end as u32,
             }
+        }
+        let comments = self.hir.comments;
+        let count_before = comments.partition_point(|comment| comment.pos < at);
+        if let Some(last) = count_before
+            .checked_sub(1)
+            .and_then(|index| comments.get(index))
+            && last.next_token_start == at
+        {
+            return last.prev_token_end;
         }
         self.tokens_before(Span::empty(at))
             .next()
@@ -709,6 +724,10 @@ pub trait Handle<'a>: Copy {
     #[doc(hidden)]
     fn from_raw(file: &'a File<'a>, id: u32) -> Self;
 
+    /// How many nodes of this kind `file` has.
+    #[doc(hidden)]
+    fn count_in(file: &File<'a>) -> u32;
+
     /// It is synthesized from a JSDoc comment: lists leave it out.
     #[doc(hidden)]
     #[inline]
@@ -791,6 +810,10 @@ macro_rules! handle {
             #[inline]
             fn from_raw(file: &'a $crate::ast::File<'a>, id: u32) -> Self {
                 $name::new(file, ::bun_sema::hir::$id(id))
+            }
+            #[inline]
+            fn count_in(file: &$crate::ast::File<'a>) -> u32 {
+                file.hir.$field.len() as u32
             }
             #[inline]
             fn is_synthetic(self) -> bool {

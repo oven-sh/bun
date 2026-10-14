@@ -16,6 +16,7 @@
 
 pub mod Global;
 pub mod atomic_cell;
+pub mod ci_info;
 pub mod comptime_string_map;
 pub mod error;
 pub mod hint;
@@ -241,7 +242,6 @@ pub mod os {
 }
 
 pub mod code_generation;
-pub mod deprecated;
 pub mod env_var;
 pub mod feature_flags;
 pub use code_generation::{
@@ -2134,32 +2134,64 @@ pub(crate) mod strings_impl {
 
     /// Port of `bun.fmt.URLFormatter.findUrlPassword` — returns
     /// `(offset, len)` of the password segment, or None.
-    /// Only matches http:// and https:// schemes and rejects empty pw.
+    /// `s` must start with a URL (`https://`, `git+ssh://`, ...); rejects empty pw.
     pub(crate) fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
-        // Case-sensitive prefix match; the search region is truncated at the
-        // first '\n' and at the end of the authority before scanning for '@'/':'.
-        let scheme_end = if s.starts_with(b"http://") {
-            7
-        } else if s.starts_with(b"https://") {
-            8
-        } else {
+        // RFC 3986 scheme (`git+https` is one scheme) followed by `://`.
+        if !s.first().is_some_and(u8::is_ascii_alphabetic) {
             return None;
-        };
-        let mut rest = &s[scheme_end..];
+        }
+        let scheme_len = s.iter().take_while(|&&b| is_url_scheme_byte(b)).count();
+        if !s[scheme_len..].starts_with(b"://") {
+            return None;
+        }
+        let scheme_end = scheme_len + b"://".len();
+        let (offset, len) = find_authority_password(&s[scheme_end..])?;
+        Some((scheme_end + offset, len))
+    }
+
+    fn is_url_scheme_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')
+    }
+
+    /// [`find_url_password`] for what follows `scheme://`; userinfo ends at the last '@'.
+    pub(crate) fn find_authority_password(mut rest: &[u8]) -> Option<(usize, usize)> {
         if let Some(nl) = crate::strings::index_of_char_usize(rest, b'\n') {
             rest = &rest[..nl];
         }
         if let Some(end) = crate::strings::index_of_any(rest, b"/?#") {
             rest = &rest[..end];
         }
-        let at = crate::strings::index_of_char_usize(rest, b'@')?;
+        let at = crate::strings::last_index_of_char(rest, b'@')?;
         let userinfo = &rest[..at];
         let colon = crate::strings::index_of_char_usize(userinfo, b':')?;
         // Reject empty password (`user:@host`).
         if colon == at - 1 {
             return None;
         }
-        Some((scheme_end + colon + 1, at - colon - 1))
+        Some((colon + 1, at - colon - 1))
+    }
+
+    /// [`find_url_password`] for the first URL at or after `from` that has one; offset into `s`.
+    pub(crate) fn next_url_password(s: &[u8], mut from: usize) -> Option<(usize, usize)> {
+        while let Some(separator) = crate::strings::index_of(&s[from..], b"://") {
+            let separator = from + separator;
+            let scheme_len = s[from..separator]
+                .iter()
+                .rev()
+                .take_while(|&&b| is_url_scheme_byte(b))
+                .count();
+            // A scheme starts with a letter.
+            let not_letters = s[separator - scheme_len..separator]
+                .iter()
+                .take_while(|b| !b.is_ascii_alphabetic())
+                .count();
+            let start = separator - scheme_len + not_letters;
+            if let Some((offset, len)) = find_url_password(&s[start..]) {
+                return Some((start + offset, len));
+            }
+            from = separator + b"://".len();
+        }
+        None
     }
 
     /// Returns the UTF-8/WTF-8 sequence length implied by a *leading* byte,

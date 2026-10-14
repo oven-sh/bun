@@ -16,7 +16,7 @@ pub(crate) fn write_ts_tuple_type<'a>(
     if elements.is_empty() {
         write!(
             f,
-            format_dangling_comments(ty.span()).with_soft_block_indent()
+            dangling_comments(AstNodes::TSTupleType(ty)).with_soft_block_indent()
         );
     } else {
         let element_types = format_with(|f| {
@@ -66,7 +66,7 @@ pub(crate) fn write_ts_tuple_element<'a>(element: TupleElem<'a>, f: &mut Formatt
         Some(label) => write!(
             f,
             [
-                identifier(label, AstNodes::TSNamedTupleMember(element)),
+                identifier(label),
                 element.is_optional().then_some("?"),
                 ":",
                 space(),

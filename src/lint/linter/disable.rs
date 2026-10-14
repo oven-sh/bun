@@ -257,6 +257,7 @@ impl Input<'_, '_> {
             column,
             end: None,
             is_fatal: false,
+            claim: None,
             fix: self.wants_fixes.then_some(fix),
             suggestions: Vec::new(),
             suppressions: Vec::new(),

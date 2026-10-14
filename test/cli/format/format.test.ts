@@ -850,6 +850,26 @@ describe.concurrent("bun fmt", () => {
     expect(checked.exitCode).toBe(0);
   });
 
+  test("two comments before the `=>` of an arrow function are on its line", async () => {
+    // Prettier 3.9.9 prints `(a) /* b */\n/* c */ => d`, and no line break is allowed before `=>`.
+    const files = {
+      "a.js": "const f = a /* b */ /* c */ => d;\nuseEffect(() /* b */ /* c */ => { a(); }, [d]);\n",
+      "b.vue": '<template>\n  <div :x="a /* b */ /* c */ => a"></div>\n</template>\n',
+      "c.svelte": "<div x={a /* b */ /* c */ => d}></div>\n",
+    };
+    const result = await format(files, [], { reads: Object.keys(files) });
+    expect(result.files).toEqual({
+      "a.js":
+        "const f = (a) /* b */ /* c */ => d;\nuseEffect(\n  () /* b */ /* c */ => {\n    a();\n  },\n  [d],\n);\n",
+      "b.vue": '<template>\n  <div :x="(a) /* b */ /* c */ => a"></div>\n</template>\n',
+      "c.svelte": "<div x={(a) /* b */ /* c */ => d}></div>\n",
+    });
+    expect(result.exitCode).toBe(0);
+    const checked = await format(files, ["--debug-check"]);
+    expect(checked.stderr).toBe("");
+    expect(checked.exitCode).toBe(0);
+  });
+
   test("a vertical tab next to a comment is white space", async () => {
     const text = "function a(b\v/* c */) {}\nfunction d(/* e */\vf) {}\nconst g = /* h */\vi;\n";
     const result = await format({ "a.js": text }, [], { reads: ["a.js"] });
@@ -861,6 +881,361 @@ describe.concurrent("bun fmt", () => {
     const text = `let a: /* b */${space}C;\nfunction d(e: /* f */${space}G) {}\n`;
     const result = await format({ "a.ts": text }, [], { reads: ["a.ts"] });
     expect(result.files).toEqual({ "a.ts": text.replaceAll(space, " ") });
+    expect(result.exitCode).toBe(0);
+  });
+
+  // Where a comment makes the tool print another program, or none. The extension, the text, what is printed,
+  // and what the tool prints.
+  describe.each([
+    [
+      "Prettier 3.9.9 adds a `;` to a declaration in the head of a `for`",
+      {},
+      [
+        [
+          "js",
+          "for (/* prettier-ignore */ const  a of b) {\n}\n",
+          "for (/* prettier-ignore */ const  a of b) {\n}\n",
+          "for (/* prettier-ignore */ const  a; of b) {\n}\n",
+        ],
+        [
+          "js",
+          "for (/* prettier-ignore */ const  a in b) {\n}\n",
+          "for (/* prettier-ignore */ const  a in b) {\n}\n",
+          "for (/* prettier-ignore */ const  a; in b) {\n}\n",
+        ],
+        [
+          "js",
+          "for (/* prettier-ignore */ var i   =   1; ; ) {\n}\n",
+          "for (/* prettier-ignore */ var i   =   1; ;) {}\n",
+          "for (/* prettier-ignore */ var i   =   1;; ;) {}\n",
+        ],
+      ],
+    ],
+    [
+      "Prettier 3.9.9 leaves out the parentheses of what it writes as it is, where only its text needs them",
+      {},
+      [
+        [
+          "js",
+          "({}.a) && // prettier-ignore\n  b;\n",
+          "({}.a) && // prettier-ignore\n  b;\n",
+          "{}.a && // prettier-ignore\n  b;\n",
+        ],
+        [
+          "js",
+          "({} + a) /* prettier-ignore */ && b;\n",
+          "({} + a) /* prettier-ignore */ && b;\n",
+          "{} + a /* prettier-ignore */ && b;\n",
+        ],
+        [
+          "js",
+          "(function () {}()) && // prettier-ignore\n  b;\n",
+          "(function () {}()) && // prettier-ignore\n  b;\n",
+          "function () {}() && // prettier-ignore\n  b;\n",
+        ],
+        [
+          "js",
+          "x = () => ({}.a) && // prettier-ignore\n  b;\n",
+          "x = () =>\n  ({}.a) && // prettier-ignore\n  b;\n",
+          "x = () =>\n  {}.a && // prettier-ignore\n  b;\n",
+        ],
+        [
+          "js",
+          "for (let x = (a in b == c) && // prettier-ignore\n  d; ; );\n",
+          "for (\n  let x =\n    (a in b == c) && // prettier-ignore\n    d;\n  ;\n);\n",
+          "for (\n  let x =\n    a in b == c && // prettier-ignore\n    d;\n  ;\n);\n",
+        ],
+        [
+          "js",
+          "(new   A) // prettier-ignore\n  .foo();\n",
+          "(new   A) // prettier-ignore\n  .foo();\n",
+          "new   A // prettier-ignore\n  .foo();\n",
+        ],
+        [
+          "ts",
+          "b + (/* prettier-ignore */ a<T>) + c;\n",
+          "b + /* prettier-ignore */ (a<T>) + c;\n",
+          "b + /* prettier-ignore */ a<T> + c;\n",
+        ],
+        [
+          "ts",
+          "(/* prettier-ignore */ new A)!.b;\n",
+          "/* prettier-ignore */ (new A)!.b;\n",
+          "/* prettier-ignore */ new A!.b;\n",
+        ],
+        [
+          "ts",
+          "(/* prettier-ignore */ a<T>)<U>;\n",
+          "/* prettier-ignore */ (a<T>)<U>;\n",
+          "/* prettier-ignore */ a<T><U>;\n",
+        ],
+        [
+          "ts",
+          "x = b = (/* prettier-ignore */ a<T>) > c;\n",
+          "x = b = /* prettier-ignore */ (a<T>) > c;\n",
+          "x = b = /* prettier-ignore */ a<T> > c;\n",
+        ],
+        [
+          "js",
+          "(function(){}()) // prettier-ignore\n  .b();\n",
+          "(function(){}()) // prettier-ignore\n  .b();\n",
+          "function(){}() // prettier-ignore\n  .b();\n",
+        ],
+        [
+          "js",
+          "({}.a) // prettier-ignore\n  [0];\n",
+          "({}.a) // prettier-ignore\n[0];\n",
+          "{}.a // prettier-ignore\n[0];\n",
+        ],
+        [
+          "ts",
+          "x = (a  <T>) // prettier-ignore\n+ y;\n",
+          "x =\n  (a  <T>) + // prettier-ignore\n  y;\n",
+          "x =\n  a  <T> + // prettier-ignore\n  y;\n",
+        ],
+        [
+          "js",
+          "(new (A)) // prettier-ignore\n.b;\n",
+          "(new (A)) // prettier-ignore\n.b;\n",
+          "new (A) // prettier-ignore\n.b;\n",
+        ],
+        [
+          "js",
+          "(new (a + b)) // prettier-ignore\n(1);\n",
+          "(new (a + b)) // prettier-ignore\n(1);\n",
+          "new (a + b) // prettier-ignore\n(1);\n",
+        ],
+      ],
+    ],
+    [
+      "oxfmt 0.72 leaves out the parentheses of what it writes as it is",
+      { ".oxfmtrc.json": "{}" },
+      [
+        [
+          "js",
+          "/** @type {Foo} */ (new Foo // prettier-ignore\n).bar;\n",
+          "/** @type {Foo} */ (\n  new Foo // prettier-ignore\n).bar;\n",
+          "/** @type {Foo} */ new Foo.bar; // prettier-ignore\n",
+        ],
+        [
+          "js",
+          "const x = (a  +  b // prettier-ignore\n)(1);\n",
+          "const x = (a  +  b) // prettier-ignore\n(1);\n",
+          "const x = a  +  b // prettier-ignore\n(1);\n",
+        ],
+        [
+          "js",
+          "const x = (a  =  b // prettier-ignore\n) ? c : d;\n",
+          "const x = (a  =  b) // prettier-ignore\n  ? c\n  : d;\n",
+          "const x = a  =  b // prettier-ignore\n  ? c\n  : d;\n",
+        ],
+        [
+          "js",
+          "const x = a ? (b  ,  c // prettier-ignore\n) : d;\n",
+          "const x = a\n  ? (b  ,  c) // prettier-ignore\n  : d;\n",
+          "const x = a\n  ? b  ,  c // prettier-ignore\n  : d;\n",
+        ],
+        [
+          "js",
+          "const x = a ? b : (c  ,  d // prettier-ignore\n);\n",
+          "const x = a ? b : (c  ,  d); // prettier-ignore\n",
+          "const x = a ? b : c  ,  d; // prettier-ignore\n",
+        ],
+        [
+          "js",
+          "class A extends (a  +  b // prettier-ignore\n) {}\n",
+          "class A extends (a  +  b) // prettier-ignore\n{}\n",
+          "class A extends a  +  b // prettier-ignore\n{}\n",
+        ],
+        [
+          "js",
+          "const x = (()  =>  {} // prettier-ignore\n)();\n",
+          "const x = (()  =>  {}) // prettier-ignore\n();\n",
+          "const x = ()  =>  {} // prettier-ignore\n();\n",
+        ],
+        [
+          "ts",
+          "const x = (a  +  b /* prettier-ignore */\n) as T;\n",
+          "const x = (a  +  b) as /* prettier-ignore */ T;\n",
+          "const x = a  +  b as /* prettier-ignore */ T;\n",
+        ],
+        [
+          "ts",
+          "const x = (y  as  T // prettier-ignore\n)(1);\n",
+          "const x = (y  as  T) // prettier-ignore\n(1);\n",
+          "const x = y  as  T // prettier-ignore\n(1);\n",
+        ],
+        [
+          "ts",
+          "type A = B extends (C  extends D ? E : F // prettier-ignore\n) ? G : H;\n",
+          "type A = B extends (C  extends D ? E : F) // prettier-ignore\n  ? G\n  : H;\n",
+          "type A = B extends C  extends D ? E : F // prettier-ignore\n  ? G\n  : H;\n",
+        ],
+        [
+          "js",
+          "try {} catch (/* prettier-ignore */ e) {}\n",
+          "try {\n} catch (/* prettier-ignore */ e) {}\n",
+          "try {\n} catch /* prettier-ignore */ e {}\n",
+        ],
+        [
+          "js",
+          "try {\n} catch (\n  // prettier-ignore\n  { a,   b }\n) {}\n",
+          "try {\n} catch (\n  // prettier-ignore\n  { a,   b }\n) {}\n",
+          "try {\n} catch // prettier-ignore\n{ a,   b } {}\n",
+        ],
+      ],
+    ],
+    [
+      "Prettier 3.9.9 moves a comment of several lines before the `[]` of an array type, where a line break ends the type",
+      {},
+      [
+        ["ts", "type A = B[ /* a\n b */ ];\n", "type A = B[] /* a\n b */;\n", "type A = B /* a\n b */[];\n"],
+        [
+          "ts",
+          "let a: B[ /* a\n b */ ] | null;\n",
+          "let a:\n  | B[] /* a\n b */\n  | null;\n",
+          "let a:\n  | B /* a\n b */[]\n  | null;\n",
+        ],
+      ],
+    ],
+    [
+      "oxfmt 0.72 moves a comment of several lines before the `[]` of an array type, where a line break ends the type",
+      { ".oxfmtrc.json": "{}" },
+      [
+        [
+          "ts",
+          "let a: B[ /* a\n b */ ] | null;\n",
+          "let a:\n  | B[] /* a\n b */\n  | null;\n",
+          "let a:\n  | B /* a\n b */[]\n  | null;\n",
+        ],
+      ],
+    ],
+    [
+      "oxfmt 0.72 writes the `]` of an array after a line comment that follows a hole",
+      { ".oxfmtrc.json": "{}" },
+      [
+        ["js", "x = [a,\n// c\n,];\n", "x = [\n  a,\n  ,// c\n];\n", "x = [a, ,// c];\n"],
+        [
+          "js",
+          "const z = [a, , b, \n// c\n,];\n",
+          "const z = [\n  a,\n  ,\n  b,\n  ,// c\n];\n",
+          "const z = [a, , b, ,// c];\n",
+        ],
+      ],
+    ],
+    [
+      "Prettier 3.9.9 writes the `}` of a substitution in a template type after a line comment",
+      {},
+      [["ts", "type A = `${B}-${ // c\nC}`;\n", "type A = `${\n  B // c\n}-${C}`;\n", "type A = `${B // c}-${C}`;\n"]],
+    ],
+    [
+      "Prettier 3.9.9 writes what a class without a name implements after a line comment",
+      {},
+      [
+        [
+          "ts",
+          "x = class // c\nimplements A {};\n",
+          "x = class // c\nimplements A {};\n",
+          "x = class implements // cA {};\n",
+        ],
+        [
+          "ts",
+          "export default class\n// a\n// b\nimplements A {}\n",
+          "export default class // a\n// b\nimplements A {}\n",
+          "export default class implements // a\n// bA {}\n",
+        ],
+      ],
+    ],
+  ])("%s", (_, config, rows) => {
+    test("and `bun fmt` does not", async () => {
+      const names = rows.map(([extension], index) => `${index}.${extension}`);
+      const texts = Object.fromEntries(rows.map(([, text], index) => [names[index], text]));
+      const result = await format({ ...config, ...texts }, [], { reads: names });
+      expect(result.files).toEqual(Object.fromEntries(rows.map(([, , printed], index) => [names[index], printed])));
+      expect(result.exitCode).toBe(0);
+    });
+  });
+
+  test("a comment in what a `prettier-ignore` comment leads is copied with it, once", async () => {
+    const text = "x = <a {\n  // prettier-ignore\n  ...b\n  // c1\n  .c} />;\n";
+    const result = await format({ "a.jsx": text }, [], { reads: ["a.jsx"] });
+    expect(result.files).toEqual({
+      "a.jsx": "x = (\n  <a\n    {\n      // prettier-ignore\n      ...b\n  // c1\n  .c\n    }\n  />\n);\n",
+    });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a `prettier-ignore` comment before an empty body is printed", async () => {
+    // Prettier 3.9.9 moves the comment into the body, copies the body, and throws: 'Comment "prettier-ignore" was not printed.'
+    const rows = [
+      ["class A // prettier-ignore\n{  }\n", "class A // prettier-ignore\n{  }\n"],
+      ["class A extends (a  +  b) // prettier-ignore\n{  }\n", "class A extends (a + b) // prettier-ignore\n{  }\n"],
+      [
+        "class A extends (a  +  b /* prettier-ignore */\n) {  }\n",
+        "class A extends (a + b) /* prettier-ignore */\n{  }\n",
+      ],
+      ["x = (function  () // prettier-ignore\n{  })();\n", "x = (function () // prettier-ignore\n{  })();\n"],
+    ];
+    const names = rows.map((_, index) => `${index}.js`);
+    const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));
+    const result = await format(texts, [], { reads: names });
+    expect(result.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a comment that no printer writes is written after its statement", async () => {
+    // The file used to be refused: "The formatter failed". When this input gets a printer for `/* a */`, which is right, take
+    // another one that `bun fmt --debug-unprinted-comments <directory> <file>` has a line for.
+    const text = "type N = keyof ( /* a */ B | C /* prettier-ignore */ );\ne;\n";
+    const result = await format({ "a.ts": text }, [], { reads: ["a.ts"] });
+    expect(result.files["a.ts"]).toBe("type N = keyof (B | C) /* prettier-ignore */; /* a */\ne;\n");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("`<!--` and `-->` comments in a script", async () => {
+    // What oxfmt 0.72 prints, unless it says otherwise. Prettier 3.9.9 does not parse these files.
+    const rows = [
+      ["<!-- prettier-ignore\na(  b  );\nc(  d  );\n", "<!-- prettier-ignore\na(  b  );\nc(d);\n"],
+      ["a;\n--> prettier-ignore\nb(  c  );\nd(  e  );\n", "a;\n--> prettier-ignore\nb(  c  );\nd(e);\n"],
+      ["<!-- a comment\na(  b  );\n", "<!-- a comment\na(b);\n"],
+      // `-->` starts a comment at the start of a line only. oxfmt prints `var --> c`, which does not parse, and `x = a--> c`,
+      // which is `x = a-- > c.b.c()`.
+      ["var\n--> c\na = b;\n", "var\n  --> c\n  a = b;\n"],
+      ["x = a\n--> c\n.b.c();\n", "x = a\n--> c\n.b\n  .c();\n"],
+    ];
+    const names = rows.map((_, index) => `${index}.js`);
+    const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));
+    const printed = Object.fromEntries(rows.map(([, printed], index) => [names[index], printed]));
+    for (const configuration of [{}, { ".oxfmtrc.json": "{}" }]) {
+      const result = await format({ ...configuration, ...texts }, [], { reads: names });
+      expect(result.files).toEqual(printed);
+      expect(result.exitCode).toBe(0);
+    }
+  });
+
+  test("a comment that waits for the end of the line is not written in the middle of the next one", async () => {
+    // Prettier 3.9.9 prints `a; /**⏎// b⏎ * c⏎ */`, and with `/* b */` on its own line what it prints does not parse.
+    const rows = [
+      ["a // b\n; /**\n * c\n */\n", "a; // b\n/**\n * c\n */\n"],
+      ["a\n/* b */\n; /**\n * c\n */\n", "a;\n/* b */ /**\n * c\n */\n"],
+      // Prettier: `import a from /** // b⏎ * c⏎ */ "d";`
+      ['import a // b\n/**\n * c\n */ from "d";\n', 'import a from  // b\n/**\n * c\n */ "d";\n'],
+    ];
+    const names = rows.map((_, index) => `${index}.js`);
+    const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));
+    const result = await format(texts, [], { reads: names });
+    expect(result.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a binding of Vue that is nothing but a comment stays as it is", async () => {
+    // oxfmt 0.72 prints `v-slot=""` and `v-for=" in xs"`.
+    const text =
+      '<template>\n  <a   v-slot="/* a */"   b="c" />\n  <a   v-for="(/* d */) in xs"   b="c" />\n</template>\n';
+    const result = await format({ ".oxfmtrc.json": "{}", "a.vue": text }, [], { reads: ["a.vue"] });
+    expect(result.files).toEqual({
+      "a.vue": '<template>\n  <a v-slot="/* a */" b="c" />\n  <a v-for="(/* d */) in xs" b="c" />\n</template>\n',
+    });
     expect(result.exitCode).toBe(0);
   });
 
@@ -3610,6 +3985,115 @@ try {
     expect(slowdown(odd, plain)).toBeLessThan(6);
   }, 120_000);
 
+  // A comment in each repetition: what attaching or printing comments once walked again for each of them, and what is like it.
+  test("JavaScript with many comments takes time in proportion to its size", async () => {
+    const count = isDebug || isASAN ? 2_000 : 40_000;
+    // The ending of the name, what is before, what is repeated, what is after.
+    const shapes: [string, string, string, string][] = [
+      ["js", "", "a; // c\n", ""],
+      ["js", "", "// c\na;\n", ""],
+      ["js", "", "// c\n", ""],
+      ["js", "a; // c\n", ";", ""],
+      ["js", "a(", "/* c */ ", "b);"],
+      ["js", "a;\n", "/* c */ ", "\n"],
+      ["js", "x = ", "/* c */ ", "a;"],
+      ["js", "x ", "/* c */ ", "= a;"],
+      ["js", "x =\n", "// c\n", "a;"],
+      ["js", "x\n", "// c\n", "= a;"],
+      ["js", "", "// c\n", "a;"],
+      ["js", "a;\n", "// c\n", "b;"],
+      ["js", "x = a ", "/* c */ ", "+ b;"],
+      ["js", "x = a + ", "/* c */ ", "b;"],
+      ["js", "x = a\n", "// c\n", "+ b;"],
+      ["js", "x = a +\n", "// c\n", "b;"],
+      ["js", "x = { a: ", "/* c */ ", "b };"],
+      ["js", "x = a ? ", "/* c */ ", "b : c;"],
+      ["js", "x = a.", "/* c */ ", "b;"],
+      ["js", "function f() ", "/* c */ ", "{}"],
+      ["js", "if (a) ", "/* c */ ", "b;"],
+      ["js", "if (a) {}\n", "// c\n", "else {}"],
+      ["js", "return_: ", "/* c */ ", "a;"],
+      ["ts", "type A = (", "/* c */ ", "B | C)[];"],
+      ["ts", "type A = ", "/* c */ ", "B;"],
+      ["ts", "let a: ", "/* c */ ", "B = c;"],
+      ["ts", "let a ", "/* c */ ", ": B = c;"],
+      ["ts", "class A {\n", "// c\n", "a = 1;\n}"],
+      ["jsx", "x = <a ", "/* c */ ", "b />;"],
+      ["js", "x = `", "${/* c */ a}", "`;"],
+      ["js", "x = `", "${a /* c */}", "`;"],
+      ["js", "x = [\n", "a, // c\n", "];"],
+      ["js", "x = [\n", "// c\na,\n", "];"],
+      ["js", "x = [\n", "/* c */ a,\n", "];"],
+      ["js", "x = [\n", ", // c\n", "];"],
+      ["js", "// prettier-ignore\nx = [\n", "a, // c\n", "];"],
+      ["js", "x = {\n", "a: 1, // c\n", "};"],
+      ["js", "x = {\n", "// c\na: 1,\n", "};"],
+      ["js", "x = {\n", "a: /* c */ 1,\n", "};"],
+      ["js", "x = {\n", "a: /* c */ 1, // d\n", "};"],
+      ["js", "x = {\n", "// c\na: /* d */ 1,\n", "};"],
+      ["js", "function f(\n", "a = /* c */ 1, // d\n", ") {}"],
+      ["js", "let\n", "a = /* c */ 1, // d\n", "b;"],
+      ["js", "switch (a) {\n", "case /* c */ 1: // d\n", "}"],
+      ["js", "export {\n", "a as /* c */ b, // d\n", "};"],
+      ["ts", "class A {\n", "a = /* c */ 1; // d\n", "}"],
+      ["ts", "interface I {\n", "a: /* c */ 1; // d\n", "}"],
+      ["ts", "enum E {\n", "A = /* c */ 1, // d\n", "}"],
+      ["ts", "type T = [\n", "a: /* c */ A, // d\n", "];"],
+      ["ts", "type T<\n", "A = /* c */ B, // d\n", "> = 1;"],
+      ["jsx", "x = <a\n", 'b=/* c */ "d" // e\n', "/>;"],
+      ["js", "f(\n", "a, // c\n", ");"],
+      ["js", "function f(\n", "a, // c\n", ") {}"],
+      ["js", "switch (a) {\n", "// c\ncase 1:\n", "}"],
+      ["js", "x = a\n", ".b() // c\n", ";"],
+      ["js", "x = a\n", "+ b // c\n", ";"],
+      ["js", "export {\n", "a, // c\n", "};"],
+      ["js", "x = ", "! /* c */ ", "a;"],
+      ["js", "x = ", "new /* c */ ", "a;"],
+      ["js", "x = ", "() => /* c */ ", "a;"],
+      ["js", "", "{ // c\n", ""],
+      ["js", "x = ", "[ // c\n", ""],
+      ["js", "x = ", "/** @type {T} */ (", "a"],
+      ["jsx", "x = <a>\n", "{/* c */}\n", "</a>;"],
+      ["jsx", "x = <a\n", "b // c\n", "/>;"],
+      ["ts", "type T =\n", "| A // c\n", ";"],
+      ["ts", "type T =\n", "& A // c\n", ";"],
+      ["ts", "type T = [\n", "A, // c\n", "];"],
+      ["ts", "class A {\n", "// c\na = 1;\n", "}"],
+      ["ts", "class A {\n", "a = 1; // c\n", "}"],
+      ["ts", "interface I {\n", "a: 1; // c\n", "}"],
+      ["ts", "enum E {\n", "A, // c\n", "}"],
+      ["ts", "class A {\n", "@a // c\n", "b;\n}"],
+      ["ts", "class A {\nb(", "@a // c\n", "c) {}\n}"],
+      ["js", "x = ", "@a // c\n", "class {};"],
+      ["js", "", "@a // c\n", "class A {}"],
+      ["js", "f()", "(/* c */)", ";"],
+      ["js", "f()", " /* c */ ()", ";"],
+      ["js", "a[0]", "(/* c */)", ".b();"],
+      ["js", `"${"a".repeat(100 * count)}"\n`, "// c\n", "[b];"],
+      ["js", "a", "\n// c\n.b", ";"],
+      ["js", "(", "/* c */ ", `a${".b".repeat(count)})();`],
+      ["js", "(", "/* c */ ", `a${".b".repeat(count)}).c;`],
+    ];
+    const texts = shapes.map(([, before, unit, after]) => before + unit.repeat(count) + after);
+    const ordinary =
+      "// Returns the sum.\nfunction add(first, second) {\n  const sum = first + second; // a number\n  return [sum, { first, second }];\n}\n\n";
+    const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
+    for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }]) {
+      const run = (text: (index: number) => string) =>
+        format(
+          {
+            ...configuration,
+            ...Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])),
+          },
+          ["--check", "--log-level", "silent"],
+        );
+      const odd = await run(index => texts[index]);
+      const plain = await run(() => ordinary.repeat(length / ordinary.length));
+      // 2.3 to 3 on Linux and 8.3 on Windows when all is well. One shape that takes quadratic time adds 9 or more.
+      expect(slowdown(odd, plain)).toBeLessThan(isWindows ? 16 : 8);
+    }
+  }, 120_000);
+
   // The same for what is repeated in something. Prettier takes the square of the number of parameters.
   test("the parameters of @include, @mixin and @function take time in proportion to their number", async () => {
     const count = isDebug || isASAN ? 2_000 : 40_000;
@@ -4866,6 +5350,8 @@ try {
     test.each([
       [["--cursor-offset", "13"], js, printed, "14"],
       [["--cursor-offset", "0"], js, printed, "0"],
+      // The cursor is in a comment that moves. It stays after the name, which is the node before it.
+      [["--cursor-offset", "20"], "function f // comment\n(a, b) {}\n", "function f(a, b) {} // comment\n", "10"],
       [
         ["--range-start", "10", "--range-end", "20"],
         "a  =  1;\nb  =  2;\nc  =  3;\n",

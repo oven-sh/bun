@@ -37,14 +37,10 @@
 
 [bun_install]
 "bare_bool_args:src/install/windows-shim/BinLinkingShim.rs" = 1
-"defaulted_failure:src/install/npm.rs" = 1
 "generic_body_not_generic:src/install/bin.rs" = 1
 "generic_body_not_generic:src/install/extract_tarball.rs" = 1
-"generic_body_not_generic:src/install/isolated_install/Installer.rs" = 2
-"generic_body_not_generic:src/install/lockfile.rs" = 2
 "generic_body_not_generic:src/install/lockfile/Tree.rs" = 1
 "generic_body_not_generic:src/install/lockfile/printer/Yarn.rs" = 1
-"generic_body_not_generic:src/install/lockfile/printer/tree_printer.rs" = 4
 "generic_body_not_generic:src/install/windows-shim/bun_shim_impl.rs" = 1
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
 "unused_pub:src/install/windows-shim/bun_shim_impl.rs" = 1
@@ -127,9 +123,7 @@
 "generic_body_not_generic:src/runtime/api/bun/h2_frame_parser.rs" = 2
 "generic_body_not_generic:src/runtime/api/cron.rs" = 1
 "generic_body_not_generic:src/runtime/bake/dev_server/incremental_graph.rs" = 2
-"generic_body_not_generic:src/runtime/cli/create_command.rs" = 1
 "generic_body_not_generic:src/runtime/cli/multi_run.rs" = 1
-"generic_body_not_generic:src/runtime/cli/pack_command.rs" = 1
 "generic_body_not_generic:src/runtime/cli/pm_diff_normalize.rs" = 1
 "generic_body_not_generic:src/runtime/cli/test_command.rs" = 3
 "generic_body_not_generic:src/runtime/jsc_hooks.rs" = 1
@@ -151,8 +145,6 @@
 "generic_body_not_generic:src/runtime/webcore/TextDecoder.rs" = 1
 "parallel_bools:src/runtime/shell/IOWriter.rs" = 1
 "reimplemented_helper:src/runtime/hw_exports.rs" = 1
-"same_match_twice:src/runtime/cli/pack_command.rs" = 1
-"same_match_twice:src/runtime/cli/update_interactive_command.rs" = 2
 "same_match_twice:src/runtime/webcore/Blob.rs" = 2
 "same_match_twice:src/runtime/webcore/blob/write_file.rs" = 3
 "unchecked_construction:src/runtime/api/js_bundle_completion_task.rs" = 1
@@ -177,7 +169,7 @@
 
 [bun_sys]
 "error_collapsed_to_bool:src/sys/lib.rs" = 4
-"unused_pub:src/sys/lib.rs" = 56
+"unused_pub:src/sys/lib.rs" = 55
 "unused_pub:src/sys/windows/mod.rs" = 5
 
 [bun_text_diff]

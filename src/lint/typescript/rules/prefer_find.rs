@@ -234,7 +234,8 @@ impl PreferFind {
         filter_expressions: &FilterExpressions,
     ) {
         let is_oxlint = cx.language().is_oxlint;
-        cx.report(whole, PREFER_FIND).suggest(PREFER_FIND_SUGGESTION, |fixer| {
+        // Where unicorn's rule reports too, `object` is the call of `filter`.
+        cx.report(whole, PREFER_FIND).claims(object).suggest(PREFER_FIND_SUGGESTION, |fixer| {
             // tsgolint also suggests `a.find(f) = 1` and `a.find(f)++`, which do not parse.
             if is_oxlint && (is_assignee(whole) || is_assignment_target(whole)) {
                 return None;

@@ -2090,19 +2090,11 @@ impl<'a> Parser<'a> {
             }
 
             for item in p.import_records.items() {
-                // skip if they did import it
-                if item.path.text == b"bun:test"
-                    || item.path.text == b"@jest/globals"
-                    || item.path.text == b"vitest"
-                {
+                if item.path.text == b"@jest/globals" || item.path.text == b"vitest" {
                     if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                         // If we rewrote import paths, we need to disable the runtime transpiler cache
-                        if item.path.text != b"bun:test" {
-                            cache.input_hash = None;
-                        }
+                        cache.input_hash = None;
                     }
-
-                    break 'outer;
                 }
             }
 

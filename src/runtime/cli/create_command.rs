@@ -59,6 +59,24 @@ const NEVER_CONFLICT: &[&[u8]] = &[b"README.md", b"gitignore", b".gitignore", b"
 
 const NPM_TASK_ARGS: &[&[u8]] = &[b"run"];
 
+/// Copies `gitignore` to `.gitignore` in `dir`. As the extraction, it goes through no junction or symlink that is
+/// already in `dir`, and a symlink under the name `.gitignore` is replaced.
+#[cfg(windows)]
+fn copy_gitignore(dir: bun_sys::Fd) -> bun_sys::Maybe<()> {
+    let mut destination = bun_libarchive::ContainedDir::new(dir);
+    let Some(from) = destination.open_existing(bun_core::zstr!("gitignore"), bun_sys::O::RDONLY)?
+    else {
+        return Ok(());
+    };
+    let _close_from = bun_sys::CloseOnDrop::new(from);
+    let mode = bun_sys::fstat(from)?.st_mode as bun_sys::Mode;
+    let Some(to) = destination.create_file(bun_core::zstr!(".gitignore"), mode)? else {
+        return Ok(());
+    };
+    let _close_to = bun_sys::CloseOnDrop::new(to);
+    bun_sys::copy_file(from, to)
+}
+
 fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClient>) {
     let task = strings::trim(task_, b" \n\r\t");
     if task.is_empty() {
@@ -761,12 +779,7 @@ impl CreateCommand {
             let parent_dir = bun_sys::Dir::open(destination)?;
             #[cfg(windows)]
             {
-                let _ = parent_dir.copy_file(
-                    b"gitignore",
-                    &parent_dir,
-                    b".gitignore",
-                    Default::default(),
-                );
+                let _ = copy_gitignore(parent_dir.fd());
             }
             #[cfg(not(windows))]
             {

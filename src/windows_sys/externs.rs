@@ -300,6 +300,13 @@ pub const FILE_SYNCHRONOUS_IO_NONALERT: ULONG = 0x0000_0020;
 pub const FILE_NON_DIRECTORY_FILE: ULONG = 0x0000_0040;
 pub const FILE_OPEN_REPARSE_POINT: ULONG = 0x0020_0000;
 
+/// `IO_STATUS_BLOCK.Information` of an `NtCreateFile` that made the file (`ntifs.h`).
+pub const FILE_CREATED: usize = 2;
+
+/// `OBJECT_ATTRIBUTES.Attributes` (`ntdef.h`): a junction or a symlink in the name fails the open with
+/// `STATUS_REPARSE_POINT_ENCOUNTERED`.
+pub const OBJ_DONT_REPARSE: ULONG = 0x0000_1000;
+
 // Standard access rights (`winnt.h`).
 pub const DELETE: ACCESS_MASK = 0x0001_0000;
 pub const READ_CONTROL: ACCESS_MASK = 0x0002_0000;
@@ -352,6 +359,13 @@ pub struct FILE_BASIC_INFORMATION {
     pub FileAttributes: ULONG,
 }
 
+/// `FILE_ATTRIBUTE_TAG_INFORMATION` (`ntifs.h`). `ReparseTag` is 0 unless a reparse point.
+#[repr(C)]
+pub struct FILE_ATTRIBUTE_TAG_INFORMATION {
+    pub FileAttributes: ULONG,
+    pub ReparseTag: ULONG,
+}
+
 /// `FILE_DIRECTORY_INFORMATION` (`ntifs.h`) — `NtQueryDirectoryFile` record.
 /// `FileName` is a flexible array; declared `[WCHAR; 1]` to match C layout
 /// (read past it via `FileNameLength`).
@@ -381,6 +395,7 @@ impl FILE_INFORMATION_CLASS {
     pub const FileDispositionInformation: Self = Self(13);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
+    pub const FileAttributeTagInformation: Self = Self(35);
     pub const FileDispositionInformationEx: Self = Self(64);
 }
 
@@ -463,6 +478,9 @@ const _: () = {
     assert!(core::mem::size_of::<FILE_FS_VOLUME_INFORMATION>() == 24);
     assert!(core::mem::offset_of!(FILE_FS_VOLUME_INFORMATION, VolumeSerialNumber) == 8);
 };
+
+/// `FILE_FS_DEVICE_INFORMATION.Characteristics` (`wdm.h`): a network redirector owns the volume.
+pub const FILE_REMOTE_DEVICE: ULONG = 0x0000_0010;
 
 /// `DEVICE_TYPE` values (`ntddk.h`).
 pub const FILE_DEVICE_NAMED_PIPE: ULONG = 0x00000011;
@@ -1241,6 +1259,8 @@ impl Win32Error {
     pub const NOT_CONNECTED: Win32Error = Win32Error(2250);
     pub const IO_REISSUE_AS_CACHED: Win32Error = Win32Error(3950);
     pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(4392);
+    /// `STATUS_REPARSE_POINT_ENCOUNTERED`: `OBJ_DONT_REPARSE` met a junction or a symlink.
+    pub const REPARSE_POINT_ENCOUNTERED: Win32Error = Win32Error(4395);
 
     // — WSA pseudo-variants —
     pub const WSAEINTR: Win32Error = Win32Error(10004);

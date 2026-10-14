@@ -4032,6 +4032,7 @@ mod windows_impl {
                     None
                 },
                 remove_dir: (flags & AT_REMOVEDIR) != 0,
+                object_attributes: 0,
             },
         )
     }
@@ -6244,6 +6245,8 @@ pub struct WindowsOpenDirOptions {
     pub no_follow: bool,
     pub can_rename_or_delete: bool,
     pub op: WindowsOpenDirOp,
+    /// `OBJECT_ATTRIBUTES.Attributes`.
+    pub object_attributes: u32,
 }
 #[cfg(windows)]
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -6262,6 +6265,8 @@ pub struct NtCreateFileOptions {
     pub options: u32,
     pub attributes: u32,
     pub sharing_mode: u32,
+    /// `OBJECT_ATTRIBUTES.Attributes`.
+    pub object_attributes: u32,
 }
 #[cfg(windows)]
 impl Default for NtCreateFileOptions {
@@ -6272,6 +6277,7 @@ impl Default for NtCreateFileOptions {
             options: 0,
             attributes: bun_windows_sys::FILE_ATTRIBUTE_NORMAL,
             sharing_mode: FILE_SHARE,
+            object_attributes: 0,
         }
     }
 }
@@ -6683,6 +6689,16 @@ pub(crate) fn open_dir_at_windows_nt_path(
     path: &bun_core::WStr,
     options: WindowsOpenDirOptions,
 ) -> Maybe<Fd> {
+    open_dir_at_windows_nt_path_created(dir_fd, path, options).map(|(fd, _)| fd)
+}
+
+/// `open_dir_at_windows_nt_path`, and whether the open made the directory.
+#[cfg(windows)]
+fn open_dir_at_windows_nt_path_created(
+    dir_fd: Fd,
+    path: &bun_core::WStr,
+    options: WindowsOpenDirOptions,
+) -> Maybe<(Fd, bool)> {
     use bun_windows_sys::externs as w;
     // No FILE_ADD_FILE|FILE_ADD_SUBDIRECTORY: child creates via RootDirectory
     // check the directory's ACL, not this handle's access mask, so requesting
@@ -6730,7 +6746,8 @@ pub(crate) fn open_dir_at_windows_nt_path(
                 | w::FILE_SYNCHRONOUS_IO_NONALERT
                 | windows::FILE_OPEN_FOR_BACKUP_INTENT
                 | open_reparse,
-        );
+        )
+        .map(|fd| (fd, false));
     }
 
     let path_len_bytes = (p.len() * 2) as u16;
@@ -6748,7 +6765,7 @@ pub(crate) fn open_dir_at_windows_nt_path(
         } else {
             Fd::cwd().native()
         },
-        Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+        Attributes: options.object_attributes, // Note we do not use OBJ_CASE_INSENSITIVE here.
         ObjectName: &mut nt_name,
         SecurityDescriptor: core::ptr::null_mut(),
         SecurityQualityOfService: core::ptr::null_mut(),
@@ -6782,7 +6799,9 @@ pub(crate) fn open_dir_at_windows_nt_path(
     // `OBJECT_NAME_INVALID` to EINVAL, and `open` of a bad name is ENOENT
     // (libuv/Node), which `RtlNtStatusToDosError` gives.
     match windows::Win32Error::from_nt_status(rc) {
-        windows::Win32Error::SUCCESS => Ok(Fd::from_system(fd)),
+        windows::Win32Error::SUCCESS => {
+            Ok((Fd::from_system(fd), io.Information == w::FILE_CREATED))
+        }
         code => Err(Error::from_win32(code, Tag::open)),
     }
 }
@@ -6796,6 +6815,16 @@ pub(crate) fn open_file_at_windows_nt_path(
     path: &bun_core::WStr,
     options: NtCreateFileOptions,
 ) -> Maybe<Fd> {
+    open_file_at_windows_nt_path_created(dir, path, options).map(|(fd, _)| fd)
+}
+
+/// `open_file_at_windows_nt_path`, and whether the open made the file.
+#[cfg(windows)]
+fn open_file_at_windows_nt_path_created(
+    dir: Fd,
+    path: &bun_core::WStr,
+    options: NtCreateFileOptions,
+) -> Maybe<(Fd, bool)> {
     use bun_windows_sys::externs as w;
     let p = path.as_slice();
     let mut result: w::HANDLE = core::ptr::null_mut();
@@ -6821,7 +6850,7 @@ pub(crate) fn open_file_at_windows_nt_path(
         } else {
             Fd::cwd().native()
         },
-        Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+        Attributes: options.object_attributes, // Note we do not use OBJ_CASE_INSENSITIVE here.
         SecurityDescriptor: core::ptr::null_mut(),
         SecurityQualityOfService: core::ptr::null_mut(),
     };
@@ -6882,7 +6911,7 @@ pub(crate) fn open_file_at_windows_nt_path(
                         return Err(Error::from_code(E::EUNKNOWN, Tag::SetFilePointerEx));
                     }
                 }
-                Ok(Fd::from_system(result))
+                Ok((Fd::from_system(result), io.Information == w::FILE_CREATED))
             }
             // See `open_dir_at_windows_nt_path`: Rtl mapping, not the curated table.
             code => Err(Error::from_win32(code, Tag::open)),
@@ -6942,7 +6971,6 @@ pub fn open_file_at_windows(dir_fd: Fd, path: &[u16], opts: NtCreateFileOptions)
 /// translation.
 #[cfg(windows)]
 fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -> Maybe<Fd> {
-    use bun_windows_sys::externs as w;
     if (flags & O::DIRECTORY) != 0 {
         // We interpret `O_PATH` as meaning "no iteration".
         return open_dir_at_windows_nt_path(
@@ -6957,6 +6985,13 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         );
     }
 
+    open_file_at_windows_nt_path(dir, norm, nt_file_options(flags, perm))
+}
+
+/// What `NtCreateFile` gets for the POSIX `flags` and `perm` of a file open.
+#[cfg(windows)]
+fn nt_file_options(flags: i32, perm: Mode) -> NtCreateFileOptions {
+    use bun_windows_sys::externs as w;
     let nonblock = (flags & O::NONBLOCK) != 0;
 
     // Matches libuv fs__open: O_RDONLY asks for read access only. GENERIC_WRITE
@@ -7007,17 +7042,13 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         attributes |= w::FILE_ATTRIBUTE_READONLY;
     }
 
-    open_file_at_windows_nt_path(
-        dir,
-        norm,
-        NtCreateFileOptions {
-            access_mask,
-            disposition,
-            options: opts,
-            attributes,
-            ..Default::default()
-        },
-    )
+    NtCreateFileOptions {
+        access_mask,
+        disposition,
+        options: opts,
+        attributes,
+        ..Default::default()
+    }
 }
 
 /// `openatWindows` — UTF-16 input.
@@ -7040,6 +7071,211 @@ pub fn openat_windows_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> 
     let mut buf2 = bun_paths::w_path_buffer_pool::get();
     let norm = normalize_path_windows(dir, wide, &mut buf2.0[..])?;
     openat_windows_impl(dir, norm, flags, perm)
+}
+
+// ── opens below a directory handle ──
+//
+// `path` stays relative to `RootDirectory`. `normalize_path_windows` makes an
+// absolute name of it, which `NtCreateFile` resolves from the volume again.
+//
+// `object_attributes` is 0 or `OBJ_DONT_REPARSE`. With `OBJ_DONT_REPARSE`, a
+// junction or a symlink in `path` fails the call with ELOOP. A server resolves
+// the paths below a handle for which `is_remote_device` is true, so the flag
+// refuses nothing there: pass one name at a time and ask `reparse_point`.
+
+/// `path` for `NtCreateFile` below a directory handle: `\` between the names, and no root, `.`, `..` or empty name.
+#[cfg(windows)]
+fn nt_name_below<'a>(path: &[u16], buf: &'a mut [u16]) -> Maybe<&'a bun_core::WStr> {
+    const DOT: u16 = b'.' as u16;
+    if path.len() >= buf.len() {
+        return Err(Error::from_code(E::ENAMETOOLONG, Tag::open));
+    }
+    let mut len = 0usize;
+    for name in path.split(|c| bun_paths::is_sep_any_t::<u16>(*c)) {
+        if matches!(name, [] | [DOT] | [DOT, DOT]) {
+            return Err(Error::from_code(E::EINVAL, Tag::open));
+        }
+        if len != 0 {
+            buf[len] = b'\\' as u16;
+            len += 1;
+        }
+        buf[len..len + name.len()].copy_from_slice(name);
+        len += name.len();
+    }
+    buf[len] = 0;
+    Ok(bun_core::WStr::from_buf(&buf[..], len))
+}
+
+/// `openat_windows` below `dir`, and whether it made the file. With `O::NOFOLLOW` the last name opens as itself,
+/// and the handle can answer `reparse_point`.
+#[cfg(windows)]
+pub fn openat_windows_below(
+    dir: Fd,
+    path: &[u16],
+    flags: i32,
+    perm: Mode,
+    object_attributes: u32,
+) -> Maybe<(Fd, bool)> {
+    debug_assert!((flags & O::DIRECTORY) == 0);
+    let mut buf = bun_paths::w_path_buffer_pool::get();
+    let name = nt_name_below(path, &mut buf.0[..])?;
+    let mut options = nt_file_options(flags, perm);
+    options.object_attributes = object_attributes;
+    if (flags & O::NOFOLLOW) != 0 {
+        options.access_mask |= bun_windows_sys::FILE_READ_ATTRIBUTES;
+    }
+    open_file_at_windows_nt_path_created(dir, name, options)
+}
+
+/// `open_dir_at_windows` below `dir`, and whether it made the directory. The last name opens as itself.
+#[cfg(windows)]
+pub fn open_dir_at_windows_below(
+    dir: Fd,
+    path: &[u16],
+    op: WindowsOpenDirOp,
+    object_attributes: u32,
+) -> Maybe<(Fd, bool)> {
+    let mut buf = bun_paths::w_path_buffer_pool::get();
+    let name = nt_name_below(path, &mut buf.0[..])?;
+    open_dir_at_windows_nt_path_created(
+        dir,
+        name,
+        WindowsOpenDirOptions {
+            no_follow: true,
+            op,
+            object_attributes,
+            ..Default::default()
+        },
+    )
+}
+
+/// `unlinkat` below `dir`. What the last name is goes away, not what it links to.
+#[cfg(windows)]
+pub fn unlinkat_windows_below(
+    dir: Fd,
+    path: &[u16],
+    remove_dir: bool,
+    object_attributes: u32,
+) -> Maybe<()> {
+    let mut buf = bun_paths::w_path_buffer_pool::get();
+    let name = nt_name_below(path, &mut buf.0[..])?;
+    windows::DeleteFileBun(
+        name.as_slice(),
+        windows::DeleteFileOptions {
+            dir: Some(dir.native()),
+            remove_dir,
+            object_attributes,
+        },
+    )
+}
+
+/// What a handle is that `FILE_OPEN_REPARSE_POINT` opened.
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+pub struct ReparsePoint {
+    pub directory: bool,
+    /// 0: not a reparse point.
+    pub tag: u32,
+}
+
+#[cfg(windows)]
+impl ReparsePoint {
+    /// A junction or a symlink: a path that goes through it continues somewhere else.
+    pub fn is_link(self) -> bool {
+        bun_windows_sys::is_reparse_tag_name_surrogate(self.tag)
+    }
+}
+
+/// `fd` needs `FILE_READ_ATTRIBUTES`.
+#[cfg(windows)]
+pub fn reparse_point(fd: Fd) -> Maybe<ReparsePoint> {
+    use bun_windows_sys::externs as w;
+    let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let mut basic: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: FFI; `fd` is a live HANDLE and `basic` is valid for write.
+    let rc = unsafe {
+        w::ntdll::NtQueryInformationFile(
+            fd.native(),
+            &mut io,
+            core::ptr::from_mut(&mut basic).cast(),
+            core::mem::size_of::<w::FILE_BASIC_INFORMATION>() as u32,
+            w::FILE_INFORMATION_CLASS::FileBasicInformation,
+        )
+    };
+    if w::NT_ERROR(rc) {
+        return Err(Error::new(rc, Tag::fstat).with_fd(fd));
+    }
+    let directory = (basic.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0;
+    // FAT has no reparse points and rejects the query for the tag.
+    if (basic.FileAttributes & w::FILE_ATTRIBUTE_REPARSE_POINT) == 0 {
+        return Ok(ReparsePoint { directory, tag: 0 });
+    }
+    let mut tag: w::FILE_ATTRIBUTE_TAG_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: FFI; `fd` is a live HANDLE and `tag` is valid for write.
+    let rc = unsafe {
+        w::ntdll::NtQueryInformationFile(
+            fd.native(),
+            &mut io,
+            core::ptr::from_mut(&mut tag).cast(),
+            core::mem::size_of::<w::FILE_ATTRIBUTE_TAG_INFORMATION>() as u32,
+            w::FILE_INFORMATION_CLASS::FileAttributeTagInformation,
+        )
+    };
+    if w::NT_ERROR(rc) {
+        return Err(Error::new(rc, Tag::fstat).with_fd(fd));
+    }
+    Ok(ReparsePoint {
+        directory,
+        tag: tag.ReparseTag,
+    })
+}
+
+/// `reparse_point` of the last name of `path` below `dir`, opened as itself.
+#[cfg(windows)]
+pub fn reparse_point_at_windows_below(
+    dir: Fd,
+    path: &[u16],
+    object_attributes: u32,
+) -> Maybe<ReparsePoint> {
+    use bun_windows_sys::externs as w;
+    let mut buf = bun_paths::w_path_buffer_pool::get();
+    let name = nt_name_below(path, &mut buf.0[..])?;
+    let fd = open_file_at_windows_nt_path(
+        dir,
+        name,
+        NtCreateFileOptions {
+            access_mask: w::FILE_READ_ATTRIBUTES | w::SYNCHRONIZE,
+            disposition: w::FILE_OPEN,
+            options: w::FILE_SYNCHRONOUS_IO_NONALERT | w::FILE_OPEN_REPARSE_POINT,
+            object_attributes,
+            ..Default::default()
+        },
+    )?;
+    let found = reparse_point(fd);
+    let _ = close(fd);
+    found
+}
+
+/// Whether a network redirector owns the volume of `fd`: then a server resolves the paths below `fd`.
+#[cfg(windows)]
+pub fn is_remote_device(fd: Fd) -> Maybe<bool> {
+    use bun_windows_sys::externs as w;
+    let mut io: w::IO_STATUS_BLOCK = bun_core::ffi::zeroed();
+    let mut device: w::FILE_FS_DEVICE_INFORMATION = bun_core::ffi::zeroed();
+    // SAFETY: FFI; `fd` is a live HANDLE and `device` is valid for write.
+    let rc = unsafe {
+        w::ntdll::NtQueryVolumeInformationFile(
+            fd.native(),
+            &mut io,
+            core::ptr::from_mut(&mut device).cast(),
+            core::mem::size_of::<w::FILE_FS_DEVICE_INFORMATION>() as u32,
+            w::FS_INFORMATION_CLASS::FileFsDeviceInformation,
+        )
+    };
+    if w::NT_ERROR(rc) {
+        return Err(Error::new(rc, Tag::fstat).with_fd(fd));
+    }
+    Ok((device.Characteristics & w::FILE_REMOTE_DEVICE) != 0)
 }
 
 // ── existence checks ──

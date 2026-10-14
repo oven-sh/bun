@@ -1342,7 +1342,6 @@ fn extract_to_disk_filtered(
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
-    #[cfg(not(windows))]
     let mut destination = libarchive::ContainedDir::new(dir_fd);
     // Created last, as in `extract_to_dir`: no entry finds a symlink of its own archive in its way.
     #[cfg(unix)]
@@ -1392,10 +1391,7 @@ fn extract_to_disk_filtered(
 
         match kind {
             bun_sys::FileKind::Directory => {
-                #[cfg(windows)]
-                let created = dir_fd.make_path(pathname);
                 // As `make_path`: 0o755, and a name that is taken is not an error.
-                #[cfg(not(windows))]
                 let created = match destination.make_dir(pathname_z, |_| 0o755) {
                     Ok(Some(())) => Ok(()),
                     Ok(None) => return Err(libarchive::link_in_the_way(pathname, false).into()),
@@ -1420,32 +1416,7 @@ fn extract_to_disk_filtered(
                     0o644
                 };
 
-                // Create parent directories if needed (ignore expected errors)
-                #[cfg(windows)]
-                if let Some(parent_dir) = bun_core::dirname(pathname) {
-                    match dir_fd.make_path(parent_dir) {
-                        // Expected: directory already exists
-                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
-                        // Permission errors: skip this file, will fail at openat
-                        Err(e) if e.get_errno() == bun_sys::E::EACCES => {}
-                        // Other errors: skip, will fail at openat
-                        Err(_) => {}
-                        Ok(()) => {}
-                    }
-                }
-
                 // Create and write the file using bun.sys
-                #[cfg(windows)]
-                let file_fd: Fd = match bun_sys::openat(
-                    dir_fd,
-                    pathname_z,
-                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                    mode,
-                ) {
-                    Ok(fd) => fd,
-                    Err(_) => continue,
-                };
-                #[cfg(not(windows))]
                 let file_fd: Fd = match destination.create_file(pathname_z, mode) {
                     Ok(Some(fd)) => fd,
                     Ok(None) => return Err(libarchive::link_in_the_way(pathname, false).into()),
@@ -1492,9 +1463,6 @@ fn extract_to_disk_filtered(
                     count += 1;
                 } else {
                     // Remove partial file on failure
-                    #[cfg(windows)]
-                    let _ = bun_sys::unlinkat(dir_fd, pathname_z);
-                    #[cfg(not(windows))]
                     let _ = destination.unlink(pathname_z);
                 }
             }

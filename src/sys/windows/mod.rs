@@ -159,6 +159,7 @@ pub use bun_windows_sys::FILE_SHARE_WRITE;
 pub use bun_windows_sys::FILE_SYNCHRONOUS_IO_NONALERT;
 pub use bun_windows_sys::FS_INFORMATION_CLASS;
 pub use bun_windows_sys::IO_STATUS_BLOCK;
+pub use bun_windows_sys::OBJ_DONT_REPARSE;
 pub use bun_windows_sys::OBJECT_ATTRIBUTES;
 pub use bun_windows_sys::STANDARD_RIGHTS_READ;
 pub use bun_windows_sys::advapi32;
@@ -962,6 +963,8 @@ pub use bun_windows_sys::externs::SetStdHandle;
 pub struct DeleteFileOptions {
     pub(crate) dir: Option<HANDLE>,
     pub(crate) remove_dir: bool,
+    /// `OBJECT_ATTRIBUTES.Attributes`.
+    pub(crate) object_attributes: ULONG,
 }
 
 impl Default for DeleteFileOptions {
@@ -969,6 +972,7 @@ impl Default for DeleteFileOptions {
         Self {
             dir: None,
             remove_dir: false,
+            object_attributes: 0,
         }
     }
 }
@@ -1014,7 +1018,7 @@ pub fn DeleteFileBun(sub_path_w: &[u16], options: DeleteFileOptions) -> bun_sys:
         } else {
             options.dir.unwrap_or(ptr::null_mut())
         },
-        Attributes: 0, // Note we do not use OBJ_CASE_INSENSITIVE here.
+        Attributes: options.object_attributes, // Note we do not use OBJ_CASE_INSENSITIVE here.
         ObjectName: &mut nt_name,
         SecurityDescriptor: ptr::null_mut(),
         SecurityQualityOfService: ptr::null_mut(),

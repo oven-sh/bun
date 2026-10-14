@@ -10290,10 +10290,10 @@ declare module "bun" {
      * Creates the target directory and any necessary parent directories if they don't exist.
      * Existing files are overwritten.
      *
-     * On POSIX systems, a symbolic link that already exists in the target directory
-     * is never followed. A file entry replaces a link that has the same name. If a
-     * link stands in place of a directory that an entry needs, the promise rejects
-     * with an `ELOOP` error. The `path` of the error is that entry.
+     * A symbolic link that already exists in the target directory is never followed.
+     * On Windows, neither is a junction. A file entry replaces a link that has the
+     * same name. If a link stands in place of a directory that an entry needs, the
+     * promise rejects with an `ELOOP` error. The `path` of the error is that entry.
      *
      * @param path - The directory path to extract to
      * @param options - Optional extraction options

@@ -960,6 +960,49 @@ test(
   timeout,
 );
 
+// A worker torn down while a Bun.spawn() child with `stdin: "pipe"` is alive and script never read
+// `.stdin`: the Subprocess then holds the only ref on the stdin FileSink. On Windows the stop phase
+// closes that pipe, and the close notifies the Subprocess, which drops its ref: the sink was freed
+// while FileSink::on_close still used it (debug build: "misaligned pointer dereference ... 0xdfdfdfdfdfdf").
+// Only a Windows debug build fails here without the fix: a release build reads the freed sink
+// silently, and no other platform closes the pipe in the stop phase. filesink.test.ts has the same
+// close through a testing hook, which ASAN catches on every platform.
+test(
+  "worker terminate with a live spawned child whose stdin pipe was never read from script",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(\`
+          // The child lives until its stdin reaches EOF, so it is alive when the worker is torn down.
+          globalThis.keep = Bun.spawn({
+            cmd: [process.execPath, "-e", "process.stdin.on('data', () => {}).on('end', () => process.exit(0))"],
+            stdin: "pipe",
+            stdout: "ignore",
+            stderr: "ignore",
+          });
+          require("node:worker_threads").parentPort.postMessage("spawned");
+        \`, { eval: true });
+        w.on("error", (e) => { console.error(e); process.exit(1); });
+        w.once("message", async () => {
+          await w.terminate();
+          console.log("terminated");
+        });
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "terminated\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);
+
 // A worker exiting with fetches that have both a streaming request body (whose sink cell holds the
 // FetchTasklet) and a JS-touched response.body (a ByteStream source owned by another cell): the VM's
 // last sweep destroys cells in no particular order, and the tasklet's teardown unhooked itself as the

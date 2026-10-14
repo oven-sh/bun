@@ -75,7 +75,7 @@ describe("Stats methods and accessors called without a receiver", () => {
       bare: [isFile(), isDirectory()],
       undefinedReceiver: [isFile.call(undefined), isDirectory.call(undefined)],
       statsReceiver: [isFile.call(stats), isDirectory.call(bigintStats)],
-    }).toEqual({
+    }).toEqual<Record<string, (boolean | undefined)[]>>({
       bare: [undefined, undefined],
       undefinedReceiver: [undefined, undefined],
       statsReceiver: [true, true],

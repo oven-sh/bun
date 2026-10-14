@@ -380,6 +380,15 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if ctx.args.allow_ffi_cc == Some(false) {
         argv.push(lit(b"--no-ffi-cc\0"));
     }
+    match bun_core::code_generation_from_strings() {
+        bun_core::CodeGenerationFromStrings::Allowed => {}
+        bun_core::CodeGenerationFromStrings::DisallowedLikeNode => {
+            argv.push(lit(b"--disallow-code-generation-from-strings\0"));
+        }
+        bun_core::CodeGenerationFromStrings::Disallowed => {
+            argv.push(lit(b"--disallow-code-generation-from-strings=strict\0"));
+        }
+    }
     if matches!(ctx.debug.macros, MacroOptions::Disable) {
         argv.push(lit(b"--no-macros\0"));
     }

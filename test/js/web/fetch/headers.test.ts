@@ -172,11 +172,9 @@ describe("Headers", () => {
       expect(() => new Headers(["notanentry"])).toThrow(TypeError);
     });
     test("cannot create headers from array with entry of length 1", () => {
-      // @ts-expect-error
       expect(() => new Headers([["age"]])).toThrow(TypeError);
     });
     test("cannot create headers from array with entry of length 3", () => {
-      // @ts-expect-error
       expect(() => new Headers([["age", "60", "extra"]])).toThrow(TypeError);
     });
     test("can create headers from empty headers", () => {
@@ -209,14 +207,14 @@ describe("Headers", () => {
       expect(copy.get("user-agent")).toBe("bun");
     });
     test("can create headers from empty iterator", () => {
-      expect(() => new Headers((function* () {})())).not.toThrow();
+      expect(() => new Headers((function* () {})() as any)).not.toThrow();
     });
     test("can create headers from iterator", () => {
       const headers = new Headers(
         (function* () {
           yield ["server", "bun"];
           yield ["content-type", "application/json"];
-        })(),
+        })() as any,
       );
       expect(headers.get("server")).toBe("bun");
       expect(headers.get("content-type")).toBe("application/json");
@@ -228,7 +226,7 @@ describe("Headers", () => {
           new Headers(
             (function* () {
               throw error;
-            })(),
+            })() as any,
           ),
       ).toThrow(error);
     });
@@ -272,7 +270,7 @@ describe("Headers", () => {
     });
     test("can set header with non-string value", () => {
       const headers = new Headers();
-      const values = [
+      const values: [unknown, string][] = [
         [60, "60"],
         [60n, "60"],
         [true, "true"],
@@ -360,7 +358,6 @@ describe("Headers", () => {
       expect(() => cookies.getAll("not-set-cookie")).toThrow(TypeError);
     });
     test("can get header with set-cookie using getSetCookie()", () => {
-      // @ts-expect-error
       expect(cookies.getSetCookie()).toEqual([
         "__Secure-ID=123; Secure; Domain=example.com",
         "__Host-ID=123; Secure; Path=/",

@@ -109,9 +109,8 @@ pub(crate) fn set_override_module_run_main_promise(
     vm: &mut VirtualMachine,
     promise: *mut JSInternalPromise,
 ) {
-    if vm.pending_internal_promise.is_none() {
-        vm.pending_internal_promise = Some(promise);
-        vm.pending_internal_promise_is_protected = false;
+    if vm.pending_internal_promise().is_none() {
+        vm.set_pending_internal_promise(Some(promise));
     }
 }
 
@@ -240,7 +239,7 @@ mod sql_hooks {
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
         use crate::socket::SSLConfigFromJs;
-        match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value) {
+        match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value, false) {
             Ok(Some(cfg)) => bun_core::heap::into_raw(Box::new(cfg)).cast::<c_void>(),
             Ok(None) => core::ptr::null_mut(),
             Err(bun_jsc::JsError::OutOfMemory) => {

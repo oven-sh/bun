@@ -240,9 +240,14 @@ pub mod os {
     }
 }
 
+pub mod code_generation;
 pub mod deprecated;
 pub mod env_var;
 pub mod feature_flags;
+pub use code_generation::{
+    CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD, CodeGenerationFromStrings,
+    code_generation_from_strings, disallow_code_generation_from_strings,
+};
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`
 /// (dirname, which) can use them without an upward dep. `bun_paths` re-exports

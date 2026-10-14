@@ -215,7 +215,7 @@ pub enum SideEffects {
 
 type SideEffectsMap = bun_collections::HashMap<StringHashMapUnownedKey, ()>;
 
-type GlobList = Vec<Box<[u8]>>;
+type GlobList = Vec<glob::Prepared<Box<[u8]>>>;
 
 pub struct MixedPatterns {
     pub(crate) exact: SideEffectsMap,
@@ -235,7 +235,7 @@ impl SideEffects {
                 };
 
                 for pattern in glob_list.iter() {
-                    if glob::r#match(pattern, &normalized_path).matches() {
+                    if pattern.r#match(&normalized_path).matches() {
                         return true;
                     }
                 }
@@ -255,7 +255,7 @@ impl SideEffects {
                 };
 
                 for pattern in mixed.globs.iter() {
-                    if glob::r#match(pattern, &normalized_path).matches() {
+                    if pattern.r#match(&normalized_path).matches() {
                         return true;
                     }
                 }
@@ -684,6 +684,7 @@ impl PackageJSON {
                             || strings::contains_char(name, b'?')
                             || strings::contains_char(name, b'[')
                             || strings::contains_char(name, b'{')
+                            || glob::has_extglob_prefix(name)
                         {
                             has_globs = true;
                         } else {
@@ -717,11 +718,14 @@ impl PackageJSON {
                                 || strings::contains_char(name, b'?')
                                 || strings::contains_char(name, b'[')
                                 || strings::contains_char(name, b'{')
+                                || glob::has_extglob_prefix(name)
                             {
                                 // Normalize pattern to use forward slashes for cross-platform compatibility
                                 let normalized_pattern = Self::normalize_path_for_glob(pattern)
                                     .unwrap_or_else(|_| pattern.to_vec());
-                                glob_list.push(normalized_pattern.into_boxed_slice());
+                                glob_list.push(glob::Prepared::new(
+                                    normalized_pattern.into_boxed_slice(),
+                                ));
                             } else {
                                 let _ = map.insert(StringHashMapUnownedKey::init(pattern), ());
                             }
@@ -749,7 +753,8 @@ impl PackageJSON {
                             // Normalize pattern to use forward slashes for cross-platform compatibility
                             let normalized_pattern = Self::normalize_path_for_glob(pattern)
                                 .unwrap_or_else(|_| pattern.to_vec());
-                            glob_list.push(normalized_pattern.into_boxed_slice());
+                            glob_list
+                                .push(glob::Prepared::new(normalized_pattern.into_boxed_slice()));
                         }
                     }
                     package_json.side_effects = SideEffects::Glob(glob_list);

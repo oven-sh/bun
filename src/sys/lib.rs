@@ -1374,6 +1374,10 @@ impl Tag {
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
     pub const uv_os_setpriority: Tag = Tag(108);
+    #[cfg(not(windows))]
+    pub(crate) const flistxattr: Tag = Tag(109);
+    #[cfg(not(windows))]
+    pub(crate) const fgetxattr: Tag = Tag(110);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1381,7 +1385,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 109] = [
+        const NAMES: [&str; 111] = [
             "TODO",
             "dup",
             "access",
@@ -1492,6 +1496,8 @@ impl Tag {
             "setrlimit",
             "clone3",
             "uv_os_setpriority",
+            "flistxattr",
+            "fgetxattr",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -2608,6 +2614,88 @@ mod posix_impl {
         check!(safe_libc::fchown(fd.native(), uid, gid), Tag::fchown);
         Ok(())
     }
+    /// What `call` writes. It is given a buffer and its length, or null and 0: then it returns how long one has to be.
+    fn filled(tag: Tag, mut call: impl FnMut(*mut libc::c_void, usize) -> isize) -> Maybe<Vec<u8>> {
+        let size = check!(call(core::ptr::null_mut(), 0), tag) as usize;
+        let mut buffer = vec![0u8; size];
+        if size > 0 {
+            let written = check!(call(buffer.as_mut_ptr().cast(), size), tag) as usize;
+            buffer.truncate(written);
+        }
+        Ok(buffer)
+    }
+    /// The extended attributes of an open file, by name, each with its value. On Linux its ACL and its SELinux label are
+    /// among them. On FreeBSD: those of the namespace `user`. None on a file system that has none.
+    pub fn extended_attributes(fd: Fd) -> Maybe<Vec<(Vec<u8>, Vec<u8>)>> {
+        let fd = fd.native();
+        let listed = filled(Tag::flistxattr, |list, size| {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            {
+                // SAFETY: `filled` passes `size` writable bytes, or null and 0.
+                unsafe { libc::flistxattr(fd, list.cast(), size) }
+            }
+            #[cfg(target_os = "macos")]
+            {
+                // SAFETY: `filled` passes `size` writable bytes, or null and 0.
+                unsafe { libc::flistxattr(fd, list.cast(), size, 0) }
+            }
+            #[cfg(target_os = "freebsd")]
+            {
+                // SAFETY: `filled` passes `size` writable bytes, or null and 0.
+                unsafe { libc::extattr_list_fd(fd, libc::EXTATTR_NAMESPACE_USER, list, size) }
+            }
+        });
+        let listed = match listed {
+            Ok(listed) => listed,
+            Err(error) if [libc::ENOTSUP, libc::EOPNOTSUPP].contains(&i32::from(error.errno)) => {
+                return Ok(Vec::new());
+            }
+            Err(error) => return Err(error),
+        };
+        // Each ends with a NUL.
+        #[cfg(not(target_os = "freebsd"))]
+        let names: Vec<&[u8]> = bun_core::strings::split(&listed, b"\0").collect();
+        // Each follows its length.
+        #[cfg(target_os = "freebsd")]
+        let names: Vec<&[u8]> = {
+            let (mut names, mut rest) = (Vec::new(), &listed[..]);
+            while let [length, after @ ..] = rest {
+                let (name, more) = after.split_at(usize::from(*length).min(after.len()));
+                names.push(name);
+                rest = more;
+            }
+            names
+        };
+        let mut attributes = Vec::with_capacity(names.len());
+        for name in names.into_iter().filter(|name| !name.is_empty()) {
+            let Ok(terminated) = std::ffi::CString::new(name) else {
+                continue;
+            };
+            let value = filled(Tag::fgetxattr, |value, size| {
+                let name = terminated.as_ptr();
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                {
+                    // SAFETY: `name` ends with a NUL. `filled` passes `size` writable bytes, or null and 0.
+                    unsafe { libc::fgetxattr(fd, name, value, size) }
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    // SAFETY: `name` ends with a NUL. `filled` passes `size` writable bytes, or null and 0.
+                    unsafe { libc::fgetxattr(fd, name, value, size, 0, 0) }
+                }
+                #[cfg(target_os = "freebsd")]
+                {
+                    // SAFETY: `name` ends with a NUL. `filled` passes `size` writable bytes, or null and 0.
+                    unsafe {
+                        libc::extattr_get_fd(fd, libc::EXTATTR_NAMESPACE_USER, name, value, size)
+                    }
+                }
+            })?;
+            attributes.push((name.to_vec(), value));
+        }
+        attributes.sort_unstable();
+        Ok(attributes)
+    }
     pub fn ftruncate(fd: Fd, len: i64) -> Maybe<()> {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
@@ -3064,9 +3152,12 @@ mod posix_impl {
         send(fd, buf, SEND_FLAGS_NONBLOCK)
     }
     pub(crate) const MSG_DONTWAIT: i32 = libc::MSG_DONTWAIT;
-    // `MSG_DONTWAIT | MSG_NOSIGNAL` on all Unix including macOS
-    // (Darwin defines MSG_NOSIGNAL=0x80000).
-    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | libc::MSG_NOSIGNAL;
+    /// XNU's `sosend` only honours `MSG_NBIO` (private, 0x20000) for "don't wait for buffer space"; `MSG_DONTWAIT` alone still blocks there.
+    #[cfg(target_os = "macos")]
+    const MSG_NBIO: i32 = 0x20000;
+    #[cfg(not(target_os = "macos"))]
+    const MSG_NBIO: i32 = 0;
+    pub(crate) const SEND_FLAGS_NONBLOCK: i32 = libc::MSG_DONTWAIT | MSG_NBIO | libc::MSG_NOSIGNAL;
     /// `fcntl(F_GETFD)` then OR in `FD_CLOEXEC`.
     pub fn set_close_on_exec(fd: Fd) -> Maybe<()> {
         let fl = fcntl(fd, libc::F_GETFD, 0)?;
@@ -7241,68 +7332,60 @@ unsafe extern "C" {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const RWF_NOWAIT: u32 = 0x00000008;
 
-/// Linux: `preadv2(.., RWF_NOWAIT)`; else plain `read`.
-pub fn read_nonblocking(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    while linux::RWFFlagSupport::is_maybe_supported() {
+/// `preadv2(RWF_NOWAIT)` with no fallback: `Ok(None)` means this fd's file type (or the kernel) lacks it and the caller should remember that.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn read_nowait(fd: Fd, buf: &mut [u8]) -> Maybe<Option<usize>> {
+    if !linux::RWFFlagSupport::is_maybe_supported() {
+        return Ok(None);
+    }
+    loop {
         let iov = [libc::iovec {
             iov_base: buf.as_mut_ptr().cast(),
             iov_len: buf.len(),
         }];
         // SAFETY: fd valid; iov points at a live stack array.
         let rc = unsafe { sys_preadv2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
-        if rc < 0 {
-            let e = last_errno();
-            match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
-                    linux::RWFFlagSupport::disable();
-                    // Only fall through to BLOCKING read if the fd is
-                    // actually readable now; otherwise return retry (EAGAIN).
-                    return match bun_core::is_readable(fd) {
-                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => read(fd, buf),
-                        _ => Err(Error::retry().with_fd(fd)),
-                    };
-                }
-                libc::EINTR => continue,
-                _ => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
-            }
+        if rc >= 0 {
+            return Ok(Some(rc as usize));
         }
-        return Ok(rc as usize);
+        match last_errno() {
+            libc::EINTR => continue,
+            libc::ENOSYS => {
+                linux::RWFFlagSupport::disable();
+                return Ok(None);
+            }
+            libc::EOPNOTSUPP | libc::EPERM | libc::EACCES => return Ok(None),
+            e => return Err(Error::from_code_int(e, Tag::read).with_fd(fd)),
+        }
     }
-    read(fd, buf)
 }
-/// Linux: `pwritev2(.., RWF_NOWAIT)`; else plain `write`.
-pub fn write_nonblocking(fd: Fd, buf: &[u8]) -> Maybe<usize> {
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    while linux::RWFFlagSupport::is_maybe_supported() {
+
+/// `pwritev2(RWF_NOWAIT)` with no fallback: `Ok(None)` means this fd's file type (or the kernel) lacks it and the caller should remember that.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn write_nowait(fd: Fd, buf: &[u8]) -> Maybe<Option<usize>> {
+    if !linux::RWFFlagSupport::is_maybe_supported() {
+        return Ok(None);
+    }
+    loop {
         let iov = [libc::iovec {
             iov_base: buf.as_ptr().cast_mut().cast::<_>(),
             iov_len: buf.len(),
         }];
         // SAFETY: fd valid; iov points at a live stack array.
         let rc = unsafe { sys_pwritev2(fd.native(), iov.as_ptr(), 1, -1, RWF_NOWAIT) };
-        if rc < 0 {
-            let e = last_errno();
-            match e {
-                libc::EOPNOTSUPP | libc::ENOSYS | libc::EPERM | libc::EACCES => {
-                    linux::RWFFlagSupport::disable();
-                    // Poll before issuing a blocking write.
-                    return match bun_core::is_writable(fd) {
-                        bun_core::Pollable::Ready | bun_core::Pollable::Hup => write(fd, buf),
-                        _ => {
-                            let mut e = Error::retry();
-                            e.syscall = Tag::write;
-                            Err(e.with_fd(fd))
-                        }
-                    };
-                }
-                libc::EINTR => continue,
-                _ => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
-            }
+        if rc >= 0 {
+            return Ok(Some(rc as usize));
         }
-        return Ok(rc as usize);
+        match last_errno() {
+            libc::EINTR => continue,
+            libc::ENOSYS => {
+                linux::RWFFlagSupport::disable();
+                return Ok(None);
+            }
+            libc::EOPNOTSUPP | libc::EPERM | libc::EACCES => return Ok(None),
+            e => return Err(Error::from_code_int(e, Tag::write).with_fd(fd)),
+        }
     }
-    write(fd, buf)
 }
 
 /// `fallocate(fd, 0, offset, len)` on Linux, result discarded; no-op elsewhere.
@@ -9148,6 +9231,18 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
         match write(fd, bytes) {
             Ok(0) => return false, // short write → give up
             Ok(n) => bytes = &bytes[n..],
+            #[cfg(unix)]
+            Err(e) if e.get_errno() == E::EAGAIN => {
+                // fd 1/2 are O_NONBLOCK once process.stdout/stderr exist (as in Node); wait instead of dropping output.
+                let mut pfd = [posix::PollFd {
+                    fd: fd.native(),
+                    events: posix::POLL_OUT,
+                    revents: 0,
+                }];
+                if posix::poll(&mut pfd, -1).is_err() {
+                    return false;
+                }
+            }
             Err(_) => return false,
         }
     }

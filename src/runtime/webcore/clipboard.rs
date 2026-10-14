@@ -1041,7 +1041,7 @@ mod platform {
                 .chain(argv[1..].iter().map(|word| word.as_bytes()))
                 .map(Box::from)
                 .collect(),
-            stdin: stdin.map_or(spawn_sync::SyncStdio::Ignore, spawn_sync::SyncStdio::Fd),
+            stdin: stdin.map_or(spawn_sync::SyncStdio::Ignore, spawn_sync::SyncStdio::Pipe),
             // Not for writes: a helper that daemonizes keeps its output open.
             stdout: output,
             stderr: output,

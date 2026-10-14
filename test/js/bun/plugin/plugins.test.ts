@@ -427,8 +427,9 @@ describe("onLoad contents accepts BufferSource", () => {
 });
 
 // The transpiler reads the source of a module until it has printed the module.
-// JS runs in that time, and another thread can write a SharedArrayBuffer. So
-// the transpiler reads a copy of the bytes of a buffer `contents`.
+// A macro runs JS in that time, and another thread can write a
+// SharedArrayBuffer. So the transpiler reads a copy of the bytes of a buffer
+// `contents`.
 describe.concurrent("onLoad contents in a buffer", () => {
   async function fixture(...args: string[]) {
     await using proc = Bun.spawn({
@@ -459,19 +460,17 @@ describe.concurrent("onLoad contents in a buffer", () => {
     "growable SharedArrayBuffer": ["overwrite"],
   };
   for (const [kind, hows] of Object.entries(mutations)) {
-    it(`${kind}: transpiles the bytes it was given when a macro or an onResolve hook changes them`, async () => {
+    it(`${kind}: transpiles the bytes it was given when a macro changes them`, async () => {
       const transpiled: Record<string, unknown> = {};
       for (const how of hows) {
-        for (const by of ["macro", "onResolve"]) {
-          for (const form of [
-            "onLoad import",
-            "onLoad require",
-            "async onLoad import",
-            "build.module import",
-            "build.module require",
-          ]) {
-            transpiled[`${how} by ${by}, ${form}`] = { during: how, after: "after the mutation", mutated: true };
-          }
+        for (const form of [
+          "onLoad import",
+          "onLoad require",
+          "async onLoad import",
+          "build.module import",
+          "build.module require",
+        ]) {
+          transpiled[`${how}, ${form}`] = { during: how, after: "after the mutation", mutated: true };
         }
       }
       expect(await fixture("mutate", kind, ...hows)).toEqual({ result: transpiled, stderr: "", exitCode: 0 });

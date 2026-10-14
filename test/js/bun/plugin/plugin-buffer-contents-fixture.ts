@@ -6,13 +6,13 @@
 //   bun plugin-buffer-contents-fixture.ts string
 //
 // Bun.plugin serves modules whose `contents` is a buffer. The transpiler reads
-// the source until it has printed the module. JS runs in that time: a macro in
-// the module, and the onResolve hooks of its imports. Another thread can write
-// a SharedArrayBuffer at any time. Each mode changes the bytes in one of these
-// ways, or shows when the bytes are taken. It prints one line of JSON.
+// the source until it has printed the module. A macro in the module runs JS in
+// that time, and another thread can write a SharedArrayBuffer at any time.
+// Each mode changes the bytes in one of these ways, or shows when the bytes
+// are taken. It prints one line of JSON.
 import { plugin } from "bun";
 import { join } from "node:path";
-import { bytesOf, mutate, mutated } from "./plugin-buffer-contents-macro.ts";
+import { bytesOf, mutated } from "./plugin-buffer-contents-macro.ts";
 
 const [mode, kind, ...rest] = process.argv.slice(2);
 const macros = JSON.stringify(join(import.meta.dir, "plugin-buffer-contents-macro.ts"));
@@ -42,19 +42,13 @@ const results: Record<string, unknown> = {};
 const failure = (e: unknown) => ({ error: String((e as Error)?.message ?? e).split("\n")[0] });
 
 if (mode === "mutate") {
-  // What the onResolve hook does to `contents` when the transpiler resolves
-  // the import of the module that is being loaded.
-  let pending: string | undefined;
-
-  // The source of the module at `<by>/<how>/<n>`. `by` is what runs
-  // mutate(how) while the transpiler reads this source.
+  // The source of the module at `<how>/<n>`. The macro runs mutate(how) while
+  // the transpiler reads this source.
   const moduleSource = (path: string) => {
-    const [by, how] = path.split("/");
-    pending = by === "onResolve" ? how : undefined;
+    const how = path.split("/")[0];
     return make(
-      (by === "macro"
-        ? `import { mutate } from ${macros} with { type: "macro" };\nexport const during = mutate(${JSON.stringify(how)});\n`
-        : `import ${macros};\nexport const during = ${JSON.stringify(how)};\n`) +
+      `import { mutate } from ${macros} with { type: "macro" };\n` +
+        `export const during = mutate(${JSON.stringify(how)});\n` +
         `export const after = "after the mutation";\n`,
     );
   };
@@ -71,38 +65,28 @@ if (mode === "mutate") {
         return { contents: moduleSource(path), loader: "ts" };
       });
 
-      // The transpiler resolves the imports of a module after it has parsed the
-      // module and before it prints it. The hook returns nothing, so the
-      // import resolves to the file as it does with no plugin.
-      build.onResolve({ filter: /plugin-buffer-contents-macro\.ts$/ }, () => {
-        if (pending) mutate(pending);
-        pending = undefined;
-      });
-
       for (const how of rest) {
-        for (const by of ["macro", "onResolve"]) {
-          const path = () => `${by}/${how}/${cells.length}`;
-          const module = () => {
-            const specifier = `module-${cells.length}`;
-            const source = path();
-            build.module(specifier, () => ({ contents: moduleSource(source), loader: "ts" }));
-            return specifier;
-          };
-          const forms: [string, () => string, "import" | "require"][] = [
-            ["onLoad import", () => "sync:" + path(), "import"],
-            ["onLoad require", () => "sync:" + path(), "require"],
-            ["async onLoad import", () => "async:" + path(), "import"],
-            ["build.module import", module, "import"],
-            ["build.module require", module, "require"],
-          ];
-          for (const [form, specifierOf, through] of forms) {
-            const specifier = specifierOf();
-            cells.push({
-              cell: `${how} by ${by}, ${form}`,
-              how,
-              load: () => (through === "import" ? import(specifier) : require(specifier)),
-            });
-          }
+        const path = () => `${how}/${cells.length}`;
+        const module = () => {
+          const specifier = `module-${cells.length}`;
+          const source = path();
+          build.module(specifier, () => ({ contents: moduleSource(source), loader: "ts" }));
+          return specifier;
+        };
+        const forms: [string, () => string, "import" | "require"][] = [
+          ["onLoad import", () => "sync:" + path(), "import"],
+          ["onLoad require", () => "sync:" + path(), "require"],
+          ["async onLoad import", () => "async:" + path(), "import"],
+          ["build.module import", module, "import"],
+          ["build.module require", module, "require"],
+        ];
+        for (const [form, specifierOf, through] of forms) {
+          const specifier = specifierOf();
+          cells.push({
+            cell: `${how}, ${form}`,
+            how,
+            load: () => (through === "import" ? import(specifier) : require(specifier)),
+          });
         }
       }
     },

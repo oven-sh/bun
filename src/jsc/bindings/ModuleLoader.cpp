@@ -226,7 +226,7 @@ static bool sourceTextForTranspile(Zig::GlobalObject* globalObject, JSC::ThrowSc
         return true;
     }
 
-    // The transpiler reads a copy: macros and onResolve plugins run JS meanwhile, and another thread can write a SharedArrayBuffer.
+    // The transpiler reads a copy: a macro runs JS meanwhile, and another thread can write a SharedArrayBuffer.
     auto bytes = bufferContentsBytes(contents);
     ASSERT(bytes);
     if (bytes->size() > Bun::maxVectorSize<uint8_t>() || !copy.tryAppend(*bytes)) [[unlikely]] {
@@ -329,6 +329,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
 
     result.value.sourceText.loader = loader;
     result.value.sourceText.value = JSValue {};
+    result.value.sourceText.string = {};
 
     auto contentsValue = object->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "contents"_s));
     if (scope.exception()) [[unlikely]] {
@@ -419,14 +420,13 @@ static JSValue handleVirtualModuleResult(
 
     switch (onLoadResult.type) {
     case OnLoadResultTypeCode: {
-        JSValue contents = onLoadResult.value.sourceText.value;
+        auto& sourceText = onLoadResult.value.sourceText;
         WTF::Vector<uint8_t> copy;
-        EncodedSlice source {};
-        if (!sourceTextForTranspile(globalObject, scope, contents, copy, source)) [[unlikely]]
+        if (!sourceTextForTranspile(globalObject, scope, sourceText.value, copy, sourceText.string)) [[unlikely]]
             return rejectOrResolve({});
-        Bun__transpileVirtualModule(globalObject, specifier, referrer, &source, onLoadResult.value.sourceText.loader, res);
-        // `source` can point into the JSString.
-        JSC::ensureStillAliveHere(contents);
+        Bun__transpileVirtualModule(globalObject, specifier, referrer, &sourceText.string, sourceText.loader, res);
+        // `sourceText.string` can point into the JSString.
+        JSC::ensureStillAliveHere(sourceText.value);
         if (!res->success) {
             RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err)));
         }

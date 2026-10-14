@@ -32,6 +32,8 @@ const OnLoadResultType OnLoadResultTypeObject = 2;
 const OnLoadResultType OnLoadResultTypePromise = 3;
 
 struct CodeString {
+    // Empty until handleVirtualModuleResult points it at the source text for the transpiler.
+    EncodedSlice string;
     // `contents` as the plugin returned it: a string, a typed array, a DataView, an ArrayBuffer or a SharedArrayBuffer.
     JSC::JSValue value;
     BunLoaderType loader;

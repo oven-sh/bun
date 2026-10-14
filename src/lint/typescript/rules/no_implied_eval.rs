@@ -22,23 +22,15 @@ fn is_global_candidate(object: Expr) -> bool {
     object.as_ident().is_some_and(|name| name.is_any(&GLOBAL_CANDIDATES))
 }
 
-/// tsgolint has a `ParenthesizedExpression` here, which is no identifier, access, call or literal.
-fn is_parenthesized_expression(node: Expr, is_oxlint: bool) -> bool {
-    is_oxlint && node.is_parenthesized()
-}
-
 fn get_callee_name(node: Expr<'_>, is_oxlint: bool) -> Option<Name<'_>> {
     match node.kind() {
-        _ if is_parenthesized_expression(node, is_oxlint) => None,
         ExprKind::Ident(name) => Some(name),
         // A `ChainExpression` for ESLint.
         _ if node.is_chain_root() => None,
-        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if is_parenthesized_expression(obj, is_oxlint) => None,
         ExprKind::Dot { obj, name, .. } if is_global_candidate(obj) && !name.bytes().starts_with(b"#") => {
             Some(name.name())
         }
         ExprKind::Index { obj, index, .. } if is_global_candidate(obj) => match index.kind() {
-            _ if is_parenthesized_expression(index, is_oxlint) => None,
             ExprKind::String(name) => Some(name),
             // tsgolint names a computed member only by a string literal.
             ExprKind::Ident(name) if !is_oxlint => Some(name),
@@ -59,9 +51,10 @@ fn is_function_type(node: Expr) -> bool {
 // tsgolint has no `ChainExpression` and looks at an identifier or the name of a `PropertyAccessExpression` only.
 fn is_bind(node: Expr, is_oxlint: bool) -> bool {
     match node.kind() {
-        _ if is_parenthesized_expression(node, is_oxlint) => false,
         ExprKind::Ident(name) => name.is("bind"),
-        ExprKind::Dot { name, .. } if is_oxlint || !node.is_chain_root() => name.name().is("bind"),
+        ExprKind::Dot { name, .. } if !node.is_chain_root() || (is_oxlint && !node.is_parenthesized()) => {
+            name.name().is("bind")
+        }
         ExprKind::Index { index, .. } if !is_oxlint && !node.is_chain_root() => is_bind(index, is_oxlint),
         _ => false,
     }
@@ -69,7 +62,6 @@ fn is_bind(node: Expr, is_oxlint: bool) -> bool {
 
 fn is_function(node: Expr, is_oxlint: bool) -> bool {
     match node.kind() {
-        _ if is_parenthesized_expression(node, is_oxlint) => is_function_type(node),
         ExprKind::Fn(_) => true,
         ExprKind::String(_)
         | ExprKind::Number(_)

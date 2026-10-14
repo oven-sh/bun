@@ -33,14 +33,12 @@ impl RequireArraySortCompare {
         let Some(obj) = callee.object() else {
             return;
         };
-        // `(a?.sort)()` calls a `ChainExpression`, and for tsgolint `(a.sort)()` a `ParenthesizedExpression`.
-        let is_sort = match is_oxlint {
-            true => {
-                !callee.is_parenthesized()
-                    && matches!(callee.file().type_checker().get_accessed_property_name(callee), Some(b"sort" | b"toSorted"))
-            }
-            false => !callee.is_chain_root() && is_static_member_access_of_value(callee, &["sort", "toSorted"]),
-        };
+        // `(a?.sort)()` calls a `ChainExpression`.
+        let is_sort = !callee.is_chain_root()
+            && match is_oxlint {
+                true => matches!(callee.file().type_checker().get_accessed_property_name(callee), Some(b"sort" | b"toSorted")),
+                false => is_static_member_access_of_value(callee, &["sort", "toSorted"]),
+            };
         if !is_sort {
             return;
         }

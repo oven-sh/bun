@@ -94,10 +94,8 @@ impl Rule for RestrictTemplateExpressions {
         let ExprKind::Template(template) = node.kind() else {
             return;
         };
-        // tsgolint asks the parent, which is the ParenthesizedExpression of a tag in parentheses.
         if template.exprs().is_empty()
             || matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::TaggedTemplate)
-                && !(cx.language().is_oxlint && node.is_parenthesized())
         {
             return;
         }

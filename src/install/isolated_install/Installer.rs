@@ -118,6 +118,20 @@ pub struct Installer<'a> {
     /// Main-thread only: `waiters_head[dep]` starts the intrusive list of blocked entries waiting on `dep`, linked through `next_waiter`.
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
+
+    /// Tasks on any thread add to it. The main thread reports it.
+    pub(crate) occupied_links: bun_threading::Guarded<Vec<OccupiedLink>>,
+}
+
+/// A directory that was where the root or a workspace links a dependency.
+pub(crate) enum OccupiedLink {
+    /// It is at `aside` now, and the link is written.
+    Moved { link: Box<[u8]>, aside: Box<[u8]> },
+    /// It could not move. It stays, and no link is written.
+    Kept {
+        link: Box<[u8]>,
+        err: Box<sys::Error>,
+    },
 }
 
 impl<'a> Installer<'a> {
@@ -360,6 +374,14 @@ impl<'a> Installer<'a> {
                         pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
                     ),
                 );
+                if !symlink_err.dest.is_empty() {
+                    // Only `Symlinker::move_aside` names two paths.
+                    bun_core::note!(
+                        "The folder that was at {} is at {} now",
+                        bun_core::fmt::quote(&symlink_err.path),
+                        bun_core::fmt::quote(&symlink_err.dest),
+                    );
+                }
             }
             TaskError::Patching(patch_log) => {
                 Output::err_generic(
@@ -435,6 +457,7 @@ impl<'a> Installer<'a> {
         }
 
         if self.manager().options.enable.fail_early() {
+            self.report_occupied_links();
             Global::exit(1);
         }
 
@@ -2131,6 +2154,82 @@ impl<'a> Installer<'a> {
         Ok(PatchInfo::None)
     }
 
+    /// Main thread, when the tasks are done or the install stops.
+    pub(crate) fn report_occupied_links(&self) {
+        let occupied = core::mem::take(&mut *self.occupied_links.lock());
+        if occupied.is_empty() || self.manager().options.log_level.is_silent() {
+            return;
+        }
+        // Tasks add in any order: the example is the smallest link path, the same in each run.
+        let mut moved: Option<(usize, &[u8], &[u8])> = None;
+        let mut kept: Option<(usize, &[u8], &sys::Error)> = None;
+        for occupied in &occupied {
+            match occupied {
+                OccupiedLink::Moved { link, aside } => {
+                    moved = Some(match moved {
+                        Some((count, first, _)) if &**link < first => (count + 1, link, aside),
+                        Some((count, first, first_aside)) => (count + 1, first, first_aside),
+                        None => (1, link, aside),
+                    });
+                }
+                OccupiedLink::Kept { link, err } => {
+                    kept = Some(match kept {
+                        Some((count, first, _)) if &**link < first => (count + 1, link, err),
+                        Some((count, first, first_err)) => (count + 1, first, first_err),
+                        None => (1, link, err),
+                    });
+                }
+            }
+        }
+
+        match moved {
+            None => {}
+            Some((1, link, aside)) => bun_core::note!(
+                "{} was a folder, not a link. Moved it to {}",
+                bun_core::fmt::quote(link),
+                bun_core::fmt::quote(aside),
+            ),
+            Some((count, link, aside)) => bun_core::note!(
+                "{} folders were where dependency links belong. Moved each to a new <b>{}\\<name\\>-\\<id\\><r> folder beside its link, for example {} to {}",
+                count,
+                bstr::BStr::new(symlinker::DISPLACED_PREFIX),
+                bun_core::fmt::quote(link),
+                bun_core::fmt::quote(aside),
+            ),
+        }
+
+        if let Some((count, link, err)) = kept {
+            let name = bstr::BStr::new(err.name());
+            let message = bstr::BStr::new(err.msg().unwrap_or(b"unknown error"));
+            let syscall = <&'static str>::from(err.syscall);
+            if count == 1 {
+                bun_core::warn!(
+                    "{} is a folder where a dependency link belongs, and bun install cannot move it: {}: {} <d>({})<r>",
+                    bun_core::fmt::quote(link),
+                    name,
+                    message,
+                    syscall,
+                );
+            } else {
+                bun_core::warn!(
+                    "{} folders are where dependency links belong, and bun install cannot move them, for example {}: {}: {} <d>({})<r>",
+                    count,
+                    bun_core::fmt::quote(link),
+                    name,
+                    message,
+                    syscall,
+                );
+            }
+            bun_core::note!("Remove or rename each folder, then run <cyan>bun install<r> again");
+        }
+        Output::flush();
+    }
+
+    #[cold]
+    fn record_occupied_link(&self, occupied: OccupiedLink) {
+        self.occupied_links.lock().push(occupied);
+    }
+
     pub(crate) fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
@@ -2311,7 +2410,21 @@ impl<'a> Installer<'a> {
             };
             let result = symlinker.ensure_symlink(strategy);
             dest = symlinker.dest.into_sep::<{ PathSeparators::AUTO }>();
-            changed |= result?;
+            match result? {
+                symlinker::Link::Unchanged => {}
+                symlinker::Link::Written => changed = true,
+                symlinker::Link::Moved(aside) => {
+                    changed = true;
+                    self.record_occupied_link(OccupiedLink::Moved {
+                        link: Box::from(dest.slice()),
+                        aside,
+                    });
+                }
+                symlinker::Link::Kept(err) => self.record_occupied_link(OccupiedLink::Kept {
+                    link: Box::from(dest.slice()),
+                    err,
+                }),
+            }
         }
 
         Ok(changed)

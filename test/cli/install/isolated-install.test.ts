@@ -1,8 +1,8 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
-import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { chmodSync, cpSync, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "fs";
+import { mkdir, readlink, rm, symlink, unlink } from "fs/promises";
+import { bunEnv, bunExe, isLinux, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { TestRegistry } from "registry";
@@ -1849,6 +1849,672 @@ describe("--linker flag", () => {
     expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBeTrue();
   });
 });
+
+// Not concurrent: on a debug build, installs that run at the same time pass the default timeout of a test.
+describe("a real directory where a dependency link belongs", () => {
+  // CI exports one BUN_INSTALL_CACHE_DIR for the whole file. `bun patch --commit` writes to the cache, so each
+  // project here has its own.
+  async function run(packageDir: string, args: string[], cwd: string = packageDir) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // An install moves the folder that was in place of the link `slot` to `.old_<name>-<id>` beside the link.
+  async function displaced(slot: string) {
+    const prefix = `.old_${basename(slot)}-`;
+    const names = (await readdirSorted(dirname(slot))).filter(name => name.startsWith(prefix));
+    return names.map(name => join(dirname(slot), name));
+  }
+  const movedNote = (slot: string, aside: string) =>
+    `note: "${slot}" was a folder, not a link. Moved it to "${aside}"\n`;
+  const keptWarning = (slot: string, cause: string) =>
+    `warn: "${slot}" is a folder where a dependency link belongs, and bun install cannot move it: ${cause}\n` +
+    `note: Remove or rename each folder, then run bun install again\n`;
+
+  async function version(folder: string) {
+    return (await file(join(folder, "package.json")).json()).version;
+  }
+
+  // Puts a directory with a package.json where the link `slot` is.
+  async function replaceWithDirectory(slot: string, name: string, files: Record<string, string> = {}) {
+    await unlink(slot);
+    await write(join(slot, "package.json"), JSON.stringify({ name, version: "0.0.0-stale" }));
+    for (const [path, contents] of Object.entries(files)) {
+      await write(join(slot, path), contents);
+    }
+  }
+
+  const storeLink = (name: string, version: string) => join(".bun", `${name}@${version}`, "node_modules", name);
+  const edit = "module.exports = 'EDITED';\n";
+  const rootWithNoDeps = {
+    "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.0" } }),
+  };
+
+  test("a package of the hoisted linker in a workspace, after the root node_modules is removed", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "app",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+        "packages/m/package.json": JSON.stringify({
+          name: "m",
+          version: "1.0.0",
+          dependencies: { "no-deps": "2.0.0" },
+        }),
+      },
+    });
+    const member = join(packageDir, "packages", "m");
+    const slot = join(member, "node_modules", "no-deps");
+
+    // The hoisted linker puts the version that conflicts with the root in the workspace.
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+    expect(lstatSync(slot).isSymbolicLink()).toBe(false);
+    expect(await version(slot)).toBe("2.0.0");
+
+    await write(
+      join(member, "package.json"),
+      JSON.stringify({ name: "m", version: "1.0.0", dependencies: { "no-deps": "1.0.1" } }),
+    );
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await registry.writeBunfig(packageDir, { linker: "isolated" });
+
+    const install = await run(packageDir, ["install"]);
+    expect(install.stderr).not.toContain("error:");
+    expect(readlinkSync(slot)).toBe(join("..", "..", "..", "node_modules", storeLink("no-deps", "1.0.1")));
+    expect(await version(slot)).toBe("1.0.1");
+    expect(install.exitCode).toBe(0);
+
+    const again = await run(packageDir, ["install"]);
+    expect(again.stderr).not.toContain("note:");
+    expect(again.stdout).toContain("(no changes)");
+    expect(await version(slot)).toBe("1.0.1");
+    expect(again.exitCode).toBe(0);
+  });
+
+  test("a package of the hoisted linker with the same version resolves its dependencies", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "app",
+          workspaces: ["packages/*"],
+          dependencies: { "has-bin-entries": "1.0.0" },
+        }),
+        "packages/m/package.json": JSON.stringify({
+          name: "m",
+          version: "1.0.0",
+          dependencies: { "has-bin-entries": "2.0.0" },
+        }),
+      },
+    });
+    const member = join(packageDir, "packages", "m");
+    const slot = join(member, "node_modules", "has-bin-entries");
+
+    // has-bin-entries depends on no-deps, which the hoisted linker puts in the root node_modules only.
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+    expect(lstatSync(slot).isSymbolicLink()).toBe(false);
+    expect(await readdirSorted(join(member, "node_modules"))).toEqual([".bin", "has-bin-entries"]);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await registry.writeBunfig(packageDir, { linker: "isolated" });
+
+    const install = await run(packageDir, ["install"]);
+    expect(install.stderr).not.toContain("error:");
+    expect(readlinkSync(slot)).toBe(join("..", "..", "..", "node_modules", storeLink("has-bin-entries", "2.0.0")));
+    expect(install.exitCode).toBe(0);
+
+    // index.js of has-bin-entries requires each of its dependencies.
+    const loaded = await run(packageDir, ["-p", "require('has-bin-entries').dependencies['no-deps'].version"], member);
+    expect(loaded.stdout).toBe("1.0.0\n");
+    expect(loaded.exitCode).toBe(0);
+  });
+
+  test("a directory at the link of a workspace dependency, when the store exists", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "app", workspaces: ["packages/*"] }),
+        "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+        "packages/m/package.json": JSON.stringify({
+          name: "m",
+          version: "1.0.0",
+          dependencies: { lib: "workspace:*" },
+        }),
+      },
+    });
+    const slot = join(packageDir, "packages", "m", "node_modules", "lib");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+    await replaceWithDirectory(slot, "lib");
+
+    const install = await run(packageDir, ["install"]);
+    const [aside] = await displaced(slot);
+    expect(install.stderr).toContain(movedNote(slot, aside));
+    expect(readlinkSync(slot)).toBe(join("..", "..", "lib"));
+    expect(await version(aside)).toBe("0.0.0-stale");
+    expect(install.exitCode).toBe(0);
+
+    const again = await run(packageDir, ["install"]);
+    expect(again.stderr).not.toContain("note:");
+    expect(again.stdout).toContain("(no changes)");
+    expect(readlinkSync(slot)).toBe(join("..", "..", "lib"));
+    expect(again.exitCode).toBe(0);
+  });
+
+  test("a workspace that arrives with its own node_modules, when the store exists", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "app",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      },
+    });
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    const slot = join(packageDir, "packages", "n", "node_modules", "no-deps");
+    await write(
+      join(packageDir, "packages", "n", "package.json"),
+      JSON.stringify({ name: "n", version: "1.0.0", dependencies: { "no-deps": "1.0.1" } }),
+    );
+    await write(join(slot, "package.json"), JSON.stringify({ name: "no-deps", version: "0.0.0-stale" }));
+
+    const install = await run(packageDir, ["install"]);
+    const [aside] = await displaced(slot);
+    expect(install.stderr).toContain(movedNote(slot, aside));
+    expect(readlinkSync(slot)).toBe(join("..", "..", "..", "node_modules", storeLink("no-deps", "1.0.1")));
+    expect(await version(aside)).toBe("0.0.0-stale");
+    expect(install.exitCode).toBe(0);
+  });
+
+  test("each thing that can stand where a link belongs, when the store exists", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "a-dep": "1.0.1",
+            "@types/is-number": "1.0.0",
+            "is-number": "1.0.0",
+            "left-pad": "1.0.0",
+          },
+        }),
+      },
+    });
+    const nodeModules = join(packageDir, "node_modules");
+    const hiddenLink = join(nodeModules, ".bun", "node_modules", "no-deps");
+    const scoped = join(nodeModules, "@types", "is-number");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    // Directories with files, one of them at a scoped name.
+    await replaceWithDirectory(join(nodeModules, "no-deps"), "no-deps", { "lib/mine.js": "mine" });
+    await replaceWithDirectory(join(nodeModules, "a-dep"), "a-dep");
+    await replaceWithDirectory(scoped, "@types/is-number");
+    // An empty directory, and a file.
+    await unlink(join(nodeModules, "is-number"));
+    await mkdir(join(nodeModules, "is-number"));
+    await unlink(join(nodeModules, "left-pad"));
+    await write(join(nodeModules, "left-pad"), "a file");
+    // A directory at a link that is not a link of the root or of a workspace.
+    await replaceWithDirectory(hiddenLink, "no-deps");
+
+    const install = await run(packageDir, ["install"]);
+    const [scopedAside] = await displaced(scoped);
+    const [aDepAside] = await displaced(join(nodeModules, "a-dep"));
+    const [noDepsAside] = await displaced(join(nodeModules, "no-deps"));
+    // One line, with the first of the folders as the example.
+    expect(install.stderr).toContain(
+      `note: 3 folders were where dependency links belong. Moved each to a new .old_<name>-<id> folder beside its link, for example "${scoped}" to "${scopedAside}"\n`,
+    );
+    expect(install.stderr.match(/^note: /gm)).toHaveLength(1);
+    expect(install.stderr).not.toContain("warn:");
+
+    // The empty directory and the file leave nothing behind.
+    expect(await readdirSorted(nodeModules)).toEqual([
+      ".bun",
+      basename(aDepAside),
+      basename(noDepsAside),
+      "@types",
+      "a-dep",
+      "is-number",
+      "left-pad",
+      "no-deps",
+    ]);
+    expect(await readdirSorted(dirname(scoped))).toEqual([basename(scopedAside), "is-number"]);
+    expect(readlinkSync(join(nodeModules, "no-deps"))).toBe(storeLink("no-deps", "1.0.0"));
+    expect(readlinkSync(join(nodeModules, "a-dep"))).toBe(storeLink("a-dep", "1.0.1"));
+    expect(readlinkSync(join(nodeModules, "is-number"))).toBe(storeLink("is-number", "1.0.0"));
+    expect(readlinkSync(join(nodeModules, "left-pad"))).toBe(storeLink("left-pad", "1.0.0"));
+    expect(await version(scoped)).toBe("1.0.0");
+    // The directory in the hidden hoist folder is where it was.
+    expect(lstatSync(hiddenLink).isSymbolicLink()).toBe(false);
+    // Nothing in a directory that moved is lost.
+    expect(await file(join(noDepsAside, "lib", "mine.js")).text()).toBe("mine");
+    expect(await version(aDepAside)).toBe("0.0.0-stale");
+    expect(await version(scopedAside)).toBe("0.0.0-stale");
+    expect(install.exitCode).toBe(0);
+  });
+
+  test.each(["install --force", "install --frozen-lockfile", "ci"])(
+    "a directory at a root link, when the store exists: bun %s",
+    async command => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: rootWithNoDeps,
+      });
+      const slot = join(packageDir, "node_modules", "no-deps");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+      await replaceWithDirectory(slot, "no-deps");
+
+      const install = await run(packageDir, command.split(" "));
+      const [aside] = await displaced(slot);
+      expect(install.stderr).toContain(movedNote(slot, aside));
+      expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+      expect(await version(aside)).toBe("0.0.0-stale");
+      expect(install.exitCode).toBe(0);
+    },
+  );
+
+  test("--silent moves the directory and prints nothing", async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" }, files: rootWithNoDeps });
+    const slot = join(packageDir, "node_modules", "no-deps");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    await replaceWithDirectory(slot, "no-deps");
+
+    const install = await run(packageDir, ["install", "--silent"]);
+    const [aside] = await displaced(slot);
+    expect(install.stderr).toBe("");
+    expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+    expect(await version(aside)).toBe("0.0.0-stale");
+    expect(install.exitCode).toBe(0);
+  });
+
+  test("a move replaces nothing: what has the name .old_<name>, and each folder that moved before, stays", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1", "is-number": "1.0.0" },
+        }),
+        "outside/kept.txt": "outside",
+      },
+    });
+    const nodeModules = join(packageDir, "node_modules");
+    const slot = join(nodeModules, "no-deps");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    // A folder, a file and a link.
+    await write(join(nodeModules, ".old_no-deps", "mine.txt"), "a folder");
+    await write(join(nodeModules, ".old_a-dep"), "a file");
+    await symlink(join(packageDir, "outside"), join(nodeModules, ".old_is-number"));
+    await replaceWithDirectory(slot, "no-deps", { "first.js": "" });
+    await replaceWithDirectory(join(nodeModules, "a-dep"), "a-dep");
+    await replaceWithDirectory(join(nodeModules, "is-number"), "is-number");
+
+    const first = await run(packageDir, ["install"]);
+    expect(first.stderr).toContain("note: 3 folders were where dependency links belong.");
+    const [firstAside] = await displaced(slot);
+    expect(await readdirSorted(firstAside)).toEqual(["first.js", "package.json"]);
+    expect(first.exitCode).toBe(0);
+
+    await replaceWithDirectory(slot, "no-deps", { "second.js": "" });
+    const second = await run(packageDir, ["install"]);
+    const asides = await displaced(slot);
+    expect(asides).toHaveLength(2);
+    const secondAside = asides.find(aside => aside !== firstAside)!;
+    expect(second.stderr).toContain(movedNote(slot, secondAside));
+    expect(second.exitCode).toBe(0);
+
+    expect(await readdirSorted(firstAside)).toEqual(["first.js", "package.json"]);
+    expect(await readdirSorted(secondAside)).toEqual(["package.json", "second.js"]);
+    expect(await file(join(nodeModules, ".old_no-deps", "mine.txt")).text()).toBe("a folder");
+    expect(await file(join(nodeModules, ".old_a-dep")).text()).toBe("a file");
+    expect(lstatSync(join(nodeModules, ".old_is-number")).isSymbolicLink()).toBe(true);
+    expect(await file(join(packageDir, "outside", "kept.txt")).text()).toBe("outside");
+    expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+  });
+
+  // The name of the moved directory is 22 bytes longer than the name of the link, and a name has 255 bytes at most.
+  // Windows limits the whole path, so the install stops before that.
+  test.skipIf(isWindows)(
+    "a directory that cannot move stays, and the install warns and writes the other links",
+    async () => {
+      const moves = Buffer.alloc(233, "a").toString();
+      const stays = Buffer.alloc(234, "b").toString();
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "app",
+            dependencies: { [moves]: "npm:no-deps@1.0.0", [stays]: "npm:no-deps@1.0.0", "no-deps": "1.0.0" },
+          }),
+        },
+      });
+      const nodeModules = join(packageDir, "node_modules");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+      await replaceWithDirectory(join(nodeModules, moves), "no-deps");
+      await replaceWithDirectory(join(nodeModules, stays), "no-deps", { "mine.txt": "mine" });
+      // `no-deps` is after both in the order of the links of the root.
+      await unlink(join(nodeModules, "no-deps"));
+
+      const install = await run(packageDir, ["install"]);
+      const [aside] = await displaced(join(nodeModules, moves));
+      expect(install.stderr).toContain(movedNote(join(nodeModules, moves), aside));
+      expect(install.stderr).toContain(
+        keptWarning(join(nodeModules, stays), "ENAMETOOLONG: File name too long (rename)"),
+      );
+      expect(install.stderr).not.toContain("error:");
+      expect(readlinkSync(join(nodeModules, moves))).toBe(storeLink("no-deps", "1.0.0"));
+      expect(await file(join(nodeModules, stays, "mine.txt")).text()).toBe("mine");
+      expect(await displaced(join(nodeModules, stays))).toEqual([]);
+      expect(readlinkSync(join(nodeModules, "no-deps"))).toBe(storeLink("no-deps", "1.0.0"));
+      expect(install.exitCode).toBe(0);
+
+      // The folder is named again in each install, until the user removes it.
+      const again = await run(packageDir, ["install"]);
+      expect(again.stderr).toContain(
+        keptWarning(join(nodeModules, stays), "ENAMETOOLONG: File name too long (rename)"),
+      );
+      expect(again.exitCode).toBe(0);
+    },
+  );
+
+  // root can move a directory in a node_modules that has no write permission.
+  test.skipIf(isWindows || process.getuid?.() === 0)(
+    "a directory in a node_modules that is read-only stays, and the install exits 0",
+    async () => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: rootWithNoDeps,
+      });
+      const nodeModules = join(packageDir, "node_modules");
+      const slot = join(nodeModules, "no-deps");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+      await replaceWithDirectory(slot, "no-deps", { "mine.txt": "mine" });
+      chmodSync(nodeModules, 0o555);
+      try {
+        const install = await run(packageDir, ["install"]);
+        expect(install.stderr).toContain(keptWarning(slot, "EACCES: Permission denied (rmdir)"));
+        expect(install.stderr).not.toContain("error:");
+        expect(await file(join(slot, "mine.txt")).text()).toBe("mine");
+        expect(install.exitCode).toBe(0);
+      } finally {
+        chmodSync(nodeModules, 0o755);
+      }
+    },
+  );
+
+  // Linux renames a directory that has no permissions. macOS refuses that rename for a user that is not root.
+  test.skipIf(isWindows)("a directory that has no permissions moves, or stays with a warning", async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" }, files: rootWithNoDeps });
+    const slot = join(packageDir, "node_modules", "no-deps");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    await replaceWithDirectory(slot, "no-deps");
+    chmodSync(slot, 0o000);
+    let aside: string | undefined;
+    try {
+      const install = await run(packageDir, ["install"]);
+      [aside] = await displaced(slot);
+      if (isLinux) expect(aside).toBeDefined();
+      if (aside) {
+        expect(install.stderr).toContain(movedNote(slot, aside));
+        expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+      } else {
+        expect(install.stderr).toContain(keptWarning(slot, "EACCES: Permission denied (rename)"));
+        expect(lstatSync(slot).isSymbolicLink()).toBe(false);
+      }
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+    } finally {
+      chmodSync(aside ?? slot, 0o755);
+    }
+    expect(await version(aside ?? slot)).toBe("0.0.0-stale");
+  });
+
+  // A path has 4095 bytes at most on Linux, and the path of the moved directory is 22 bytes longer than the path of
+  // the link. The limit is 1023 bytes on macOS, and the temporary directory takes too much of it there.
+  test.skipIf(!isLinux)(
+    "a link path at the limit: the directory moves when the new path fits, and stays when not",
+    async () => {
+      const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+      // A workspace for which the path of the link `<workspace>/node_modules/no-deps` has `length` bytes.
+      const workspace = (first: string, length: number) => {
+        const tail = join("node_modules", "no-deps");
+        let path = first;
+        for (let rest; (rest = length - join(packageDir, path, tail).length) > 0;) {
+          // A directory takes one byte for the separator and one or more for its name.
+          path = rest === 1 ? path + "d" : join(path, Buffer.alloc(Math.min(rest - 1, 200), "d").toString());
+        }
+        expect(join(packageDir, path, tail)).toHaveLength(length);
+        return path;
+      };
+      const fits = workspace("fits", 4073);
+      const tooLong = workspace("too-long", 4074);
+      await write(join(packageDir, "package.json"), JSON.stringify({ name: "app", workspaces: [fits, tooLong] }));
+      for (const [name, path] of [
+        ["fits", fits],
+        ["too-long", tooLong],
+      ]) {
+        await write(
+          join(packageDir, path, "package.json"),
+          JSON.stringify({ name, version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+        );
+      }
+      const fitsSlot = join(packageDir, fits, "node_modules", "no-deps");
+      const tooLongSlot = join(packageDir, tooLong, "node_modules", "no-deps");
+      expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+      expect(lstatSync(fitsSlot).isSymbolicLink()).toBe(true);
+      expect(lstatSync(tooLongSlot).isSymbolicLink()).toBe(true);
+
+      await replaceWithDirectory(fitsSlot, "no-deps");
+      await replaceWithDirectory(tooLongSlot, "no-deps");
+
+      const install = await run(packageDir, ["install"]);
+      const [aside] = await displaced(fitsSlot);
+      expect(aside).toHaveLength(4095);
+      expect(install.stderr).toContain(movedNote(fitsSlot, aside));
+      expect(install.stderr).toContain(keptWarning(tooLongSlot, "ENAMETOOLONG: File name too long (rename)"));
+      expect(lstatSync(fitsSlot).isSymbolicLink()).toBe(true);
+      expect(await readdirSorted(aside)).toEqual(["package.json"]);
+      expect(await version(tooLongSlot)).toBe("0.0.0-stale");
+      expect(install.exitCode).toBe(0);
+    },
+  );
+
+  test("a dependency with the name of the store: the store stays where it is", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { ".bun": "npm:no-deps@1.0.0", "a-dep": "1.0.1" },
+        }),
+      },
+    });
+    const nodeModules = join(packageDir, "node_modules");
+
+    for (const args of [["install"], ["install"], ["install", "--force"]]) {
+      const install = await run(packageDir, args);
+      expect(install.stderr).not.toContain("note:");
+      expect(install.stderr).not.toContain("warn:");
+      expect(install.stderr).not.toContain("error:");
+      expect(await readdirSorted(nodeModules)).toEqual([".bun", "a-dep"]);
+      expect(readlinkSync(join(nodeModules, "a-dep"))).toBe(storeLink("a-dep", "1.0.1"));
+      expect(install.exitCode).toBe(0);
+    }
+  });
+
+  test("a directory behind a link stays where it is", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "app",
+          workspaces: ["packages/m", "packages/linked"],
+          dependencies: { "@types/is-number": "1.0.0" },
+        }),
+        "packages/m/package.json": JSON.stringify({
+          name: "m",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+        "outside/scope/is-number/mine.txt": "mine",
+        "outside/modules/no-deps/mine.txt": "mine",
+        "outside/member/package.json": JSON.stringify({
+          name: "linked",
+          version: "1.0.0",
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      },
+    });
+    const outside = join(packageDir, "outside");
+    const scope = join(packageDir, "node_modules", "@types");
+    const memberModules = join(packageDir, "packages", "m", "node_modules");
+    const linkedSlot = join(outside, "member", "node_modules", "no-deps");
+    // The folder of a workspace is a link.
+    await symlink(join(outside, "member"), join(packageDir, "packages", "linked"), "dir");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    // A scope directory and the node_modules of a workspace are links, and each has a directory where a
+    // dependency link belongs. So has the node_modules of the workspace whose folder is a link.
+    await rm(scope, { recursive: true, force: true });
+    await symlink(join(outside, "scope"), scope, "dir");
+    await rm(memberModules, { recursive: true, force: true });
+    await symlink(join(outside, "modules"), memberModules, "dir");
+    await rm(linkedSlot, { recursive: true, force: true });
+    await write(join(linkedSlot, "mine.txt"), "mine");
+
+    for (const args of [["install"], ["install", "--force"]]) {
+      const install = await run(packageDir, args);
+      expect(install.stderr).not.toContain("note:");
+      expect(install.stderr).not.toContain("warn:");
+      expect(install.stderr).not.toContain("error:");
+      expect(await readdirSorted(join(outside, "scope"))).toEqual(["is-number"]);
+      expect(await readdirSorted(join(outside, "scope", "is-number"))).toEqual(["mine.txt"]);
+      expect(await readdirSorted(join(outside, "modules"))).toEqual(["no-deps"]);
+      expect(await readdirSorted(join(outside, "modules", "no-deps"))).toEqual(["mine.txt"]);
+      expect(await readdirSorted(linkedSlot)).toEqual(["mine.txt"]);
+      expect(install.exitCode).toBe(0);
+    }
+  });
+
+  test("a copy that an earlier bun made in place of the link moves aside, and --commit of that folder works", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: rootWithNoDeps,
+    });
+    const slot = join(packageDir, "node_modules", "no-deps");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    // bun 1.3.14 to 1.4.x replaced the link with the copy.
+    const store = realpathSync(slot);
+    await unlink(slot);
+    cpSync(store, slot, { recursive: true });
+    await write(join(slot, "index.js"), edit);
+
+    const install = await run(packageDir, ["install"]);
+    const [aside] = await displaced(slot);
+    expect(install.stderr).toContain(movedNote(slot, aside));
+    expect(readlinkSync(slot)).toBe(storeLink("no-deps", "1.0.0"));
+    expect(await file(join(aside, "index.js")).text()).toBe(edit);
+    expect(install.exitCode).toBe(0);
+
+    // A diff of a link is a patch that deletes every file of the package.
+    const moved = `node_modules/${basename(aside)}`;
+    const refused = await run(packageDir, ["patch", "--commit", "node_modules/no-deps/"]);
+    expect(refused.stderr).toContain(
+      `error: "${join("node_modules", "no-deps")}" is a link to "${storeLink("no-deps", "1.0.0")}", not a folder that bun patch prepared\n` +
+        `note: An install moved a folder that was there. To commit that folder, run bun patch --commit '${moved}'\n` +
+        `note: To prepare a new copy, run bun patch 'node_modules/no-deps/'\n`,
+    );
+    expect(existsSync(join(packageDir, "patches"))).toBe(false);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "app",
+      dependencies: { "no-deps": "1.0.0" },
+    });
+    expect(refused.exitCode).toBe(1);
+
+    const commit = await run(packageDir, ["patch", "--commit", moved]);
+    expect(commit.stderr).not.toContain("error:");
+    expect(commit.exitCode).toBe(0);
+    expect(await file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text()).toContain(
+      "+module.exports = 'EDITED';",
+    );
+    expect(await file(join(slot, "index.js")).text()).toBe(edit);
+    // The folder is the user's, so it stays.
+    expect(await file(join(aside, "index.js")).text()).toBe(edit);
+  });
+
+  test("--commit <link> does not name the folder that moved from the link of another dependency", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "app", dependencies: { "a-dep": "1.0.1", "a-dep-b": "1.0.0" } }),
+      },
+    });
+    const nodeModules = join(packageDir, "node_modules");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    // `.old_a-dep-b-<id>` starts with `.old_a-dep-`, and it is not from the link `a-dep`.
+    await replaceWithDirectory(join(nodeModules, "a-dep-b"), "a-dep-b");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+    expect(await displaced(join(nodeModules, "a-dep-b"))).toHaveLength(1);
+
+    const refused = await run(packageDir, ["patch", "--commit", "node_modules/a-dep"]);
+    expect(refused.stderr).toContain("not a folder that bun patch prepared\n");
+    expect(refused.stderr).not.toContain(".old_");
+    expect(refused.exitCode).toBe(1);
+  });
+
+  test("--commit refuses a moved folder that has another version", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: rootWithNoDeps,
+    });
+    const slot = join(packageDir, "node_modules", "no-deps");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+
+    // The folder of another linker: the same package, but not the version that bun.lock has.
+    await unlink(slot);
+    await write(join(slot, "package.json"), JSON.stringify({ name: "no-deps", version: "2.0.0" }));
+    await write(join(slot, "index.js"), "module.exports = require(`./package.json`);\n");
+    expect((await run(packageDir, ["install"])).exitCode).toBe(0);
+    const [aside] = await displaced(slot);
+    const moved = `node_modules/${basename(aside)}`;
+
+    const commit = await run(packageDir, ["patch", "--commit", moved]);
+    expect(commit.stderr).toContain(
+      `error: "${join("node_modules", basename(aside))}" is not a copy of the installed no-deps@1.0.0: its package.json has version "2.0.0", and the installed package has "1.0.0"\n` +
+        `note: To patch the installed package, run bun patch 'no-deps@1.0.0'\n`,
+    );
+    expect(existsSync(join(packageDir, "patches"))).toBe(false);
+    expect(await file(join(packageDir, "package.json")).json()).toEqual({
+      name: "app",
+      dependencies: { "no-deps": "1.0.0" },
+    });
+    expect(commit.exitCode).toBe(1);
+  });
+});
+
 test("many transitive dependencies", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 

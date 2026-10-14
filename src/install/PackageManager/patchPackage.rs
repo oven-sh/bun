@@ -13,6 +13,7 @@ use crate::bun_fs::FileSystem;
 use crate::bun_json as JSON;
 use crate::dependency::{Dependency, DependencyExt as _};
 use crate::isolated_install::FileCopier;
+use crate::isolated_install::symlinker::DISPLACED_PREFIX;
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::tree;
 use crate::lockfile_real::{self as lockfile, Lockfile, PackageIndexEntry};
@@ -226,6 +227,48 @@ fn point_link_at_patch_copy(link: &[u8], copy: &[u8]) -> sys::Result<()> {
     #[cfg(not(windows))]
     {
         sys::symlink(target, link)
+    }
+}
+
+/// The `.old_<name>-<id>` folders beside `link` (`Symlinker::move_aside`), with `/` separators.
+fn displaced_folders(link: &[u8]) -> Vec<Vec<u8>> {
+    let parent = bun_paths::dirname(link).unwrap_or(b".");
+    let prefix = [DISPLACED_PREFIX, bun_paths::basename(link), b"-"].concat();
+    let mut folders = Vec::new();
+    let Ok(dir) = Dir::open(parent) else {
+        return folders;
+    };
+    let mut entries = sys::iterate_dir(dir.fd());
+    while let Ok(Some(entry)) = entries.next() {
+        let name = entry.name.slice_u8();
+        // `.old_foo-bar-<id>` is from the link `foo-bar`, not from `foo`: the id is 16 hex digits.
+        if name.strip_prefix(&*prefix).is_some_and(|id| {
+            id.len() == 16 && id.iter().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+        }) {
+            folders.push([parent, b"/", name].concat());
+        }
+    }
+    folders.sort_unstable();
+    folders
+}
+
+fn is_displaced_folder(folder: &[u8]) -> bool {
+    bun_paths::basename(strings::without_trailing_slash(folder)).starts_with(DISPLACED_PREFIX)
+}
+
+/// The "version" in the package.json of `folder`.
+fn package_json_version(folder: &[u8]) -> Option<Vec<u8>> {
+    // `do_patch_commit` calls this while it holds a path in the buffer of `resolve_path::join`.
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let path = resolve_path::join_z_buf::<platform::Auto>(&mut buf[..], &[folder, b"package.json"]);
+    let source = bun_ast::to_source(path, Default::default()).ok()?;
+    initialize_store();
+    let mut log = bun_ast::Log::init();
+    // `parsed` owns what `root` points to.
+    let parsed = JSON::ParsedJson::parse_package_json(&source, &mut log).ok()?;
+    match &parsed.root.get(b"version")?.data {
+        bun_ast::ExprData::EString(version) => Some(version.data.slice().to_vec()),
+        _ => None,
     }
 }
 
@@ -469,6 +512,12 @@ pub fn do_patch_commit(
                 bun_fmt::quote(&changes_dir),
                 bun_fmt::quote(&target),
             );
+            for displaced in displaced_folders(&changes_dir) {
+                bun_core::note!(
+                    "An install moved a folder that was there. To commit that folder, run <cyan>bun patch --commit '{}'<r>",
+                    bstr::BStr::new(&displaced),
+                );
+            }
             // The link of an earlier `bun patch` is gone, and its copy is not.
             #[cfg(windows)]
             let mut posix_buf = bun_paths::path_buffer_pool::get();
@@ -550,6 +599,26 @@ pub fn do_patch_commit(
                 cache_dir_subpath.as_bytes(),
             ]);
         };
+
+        // A moved folder can hold any version: its diff would turn the installed one into that.
+        if is_displaced_folder(new_folder) {
+            let installed = package_json_version(old_folder);
+            let displaced = package_json_version(new_folder);
+            if installed != displaced {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> {} is not a copy of the installed <b>{}<r>: its package.json has version {}, and the installed package has {}",
+                    bun_fmt::quote(new_folder),
+                    bstr::BStr::new(&patch_key),
+                    bun_fmt::quote(displaced.as_deref().unwrap_or(b"")),
+                    bun_fmt::quote(installed.as_deref().unwrap_or(b"")),
+                );
+                bun_core::note!(
+                    "To patch the installed package, run <cyan>bun patch '{}'<r>",
+                    bstr::BStr::new(&patch_key),
+                );
+                Global::crash();
+            }
+        }
 
         let random_tempdir = match bun_paths::fs::FileSystem::tmpname(
             b"node_modules_tmp",

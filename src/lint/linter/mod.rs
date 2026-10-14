@@ -196,6 +196,56 @@ pub struct Linter<S: RuleSet> {
     numbers: Vec<u16>,
     /// What the configurations name by numbers.
     instances: Instances<Arc<S>>,
+    twins: Twins,
+}
+
+/// The rules without types that, with oxlint, give way to the rule of typescript-eslint that makes the same check with types.
+/// oxlint reports what both find twice.
+struct Twins {
+    /// The core rules that such a rule extends. It decides all that they decide: they do not run where it does.
+    extended: RuleBits,
+    /// unicorn's rules of the same name. They report where the other is silent, as for a value of type `any`: both run, and
+    /// what both report at one place is reported once.
+    namesakes: RuleBits,
+    /// For a rule of either set, by its number: the number of the rule with types.
+    typed: Vec<u16>,
+}
+
+impl Twins {
+    /// `number_of`: the number of a rule, if it has one.
+    fn new(
+        registry: &Registry,
+        numbers: usize,
+        number_of: &dyn Fn(&RuleEntry) -> Option<u16>,
+    ) -> Twins {
+        let (mut extended, mut namesakes) = (RuleBits::EMPTY, RuleBits::EMPTY);
+        let mut typed = vec![u16::MAX; numbers];
+        for entry in registry.all().iter().filter(|it| !it.meta.requires_types) {
+            let (twin, of) = match entry.meta.plugin {
+                crate::rule::Plugin::Eslint => {
+                    (registry.pair_of(entry.meta).map(|it| it.1), &mut extended)
+                }
+                crate::rule::Plugin::Unicorn => {
+                    let name = entry.meta.name.as_bytes();
+                    (
+                        registry.get(crate::rule::Plugin::TypeScript, name),
+                        &mut namesakes,
+                    )
+                }
+                _ => continue,
+            };
+            let twin = twin.filter(|it| it.meta.requires_types).and_then(number_of);
+            if let (Some(number), Some(twin)) = (number_of(entry), twin) {
+                of.insert(number);
+                typed[number as usize] = twin;
+            }
+        }
+        Twins {
+            extended,
+            namesakes,
+            typed,
+        }
+    }
 }
 
 /// A rule as it runs on the file: as it is configured, or as a comment changes that.
@@ -361,10 +411,16 @@ impl<S: RuleSet> Linter<S> {
                 numbers[index] = number as u16;
             }
         }
+        let number_of = |entry: &RuleEntry| {
+            let number = *numbers.get(registry.index_of(entry)?)?;
+            (number != u16::MAX).then_some(number)
+        };
+        let twins = Twins::new(&registry, S::METAS.len(), &number_of);
         Linter {
             registry,
             numbers,
             instances: Instances::new(),
+            twins,
         }
     }
 
@@ -781,6 +837,7 @@ impl<S: RuleSet> Linter<S> {
             file.set_package_module(Arc::clone(module));
         }
         // A rule for which the file has nothing is not started.
+        let mut on = prepared.on;
         if !is_plain {
             enabled.extend(running.iter().zip(0..).map(|(it, place)| Enabled {
                 rule: match &it.rule {
@@ -790,7 +847,7 @@ impl<S: RuleSet> Linter<S> {
                 severity: it.severity,
                 place,
             }));
-            let mut on = RuleBits::EMPTY;
+            on = RuleBits::EMPTY;
             for it in enabled.iter().filter(|it| it.severity != Severity::Off) {
                 let number = it.rule.number();
                 on.insert(number);
@@ -802,37 +859,23 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
-        // With oxlint, a rule gives way to the rule of typescript-eslint that makes the same check with types, where that one
-        // runs: oxlint reports such a thing twice. ESLint does too, and there both are reported. The places among `enabled`
-        // of the rules that still run and give way where both report, and of those with types.
-        let (mut giving_way, mut typed_at): (Vec<u16>, Vec<u16>) = (Vec::new(), Vec::new());
-        if file.types.is_some() && file.language().is_oxlint {
-            let meta_at = |index: usize, it: &Enabled<S>| match is_plain {
-                true => (prepared.order.get(it.place as usize))
-                    .and_then(|slot| config.rules.get(slot.at as usize))
-                    .map(|rule| rule.entry.meta),
-                false => running.get(index).map(|it| it.entry.meta),
-            };
-            let on = enabled
-                .iter()
-                .enumerate()
-                .filter(|(_, it)| it.severity != Severity::Off);
-            let metas: Vec<(usize, &'static Meta)> = on
-                .filter_map(|(index, it)| Some((index, meta_at(index, it)?)))
-                .collect();
-            let typed = metas
-                .iter()
-                .filter(|it| it.1.requires_types && it.1.plugin == crate::rule::Plugin::TypeScript);
-            let typed: Vec<&'static Meta> = typed.map(|it| it.1).collect();
-            for &(index, meta) in metas.iter().filter(|_| !typed.is_empty()) {
-                match self.registry.gives_way_to_one_of(meta, &typed) {
-                    Some(registry::GivesWay::Wholly) => {
-                        enabled[index].severity = Severity::Off;
-                        rules_to_ignore.push(RuleId::Known(meta));
-                    }
-                    Some(registry::GivesWay::WhereBothReport) => giving_way.push(index as u16),
-                    None if meta.requires_types => typed_at.push(index as u16),
-                    None => {}
+        // See `Twins`. The namesakes that run beside the rule with types, and those rules.
+        let (mut giving_way, mut typed_twins) = (RuleBits::EMPTY, RuleBits::EMPTY);
+        let twins = &self.twins;
+        let has_twins = on.intersects(&twins.extended) || on.intersects(&twins.namesakes);
+        if has_twins && file.types.is_some() && file.language().is_oxlint {
+            for it in enabled.iter_mut().filter(|it| it.severity != Severity::Off) {
+                let number = it.rule.number();
+                let typed = twins.typed.get(number as usize).copied();
+                let Some(typed) = typed.filter(|typed| *typed != u16::MAX && on.has(*typed)) else {
+                    continue;
+                };
+                if twins.namesakes.has(number) {
+                    giving_way.insert(number);
+                    typed_twins.insert(typed);
+                } else if let Some(Some(meta)) = S::METAS.get(number as usize) {
+                    it.severity = Severity::Off;
+                    rules_to_ignore.push(RuleId::Known(meta));
                 }
             }
         }
@@ -857,11 +900,13 @@ impl<S: RuleSet> Linter<S> {
             })
         };
         let mut diagnostics = crate::runner::run(file, &enabled, wants_fixes);
-        if !giving_way.is_empty() {
-            let of_typed = diagnostics.iter().filter(|it| typed_at.contains(&it.rule));
+        if giving_way != RuleBits::EMPTY {
+            let number = |it: &Diagnostic| enabled.get(it.rule as usize).map(|it| it.rule.number());
+            let is_of =
+                |it: &Diagnostic, rules: &RuleBits| number(it).is_some_and(|it| rules.has(it));
+            let of_typed = diagnostics.iter().filter(|it| is_of(it, &typed_twins));
             let of_typed: Vec<u32> = of_typed.map(|it| it.span.start).collect();
-            diagnostics
-                .retain(|it| !(giving_way.contains(&it.rule) && of_typed.contains(&it.span.start)));
+            diagnostics.retain(|it| !(is_of(it, &giving_way) && of_typed.contains(&it.span.start)));
         }
         if let Some(thrown) = file.sink.thrown.take() {
             // "error:" stands for the plain `Error:` where the run ends.

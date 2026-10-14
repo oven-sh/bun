@@ -1449,8 +1449,12 @@ export const linkerFlags: Flag[] = [
     // The file is a build artifact, never committed: configure seeds an empty one
     // (a no-op for lld) so this flag is unconditional. No build traces its own
     // binary: a CI build inherits the file an earlier build's trace-order step
-    // published (ci.ts "Symbol ordering file"), and links once. Symbols lld
-    // cannot find are skipped, so a stale file only costs part of the win.
+    // published (ci.ts "Symbol ordering file"), and does not link again for it.
+    // Symbols lld cannot find are skipped, so a stale file only costs part of
+    // the win.
+    //
+    // With a feature table the link is given a copy that goes on with what each
+    // set of features needs (feature-table.ts).
     //
     // A local `bun run build:release` therefore links unordered until you run
     // `bun run orderfile` and build again.

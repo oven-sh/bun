@@ -2129,8 +2129,7 @@ impl<'a> Repl<'a> {
             bun_ast::Loader::Tsx,
         );
         opts.repl_mode = true;
-        // A block that does not end with `;` is an error here, and the callers evaluate it as
-        // written: the transform gives a block no completion value.
+        // A block with no `;` at its end is an error here: the callers evaluate it as written, for its completion value.
         opts.repl_leading_brace = bun_js_parser::ReplLeadingBrace::Expression;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL

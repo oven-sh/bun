@@ -21,9 +21,7 @@ use crate::Error;
 use crate::lexer::T;
 use crate::p::P;
 
-/// At the first token of the input. `isObjectLiteral` of node's REPL: the input starts with
-/// `{` and does not end with `;`.
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/repl/utils.js#L786-L789
+/// `isObjectLiteral` of node's REPL, at the first token: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/repl/utils.js#L786-L789
 pub(crate) fn starts_like_object_literal(
     lexer: &crate::lexer::Lexer,
     source: &bun_ast::Source,
@@ -36,8 +34,7 @@ pub(crate) fn starts_like_object_literal(
 }
 
 impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
-    /// `ReplLeadingBrace::Expression`: reads the whole input as one expression. The result is
-    /// the statement list of the input.
+    /// `ReplLeadingBrace::Expression`: the statement list of an input that is one expression.
     #[cold]
     #[inline(never)]
     pub(crate) fn read_repl_expression(&mut self) -> Result<&'a mut [Stmt], Error> {

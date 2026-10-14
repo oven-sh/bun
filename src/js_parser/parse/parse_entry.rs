@@ -164,8 +164,7 @@ pub struct Options<'a> {
 /// How `Options::repl_mode` reads an input that starts with `{` and does not end with `;`.
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum ReplLeadingBrace {
-    /// As one expression, so that `{a: 1}` is an object literal and not a block with a label.
-    /// If the input is not one expression, or the visit pass rejects it, as statements.
+    /// As one expression (`{a: 1}` is an object literal), or as statements if it is not one.
     #[default]
     ExpressionOrStatements,
     /// As one expression. `Err(Error::Backtrack)`: the input is not one expression.
@@ -906,8 +905,7 @@ fn log_of_one_reading(log: &bun_ast::Log) -> bun_ast::Log {
     of_reading
 }
 
-/// The input ends inside the expression (its first error is at the end of the input), and
-/// the first error of the statements is before that: `{ a: 1, b: 2,`.
+/// `{ a: 1, b: 2,`: the first error of the expression is at the end of the input, and the one of the statements is not.
 fn ends_inside_expression_only(
     of_expression: &bun_ast::Log,
     of_statements: &bun_ast::Log,
@@ -944,30 +942,19 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// One parser reads the input as one expression and another reads it as statements, so
-    /// that nothing of the first reading is in the second. `p` gives them its options.
-    ///
-    /// Node v26.3.0 evaluates `(` + input + `)`, and the input as written if that does not parse:
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/repl.js#L458-L462 and #L550-L561
-    /// Not as in node: a comment after the expression is not part of it (`{a: 1} // note` is an
-    /// object literal), and if the input is not statements either, the errors are those of
-    /// the statements. The errors are those of the expression if only the visit pass rejects
-    /// it, or if the input ends inside it (`ends_inside_expression_only`): then a caller that
-    /// reads input line by line finds `end of file` in them.
+    /// One parser reads the input as one expression and another reads it as statements, as node's REPL does with `(input)` and `input`: https://github.com/nodejs/node/blob/v26.3.0/lib/repl.js#L458-L462
     fn parse_repl_expression_or_statements<const TS: bool>(
         p: &mut P<'a, TS, false>,
     ) -> Result<crate::Result<'a>, Error> {
         let (source, define, arena) = (p.source, p.define, p.arena);
 
         let mut of_expression = log_of_one_reading(p.log());
-        // One expression has no import or export statement, which is what reads the options
-        // that `clone_for_lazy_export` leaves out.
+        // `clone_for_lazy_export` leaves out what only an import or export statement reads.
         let mut options = p.options.clone_for_lazy_export();
         options.repl_leading_brace = ReplLeadingBrace::Expression;
         let expression = Parser::init(options, &mut of_expression, source, define, arena)
             .and_then(Parser::_parse::<TS>);
-        // `Backtrack`: the input is not one expression. Any other error: it is one, and the
-        // visit pass rejected it, or the parser ran out of stack in it.
+        // Any error but `Backtrack`: the input is one expression, and the visit pass rejected it.
         let is_rejected_expression = match expression {
             Ok(result) => {
                 of_expression.append_to_maybe_recycled(p.log(), source);

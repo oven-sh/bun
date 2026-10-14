@@ -150,7 +150,7 @@ fn format_normalized(
     // Prettier's `addAlignmentToDoc`. The line break makes the indentation take effect.
     let tab_width = options.indent_width.value().max(1) as usize;
     let (levels, spaces) = (alignment / tab_width, (alignment % tab_width) as u32);
-    let context = JsFormatContext::without_file(text, options.clone(), &[]);
+    let context = JsFormatContext::without_file(options.clone(), &crate::js::comments::NO_COMMENTS);
     let root = crate::ir::run::write_with(context, text, document, |f| {
         if spaces > 0 {
             f.write_element(FormatElement::Tag(Tag::StartAlign(Align(spaces))));

@@ -390,6 +390,7 @@ fn message_of<'a>(file: &'a File<'a>, error: SyntaxError) -> LintMessage {
         column: at.column + u32::from(parser != Parser::TypeScript),
         end,
         is_fatal: true,
+        claim: None,
         fix: None,
         suggestions: Vec::new(),
         suppressions: Vec::new(),

@@ -302,6 +302,12 @@ impl PartialEq for Symbol<'_> {
     }
 }
 impl Eq for Symbol<'_> {}
+impl crate::types::Indexed for Symbol<'_> {
+    #[inline]
+    fn index(self) -> u32 {
+        self.index
+    }
+}
 impl std::hash::Hash for Symbol<'_> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -961,6 +967,12 @@ impl PartialEq for Scope<'_> {
     }
 }
 impl Eq for Scope<'_> {}
+impl crate::types::Indexed for Scope<'_> {
+    #[inline]
+    fn index(self) -> u32 {
+        self.id.0
+    }
+}
 impl std::hash::Hash for Scope<'_> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

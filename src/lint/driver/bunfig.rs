@@ -27,9 +27,6 @@ pub struct Refusal {
     pub message: Vec<u8>,
 }
 
-/// [`lint`] or [`format`]: what a bunfig.toml says to the command. `Ok(None)`: nothing.
-pub type Read<T> = fn(&Expr) -> Result<Option<T>, Refusal>;
-
 fn refuse<T>(at: Loc, parts: &[&[u8]]) -> Result<T, Refusal> {
     Err(Refusal {
         at,
@@ -294,11 +291,12 @@ const FORMAT: Table = Table {
         b"insert-pragma",
         b"experimental-ternaries",
         b"experimental-operator-position",
-        // Features beyond Prettier's options. The first four also take a table, see `FEATURES`.
+        // Features beyond Prettier's options. The first five also take a table, see `FEATURES`.
         b"sort-imports",
         b"sort-tailwindcss",
         b"sort-package-json",
         b"jsdoc",
+        b"svelte",
         b"insert-final-newline",
     ],
     renamed: &[
@@ -338,6 +336,7 @@ const FORMAT: Table = Table {
         b"no-bracket-spacing",
         b"no-error-on-unmatched-pattern",
         b"no-insert-final-newline",
+        b"no-svelte",
         b"no-color",
         b"parser",
         b"plugin",
@@ -408,7 +407,7 @@ struct Feature {
     options: &'static [(&'static [u8], Takes)],
 }
 
-const FEATURES: [Feature; 4] = [
+const FEATURES: [Feature; 5] = [
     Feature {
         flag: b"sort-imports",
         name: b"sortImports",
@@ -462,6 +461,16 @@ const FEATURES: [Feature; 4] = [
             (b"jsdoc.keepUnparsableExampleIndent", Takes::Boolean),
         ],
     },
+    Feature {
+        flag: b"svelte",
+        name: b"svelte",
+        table: As::Parts,
+        options: &[
+            (b"svelte.sortOrder", Takes::String),
+            (b"svelte.allowShorthand", Takes::Boolean),
+            (b"svelte.indentScriptAndStyle", Takes::Boolean),
+        ],
+    },
 ];
 
 impl Feature {
@@ -502,7 +511,16 @@ impl Feature {
                 .set(name, &text)
                 .is_err()
             {
-                return refuse(value.loc, &[b"Invalid ", name, b" value: ", &text, b"."]);
+                let hint: &[u8] = match name {
+                    b"svelte.sortOrder" => {
+                        b"\n  Use \"none\", or all four parts in the order you want: \"options-scripts-markup-styles\""
+                    }
+                    _ => b"",
+                };
+                return refuse(
+                    value.loc,
+                    &[b"Invalid ", name, b" value: ", &text, b".", hint],
+                );
             }
             parts.push((name, text));
         }
@@ -1019,14 +1037,11 @@ fn settings(table: &Expr) -> Result<Vec<(Vec<u8>, Json)>, Refusal> {
     entries(table)?.into_iter().map(one).collect()
 }
 
-/// What `[lint]` of `file` says, and `[fmt]`, which is for the rule that holds a file against what `bun fmt` prints.
+/// What `[lint]` of `file` says.
 pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
-    let mut options = crate::cli::Options {
-        of_bun_format: format(file)?.map(Box::new),
-        ..Default::default()
-    };
+    let mut options = crate::cli::Options::default();
     let Some(section) = file.get(b"lint") else {
-        return Ok(options.of_bun_format.is_some().then_some(options));
+        return Ok(None);
     };
     for (key, value) in entries(&section)? {
         let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);

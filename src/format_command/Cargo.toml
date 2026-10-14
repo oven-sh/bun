@@ -19,3 +19,4 @@ bun_lint_driver.workspace = true
 bun_format_conformance.workspace = true
 bun_core.workspace = true
 bun_options_types.workspace = true
+bun_bunfig.workspace = true

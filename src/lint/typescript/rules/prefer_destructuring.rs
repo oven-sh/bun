@@ -54,7 +54,8 @@ impl PreferDestructuring {
             return true;
         }
         if self.base.enforce_for_renamed_properties && is_object_enabled {
-            cx.report(report_node, PREFER_DESTRUCTURING).data("type", "object");
+            cx.report(report_node, PREFER_DESTRUCTURING)
+                .claims(report_node).data("type", "object");
         }
         false
     }

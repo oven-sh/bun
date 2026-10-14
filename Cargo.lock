@@ -645,6 +645,7 @@ dependencies = [
 name = "bun_format_command"
 version = "0.0.0"
 dependencies = [
+ "bun_bunfig",
  "bun_core",
  "bun_format_conformance",
  "bun_lint_command",

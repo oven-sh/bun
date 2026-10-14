@@ -1,6 +1,5 @@
 use super::semicolon::OptionalSemicolon;
 use crate::js::format::identifier;
-use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -17,9 +16,6 @@ pub(crate) fn write_ts_mapped_type<'a>(
 ) {
     let param = mapped.param();
     let key = param.name();
-    if f.comments().is_suppressed(key.start()) {
-        return write!(f, FormatSuppressedNode(ty.span()));
-    }
     // One that has a line break after its `{` in the source stays broken.
     let should_expand = f.options().expand == Expand::Auto
         && f.source_text()
@@ -27,11 +23,8 @@ pub(crate) fn write_ts_mapped_type<'a>(
 
     let format_inner = format_with(|f| {
         if !f.is_quiet() {
-            write_comments_before_bracket(
-                f.comments()
-                    .comments_before_character(ty.span().start, b'['),
-                f,
-            );
+            let dangling_comments = f.comments().of_node(AstNodes::TSMappedType(ty)).dangling;
+            write_comments_before_bracket(dangling_comments, f);
         }
         match mapped.readonly() {
             MappedModifier::None => {}
@@ -50,17 +43,14 @@ pub(crate) fn write_ts_mapped_type<'a>(
             // The blank after `in` stays if a comment that trails the key ends up behind it.
             let comment_brings_its_blank = one_blank_before_line_comment_behind_in(f)
                 && !f.is_quiet()
-                && param.constraint().is_some_and(|constraint| {
-                    matches!(constraint.kind(), TypeKind::Union(_))
-                        && f.comments()
-                            .comments_before(constraint.span().start)
-                            .iter()
-                            .any(|comment| comment.followed_by_newline())
-                });
+                && (param.constraint())
+                    .is_some_and(|constraint| matches!(constraint.kind(), TypeKind::Union(_)))
+                && (f.comments().of_name(key.span().start).trailing.iter())
+                    .any(|comment| comment.has_newline_after());
             write!(
                 f,
                 [
-                    identifier(key, AstNodes::TSMappedType(ty)),
+                    identifier(key),
                     match comment_brings_its_blank {
                         true => " in",
                         false => " in ",
@@ -108,17 +98,22 @@ pub(crate) fn write_ts_mapped_type<'a>(
 
 /// The comments between the `{` and the `[`, each on its own line. The last one stays on the line
 /// of the `[` if it is there in the source and fits.
-fn write_comments_before_bracket<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
-    let Some((last, others)) = comments.split_last() else {
-        return;
-    };
-    for comment in others {
-        f.comments_mut().increment_printed_count();
-        write!(f, [comment, hard_line_break()]);
-    }
-    f.comments_mut().increment_printed_count();
-    match last.followed_by_newline() {
-        true => write!(f, [last, hard_line_break()]),
-        false => write!(f, group(&format_args!(last, soft_line_break_or_space()))),
+fn write_comments_before_bracket<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
+    let mut comments = comments.iter().peekable();
+    while let Some(comment) = comments.next() {
+        f.comments_mut().mark_printed(comment);
+        match comments.peek() {
+            // Prettier's `mergeNestledJsdocComments`: `/** .. *//** .. */` is one comment.
+            Some(next)
+                if next.span().start == comment.span().end
+                    && comment.is_indentable_block()
+                    && next.is_indentable_block() =>
+            {
+                write!(f, comment)
+            }
+            Some(_) => write!(f, [comment, hard_line_break()]),
+            None if comment.has_newline_after() => write!(f, [comment, hard_line_break()]),
+            None => write!(f, group(&format_args!(comment, soft_line_break_or_space()))),
+        }
     }
 }

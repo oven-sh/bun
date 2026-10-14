@@ -21,6 +21,7 @@ fn body_of_for_loop_is_written_like_its_head(f: &Formatter<'_>) -> bool {
 }
 
 /// `const a = 1, b = 2;`
+#[inline(never)]
 pub(crate) fn write_variable_declaration<'a>(
     statement: Stmt<'a>,
     declarations: List<'a, VarDecl<'a>>,
@@ -99,11 +100,12 @@ impl<'a> Format<'a> for FormatVariableDeclarators<'a> {
             return;
         };
 
-        if length == 1
-            && !f
-                .comments()
-                .has_comment_before(first_declarator.span().start)
-        {
+        // Only oxfmt has dangling comments here: the ones that stay behind the `=`. They do not count.
+        let has_comments = |declarator: VarDecl<'a>| {
+            let comments = (f.comments()).of_node(AstNodes::VariableDeclarator(declarator));
+            !comments.leading.is_empty() || !comments.trailing.is_empty()
+        };
+        if length == 1 && !self.declarations.first().is_some_and(has_comments) {
             return write!(f, first_declarator);
         }
 

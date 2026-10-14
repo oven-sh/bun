@@ -332,6 +332,10 @@ impl<'a> Format<'a> for Comment<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let content = self.text();
         if self.is_line() {
+            // `-->` starts a comment at the start of a line only. oxfmt prints `var --> comment`.
+            if content.starts_with(b"-->") {
+                write!(f, hard_line_break());
+            }
             return write!(f, text(bun_core::strings::trim_js_whitespace_end(content)));
         }
         if super::jsdoc::write_comment(*self, f) {

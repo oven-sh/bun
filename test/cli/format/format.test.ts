@@ -1192,12 +1192,16 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  test("`<!-- prettier-ignore` in a script is an ignore comment", async () => {
-    // What oxfmt 0.72 prints. Prettier 3.9.9 does not parse these files.
+  test("`<!--` and `-->` comments in a script", async () => {
+    // What oxfmt 0.72 prints, unless it says otherwise. Prettier 3.9.9 does not parse these files.
     const rows = [
       ["<!-- prettier-ignore\na(  b  );\nc(  d  );\n", "<!-- prettier-ignore\na(  b  );\nc(d);\n"],
       ["a;\n--> prettier-ignore\nb(  c  );\nd(  e  );\n", "a;\n--> prettier-ignore\nb(  c  );\nd(e);\n"],
       ["<!-- a comment\na(  b  );\n", "<!-- a comment\na(b);\n"],
+      // `-->` starts a comment at the start of a line only. oxfmt prints `var --> c`, which does not parse, and `x = a--> c`,
+      // which is `x = a-- > c.b.c()`.
+      ["var\n--> c\na = b;\n", "var\n  --> c\n  a = b;\n"],
+      ["x = a\n--> c\n.b.c();\n", "x = a\n--> c\n.b\n  .c();\n"],
     ];
     const names = rows.map((_, index) => `${index}.js`);
     const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));

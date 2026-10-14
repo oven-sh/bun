@@ -8,7 +8,7 @@ const {
   validateObject,
   validateInteger,
 } = require("internal/validators");
-const { resistStopPropagation, ErrnoException } = require("internal/shared");
+const { resistStopPropagation, ErrnoException, captureCallSites } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
@@ -548,7 +548,7 @@ interface CallSiteObject {
   column: number;
 }
 
-function prepareCallSites(_err, callSites) {
+function toCallSiteObjects(callSites) {
   const result: CallSiteObject[] = [];
   for (let i = 0; i < callSites.length; i++) {
     const callSite = callSites[i];
@@ -594,27 +594,7 @@ function getCallSites(frameCount = 10, options) {
   // Using kDefaultMaxCallStackSizeToCapture as reference
   validateInteger(frameCount, "frameCount", 1, 200);
 
-  // Capture with our own prepareStackTrace so a user-installed
-  // Error.prepareStackTrace is never invoked, and so Error.stackTraceLimit
-  // does not influence the number of frames returned.
-  const target: { stack?: CallSiteObject[] } = {};
-  const savedPrepareStackTrace = Error.prepareStackTrace;
-  const savedStackTraceLimit = Error.stackTraceLimit;
-  try {
-    Error.prepareStackTrace = prepareCallSites;
-    // User code may have made stackTraceLimit non-writable; best-effort so the
-    // capture still runs and prepareStackTrace is always restored.
-    try {
-      Error.stackTraceLimit = frameCount;
-    } catch {}
-    Error.captureStackTrace(target, getCallSites);
-    return target.stack;
-  } finally {
-    Error.prepareStackTrace = savedPrepareStackTrace;
-    try {
-      Error.stackTraceLimit = savedStackTraceLimit;
-    } catch {}
-  }
+  return toCallSiteObjects(captureCallSites(getCallSites, frameCount));
 }
 
 let lazySignals;

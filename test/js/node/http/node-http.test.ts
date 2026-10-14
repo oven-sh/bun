@@ -7531,6 +7531,29 @@ describe("the head of a response", () => {
     }
   }
 
+  it("frames the body by its headers whatever the case of their names", async () => {
+    const heads: Record<string, http.OutgoingHttpHeaders> = {
+      "/lower": { "content-length": "5", date: "then" },
+      "/upper": { "CONTENT-LENGTH": "5", DATE: "then" },
+      "/mixed": { "cOnTeNt-LeNgTh": "5", dAtE: "then" },
+      "/chunked": { "TRANSFER-encoding": "chunked", Date: "then" },
+      // As long as those, and not those.
+      "/others": { "content-lengt_": "5", "Dat_": "then", "transfer-encodin_": "chunked", date: "then" },
+    };
+    expect(
+      await written(Object.keys(heads), (req, res) => {
+        for (const [name, value] of Object.entries(heads[req.url!])) res.setHeader(name, value!);
+        res.end("<end>");
+      }),
+    ).toEqual([
+      `HTTP/1.1 200 OK\r\ncontent-length: 5\r\ndate: then\r\n${persist}\r\n<end>`,
+      `HTTP/1.1 200 OK\r\nCONTENT-LENGTH: 5\r\nDATE: then\r\n${persist}\r\n<end>`,
+      `HTTP/1.1 200 OK\r\ncOnTeNt-LeNgTh: 5\r\ndAtE: then\r\n${persist}\r\n<end>`,
+      `HTTP/1.1 200 OK\r\nTRANSFER-encoding: chunked\r\nDate: then\r\n${persist}\r\n5\r\n<end>\r\n0\r\n\r\n`,
+      `HTTP/1.1 200 OK\r\ncontent-lengt_: 5\r\nDat_: then\r\ntransfer-encodin_: chunked\r\ndate: then\r\n${persist}Content-Length: 5\r\n\r\n<end>`,
+    ]);
+  });
+
   it.each([
     { contentLength: "the listener's", own: true },
     { contentLength: "the server's", own: false },

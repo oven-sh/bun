@@ -26,11 +26,18 @@ describe.concurrent("http2 session idle timer", () => {
     return counts;
   }
 
+  // Rejects a promise that waits for the 'timeout' event of `session` when the session fails or closes first.
+  function rejectOnFailure(session: http2.Http2Session, reject: (reason: Error) => void) {
+    session.on("error", reject);
+    session.on("close", () => reject(new Error("the session closed before its 'timeout' event")));
+  }
+
   // Arms the idle timer of `session`. Resolves with the count of expiries at its 'timeout' event.
   function expiriesAtTimeout(session: http2.Http2Session) {
-    const { promise, resolve } = Promise.withResolvers<number>();
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
     session.setTimeout(period, () => resolve(counts.expiries));
     const counts = watchIdleTimer(session);
+    rejectOnFailure(session, reject);
     return promise;
   }
 
@@ -75,7 +82,6 @@ describe.concurrent("http2 session idle timer", () => {
       await new Promise<void>(resolve => peer.listen(0, "127.0.0.1", resolve));
       const { port } = peer.address() as AddressInfo;
       const client = http2.connect(`${scheme}://127.0.0.1:${port}`, { rejectUnauthorized: false });
-      client.on("error", () => {});
       try {
         expect(await expiriesAtTimeout(client)).toBe(1);
       } finally {
@@ -100,10 +106,11 @@ describe.concurrent("http2 session idle timer", () => {
 
     it(`emits 'timeout' at the first expiry of an idle server session (${transport})`, async () => {
       const server = createServer(transport);
-      const { promise, resolve } = Promise.withResolvers<number>();
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
       let counts: { expiries: number };
       server.on("session", session => {
         counts = watchIdleTimer(session);
+        rejectOnFailure(session, reject);
       });
       server.setTimeout(period, () => resolve(counts.expiries));
       const client = await connectTo(server, transport);
@@ -118,10 +125,11 @@ describe.concurrent("http2 session idle timer", () => {
 
   it("destroys an idle server session at the first expiry when the server has no 'timeout' listener", async () => {
     const server = http2.createServer();
-    const { promise, resolve } = Promise.withResolvers<number>();
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
     server.setTimeout(period);
     server.on("session", session => {
       const counts = watchIdleTimer(session);
+      session.on("error", reject);
       session.on("close", () => resolve(counts.expiries));
     });
     const client = await connectTo(server);

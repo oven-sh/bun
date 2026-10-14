@@ -58,11 +58,10 @@ pub enum Mode {
 pub(crate) struct ScopeFunctions {
     pub(crate) mode: Mode,
     pub(crate) cfg: BaseScopeCfg,
-    /// typically `.zero`. After `.each`: the table array, or the Error of a malformed
-    /// template table, which the title call throws. not Strong.Optional because codegen
-    /// visits the C++ `m_each` WriteBarrier on the JS wrapper (see `values: ["each"]` in
-    /// jest.classes.ts). This field is kept in sync with that slot via
-    /// `js::each_set_cached` in `create_unbound`.
+    /// typically `.zero`. not Strong.Optional because codegen visits the C++ `m_each`
+    /// WriteBarrier on the JS wrapper (see `values: ["each"]` in jest.classes.ts). This
+    /// field is kept in sync with that slot via `js::each_set_cached` in `create_unbound`.
+    /// After `.each`: the table array, or the Error of a malformed template table.
     pub(crate) each: JSValue,
 }
 
@@ -145,9 +144,7 @@ fn is_template_strings(global: &JSGlobalObject, array: JSValue) -> JsResult<bool
     Ok(array.get_own_truthy(global, "raw")?.is_some_and(|raw| raw.is_array()))
 }
 
-/// The headings of a template table. `header` is `strings[0]`: a newline, one row of names
-/// with `|` between them, and a newline. jest-each also takes an empty name, and a row
-/// that goes on after the newline. Both are malformed here.
+/// The headings in `strings[0]`: one row of names. jest-each also takes an empty name and a row on two lines.
 fn template_headings(header: EncodedSlice<'_>) -> Option<Vec<BunString>> {
     let is_space = |i: usize| strings::is_js_whitespace(u32::from(header.char_at(i)));
     let skip_space = |mut i: usize| {
@@ -192,7 +189,6 @@ fn template_headings(header: EncodedSlice<'_>) -> Option<Vec<BunString>> {
     }
     headings.push(BunString::clone_utf16(&heading));
     // jest-each can read a `|` and a name at the start of the next line as more headings.
-    // A `|` with no name after it starts a row of values.
     i = skip_space(i + 1);
     if i < header.len && header.char_at(i) == u16::from(b'|') && skip_space(i + 1) < header.len {
         return None;
@@ -200,9 +196,7 @@ fn template_headings(header: EncodedSlice<'_>) -> Option<Vec<BunString>> {
     Some(headings)
 }
 
-/// The table for `each(strings, ...values)`: one object per row, keyed by the headings in
-/// `strings[0]`. A malformed table gives the Error that the title call throws, in
-/// jest-each's wording. `rooted` keeps the result alive until the caller stores it.
+/// One object per row of `each(strings, ...values)`, or the Error that the title call throws.
 fn template_table(
     global: &JSGlobalObject,
     rooted: &mut bun_jsc::MarkedArgumentBuffer,
@@ -273,8 +267,7 @@ fn template_table(
     Ok(rows)
 }
 
-/// A template with no `${}` calls `each(strings)`, so `.each` kept `strings` as a table of one row.
-/// That row is the text of the template, or undefined when the text has an invalid escape.
+/// A template with no `${}` is a table of one row here: its text, or undefined for an invalid escape.
 fn reject_template_without_values(global: &JSGlobalObject, table: JSValue) -> JsResult<()> {
     let first = table.get_index(global, 0)?;
     if !(first.is_string() || first.is_undefined()) || !is_template_strings(global, table)? {

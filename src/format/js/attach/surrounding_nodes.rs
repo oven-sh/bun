@@ -165,6 +165,12 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             Node::Expr(e) => self.owner_of_expr(e),
             Node::Type(ty) => self.owner_of_type(ty),
             Node::Stmt(statement) => self.owner_of_stmt(statement),
+            // A tuple element without a name, `?` or `...` is just its type in ESTree.
+            Node::TupleElem(element)
+                if element.name().is_none() && !element.is_rest() && !element.is_optional() =>
+            {
+                self.owner_of_type(element.ty())
+            }
             _ => Owner::Node(node_as_ast_nodes(node)),
         }
     }

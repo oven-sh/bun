@@ -5,6 +5,7 @@ use super::{Marker, Options, Owner, Placement, attach};
 use crate::js::ast_nodes::AST_KIND_NAMES;
 use crate::js::comments::Comment;
 use bun_lint::ast::File;
+use bun_lint::ast::comments::NodeOrName;
 use std::io::Write;
 
 /// A line for each comment: where it is, and what owns it. And one for each node that is ignored by a comment that another
@@ -54,6 +55,24 @@ pub(crate) fn list<'a>(
             comment.span.start, comment.span.end, span.start, span.end,
         );
         lines.push((comment.span.start, line));
+    }
+    // The nodes that the parser recorded, to debug a wrong owner.
+    for comment in file.comments_by_id() {
+        let describe = |node: Option<NodeOrName<'a>>| match node {
+            None => "-".to_owned(),
+            Some(NodeOrName::Name(start)) => format!("name@{start}"),
+            Some(NodeOrName::Node(node)) => format!("{}..{}", node.span().start, node.span().end),
+        };
+        let line = format!(
+            "P {} tokens {}..{} enclosing {} preceding {} following {}",
+            comment.span().start,
+            comment.prev_token_end(),
+            comment.next_token_start(),
+            describe(comment.enclosing_node().map(NodeOrName::Node)),
+            describe(comment.preceding_node()),
+            describe(comment.following_node()),
+        );
+        lines.push((comment.span().start, line.into_bytes()));
     }
     for owner in &attached.ignored_nodes {
         let (name, span) = describe(*owner);

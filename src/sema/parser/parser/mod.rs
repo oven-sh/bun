@@ -154,7 +154,8 @@ file_lists! {
     classes, interfaces, aliases, enums, enum_members, modules, members, props, var_decls, calls,
     cases, jsx, imports, import_specs, import_equals, exports, export_specs, tuple_elems, mapped,
     modifiers, names, parens, non_null_ends, jsx_expressions, body_starts, specifier_uses,
-    decorators, modifiers_of_params, modifiers_of_props, with_bodies, import_attributes,
+    decorators, modifiers_of_params, modifiers_of_props, with_bodies, detached_semicolons,
+    import_attributes,
     deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
     mentioned, diagnostics, after_skipped, stray_decorators,
     specifier_expressions, exports_from_expressions,
@@ -854,13 +855,32 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         matches!(self.lx.token, T::Semicolon | T::CloseBrace | T::Eof) || self.lx.newline_before
     }
 
+    /// Consumes a `;` that terminates a statement or a class member, if the current token is one.
+    #[inline(always)]
+    pub(crate) fn eat_semicolon(&mut self) -> bool {
+        if self.lx.token != T::Semicolon {
+            return false;
+        }
+        if self.lx.full_start != self.lx.start {
+            self.record_detached_semicolon();
+        }
+        self.lx.next();
+        true
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn record_detached_semicolon(&mut self) {
+        (self.f.detached_semicolons).push((self.lx.start, self.lx.full_start));
+    }
+
     /// `parseSemicolon`
     #[inline(always)]
     #[track_caller]
     pub(crate) fn semicolon(&mut self) {
-        if self.lx.token == T::Semicolon {
-            self.lx.next();
-        } else if !(matches!(self.lx.token, T::CloseBrace | T::Eof) || self.lx.newline_before) {
+        if !self.eat_semicolon()
+            && !(matches!(self.lx.token, T::CloseBrace | T::Eof) || self.lx.newline_before)
+        {
             self.expected(T::Semicolon);
         }
     }

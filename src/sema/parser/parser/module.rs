@@ -89,8 +89,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.expression_as_module_specifier(is_export);
             return (Atom::NONE, ResolutionMode::None);
         }
-        let (spec, pos) = (self.lx.atom, self.pos());
+        let (spec, pos, end) = (self.lx.atom, self.pos(), self.lx.end);
         self.next();
+        self.finish_name(pos, end);
         let mut mode = self.import_attributes_of_declaration(is_export);
         if !is_type_only {
             mode = ResolutionMode::None;

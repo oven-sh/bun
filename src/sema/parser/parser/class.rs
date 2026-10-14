@@ -730,7 +730,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.context = inner;
             // `parseSemicolonAfterPropertyName`
             if self.token() == T::OpenParen && self.recovers()
-                || !self.eat(T::Semicolon) && !self.can_parse_semicolon()
+                || !self.eat_semicolon() && !self.can_parse_semicolon()
             {
                 let is_identifier =
                     name_token.is_identifier_or_keyword() && name_token != T::PrivateIdentifier;

@@ -373,11 +373,6 @@ pub(crate) fn of_file<'a>(
     comments.unwrap_or(&NO_COMMENTS)
 }
 
-/// `\s` for one byte. `u8::is_ascii_whitespace` does not know the vertical tab.
-fn is_white_space(b: u8) -> bool {
-    b.is_ascii_whitespace() || b == 0x0B
-}
-
 /// Only Babel, which Prettier parses JavaScript with, tells it about the parentheses after
 /// `/** @type {T} */`. In TypeScript they are parentheses like any other. oxfmt keeps them there too.
 fn type_casts_are_kept_in_typescript(flavor: Flavor) -> bool {
@@ -517,73 +512,6 @@ impl<'a> Comments<'a> {
         self.unprinted_comments()
             .first()
             .map_or(u32::MAX, |c| c.start())
-    }
-
-    /// Prettier's `__contentEnd`: `span`, which is that of a statement, without the `;` at its end
-    /// and the comments before that. They are not in the statement but behind it:
-    /// `a() /* comment */;` is `a(); /* comment */`.
-    pub(crate) fn without_semicolon(&self, span: Span) -> Span {
-        if span.is_empty() || self.source_text.byte_at(span.end - 1) != Some(b';') {
-            return span;
-        }
-        let mut end = span.end - 1;
-        loop {
-            while end > span.start
-                && self
-                    .source_text
-                    .byte_at(end - 1)
-                    .is_some_and(is_white_space)
-            {
-                end -= 1;
-            }
-            let at = self.inner.partition_point(|comment| comment.end() < end);
-            match self.inner.get(at) {
-                Some(comment)
-                    if comment.end() == end && (span.start..end).contains(&comment.start()) =>
-                {
-                    end = comment.start()
-                }
-                _ => return Span::new(span.start, end),
-            }
-        }
-    }
-
-    /// Prettier's `handleMethodNameComments` for the comments at the end of a member of a class, which
-    /// is at `span`: those with code behind them on their line, a `)` or the `;`, trail the member,
-    /// unless they start the line. Where they start. The others are in the member.
-    ///
-    /// `value_end`: where the value of the member ends, without parentheses.
-    pub(crate) fn start_of_comments_before_semicolon(
-        &self,
-        value_end: Option<u32>,
-        span: Span,
-    ) -> u32 {
-        let content_end = self.without_semicolon(span).end;
-        let comments = self.comments_in(Span::new(value_end.unwrap_or(content_end), span.end));
-        let is_on_same_line = |from: u32, to: u32| {
-            self.source_text.all_bytes(Span::new(from, to), |b| {
-                matches!(b, b' ' | b'\t' | b')' | b';')
-            })
-        };
-        let mut first = comments.len();
-        while first > 0
-            && is_on_same_line(
-                comments[first - 1].end(),
-                comments.get(first).map_or(span.end, |next| next.start()),
-            )
-        {
-            first -= 1;
-        }
-        match comments.get(first) {
-            // At the very end it has no code behind it.
-            Some(comment)
-                if !comment.preceded_by_newline()
-                    && comments.last().is_some_and(|last| last.end() < span.end) =>
-            {
-                comment.start()
-            }
-            _ => span.end,
-        }
     }
 
     /// Whether any comment of the file is a type cast.

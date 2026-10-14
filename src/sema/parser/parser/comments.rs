@@ -27,9 +27,19 @@ impl Candidate {
         self.node == NodeOrName::None
     }
 
+    /// An identifier can be reported both as a name and as the node that consists of it. The node counts.
+    fn is_name_of(self, other: Candidate) -> bool {
+        matches!(self.node, NodeOrName::Name(_))
+            && matches!(other.node, NodeOrName::Node(_))
+            && (self.start, self.end) == (other.start, other.end)
+    }
+
     /// Both end before the comment. The better one ends later. If they end at the same offset, one contains the other, and
     /// the outer one is better.
     fn is_better_preceding_node_than(self, other: Candidate) -> bool {
+        if self.is_name_of(other) {
+            return false;
+        }
         other.is_none()
             || self.end > other.end
             || (self.end == other.end && self.start <= other.start)
@@ -37,6 +47,9 @@ impl Candidate {
 
     /// Both start after the comment. The better one starts earlier, or is the outer one.
     fn is_better_following_node_than(self, other: Candidate) -> bool {
+        if self.is_name_of(other) {
+            return false;
+        }
         other.is_none()
             || self.start < other.start
             || (self.start == other.start && self.end >= other.end)
@@ -189,11 +202,38 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         start: u32,
         end: u32,
     ) {
-        // Prettier never attaches a comment to a stray `;`.
-        if self.options.attach_comments && !matches!(kind, StmtKind::Empty) {
-            let end = self.end_without_semicolon(kind, end);
-            self.update_pending_comments(NodeOrName::Node(NodeData::Stmt(id)), start, end);
+        // Prettier never attaches a comment to a stray `;` in a list of statements.
+        if !self.options.attach_comments || matches!(kind, StmtKind::Empty) {
+            return;
         }
+        // It does attach to a `;` that is the body of another statement, as in `while (a) /* comment */;`.
+        let bodies = match kind {
+            StmtKind::If { yes, no, .. } => [yes, no],
+            StmtKind::For { body, .. }
+            | StmtKind::ForIn { body, .. }
+            | StmtKind::ForOf { body, .. }
+            | StmtKind::While { body, .. }
+            | StmtKind::DoWhile { body, .. }
+            | StmtKind::Labeled { body, .. } => [body, StmtId::NONE],
+            _ => [StmtId::NONE; 2],
+        };
+        for body in bodies {
+            if let Some(&Stmt {
+                kind: StmtKind::Empty,
+                start,
+                loc,
+                ..
+            }) = self.f.stmts.get(body.idx())
+            {
+                self.update_pending_comments(
+                    NodeOrName::Node(NodeData::Stmt(body)),
+                    start,
+                    loc.end,
+                );
+            }
+        }
+        let end = self.end_without_semicolon(kind, end);
+        self.update_pending_comments(NodeOrName::Node(NodeData::Stmt(id)), start, end);
     }
 
     /// Prettier treats the `;` that terminates a JavaScript statement as outside the statement, so a comment right before the
@@ -262,7 +302,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let file = &self.f;
         let (name_start, name_end) = self.comments.last_name;
+        // The name comes first so that a node with the same range replaces it.
         let last_finished = [
+            Some(Candidate {
+                node: NodeOrName::Name(name_start),
+                start: name_start,
+                end: name_end,
+            }),
             (file.exprs.last()).map(|e| {
                 candidate(
                     NodeData::Expr(ExprId(last_index(&file.exprs))),
@@ -289,11 +335,6 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     pat.pos,
                     pat.end,
                 )
-            }),
-            Some(Candidate {
-                node: NodeOrName::Name(name_start),
-                start: name_start,
-                end: name_end,
             }),
         ];
         for id in first_new..self.lx.comments.len() {

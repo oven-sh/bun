@@ -228,7 +228,7 @@ pub(crate) fn write_expression_statement<'a>(
         Some(false) => {}
     }
     if !f.is_quiet() {
-        let end = f.comments().without_semicolon(statement.span()).end;
+        let end = f.file().without_semicolon(statement.span()).end;
         write!(
             f,
             FormatTrailingComments::Comments(f.comments().comments_before(end))
@@ -308,7 +308,7 @@ impl<'a> Head<'a> {
                 }
                 end
             }
-            Head::EndsWith(statement) => f.comments().without_semicolon(statement.span()).end,
+            Head::EndsWith(statement) => f.file().without_semicolon(statement.span()).end,
         }
     }
 }
@@ -890,7 +890,7 @@ pub(crate) fn write_labeled_statement<'a>(
             .first()
             .is_some_and(|it| f.comments().is_suppression_comment(it))
     }) {
-        let span = f.comments().without_semicolon(statement.span());
+        let span = f.file().without_semicolon(statement.span());
         return write!(
             f,
             [

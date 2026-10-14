@@ -550,6 +550,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// namespace, its start and whether it is anything but an identifier.
     #[inline(never)]
     fn jsx_name(&mut self) -> (Atom, u32, bool) {
+        let name = self.jsx_name_without_comments();
+        self.finish_name(name.1, self.prev_end());
+        name
+    }
+
+    #[inline(always)]
+    fn jsx_name_without_comments(&mut self) -> (Atom, u32, bool) {
         let end = self.lx.end;
         self.scan_jsx_identifier();
         if self.token() != T::Identifier {
@@ -757,6 +764,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             let end = self.prev_end();
             if let Some(open) = braces {
+                self.finish_jsx_expression_container(value, open, end);
                 self.f.jsx_expressions.push((value, open, end));
             }
             self.s.props.push(Prop {
@@ -818,6 +826,17 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.add_expr(ExprKind::Missing, open, open)
     }
 
+    /// `{/* comment */}`: the `JSXEmptyExpression` of ESTree is everything between the braces. Here it is a missing expression
+    /// without a width, so a comment would not be inside it.
+    #[inline(always)]
+    fn finish_jsx_expression_container(&mut self, expression: ExprId, open: u32, end: u32) {
+        if open <= self.lx.max_relevant_node_start
+            && matches!(self.f.exprs.get(expression.idx()), Some(e) if matches!(e.kind, ExprKind::Missing))
+        {
+            self.finish_node(NodeData::Expr(expression), open + 1, end.saturating_sub(1));
+        }
+    }
+
     /// The expression between braces. `parseJsxExpression` stays in the context of the element.
     fn jsx_expression(&mut self) -> ExprId {
         match self.is_ecmascript {
@@ -843,6 +862,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.unclosed_jsx_expression_child(expression, open);
             return expression;
         }
+        self.finish_jsx_expression_container(expression, open, self.lx.end);
         self.f.jsx_expressions.push((expression, open, self.lx.end));
         self.lx.next_jsx_child();
         expression

@@ -127,22 +127,7 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     if value.has_body() {
         return write!(f, FormatFunctionBody(value));
     }
-    if !f.is_quiet() && !all_comments_before_semicolon_go_behind_it(f) {
-        let limit = f
-            .comments()
-            .start_of_comments_before_semicolon(None, member.span());
-        write!(
-            f,
-            FormatTrailingComments::Comments(f.comments().comments_before(limit))
-        );
-    }
     write!(f, OptionalSemicolon);
-}
-
-/// For oxfmt all comments between a member and its `;` are behind the `;`. For Prettier those that end or
-/// start their line are in the member: see `Comments::start_of_comments_before_semicolon`.
-fn all_comments_before_semicolon_go_behind_it(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
 }
 
 fn constructor_keeps_override(f: &Formatter<'_>) -> bool {
@@ -794,7 +779,7 @@ impl<'a> FormatClassElementWithSemicolon<'a> {
             _ => self.element.func().is_some_and(|func| !func.has_body()),
         };
         let content = match has_terminator {
-            true => f.comments().without_semicolon(span),
+            true => f.file().without_semicolon(span),
             false => span,
         };
         let terminator = has_terminator

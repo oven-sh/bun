@@ -135,7 +135,7 @@ impl<'a> Format<'a> for FormatBodyAndItsComments<'a> {
         if matches!(body.kind(), StmtKind::Block(_)) {
             return write!(f, FormatNodeWithoutTrailingComments(&body));
         }
-        let end = f.comments().without_semicolon(body.span()).end;
+        let end = f.file().without_semicolon(body.span()).end;
         // `statement; // prettier-ignore` has to see its comment.
         // The `;` can be behind the comment.
         let limit = match [body.span().end, end]

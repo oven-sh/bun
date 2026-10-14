@@ -102,6 +102,20 @@ impl<'a> Comment<'a> {
 }
 
 impl<'a> File<'a> {
+    /// `span` without the `;` at its end, and without the whitespace and comments before that `;`. `span` is the span of a
+    /// statement or a class member.
+    pub fn without_semicolon(&self, span: Span) -> Span {
+        if span.is_empty() || self.text().get(span.end as usize - 1) != Some(&b';') {
+            return span;
+        }
+        let semicolon = span.end - 1;
+        let detached = self.hir.detached_semicolons;
+        match detached.binary_search_by_key(&semicolon, |entry| entry.0) {
+            Ok(index) => Span::new(span.start, detached[index].1.max(span.start)),
+            Err(_) => Span::new(span.start, semicolon),
+        }
+    }
+
     /// All comments in source order. The nodes around them are only known if the file was parsed with `attach_comments`.
     pub fn comments_by_id(&'a self) -> impl ExactSizeIterator<Item = Comment<'a>> {
         (0..self.hir.comments.len() as u32).map(move |id| Comment { file: self, id })

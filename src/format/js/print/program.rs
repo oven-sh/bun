@@ -146,7 +146,7 @@ fn is_next_line_empty_after<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool 
         // An `ExportNamedDeclaration` around a declaration.
         || statement.is_exported()
         || empty_line_before_semicolon_is_after_any_statement(f))
-        && is_next_line_empty(source, f.comments().without_semicolon(span).end)
+        && is_next_line_empty(source, f.file().without_semicolon(span).end)
 }
 
 /// `type A = 1⏎⏎;(b)`: the `;` is that of the type alias. oxfmt keeps the empty line all the same.

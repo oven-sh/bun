@@ -2131,6 +2131,9 @@ pub struct FileIn<S: Storage> {
     pub mentioned: S::Nodes<u64>,
     /// The span of the statement of each `with (e) statement`, from right after the `)` to its end.
     pub with_bodies: S::Few<(u32, u32)>,
+    /// The `;` terminators that do not directly follow the previous token, as in `a() /* comment */ ;`. Each entry is the
+    /// offset of the `;` and the end of the previous token. Sorted.
+    pub detached_semicolons: S::Few<(u32, u32)>,
     /// The position of the `{` of each function whose body is a block, except for a static block,
     /// where it is the `anchor`. Sorted.
     pub body_starts: S::Nodes<(FnId, u32)>,
@@ -2649,6 +2652,7 @@ macro_rules! file_in_arena {
             comments: $long!($this.comments),
             mentioned: $long!($this.mentioned),
             with_bodies: $few!($this.with_bodies),
+            detached_semicolons: $few!($this.detached_semicolons),
             body_starts: $long!($this.body_starts),
             after_skipped: $few!($this.after_skipped),
             modifiers_of_params: $long!($this.modifiers_of_params),

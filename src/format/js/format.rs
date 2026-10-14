@@ -93,7 +93,7 @@ fn span_for_comments<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> Span {
         | AstNodes::VariableDeclaration(_)
         | AstNodes::PropertyDefinition(_)
         | AstNodes::AccessorProperty(_)
-        | AstNodes::MethodDefinition(_) => f.comments().without_semicolon(span),
+        | AstNodes::MethodDefinition(_) => f.file().without_semicolon(span),
         // These end where their last body ends. An empty statement is its `;`.
         AstNodes::IfStatement(statement)
         | AstNodes::ForStatement(statement)
@@ -104,20 +104,20 @@ fn span_for_comments<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> Span {
         | AstNodes::LabeledStatement(statement)
             if ends_before_semicolon(statement) =>
         {
-            f.comments().without_semicolon(span)
+            f.file().without_semicolon(span)
         }
         // What is exported ends where the `export` around it ends.
         AstNodes::TSTypeAliasDeclaration(statement)
         | AstNodes::TSImportEqualsDeclaration(statement)
             if statement.is_exported() =>
         {
-            f.comments().without_semicolon(span)
+            f.file().without_semicolon(span)
         }
         AstNodes::Function(func)
             if !func.has_body()
                 && matches!(func.owner(), Node::Stmt(statement) if statement.is_exported()) =>
         {
-            f.comments().without_semicolon(span)
+            f.file().without_semicolon(span)
         }
         _ => span,
     }
@@ -795,7 +795,7 @@ fn write_ignored_statement_without_terminator<'a>(
 ) {
     let content = match ends_with_terminator(statement) {
         true => f
-            .comments()
+            .file()
             .without_semicolon(Span::new(span.start, statement.span().end)),
         false => span,
     };

@@ -1328,7 +1328,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.expect(T::While);
         let test = self.parenthesized_condition();
         // "do;while(0)x will have a semicolon inserted before x."
-        self.eat(T::Semicolon);
+        self.eat_semicolon();
         self.add_stmt(StmtKind::DoWhile { body, test }, start, Span::EMPTY)
     }
 
@@ -1572,7 +1572,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             false => self.expression_allowing_in(),
         };
-        if !self.eat(T::Semicolon) && !self.can_parse_semicolon() {
+        if !self.eat_semicolon() && !self.can_parse_semicolon() {
             match self.recovers() {
                 true => self.missing_semicolon_after(value),
                 false => self.fail(),
@@ -1742,9 +1742,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return self.add_stmt(StmtKind::Labeled { label, body }, start, Span::EMPTY);
         }
         // `parseSemicolon`
-        if self.token() == T::Semicolon {
-            self.next();
-        } else if !self.can_parse_semicolon() {
+        if !self.eat_semicolon() && !self.can_parse_semicolon() {
             return self.statement_without_semicolon(start, expression);
         }
         self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY)

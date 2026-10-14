@@ -94,7 +94,9 @@ impl<'a> Rules<'_, 'a, '_> {
     }
 
     fn is_on_same_line_as_end_of(&self, owner: Owner<'a>) -> bool {
-        let between = Span::new(self.cx.span_of(owner).end, self.context.comment.span.start);
+        // Prettier's `locEnd` of a statement does not include the `;`.
+        let end = self.cx.file.without_semicolon(self.cx.span_of(owner)).end;
+        let between = Span::new(end, self.context.comment.span.start);
         !self.cx.source.has_newline_in_range(between)
     }
 
@@ -414,16 +416,6 @@ impl<'a> Rules<'_, 'a, '_> {
             N::UnaryExpression(e) if text_position == EndOfLine => {
                 self.handle_last_binary_operator_operand(e)
             }
-            // `handleTaggedTemplateExpressionComments`
-            N::TaggedTemplateExpression(e) if text_position == EndOfLine => {
-                let ExprKind::TaggedTemplate(call) = e.kind() else {
-                    return None;
-                };
-                let quasi = self.cx.owner_of_expr(call.template()?);
-                self.following_node
-                    .filter(|it| *it == quasi)
-                    .map(Attachment::leading)
-            }
             N::TSAsExpression(e) | N::TSSatisfiesExpression(e) => {
                 self.handle_binary_cast_expression_comment(e)
             }
@@ -643,8 +635,7 @@ impl<'a> Rules<'_, 'a, '_> {
         if !is_after_name && Some(preceding_node) != super_class {
             return Some(Attachment::dangling_with_marker(Owner::Node(node), marker));
         }
-        // `class A /* comment */ implements B {}`
-        (!self.is_directly_before(following_node)).then(|| Attachment::trailing(preceding_node))
+        Some(Attachment::trailing(preceding_node))
     }
 
     fn handle_function_comments(&self, node: N<'a>) -> Option<Attachment<'a>> {

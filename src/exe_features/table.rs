@@ -12,8 +12,11 @@ pub(crate) const MAGIC: &[u8; 8] = b"BUNFEAT\x01";
 
 pub(crate) struct Table<'a> {
     pub(crate) features: Vec<&'a [u8]>,
-    /// Sorted, not overlapping. Each with the features that need it, as indexes: it goes once all of them are excluded.
-    pub(crate) ranges: Vec<(Range<u64>, Vec<usize>)>,
+    /// Sets of features, as indexes.
+    pub(crate) sets: Vec<Vec<usize>>,
+    /// Sorted, not overlapping. Each with the set of the features that need it, as an index: it goes once all of them are
+    /// excluded.
+    pub(crate) ranges: Vec<(Range<u64>, usize)>,
     pub(crate) markers: Vec<Marker<'a>>,
 }
 
@@ -51,7 +54,7 @@ impl<'a> Table<'a> {
         for _ in 0..r.count()? {
             let start = add(at, r.number()?)?;
             at = add(start, r.number()?)?;
-            ranges.push((start..at, sets[r.index(sets.len())?].clone()));
+            ranges.push((start..at, r.index(sets.len())?));
         }
         let mut markers = Vec::new();
         let mut address = 0;
@@ -70,6 +73,7 @@ impl<'a> Table<'a> {
         }
         Ok(Self {
             features,
+            sets,
             ranges,
             markers,
         })
@@ -95,13 +99,10 @@ impl Table<'_> {
         for name in &self.features {
             blob(&mut out, name);
         }
-        let mut sets: Vec<&Vec<usize>> = self.ranges.iter().map(|r| &r.1).collect();
-        sets.sort_unstable();
-        sets.dedup();
-        number(&mut out, sets.len() as u64);
-        for set in &sets {
+        number(&mut out, self.sets.len() as u64);
+        for set in &self.sets {
             number(&mut out, set.len() as u64);
-            for &feature in *set {
+            for &feature in set {
                 number(&mut out, feature as u64);
             }
         }
@@ -110,10 +111,7 @@ impl Table<'_> {
         for (range, set) in &self.ranges {
             number(&mut out, range.start - at);
             number(&mut out, range.end - range.start);
-            number(
-                &mut out,
-                sets.binary_search(&set).expect("it is one of them") as u64,
-            );
+            number(&mut out, *set as u64);
             at = range.end;
         }
         number(&mut out, self.markers.len() as u64);

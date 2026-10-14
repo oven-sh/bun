@@ -54,7 +54,7 @@ pub struct Link<'a> {
     pub map: &'a Path,
     /// What the linker printed: identical code folding (ELF), which libraries it read (PE).
     pub printed: &'a Path,
-    /// ELF: the directory of the linker's LTO cache, which held nothing before this link.
+    /// ELF, PE: the directory of the linker's LTO cache, which held nothing before this link.
     pub lto_cache: &'a Path,
 }
 
@@ -66,8 +66,8 @@ struct Node {
     can_be_left_out: bool,
     /// The linker keeps it whether or not anything refers to it.
     is_root: bool,
-    /// A symbol at its start, if it has one.
-    name: Option<String>,
+    /// Symbols at its start. Those that the linker may know it by are among them.
+    names: Vec<String>,
 }
 
 /// `bun_core::feature`
@@ -159,8 +159,8 @@ fn needs(graph: &Graph) -> Result<Needs> {
         .map(|n| edges.partition_point(|e| e.0 < n))
         .collect();
 
-    // Per node: the features it is a door of. Two doors that are alike may have been folded into one.
-    let mut door_of: Vec<Vec<usize>> = vec![Vec::new(); count];
+    // Per node: the feature it is a door of. Its no-op holds the id, so it is like no door of another.
+    let mut door_of: Vec<Option<usize>> = vec![None; count];
     let mut doors = vec![0; FEATURES.len()];
     for record in &graph.records {
         let Some(feature) = FEATURES.iter().position(|f| f.1 == record.id) else {
@@ -186,8 +186,11 @@ fn needs(graph: &Graph) -> Result<Needs> {
             Some(_) => {}
             None => {
                 doors[feature] += 1;
-                if !door_of[node as usize].contains(&feature) {
-                    door_of[node as usize].push(feature);
+                if door_of[node as usize]
+                    .replace(feature)
+                    .is_some_and(|other| other != feature)
+                {
+                    fail!("{:x} is in a door of two features", record.no_op);
                 }
             }
         }
@@ -223,7 +226,14 @@ fn needs(graph: &Graph) -> Result<Needs> {
 
     let mut always_stays = vec![false; count];
     let starts = roots.iter().chain(&unexplained).copied().collect();
-    reach(&mut always_stays, starts, &|n| door_of[n].is_empty());
+    reach(&mut always_stays, starts, &|n| door_of[n].is_none());
+    // Else the whole feature would stay, without a word.
+    if let Some(door) = (0..count).find(|&n| always_stays[n] && door_of[n].is_some()) {
+        fail!(
+            "the door at {:x} is kept by the linker, or by something that the graph does not know",
+            graph.nodes[door].addresses.start
+        );
+    }
 
     let mut of: Vec<Option<Vec<usize>>> = always_stays
         .iter()
@@ -232,10 +242,10 @@ fn needs(graph: &Graph) -> Result<Needs> {
     for feature in 0..FEATURES.len() {
         let mut is_reached = always_stays.clone();
         let starts = all()
-            .filter(|&n| door_of[n as usize].contains(&feature))
+            .filter(|&n| door_of[n as usize] == Some(feature))
             .collect();
         reach(&mut is_reached, starts, &|n| {
-            door_of[n].is_empty() || door_of[n].contains(&feature)
+            door_of[n].is_none_or(|of| of == feature)
         });
         for (node, needed_by) in of.iter_mut().enumerate() {
             if let Some(needed_by) = needed_by.as_mut().filter(|_| is_reached[node]) {
@@ -279,7 +289,7 @@ fn needs(graph: &Graph) -> Result<Needs> {
             "  {:x} {} {}",
             node.addresses.start,
             node.addresses.end - node.addresses.start,
-            node.name.as_deref().unwrap_or("")
+            node.names.first().map_or("", |name| &name[..])
         );
     }
     Ok(Needs { of, report })
@@ -341,8 +351,11 @@ pub fn make_table(link: &Link<'_>) -> Result<String> {
     let needs = needs(&graph)?;
     let is_arm64 = container.is_arm64(&linked).map_err(|e| e.to_string())?;
 
+    let mut sets: Vec<Vec<usize>> = needs.of.iter().flatten().cloned().collect();
+    sets.sort_unstable();
+    sets.dedup();
     // A node with the padding that follows it.
-    let mut ranges: Vec<(Range<u64>, Vec<usize>)> = Vec::new();
+    let mut ranges: Vec<(Range<u64>, usize)> = Vec::new();
     for (index, node) in graph
         .nodes
         .iter()
@@ -358,11 +371,20 @@ pub fn make_table(link: &Link<'_>) -> Result<String> {
             .filter(|next| next.stretch == node.stretch);
         let range =
             node.addresses.start..next.map_or(node.addresses.end, |next| next.addresses.start);
+        if range.end != node.addresses.end {
+            let at =
+                (container.offset_of(&linked, node.addresses.end)).map_err(|e| e.to_string())?;
+            let padding = &linked[at..at + (range.end - node.addresses.end) as usize];
+            if !padding.iter().all(|&byte| byte == 0 || byte == 0xcc) {
+                fail!("what follows {:x} is not padding", node.addresses.end);
+            }
+        }
+        let needed_by = sets.binary_search(needed_by).expect("it is one of them");
         match ranges.last_mut() {
-            Some(last) if last.0.end == range.start && last.1 == *needed_by => {
+            Some(last) if last.0.end == range.start && last.1 == needed_by => {
                 last.0.end = range.end
             }
-            _ => ranges.push((range, needed_by.clone())),
+            _ => ranges.push((range, needed_by)),
         }
     }
 
@@ -414,6 +436,7 @@ pub fn make_table(link: &Link<'_>) -> Result<String> {
                 excluded,
             })
             .collect(),
+        sets,
         ranges,
     };
     let bytes = table.write();
@@ -441,13 +464,13 @@ pub fn make_table(link: &Link<'_>) -> Result<String> {
         let only: u64 = table
             .ranges
             .iter()
-            .filter(|r| r.1 == [feature])
+            .filter(|r| table.sets[r.1] == [feature])
             .map(|r| r.0.end - r.0.start)
             .sum();
         let shared: u64 = table
             .ranges
             .iter()
-            .filter(|r| r.1.contains(&feature))
+            .filter(|r| table.sets[r.1].contains(&feature))
             .map(|r| r.0.end - r.0.start)
             .sum();
         let _ = writeln!(
@@ -461,16 +484,6 @@ pub fn make_table(link: &Link<'_>) -> Result<String> {
     linked[room.clone()].fill(0);
     linked[room.start..room.start + bytes.len()].copy_from_slice(&bytes);
     std::fs::write(link.linked, linked).map_err(|e| format!("{}: {e}", link.linked.display()))?;
-    // lld-link writes each object that LTO generates, `<output>.lto.<input>`, next to the input it was made from.
-    if container == Container::Pe {
-        let output = link
-            .linked
-            .file_name()
-            .ok_or("the executable has no name")?;
-        let prefix = format!("{}.lto.", output.to_string_lossy());
-        remove_files_starting_with(Path::new("."), &prefix)
-            .map_err(|e| format!("{prefix}*: {e}"))?;
-    }
     Ok(report)
 }
 
@@ -487,8 +500,8 @@ pub fn make_order(link: &Link<'_>, before: &[u8]) -> Result<Vec<u8>> {
         .zip(&needs.of)
         .filter(|n| n.0.can_be_left_out)
     {
-        if let (Some(needed_by), Some(name)) = (needed_by, &node.name) {
-            named.push((needed_by, name));
+        if let Some(needed_by) = needed_by {
+            named.extend(node.names.iter().map(|name| (needed_by, &name[..])));
         }
     }
     // Stable: within a set, the order they are in.
@@ -503,17 +516,4 @@ pub fn make_order(link: &Link<'_>, before: &[u8]) -> Result<Vec<u8>> {
         out.push(b'\n');
     }
     Ok(out)
-}
-
-fn remove_files_starting_with(directory: &Path, prefix: &str) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(directory)? {
-        let entry = entry?;
-        let kind = entry.file_type()?;
-        if kind.is_dir() {
-            remove_files_starting_with(&entry.path(), prefix)?;
-        } else if kind.is_file() && entry.file_name().to_string_lossy().starts_with(prefix) {
-            std::fs::remove_file(entry.path())?;
-        }
-    }
-    Ok(())
 }

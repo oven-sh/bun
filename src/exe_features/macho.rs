@@ -19,8 +19,6 @@ const LC_SEGMENT_64: u32 = 0x19;
 const LC_SYMTAB: u32 = 0x2;
 const LC_DYSYMTAB: u32 = 0xb;
 const LC_CODE_SIGNATURE: u32 = 0x1d;
-const LC_DYLD_INFO: u32 = 0x22;
-const LC_DYLD_INFO_ONLY: u32 = 0x8000_0022;
 const LC_DYLD_CHAINED_FIXUPS: u32 = 0x8000_0034;
 const SEGMENT: usize = 72;
 const SECTION: usize = 80;
@@ -28,15 +26,17 @@ const N_STAB: u8 = 0xe0;
 const N_TYPE: u8 = 0x0e;
 const N_SECT: u8 = 0x0e;
 
-/// The fields of each load command that are offsets in the file, all 32 bits wide.
-fn file_offsets(command: u32) -> &'static [usize] {
+/// The fields of a load command that are offsets in the file, all 32 bits wide. Of the commands that bun has: another may
+/// well have some.
+fn file_offsets(command: u32) -> Result<&'static [usize]> {
     match command {
-        LC_SYMTAB => &[8, 16],
-        LC_DYSYMTAB => &[32, 40, 48, 56, 64, 72],
-        // code signature, split info, function starts, data in code, code sign DRs, optimization hints, exports trie,
-        // chained fixups, atom info
-        0x1d | 0x1e | 0x26 | 0x29 | 0x2b | 0x2e | 0x8000_0033 | 0x8000_0034 | 0x36 => &[8],
-        _ => &[],
+        LC_SYMTAB => Ok(&[8, 16]),
+        LC_DYSYMTAB => Ok(&[32, 40, 48, 56, 64, 72]),
+        // function starts, data in code, exports trie
+        LC_CODE_SIGNATURE | 0x26 | 0x29 | 0x8000_0033 | LC_DYLD_CHAINED_FIXUPS => Ok(&[8]),
+        // (its own are seen to.) load dylib, load dylinker, UUID, build version, main
+        LC_SEGMENT_64 | 0xc | 0xe | 0x1b | 0x32 | 0x8000_0028 => Ok(&[]),
+        _ => Err(Error::InvalidExecutable),
     }
 }
 
@@ -56,15 +56,25 @@ pub(crate) fn is_arm64(file: &[u8]) -> Result<bool> {
 fn commands(file: &[u8]) -> Result<Vec<(u32, usize, usize)>> {
     let mut list = Vec::new();
     let mut at = 32;
+    let end = 32 + u32_at(file, 20)? as usize;
     for _ in 0..u32_at(file, 16)? {
         let size = u32_at(file, at + 4)? as usize;
-        slice(file, at, size.max(8))?;
+        if size < 8 || size > end.saturating_sub(at) {
+            return Err(Error::InvalidExecutable);
+        }
+        slice(file, at, size)?;
         list.push((u32_at(file, at)?, at, size));
         at += size;
     }
     // So that what follows can add and subtract these.
+    let mut all_sections = 0;
     for &(_, at, size) in list.iter().filter(|c| c.0 == LC_SEGMENT_64) {
         let sections = u32_at(file, at + 64)? as usize;
+        // A symbol says which it is in with a byte.
+        all_sections += sections;
+        if all_sections > 255 {
+            return Err(Error::InvalidExecutable);
+        }
         if size != SEGMENT + sections * SECTION
             || plus(u64_at(file, at + 40)?, u64_at(file, at + 48)?)? > file.len() as u64
         {
@@ -128,13 +138,6 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
     let (Some(text_index), Some(linkedit_index)) = (find(b"__TEXT"), find(b"__LINKEDIT")) else {
         return Err(Error::InvalidExecutable);
     };
-    // Rebase and bind opcodes name segments by number. Chained fixups do too, in one small array.
-    if commands
-        .iter()
-        .any(|c| c.0 == LC_DYLD_INFO || c.0 == LC_DYLD_INFO_ONLY)
-    {
-        return Err(Error::InvalidExecutable);
-    }
     let (text, linkedit) = (segments[text_index], segments[linkedit_index]);
     let text_range = u64_at(file, text + 24)?..u64_at(file, text + 24)? + u64_at(file, text + 48)?;
     if u64_at(file, text + 40)? != 0 || linkedit_index + 1 != segments.len() {
@@ -182,7 +185,13 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
         Ok(list)
     };
     // The load commands grow into the room that the linker left behind them. The largest gaps that there is room for.
-    let room = minus(first_content, end_of_commands as u64)? as usize;
+    // On x86-64 nothing is signed. Whoever signs it later adds a command for that.
+    let for_a_signature = if commands.iter().any(|c| c.0 == LC_CODE_SIGNATURE) {
+        0
+    } else {
+        16
+    };
+    let room = minus(first_content, (end_of_commands + for_a_signature) as u64)? as usize;
     gaps.sort_by_key(|g| core::cmp::Reverse(g.end - g.start));
     loop {
         let mut sorted = gaps.clone();
@@ -289,9 +298,9 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
 
     // ---- the load commands
     let mut header = slice(file, 0, 32)?.to_vec();
-    // Of each section as it was numbered, the number of its first part. Numbers start at 1.
-    let mut parts: Vec<(Range<u64>, u8)> = Vec::new();
-    let mut number = 0u8;
+    // {number the section had, addresses of the part, number the part has}. Numbers start at 1.
+    let mut parts: Vec<(u8, Range<u64>, u8)> = Vec::new();
+    let (mut old_number, mut number) = (0u8, 0u8);
     for &(kind, at, size) in &commands {
         let mut bytes = slice(file, at, size)?.to_vec();
         if at == text {
@@ -309,6 +318,7 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
                 put_u64(&mut segment, 48, stretch.end - stretch.start)?;
                 put_u32(&mut segment, 64, inside.len() as u32)?;
                 for (section, part) in inside {
+                    let nth = (*section - (at + SEGMENT)) / SECTION;
                     let mut section = slice(file, *section, SECTION)?.to_vec();
                     put_u64(&mut section, 32, part.start)?;
                     put_u64(&mut section, 40, part.end - part.start)?;
@@ -316,10 +326,11 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
                     put_u32(&mut section, 48, narrow(offset)?)?;
                     segment.extend_from_slice(&section);
                     number = number.checked_add(1).ok_or(Error::InvalidExecutable)?;
-                    parts.push((part.clone(), number));
+                    parts.push((old_number + 1 + nth as u8, part.clone(), number));
                 }
                 header.extend_from_slice(&segment);
             }
+            old_number += sections.len() as u8;
             continue;
         }
         if kind == LC_SEGMENT_64 {
@@ -335,9 +346,11 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
                 };
                 put_u32(&mut bytes, section + 48, offset)?;
                 number = number.checked_add(1).ok_or(Error::InvalidExecutable)?;
+                old_number += 1;
+                let address = u64_at(&bytes, section + 32)?;
                 parts.push((
-                    u64_at(&bytes, section + 32)?
-                        ..u64_at(&bytes, section + 32)? + u64_at(&bytes, section + 40)?,
+                    old_number,
+                    address..address + u64_at(&bytes, section + 40)?,
                     number,
                 ));
             }
@@ -347,7 +360,7 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
                 put_u64(&mut bytes, 32, size.next_multiple_of(page))?;
             }
         }
-        for &field in file_offsets(kind) {
+        for &field in file_offsets(kind)? {
             let offset = moved(u32_at(&bytes, field)?)?;
             put_u32(&mut bytes, field, offset)?;
         }
@@ -377,13 +390,19 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
         for index in 0..u32_at(file, c + 12)? as usize {
             let at = symbols + index * 16;
             let (kind, old) = (u8_at(&out, at + 4)?, u8_at(&out, at + 5)?);
-            if old != 0 && (kind & N_STAB != 0 || kind & N_TYPE == N_SECT) {
+            // Of the entries for a debugger: a function, a static, its begin and its end. In others the field is something else.
+            let is_in_a_section = match kind & N_STAB {
+                0 => kind & N_TYPE == N_SECT,
+                _ => matches!(kind, 0x24 | 0x26 | 0x28 | 0x2e | 0x4e),
+            };
+            let of_section = || parts.iter().filter(|p| p.0 == old);
+            if is_in_a_section && let Some(first) = of_section().next() {
                 let value = u64_at(&out, at + 8)?;
                 // One in a gap is of something that is gone.
-                let found = parts
-                    .iter()
-                    .find(|p| p.0.contains(&value) || p.0.end == value && p.0.start < value);
-                out[at + 5] = found.map_or(1, |p| p.1);
+                out[at + 5] = of_section()
+                    .find(|p| p.1.contains(&value))
+                    .unwrap_or(first)
+                    .2;
             }
         }
     }

@@ -258,9 +258,9 @@ struct Bytes {
 }
 
 /// The map names a member of an archive by the name it has inside the archive, without the archive. The log of the link
-/// names every archive that was read.
-fn members_of_archives(printed: &[u8]) -> HashMap<Vec<u8>, Bytes> {
-    let mut members = HashMap::new();
+/// names every archive that was read. Several may have a member of one name.
+fn members_of_archives(printed: &[u8]) -> HashMap<Vec<u8>, Vec<Bytes>> {
+    let mut members: HashMap<Vec<u8>, Vec<Bytes>> = HashMap::new();
     for line in lines(printed) {
         let Some(path) = line.strip_prefix(b"lld-link: Reading ") else {
             continue;
@@ -302,7 +302,7 @@ fn members_of_archives(printed: &[u8]) -> HashMap<Vec<u8>, Bytes> {
                     None => id,
                 };
                 let name = name.strip_suffix(b"/").unwrap_or(name).to_vec();
-                members.entry(name).or_insert_with(|| Bytes {
+                members.entry(name).or_default().push(Bytes {
                     file: Rc::clone(&ar),
                     range: body..body + size,
                 });
@@ -480,10 +480,119 @@ impl Known<'_, '_> {
     }
 }
 
-fn replay(pe: &Pe<'_>, map: &Map<'_>, printed: &[u8]) -> Result<Replayed> {
+/// The object files that LTO generated, by the names the map gives them.
+///
+/// They are in the linker's cache, under names that do not say which is which. (`/lldsavetemps` is there to write them under
+/// those of the map. With a cache it writes empty files.) But the map says how large each chunk of each of them is and which
+/// symbols are in it, and the one that it is has a section like that for every one. So where only one has, that is the one.
+fn generated_objects(
+    cache: &std::path::Path,
+    map: &Map<'_>,
+    files: &[Rc<[u8]>],
+) -> Result<HashMap<Rc<[u8]>, Vec<u8>>> {
+    let mut objects: Vec<Vec<u8>> = Vec::new();
+    for entry in std::fs::read_dir(cache).map_err(|e| format!("{}: {e}", cache.display()))? {
+        let entry = entry.map_err(|e| format!("{}: {e}", cache.display()))?;
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with("llvmcache-")
+        {
+            objects.push(
+                std::fs::read(entry.path()).map_err(|e| format!("{}: {e}", cache.display()))?,
+            );
+        }
+    }
+    // Per object: {name of a symbol, size of the section that it is in}, and the sizes alone for what has no name.
+    let mut defines: Vec<HashSet<(&[u8], u64)>> = Vec::new();
+    let mut sizes: Vec<HashSet<u64>> = Vec::new();
+    let mut defining: HashMap<&[u8], Vec<usize>> = HashMap::new();
+    for (index, object) in objects.iter().enumerate() {
+        let (mut own, mut own_sizes) = (HashSet::new(), HashSet::new());
+        if let Some(parsed) = parse(object) {
+            own_sizes.extend(parsed.sections.iter().map(|s| s.size));
+            for y in parsed.symbols.iter().flatten().filter(|y| y.section > 0) {
+                if own.insert((y.name, parsed.sections[y.section as usize - 1].size)) {
+                    defining.entry(y.name).or_default().push(index);
+                }
+            }
+        }
+        defines.push(own);
+        sizes.push(own_sizes);
+    }
+    // Under a chunk the map lists the symbols of its section, and those of the sections of other files that were folded into it.
+    let has = |o: usize, c: &Chunk<'_>| match &c.names[..] {
+        [] => sizes[o].contains(&c.size),
+        names => names.iter().any(|&n| defines[o].contains(&(n, c.size))),
+    };
+    let all: Vec<usize> = (0..objects.len()).collect();
+    let mut candidates: Vec<Vec<usize>> = Vec::new();
+    for file in files {
+        let chunks: Vec<&Chunk<'_>> = (map.chunks.iter())
+            .filter(|c| c.file == *file && c.output != b".pdata")
+            .collect();
+        let may_have = |c: &&&Chunk<'_>| -> Vec<usize> {
+            let mut list: Vec<usize> = c
+                .names
+                .iter()
+                .filter_map(|n| defining.get(n))
+                .flatten()
+                .copied()
+                .collect();
+            list.sort_unstable();
+            list.dedup();
+            list
+        };
+        let named = chunks.iter().filter(|c| !c.names.is_empty());
+        let fewest = named
+            .map(|c| may_have(&c))
+            .min_by_key(Vec::len)
+            .unwrap_or_else(|| all.clone());
+        candidates.push(
+            fewest
+                .into_iter()
+                .filter(|&o| chunks.iter().all(|c| has(o, c)))
+                .collect(),
+        );
+    }
+    // Each is one file of the map. So one that is spoken for is no candidate for another.
+    let mut of_file: Vec<Option<usize>> = vec![None; files.len()];
+    let mut is_taken = vec![false; objects.len()];
+    loop {
+        let mut has_changed = false;
+        for (candidates, of_file) in candidates
+            .iter_mut()
+            .zip(&mut of_file)
+            .filter(|c| c.1.is_none())
+        {
+            candidates.retain(|&o| !is_taken[o]);
+            if let &[only] = &candidates[..] {
+                (*of_file, is_taken[only], has_changed) = (Some(only), true, true);
+            }
+        }
+        if !has_changed {
+            break;
+        }
+    }
+    drop((defines, sizes, defining));
+    let mut found = HashMap::new();
+    for (file, (object, candidates)) in files.iter().zip(of_file.iter().zip(&candidates)) {
+        match object {
+            Some(object) => found.insert(Rc::clone(file), core::mem::take(&mut objects[*object])),
+            None => fail!(
+                "{} entries of the LTO cache may be {}",
+                candidates.len(),
+                String::from_utf8_lossy(file)
+            ),
+        };
+    }
+    Ok(found)
+}
+
+fn replay(pe: &Pe<'_>, map: &Map<'_>, link: &Link<'_>) -> Result<Replayed> {
     let exe = pe.b;
     let unwind_info_of: HashMap<u64, u64> = pe.function_table().collect();
-    let members = members_of_archives(printed);
+    let members = members_of_archives(&read(link.printed)?);
 
     let mut counts: Vec<(&str, usize)> = Vec::new();
     let mut count = |what: &'static str| match counts.iter_mut().find(|c| c.0 == what) {
@@ -503,12 +612,43 @@ fn replay(pe: &Pe<'_>, map: &Map<'_>, printed: &[u8]) -> Result<Replayed> {
             files.push(Rc::clone(&chunk.file));
         }
     }
+    let output = link
+        .linked
+        .file_name()
+        .ok_or("the executable has no name")?;
+    let generated_prefix = format!("{}.lto.", output.to_string_lossy()).into_bytes();
+    let is_generated = |file: &&Rc<[u8]>| {
+        let name = file
+            .rsplit(|&b| b == b'/' || b == b'\\')
+            .next()
+            .unwrap_or(file);
+        name.starts_with(&generated_prefix)
+    };
+    let generated: Vec<Rc<[u8]>> = files.iter().filter(is_generated).cloned().collect();
+    let generated = generated_objects(link.lto_cache, map, &generated)?;
     for file in &files {
         let path = String::from_utf8_lossy(file).into_owned();
-        let own = std::fs::read(&path).ok();
-        let bytes: Option<&[u8]> = own
-            .as_deref()
-            .or_else(|| members.get(&file[..]).map(|m| &m.file[m.range.clone()]));
+        let own = if generated.contains_key(file) {
+            None
+        } else {
+            std::fs::read(&path).ok()
+        };
+        let member = match members.get(&file[..]).map(|m| &m[..]) {
+            _ if own.is_some() || generated.contains_key(file) => None,
+            Some([one]) => Some(&one.file[one.range.clone()]),
+            Some(several)
+                if several.iter().all(|m| {
+                    m.file[m.range.clone()] == several[0].file[several[0].range.clone()]
+                }) =>
+            {
+                Some(&several[0].file[several[0].range.clone()])
+            }
+            Some(_) => fail!("{path}: several archives have a member of that name"),
+            None => None,
+        };
+        let bytes: Option<&[u8]> = (generated.get(file).map(|o| &o[..]))
+            .or(own.as_deref())
+            .or(member);
         let Some((bytes, Parsed { sections, symbols })) =
             bytes.and_then(|bytes| Some((bytes, parse(bytes)?)))
         else {
@@ -692,6 +832,27 @@ fn replay(pe: &Pe<'_>, map: &Map<'_>, printed: &[u8]) -> Result<Replayed> {
                 learn_unwind_info(&mut known, &mut identified)?;
             }
         }
+        // What a chunk of this file that is none of the sections found refers to is not known, but for its pointers, which are
+        // listed for the loader. So it has to be a section that has nothing else.
+        let has_more_than_pointers = |s: &ObjectSection<'_>| {
+            (0..s.relocation_count).any(|i| b.u16(s.relocations + i * 10 + 8) != reloc::ADDR64)
+        };
+        let is_left = |(index, s): &(usize, &ObjectSection<'_>)| {
+            known.address[index + 1] < 0 && !s.is_function_table() && has_more_than_pointers(s)
+        };
+        let left: HashSet<u64> = (sections.iter().enumerate().filter(is_left))
+            .map(|(_, s)| s.size)
+            .collect();
+        let is_unknown = |c: &&Chunk<'_>| {
+            let is_followed = c.output != b".pdata" && c.output != b".bunft";
+            c.file == *file && is_followed && !identified.contains(&c.rva) && left.contains(&c.size)
+        };
+        if let Some(c) = map.chunks.iter().find(is_unknown) {
+            fail!(
+                "{path}: which section the chunk at {:x} is cannot be told, and it may be one that refers to something",
+                c.rva
+            );
+        }
     }
     // The linker makes an object of its own from the resources. What matters is code and constants.
     let is_covered = |c: &Chunk<'_>| c.output == b".text" || c.output == b".rdata";
@@ -735,7 +896,7 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
     let b = pe.b;
     let map_text = read(link.map)?;
     let mut map = read_map(&map_text);
-    let replayed = replay(&pe, &map, &read(link.printed)?)?;
+    let replayed = replay(&pe, &map, link)?;
     for &(chunk, is_comdat) in &replayed.comdat {
         map.chunks[chunk].is_comdat = is_comdat;
     }
@@ -773,7 +934,7 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
                 stretch: 0,
                 can_be_left_out: false,
                 is_root: true,
-                name: None,
+                names: Vec::new(),
             });
         }
     };
@@ -806,10 +967,10 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
             can_be_left_out: is_code && is_known,
             // The linker drops only what is a COMDAT. And what is not known refers to what is not known.
             is_root: !c.is_comdat || !is_known,
-            name: c
-                .names
-                .first()
-                .map(|name| name.iter().map(|&c| char::from(c)).collect()),
+            // With those of what was folded into it.
+            names: (c.names.iter())
+                .map(|name| name.iter().map(|&c| char::from(c)).collect())
+                .collect(),
         });
     }
     if text.rva + text.size.min(text.raw_size) > end_of_code {
@@ -831,7 +992,14 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
 
     // ---- edges
     let mut edges: Vec<(u32, u32)> = Vec::new();
-    for r in &replayed.records {
+    // A record of `bun_core::feature` does not keep the function that it is about.
+    let records = pe.sections.iter().find(|s| s.name == b".bunft");
+    let records = records.map_or(0..0, |s| s.rva..s.rva + s.size);
+    for r in replayed
+        .records
+        .iter()
+        .filter(|r| !records.contains(&r.place))
+    {
         let to = r.chunk.or_else(|| u64::try_from(r.target).ok());
         if let (Some(from), Some(to)) = (find(&nodes, r.place), to.and_then(|to| find(&nodes, to)))
         {

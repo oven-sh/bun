@@ -623,14 +623,12 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
     use bun_paths::{platform::Auto, resolve_path::join_abs_string};
     use bun_sema_driver::host::to_native;
     let (watch, cwd) = (vm.watcher_for_threads()?, working_directory());
-    enter(|| -> Option<BeforeRead> {
-        Some(Box::new(move |path| {
-            if !bun_core::strings::contains(path, b"/node_modules/") {
-                // The watcher knows a file by its path as the system spells it.
-                watch(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
-            }
-        }))
-    })
+    Some(Box::new(move |path| {
+        if !bun_core::strings::contains(path, b"/node_modules/") {
+            // The watcher knows a file by its path as the system spells it.
+            watch(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
+        }
+    }))
 }
 
 /// `sources` of `bun_bundler::options::TypeCheck`. A key of `files` of `Bun.build` may be relative,

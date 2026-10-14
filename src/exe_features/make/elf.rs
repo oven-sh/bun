@@ -5,22 +5,28 @@
 use std::collections::{HashMap, HashSet};
 
 use super::objects::{Object, Objects};
-use super::{Data, Graph, Link, Node, Record, Result, fail, find, read_text};
+use super::{Data, Graph, Link, Node, Record, Result, fail, find, no_op_and_jump, read_text};
 
+const SHT_SYMTAB: u32 = 2;
 const SHT_RELA: u32 = 4;
 const SHT_NOTE: u32 = 7;
 const SHT_NOBITS: u32 = 8;
+const SHT_REL: u32 = 9;
 const SHT_INIT_ARRAY: u32 = 14;
 const SHT_PREINIT_ARRAY: u32 = 16;
 const SHT_SYMTAB_SHNDX: u32 = 18;
+const SHT_CREL: u32 = 0x4000_0014;
 const SHF_ALLOC: u64 = 2;
 const SHF_MERGE: u64 = 0x10;
 const SHF_TLS: u64 = 0x400;
 const SHF_GNU_RETAIN: u64 = 0x20_0000;
 const SHN_UNDEF: usize = 0;
 const SHN_LORESERVE: usize = 0xff00;
+const SHN_ABS: usize = 0xfff1;
 const SHN_XINDEX: usize = 0xffff;
 const STB_LOCAL: u8 = 0;
+const STT_TLS: u8 = 6;
+const EM_AARCH64: u16 = 183;
 
 /// `address  address  size  align  text`, with the text indented by its level: output section, input section, symbol.
 struct MapLine<'a> {
@@ -103,7 +109,7 @@ enum Placed {
     Nowhere,
     /// Merged with others piece by piece: strings, constants. Those refer to nothing and stay.
     Merged,
-    /// The object has several of that name and only some were placed.
+    /// The object has several of that name.
     OneOfSeveral,
 }
 
@@ -211,6 +217,8 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
     let mut nodes: Vec<Node> = Vec::new();
     let mut files: Vec<&str> = Vec::new();
     let mut placed: HashMap<&str, HashMap<&str, Vec<u32>>> = HashMap::new();
+    // Nodes whose section has not been found in its object yet, by what the map calls them.
+    let mut unclaimed: HashMap<u32, &str> = HashMap::new();
     let mut output: Option<(usize, &Section<'_>)> = None;
     for line in map.lines().filter_map(map_line) {
         match line.indent {
@@ -220,10 +228,15 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
                 let is_loaded = |s: &&Section<'_>| {
                     s.flags & SHF_ALLOC != 0 && !(s.flags & SHF_TLS != 0 && s.kind == SHT_NOBITS)
                 };
-                output = outputs
-                    .iter()
-                    .enumerate()
-                    .find(|(_, s)| is_it(s) && is_loaded(s));
+                let found = outputs.iter().enumerate().find(|(_, s)| is_it(s));
+                if found.is_none() && line.address != 0 && line.size != 0 {
+                    fail!(
+                        "the executable has no section {} at {:x}",
+                        line.text,
+                        line.address
+                    );
+                }
+                output = found.filter(|(_, s)| is_loaded(s));
             }
             8 => {
                 let (Some((stretch, output)), Some((file, section))) =
@@ -236,7 +249,8 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
                 }
                 // The linker takes the unwind tables apart and puts them together again. They live and die with the functions
                 // that they are about, not those with them, so what they refer to is not followed.
-                let is_from_an_object = file != "<internal>" && output.name != ".eh_frame";
+                let is_from_an_object =
+                    file != "<internal>" && output.name != ".eh_frame" && section != "COMMON";
                 if is_from_an_object {
                     if !placed.contains_key(file) {
                         files.push(file);
@@ -247,6 +261,7 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
                         .entry(section)
                         .or_default()
                         .push(nodes.len() as u32);
+                    unclaimed.insert(nodes.len() as u32, line.text);
                 }
                 nodes.push(Node {
                     addresses: line.address..line.address + line.size,
@@ -255,7 +270,7 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
                         && matches!(output.name, ".text" | ".rodata"),
                     // What the linker made itself refers to nothing that is known here, and is referred to in ways that are not.
                     is_root: !is_from_an_object,
-                    name: None,
+                    names: Vec::new(),
                 });
             }
             _ => {}
@@ -314,7 +329,9 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
         };
         match object.filter(|o| o.bytes().starts_with(b"\x7fELF")) {
             Some(object) => loaded.push((file, object)),
-            None => fail!("an object file of the link is not there: {file}"),
+            None => fail!(
+                "an object file of the link is not there, or its archive has two of that name: {file}"
+            ),
         }
     }
     struct Parsed<'a> {
@@ -324,7 +341,6 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
         placed: Vec<Placed>,
     }
     let mut objects: Vec<Parsed<'_>> = Vec::new();
-    let mut seen_by_all: HashMap<&[u8], Vec<u32>> = HashMap::new();
     for (file, object) in &loaded {
         let (file, b) = (*file, Data(object.bytes()));
         let sections = sections_of(b);
@@ -333,7 +349,6 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
         for s in sections.iter().filter(|s| is_content(s)) {
             *copies.entry(s.name).or_default() += 1;
         }
-        let mut seen: HashMap<&str, usize> = HashMap::new();
         let mut became = Vec::new();
         for s in &sections {
             became.push(if !is_content(s) {
@@ -341,12 +356,13 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
             } else if s.flags & SHF_MERGE != 0 && !placed[file].contains_key(s.name) {
                 Placed::Merged
             } else if let Some(at) = placed[file].get(s.name) {
-                let nth = seen.entry(s.name).or_default();
-                *nth += 1;
-                if copies[s.name] == at.len() {
-                    Placed::Node(at[*nth - 1])
-                } else {
-                    Placed::OneOfSeveral
+                // The map does not say which is which, and they need not be in the order they have in the object.
+                match (&at[..], copies[s.name]) {
+                    (&[one], 1) => {
+                        unclaimed.remove(&one);
+                        Placed::Node(one)
+                    }
+                    _ => Placed::OneOfSeveral,
                 }
             } else {
                 match folded
@@ -390,15 +406,38 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
             placed: became,
         });
     }
+    // Else there are relocations that have not been read: another member of that name in the archive, say.
+    if let Some(text) = unclaimed.values().min() {
+        fail!(
+            "{} sections of the map were not found in their objects, one is {text}",
+            unclaimed.len()
+        );
+    }
+
+    // ---- what a name that other objects see stands for is said by the symbol table of the executable: after folding, after one
+    // of several definitions was chosen. It has names that only one object sees too, so this may be more than is meant.
+    let mut named: HashMap<&[u8], Vec<u32>> = HashMap::new();
+    for symbols in outputs.iter().filter(|s| s.kind == SHT_SYMTAB) {
+        for at in (symbols.offset..symbols.offset + symbols.size as usize).step_by(24) {
+            let name = b.cstr(outputs[symbols.link].offset + b.u32(at) as usize);
+            let list = named.entry(name).or_default();
+            let is_an_address = !matches!(usize::from(b.u16(at + 6)), SHN_UNDEF | SHN_ABS)
+                && b.u8(at + 4) & 15 != STT_TLS;
+            if let Some(node) =
+                find(&nodes, b.u64(at + 8)).filter(|n| is_an_address && !list.contains(n))
+            {
+                list.push(node);
+            }
+        }
+    }
+
     /// {name, is it seen only in its object, number of its section}
     fn symbol<'a>(o: &Parsed<'a>, symbols: &Section<'a>, index: usize) -> (&'a [u8], bool, usize) {
         let at = symbols.offset + index * 24;
-        let number = match (
-            usize::from(o.b.u16(at + 6)),
-            o.sections.iter().find(|s| s.kind == SHT_SYMTAB_SHNDX),
-        ) {
-            (SHN_XINDEX, Some(extended)) => o.b.u32(extended.offset + index * 4) as usize,
-            (number, _) => number,
+        let extended = || o.sections.iter().find(|s| s.kind == SHT_SYMTAB_SHNDX);
+        let number = match usize::from(o.b.u16(at + 6)) {
+            SHN_XINDEX => extended().map_or(SHN_XINDEX, |s| o.b.u32(s.offset + index * 4) as usize),
+            number => number,
         };
         (
             o.b.cstr(o.sections[symbols.link].offset + o.b.u32(at) as usize),
@@ -412,31 +451,25 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
             && number < o.sections.len()
     };
     for o in &objects {
-        for symbols in o.sections.iter().filter(|s| s.kind == 2) {
+        for symbols in o.sections.iter().filter(|s| s.kind == SHT_SYMTAB) {
             for index in 1..(symbols.size / 24) as usize {
-                let (name, is_local, number) = symbol(o, symbols, index);
+                let (name, _, number) = symbol(o, symbols, index);
                 if !is_a_section(number, o) || name.is_empty() {
                     continue;
                 }
                 let Placed::Node(node) = o.placed[number] else {
                     continue;
                 };
-                if !is_local {
-                    // Of a definition that several objects have, the linker as a rule placed one. Else it may be any of them.
-                    let nodes = seen_by_all.entry(name).or_default();
-                    if !nodes.contains(&node) {
-                        nodes.push(node);
-                    }
-                }
                 // The map has names too, but not as the linker takes them. An object or a function: on arm64 every section
                 // starts with a `$x` or a `$d` as well, which says whether it is code.
                 let at = symbols.offset + index * 24;
                 let is_at_the_start = o.b.u64(at + 8) == 0 && matches!(o.b.u8(at + 4) & 15, 1 | 2);
                 if is_at_the_start
-                    && nodes[node as usize].name.is_none()
+                    && nodes[node as usize].names.is_empty()
                     && placed[o.file].contains_key(o.sections[number].name)
                 {
-                    nodes[node as usize].name = Some(name.iter().map(|&c| char::from(c)).collect());
+                    nodes[node as usize].names =
+                        vec![name.iter().map(|&c| char::from(c)).collect()];
                 }
             }
         }
@@ -446,6 +479,16 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
     let mut edges: Vec<(u32, u32)> = Vec::new();
     let (mut relocations, mut elsewhere) = (0u64, 0u64);
     for o in &objects {
+        let is_another_kind = |s: &&Section<'_>| {
+            matches!(s.kind, SHT_REL | SHT_CREL) && o.placed[s.info] != Placed::Nowhere
+        };
+        if let Some(list) = o.sections.iter().find(is_another_kind) {
+            fail!(
+                "{}: {} is relocations of a kind that is not read",
+                o.file,
+                list.name
+            );
+        }
         for list in o.sections.iter().filter(|s| s.kind == SHT_RELA) {
             let from = match o.placed[list.info] {
                 Placed::Node(from) => from,
@@ -482,7 +525,21 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
                         Placed::Nowhere | Placed::Merged => &[],
                     }
                 } else {
-                    seen_by_all.get(name).map_or(&[], |nodes| &nodes[..])
+                    // `name@VERSION` asks for that version of what a library has.
+                    let name = name.split(|&c| c == b'@').next().unwrap_or(name);
+                    // `--wrap=name` has `name` mean `__wrap_name`, and `__real_name` mean `name`.
+                    let wrapper = [b"__wrap_", name].concat();
+                    let wrapped = named.get(&wrapper[..]);
+                    edges.extend(wrapped.into_iter().flatten().map(|&to| (from, to)));
+                    match named.get(name.strip_prefix(b"__real_").unwrap_or(name)) {
+                        Some(nodes) => nodes,
+                        None if wrapped.is_some() => &[],
+                        None => fail!(
+                            "{}: the executable knows no {}",
+                            o.file,
+                            String::from_utf8_lossy(name)
+                        ),
+                    }
                 };
                 edges.extend(to.iter().map(|&to| (from, to)));
                 // imported, made by the linker, thread-local zeroes, merged
@@ -506,15 +563,29 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8]) -> Result<Graph> {
         }
     }
 
-    // ---- records: {no-op, other side or 0, id, 0}. Those of what the linker dropped read 0.
+    // ---- records: {no-op, other side or 0, id, 0}. There is one of what the linker dropped too, which holds offsets in what is
+    // gone in place of addresses. It is told by what is there.
+    let is_arm64 = b.u16(18) == EM_AARCH64;
+    let holds = |address: u64, bytes: &[u8]| {
+        let is_in = |s: &&Section<'_>| {
+            s.flags & SHF_ALLOC != 0
+                && s.kind != SHT_NOBITS
+                && address >= s.address
+                && address - s.address < s.size
+        };
+        let section = outputs.iter().find(is_in);
+        section
+            .is_some_and(|s| linked[s.offset + (address - s.address) as usize..].starts_with(bytes))
+    };
     let mut records = Vec::new();
     for s in outputs.iter().filter(|s| s.name == ".bun_features") {
         for at in (s.offset..s.offset + s.size as usize).step_by(24) {
-            if b.u64(at) != 0 {
+            let (no_op, otherwise, id) = (b.u64(at), b.u64(at + 8), b.u32(at + 16));
+            if holds(no_op, &no_op_and_jump(is_arm64, id, no_op, no_op)?.0) {
                 records.push(Record {
-                    no_op: b.u64(at),
-                    otherwise: Some(b.u64(at + 8)).filter(|&o| o != 0),
-                    id: b.u32(at + 16),
+                    no_op,
+                    otherwise: Some(otherwise).filter(|&o| o != 0),
+                    id,
                 });
             }
         }

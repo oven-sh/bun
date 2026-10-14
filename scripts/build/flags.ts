@@ -1077,9 +1077,11 @@ export const linkerFlags: Flag[] = [
   },
   {
     // What the feature table is made from (feature-table.ts), besides lld's
-    // map: the objects LTO generated, which library each member came from, and
-    // in the map the names the object files use.
-    flag: ["/lldsavetemps:prelink", "/verbose", "/demangle:no"],
+    // map: the objects LTO generated, which are what its cache holds, which
+    // library each member came from, and in the map the names the object files
+    // use. The cache is also what makes the second link of that command take
+    // seconds.
+    flag: c => [`/lldltocache:${slash(featureTableLtoCache(c))}`, "/verbose", "/demangle:no"],
     when: c => c.windows && c.featureTable,
     desc: "Feature table: leave behind what refers to what",
   },
@@ -1092,7 +1094,7 @@ export const linkerFlags: Flag[] = [
     // them. /ignore:4037 is --no-warn-symbol-ordering's counterpart: the names
     // were traced from an earlier build's binary (see usesOrderFile), and each
     // one that no longer exists would otherwise be an LNK4037 warning.
-    flag: c => [`/order:@${slash(orderFilePath(c))}`, "/ignore:4037"],
+    flag: c => [`/order:@${slash(linkedOrderFilePath(c))}`, "/ignore:4037"],
     when: c => c.windows && usesOrderFile(c),
     desc: "Sort startup-hot functions to the front of .text (cuts resident binary pages)",
   },
@@ -1620,8 +1622,8 @@ export function orderFilePath(cfg: Pick<Config, "buildDir">): string {
 }
 
 /** The order file the linker is given: with a feature table, the one above and what feature-table.ts adds to it. */
-export function linkedOrderFilePath(cfg: Pick<Config, "buildDir" | "featureTable" | "windows">): string {
-  return cfg.featureTable && !cfg.windows ? join(cfg.buildDir, "feature-table", "linker.order") : orderFilePath(cfg);
+export function linkedOrderFilePath(cfg: Pick<Config, "buildDir" | "featureTable">): string {
+  return cfg.featureTable ? join(cfg.buildDir, "feature-table", "linker.order") : orderFilePath(cfg);
 }
 
 /** Emptied before each link, and after. */

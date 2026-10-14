@@ -56,8 +56,10 @@ impl Objects {
     }
 }
 
+/// None as well if there are two of that name: the map does not say which it means.
 fn member_of(ar: &[u8], wanted: &str) -> Option<core::ops::Range<usize>> {
     let text = |range: core::ops::Range<usize>| core::str::from_utf8(&ar[range]).ok();
+    let mut found: Option<core::ops::Range<usize>> = None;
     let mut long_names = 0..0;
     let mut at = 8;
     while at + 60 <= ar.len() {
@@ -66,8 +68,10 @@ fn member_of(ar: &[u8], wanted: &str) -> Option<core::ops::Range<usize>> {
         let body = at + 60;
         if let Some(length) = id.strip_prefix("#1/").and_then(|n| n.parse::<usize>().ok()) {
             // BSD: the name precedes the contents
-            if crate::bytes::fixed_name(&ar[body..body + length]) == wanted.as_bytes() {
-                return Some(body + length..body + size);
+            if crate::bytes::fixed_name(&ar[body..body + length]) == wanted.as_bytes()
+                && found.replace(body + length..body + size).is_some()
+            {
+                return None;
             }
         } else if id == "//" {
             long_names = body..body + size;
@@ -79,11 +83,13 @@ fn member_of(ar: &[u8], wanted: &str) -> Option<core::ops::Range<usize>> {
                 }
                 None => id,
             };
-            if name.strip_suffix('/').unwrap_or(name) == wanted {
-                return Some(body..body + size);
+            if name.strip_suffix('/').unwrap_or(name) == wanted
+                && found.replace(body..body + size).is_some()
+            {
+                return None;
             }
         }
         at = body + size + (size & 1);
     }
-    None
+    found
 }

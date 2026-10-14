@@ -16,7 +16,7 @@
  * `bun build --compile` and what writes it are the same crate.
  */
 
-import { mkdirSync, readdirSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
+import { mkdirSync, readdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
 import { featureTableLtoCache, linkedOrderFilePath, linkerMapPath, orderFilePath, usesOrderFile } from "./flags.ts";
@@ -29,29 +29,6 @@ const directory = (cfg: Config) => resolve(cfg.buildDir, "feature-table");
 const toolPath = (cfg: Config) => join(directory(cfg), "bun-exe-features");
 /** What the linker prints and writes nowhere else: ld.lld what identical code folding merged, lld-link which libraries it read. */
 const printed = (cfg: Config) => (cfg.darwin ? "/dev/null" : join(directory(cfg), `${bunExeName(cfg)}.printed`));
-
-/**
- * lld-link writes each object that LTO generates next to the input it was made from. Libraries outside the build directory
- * are in a cache that other checkouts share, so the link reaches them through links of its own.
- */
-export function linkFromBuildDir(cfg: Config, libs: string[]): string[] {
-  if (!cfg.featureTable || !cfg.windows) return libs;
-  const dir = join(directory(cfg), "lib");
-  mkdirSync(dir, { recursive: true });
-  return libs.map(lib => {
-    if (lib.startsWith(cfg.buildDir)) return lib;
-    const link = join(dir, basename(lib));
-    let current: string | undefined;
-    try {
-      current = readlinkSync(link);
-    } catch {}
-    if (current !== lib) {
-      rmSync(link, { force: true });
-      symlinkSync(lib, link);
-    }
-    return link;
-  });
-}
 
 /** `link`, the command that links, keeping what the linker prints. */
 function keepingWhatTheLinkerPrints(cfg: Config, link: string): string {
@@ -69,8 +46,6 @@ export function withFeatureTable(cfg: Config, link: string): string {
   const linked = `$out ${q(linkerMapPath(cfg))} ${q(printed(cfg))} ${cache}`;
   const table = `${tool} table ${linked} > ${q(join(directory(cfg), `${bunExeName(cfg)}.report`))}`;
   link = keepingWhatTheLinkerPrints(cfg, link);
-  // lld-link leaves no objects behind if it has a cache. One link, in the order things come.
-  if (cfg.windows) return `${link} && ${table}`;
   const before = q(usesOrderFile(cfg) ? orderFilePath(cfg) : "/dev/null");
   return (
     `rm -rf ${cache} && cp ${before} ${order} && ${link} && ` +

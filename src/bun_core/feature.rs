@@ -168,7 +168,7 @@ mod marked {
 #[cfg_attr(target_os = "linux", unsafe(link_section = ".bun_feature_table"))]
 #[cfg_attr(target_os = "macos", unsafe(link_section = "__TEXT,__bun_feat_tab"))]
 #[cfg_attr(windows, unsafe(link_section = ".bunftab"))]
-static TABLE: [u8; 1 << 16] = [0; 1 << 16];
+static TABLE: [u8; 1 << 15] = [0; 1 << 15];
 
 /// Room for program headers. An ELF file with pages left out has one more for each gap, the table of them cannot grow where
 /// the linker put it, and it has to be near the start of the file, where notes are.

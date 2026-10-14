@@ -1498,7 +1498,7 @@ pub(crate) mod command {
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
-            feature::enter::<{ feature::LINT }, _>(|| lint_command::read_program_of_script(ctx));
+            lint_command::read_program_of_script(ctx);
             return run_command::RunCommand::exec_eval(ctx);
         }
 

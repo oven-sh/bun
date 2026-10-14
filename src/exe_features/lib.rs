@@ -8,9 +8,10 @@
 //! 3. leave the pages that hold nothing else out of the file.
 //!
 //! Nothing moves. Every byte that stays is loaded at the address it was linked for, so no address stored anywhere has to be
-//! found or changed: not in code, not in data, not in symbols, debug information or unwind tables, and not in a crash
-//! report, which is read against the symbols of the release. All that changes is where in the file things are, which only
-//! the headers of the file say. That is the whole of what [`elf`], [`macho`] and [`pe`] do.
+//! found or changed: not in code, not in data, not in symbols, debug information or unwind tables, and a crash report has
+//! the addresses it would have had, to be read against the symbols of the release. All that changes is where in the file
+//! things are, and into how many segments or sections it is cut, which only the headers of the file say. That is the whole of
+//! what [`elf`], [`macho`] and [`pe`] do. What is left out cannot be read or run: whatever gets there by mistake stops there.
 //!
 //! An executable is loaded in pages, so only whole pages leave the file. Bun's build lays out what each set of features
 //! needs as one stretch, so that is nearly all of it.
@@ -179,9 +180,11 @@ impl<'a> Features<'a> {
             there.copy_from_slice(marker.excluded);
         }
 
+        let is_needed_by_none = |set: &Vec<usize>| set.iter().all(|&feature| is_excluded[feature]);
+        let is_needed_by_none: Vec<bool> = table.sets.iter().map(is_needed_by_none).collect();
         let mut dead: Vec<Range<u64>> = Vec::new();
         for (range, needed_by) in &table.ranges {
-            if needed_by.iter().all(|&feature| is_excluded[feature]) {
+            if is_needed_by_none[*needed_by] {
                 match dead.last_mut() {
                     Some(last) if last.end == range.start => last.end = range.end,
                     _ => dead.push(range.clone()),

@@ -49,12 +49,16 @@ pub(crate) fn minus(a: u64, b: u64) -> Result<u64> {
 pub(crate) fn narrow(value: u64) -> Result<u32> {
     u32::try_from(value).map_err(|_| Error::InvalidExecutable)
 }
-/// The whole pages of `range`.
+/// The whole pages of `range`, but for a little at either end: vector code reads a few bytes more than it was given.
 pub(crate) fn whole_pages(
     range: &core::ops::Range<u64>,
     page: u64,
 ) -> Option<core::ops::Range<u64>> {
-    let pages = range.start.checked_next_multiple_of(page)?..range.end / page * page;
+    let start = range
+        .start
+        .checked_add(64)?
+        .checked_next_multiple_of(page)?;
+    let pages = start..range.end.saturating_sub(64) / page * page;
     (pages.start < pages.end).then_some(pages)
 }
 

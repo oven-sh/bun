@@ -17,7 +17,7 @@ import {
   readElf64ProgramHeaders,
   tempDir,
 } from "harness";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const exe = (name: string) => (isWindows ? name + ".exe" : name);
@@ -26,11 +26,15 @@ const app = `
 import { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
+const worker = new Worker("data:text/javascript,postMessage(40 + 2)");
+const posted = await new Promise(resolve => (worker.onmessage = event => resolve(event.data)));
+worker.terminate();
 const server = Bun.serve({ port: 0, fetch: () => new Response("served") });
 const fetched = await (await fetch(server.url)).text();
 server.stop(true);
 console.log(JSON.stringify({
   sqlite: new Database(":memory:").query("select 42 as x").get(),
+  posted,
   fetched,
   shell: (await Bun.$\`echo shell\`.text()).trim(),
   sha256: createHash("sha256").update("a").digest("hex").slice(0, 8),
@@ -42,6 +46,7 @@ console.log(JSON.stringify({
 `;
 const working = {
   sqlite: { x: 42 },
+  posted: 42,
   fetched: "served",
   shell: "shell",
   sha256: "ca978112",
@@ -99,7 +104,13 @@ test.skipIf(hasTable)("a bun that cannot exclude features says so", async () => 
 
 describe.skipIf(!hasTable)("with a feature table", () => {
   const size = (cwd: string, name: string) => statSync(join(cwd, exe(name))).size;
-  const files = { "app.ts": app, "one.ts": "export const one = 1;\n", "tsconfig.json": `{ "files": ["one.ts"] }` };
+  const files = {
+    "app.ts": app,
+    "one.ts": "export const one = 1;\n",
+    "tsconfig.json": `{ "files": ["one.ts"] }`,
+    // `bun fmt` runs this in a process of its own, with what `bun lint` runs its plugins with.
+    "prettier.config.mjs": "export default { semi: true };\n",
+  };
   const commands = { check: ["check"], lint: ["lint", "one.ts"], fmt: ["fmt", "--check", "one.ts"] };
   const features = Object.keys(commands) as (keyof typeof commands)[];
 
@@ -147,6 +158,28 @@ describe.skipIf(!hasTable)("with a feature table", () => {
     const MB = 1024 * 1024;
     expect(size(cwd, "lint")).toBeLessThan(size(cwd, "full") - 5 * MB);
     expect(size(cwd, "all")).toBeLessThan(size(cwd, "lint") - 5 * MB);
+  });
+
+  // Nothing moves, so it reads against the symbols of the release like any other.
+  test.concurrent("a crash report has the addresses it would have had", async () => {
+    using dir = tempDir("exclude-features", files);
+    const cwd = String(dir);
+    const compiled = await Promise.all([
+      compile(cwd, "full"),
+      compile(cwd, "without", "--compile-exclude-features=check,lint,fmt"),
+    ]);
+    expect(compiled.map(c => c.exitCode)).toEqual([0, 0]);
+    const report = async (name: string) => {
+      const crash = `require("bun:internal-for-testing").crash_handler.panic()`;
+      // Not sent, and not to where CI collects the crashes that nobody meant.
+      const to = { BUN_CRASH_REPORT_URL: "http://report.invalid", BUN_ENABLE_CRASH_REPORTING: "0" };
+      const env = { ...bunEnv, ...to, BUN_BE_BUN: "1" };
+      const { stderr } = await run([join(cwd, exe(name)), "-e", crash], cwd, env);
+      return /report\.invalid\/\S+/.exec(stderr)?.[0];
+    };
+    const [full, without] = await Promise.all([report("full"), report("without")]);
+    expect(full).toBeString();
+    expect(without).toBe(full);
   });
 
   // What asks for an excluded feature in another way is refused too, not ignored.
@@ -211,6 +244,31 @@ describe.skipIf(!hasTable)("with a feature table", () => {
     const again = await compile(cwd, "again", from, "--compile-exclude-features=fmt");
     expect(again.stdout + again.stderr).toContain(noTable);
     expect(again.exitCode).not.toBe(0);
+  });
+
+  // A release is signed. The signature comes behind everything else in the file, and is of the file as it was.
+  test.skipIf(!isWindows).concurrent("PE: from a signed bun", async () => {
+    using dir = tempDir("exclude-features", files);
+    const cwd = String(dir);
+    const unsigned = readFileSync(bunExe());
+    const directory = unsigned.readUInt32LE(0x3c) + 24 + 112 + 4 * 8; // IMAGE_DIRECTORY_ENTRY_SECURITY
+    expect(unsigned.readUInt32LE(directory + 4)).toBe(0);
+    const certificate = Buffer.alloc(8 + 1000); // WIN_CERTIFICATE
+    certificate.writeUInt32LE(certificate.length, 0);
+    certificate.writeUInt16LE(0x200, 4); // WIN_CERT_REVISION_2_0
+    certificate.writeUInt16LE(2, 6); // WIN_CERT_TYPE_PKCS_SIGNED_DATA
+    const signed = Buffer.concat([unsigned, Buffer.alloc(-unsigned.length & 7), certificate]);
+    signed.writeUInt32LE(signed.length - certificate.length, directory);
+    signed.writeUInt32LE(certificate.length, directory + 4);
+    writeFileSync(join(cwd, "signed.exe"), signed);
+
+    const from = `--compile-executable-path=${join(cwd, "signed.exe")}`;
+    const compiled = await compile(cwd, "app", from, "--compile-exclude-features=check,lint,fmt");
+    expect(compiled.stdout + compiled.stderr).not.toContain("error");
+    expect(compiled.exitCode).toBe(0);
+    const ran = await run([join(cwd, "app.exe")], cwd);
+    expect(JSON.parse(ran.stdout)).toEqual(working);
+    expect(ran.exitCode).toBe(0);
   });
 
   // On Windows no compiled executable can: it has a `.bun` section already.

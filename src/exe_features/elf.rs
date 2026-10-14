@@ -16,8 +16,8 @@ const PT_PHDR: u32 = 6;
 const PF_W: u32 = 2;
 const SHT_SYMTAB: u32 = 2;
 const SHT_NOBITS: u32 = 8;
-const SHT_DYNSYM: u32 = 11;
 const SHF_ALLOC: u64 = 2;
+const SHN_UNDEF: u16 = 0;
 const SHN_LORESERVE: usize = 0xff00;
 const EM_X86_64: u16 = 62;
 const EM_AARCH64: u16 = 183;
@@ -142,8 +142,7 @@ pub(crate) fn offset_of(file: &[u8], address: u64) -> Result<usize> {
 }
 
 /// `bun_core::feature` has a note whose contents are room for them. A note, because the linker puts those at the start of
-/// the file. Older Linux takes the table to be loaded as far from the start of the image as it is from the start of the
-/// file, which holds for what comes before the first gap.
+/// the file, before the first gap: see `without_pages`.
 fn room_for_program_headers(file: &[u8], headers: &[ProgramHeader]) -> Result<Range<usize>> {
     for h in headers.iter().filter(|h| h.kind == PT_NOTE) {
         let align = if h.align == 8 { 8 } else { 4 };
@@ -187,10 +186,16 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
     let loads = || headers.iter().filter(|h| h.kind == PT_LOAD);
     // A file offset and its address are the same but for a multiple of this.
     let page = loads().map(|h| h.align).max().unwrap_or(0).max(0x1000);
+    // Older Linux takes the table to be as far from the first segment in memory as in the file. (patchelf puts a segment of its
+    // own first.)
     let first = loads().next().ok_or(Error::InvalidExecutable)?;
+    let holds_room = |h: &&ProgramHeader| {
+        room.start as u64 >= h.offset && room.end as u64 - h.offset <= h.file_size
+    };
+    let around_room = loads().find(holds_room).ok_or(Error::InvalidExecutable)?;
     if !page.is_power_of_two()
-        || first.offset != 0
-        || room.end as u64 > first.file_size
+        || around_room.address.wrapping_sub(around_room.offset)
+            != first.address.wrapping_sub(first.offset)
         || room.start % 8 != 0
     {
         return Err(Error::InvalidExecutable);
@@ -203,7 +208,8 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
             continue;
         };
         let holds = |h: &&ProgramHeader| {
-            h.flags & PF_W == 0 && gap.start >= h.address && gap.end - h.address <= h.file_size
+            let is_all_in_the_file = h.flags & PF_W == 0 && h.memory_size == h.file_size;
+            is_all_in_the_file && gap.start >= h.address && gap.end - h.address <= h.file_size
         };
         if let Some(h) = loads().find(holds)
             && h.offset + (gap.start - h.address) >= room.end as u64
@@ -243,41 +249,36 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
     // ---- program headers
     let mut new: Vec<ProgramHeader> = Vec::new();
     for h in &headers {
-        if h.kind != PT_LOAD {
+        let whole = h.address..h.address + h.file_size;
+        let has_gaps = h.kind == PT_LOAD
+            && gaps
+                .iter()
+                .any(|g| g.start >= whole.start && g.end <= whole.end);
+        if !has_gaps {
             new.push(ProgramHeader {
                 offset: new_offset(h.offset),
                 ..h.clone()
             });
             continue;
         }
-        let kept = stretches(h.address..h.address + h.file_size, &gaps);
-        for (index, part) in kept.iter().enumerate() {
+        for part in stretches(whole, &gaps) {
             let from_start = part.start - h.address;
-            // What is in memory only comes last.
-            let is_last = index + 1 == kept.len();
             new.push(ProgramHeader {
                 offset: new_offset(h.offset + from_start),
                 address: part.start,
                 physical_address: h.physical_address + from_start,
                 file_size: part.end - part.start,
-                memory_size: if is_last {
-                    h.memory_size - from_start
-                } else {
-                    part.end - part.start
-                },
+                memory_size: part.end - part.start,
                 ..h.clone()
             });
-        }
-        if kept.is_empty() {
-            new.push(h.clone());
         }
     }
     let size = (new.len() * PROGRAM_HEADER) as u64;
     for h in new.iter_mut().filter(|h| h.kind == PT_PHDR) {
         (h.offset, h.address, h.physical_address) = (
             room.start as u64,
-            first.address + room.start as u64,
-            first.physical_address + room.start as u64,
+            around_room.address + (room.start as u64 - around_room.offset),
+            around_room.physical_address + (room.start as u64 - around_room.offset),
         );
         (h.file_size, h.memory_size) = (size, size);
     }
@@ -333,9 +334,9 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
     if table.len() / SECTION_HEADER >= SHN_LORESERVE {
         return Err(Error::InvalidExecutable);
     }
-    // Symbols say which section they are in, by number.
+    // Symbols say which section they are in, by number. One in a gap is in none: it is of something that is gone.
     for at in (0..count).map(|index| index * SECTION_HEADER) {
-        if !matches!(u32_at(&table, at + 4)?, SHT_SYMTAB | SHT_DYNSYM) {
+        if u32_at(&table, at + 4)? != SHT_SYMTAB {
             continue;
         }
         let (symbols, size) = (
@@ -347,8 +348,12 @@ pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>>
                 usize::from(u16_at(&out, symbol + 6)?),
                 u64_at(&out, symbol + 8)?,
             );
-            if let Some(part) = parts.iter().find(|p| p.0 == number && p.1.contains(&value)) {
-                put_u16(&mut out, symbol + 6, part.2 as u16)?;
+            let of_section = || parts.iter().filter(|p| p.0 == number);
+            if of_section().next().is_some() {
+                // In a part, or at the end of one.
+                let part = (of_section().find(|p| p.1.contains(&value)))
+                    .or_else(|| of_section().find(|p| p.1.end == value));
+                put_u16(&mut out, symbol + 6, part.map_or(SHN_UNDEF, |p| p.2 as u16))?;
             }
         }
     }

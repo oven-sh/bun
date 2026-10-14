@@ -2072,7 +2072,7 @@ fn without_features(executable: Vec<u8>, exclude: &[Box<[u8]>]) -> Result<Vec<u8
     }
     let explain = |e: Error| match e {
         Error::MissingTable => CompileError::fmt(format_args!(
-            "--compile-exclude-features needs a release build of Bun to compile from: this one does not say what can be excluded"
+            "--compile-exclude-features: the Bun to compile from does not say what can be excluded. Release builds for Linux, macOS and Windows x64 do"
         )),
         e => CompileError::fmt(format_args!(
             "failed to exclude features from the executable: {e}"

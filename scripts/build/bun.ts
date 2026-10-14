@@ -23,7 +23,7 @@ import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
-import { emitFeatureTableTool, featureTableLinkImplicitInputs, linkFromBuildDir } from "./feature-table.ts";
+import { emitFeatureTableTool, featureTableLinkImplicitInputs } from "./feature-table.ts";
 import {
   bunIncludes,
   computeFlags,
@@ -432,7 +432,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const ldflags = [...flags.ldflags, ...systemLibs(cfg)];
   emitFeatureTableTool(n, cfg);
   const exe = link(n, cfg, exeName, linkObjects, {
-    libs: linkFromBuildDir(cfg, depLibs),
+    libs: depLibs,
     lazyObjects: depLink.lazy,
     flags: ldflags,
     implicitInputs: [...linkImplicitInputs(cfg), ...shimInputs, ...featureTableLinkImplicitInputs(cfg)],

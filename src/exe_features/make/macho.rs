@@ -18,8 +18,6 @@ const LC_SYMTAB: u32 = 2;
 const LC_SEGMENT_64: u32 = 0x19;
 const LC_MAIN: u32 = 0x8000_0028;
 const LC_DYLD_EXPORTS_TRIE: u32 = 0x8000_0033;
-const LC_DYLD_CHAINED_FIXUPS: u32 = 0x8000_0034;
-const DYLD_CHAINED_PTR_64: u16 = 2;
 const N_STAB: u8 = 0xe0;
 const N_TYPE: u8 = 0x0e;
 const N_SECT: u8 = 0x0e;
@@ -383,6 +381,9 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
     // Ranges that the map lists as several symbols but that are one atom.
     let mut whole: Vec<(u64, u64)> = Vec::new();
     let mut references: Vec<(u64, u64)> = Vec::new();
+    let mut referred_to_by_the_nameless: Vec<u64> = Vec::new();
+    // Per atom of the map: has it been found in an object?
+    let mut is_claimed = vec![false; map.atoms.len()];
     // Sections in which something comes before the first symbol. The map does not say where that went.
     let mut has_nameless: HashSet<(&[u8], &[u8])> = HashSet::new();
     let (mut relocations, mut not_kept) = (0u64, 0u64);
@@ -436,6 +437,11 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
             found.names.iter().find_map(|name| final_address(name))
         };
 
+        for y in symbols.iter().filter(|y| y.is_defined()) {
+            if let Some(atom) = placed_atom(y.name) {
+                is_claimed[atom] = true;
+            }
+        }
         for (s, starts) in sections.iter().zip(&starts) {
             if s.size != 0
                 && starts.first().is_none_or(|first| first.value != s.addr)
@@ -466,10 +472,11 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
         }
 
         for (index, s) in sections.iter().enumerate() {
-            // Debug information. Unwind tables, which live and die with the functions they are about. And a record of
-            // `bun_core::feature` does not keep the function that it is about.
+            // Debug information. Notes for the linker, which are not loaded. Unwind tables, which live and die with the functions
+            // they are about. And a record of `bun_core::feature` does not keep the function that it is about.
             if s.segment == b"__DWARF"
                 || s.segment == b"__LD"
+                || s.section == b"__llvm_addrsig"
                 || s.section == b"__eh_frame"
                 || s.section == b"__bun_feat"
             {
@@ -488,11 +495,16 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
                     continue;
                 }
                 relocations += 1;
-                let Some(from) = locate(index + 1, s.addr.wrapping_add_signed(offset.into()))
-                else {
+                let place = s.addr.wrapping_add_signed(offset.into());
+                let from = locate(index + 1, place);
+                // What comes before the first symbol of its section has no name, and the map does not say whether it was kept.
+                let is_nameless = starts[index]
+                    .first()
+                    .is_none_or(|first| place < first.value);
+                if from.is_none() && !is_nameless {
                     not_kept += 1;
                     continue;
-                };
+                }
                 let to = if !is_external {
                     // Against a section, for what has no symbol to go by. What is in place is an address in the object, or
                     // the distance to one from the end of the instruction. `SIGNED_1`, `_2` and `_4` say how far that is.
@@ -536,6 +548,7 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
                     } else {
                         match locate(y.section.into(), y.value) {
                             Some(to) => Some(to),
+                            None if from.is_none() => None,
                             None => fail!(
                                 "{}: cannot find {} in the image",
                                 files[file],
@@ -544,9 +557,34 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
                         }
                     }
                 };
-                references.extend(to.map(|to| (from, to)));
+                match from {
+                    Some(from) => references.extend(to.map(|to| (from, to))),
+                    // So what it refers to stays.
+                    None => referred_to_by_the_nameless.extend(to),
+                }
             }
         }
+    }
+
+    // Else there are relocations that have not been read. A stub is credited to the library that it calls into. Strings have no
+    // symbols and no relocations, and those of the unwind tables are not followed.
+    let is_in = |a: &Atom<'_>, section: &[u8]| {
+        (map.sections.iter())
+            .any(|s| s.section == section && a.addr >= s.addr && a.addr < s.addr + s.size)
+    };
+    let is_from_an_object = |a: &Atom<'_>| {
+        let is_from_a_file = a.file != 0 && a.size != 0 && !files[a.file].ends_with(".tbd");
+        is_from_a_file && !is_in(a, b"__cstring") && !is_in(a, b"__eh_frame")
+    };
+    let mut unclaimed = (map.atoms.iter().zip(&is_claimed))
+        .filter(|(a, is_claimed)| is_from_an_object(a) && !**is_claimed);
+    if let Some((atom, _)) = unclaimed.next() {
+        fail!(
+            "{} atoms of the map were not found in their objects, one is {} of {}",
+            unclaimed.count() + 1,
+            String::from_utf8_lossy(atom.name),
+            files[atom.file]
+        );
     }
 
     // ---- nodes
@@ -602,7 +640,7 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
                         && matches!(s.section, b"__text" | b"__const")
                         && is_whole_known,
                     is_root: keep,
-                    name: Some(name.iter().map(|&c| char::from(c)).collect()),
+                    names: vec![name.iter().map(|&c| char::from(c)).collect()],
                 });
             }
         }
@@ -610,33 +648,16 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
 
     // ---- load commands
     let mut commands: Vec<(u32, usize)> = Vec::new();
-    let mut segments: Vec<(&[u8], u64, u64, u64)> = Vec::new(); // {name, address, offset, size in the file}
     let mut at = 32;
     for _ in 0..b.u32(16) {
         commands.push((b.u32(at), at));
-        if b.u32(at) == LC_SEGMENT_64 {
-            segments.push((
-                fixed_name(&linked[at + 8..at + 24]),
-                b.u64(at + 24),
-                b.u64(at + 40),
-                b.u64(at + 48),
-            ));
-        }
         at += b.u32(at + 4) as usize;
     }
     let command = |kind: u32| commands.iter().find(|c| c.0 == kind).map(|c| c.1);
-    let file_offset = |a: u64| -> usize {
-        let s = segments
-            .iter()
-            .find(|s| a >= s.1 && a < s.1 + s.3)
-            .unwrap_or_else(|| panic!("no file bytes at {a:x}"));
-        (s.2 + (a - s.1)) as usize
+    let is_text = |c: &&(u32, usize)| {
+        c.0 == LC_SEGMENT_64 && fixed_name(&linked[c.1 + 8..c.1 + 24]) == b"__TEXT"
     };
-    let base = segments
-        .iter()
-        .find(|s| s.0 == b"__TEXT")
-        .ok_or("no segment __TEXT")?
-        .1;
+    let base = b.u64(commands.iter().find(is_text).ok_or("no segment __TEXT")?.1 + 24);
     let section = |segment: &[u8], name: &[u8]| {
         output
             .sections
@@ -658,47 +679,7 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
                 .map(|at| base + u64::from(b.u32(at))),
         );
     }
-    // Chained fixups: the pointers the loader rebases. The low 36 bits of one hold the address of its target. One in no node
-    // is in something nameless, whose relocations could not be placed. The GOT is not that: whatever goes through it has a
-    // relocation that names what it is after.
-    let got = section(b"__DATA_CONST", b"__got").map_or(0..0, |s| s.addr..s.addr + s.size);
-    let header = b
-        .u32(command(LC_DYLD_CHAINED_FIXUPS).ok_or("the image does not use chained fixups")? + 8)
-        as usize;
-    let starts = header + b.u32(header + 4) as usize;
-    let mut nameless_pointers = 0;
-    for i in 0..b.u32(starts) as usize {
-        if b.u32(starts + 4 + 4 * i) == 0 {
-            continue;
-        }
-        let in_segment = starts + b.u32(starts + 4 + 4 * i) as usize;
-        if b.u16(in_segment + 6) != DYLD_CHAINED_PTR_64 {
-            fail!("chained pointer format {}", b.u16(in_segment + 6));
-        }
-        for page in 0..usize::from(b.u16(in_segment + 20)) {
-            let first = b.u16(in_segment + 22 + 2 * page);
-            if first == 0xffff {
-                continue;
-            }
-            let mut a = base
-                + b.u64(in_segment + 8)
-                + page as u64 * u64::from(b.u16(in_segment + 4))
-                + u64::from(first);
-            loop {
-                let value = b.u64(file_offset(a));
-                // else it is bound to an import
-                if value >> 63 == 0 && !got.contains(&a) && find(&nodes, a).is_none() {
-                    nameless_pointers += 1;
-                    roots.push(value & 0xf_ffff_ffff);
-                }
-                let next = (value >> 51) & 0xfff;
-                if next == 0 {
-                    break;
-                }
-                a += next * 4;
-            }
-        }
-    }
+    roots.extend(&referred_to_by_the_nameless);
     for root in roots {
         if let Some(node) = find(&nodes, root) {
             nodes[node as usize].is_root = true;
@@ -736,9 +717,10 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
         .collect();
     nameless.sort_unstable();
     let report = format!(
-        "objects {}, relocations {relocations}, of which in atoms that were not kept {not_kept}; pointers in what has no name \
-         {nameless_pointers}; sections that have something nameless: {}\n",
+        "objects {}, relocations {relocations}, of which in atoms that were not kept {not_kept}; references from what has no name \
+         {}; sections that have something nameless: {}\n",
         objects.len(),
+        referred_to_by_the_nameless.len(),
         nameless.join(" "),
     );
     Ok(Graph {

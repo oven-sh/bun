@@ -5,6 +5,7 @@ use super::statements::{expression_statement_needs_semicolon, follows_type_cast_
 use crate::ir::element::TextWidth;
 use crate::js::ast_nodes::node_as_ast_nodes;
 use crate::js::sort_imports::ImportRun;
+use crate::js::trivia::comment_before_semicolon_keeps_its_line;
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::prelude::*;
 use crate::write;
@@ -135,8 +136,14 @@ impl<'a> Format<'a> for FormatStatements<'a> {
         for statement in self.0.iter().filter(|it| it.tag() != StmtTag::Empty) {
             if let Some(previous_statement) = previous.replace(statement) {
                 imports.before_separator(statement, true, f);
-                let is_next_line_empty = !is_behind_semicolon_and_blanks(statement, f)
-                    && is_next_line_empty_after(previous_statement, f);
+                let is_next_line_empty =
+                    match own_line_comment_before_semicolon(previous_statement, f) {
+                        Some(comment) => f.lines_before(comment.span()) > 1,
+                        None => {
+                            !is_behind_semicolon_and_blanks(statement, f)
+                                && is_next_line_empty_after(previous_statement, f)
+                        }
+                    };
                 match is_next_line_empty {
                     true => write!(f, empty_line()),
                     false => write!(f, hard_line_break()),
@@ -154,6 +161,21 @@ impl<'a> Format<'a> for FormatStatements<'a> {
             write!(f, empty_line());
         }
     }
+}
+
+/// `a ⏎ /* comment */; ⏎⏎ b`: see [`comment_before_semicolon_keeps_its_line`]. The comment is written on its own line behind
+/// `a;`, so an empty line is kept between the two only if there is one before the comment.
+fn own_line_comment_before_semicolon<'a>(
+    statement: Stmt<'a>,
+    f: &Formatter<'a>,
+) -> Option<Comment<'a>> {
+    if f.is_quiet() || !comment_before_semicolon_keeps_its_line(f) {
+        return None;
+    }
+    let semicolon = statement.span().end.checked_sub(1)?;
+    (f.source_text().byte_at(semicolon) == Some(b';'))
+        .then(|| f.comments().comments_directly_before(semicolon).first())?
+        .filter(|comment| comment.has_newline_before())
 }
 
 /// `a()⏎⏎; [b].c()`: oxfmt looks for an empty line before a statement, and over a `;` only if that is right before it.
@@ -194,11 +216,18 @@ fn write_semicolon_before_type_cast_comment_of<'a>(statement: Stmt<'a>, f: &mut 
     let node = statement.as_ast_nodes();
     if let Some((_, rest)) = f.comments().of_node(node).leading.split_last()
         && follows_type_cast_comment(statement.span().start, f)
-        && !f.comments().is_ignored(node)
+        && (!f.comments().is_ignored(node)
+            || semicolon_is_before_cast_comment_of_ignored_statement(f))
         && expression_statement_needs_semicolon(statement, expression, f)
     {
         write!(f, [FormatLeadingComments::Comments(rest), ";"]);
     }
+}
+
+/// `// prettier-ignore ⏎ /** @type {T} */ (a).b()` without semicolons: Prettier writes the `;` right before the copied text,
+/// between the comment and its `(`. oxfmt keeps the two together: `;/** @type {T} */ (a).b()`
+pub(crate) fn semicolon_is_before_cast_comment_of_ignored_statement(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// `"use strict";`

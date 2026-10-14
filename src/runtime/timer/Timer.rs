@@ -175,7 +175,8 @@ impl All {
                         }
                     }
                     // As in @sinonjs/fake-timers, a fake timer without a delay is due now. See `FakeTimers::min_delay_ms()`.
-                    if clock == Clock::Fake && !(countdown_double > i32::MAX as f64) {
+                    let is_too_long = countdown_double > i32::MAX as f64;
+                    if clock == Clock::Fake && !is_too_long {
                         0
                     } else {
                         1

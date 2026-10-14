@@ -391,6 +391,8 @@ function connectionListenerHTTP1(server, socket, options) {
   const canTimeOut = typeof socket.setTimeout === "function";
   // Node's state.keepAliveTimeoutSet.
   let keepAliveTimeoutSet = false;
+  // Node's parser is an AsyncResource made here. A handler that restarts the stopped socket from req._read() must not lend its AsyncLocalStorage store to the next request.
+  const connectionFrame = AsyncContextFrame.current();
 
   const kOnHeaders = HTTPParser.kOnHeaders | 0;
   const kOnMessageBegin = HTTPParser.kOnMessageBegin | 0;
@@ -626,6 +628,9 @@ function connectionListenerHTTP1(server, socket, options) {
     }
   }
   function onHttp1SocketData(data) {
+    AsyncContextFrame.run(connectionFrame, parseHttp1SocketData, undefined, data);
+  }
+  function parseHttp1SocketData(data) {
     const ret = parser.execute(data);
     if (ret instanceof Error) {
       onHttp1SocketError(ret, data);

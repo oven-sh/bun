@@ -4593,21 +4593,17 @@ maybe(() => { return f; });
 
       // parentheses.json has code in parentheses that aren't needed, for the type-aware rules that used to treat it
       // differently from the same code without them. parentheses.expected.json is what `bun lint` reports for it.
-      test.serial(
-        "type-aware rules see through redundant parentheses",
-        async () => {
-          const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
-          const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
-          for (const { name, config, files: texts } of parentheses) {
-            files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
-            files[`${name}/tsconfig.json`] = JSON.stringify({ compilerOptions });
-            for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
-          }
-          const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
-          expect(foundExactly(raw, Object.keys(parenthesesExpected))).toEqual(parenthesesExpected);
-        },
-        isDebug || isASAN ? 120_000 : 30_000,
-      );
+      test("type-aware rules see through redundant parentheses", async () => {
+        const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        for (const { name, config, files: texts } of parentheses) {
+          files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
+          files[`${name}/tsconfig.json`] = JSON.stringify({ compilerOptions });
+          for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
+        }
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        expect(foundExactly(raw, Object.keys(parenthesesExpected))).toEqual(parenthesesExpected);
+      });
 
       // messages.json has what oxlint 1.87.0 with tsgolint 7.0.2003 says.
       test("the rules that oxlint shares with ESLint and typescript-eslint say what oxlint's say", async () => {

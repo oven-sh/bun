@@ -480,26 +480,26 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
     const { sql, table, rows } = await connectWithTable();
     await using gate = await lock();
     const insert = insertInto(table);
-    const queued = Promise.withResolvers<unknown>();
-    const closed = Promise.withResolvers<unknown>();
+    const returned = Promise.withResolvers<{ close: () => Promise<void>; queued: Promise<unknown> }>();
 
-    const outcome = settled(
+    const transaction = settled(
       sql.begin(async tx => {
         await insert(tx, 1);
         gate.hold(tx);
-        // Waits behind the held query.
-        queued.resolve(settled(insert(tx, 2).execute()));
-        // Not awaited. The callback returns, and the COMMIT of begin() is in the
-        // queue when the timer fires.
-        closed.resolve(tx.close({ timeout: 0.001 }));
+        // Waits behind the held query. The COMMIT of begin() waits behind both.
+        const queued = settled(insert(tx, 2).execute());
+        returned.resolve({ close: () => tx.close({ timeout: 0.001 }), queued });
         return "returned";
       }),
     );
+    const { close, queued } = await returned.promise;
+    await gate.roundTrip();
+    const closed = close();
 
     // The timer has fired when the query of the caller rejects.
-    expect(await queued.promise).toEqual(cancelled);
+    expect(await queued).toEqual(cancelled);
     await gate.release();
-    expect({ outcome: await outcome, closed: await closed.promise, inserted: await rows() }).toEqual({
+    expect({ outcome: await transaction, closed: await closed, inserted: await rows() }).toEqual({
       outcome: { resolved: "returned" },
       closed: undefined,
       inserted: [{ id: 0 }, { id: 1 }],

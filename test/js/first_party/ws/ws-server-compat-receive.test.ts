@@ -1,6 +1,6 @@
 // What a `ws` server socket does with the frames it receives, from a raw TCP client. See ws-raw-peer.ts.
 import { describe, expect, test } from "bun:test";
-import { isLinux, tls as harnessTls } from "harness";
+import { tls as harnessTls, isLinux } from "harness";
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";

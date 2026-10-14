@@ -1865,7 +1865,9 @@ function formatError(err, constructor, tag, ctx, keys) {
   }
 
   //! temp fix for Bun losing the error name from inherited errors + extraneous ": " with no message
-  if (!messageIsGetterThatThrows) stack = stack.replace(/^Error: /, `${name}${message ? ": " : ""}`);
+  if (!messageIsGetterThatThrows && StringPrototypeStartsWith(stack, "Error: ")) {
+    stack = `${name}${message ? ": " : ""}${StringPrototypeSlice(stack, 7)}`;
+  }
 
   removeDuplicateErrorKeys(ctx, keys, err, stack);
 

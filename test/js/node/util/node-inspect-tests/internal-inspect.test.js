@@ -225,51 +225,52 @@ test("util.inspect keeps the first line of a stack that was read before the mess
   ]);
 });
 
-// Node v26.3.0 throws for the two causes. For the other values it prints other text: V8 makes the
-// stack when it is first read, and that read throws.
+// Node v26.3.0 throws for these two causes.
+test.each([
+  ["that inherits from DOMException.prototype", () => ({ __proto__: DOMException.prototype }), "[object DOMException]"],
+  [
+    "with stack and name getters that throw",
+    () => Object.defineProperties(new Error("c"), { stack: throwingGetter, name: throwingGetter }),
+    "[object Error]",
+  ],
+])("util.inspect does not throw for an error with a cause %s", (_, cause, expected) => {
+  const text = util.inspect(new Error("a", { cause: cause() }));
+  expect(text).toStartWith("Error: a\n    at ");
+  expect(text).toEndWith(` {\n  [cause]: ${expected}\n}`);
+});
+
+// Node v26.3.0 prints "[object Error]" for these two: V8 makes the stack when it is first read, and
+// that read throws.
 const throwingToString = {
   toString() {
     throw new RangeError("toString");
   },
 };
 test.each([
-  [
-    "a cause that inherits from DOMException.prototype",
-    () => new Error("a", { cause: { __proto__: DOMException.prototype } }),
-    "Error: a\n    at ",
-    " {\n  [cause]: [object DOMException]\n}",
-  ],
-  [
-    "a cause with stack and name getters that throw",
-    () =>
-      new Error("a", {
-        cause: Object.defineProperties(new Error("c"), { stack: throwingGetter, name: throwingGetter }),
-      }),
-    "Error: a\n    at ",
-    " {\n  [cause]: [object Error]\n}",
-  ],
-  [
-    "a name whose toString throws",
-    () => Object.defineProperty(new Error("m"), "name", { value: throwingToString }),
-    "Error: m\n    at ",
-    "",
-  ],
-  [
-    "a message whose toString throws",
-    () => Object.defineProperty(new Error("m"), "message", { value: throwingToString }),
-    "Error\n    at ",
-    "",
-  ],
-  [
-    "an enumerable stack that is a Symbol",
-    () => Object.defineProperty(new Error("m"), "stack", { value: Symbol("s"), enumerable: true }),
-    "[Symbol(s)] { stack: Symbol(s) }",
-    "[Symbol(s)] { stack: Symbol(s) }",
-  ],
-])("util.inspect does not throw for an error with %s", (_, create, start, end) => {
-  const text = util.inspect(create());
-  expect(text).toStartWith(start);
-  expect(text).toEndWith(end);
+  ["name", "Error: m"],
+  ["message", "Error"],
+])("util.inspect prints the stack of an error with a %s whose toString throws", (key, firstLine) => {
+  const error = Object.defineProperty(new Error("m"), key, { value: throwingToString });
+  const text = util.inspect(error);
+  expect(text).toStartWith(`${firstLine}\n    at `);
+  expect(text).toBe(error.stack);
+});
+
+// Node v26.3.0 prints a stack that is no string as a value, below "Error: m".
+test("util.inspect does not throw for an error with an enumerable stack that is a Symbol", () => {
+  const error = Object.defineProperty(new Error("m"), "stack", { value: Symbol("s"), enumerable: true });
+  expect(util.inspect(error)).toBe("[Symbol(s)] { stack: Symbol(s) }");
+});
+
+test("util.inspect puts a name with a replacement pattern in the first line as it is", () => {
+  const names = ["A$&B", "$$", "$`", "$'"];
+  const firstLines = names.map(name => {
+    const error = new Error("m");
+    void error.stack;
+    error.name = name;
+    return util.inspect(error).split("\n")[0];
+  });
+  expect(firstLines).toEqual(names.map(name => `${name}: m`));
 });
 
 //! non-standard property, should this be kept?

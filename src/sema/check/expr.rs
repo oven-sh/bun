@@ -4425,7 +4425,10 @@ impl<'p, 's> Checker<'p, 's> {
                 && matches!(hir[inner].kind, TypeNodeKind::Typeof { .. })
             {
                 if inner != node {
+                    // `c.currentNode`, where an error at a limit is reported.
+                    let outer = self.looked_at_type_node.replace((file, inner));
                     self.type_from_node(file, inner);
+                    self.looked_at_type_node = outer;
                 }
                 continue;
             }

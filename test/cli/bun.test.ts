@@ -462,6 +462,7 @@ describe("bun", () => {
 
     // Runs `bun discord` with PATH = [first, second], each holding the given
     // `xdg-open`. `opened` is what the stub recorded, or null if it did not run.
+    // When no opener runs, `bun discord` prints the URL on stdout.
     async function open(openers: Openers) {
       using dir = tempDir("discord-opener", { first: {}, second: {} });
       const base = String(dir);
@@ -481,8 +482,8 @@ describe("bun", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { opened: fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : null, stderr, exitCode };
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { opened: fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : null, stdout, stderr, exitCode };
     }
 
     test.concurrent("runs the first xdg-open on PATH that exec accepts", async () => {
@@ -495,8 +496,9 @@ describe("bun", () => {
         nowhere: {},
       };
       const results = Object.entries(cases).map(async ([name, openers]) => [name, await open(openers)]);
-      const ran = { opened: "https://bun.com/discord", stderr: "", exitCode: 0 };
-      const didNotRun = { opened: null, stderr: "", exitCode: 0 };
+      const url = "https://bun.com/discord";
+      const ran = { opened: url, stdout: "", stderr: "", exitCode: 0 };
+      const didNotRun = { opened: null, stdout: expect.stringContaining(url), stderr: "", exitCode: 0 };
       expect(Object.fromEntries(await Promise.all(results))).toEqual({
         // exec refuses the first entry with EACCES, ENOENT and ENOTDIR. The search goes on to the stub.
         directory: ran,

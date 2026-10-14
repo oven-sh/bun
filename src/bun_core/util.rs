@@ -4136,27 +4136,35 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
 }
 
 // ── which ─────────────────────────────────────────────────────────────────
-/// One `$PATH` entry of `spawn_sync_inherit`'s walk (`bun_which` is above tier-0):
-/// `dir/bin` written NUL-terminated into `buf`, if it fits and `access(X_OK)` passes.
-/// This only filters out misses. A directory passes too, so execve has the final say.
+/// The next `$PATH` entry where `dir/bin` passes `access(X_OK)`. A directory passes too: exec decides.
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-fn which_in_dir<'a>(buf: &'a mut PathBuffer, dir: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
-    if dir.is_empty() || bin.is_empty() || dir.len() + 1 + bin.len() + 1 > buf.0.len() {
+fn which_next<'a>(
+    buf: &'a mut PathBuffer,
+    entries: &mut crate::strings::SplitIterator<'_>,
+    bin: &[u8],
+) -> Option<&'a ZStr> {
+    if bin.is_empty() {
         return None;
     }
-    buf.0[..dir.len()].copy_from_slice(dir);
-    let mut n = dir.len();
-    if buf.0[n - 1] != b'/' {
-        buf.0[n] = b'/';
-        n += 1;
+    for dir in entries {
+        if dir.is_empty() || dir.len() + 1 + bin.len() + 1 > buf.0.len() {
+            continue;
+        }
+        buf.0[..dir.len()].copy_from_slice(dir);
+        let mut n = dir.len();
+        if buf.0[n - 1] != b'/' {
+            buf.0[n] = b'/';
+            n += 1;
+        }
+        buf.0[n..n + bin.len()].copy_from_slice(bin);
+        n += bin.len();
+        buf.0[n] = 0;
+        // SAFETY: `buf.0[n] == 0` was just written, so `buf.0` holds a NUL-terminated C string.
+        if unsafe { libc::access(buf.0.as_ptr().cast(), libc::X_OK) } == 0 {
+            return Some(ZStr::from_buf(&buf.0, n));
+        }
     }
-    buf.0[n..n + bin.len()].copy_from_slice(bin);
-    n += bin.len();
-    buf.0[n] = 0;
-    let candidate = ZStr::from_buf(&buf.0, n);
-    // SAFETY: `candidate` is NUL-terminated.
-    let may_execute = unsafe { libc::access(candidate.as_ptr(), libc::X_OK) } == 0;
-    may_execute.then_some(candidate)
+    None
 }
 
 // ── auto_reload_on_crash / reload_process group ───────────────────────────
@@ -4545,33 +4553,32 @@ fn spawn_sync_inherit_impl(
         let environ = c_environ();
 
         // Linux/FreeBSD: route through Bun's vfork-based posix_spawn_bun.
-        // It uses execve (no PATH search), so a bare argv[0] is tried on each
-        // $PATH entry in turn, like `posix_spawnp` does (e.g. crash_handler
-        // spawning `llvm-symbolizer` by bare name).
+        // It uses execve (no PATH search), so resolve argv[0] via $PATH first
+        // to preserve the `posix_spawnp`-like contract callers expect (e.g.
+        // crash_handler spawning `llvm-symbolizer` by bare name).
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let pid: libc::pid_t = {
             // dup2(n, n) for fds 0..=2 — posix_spawn_bun's Dup2 same-fd path
             // clears CLOEXEC and bumps the close-range floor past stdio. An
             // empty actions list would start the close-range at fd 1.
+            // StdinBehavior::Ignore swaps the fd-0 action for an Open of
+            // /dev/null (posix_spawn_bun: open(path, flags, mode) → dup2 onto
+            // fds[0]).
             let mut inherit_stdio: [spawn_ffi::Action; 3] =
                 core::array::from_fn(|fd| spawn_ffi::Action {
                     kind: spawn_ffi::FileActionType::Dup2,
                     fds: [fd as core::ffi::c_int, fd as core::ffi::c_int],
                     ..Default::default()
                 });
-            // StdinBehavior::Ignore dups /dev/null onto fd 0. The parent opens
-            // it: a child-side Open could fail with the errnos that the $PATH
-            // walk below takes as execve's.
-            let devnull: core::ffi::c_int = if stdin == StdinBehavior::Ignore {
-                let fd = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY | libc::O_CLOEXEC);
-                if fd < 0 {
-                    return Err(crate::CrateError::Unexpected);
-                }
-                inherit_stdio[0].fds[0] = fd;
-                fd
-            } else {
-                -1
-            };
+            if stdin == StdinBehavior::Ignore {
+                inherit_stdio[0] = spawn_ffi::Action {
+                    kind: spawn_ffi::FileActionType::Open,
+                    path: c"/dev/null".as_ptr(),
+                    fds: [0, 0],
+                    flags: libc::O_RDONLY,
+                    mode: 0,
+                };
+            }
             let req = spawn_ffi::BunSpawnRequest {
                 actions: spawn_ffi::ActionsList {
                     ptr: inherit_stdio.as_ptr(),
@@ -4591,41 +4598,32 @@ fn spawn_sync_inherit_impl(
                 )
             };
             let arg0 = argv[0].as_ref();
-            let spawned = 'spawned: {
-                if crate::strings::contains_char(arg0, b'/') {
-                    // Contains a separator → use as-is (execve resolves relative
-                    // to cwd, matching posix_spawnp semantics for non-bare names).
-                    break 'spawned match spawn(ptrs[0]) {
-                        0 => Ok(()),
-                        _ => Err(crate::CrateError::Unexpected),
-                    };
+            if crate::strings::contains_char(arg0, b'/') {
+                // A name with a separator is not searched: execve resolves it against the cwd.
+                if spawn(ptrs[0]) != 0 {
+                    return Err(crate::CrateError::Unexpected);
                 }
-                // Bare names go straight to PATH — do NOT consult cwd.
+            } else {
                 let path_env = getenv_z(ZStr::from_static(b"PATH\0")).unwrap_or(b"");
+                let mut entries = crate::strings::split(path_env, b":");
                 let mut pathbuf = PathBuffer::ZEROED;
                 let mut refused = false;
-                for dir in crate::strings::split(path_env, b":") {
-                    let Some(exe) = which_in_dir(&mut pathbuf, dir, arg0) else {
-                        continue;
+                loop {
+                    let Some(exe) = which_next(&mut pathbuf, &mut entries, arg0) else {
+                        return Err(if refused {
+                            crate::CrateError::Unexpected
+                        } else {
+                            crate::CrateError::FileNotFound
+                        });
                     };
                     match spawn(exe.as_ptr()) as core::ffi::c_int {
-                        0 => break 'spawned Ok(()),
-                        // execve refused this candidate (a directory, a dead
-                        // `#!`). posix_spawnp goes on to the next entry.
+                        0 => break,
+                        // exec refused this candidate (a directory, a dead `#!`): go on like posix_spawnp.
                         libc::EACCES | libc::ENOENT | libc::ENOTDIR => refused = true,
-                        _ => break 'spawned Err(crate::CrateError::Unexpected),
+                        _ => return Err(crate::CrateError::Unexpected),
                     }
                 }
-                Err(if refused {
-                    crate::CrateError::Unexpected
-                } else {
-                    crate::CrateError::FileNotFound
-                })
-            };
-            if devnull >= 0 {
-                libc::close(devnull);
             }
-            spawned?;
             pid as libc::pid_t
         };
         // macOS: Apple's posix_spawnp is a kernel fast-path (no fork); keep it

@@ -170,6 +170,14 @@ fn format_node_with_comments<'a>(
 /// // prettier-ignore
 /// .b;
 /// ```
+///
+/// A dangling comment can be outside the node: Prettier moves this one into the empty body, copies the body, and then throws
+/// because the comment was not printed. Here it is printed before the body.
+///
+/// ```js
+/// class A // prettier-ignore
+/// {}
+/// ```
 #[cold]
 fn format_ignored_node<'a>(
     node: AstNodes<'a>,
@@ -184,6 +192,10 @@ fn format_ignored_node<'a>(
         .count();
     let (before_node, in_node) = owned.leading.split_at(count_before_node);
     FormatLeadingComments::Comments(before_node).fmt(f);
+    let count_before_node = (owned.dangling.iter())
+        .take_while(|comment| comment.span().start < node_start)
+        .count();
+    FormatLeadingComments::Comments(owned.dangling.slice(0, count_before_node)).fmt(f);
     write_source_text(f);
     // Only those that were not copied.
     FormatTrailingComments::Comments(in_node).fmt(f);

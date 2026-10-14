@@ -138,6 +138,46 @@ impl CommentTracker {
         }
         self.last_finished = (NodeOrName::None, 0);
     }
+
+    /// Half of the finished nodes that matter are around the following node of the last pending comments and start with it, as
+    /// `a.b`, `a.b()` and `a.b();` are around `a`, or are around the preceding node and end with it. If `finished` is one and
+    /// makes no difference to the comments before, replaces that node and returns true.
+    #[inline(always)]
+    fn replace_candidate_by_outer_node(&mut self, finished: Candidate) -> bool {
+        let Some((last, earlier)) = self.pending.split_last_mut() else {
+            return false;
+        };
+        let is_around_following_node = !last.following.is_none()
+            && finished.start == last.following.start
+            && finished.end >= last.following.end;
+        let is_around_preceding_node = !last.preceding.is_none()
+            && finished.end == last.preceding.end
+            && finished.start <= last.preceding.start;
+        // The comments before have a following node that starts earlier, so they are before `finished`, which is not closer.
+        let is_after_earlier_comments = (earlier.last()).is_none_or(|comments| {
+            !comments.following.is_none() && comments.following.start < finished.start
+        });
+        if !(is_around_following_node || is_around_preceding_node)
+            || !is_after_earlier_comments
+            || !matches!(finished.node, NodeOrName::Node(_))
+        {
+            return false;
+        }
+        self.last_finished = (finished.node, self.undo_log.len());
+        self.undo_log.push(*last);
+        match is_around_following_node {
+            true => last.following = finished,
+            false => last.preceding = finished,
+        }
+        true
+    }
+
+    /// Forgets the comments from `first_id` on. They are added again when the next node is finished.
+    fn forget_comments_from(&mut self, first_id: u32) {
+        let kept = (self.pending).partition_point(|comments| comments.first_id < first_id);
+        self.pending.truncate(kept);
+        self.tracked_count = first_id;
+    }
 }
 
 /// The part of a [`Checkpoint`] that belongs to the [`CommentTracker`].
@@ -355,7 +395,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     /// Prettier treats the `;` that terminates a JavaScript statement as outside the statement, so a comment right before the
     /// `;` comes after the statement. Such a comment has recorded where the statement's last real token ends.
-    fn end_without_semicolon(&mut self, mut kind: StmtKind, end: u32) -> u32 {
+    fn end_without_semicolon(&self, mut kind: StmtKind, end: u32) -> u32 {
         // Statements like `if (a) b;` end where their last child statement ends.
         loop {
             let last_child = match kind {
@@ -390,10 +430,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 None => return end,
             }
         }
-        self.add_new_pending_comments();
-        let last_comment = (self.comments.pending.iter())
-            .rfind(|comment| comment.start < end)
-            .and_then(|comments| self.lx.comments.get(comments.first_id as usize));
+        let last_comment = self.lx.comments.iter().rfind(|comment| comment.pos < end);
         match last_comment {
             Some(comment)
                 if comment.next_token_start + 1 == end
@@ -405,17 +442,44 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
     }
 
-    /// Adds the comments that the lexer has scanned since the last call. No node was finished in between, so the best
-    /// preceding node so far is the most recently finished node, which is the last element of one of the node lists.
+    /// Adds the comments that the lexer has scanned since the last call. `finished` is the node that is being finished.
     #[inline(always)]
-    fn add_new_pending_comments(&mut self) {
+    fn add_new_pending_comments(&mut self, finished: Candidate) {
         if self.comments.tracked_count as usize != self.lx.comments.len() {
-            self.add_pending_comments_since(self.comments.tracked_count as usize);
+            self.add_pending_comments_since(self.comments.tracked_count as usize, finished);
         }
     }
 
     #[inline(never)]
-    fn add_pending_comments_since(&mut self, first_new: usize) {
+    fn add_pending_comments_since(&mut self, first_new: usize, finished: Candidate) {
+        // The usual case, `a; // comment`: the statement that is being finished ends at the token before the comments. No node
+        // ends later, and this one is around all that ended there before, so it is the preceding node. The caller sets it.
+        // Only for a statement: [`Parser::unfinish_node`] would leave the comments without the node that was best before. The
+        // one statement that is taken back is the inner one of `namespace a.b {}`, and the outer one ends at the same offset.
+        if let Some(first) = self.lx.comments.get(first_new)
+            && first.prev_token_end == finished.end
+            && finished.start < finished.end
+            && matches!(finished.node, NodeOrName::Node(NodeData::Stmt(_)))
+            && (self.lx.comments.last())
+                .is_some_and(|last| last.next_token_start == first.next_token_start)
+        {
+            self.comments.pending.push(PendingComments {
+                first_id: first_new as u32,
+                count: (self.lx.comments.len() - first_new) as u32,
+                start: first.pos,
+                preceding: Candidate::default(),
+                following: Candidate::default(),
+            });
+            self.comments.tracked_count = self.lx.comments.len() as u32;
+            return;
+        }
+        self.add_pending_comments_after_any_node(first_new);
+    }
+
+    /// No node was finished since the lexer scanned the comments, so the best preceding node so far is the most recently
+    /// finished node, which is the last element of one of the node lists.
+    #[inline(never)]
+    fn add_pending_comments_after_any_node(&mut self, first_new: usize) {
         fn candidate(node: NodeData, start: u32, end: u32) -> Candidate {
             Candidate {
                 node: NodeOrName::Node(node),
@@ -520,9 +584,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
 
     #[inline(never)]
     fn update_pending_comments_for_node(&mut self, node: NodeOrName, start: u32, end: u32) {
-        self.add_new_pending_comments();
+        let finished = Candidate { node, start, end };
+        if self.comments.tracked_count as usize == self.lx.comments.len()
+            && self.comments.replace_candidate_by_outer_node(finished)
+        {
+            return;
+        }
+        self.add_new_pending_comments(finished);
         if start < end {
-            let finished = Candidate { node, start, end };
             self.comments.last_finished = (node, self.comments.undo_log.len());
             let CommentTracker {
                 pending, undo_log, ..
@@ -595,7 +664,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if !self.options.attach_comments {
             return;
         }
-        self.add_new_pending_comments();
+        self.add_new_pending_comments(Candidate::default());
         for comment in self.comments.pending.drain(..) {
             let ids = comment.first_id as usize..(comment.first_id + comment.count) as usize;
             for resolved in self.lx.comments.get_mut(ids).unwrap_or_default() {
@@ -628,16 +697,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.comments
             .last_non_empty_stmt
             .truncate(self.f.stmts.len());
-        let CommentTracker {
-            pending,
-            tracked_count,
-            last_name,
-            ..
-        } = &mut self.comments;
         // Comments that were first seen after the checkpoint will be seen again.
-        *tracked_count = to.comments.tracked_count;
-        pending.truncate(pending.partition_point(|comments| comments.first_id < *tracked_count));
-        *last_name = to.comments.last_name;
+        (self.comments).forget_comments_from(to.comments.tracked_count);
+        self.comments.last_name = to.comments.last_name;
         self.lx.max_relevant_node_start = u32::MAX;
     }
 }

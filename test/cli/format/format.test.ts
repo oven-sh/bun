@@ -1060,6 +1060,24 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("a `prettier-ignore` comment before an empty body is printed", async () => {
+    // Prettier 3.9.9 moves the comment into the body, copies the body, and throws: 'Comment "prettier-ignore" was not printed.'
+    const rows = [
+      ["class A // prettier-ignore\n{  }\n", "class A // prettier-ignore\n{  }\n"],
+      ["class A extends (a  +  b) // prettier-ignore\n{  }\n", "class A extends (a + b) // prettier-ignore\n{  }\n"],
+      [
+        "class A extends (a  +  b /* prettier-ignore */\n) {  }\n",
+        "class A extends (a + b) /* prettier-ignore */\n{  }\n",
+      ],
+      ["x = (function  () // prettier-ignore\n{  })();\n", "x = (function () // prettier-ignore\n{  })();\n"],
+    ];
+    const names = rows.map((_, index) => `${index}.js`);
+    const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));
+    const result = await format(texts, [], { reads: names });
+    expect(result.files).toEqual(Object.fromEntries(rows.map(([, printed], index) => [names[index], printed])));
+    expect(result.exitCode).toBe(0);
+  });
+
   test("a binding of Vue that is nothing but a comment stays as it is", async () => {
     // oxfmt 0.72 prints `v-slot=""` and `v-for=" in xs"`.
     const text =

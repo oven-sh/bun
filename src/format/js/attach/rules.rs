@@ -37,6 +37,7 @@ pub(super) fn handle_comment<'a>(
         enclosing_node,
         preceding_node,
         following_node,
+        ..
     } = context.nodes;
     Rules {
         cx,

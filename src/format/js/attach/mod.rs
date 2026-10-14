@@ -285,8 +285,15 @@ pub(crate) fn attach<'a>(
         };
         attached.has_ignore_comments |= context.is_ignore_comment;
         let mut ignored_node = None;
-        let attachment = rules::handle_comment(&cx, &context, &mut ignored_node)
-            .or_else(|| attach_by_text_position(context.text_position, &context.nodes, program));
+        // `handleClosureTypeCastComments` is the only rule that does not ask what the enclosing node is.
+        let has_no_rule = context.nodes.is_before_list_element
+            && (context.text_position != TextPosition::EndOfLine
+                || !comment.looks_like_type_cast());
+        let attachment = match has_no_rule {
+            true => None,
+            false => rules::handle_comment(&cx, &context, &mut ignored_node),
+        }
+        .or_else(|| attach_by_text_position(context.text_position, &context.nodes, program));
         attached.attachments[id].is_unignored = ignored_node.is_some();
         attached.attachments[id].ignores_owner =
             context.is_ignore_comment && ignored_node.is_none();
@@ -304,6 +311,7 @@ pub(crate) fn attach<'a>(
             enclosing_node,
             preceding_node,
             following_node,
+            ..
         } = nodes[id];
         let nearby = [
             enclosing_node,

@@ -192,14 +192,14 @@ fn has_comments_around_arguments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let mut start = call.callee().span().end;
     for argument in call.args() {
         if f.comments()
-            .has_any_comment_in(Span::before(start, argument.span()))
+            .has_comment_in_span(Span::before(start, argument.span()))
         {
             return true;
         }
         start = argument.span().end;
     }
     f.comments()
-        .has_any_comment_in(Span::new(start, e.span().end))
+        .has_comment_in_span(Span::new(start, e.span().end))
 }
 
 /// oxfmt has a longer list than Prettier: `it.todo("name", () => {})`, `Deno.test("name", () => {})`.

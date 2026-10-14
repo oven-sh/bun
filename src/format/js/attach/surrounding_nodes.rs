@@ -26,6 +26,8 @@ pub(super) struct SurroundingNodes<'a> {
     pub(super) enclosing_node: Option<Owner<'a>>,
     pub(super) preceding_node: Option<Owner<'a>>,
     pub(super) following_node: Option<Owner<'a>>,
+    /// See [`AttachContext::list_elements_around`]. `enclosing_node` is not set.
+    pub(super) is_before_list_element: bool,
 }
 
 pub(super) struct AttachContext<'a, 'c> {
@@ -202,6 +204,7 @@ fn account_for_exported_declaration_without_children(
         enclosing_node: Some(Owner::Node(N::ExportDefaultDeclaration(statement))),
         preceding_node: None,
         following_node: None,
+        ..
     } = *nodes
     else {
         return;
@@ -489,7 +492,54 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         }
     }
 
+    /// Most comments are before a statement of a block or a member of a class or an interface, and after the one before it or
+    /// after the `{`. The parser has recorded the nodes that Prettier finds, and the enclosing node is a `Program`, a
+    /// `BlockStatement`, a `ClassBody`, a `TSInterfaceBody` or a `TSTypeLiteral`, for which Prettier has no rule.
+    fn list_elements_around(&self, comment: comments::Comment<'a>) -> Option<SurroundingNodes<'a>> {
+        if self.options.flavor.is_oxfmt() || self.file.is_flow() {
+            return None;
+        }
+        let NodeOrName::Node(following_node) = comment.following_node()? else {
+            return None;
+        };
+        let text = self.file.text();
+        let is_list_of_following_node = match (comment.enclosing_node(), following_node) {
+            (None | Some(Node::Func(_)), Node::Stmt(_)) => true,
+            // `with (a) b` is a block of `a` and `b` in the HIR.
+            (Some(Node::Stmt(block)), Node::Stmt(_)) => {
+                block.tag() == StmtTag::Block
+                    && text.get(block.span().start as usize) == Some(&b'{')
+            }
+            (Some(Node::Class(_)), Node::Member(_)) => true,
+            (Some(Node::Stmt(interface)), Node::Member(_)) => interface.tag() == StmtTag::Interface,
+            (Some(Node::Type(ty)), Node::Member(_)) => matches!(ty.kind(), TypeKind::Object(_)),
+            _ => false,
+        };
+        if !is_list_of_following_node {
+            return None;
+        }
+        let preceding_node = match (comment.preceding_node(), following_node) {
+            (Some(NodeOrName::Node(node @ Node::Stmt(_))), Node::Stmt(_))
+            | (Some(NodeOrName::Node(node @ Node::Member(_))), Node::Member(_)) => Some(node),
+            (None, _) if comment.enclosing_node().is_none() => None,
+            // What is before the `{` is not in the body.
+            _ if text.get((comment.prev_token_end() as usize).wrapping_sub(1)) == Some(&b'{') => {
+                None
+            }
+            _ => return None,
+        };
+        Some(SurroundingNodes {
+            enclosing_node: None,
+            preceding_node: preceding_node.map(|node| self.owner_of_node(node)),
+            following_node: Some(self.owner_of_node(following_node)),
+            is_before_list_element: true,
+        })
+    }
+
     fn surrounding_nodes(&self, parsed_comment: comments::Comment<'a>) -> SurroundingNodes<'a> {
+        if let Some(nodes) = self.list_elements_around(parsed_comment) {
+            return nodes;
+        }
         let comment = parsed_comment.span();
         let (enclosing_node, mut preceding_node, mut following_node) =
             recorded_nodes_without_import_attribute_braces(parsed_comment);
@@ -524,6 +574,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                     enclosing_node: parent,
                     preceding_node: Some(preceding_node),
                     following_node: Some(following_node),
+                    ..SurroundingNodes::default()
                 }
             }
             // The two parents differ, so one is inside the other, as in `class A { /* comment */ b() {} }`, where the
@@ -535,18 +586,18 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                 SurroundingNodes {
                     enclosing_node: parent,
                     preceding_node: Some(preceding_node),
-                    following_node: None,
+                    ..SurroundingNodes::default()
                 }
             }
             (_, Some((following_node, parent))) => SurroundingNodes {
                 enclosing_node: parent,
-                preceding_node: None,
                 following_node: Some(following_node),
+                ..SurroundingNodes::default()
             },
             (Some((preceding_node, parent)), None) => SurroundingNodes {
                 enclosing_node: parent,
                 preceding_node: Some(preceding_node),
-                following_node: None,
+                ..SurroundingNodes::default()
             },
             (None, None) => {
                 let mut node = match enclosing_node {

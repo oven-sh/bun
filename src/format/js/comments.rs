@@ -38,7 +38,10 @@ impl CommentExt for Comment<'_> {
     }
 
     fn is_ignore_comment(self, flavor: Flavor) -> bool {
-        flavor.is_ignore_comment(self.content().trim_ascii())
+        let content = self.content().trim_ascii_start();
+        // Few comments get past this.
+        matches!(content.first(), Some(b'p' | b'o'))
+            && flavor.is_ignore_comment(content.trim_ascii_end())
     }
 }
 
@@ -326,6 +329,9 @@ pub(crate) struct Comments<'a> {
     file_comments: &'a FileComments,
     /// The result of the last search by offset. Nodes are mostly printed in source order, so the next search starts here.
     search_hint: Cell<u32>,
+    /// The offsets for which the last search by offset has the same result: from after the start of the comment before it to
+    /// the start of the comment that was found, or `u32::MAX` if none was.
+    searched_offsets: Cell<(u32, u32)>,
     /// One bit per comment id.
     printed_bitset: Vec<u64>,
     /// The ids of the printed comments, in the order in which they were printed.
@@ -343,6 +349,7 @@ impl<'a> Comments<'a> {
             flavor,
             file_comments,
             search_hint: Cell::new(0),
+            searched_offsets: Cell::new((1, 0)),
             printed_bitset: vec![0; file_comments.attachments.len().div_ceil(64)],
             printed_log: Vec::new(),
         }
@@ -444,6 +451,11 @@ impl<'a> Comments<'a> {
             id = low;
         }
         self.search_hint.set(id);
+        let start_of = |id: u32| self.comment(id).map(|comment| comment.span().start);
+        self.searched_offsets.set((
+            (id.checked_sub(1).and_then(start_of)).map_or(0, |start| start + 1),
+            start_of(id).unwrap_or(u32::MAX),
+        ));
         id
     }
 
@@ -473,14 +485,13 @@ impl<'a> Comments<'a> {
         }
     }
 
+    #[inline]
     pub(crate) fn has_comment_in_span(&self, span: Span) -> bool {
-        let first = self.first_id_at_or_after(span.start);
-        self.comment(first)
-            .is_some_and(|comment| comment.span().start < span.end)
-    }
-
-    pub(crate) fn has_any_comment_in(&self, span: Span) -> bool {
-        self.has_comment_in_span(span)
+        let (first, last) = self.searched_offsets.get();
+        if span.start < first || span.start > last {
+            self.first_id_at_or_after(span.start);
+        }
+        self.searched_offsets.get().1 < span.end
     }
 
     /// The comments between the token that starts at `token_start` and the token before it.

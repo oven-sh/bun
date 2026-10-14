@@ -1699,6 +1699,8 @@ function identicalSequenceRange(a, b) {
   return { len: 0, offset: 0 };
 }
 
+// Returns undefined when the error has no text: its stack, name or message is a getter that
+// throws, or a value that cannot be a string.
 function getStackString(error) {
   let stack;
   try {
@@ -1706,7 +1708,9 @@ function getStackString(error) {
   } catch {
     // If stack is a getter that throws, ignore it.
   }
-  return stack ? String(stack) : ErrorPrototypeToString(error);
+  try {
+    return stack ? String(stack) : ErrorPrototypeToString(error);
+  } catch {}
 }
 
 function getStackFrames(ctx, err, stack) {
@@ -1722,7 +1726,7 @@ function getStackFrames(ctx, err, stack) {
   // Remove stack frames identical to frames in cause.
   if (cause != null && (isNativeError(cause) || cause instanceof Error)) {
     const causeStack = getStackString(cause);
-    const causeStackStart = StringPrototypeIndexOf(causeStack, "\n    at");
+    const causeStackStart = causeStack === undefined ? -1 : StringPrototypeIndexOf(causeStack, "\n    at");
     if (causeStackStart !== -1) {
       const causeFrames = StringPrototypeSplit(StringPrototypeSlice(causeStack, causeStackStart + 1), "\n");
       const { len, offset } = identicalSequenceRange(frames, causeFrames);
@@ -1777,16 +1781,13 @@ function removeDuplicateErrorKeys(ctx, keys, err, stack) {
     for (const name of ["name", "message", "stack"]) {
       const index = ArrayPrototypeIndexOf(keys, name);
       if (index === -1) continue;
-      let value;
       try {
-        value = err[name];
+        // Only hide the property in case it's part of the original stack
+        if (StringPrototypeIncludes(stack, err[name])) {
+          ArrayPrototypeSplice(keys, index, 1);
+        }
       } catch {
-        // A getter that throws stays in the keys and prints as [Getter].
-        continue;
-      }
-      // Only hide the property in case it's part of the original stack
-      if (StringPrototypeIncludes(stack, value)) {
-        ArrayPrototypeSplice(keys, index, 1);
+        // A getter that throws, or a value that cannot be a string, stays in the keys.
       }
     }
   }
@@ -1845,26 +1846,26 @@ function safeGetCWD() {
 }
 
 function formatError(err, constructor, tag, ctx, keys) {
-  let message, name, stack;
-  try {
-    stack = getStackString(err);
-  } catch {
-    return ObjectPrototypeToString(err);
-  }
+  let stack = getStackString(err);
+  if (stack === undefined) return ObjectPrototypeToString(err);
+
+  let message;
+  let messageIsGetterThatThrows = false;
   try {
     message = err.message;
   } catch {
-    // If message is a getter that throws, ignore it.
+    messageIsGetterThatThrows = true;
   }
+  let name = "Error";
   try {
-    name = err.name;
+    const value = err.name;
+    if (value != null) name = String(value);
   } catch {
-    // If name is a getter that throws, ignore it.
+    // If name is a getter that throws, or a value that cannot be a string, ignore it.
   }
-  name = name != null ? String(name) : "Error";
 
   //! temp fix for Bun losing the error name from inherited errors + extraneous ": " with no message
-  stack = stack.replace(/^Error: /, `${name}${message ? ": " : ""}`);
+  if (!messageIsGetterThatThrows) stack = stack.replace(/^Error: /, `${name}${message ? ": " : ""}`);
 
   removeDuplicateErrorKeys(ctx, keys, err, stack);
 
@@ -1884,7 +1885,7 @@ function formatError(err, constructor, tag, ctx, keys) {
   stack = improveStack(stack, constructor, name, tag);
 
   // Ignore the error message if it's contained in the stack.
-  let pos = (message && StringPrototypeIndexOf(stack, message)) || -1;
+  let pos = (typeof message === "string" && message && StringPrototypeIndexOf(stack, message)) || -1;
   if (pos !== -1) pos += message.length;
   // Wrap the error in brackets in case it has no stack trace.
   const stackStart = StringPrototypeIndexOf(stack, "\n    at", pos);

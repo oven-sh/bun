@@ -1333,7 +1333,7 @@ fn describe_in_tasks<'s>(
             finished.push(task);
             ran_out_of_stack |= has_run_out;
         }
-        let is_invalid = program.validate(&finished);
+        let is_invalid = program.validate(&finished, true);
         let mut at = is_invalid.iter();
         finished.retain(|_| at.next().is_some_and(|is_invalid| !is_invalid));
         let mut retried = Vec::new();
@@ -2757,7 +2757,7 @@ pub fn link(
             let before = &text[(starts[line] as usize).min(text.len())..(pos as usize).min(text.len())];
             (line as u32 + 1, String::from_utf8_lossy(before).encode_utf16().count() as u32 + 1)
         };
-        explained.append(&mut throws::explain(&program, explain.throws_json, explain.throws_all, &line_and_column));
+        explained.append(&mut throws::explain(&program, explain.throws_json, explain.throws_all, &line_and_column, in_parallel));
     }
     if explain.literals {
         explained.append(&mut literals);
@@ -2805,7 +2805,7 @@ pub fn link(
     reuse::mark_releases_of_environments(&mut program, in_parallel);
     times.add("releases of environments", &mut since);
     let logs_type_errors = checked.checker().logs_type_errors();
-    let found = throws::always_fail(&program).iter().map(|site| {
+    let found = throws::always_fail(&program, in_parallel).iter().map(|site| {
         let span = |module: u32, pos: u32| {
             let file = modules[module as usize];
             let hir = checked.files.hir(file);

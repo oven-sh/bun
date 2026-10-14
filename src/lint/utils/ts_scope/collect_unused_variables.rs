@@ -940,10 +940,13 @@ fn is_used_variable_with<'a>(variable: Variable<'a>, facts: Facts, walks: &mut W
     if !variable.symbol.has_reads() {
         return false;
     }
+    // oxc has no reference to `React` for an element of JSX.
+    let is_oxlint = variable.symbol.file().language().is_oxlint;
     let is_split = facts.has(Facts::CLASS);
     let references = variable
         .symbol
         .references()
+        .filter(|it| !(is_oxlint && it.is_jsx_pragma()))
         .filter(|it| !is_split || variable.has_reference_at(it.ident().start()));
     let counts = |reference: Reference<'a>| {
         let is_from_outside = || {
@@ -989,7 +992,9 @@ fn is_plainly_used(symbol: Symbol, properties: &SymbolSet) -> bool {
     {
         return false;
     }
-    let Some(read) = symbol.references().find(|it| it.is_read()) else {
+    let is_oxlint = symbol.file().language().is_oxlint;
+    let is_use = |it: &Reference| it.is_read() && !(is_oxlint && it.is_jsx_pragma());
+    let Some(read) = symbol.references().find(is_use) else {
         return false;
     };
     // The ranges of `self_reference_range` are those of functions here.

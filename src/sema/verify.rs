@@ -206,7 +206,7 @@ pub fn spans_of_top_elements(
         .into_iter()
         .flat_map(|p| file.elements(file.initializer(p)))
     {
-        if let Json::String(spec) = file.convert_property_value_to_json(e) {
+        if let Some(spec) = file.convert_property_value_to_json(e).into_string() {
             spans.entry(spec).or_insert_with(|| file.span(e));
         }
     }

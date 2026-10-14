@@ -567,6 +567,10 @@ fn run(args: &[String]) {
                 checkers: number("--checkers=", defaults.checkers),
                 reproduces_symbol_ids: defaults.reproduces_symbol_ids,
                 projects_at_once: number("--projects-at-once=", defaults.projects_at_once),
+                files_of_a_small_project: number(
+                    "--files-of-a-small-project=",
+                    defaults.files_of_a_small_project,
+                ),
                 after_file_is_for_checked_files: defaults.after_file_is_for_checked_files,
                 checks_only_named: defaults.checks_only_named,
                 reads_sources_of_references: defaults.reads_sources_of_references,

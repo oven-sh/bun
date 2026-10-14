@@ -159,7 +159,9 @@ impl<'a> Val<'a> {
     /// `value[key]`, for a value that is not nullish.
     pub(super) fn get(self, key: Key, dialect: Dialect) -> Val<'a> {
         use Property as P;
-        let is_espree = dialect == Dialect::Espree;
+        // oxlint's nodes have `start` and `end` too.
+        let has_offsets =
+            |node: VNode| dialect == Dialect::Espree || node.file().language().is_oxlint;
         let string = |text: &[u8]| match key.property {
             P::Length => Val::Number(f64::from(bun_core::strings::wtf8_len_utf16(text))),
             P::Index(index) => unit_at(text, index).map_or(Val::Undefined, Val::Short),
@@ -170,10 +172,10 @@ impl<'a> Val<'a> {
             (Val::Node(node), P::Parent) => node.parent().map_or(Val::Null, Val::Node),
             (Val::Node(node), P::Range) => Val::Range(node),
             (Val::Node(node), P::Loc) => Val::Loc(node),
-            (Val::Node(node), P::Start) if is_espree => {
+            (Val::Node(node), P::Start) if has_offsets(node) => {
                 Val::Number(utf16_offset(node.file(), node.span().start))
             }
-            (Val::Node(node), P::End) if is_espree => {
+            (Val::Node(node), P::End) if has_offsets(node) => {
                 Val::Number(utf16_offset(node.file(), node.span().end))
             }
             (Val::Node(node), _) => {

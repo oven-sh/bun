@@ -7,16 +7,16 @@ use bstr::BStr;
 
 use bun_core::{Global, Output, ZStr};
 use bun_lint_driver::cli::{Options, UsageError};
-use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig};
+use bun_lint_driver::{Environment, Outcome, Script, Stream, bunfig, git};
 use bun_sys::File;
 
 use super::check_command::working_directory;
 use super::command::{ContextData, Tag};
+use bun_bunfig::Above;
 
 pub(crate) struct LintCommand;
 
-/// For the help.
-pub(crate) use bun_lint_driver::cli::PARAMS;
+pub(crate) use bun_lint_driver::cli::HELP;
 
 /// Whether `bun lint --run-eslint-tests` exists, for `test/cli/lint/conformance.test.ts`. A release
 /// build has none of it.
@@ -64,28 +64,31 @@ fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
         .last()
 }
 
-/// What bunfig.toml says to `command`, which `read` reads. `None`: nothing, or there is no such file.
-/// A file that cannot be used ends the process. It is looked for in the working directory: call this after `--cwd`.
-pub(crate) fn defaults_of_bunfig<T>(
+/// Has `read` read the bunfig.toml files that can say something to `command`, each with its path from the working directory
+/// and whether `--config` names it: the one in the working directory, then those above it, from the nearest, for as long as
+/// `read` wants the next. With `--config` there is only that file. Call this after `--cwd`.
+pub(crate) fn read_bunfigs(
     ctx: &mut ContextData,
     tag: Tag,
     command: &[u8],
-    read: bunfig::Read<T>,
-) -> Option<T> {
-    let mut defaults = None;
-    let mut tool = |file: &bun_ast::Expr| match read(file) {
-        Ok(read) => {
-            defaults = read;
-            Ok(())
-        }
-        Err(refusal) => Err((refusal.at, refusal.message)),
+    read: &mut dyn FnMut(&bun_ast::Expr, &[u8], bool) -> Result<Above, bunfig::Refusal>,
+) {
+    let named = bunfig_before(command);
+    let mut read = |file: &bun_ast::Expr, path: &[u8]| {
+        read(file, path, named.is_some()).map_err(|refusal| (refusal.at, refusal.message))
     };
-    let path = bunfig_before(command);
-    if let Err(err) = bun_bunfig::load_config_for_tool(tag, path, ctx, Some(&mut tool)) {
+    let mut above = Above::Needed;
+    let here = &mut |file: &bun_ast::Expr| {
+        above = read(file, named.unwrap_or(b"bunfig.toml"))?;
+        Ok(())
+    };
+    if let Err(err) = bun_bunfig::load_config_for_tool(tag, named, ctx, Some(here)) {
         Output::err(err, "failed to load bunfig", ());
         Global::exit(2);
     }
-    defaults
+    if named.is_none() && above != Above::Unwanted {
+        bun_bunfig::load_config_above_for_tool(tag, ctx, above, &mut read);
+    }
 }
 
 /// `--disallow-code-generation-from-strings` among the flags of `bun`, which precede `command`: it holds for the plugins and
@@ -113,17 +116,8 @@ pub(crate) fn read_program_of_script(ctx: &mut ContextData) {
 
 /// Runs `script` with this executable, to its end.
 fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
-    use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
     let Ok(exe) = bun_core::self_exe_path() else {
         return Err(b"Could not find the path of the running executable.".to_vec());
-    };
-    let mut variables = bun_dotenv::Loader::init();
-    let read = variables.load_process();
-    for name in Script::NOT_INHERITED {
-        variables.map.remove(name);
-    }
-    let Ok(envp) = read.and_then(|()| variables.map.create_null_delimited_env_map()) else {
-        return Err(b"Could not start a process: out of memory".to_vec());
     };
     let mut argv: Vec<Box<[u8]>> = vec![
         Box::from(exe.as_bytes()),
@@ -154,6 +148,63 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     // Linux.
     argv.push(Box::from(&b"-e"[..]));
     argv.push(Box::from(PROGRAM_IS_ON_STDIN));
+    let parts = script.source.iter().map(|it| it.text());
+    let input: Vec<&[u8]> = std::iter::once(script.head).chain(parts).collect();
+    let adapt = |variables: &mut bun_dotenv::Map| {
+        Script::NOT_INHERITED
+            .iter()
+            .for_each(|name| variables.remove(name));
+        true
+    };
+    match run_to_end(argv, script.cwd, &adapt, &input)? {
+        result if result.is_ok() => Ok(result.stdout),
+        result => Err(result.stderr),
+    }
+}
+
+/// Runs git and waits for it to exit.
+fn run_git(command: &git::Command) -> Result<git::Finished, git::NotRun> {
+    let mut buffer = bun_paths::path_buffer_pool::get();
+    let path = bun_core::env_var::PATH.get().unwrap_or(b"");
+    let Some(found) = bun_which::which(&mut buffer, path, command.cwd, b"git") else {
+        return Err(git::NotRun::NotFound);
+    };
+    let argv = std::iter::once(found.as_bytes())
+        .chain(command.args.iter().copied())
+        .map(Box::<[u8]>::from)
+        .collect();
+    let adapt = |variables: &mut bun_dotenv::Map| {
+        git::Command::VARIABLES
+            .iter()
+            .all(|(name, value)| variables.put(name, value).is_ok())
+    };
+    match run_to_end(argv, command.cwd, &adapt, &[command.input]) {
+        Ok(result) => Ok(git::Finished {
+            is_ok: result.is_ok(),
+            stdout: result.stdout,
+            stderr: result.stderr,
+        }),
+        Err(why) => Err(git::NotRun::Failed(why)),
+    }
+}
+
+/// Runs `argv` in `cwd` with `input` on its stdin, and waits for it to exit. The child gets this process's environment after
+/// `adapt` has changed it. `adapt` returns false if it couldn't. `Err` says why the command didn't run.
+fn run_to_end(
+    argv: Vec<Box<[u8]>>,
+    cwd: &[u8],
+    adapt: &dyn Fn(&mut bun_dotenv::Map) -> bool,
+    input: &[&[u8]],
+) -> Result<crate::api::bun::process::sync::Result, Vec<u8>> {
+    use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
+    let mut variables = bun_dotenv::Loader::init();
+    let is_ready = variables.load_process().is_ok() && adapt(&mut variables.map);
+    let Some(envp) = is_ready
+        .then(|| variables.map.create_null_delimited_env_map().ok())
+        .flatten()
+    else {
+        return Err(b"Could not start a process: out of memory".to_vec());
+    };
     let [read, written] = match bun_sys::pipe() {
         Ok(ends) => ends.map(File::from_fd),
         Err(err) => return Err([&b"Could not start a process: "[..], err.name()].concat()),
@@ -168,7 +219,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
         stdout: SyncStdio::Buffer,
         stderr: SyncStdio::Buffer,
         stdin: SyncStdio::Pipe(read.handle()),
-        cwd: Box::<[u8]>::from(script.cwd),
+        cwd: Box::<[u8]>::from(cwd),
         envp: Some(envp.as_ptr()),
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
@@ -181,20 +232,14 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     };
     // It is written while what the program prints is read, so neither waits for the other.
     let spawned = std::thread::scope(|scope| {
-        scope.spawn(move || {
-            let parts = script.source.iter().map(|it| it.as_bytes());
-            std::iter::once(script.head)
-                .chain(parts)
-                .try_for_each(|it| written.write_all(it))
-        });
+        scope.spawn(move || input.iter().try_for_each(|it| written.write_all(it)));
         let spawned = spawn(&options);
         // Who still writes is told that nobody reads any more.
         drop(read);
         spawned
     });
     match spawned {
-        Ok(Ok(result)) if result.is_ok() => Ok(result.stdout),
-        Ok(Ok(result)) => Err(result.stderr),
+        Ok(Ok(result)) => Ok(result),
         Ok(Err(err)) => Err([&b"Could not start a process: "[..], err.name()].concat()),
         Err(err) => Err([&b"Could not start a process: "[..], err.name().as_bytes()].concat()),
     }
@@ -228,6 +273,10 @@ pub(crate) fn run_and_exit(
         let _turn = turn.lock();
         run_script(script)
     };
+    let run_git = |command: &git::Command| {
+        let _turn = turn.lock();
+        run_git(command)
+    };
     let command_line: Vec<&[u8]> = bun_core::argv().iter().skip(1).collect();
     let js_engine = super::lint_js::Engines::default();
     // `path.win32.resolve` asks for it where a path names another drive than its base.
@@ -242,10 +291,12 @@ pub(crate) fn run_and_exit(
             is_tty: Output::is_stderr_tty(),
             colors: Output::enable_ansi_colors_stderr(),
         },
+        columns: super::run_command::RunCommand::columns_of_stdout,
         is_ai_agent: Output::is_ai_agent(),
         is_github_action: Output::is_github_action(),
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
         run_script: &run_script,
+        run_git: &run_git,
         command_line: &command_line,
         js_engine: &js_engine,
         version: Global::package_json_version.as_bytes(),
@@ -261,6 +312,11 @@ pub(crate) fn run_and_exit(
 }
 
 impl LintCommand {
+    /// Whether `bun lint <flag>` is a valid command line.
+    pub(crate) fn has_flag(flag: &[u8]) -> bool {
+        Options::parse(&[flag]).is_ok()
+    }
+
     /// `args`: what follows `lint`.
     pub(crate) fn exec(ctx: &mut ContextData, args: &[&ZStr]) -> ! {
         let args: Vec<&[u8]> = args.iter().map(|arg| arg.as_bytes()).collect();
@@ -290,11 +346,37 @@ impl LintCommand {
             }),
         };
         if options.help {
-            crate::cli::command::tag_print_help(Tag::LintCommand, true);
+            crate::cli::command::tag_print_help(Tag::LintCommand, options.all);
             Global::exit(0);
         }
         run_and_exit(b"lint", options.cwd.as_deref(), |environment| {
-            let defaults = defaults_of_bunfig(ctx, Tag::LintCommand, b"lint", bunfig::lint);
+            // `[fmt]` is for the rule that holds a file against what `bun fmt` prints: it is the one that `bun fmt` would read.
+            let (mut defaults, mut of_bun_format) = (None, None);
+            read_bunfigs(
+                ctx,
+                Tag::LintCommand,
+                b"lint",
+                &mut |file, path, is_named| {
+                    if defaults.is_none() {
+                        defaults = bunfig::lint(file)?
+                            .map(|it| it.of_bunfig_at(path, is_named, &environment.cwd));
+                    }
+                    if of_bun_format.is_none() {
+                        of_bun_format =
+                            bunfig::format(file)?.map(|it| it.of_bunfig_at(path, is_named));
+                    }
+                    Ok(match (&defaults, &of_bun_format) {
+                        (Some(_), Some(_)) => Above::Unwanted,
+                        (Some(it), None) if it.names_a_format_rule() => Above::Needed,
+                        (Some(_), None) if options.names_a_format_rule() => Above::Needed,
+                        (Some(_), None) => Above::Optional,
+                        (None, _) => Above::Needed,
+                    })
+                },
+            );
+            if let Some(of_bun_format) = of_bun_format {
+                defaults.get_or_insert_default().of_bun_format = Some(Box::new(of_bun_format));
+            }
             match defaults.map(|defaults| Options::parse_over(defaults, &args)) {
                 None => bun_lint_driver::run(&options, environment),
                 Some(Ok(options)) => bun_lint_driver::run(&options, environment),

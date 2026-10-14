@@ -34,8 +34,42 @@ fn is_unambiguous_await<'a>(e: Expr<'a>, in_function: &mut AncestorMemo<'a, ()>)
             .is_none()
 }
 
+/// tsgolint's `rule.ListenerOnAllowPattern`: whether the `patternVisitor` of `visitLintNodes` comes to this array or
+/// object: from the left of a `=`, through elements, values of properties and spreads. The left of a default in a
+/// pattern is not one, nor is the head of a `for`.
+pub fn is_visited_as_pattern(node: Expr) -> bool {
+    let (mut at, mut allows_pattern) = (node, false);
+    loop {
+        if at.is_parenthesized() {
+            return allows_pattern;
+        }
+        at = match at.parent() {
+            Node::Expr(parent) => match parent.as_assign() {
+                // The left of an assignment that is itself in a pattern is visited as an expression.
+                Some((None, left, _)) if left == at => {
+                    allows_pattern = !allows_pattern;
+                    parent
+                }
+                None if matches!(parent.tag(), ExprTag::Array | ExprTag::Spread) => parent,
+                _ => return allows_pattern,
+            },
+            Node::Prop(property)
+                if property.value() == Some(at)
+                    && matches!(property.kind(), PropKind::Init | PropKind::Spread)
+                    && !property.is_jsx_attribute() =>
+            {
+                match property.parent() {
+                    Node::Expr(object) => object,
+                    _ => return allows_pattern,
+                }
+            }
+            _ => return allows_pattern,
+        };
+    }
+}
+
 /// By its name the file can be a script or a module. The scripts in `.vue` and `.svelte` files are modules.
-fn is_either(file: &File) -> bool {
+pub(crate) fn is_either(file: &File) -> bool {
     !matches!(
         file.path(),
         [.., b'.', b'm' | b'c', b'j' | b't', b's']

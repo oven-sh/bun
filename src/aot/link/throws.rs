@@ -3,10 +3,12 @@ use crate::declared::{Declared, DeclaredTable, Part, prim};
 use crate::id::{FuncId, LayoutId, StrId, TyId, V};
 use crate::ir::{BinOp, Def, Func, FuncKind, Initialization, LayoutKind, NO_VARIABLE, Op, Prediction, Program, Target, Term, UnOp, Why, class_flags, field_flags, func_flags, method_flags};
 use bun_sema::check::{is_builtin_of_the_engine, is_locked_global_of_the_engine};
+use bun_sema::util::{InParallel, for_each_mut};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::collections::VecDeque;
 use std::fmt::Write;
+use std::ops::Range;
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -15,6 +17,7 @@ const MOST_CHANGES_INSIDE: u8 = 16;
 const MOST_CHANGES_BETWEEN: u8 = 4;
 const MOST_LISTED: usize = 200;
 const MOST_DOORS: usize = 40;
+const FUNCTIONS_OF_A_RUN: usize = 256;
 const OPTIMISTIC: u32 = 1 << 31;
 const CONTEXTUAL: u32 = 1 << 31;
 
@@ -312,6 +315,97 @@ struct Keys {
     paths: FxHashMap<(u32, u32), u32>,
 }
 
+#[derive(Default)]
+struct Added {
+    first: usize,
+    list: Vec<Declared>,
+    ids: FxHashMap<Declared, TyId>,
+}
+
+struct Types<'a> {
+    of_the_program: &'a DeclaredTable,
+    frozen: Option<&'a Added>,
+    added: Added,
+    anything: TyId,
+}
+
+impl Types<'_> {
+    fn get(&self, id: TyId) -> &Declared {
+        let at = id.idx();
+        match self.frozen {
+            _ if at < self.of_the_program.list.len() => &self.of_the_program.list[at],
+            Some(frozen) if at < self.added.first => &frozen.list[at - frozen.first],
+            _ => &self.added.list[at - self.added.first],
+        }
+    }
+
+    fn intern(&mut self, declared: Declared) -> TyId {
+        if let Some(id) = self.of_the_program.find(&declared).or_else(|| self.frozen.and_then(|frozen| frozen.ids.get(&declared).copied())).or_else(|| self.added.ids.get(&declared).copied()) {
+            return id;
+        }
+        let id = TyId::new(self.added.first + self.added.list.len());
+        self.added.list.push(declared.clone());
+        self.added.ids.insert(declared, id);
+        id
+    }
+}
+
+struct Setup {
+    never_return: Vec<bool>,
+    is_open_global: Vec<bool>,
+    store_to_constants: Vec<usize>,
+}
+
+impl Setup {
+    fn new(program: &Program, is_whole: bool, in_parallel: InParallel<'_>) -> Setup {
+        let mut runs: Vec<(Range<usize>, Vec<u32>, Vec<usize>)> = runs_of(program).map(|run| (run, Vec::new(), Vec::new())).collect();
+        for_each_mut(&mut runs, in_parallel, &|(run, stored, storing)| {
+            for index in run.clone() {
+                let before = stored.len();
+                for value in &program.funcs[index].values {
+                    if let Def::Op(Op::GlobalSet(global, _)) = value.def
+                        && (is_whole || program.globals[global.idx()].initialization == Initialization::NeverSeenAndStoredOnce)
+                    {
+                        stored.push(global.0);
+                    }
+                }
+                if stored.len() != before {
+                    storing.push(index);
+                }
+            }
+        });
+        let mut is_open_global = vec![true; program.globals.len()];
+        for &global in runs.iter().flat_map(|run| &run.1) {
+            is_open_global[global as usize] = false;
+        }
+        for layout in program.layouts.iter().filter(|layout| layout.environment.is_none()) {
+            for method in layout.methods.iter().filter(|method| method.func.is_some() && method.key != NO_VARIABLE) {
+                if let Some(is_open) = is_open_global.get_mut(method.key as usize) {
+                    *is_open = true;
+                }
+            }
+        }
+        Setup { never_return: functions_that_never_return(program, in_parallel), is_open_global, store_to_constants: runs.into_iter().flat_map(|run| run.2).collect() }
+    }
+}
+
+struct Frozen {
+    types: Added,
+    common: Common,
+    identities: Vec<Identity>,
+    identity_ids: FxHashMap<Identity, u32>,
+    known: Vec<TyId>,
+    origin: Vec<u32>,
+    identity: Vec<u32>,
+    stored_at: Vec<Option<(u32, V)>>,
+}
+
+fn runs_of(program: &Program) -> impl Iterator<Item = Range<usize>> {
+    let count = program.funcs.len();
+    (0..count).step_by(FUNCTIONS_OF_A_RUN).map(move |first| first..(first + FUNCTIONS_OF_A_RUN).min(count))
+}
+
+#[derive(Clone, Copy)]
 struct Common {
     never: TyId,
     undefined: TyId,
@@ -335,8 +429,13 @@ struct Common {
 
 struct Flow<'a> {
     program: &'a Program,
-    tys: DeclaredTable,
+    tys: Types<'a>,
     common: Common,
+    frozen: Option<&'a Frozen>,
+    own_values: u32,
+    skipped: u32,
+    at_function: usize,
+    stored_at: Vec<Option<(u32, V)>>,
     first_value: Vec<u32>,
     results: u32,
     globals: u32,
@@ -347,14 +446,14 @@ struct Flow<'a> {
     identities: Vec<Identity>,
     identity_ids: FxHashMap<Identity, u32>,
     is_closed: Vec<bool>,
-    is_open_global: Vec<bool>,
+    is_open_global: &'a [bool],
     is_open_field: Vec<bool>,
     is_whole: bool,
     has_changed: bool,
     has_moved: bool,
     has_given_up: bool,
     has_used_a_test: bool,
-    never_return: Vec<bool>,
+    never_return: &'a [bool],
     callers: Vec<Vec<u32>>,
     readers_of_global: Vec<Vec<u32>>,
     readers_of_field: Vec<Vec<u32>>,
@@ -369,13 +468,11 @@ struct Flow<'a> {
 }
 
 impl<'a> Flow<'a> {
-    fn new(program: &'a Program, is_whole: bool) -> Flow<'a> {
-        let mut tys = DeclaredTable::default();
-        for declared in &program.tys.list {
-            tys.intern(declared.clone());
-        }
+    fn new(program: &'a Program, setup: &'a Setup, is_whole: bool, frozen: Option<&'a Frozen>) -> Flow<'a> {
+        let first = program.tys.list.len() + frozen.map_or(0, |frozen| frozen.types.list.len());
+        let mut tys = Types { of_the_program: &program.tys, frozen: frozen.map(|frozen| &frozen.types), added: Added { first, ..Added::default() }, anything: program.tys.anything };
         let anything = tys.anything;
-        let common = Common {
+        let common = frozen.map(|frozen| frozen.common).unwrap_or_else(|| Common {
             never: tys.intern(Declared::never()),
             undefined: tys.intern(Declared::prims(prim::UNDEFINED)),
             null: tys.intern(Declared::prims(prim::NULL)),
@@ -394,21 +491,20 @@ impl<'a> Flow<'a> {
             object: tys.intern(Declared { any_object: true, ..Declared::default() }),
             objects: tys.intern(Declared::any_object()),
             array: tys.intern(Declared::part(Part::Array(anything))),
-        };
+        });
         let mut count = 0u32;
         let mut take = |many: usize| {
             let first = count;
             count += many as u32;
             first
         };
-        let first_value: Vec<u32> = program.funcs.iter().map(|func| take(func.values.len())).collect();
-        let results = take(program.funcs.len());
-        let globals = take(program.globals.len());
-        let first_field: Vec<u32> = program.layouts.iter().map(|layout| take(layout.fields.len())).collect();
+        let first_value: Vec<u32> = program.funcs.iter().filter(|_| is_whole).map(|func| take(func.values.len())).collect();
+        let results = take(if is_whole { program.funcs.len() } else { 0 });
+        let globals = take(if frozen.is_some() { 0 } else { program.globals.len() });
+        let first_field: Vec<u32> = program.layouts.iter().filter(|_| is_whole).map(|layout| take(layout.fields.len())).collect();
         let fields = count - first_field.first().copied().unwrap_or(count);
-        let mut is_closed: Vec<bool> = program.funcs.iter().map(|func| !func.has(func_flags::IS_VALUE | func_flags::IS_GENERAL_ENTRY | func_flags::IS_BUILTIN | func_flags::ASYNC | func_flags::GENERATOR) && matches!(func.kind, FuncKind::Plain | FuncKind::Arrow)).collect();
-        let mut is_called = vec![false; program.funcs.len()];
-        let mut is_open_global = vec![true; program.globals.len()];
+        let mut is_closed: Vec<bool> = program.funcs.iter().filter(|_| is_whole).map(|func| !func.has(func_flags::IS_VALUE | func_flags::IS_GENERAL_ENTRY | func_flags::IS_BUILTIN | func_flags::ASYNC | func_flags::GENERATOR) && matches!(func.kind, FuncKind::Plain | FuncKind::Arrow)).collect();
+        let mut is_called = vec![false; is_closed.len()];
         let mut is_open_field = vec![true; fields as usize];
         let base_of_fields = first_field.first().copied().unwrap_or(count);
         let mut callers: Vec<Vec<u32>> = vec![Vec::new(); if is_whole { program.funcs.len() } else { 0 }];
@@ -420,8 +516,8 @@ impl<'a> Flow<'a> {
                 list.push(who as u32);
             }
         };
-        for (who, func) in program.funcs.iter().enumerate() {
-            for (number, value) in func.values.iter().enumerate().filter(|_| is_whole) {
+        for (who, func) in program.funcs.iter().enumerate().filter(|_| is_whole) {
+            for (number, value) in func.values.iter().enumerate() {
                 match &value.def {
                     Def::Op(Op::CallDirect { func: called, .. }) => note(&mut callers[called.idx()], who),
                     Def::Op(Op::Call { .. } | Op::CallMethod { .. }) => {
@@ -441,18 +537,14 @@ impl<'a> Flow<'a> {
                 match &value.def {
                     Def::Op(Op::FuncRef(named) | Op::Closure { func: named, .. } | Op::ClosureOnce { func: named, .. }) => is_closed[named.idx()] = false,
                     Def::Op(Op::CallDirect { func: called, .. }) => is_called[called.idx()] = true,
-                    Def::Op(Op::GlobalSet(global, _)) => is_open_global[global.idx()] = false,
                     Def::Op(Op::FieldSet { layout, field, .. }) if program.layouts[layout.idx()].kind == LayoutKind::Environment => is_open_field[(first_field[layout.idx()] + field - base_of_fields) as usize] = false,
                     _ => {}
                 }
             }
         }
-        for layout in &program.layouts {
+        for layout in program.layouts.iter().filter(|_| is_whole) {
             for method in layout.methods.iter().filter(|method| method.func.is_some()) {
                 is_closed[method.func.idx()] = false;
-                if method.key != NO_VARIABLE && layout.environment.is_none() && (method.key as usize) < is_open_global.len() {
-                    is_open_global[method.key as usize] = true;
-                }
             }
             if layout.constructor.is_some() {
                 is_closed[layout.constructor.idx()] = false;
@@ -464,24 +556,64 @@ impl<'a> Flow<'a> {
             }
         }
         for &entry in program.entries.iter().chain(program.modules.iter().map(|module| &module.init)).chain(program.builtin_modules.iter().map(|entry| &entry.1)).chain(program.builtin_functions.iter().map(|entry| &entry.1)) {
-            if entry.is_some() {
+            if entry.is_some() && is_whole {
                 is_closed[entry.idx()] = false;
             }
         }
         for (closed, called) in is_closed.iter_mut().zip(&is_called) {
-            *closed &= called & is_whole;
+            *closed &= called;
         }
-        if !is_whole {
-            is_open_field.fill(true);
-            for (is_open, global) in is_open_global.iter_mut().zip(&program.globals) {
-                *is_open |= global.initialization != Initialization::NeverSeenAndStoredOnce;
-            }
-        }
-        Flow { program, tys, common, first_value, results, globals, first_field, known: vec![TyId::NONE; count as usize], origin: vec![0; count as usize], identity: vec![0; count as usize], identities: Vec::new(), identity_ids: FxHashMap::default(), is_closed, is_open_global, is_open_field, is_whole, has_changed: false, has_moved: false, has_given_up: false, has_used_a_test: false, never_return: functions_that_never_return(program), callers, readers_of_global, readers_of_field, is_pending: vec![false; program.funcs.len()], pending: VecDeque::new(), met: FxHashMap::default(), joined: FxHashMap::default(), locked: FxHashMap::default(), changes: vec![0; count as usize], resolved, orders: vec![None; if is_whole { program.funcs.len() } else { 0 }] }
+        let own_values = if is_whole { 0 } else { program.globals.len() as u32 };
+        let skipped = if frozen.is_some() { own_values } else { 0 };
+        let stored_at = vec![None; if is_whole || frozen.is_some() { 0 } else { program.globals.len() }];
+        Flow { program, tys, common, frozen, own_values, skipped, at_function: 0, stored_at, first_value, results, globals, first_field, known: vec![TyId::NONE; count as usize], origin: vec![0; count as usize], identity: vec![0; count as usize], identities: Vec::new(), identity_ids: FxHashMap::default(), is_closed, is_open_global: &setup.is_open_global, is_open_field, is_whole, has_changed: false, has_moved: false, has_given_up: false, has_used_a_test: false, never_return: &setup.never_return, callers, readers_of_global, readers_of_field, is_pending: vec![false; if is_whole { program.funcs.len() } else { 0 }], pending: VecDeque::new(), met: FxHashMap::default(), joined: FxHashMap::default(), locked: FxHashMap::default(), changes: vec![0; count as usize], resolved, orders: vec![None; if is_whole { program.funcs.len() } else { 0 }] }
     }
 
     fn get(&self, ty: TyId) -> &Declared {
         self.tys.get(ty)
+    }
+
+    fn base(&self, index: usize) -> u32 {
+        if self.is_whole { self.first_value[index] } else { self.own_values }
+    }
+
+    fn slot(&self, node: u32) -> usize {
+        (node - self.skipped) as usize
+    }
+
+    fn is_closed(&self, index: usize) -> bool {
+        self.is_whole && self.is_closed[index]
+    }
+
+    fn begin(&mut self, index: usize) {
+        if self.is_whole {
+            return;
+        }
+        self.at_function = index;
+        let (kept, all) = ((self.own_values - self.skipped) as usize, (self.own_values - self.skipped) as usize + self.program.funcs[index].values.len());
+        self.known.truncate(kept);
+        self.known.resize(all, TyId::NONE);
+        self.origin.truncate(kept);
+        self.origin.resize(all, 0);
+        self.identity.truncate(kept);
+        self.identity.resize(all, 0);
+        self.changes.truncate(kept);
+        self.changes.resize(all, 0);
+    }
+
+    fn of_global(&self, global: u32) -> (TyId, u32, u32) {
+        match self.frozen {
+            Some(frozen) => (frozen.known[global as usize], frozen.origin[global as usize], frozen.identity[global as usize]),
+            None => {
+                let at = (self.globals + global) as usize;
+                (self.known[at], self.origin[at], self.identity[at])
+            }
+        }
+    }
+
+    fn freeze(self) -> Frozen {
+        let globals = self.program.globals.len();
+        Frozen { types: self.tys.added, common: self.common, identities: self.identities, identity_ids: self.identity_ids, known: self.known[..globals].to_vec(), origin: self.origin[..globals].to_vec(), identity: self.identity[..globals].to_vec(), stored_at: self.stored_at }
     }
 
     fn declared(&self, func: &Func, v: V) -> TyId {
@@ -552,6 +684,7 @@ impl<'a> Flow<'a> {
     }
 
     fn join_at_most(&mut self, node: u32, ty: TyId, origin: u32, most: u8, top: Option<TyId>) -> bool {
+        let node = self.slot(node) as u32;
         let old = self.known[node as usize];
         let is_at_the_top = top.is_some() && self.changes[node as usize] > most;
         let mut new = if is_at_the_top {
@@ -599,6 +732,7 @@ impl<'a> Flow<'a> {
     }
 
     fn join_identity(&mut self, node: u32, identity: u32) -> bool {
+        let node = self.slot(node) as u32;
         let old = self.identity[node as usize];
         let new = if old == 0 || old == identity || identity == 0 { old.max(identity) } else { MANY };
         self.identity[node as usize] = new;
@@ -607,11 +741,11 @@ impl<'a> Flow<'a> {
     }
 
     fn identity_id(&mut self, identity: Identity) -> u32 {
-        if let Some(&id) = self.identity_ids.get(&identity) {
+        if let Some(&id) = self.frozen.and_then(|frozen| frozen.identity_ids.get(&identity)).or_else(|| self.identity_ids.get(&identity)) {
             return id;
         }
         self.identities.push(identity);
-        let id = self.identities.len() as u32 + MANY;
+        let id = (self.frozen.map_or(0, |frozen| frozen.identities.len()) + self.identities.len()) as u32 + MANY;
         self.identity_ids.insert(identity, id);
         id
     }
@@ -620,12 +754,19 @@ impl<'a> Flow<'a> {
         if v.is_none() {
             return None;
         }
-        let id = self.identity[(self.first_value[index] + v.0) as usize];
-        (id > MANY).then(|| self.identities[(id - MANY - 1) as usize])
+        if !self.is_whole && index != self.at_function {
+            return None;
+        }
+        let id = self.identity[self.slot(self.base(index) + v.0)];
+        let below = self.frozen.map_or(&[][..], |frozen| &frozen.identities[..]);
+        (id > MANY).then(|| {
+            let at = (id - MANY - 1) as usize;
+            if at < below.len() { below[at] } else { self.identities[at - below.len()] }
+        })
     }
 
     fn raw_identity(&self, index: usize, v: V) -> u32 {
-        if v.is_none() { MANY } else { self.identity[(self.first_value[index] + v.0) as usize] }
+        if v.is_none() || !self.is_whole && index != self.at_function { MANY } else { self.identity[self.slot(self.base(index) + v.0)] }
     }
 
     fn identify(&mut self, index: usize, func: &Func, v: V) -> u32 {
@@ -644,8 +785,8 @@ impl<'a> Flow<'a> {
                 }
             }
             Op::Coerce { value, .. } => self.raw_identity(index, value),
-            Op::GlobalGet(global) if !self.is_open_global[global.idx()] => self.identity[(self.globals + global.0) as usize],
-            Op::FieldGet { layout, field, .. } if self.program.layouts[layout.idx()].kind == LayoutKind::Environment && !self.is_open_field[self.field_index(self.first_field[layout.idx()] + field)] => self.identity[(self.first_field[layout.idx()] + field) as usize],
+            Op::GlobalGet(global) if !self.is_open_global[global.idx()] => self.of_global(global.0).2,
+            Op::FieldGet { layout, field, .. } if self.is_whole && self.program.layouts[layout.idx()].kind == LayoutKind::Environment && !self.is_open_field[self.field_index(self.first_field[layout.idx()] + field)] => self.identity[(self.first_field[layout.idx()] + field) as usize],
             Op::CallDirect { func: called, .. } if self.is_whole && !self.program.funcs[called.idx()].has(func_flags::ASYNC | func_flags::GENERATOR) && self.program.funcs[called.idx()].kind != FuncKind::Constructor => self.identity[(self.results + called.0) as usize],
             _ => MANY,
         }
@@ -683,7 +824,7 @@ impl<'a> Flow<'a> {
         if v.is_none() {
             return self.common.undefined;
         }
-        let known = self.known[(self.first_value[index] + v.0) as usize];
+        let known = self.known[self.slot(self.base(index) + v.0)];
         if known.is_none() {
             return self.common.never;
         }
@@ -705,7 +846,7 @@ impl<'a> Flow<'a> {
     }
 
     fn origin_of(&self, index: usize, v: V) -> u32 {
-        if v.is_none() { 0 } else { self.origin[(self.first_value[index] + v.0) as usize] }
+        if v.is_none() { 0 } else { self.origin[self.slot(self.base(index) + v.0)] }
     }
 
     fn add_fact(&mut self, func: &Func, keys: &mut Keys, facts: &mut Facts, v: V, bound: TyId) {
@@ -980,7 +1121,7 @@ impl<'a> Flow<'a> {
 
     fn transfer(&mut self, index: usize, func: &Func, facts: &Facts, keys: &mut Keys, v: V) -> (TyId, u32) {
         let declared = self.declared(func, v);
-        let own = self.first_value[index] + v.0 + 1;
+        let own = self.base(index) + v.0 + 1;
         let Some(op) = func.op(v) else { return (declared, 0) };
         match op {
             Op::Undefined => (self.common.undefined, 0),
@@ -998,15 +1139,29 @@ impl<'a> Flow<'a> {
                 if self.is_open_global[global.idx()] {
                     return (declared, if self.says_something(declared) { 0 } else { own });
                 }
-                let node = self.globals + global.0;
-                let stored = self.known[node as usize];
+                let (stored, origin, _) = self.of_global(global.0);
                 let stored = if stored.is_none() { self.common.never } else { stored };
                 let stored = if matches!(self.program.globals[global.idx()].initialization, Initialization::Undefined | Initialization::Lazy) { self.join(stored, self.common.undefined) } else { stored };
-                (self.meet(stored, declared), self.origin[node as usize])
+                (self.meet(stored, declared), origin)
             }
             &Op::GlobalSet(global, value) => {
+                if self.frozen.is_some() || !self.is_whole && self.is_open_global[global.idx()] {
+                    return (self.common.undefined, 0);
+                }
                 let stored = self.val(index, func, facts, keys, value, false);
                 let origin = self.origin_of(index, value);
+                let origin = if self.is_whole {
+                    origin
+                } else {
+                    let from = match (origin & !CONTEXTUAL).checked_sub(1) {
+                        Some(node) if node < self.own_values => self.stored_at[node as usize],
+                        Some(node) => Some((index as u32, V(node - self.own_values))),
+                        None => None,
+                    };
+                    let kept = self.stored_at[global.idx()].or(from);
+                    self.stored_at[global.idx()] = kept;
+                    origin & CONTEXTUAL | if kept.is_some() { global.0 + 1 } else { 0 }
+                };
                 let identity = self.raw_identity(index, value);
                 if self.join_between(self.globals + global.0, stored, origin, self.tys.anything) | self.join_identity(self.globals + global.0, identity) {
                     self.wake_all(|flow| &flow.readers_of_global, global.idx());
@@ -1014,6 +1169,9 @@ impl<'a> Flow<'a> {
                 (self.common.undefined, 0)
             }
             &Op::FieldGet { layout, field, .. } => {
+                if !self.is_whole {
+                    return (declared, 0);
+                }
                 let node = self.first_field[layout.idx()] + field;
                 if self.program.layouts[layout.idx()].kind != LayoutKind::Environment || self.is_open_field[self.field_index(node)] {
                     return (declared, 0);
@@ -1025,7 +1183,7 @@ impl<'a> Flow<'a> {
                 (self.meet(stored, declared), self.origin[node as usize])
             }
             &Op::FieldSet { layout, field, value, .. } => {
-                if self.program.layouts[layout.idx()].kind == LayoutKind::Environment {
+                if self.is_whole && self.program.layouts[layout.idx()].kind == LayoutKind::Environment {
                     let stored = self.val(index, func, facts, keys, value, false);
                     let origin = self.origin_of(index, value);
                     let identity = self.raw_identity(index, value);
@@ -1119,7 +1277,7 @@ impl<'a> Flow<'a> {
             },
             Op::CallDirect { func: called, args } => {
                 let (called, args) = (*called, args.clone());
-                if self.is_closed[called.idx()] {
+                if self.is_closed(called.idx()) {
                     let callee = &self.program.funcs[called.idx()];
                     let parameters = callee.blocks.first().map_or(&[][..], |entry| &entry.params[..]);
                     for (&parameter, &argument) in parameters.iter().zip(&args) {
@@ -1134,7 +1292,7 @@ impl<'a> Flow<'a> {
                     }
                 }
                 let yielded = self.result_of_functions(func, v, &[called]);
-                (self.meet(yielded, declared), self.origin[(self.results + called.0) as usize])
+                (self.meet(yielded, declared), if self.is_whole { self.origin[(self.results + called.0) as usize] } else { 0 })
             }
             &Op::Coerce { value, to, why } => {
                 let have = self.val(index, func, facts, keys, value, false);
@@ -1180,9 +1338,9 @@ impl<'a> Flow<'a> {
             let taken = self.declared(func, parameter);
             let handed = self.meet(handed, taken);
             let origin = self.origin_of(index, argument) | if self.has_used_a_test { CONTEXTUAL } else { 0 };
-            self.join_into(self.first_value[index] + parameter.0, handed, origin);
+            self.join_into(self.base(index) + parameter.0, handed, origin);
             let identity = self.raw_identity(index, argument);
-            self.join_identity(self.first_value[index] + parameter.0, identity);
+            self.join_identity(self.base(index) + parameter.0, identity);
         }
         match &mut reached[at] {
             None => {
@@ -1214,19 +1372,20 @@ impl<'a> Flow<'a> {
         let func = &self.program.funcs[index];
         let mut keys = Keys::default();
         let mut reached: Vec<Option<Facts>> = vec![None; func.blocks.len()];
+        self.begin(index);
         if func.blocks.is_empty() {
             return (reached, keys);
         }
         let (order, has_loops): (Rc<[usize]>, bool) = if self.is_whole {
             self.orders[index].get_or_insert_with(|| { let (order, has_loops) = in_reverse_postorder(func); (order.into(), has_loops) }).clone()
         } else {
-            (straight_from_the_entry(&self.never_return, func).into(), false)
+            (straight_from_the_entry(self.never_return, func).into(), false)
         };
         let mut has_changed = self.has_changed;
-        if !self.is_closed[index] {
+        if !self.is_closed(index) {
             for &parameter in &func.blocks[0].params {
                 let declared = self.declared(func, parameter);
-                let own = self.first_value[index] + parameter.0;
+                let own = self.base(index) + parameter.0;
                 self.join_into(own, declared, if self.says_something(declared) { 0 } else { own + 1 });
                 self.join_identity(own, MANY);
             }
@@ -1258,10 +1417,10 @@ impl<'a> Flow<'a> {
             self.has_used_a_test = false;
             let (ty, origin) = self.transfer(index, func, facts, keys, v);
             let origin = origin | if self.has_used_a_test { CONTEXTUAL } else { 0 };
-            self.join_into(self.first_value[index] + v.0, ty, origin);
+            self.join_into(self.base(index) + v.0, ty, origin);
             let identity = self.identify(index, func, v);
-            self.join_identity(self.first_value[index] + v.0, identity);
-            if !comes_back(&self.never_return, func, v) {
+            self.join_identity(self.base(index) + v.0, identity);
+            if !comes_back(self.never_return, func, v) {
                 if let Some(Term::Invoke { unwind, .. }) = func.blocks[at].term.as_ref() {
                     self.flow_to(index, func, keys, reached, facts, unwind, facts.clone());
                 }
@@ -1281,6 +1440,7 @@ impl<'a> Flow<'a> {
                     self.flow_to(index, func, keys, reached, facts, target, leaving);
                 }
             }
+            Some(&Term::Return(_)) if !self.is_whole => {}
             Some(&Term::Return(value)) => {
                 self.has_used_a_test = false;
                 let returned = self.val(index, func, facts, keys, value, false);
@@ -1303,35 +1463,50 @@ fn comes_back(never_return: &[bool], func: &Func, v: V) -> bool {
     !matches!(func.op(v), Some(Op::CallDirect { func: called, .. }) if never_return[called.idx()])
 }
 
-fn functions_that_never_return(program: &Program) -> Vec<bool> {
-    let mut never_return = vec![false; program.funcs.len()];
-    loop {
-        let mut has_changed = false;
-        for (index, func) in program.funcs.iter().enumerate() {
-            if never_return[index] || func.blocks.is_empty() || func.has(func_flags::ASYNC | func_flags::GENERATOR) {
-                continue;
+fn can_return(never_return: &[bool], func: &Func, seen: &mut Vec<bool>, pending: &mut Vec<usize>) -> bool {
+    seen.clear();
+    seen.resize(func.blocks.len(), false);
+    seen[0] = true;
+    pending.push(0);
+    let mut returns = false;
+    while let Some(at) = pending.pop() {
+        let goes_on = func.blocks[at].ops.iter().all(|&v| comes_back(never_return, func, v));
+        let term = func.blocks[at].term.as_ref();
+        returns |= goes_on && matches!(term, Some(Term::Return(_)));
+        for (way, target) in targets_of(term).into_iter().enumerate() {
+            let is_unwind = matches!(term, Some(Term::Invoke { .. })) && way == 1 || matches!(term, Some(Term::Throw { .. }));
+            if (goes_on || is_unwind) && !std::mem::replace(&mut seen[target.block.idx()], true) {
+                pending.push(target.block.idx());
             }
-            let (mut seen, mut pending, mut returns) = (vec![false; func.blocks.len()], vec![0usize], false);
-            seen[0] = true;
-            while let Some(at) = pending.pop() {
-                let goes_on = func.blocks[at].ops.iter().all(|&v| comes_back(&never_return, func, v));
-                let term = func.blocks[at].term.as_ref();
-                returns |= goes_on && matches!(term, Some(Term::Return(_)));
-                for (way, target) in targets_of(term).into_iter().enumerate() {
-                    let is_unwind = matches!(term, Some(Term::Invoke { .. })) && way == 1 || matches!(term, Some(Term::Throw { .. }));
-                    if (goes_on || is_unwind) && !std::mem::replace(&mut seen[target.block.idx()], true) {
-                        pending.push(target.block.idx());
-                    }
+        }
+    }
+    returns
+}
+
+fn functions_that_never_return(program: &Program, in_parallel: InParallel<'_>) -> Vec<bool> {
+    let is_asked = |func: &Func| !func.blocks.is_empty() && !func.has(func_flags::ASYNC | func_flags::GENERATOR);
+    let mut never_return = vec![false; program.funcs.len()];
+    let mut has_turned: Option<Vec<bool>> = None;
+    loop {
+        let mut runs: Vec<(Range<usize>, Vec<usize>)> = runs_of(program).map(|run| (run, Vec::new())).collect();
+        for_each_mut(&mut runs, in_parallel, &|(run, turned)| {
+            let (mut seen, mut pending) = (Vec::new(), Vec::new());
+            for index in run.clone() {
+                let func = &program.funcs[index];
+                let calls_one_that_turned = |turned: &[bool]| func.values.iter().any(|value| matches!(value.def, Def::Op(Op::CallDirect { func: called, .. }) if turned[called.idx()]));
+                if !never_return[index] && is_asked(func) && has_turned.as_deref().is_none_or(calls_one_that_turned) && !can_return(&never_return, func, &mut seen, &mut pending) {
+                    turned.push(index);
                 }
             }
-            if !returns {
-                never_return[index] = true;
-                has_changed = true;
-            }
+        });
+        let mut now = vec![false; program.funcs.len()];
+        for &index in runs.iter().flat_map(|run| &run.1) {
+            (never_return[index], now[index]) = (true, true);
         }
-        if !has_changed {
+        if runs.iter().all(|run| run.1.is_empty()) {
             return never_return;
         }
+        has_turned = Some(now);
     }
 }
 
@@ -1473,7 +1648,7 @@ struct Report<'a, 'b> {
     flow: &'b mut Flow<'a>,
     sites: Vec<Site>,
     fine: FxHashMap<Kind, usize>,
-    class_of: FxHashMap<FuncId, LayoutId>,
+    class_of: &'b FxHashMap<FuncId, LayoutId>,
     throws_either_way: usize,
     at: V,
     name: Option<&'static str>,
@@ -1484,7 +1659,7 @@ struct Report<'a, 'b> {
     risk: &'static str,
     call: Option<(u32, u32)>,
     is_at_an_entry: bool,
-    has_an_entry_that_tests: Vec<bool>,
+    has_an_entry_that_tests: &'b [bool],
 }
 
 impl<'a> Report<'a, '_> {
@@ -1494,6 +1669,12 @@ impl<'a> Report<'a, '_> {
     }
 
     fn locate(&self, node: u32) -> Option<(usize, V)> {
+        if !self.flow.is_whole {
+            return match node.checked_sub(self.flow.own_values) {
+                Some(value) => Some((self.flow.at_function, V(value))),
+                None => self.flow.frozen.map_or(&self.flow.stored_at[..], |frozen| &frozen.stored_at[..])[node as usize].map(|(index, v)| (index as usize, v)),
+            };
+        }
         if node >= self.flow.results {
             return None;
         }
@@ -1881,7 +2062,7 @@ impl<'a> Report<'a, '_> {
         }
         let held = if self.flow.is_whole { held_in(func) } else { Vec::new() };
         let mut is_always_run = vec![false; func.blocks.len()];
-        for at in straight_from_the_entry(&self.flow.never_return, func) {
+        for at in straight_from_the_entry(self.flow.never_return, func) {
             is_always_run[at] = true;
         }
         for (at, block) in func.blocks.iter().enumerate() {
@@ -1896,7 +2077,7 @@ impl<'a> Report<'a, '_> {
                     continue;
                 }
                 let Some(op) = func.op(v) else { continue };
-                if place > 0 && !comes_back(&self.flow.never_return, func, block.ops[place - 1]) {
+                if place > 0 && !comes_back(self.flow.never_return, func, block.ops[place - 1]) {
                     break;
                 }
                 self.at = v;
@@ -1998,7 +2179,7 @@ impl<'a> Report<'a, '_> {
                         };
                         let have = self.flow.get(have).clone();
                         let verdict = self.judge(None, &have, &have, &wanted);
-                        let origin = self.flow.origin[(self.flow.first_value[index] + v.0) as usize];
+                        let origin = self.flow.origin_of(index, v);
                         self.name = matches!(op, Op::IterGet { .. }).then_some("iterate-value");
                         self.risk = self.risk_of(&wanted);
                         self.call = calls.get(&v).copied().filter(|call| call.0 != 0);
@@ -2447,18 +2628,97 @@ fn escaped(text: &str) -> String {
     out
 }
 
-pub(super) fn always_fail(program: &Program) -> Vec<Site> {
-    find(program, false).0.into_iter().filter(|site| site.verdict == Verdict::Wrong).collect()
+struct Asked {
+    surely: Vec<bool>,
+    class_of: FxHashMap<FuncId, LayoutId>,
+    has_an_entry_that_tests: Vec<bool>,
 }
 
-fn find(program: &Program, is_whole: bool) -> (Vec<Site>, Vec<(Kind, usize)>, usize, usize, [f64; 3]) {
+impl Asked {
+    fn new(program: &Program, setup: &Setup) -> Asked {
+        let mut has_an_entry_that_tests = vec![false; program.funcs.len()];
+        for entry in program.funcs.iter().filter(|func| func.has(func_flags::IS_GENERAL_ENTRY) && func.kind != FuncKind::Method) {
+            let first = entry.values.iter().find_map(|value| match &value.def {
+                Def::Op(Op::CallDirect { func: called, .. }) => Some(*called),
+                _ => None,
+            });
+            if let Some(called) = first {
+                has_an_entry_that_tests[called.idx()] = true;
+            }
+        }
+        let class_of = program.layouts.iter().enumerate().filter(|(_, layout)| layout.constructor.is_some()).map(|(index, layout)| (layout.constructor, LayoutId::new(index))).collect();
+        Asked { surely: surely_run(program, &setup.never_return), class_of, has_an_entry_that_tests }
+    }
+
+    fn report<'a, 'b>(&'b self, flow: &'b mut Flow<'a>) -> Report<'a, 'b> {
+        Report { flow, sites: Vec::new(), fine: FxHashMap::default(), class_of: &self.class_of, throws_either_way: 0, at: V::NONE, name: None, value: String::new(), passes_somewhere: FxHashSet::default(), is_behind_a_test: false, is_surely_run: false, risk: "", call: None, is_at_an_entry: false, has_an_entry_that_tests: &self.has_an_entry_that_tests }
+    }
+
+    fn look_at(&self, report: &mut Report<'_, '_>, run: Range<usize>) {
+        let program = report.flow.program;
+        for index in run {
+            let func = &program.funcs[index];
+            if func.module.is_none() || func.has(func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE | func_flags::IS_HIDDEN_IN_STACK_TRACES | func_flags::IS_GENERAL_ENTRY) {
+                continue;
+            }
+            let path = program.strs.get(program.modules[func.module.idx()].display_path);
+            if path.starts_with(b".bun-aot-prelude/") || path.windows(18).any(|window| window == b"/.bun-aot-prelude/") {
+                continue;
+            }
+            let (reached, mut keys) = report.flow.run(index);
+            report.is_surely_run = self.surely[index];
+            report.look_at(index, &reached, &mut keys);
+        }
+    }
+}
+
+fn settle_the_sites(mut sites: Vec<Site>, passes_somewhere: &FxHashSet<(u32, u32, Kind)>, is_sure: bool) -> Vec<Site> {
+    for site in sites.iter_mut().filter(|site| site.verdict == Verdict::Wrong && passes_somewhere.contains(&(site.module, site.pos, site.kind))) {
+        site.verdict = Verdict::Unknown;
+        site.detail = if site.detail.is_empty() { "it always fails on one of the paths to here".to_owned() } else { format!("{}: it always fails on one of the paths to here", site.detail) };
+    }
+    if !is_sure {
+        for site in &mut sites {
+            site.verdict = site.verdict.min(Verdict::Unknown);
+        }
+    }
+    sites.sort_by(|a, b| (a.module, a.pos, a.kind, std::cmp::Reverse(a.verdict)).cmp(&(b.module, b.pos, b.kind, std::cmp::Reverse(b.verdict))));
+    sites.dedup_by(|next, kept| (next.module, next.pos, next.kind) == (kept.module, kept.pos, kept.kind));
+    sites
+}
+
+pub(super) fn always_fail(program: &Program, in_parallel: InParallel<'_>) -> Vec<Site> {
+    let setup = Setup::new(program, false, in_parallel);
+    let asked = Asked::new(program, &setup);
+    let mut first = Flow::new(program, &setup, false, None);
+    for &index in setup.store_to_constants.iter().chain(&setup.store_to_constants) {
+        first.run(index);
+    }
+    let frozen = first.freeze();
+    let mut runs: Vec<(Range<usize>, Vec<Site>, FxHashSet<(u32, u32, Kind)>)> = runs_of(program).map(|run| (run, Vec::new(), FxHashSet::default())).collect();
+    for_each_mut(&mut runs, in_parallel, &|(run, sites, passes_somewhere)| {
+        let mut flow = Flow::new(program, &setup, false, Some(&frozen));
+        let mut report = asked.report(&mut flow);
+        asked.look_at(&mut report, run.clone());
+        (*sites, *passes_somewhere) = (report.sites, report.passes_somewhere);
+    });
+    let mut passes_somewhere: FxHashSet<(u32, u32, Kind)> = FxHashSet::default();
+    let mut sites = Vec::new();
+    for (_, of_run, passes) in runs {
+        sites.extend(of_run);
+        passes_somewhere.extend(passes);
+    }
+    settle_the_sites(sites, &passes_somewhere, true).into_iter().filter(|site| site.verdict == Verdict::Wrong).collect()
+}
+
+fn find(program: &Program, in_parallel: InParallel<'_>) -> (Vec<Site>, Vec<(Kind, usize)>, usize, usize, [f64; 3]) {
     let begun = Instant::now();
-    let mut flow = Flow::new(program, is_whole);
+    let setup = Setup::new(program, true, in_parallel);
+    let asked = Asked::new(program, &setup);
+    let mut flow = Flow::new(program, &setup, true, None);
     let prepared = begun.elapsed().as_secs_f64();
     let mut rounds = 0;
-    let stores_to_a_constant = |func: &Func| func.values.iter().any(|value| matches!(value.def, Def::Op(Op::GlobalSet(global, _)) if program.globals[global.idx()].initialization == Initialization::NeverSeenAndStoredOnce));
-    let looked_at: Vec<usize> = (0..program.funcs.len()).filter(|&index| is_whole || stores_to_a_constant(&program.funcs[index])).collect();
-    for &index in &looked_at {
+    for index in 0..program.funcs.len() {
         flow.wake(index);
     }
     while rounds < program.funcs.len() * MOST_ROUNDS
@@ -2468,54 +2728,18 @@ fn find(program: &Program, is_whole: bool) -> (Vec<Site>, Vec<(Kind, usize)>, us
         flow.run(index as usize);
         rounds += 1;
     }
-    for &index in looked_at.iter().chain(&looked_at).filter(|_| !is_whole) {
-        flow.run(index);
-    }
     let is_settled = flow.pending.is_empty();
     let settled = begun.elapsed().as_secs_f64();
-    let surely = surely_run(program, &flow.never_return);
-    let class_of = program.layouts.iter().enumerate().filter(|(_, layout)| layout.constructor.is_some()).map(|(index, layout)| (layout.constructor, LayoutId::new(index))).collect();
-    let mut has_an_entry_that_tests = vec![false; program.funcs.len()];
-    for entry in program.funcs.iter().filter(|func| func.has(func_flags::IS_GENERAL_ENTRY) && func.kind != FuncKind::Method) {
-        let first = entry.values.iter().find_map(|value| match &value.def {
-            Def::Op(Op::CallDirect { func: called, .. }) => Some(*called),
-            _ => None,
-        });
-        if let Some(called) = first {
-            has_an_entry_that_tests[called.idx()] = true;
-        }
-    }
-    let mut report = Report { flow: &mut flow, sites: Vec::new(), fine: FxHashMap::default(), class_of, throws_either_way: 0, at: V::NONE, name: None, value: String::new(), passes_somewhere: FxHashSet::default(), is_behind_a_test: false, is_surely_run: false, risk: "", call: None, is_at_an_entry: false, has_an_entry_that_tests };
-    for (index, func) in program.funcs.iter().enumerate() {
-        if func.module.is_none() || func.has(func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE | func_flags::IS_HIDDEN_IN_STACK_TRACES | func_flags::IS_GENERAL_ENTRY) {
-            continue;
-        }
-        let path = program.strs.get(program.modules[func.module.idx()].display_path);
-        if path.starts_with(b".bun-aot-prelude/") || path.windows(18).any(|window| window == b"/.bun-aot-prelude/") {
-            continue;
-        }
-        let (reached, mut keys) = report.flow.run(index);
-        report.is_surely_run = surely[index];
-        report.look_at(index, &reached, &mut keys);
-    }
-    let mut sites = report.sites;
-    for site in sites.iter_mut().filter(|site| site.verdict == Verdict::Wrong && report.passes_somewhere.contains(&(site.module, site.pos, site.kind))) {
-        site.verdict = Verdict::Unknown;
-        site.detail = if site.detail.is_empty() { "it always fails on one of the paths to here".to_owned() } else { format!("{}: it always fails on one of the paths to here", site.detail) };
-    }
-    if !is_settled || report.flow.has_given_up {
-        for site in &mut sites {
-            site.verdict = site.verdict.min(Verdict::Unknown);
-        }
-    }
-    sites.sort_by(|a, b| (a.module, a.pos, a.kind, std::cmp::Reverse(a.verdict)).cmp(&(b.module, b.pos, b.kind, std::cmp::Reverse(b.verdict))));
-    sites.dedup_by(|next, kept| (next.module, next.pos, next.kind) == (kept.module, kept.pos, kept.kind));
+    let mut report = asked.report(&mut flow);
+    asked.look_at(&mut report, 0..program.funcs.len());
+    let is_sure = is_settled && !report.flow.has_given_up;
+    let sites = settle_the_sites(report.sites, &report.passes_somewhere, is_sure);
     let fine = Kind::ALL.iter().map(|&kind| (kind, report.fine.get(&kind).copied().unwrap_or(0))).collect();
     (sites, fine, rounds, report.throws_either_way, [prepared, settled - prepared, begun.elapsed().as_secs_f64() - settled])
 }
 
-pub(super) fn explain(program: &Program, as_json: bool, lists_all: bool, line_and_column: &dyn Fn(u32, u32) -> (u32, u32)) -> Vec<String> {
-    let (sites, fine, rounds, throws_either_way, [prepared, settled, looked]) = find(program, true);
+pub(super) fn explain(program: &Program, as_json: bool, lists_all: bool, line_and_column: &dyn Fn(u32, u32) -> (u32, u32), in_parallel: InParallel<'_>) -> Vec<String> {
+    let (sites, fine, rounds, throws_either_way, [prepared, settled, looked]) = find(program, in_parallel);
     let path_of = |module: u32| String::from_utf8_lossy(program.strs.get(program.modules[module as usize].display_path)).into_owned();
     let mut lines = Vec::new();
     let mut ordinals: FxHashMap<(u32, u32, &'static str), usize> = FxHashMap::default();

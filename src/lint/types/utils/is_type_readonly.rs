@@ -9,8 +9,7 @@ use crate::types::tsutils::{
     is_conditional_type, is_intersection_type, is_object_type, is_property_readonly_in_type,
     is_union_type,
 };
-use crate::types::{CheckFlags, IndexKind, SyntaxKind, TsNode, Type, TypeStructure};
-use rustc_hash::FxHashSet;
+use crate::types::{CheckFlags, IdSet, IndexKind, SyntaxKind, TsNode, Type, TypeStructure};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Readonlyness {
@@ -40,7 +39,7 @@ impl ReadonlynessOptions {
 
 struct Recurser<'o, 'a> {
     options: &'o ReadonlynessOptions,
-    seen_types: FxHashSet<Type<'a>>,
+    seen_types: IdSet<Type<'a>>,
 }
 
 /// `hasSymbol(node) && isSymbolFlagSet(node.symbol, ts.SymbolFlags.Method)`
@@ -66,14 +65,14 @@ fn branches_of_conditional_type(ty: Type<'_>) -> Option<[Type<'_>; 2]> {
 impl<'a> Recurser<'_, 'a> {
     /// `seenTypes.has(t) || isTypeReadonlyRecurser(..) === Readonlyness.Readonly`
     fn is_seen_or_readonly(&mut self, t: Type<'a>) -> bool {
-        self.seen_types.contains(&t) || self.is_type_readonly_recurser(t) == Readonlyness::Readonly
+        self.seen_types.contains(t) || self.is_type_readonly_recurser(t) == Readonlyness::Readonly
     }
 
     fn check_type_arguments(&mut self, array_type: Type<'a>) -> Readonlyness {
         // What has been looked into was not mutable, or this would not be asked. To look into it again for each path that leads
         // to it takes two to the power of the depth for a `[T, T]` of a `[U, U]` of ..
         let is_mutable = |type_arg: Type<'a>| {
-            !self.seen_types.contains(&type_arg)
+            !self.seen_types.contains(type_arg)
                 && self.is_type_readonly_recurser(type_arg) == Readonlyness::Mutable
         };
         match array_type.get_type_arguments().iter().any(is_mutable) {
@@ -108,7 +107,7 @@ impl<'a> Recurser<'_, 'a> {
         if !index_info.is_readonly() {
             return Readonlyness::Mutable;
         }
-        if index_info.ty() == ty || self.seen_types.contains(&index_info.ty()) {
+        if index_info.ty() == ty || self.seen_types.contains(index_info.ty()) {
             return Readonlyness::Readonly;
         }
         self.is_type_readonly_recurser(index_info.ty())
@@ -149,7 +148,7 @@ impl<'a> Recurser<'_, 'a> {
                 continue;
             };
             // A recursive type. One that is mutable has failed above.
-            if self.seen_types.contains(&property_type) {
+            if self.seen_types.contains(property_type) {
                 continue;
             }
             if self.is_type_readonly_recurser(property_type) == Readonlyness::Mutable {
@@ -236,7 +235,7 @@ impl<'a> Recurser<'_, 'a> {
 pub fn is_type_readonly(ty: Type, options: &ReadonlynessOptions) -> bool {
     let mut recurser = Recurser {
         options,
-        seen_types: FxHashSet::default(),
+        seen_types: IdSet::new(),
     };
     recurser.is_type_readonly_recurser(ty) == Readonlyness::Readonly
 }

@@ -3069,10 +3069,14 @@ impl<'p, 's> Checker<'p, 's> {
     /// `clone_mapper` resolves the renamed siblings of a clone (those of the same function, class or interface with the same mapper)
     /// with the mapper of the clone, so one that an earlier call renamed is cloned again with the same mapper.
     /// `None`: the renamed clones cannot be represented.
+    /// `serial`: of the argument. Each call of `getUniqueTypeParameters` makes type parameters of
+    /// its own, with nothing resolved yet: the clones of one argument are distinct from those of
+    /// every other (`renamed_type_param`).
     pub(super) fn unique_type_params(
         &self,
         inferred: &[TypeId],
         own: &[TypeId],
+        serial: usize,
     ) -> Option<Vec<TypeId>> {
         let mut names: Vec<Atom> = inferred
             .iter()
@@ -3153,6 +3157,10 @@ impl<'p, 's> Checker<'p, 's> {
             let mut pairs = self.types().mapping(around).to_vec();
             pairs.retain(|pair| !renames_of_siblings.iter().any(|rename| rename.0 == pair.0));
             pairs.extend(renames_of_siblings.iter().copied());
+            let serial = self.number_literal(serial as f64, true);
+            if !pairs.iter().any(|pair| pair.0 == serial) {
+                pairs.push((serial, serial));
+            }
             unique.push(self.cloned_type_param(file, tp, self.types().mapper(pairs)));
         }
         Some(unique)

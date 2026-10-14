@@ -1876,6 +1876,11 @@ declare module "bun:test" {
     toBeCalled(): void;
 
     /**
+     * Ensures that a mock function is called exactly once.
+     */
+    toHaveBeenCalledOnce(): void;
+
+    /**
      * Ensures that a mock function is called an exact number of times.
      */
     toHaveBeenCalledTimes(expected: number): void;
@@ -2126,9 +2131,7 @@ declare module "bun:test" {
     // export type MockFunctionMetadataType = MockMetadataType;
 
     type MockFunctionResult<T extends FunctionLike = UnknownFunction> =
-      | MockFunctionResultIncomplete
-      | MockFunctionResultReturn<T>
-      | MockFunctionResultThrow;
+      MockFunctionResultIncomplete | MockFunctionResultReturn<T> | MockFunctionResultThrow;
 
     interface MockFunctionResultIncomplete {
       type: "incomplete";

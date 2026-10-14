@@ -9,24 +9,26 @@
 
 #[path = "oxlint_categories.rs"]
 mod categories;
-#[path = "oxlint_fields.rs"]
-mod fields;
 
 use super::flat::{ConfigError, Reader, Semantics};
 use super::ignore_lines::IgnoreLines;
 use super::merge::RuleSetting;
-use super::{Config, ConfigObject, Pattern, presets, shape};
+use super::{Config, ConfigObject, Pattern, oxlint_options, presets, shape};
 use crate::context::Severity;
 use crate::fix::SuggestionKind;
 use crate::js_plugin;
-use crate::linter::registry::{Registry, oxlint_rule_key, parse_rule_id, plugin_of_oxlint};
+use crate::linter::registry::{
+    Registry, is_oxlint_rule_key, oxlint_rule_key, parse_rule_id, plugin_of_oxlint,
+};
 use crate::linter::resolved::find_js_rule;
 use crate::options::Json;
 use crate::paths;
 use crate::rule::{Meta, Plugin};
 use bun_core::strings;
-use rustc_hash::FxHashMap;
-use std::sync::Arc;
+use rustc_hash::{FxBuildHasher, FxHashMap};
+use std::borrow::Cow;
+use std::hash::BuildHasher;
+use std::sync::{Arc, LazyLock};
 
 /// Whether `word` is one of the words of `list`, which have spaces between them.
 fn has_word(list: &str, word: &[u8]) -> bool {
@@ -56,18 +58,32 @@ fn printed_key(key: &[u8]) -> Vec<u8> {
     [plugin, b"/", name].concat()
 }
 
+/// The category of each rule that oxlint has, by the plugin that it is of there and its name.
+static CATEGORY_OF: LazyLock<FxHashMap<(Plugin, &[u8]), &str>> = LazyLock::new(|| {
+    let mut all = FxHashMap::default();
+    for (category, lists) in categories::CATEGORIES {
+        for (prefix, names) in *lists {
+            let Some(plugin) = Plugin::of_oxlint_prefix(prefix.as_bytes()) else {
+                continue;
+            };
+            for name in strings::tokenize(names.as_bytes(), b" ") {
+                all.entry((plugin, name)).or_insert(*category);
+            }
+        }
+    }
+    all
+});
+
 /// The category that oxlint has the rule in: `correctness`, `suspicious`, `pedantic`, `perf`, `style`, `restriction`, `nursery`.
 pub fn oxlint_category(plugin: Plugin, name: &str) -> Option<&'static str> {
-    let has = |lists: &[(&str, &str)]| {
-        (lists
-            .iter()
-            .filter(|it| Plugin::of_oxlint_prefix(it.0.as_bytes()) == Some(plugin.in_oxlint())))
-        .any(|it| has_word(it.1, name.as_bytes()))
-    };
-    categories::CATEGORIES
-        .iter()
-        .find(|it| has(it.1))
-        .map(|it| it.0)
+    let all: &FxHashMap<(Plugin, &[u8]), &'static str> = &CATEGORY_OF;
+    all.get(&(plugin.in_oxlint(), name.as_bytes())).copied()
+}
+
+/// Whether oxlint could only run the rule as a rule of a plugin in JavaScript: it doesn't have it. Such a rule is a port of a
+/// rule for ESLint.
+pub fn oxlint_lacks(meta: &Meta) -> bool {
+    oxlint_category(meta.plugin, meta.name).is_none()
 }
 
 /// Whether oxlint runs the rule on code that is TypeScript, or on code that is not: its `should_run`, as far as that goes by the
@@ -171,6 +187,11 @@ pub(crate) fn is_rule_of_oxlint(name: &[u8]) -> bool {
     (categories::CATEGORIES.iter().flat_map(|it| it.1)).any(|it| has_word(it.1, name))
 }
 
+/// Whether a plugin of which no rule is built in has a rule that is called `name`.
+pub(crate) fn is_rule_not_built_in(name: &[u8]) -> bool {
+    (categories::NOT_BUILT_IN.iter()).any(|it| has_word(it.2, name))
+}
+
 /// What an element of `plugins` can be for oxlint 1.80, after `eslint-plugin-` or `oxlint-plugin-`. Each was tried.
 const PLUGIN_NAMES: [&[u8]; 23] = [
     b"eslint",
@@ -197,6 +218,11 @@ const PLUGIN_NAMES: [&[u8]; 23] = [
     b"node",
     b"vue",
 ];
+
+/// Whether oxlint keeps `name` for a plugin of its own. `n` is a package to it: its own is `node`.
+pub fn is_plugin_of_oxlint(name: &[u8]) -> bool {
+    PLUGIN_NAMES.contains(&name)
+}
 
 /// The files that are linted if nothing else says so. Of the last three the scripts.
 const LINTED_FILES: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,svelte,astro}";
@@ -235,40 +261,12 @@ fn with_eslint_severities(rules: &Json) -> Json {
     Json::Object(entries.collect())
 }
 
-/// oxlint's refusal of a property that the rule `key` does not know, in the words of serde. `key`: as [`oxlint_rule_key`] writes the
-/// rule. `setting`: what the file says about it.
-fn refuse_unknown_fields(key: &[u8], setting: &Json) -> Result<(), ConfigError> {
-    let options = setting.as_array().unwrap_or_default().iter().skip(1);
-    for (at, option) in options.take(2).enumerate() {
-        let place = (key, at as u8);
-        let row = fields::FIELDS.binary_search_by(|it| (it.0.as_bytes(), it.1).cmp(&place));
-        let row = row.ok().and_then(|it| fields::FIELDS.get(it));
-        let (Some(&(_, _, known)), Some(properties)) = (row, option.as_object()) else {
-            continue;
-        };
-        let Some((unknown, _)) = properties.iter().find(|it| !has_word(known, &it.0)) else {
-            continue;
-        };
-        let names: Vec<Vec<u8>> = (strings::split(known.as_bytes(), b" ")
-            .filter(|it| !it.is_empty()))
-        .map(|it| [b"`", it, b"`"].concat())
-        .collect();
-        let expected = match &names[..] {
-            [] => b"there are no fields".to_vec(),
-            [one] => [b"expected ", &one[..]].concat(),
-            [one, other] => [b"expected ", &one[..], b" or ", other].concat(),
-            all => [&b"expected one of "[..], &all.join(&b", "[..])].concat(),
-        };
-        return Err(ConfigError::new(&[
-            b"Invalid configuration for rule `",
-            key,
-            b"`:\n  unknown field `",
-            unknown,
-            b"`, ",
-            &expected,
-        ]));
-    }
-    Ok(())
+/// Whether oxlint has a rule `name` in `plugin`, which is a name that [`plugin_of_oxlint`] gives. `key`: the rule as
+/// [`oxlint_rule_key`] writes it.
+fn is_in_oxlint(plugin: &[u8], name: &[u8], key: &[u8]) -> bool {
+    let not_built_in = || categories::NOT_BUILT_IN.iter();
+    is_oxlint_rule_key(key)
+        || not_built_in().any(|it| it.0.as_bytes() == plugin && has_word(it.2, name))
 }
 
 /// Loads a JavaScript plugin: [`Host::load`](crate::js_plugin::Host::load). It is given the directory of the file that names the
@@ -294,6 +292,10 @@ struct Rc<'r, 'l> {
     options: Vec<(Vec<u8>, Json)>,
     /// `plugins` of all files, without those of overrides.
     plugins_of_files: Vec<Vec<u8>>,
+    /// `rules` of each override as they are written, and its `plugins`.
+    rules_of_overrides: Vec<(Vec<(Vec<u8>, Json)>, Vec<Vec<u8>>)>,
+    /// `plugins` of the files that have that.
+    named_plugins: Option<Vec<Vec<u8>>>,
 }
 
 /// A rule as a file names it.
@@ -313,11 +315,11 @@ fn written_rules(json: &Json) -> Vec<Written> {
     let written = |(id, setting): &(Vec<u8>, Json)| {
         let ((prefix, name), key) = (parse_rule_id(id), oxlint_rule_key(id));
         let plugin = match (prefix, parse_rule_id(&key).0) {
-            (b"", b"") => &b"eslint"[..],
-            (b"", of_key) => of_key,
+            (b"", b"") => Cow::Borrowed(&b"eslint"[..]),
+            (b"", of_key) => Cow::Borrowed(of_key),
             (prefix, _) => plugin_of_oxlint(prefix),
         };
-        let plugin = match plugin {
+        let plugin = match &*plugin {
             b"jsx-a11y" => &b"jsx_a11y"[..],
             b"react-perf" => b"react_perf",
             plugin => plugin,
@@ -334,21 +336,31 @@ fn written_rules(json: &Json) -> Vec<Written> {
 }
 
 /// oxlint's `Oxlintrc::merge`, of the rules: those of `extended` that `own` does not name are added, and all of them come out
-/// in the order of its hash table. The same hashes in the same table give the same order.
+/// in the order of its hash table, as that is on x86-64.
 fn merged(own: Vec<Written>, extended: Vec<Written>) -> Vec<Written> {
     fn text(it: &[u8]) -> &str {
         std::str::from_utf8(it).unwrap_or_default()
     }
     let mut all: Vec<Option<Written>> = own.into_iter().chain(extended).map(Some).collect();
-    let mut table: FxHashMap<(&str, &str), (usize, bool)> = FxHashMap::default();
+    // The first of each name, in the order in which they get into the table, and the hashes of the names.
+    let mut firsts: Vec<(usize, bool)> = Vec::new();
+    let mut hashes: Vec<u32> = Vec::new();
+    let mut places: FxHashMap<(&str, &str), usize> = FxHashMap::default();
     for (at, it) in all.iter().flatten().enumerate() {
-        table
-            .entry((text(&it.plugin), text(&it.name)))
-            .and_modify(|first| first.1 = true)
-            .or_insert((at, it.is_kept));
+        let name = (text(&it.plugin), text(&it.name));
+        match places.get(&name).and_then(|place| firsts.get_mut(*place)) {
+            Some(first) => first.1 = true,
+            None => {
+                places.insert(name, firsts.len());
+                hashes.push(FxBuildHasher.hash_one(name) as u32);
+                firsts.push((at, it.is_kept));
+            }
+        }
     }
-    let mut order = Vec::with_capacity(table.len());
-    order.extend(table.into_values());
+    let order = crate::semantic::order_in_table(&hashes, 0);
+    let order: Vec<(usize, bool)> = (order.iter())
+        .filter_map(|place| firsts.get(*place as usize).copied())
+        .collect();
     let in_order = order.iter().filter_map(|&(at, is_kept)| {
         let it = all.get_mut(at)?.take()?;
         Some(Written { is_kept, ..it })
@@ -359,12 +371,12 @@ fn merged(own: Vec<Written>, extended: Vec<Written>) -> Vec<Written> {
 /// Whether `plugin` is one of `names`, which are as a configuration file of oxlint has them.
 fn is_among(plugin: Plugin, names: &[Vec<u8>]) -> bool {
     (names.iter())
-        .any(|it| Plugin::of_oxlint_prefix(plugin_of_oxlint(it)) == Some(plugin.in_oxlint()))
+        .any(|it| Plugin::of_oxlint_prefix(&plugin_of_oxlint(it)) == Some(plugin.in_oxlint()))
 }
 
 /// `names`, which are as a configuration file of oxlint has them, as a set. `eslint` is no plugin.
 fn set_of(names: &[Vec<u8>]) -> u32 {
-    let plugins = (names.iter()).filter_map(|it| Plugin::of_oxlint_prefix(plugin_of_oxlint(it)));
+    let plugins = (names.iter()).filter_map(|it| Plugin::of_oxlint_prefix(&plugin_of_oxlint(it)));
     let plugins = plugins.filter(|it| *it != Plugin::Eslint);
     plugins.fold(0, |set, it| set | (1 << (it.in_oxlint() as u32)))
 }
@@ -480,7 +492,7 @@ impl Rc<'_, '_> {
             (b"parser", b"parser"),
             (b"parserOptions", b"parserOptions"),
         ] {
-            if let Some(value) = json.get(from) {
+            if let Some(value) = json.get(from).filter(|it| **it != Json::Null) {
                 entries.push((to.to_vec(), value.clone()));
             }
         }
@@ -497,29 +509,65 @@ impl Rc<'_, '_> {
         }
     }
 
-    /// `plugins`: those that are certain to be on here. oxlint passes over what is said about a rule of another one, by the name that
-    /// is written: with `"plugins": []` over `@typescript-eslint/no-unused-vars`, not over `no-unused-vars`.
-    fn rules(&mut self, json: &Json, plugins: &[Vec<u8>]) -> Result<Vec<RuleSetting>, ConfigError> {
+    /// The options in `rules`, which are as they are written, that a rule of oxlint does not take. oxlint says all of it at once, in
+    /// the order of the texts, also about a rule that is off.
+    ///
+    /// `plugins`: those that are on here. oxlint does not look at the options of a rule of another one, by the name that is written:
+    /// with `"plugins": []` not at those of `@typescript-eslint/no-unused-vars`, but at those of `no-unused-vars`.
+    fn refuse_options(
+        &self,
+        rules: &[(&[u8], &Json)],
+        plugins: &[Vec<u8>],
+    ) -> Result<(), ConfigError> {
+        let js_plugins = &self.reader.js_plugins;
+        let mut refusals: Vec<Vec<u8>> = Vec::new();
+        for &(id, setting) in rules {
+            if find_js_rule(js_plugins, id).is_some() {
+                continue;
+            }
+            let (key, (written, name)) = (oxlint_rule_key(id), parse_rule_id(id));
+            let plugin = match (written, parse_rule_id(&key).0) {
+                (b"", b"") => Cow::Borrowed(&b"eslint"[..]),
+                (b"", of_key) => Cow::Borrowed(of_key),
+                (written, _) => plugin_of_oxlint(written),
+            };
+            let is_on =
+                *plugin == *b"eslint" || plugins.iter().any(|it| plugin_of_oxlint(it) == plugin);
+            let options = setting.as_array().and_then(|it| it.get(1..));
+            if is_on
+                && is_in_oxlint(&plugin, name, &key)
+                && let Some(why) = oxlint_options::refusal(&key, options.unwrap_or_default())
+            {
+                let start: &[u8] = b"Invalid configuration for rule `";
+                let name = parse_rule_id(&key).1;
+                refusals.push(match &*plugin {
+                    b"eslint" => [start, name, b"`:\n", &why].concat(),
+                    b"jsx-a11y" => [start, b"jsx_a11y/", name, b"`:\n", &why].concat(),
+                    b"react-perf" => [start, b"react_perf/", name, b"`:\n", &why].concat(),
+                    plugin => [start, plugin, b"/", name, b"`:\n", &why].concat(),
+                });
+            }
+        }
+        if refusals.is_empty() {
+            return Ok(());
+        }
+        crate::utils::sort::sort(&mut refusals);
+        refusals.dedup();
+        Err(ConfigError {
+            message: refusals.join(&b"\n\n"[..]),
+        })
+    }
+
+    fn rules(&mut self, json: &Json) -> Result<Vec<RuleSetting>, ConfigError> {
         let Some(rules) = json.get(b"rules") else {
             return Ok(Vec::new());
         };
         let mut rules = with_eslint_severities(rules);
         // All names of a rule are one rule, so what the file says last about it counts.
         if let Json::Object(entries) = &mut rules {
-            for (id, setting) in entries {
+            for (id, _) in entries {
                 if find_js_rule(&self.reader.js_plugins, id).is_none() {
-                    let key = oxlint_rule_key(id);
-                    let plugin = match (parse_rule_id(id).0, parse_rule_id(&key).0) {
-                        (b"", b"") => &b"eslint"[..],
-                        (b"", of_key) => of_key,
-                        (written, _) => plugin_of_oxlint(written),
-                    };
-                    if plugin == b"eslint"
-                        || plugins.iter().any(|it| plugin_of_oxlint(it) == plugin)
-                    {
-                        refuse_unknown_fields(&key, setting)?;
-                    }
-                    *id = key;
+                    *id = oxlint_rule_key(id);
                 }
             }
         }
@@ -528,23 +576,21 @@ impl Rc<'_, '_> {
 
     /// `no-shadow` and `@typescript-eslint/no-shadow` are two rules in the table of [`merged`] and one when they are applied, in
     /// the order of `rules`: the later counts.
-    fn set_the_later_names(
-        &mut self,
-        rules: &[Written],
-        plugins: &[Vec<u8>],
-    ) -> Result<(), ConfigError> {
+    fn set_the_later_names(&mut self, rules: &[Written]) -> Result<(), ConfigError> {
         let mut last: FxHashMap<Vec<u8>, (usize, usize)> = FxHashMap::default();
         for (at, it) in rules.iter().enumerate() {
             let known = last.entry(oxlint_rule_key(&it.id)).or_default();
             *known = (at, known.1 + 1 + usize::from(it.is_kept));
         }
-        let later = (last.into_values().filter(|it| it.1 > 1)).filter_map(|it| rules.get(it.0));
+        let later = last.into_values().filter(|it| it.1 > 1);
+        let later = crate::utils::sort::in_order_of(later, |it| it.0);
+        let later = later.iter().filter_map(|it| rules.get(it.0));
         let later: Vec<_> = later
             .map(|it| (it.id.clone(), it.setting.clone()))
             .collect();
         if !later.is_empty() {
             let json = Json::Object(vec![(b"rules".to_vec(), Json::Object(later))]);
-            let rules = self.rules(&json, plugins)?;
+            let rules = self.rules(&json)?;
             self.reader.objects.push(ConfigObject {
                 rules,
                 ..ConfigObject::default()
@@ -566,9 +612,9 @@ impl Rc<'_, '_> {
                 .unwrap_or(b"?");
             let Some(load) = &mut self.load_plugin else {
                 self.reader.note(&[
-                    b"jsPlugins are not supported: \"",
+                    b"\"jsPlugins\" is not supported here, so the rules of \"",
                     specifier,
-                    b"\". Its rules are skipped.",
+                    b"\" were skipped",
                 ]);
                 continue;
             };
@@ -701,7 +747,11 @@ impl Rc<'_, '_> {
                 all.push((category.clone(), severity));
             }
         }
-        let plugins = (self.plugin_names(json)?).unwrap_or_else(|| {
+        let named = self.plugin_names(json)?;
+        if let Some(named) = &named {
+            (self.named_plugins.get_or_insert_default()).extend_from_slice(named);
+        }
+        let plugins = named.unwrap_or_else(|| {
             [&b"typescript"[..], b"unicorn", b"oxc"]
                 .map(<[u8]>::to_vec)
                 .into()
@@ -710,8 +760,6 @@ impl Rc<'_, '_> {
         self.plugins.extend_from_slice(&plugins);
         // All patterns are relative to the file that extends.
         let passes_everything_on = !is_extended;
-        // The flags that turn a plugin on or off are in the `plugins` of the file that extends only.
-        let certain = if is_extended { Vec::new() } else { plugins };
 
         let ignore_patterns = strings_of(json.get(b"ignorePatterns"));
         if !ignore_patterns.is_empty() && passes_everything_on {
@@ -741,11 +789,21 @@ impl Rc<'_, '_> {
             }
         }
         let mut base = ConfigObject {
-            rules: self.rules(json, &certain)?,
+            rules: self.rules(json)?,
             ..ConfigObject::default()
         };
         if passes_everything_on {
             base.language_options = self.language_options(json);
+            // oxlint's default, which an `env` replaces and an override adds to. An `env` of a file that is extended doesn't count.
+            if json.get(b"env").is_none_or(|it| *it == Json::Null) {
+                let builtin = Json::Object(vec![(b"builtin".to_vec(), Json::Bool(true))]);
+                if !matches!(base.language_options, Json::Object(_)) {
+                    base.language_options = Json::Object(Vec::new());
+                }
+                if let Json::Object(entries) = &mut base.language_options {
+                    entries.push((b"$env".to_vec(), builtin));
+                }
+            }
             base.settings = json
                 .get(b"settings")
                 .cloned()
@@ -757,8 +815,14 @@ impl Rc<'_, '_> {
         let is_merged = !rules_of_extended.is_empty();
         let extended = rules_of_extended.into_iter().rev();
         let rules = extended.fold(written_rules(json), merged);
+        // The plugins of all files are on, or oxlint's own choice if no file names any.
+        let on = self.named_plugins.clone().unwrap_or(plugins);
+        if !is_extended {
+            let written: Vec<_> = (rules.iter().map(|it| (&it.id[..], &it.setting))).collect();
+            self.refuse_options(&written, &on)?;
+        }
         if is_merged && !is_extended {
-            self.set_the_later_names(&rules, &certain)?;
+            self.set_the_later_names(&rules)?;
         }
 
         for item in json
@@ -766,28 +830,42 @@ impl Rc<'_, '_> {
             .and_then(Json::as_array)
             .unwrap_or_default()
         {
+            let item = shape::override_with_keys(item);
+            let item = &*item;
             let files = strings_of(item.get(b"files"));
             let excluded = strings_of(item.get(b"excludeFiles"));
             let plugins = self.plugin_names(item)?;
             (self.plugins).extend_from_slice(plugins.as_deref().unwrap_or_default());
-            let certain = match is_extended {
-                true => Vec::new(),
-                false => [&certain[..], plugins.as_deref().unwrap_or_default()].concat(),
+            self.rules_of_overrides.push((
+                (item.get(b"rules").and_then(Json::as_object))
+                    .unwrap_or_default()
+                    .to_vec(),
+                plugins.clone().unwrap_or_default(),
+            ));
+            // Overrides from bunfig.toml are marked with `$globsOfBun`. `$basePath` is bunfig.toml's directory.
+            let base_path = item.get(b"$basePath").and_then(Json::as_str);
+            let pattern = match item.get(b"$globsOfBun") {
+                Some(_) => Pattern::of_bunfig,
+                None => Pattern::of_oxlint,
             };
             let object = ConfigObject {
-                files: Some(
-                    (files.iter())
-                        .map(|it| vec![Pattern::of_oxlint(it)])
-                        .collect(),
-                ),
+                base_path: base_path.map(<[u8]>::to_vec),
+                files: Some(files.iter().map(|it| vec![pattern(it)]).collect()),
                 ignores: (!excluded.is_empty())
-                    .then(|| excluded.iter().map(|it| Pattern::of_oxlint(it)).collect()),
+                    .then(|| excluded.iter().map(|it| pattern(it)).collect()),
                 language_options: self.language_options(item),
                 settings: (item.get(b"settings").cloned()).and_then(ConfigObject::settings_of),
-                rules: self.rules(item, &certain)?,
+                rules: self.rules(item)?,
                 ..ConfigObject::default()
             };
             self.overrides.push((object, plugins));
+        }
+        // One override after the other, those of what is extended first.
+        if !is_extended {
+            for (written, plugins) in &self.rules_of_overrides {
+                let written: Vec<_> = written.iter().map(|it| (&it.0[..], &it.1)).collect();
+                self.refuse_options(&written, &[&on[..], plugins].concat())?;
+            }
         }
         Ok(rules)
     }
@@ -845,6 +923,7 @@ impl Rc<'_, '_> {
                     options: Vec::new(),
                     has_only_severity: true,
                     yields: false,
+                    defaults: Vec::new(),
                 });
             }
         }
@@ -1122,6 +1201,7 @@ impl Config {
                 registry,
                 base_path: base_path.clone(),
                 prefers_typescript_rules: true,
+                has_every_rule: false,
                 objects: Vec::new(),
                 notes: Vec::new(),
                 advice: Vec::new(),
@@ -1131,6 +1211,7 @@ impl Config {
                 js_locations: Vec::new(),
                 defaults: 0,
                 foreign_prefixes: Vec::new(),
+                named: 0,
                 has_unknown_resolver: false,
                 handing_back: Vec::new(),
             },
@@ -1142,6 +1223,8 @@ impl Config {
             overrides: Vec::new(),
             options: Vec::new(),
             plugins_of_files: Vec::new(),
+            rules_of_overrides: Vec::new(),
+            named_plugins: None,
         };
         rc.reader.objects.push(ConfigObject {
             files: Some(vec![vec![Pattern::new(LINTED_FILES)]]),
@@ -1172,7 +1255,10 @@ impl Config {
         if !lacking.is_empty() {
             rc.reader.note(&[
                 lacking.len().to_string().as_bytes(),
-                b" rules that the categories turn on do not exist here yet and did not run: ",
+                match lacking.len() {
+                    1 => &b" rule enabled by \"categories\" is not supported yet and did not run: "[..],
+                    _ => b" rules enabled by \"categories\" are not supported yet and did not run: ",
+                },
                 &lacking.join(&b", "[..]),
             ]);
         }

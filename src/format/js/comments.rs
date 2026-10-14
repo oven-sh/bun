@@ -146,12 +146,26 @@ impl Spanned for Comment {
     }
 }
 
+/// Whose tree Prettier has.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum ParsedBy {
+    WhatItsNameSays,
+    /// Also if it is TypeScript: `babel-ts`.
+    Babel,
+}
+
 /// Appends the comments of `file` to `comments`.
-pub(crate) fn collect<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut Vec<Comment>) {
+pub(crate) fn collect<'a>(
+    file: &'a File<'a>,
+    flavor: Flavor,
+    parsed_by: ParsedBy,
+    comments: &mut Vec<Comment>,
+) {
     let text = file.text();
     let source = SourceText::new(text);
     let first = comments.len();
-    let has_type_casts = file.is_javascript() || type_casts_are_kept_in_typescript(flavor);
+    let has_tree_of_babel = parsed_by == ParsedBy::Babel || file.is_javascript();
+    let has_type_casts = has_tree_of_babel || type_casts_are_kept_in_typescript(flavor);
     for token in file.comments() {
         let span = token.span();
         let content = token.comment_value();
@@ -211,9 +225,14 @@ pub(crate) fn collect<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut Vec
     move_comments(
         file,
         flavor,
-        file.is_javascript(),
+        has_tree_of_babel,
         comments.get_mut(first..).unwrap_or_default(),
     );
+}
+
+/// `\s` for one byte. `u8::is_ascii_whitespace` does not know the vertical tab.
+fn is_white_space(b: u8) -> bool {
+    b.is_ascii_whitespace() || b == 0x0B
 }
 
 /// Only Babel, which Prettier parses JavaScript with, tells it about the parentheses after
@@ -945,9 +964,7 @@ fn move_comments<'a>(
             }
             // `a: (b // comment ⏎ ),`
             [b')', ..] if !is_own_line => {
-                let after_parentheses = after
-                    .iter()
-                    .find(|b| **b != b')' && !b.is_ascii_whitespace());
+                let after_parentheses = after.iter().find(|b| **b != b')' && !is_white_space(**b));
                 match (comment.followed_by_newline(), after_parentheses) {
                     (true, Some(b',' | b'}')) => moved_out_of_property(&mut nodes, comment),
                     _ => None,
@@ -1110,7 +1127,7 @@ impl<'a> Comments<'a> {
                 && self
                     .source_text
                     .byte_at(end - 1)
-                    .is_some_and(|b| b.is_ascii_whitespace())
+                    .is_some_and(is_white_space)
             {
                 end -= 1;
             }

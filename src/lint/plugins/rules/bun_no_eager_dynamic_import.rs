@@ -9,7 +9,7 @@ pub struct NoEagerDynamicImport;
 
 const EAGER_IMPORT: Message = Message::new(
     "eagerImport",
-    "This `import()` starts to load as soon as the module is evaluated. Call it where the module is first needed, or write an `import` statement.",
+    "This `import()` runs as soon as the module is imported. Call it where it is needed, or use an `import` statement.",
 );
 
 /// `vi.mock(e)`, `vi.doMock(e, factory)`, `vi.unmock(e)`, `vi.doUnmock(e)`

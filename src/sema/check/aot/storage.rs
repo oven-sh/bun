@@ -788,7 +788,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn without_number_literals(&mut self, ty: TypeId) -> TypeId {
-        self.map_type(ty, |c, part| if matches!(c.data(part), TypeData::NumberLit { .. } | TypeData::BigIntLit { .. }) { c.base_of_literal(part) } else { part })
+        self.map_type(ty, |c, part| if matches!(c.data(part), TypeData::NumberLit { .. } | TypeData::BigIntLit { .. } | TypeData::BoolLit { .. }) { c.base_of_literal(part) } else { part })
     }
 
     pub fn without_number_literals_in_arguments(&mut self, ty: TypeId) -> TypeId {
@@ -871,7 +871,8 @@ impl<'p, 's> Checker<'p, 's> {
             return if is_given { TypeId::UNKNOWN } else { declared };
         }
         let is_bound_by_a_loop = hir[d].init.is_none() && self.iterable_of_loop_variable(file, d).is_some();
-        let declared = if is_bound_by_a_loop || hir[d].pat != pat || matches!(hir[d].kind, VarKind::Let | VarKind::Var) { self.without_number_literals(declared) } else { declared };
+        let is_literal = hir[d].init.is_some() && matches!(hir[hir[d].init].kind, ExprKind::True | ExprKind::False | ExprKind::Number(_) | ExprKind::BigInt(_) | ExprKind::Unary { .. } | ExprKind::As { .. });
+        let declared = if is_bound_by_a_loop || hir[d].pat != pat || matches!(hir[d].kind, VarKind::Let | VarKind::Var) || !is_literal { self.without_number_literals(declared) } else { declared };
         let declared = self.without_number_literals_in_arguments(declared);
         // What a pattern takes out of a prediction, or a loop out of a predicted iterable, is a prediction: `const { size } = fs.statSync(p)`,
         // `for (const name of fs.readdirSync(p))`.
@@ -1185,6 +1186,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let own = match self.resolved_signature(file, e).sig {
                     Some(sig) => match self.sig_decl(sig) {
                         Some((of, func, _)) if self.return_type_of_fn(of, func) == self.sig_return(sig) => own,
+                        _ if self.parts(own).iter().all(|part| part.is_null() || part.is_undefined()) => TypeId::UNKNOWN,
                         _ => self.without_number_literals_given(own),
                     },
                     None => own,

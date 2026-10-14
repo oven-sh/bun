@@ -9,6 +9,7 @@ use crate::js::trivia::{
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::prelude::*;
 use crate::write;
+use bun_core::strings;
 
 /// Whether one of `comments` starts or ends its line. Prettier's `handleTryStatementComments` moves
 /// those into the next block.
@@ -74,7 +75,7 @@ pub(crate) fn write_try_statement<'a>(
                         .source_text()
                         .text_for(&Span::before(position, comment.span));
                     position = comment.span.end;
-                    gap.trim_ascii().is_empty()
+                    strings::trim_js_whitespace(gap).is_empty()
                 })
                 .count();
             let comments = comments.get(..count).unwrap_or_default();

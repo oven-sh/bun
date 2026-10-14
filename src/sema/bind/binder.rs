@@ -1490,7 +1490,7 @@ impl<'f, 's> Binder<'f, 's> {
             }
         }
         // The attributes of `import .. with { .. }` and `export .. with { .. }` are stored
-        // separately from the statements.
+        // separately from the statements. Those of an import type are bound with the type.
         if !self.f.import_attributes.is_empty() {
             self.flow = self.new_flow(Flow::Start {
                 outer: FlowId::NONE,
@@ -1498,7 +1498,9 @@ impl<'f, 's> Binder<'f, 's> {
             });
             for i in 0..self.f.import_attributes.len() {
                 let (_, attributes) = self.f.import_attributes[i];
-                self.expr(attributes, Parent::File);
+                if matches!(self.b.expr_parent[attributes.idx()], Parent::None) {
+                    self.expr(attributes, Parent::File);
+                }
             }
         }
         // So are the module specifiers that are not string literals.
@@ -4347,7 +4349,19 @@ impl<'f, 's> Binder<'f, 's> {
                 }
                 self.tys(args)
             }
-            TypeNodeKind::Import { args, .. } => self.tys(args),
+            TypeNodeKind::Import { args, .. } => {
+                // `checkImportType` only reads `resolution-mode`.
+                // In JavaScript, two copies of a JSDoc type share one.
+                if let Some(attributes) = self.f.attributes_of_import_type(id)
+                    && matches!(self.b.expr_parent[attributes.idx()], Parent::None)
+                {
+                    let saved = (self.true_target, self.false_target);
+                    (self.true_target, self.false_target) = (FlowId::NONE, FlowId::NONE);
+                    self.unchecked_expr(attributes, Parent::File);
+                    (self.true_target, self.false_target) = saved;
+                }
+                self.tys(args)
+            }
             TypeNodeKind::Template { types, .. } => {
                 for t in self.f.ids(types) {
                     self.note_infer(t, InferPosition::Template);

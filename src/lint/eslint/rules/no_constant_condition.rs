@@ -40,7 +40,11 @@ impl NoConstantCondition {
         // A `yield` in the `init` of a `for` is evaluated once, before the loop.
         let (test, from) = match statement.kind() {
             StmtKind::While { test, .. } => {
-                if self.check_loops == CheckLoops::AllExceptWhileTrue && test.tag() == ExprTag::True {
+                // For oxlint `(true)` is a ParenthesizedExpression, not the BooleanLiteral it exempts.
+                if self.check_loops == CheckLoops::AllExceptWhileTrue
+                    && test.tag() == ExprTag::True
+                    && !(cx.language().is_oxlint && test.is_parenthesized())
+                {
                     return;
                 }
                 (test, statement.span().start)

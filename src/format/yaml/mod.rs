@@ -120,6 +120,8 @@ fn write_document(
         comment_in_brackets: None,
         printed_empty_lines: vec![false; text.len() + 1],
         last_group_id: 0,
+        key_depth: 0,
+        start_of_content: (text.len() - text.trim_ascii_start().len()) as u32,
         out,
         stack: &stack,
     };
@@ -173,7 +175,8 @@ pub fn format(
     if has_bom {
         out.extend_from_slice(BOM);
     }
-    if bun_core::strings::trim_js_whitespace(&text).is_empty() {
+    // Prettier goes by what is white space in JavaScript, and makes nothing of a no-break space.
+    if text.trim_ascii().is_empty() {
         return Ok(());
     }
     // It has to be YAML in any case.

@@ -88,6 +88,8 @@ impl<'a> BinaryLikeExpression<'a> {
             AstNodes::Program(_) => match f.options().in_html.root {
                 // Prettier's `NGRoot`.
                 HtmlRoot::NgAction | HtmlRoot::NgDirective | HtmlRoot::NgInterpolation => false,
+                // A `File`.
+                HtmlRoot::SvelteExpression => false,
                 // The same for `__ng_binding`, and `JsExpressionRoot`.
                 _ => self.operator != BinOp::BitOr,
             },
@@ -375,7 +377,8 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
             if is_angular_pipe(binary_like_expression.operator, f) {
                 return write_name_and_arguments_of_angular_pipe(right, f);
             }
-            let is_inlined = binary_like_expression.should_inline_logical_expression(f);
+            let is_inlined = binary_like_expression.should_inline_logical_expression(f)
+                || would_end_type_arguments(binary_like_expression, f);
             write_operator(binary_like_expression.operator, right, is_inlined, f);
             if is_inlined
                 && !is_jsx
@@ -503,6 +506,16 @@ fn write_name_and_arguments_of_angular_pipe<'a>(right: Expr<'a>, f: &mut Formatt
             }));
     });
     write!(f, group(&indent(&arguments)));
+}
+
+/// To TypeScript, `a < b >` at the end of a line is `a` with a type argument, and the next line another statement. Prettier
+/// breaks the line there.
+fn would_end_type_arguments<'a>(binary: BinaryLikeExpression<'a>, f: &Formatter<'a>) -> bool {
+    binary.operator == BinOp::Gt
+        && binary.left.binary_op() == Some(BinOp::Lt)
+        && !f.file().is_javascript()
+        && !f.file().is_flow()
+        && f.options().experimental_operator_position.is_end()
 }
 
 /// Writes `operator` and what is around it. `right`: the operand after it. `is_inlined`: it stays on the line of

@@ -193,6 +193,10 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(level) = level else {
             return ty;
         };
+        // `checkExpressionEx` restores `currentNode` after this function returns.
+        let around = self
+            .instantiating_generic_argument
+            .replace((file, e, self.stack.len()));
         let instantiated = self.with_inference_context(level, |c, n| {
             let returns_plain_function = n.sig.is_some_and(|sig| {
                 let returned = c.sig_return(sig);
@@ -200,11 +204,23 @@ impl<'p, 's> Checker<'p, 's> {
                     .is_some_and(|(s, _)| c.sig_type_params(s).is_empty())
             });
             if returns_plain_function
-                && let Some(unique) = c.unique_type_params(&n.inferred_type_params, &type_params)
+                && let Some(unique) = c.unique_type_params(
+                    &n.inferred_type_params,
+                    &type_params,
+                    ((file.0 as usize) << 32) | e.0 as usize,
+                )
             {
                 let instantiated = if unique[..] == type_params[..] {
                     signature
                 } else {
+                    // Each call of `getUniqueTypeParameters` makes new type parameters, whose
+                    // constraints are not resolved yet.
+                    for (renamed, declared) in unique.iter().zip(&type_params) {
+                        if renamed != declared {
+                            c.unresolved_renamed_params.insert(*renamed);
+                        }
+                    }
+                    c.restrictive_instantiations_kept.clear();
                     c.with_own_type_params(signature, &type_params, &unique)
                 };
                 if c.adopt_generic_argument(n, instantiated, contextual_signature) {
@@ -232,6 +248,7 @@ impl<'p, 's> Checker<'p, 's> {
                 c.is_assignable(s, t)
             })
         });
+        self.instantiating_generic_argument = around;
         match instantiated {
             Some(instantiated) => self.type_of_signature(instantiated, construct),
             None => ty,

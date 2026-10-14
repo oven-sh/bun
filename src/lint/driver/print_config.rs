@@ -5,10 +5,14 @@ pub(crate) use bun_lint::linter::write_json_indented as write_indented;
 use bun_lint::linter::{Entry, ResolvedConfig, RuleId};
 use bun_lint::options::Json;
 
+// Out of line: what builds JSON to print calls these two over a hundred times.
+
+#[inline(never)]
 pub(crate) fn text(text: &[u8]) -> Json {
     Json::String(text.to_vec())
 }
 
+#[inline(never)]
 pub(crate) fn object(entries: Vec<(&[u8], Json)>) -> Json {
     Json::Object(
         entries
@@ -20,6 +24,7 @@ pub(crate) fn object(entries: Vec<(&[u8], Json)>) -> Json {
 
 /// What ESLint prints for a file that has `config`, but for the default options of the rules, which
 /// ESLint fills in. `None`: the file is not linted.
+#[optimize(size)]
 pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
     let Some(config) = config else {
         return b"undefined".to_vec();

@@ -1,4 +1,3 @@
-#define BUN_DYNAMIC_JS_LOAD_PATH "" // TEMPORARY: scratch/main/test_js_load_path.py
 #include "InternalModuleRegistry.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinUtils.h>
@@ -87,12 +86,16 @@ static String internalModuleString(uint32_t offset, uint32_t length)
 static String internalModuleSource(uint32_t id)
 {
     const auto& m = internalModuleRecord(id);
-    if (const char* directory = getenv("BUN_TEST_JS_LOAD_PATH")) {
-        auto contents = WTF::FileSystemImpl::readEntireFile(makeString(WTF::String::fromUTF8(directory), "/"_s, ASCIILiteral::fromLiteralUnsafe(InternalModuleRegistryConstants::fileNames[id])));
-        if (contents)
-            return WTF::String::fromUTF8(contents.value());
+    String moduleName = internalModuleString(m.nameOffset, m.nameLength);
+    WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, ASCIILiteral::fromLiteralUnsafe(InternalModuleRegistryConstants::fileNames[id]));
+    auto contents = WTF::FileSystemImpl::readEntireFile(file);
+    if (!contents) {
+        printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
+               "Please re-compile Bun to continue.\n\n",
+            moduleName.utf8().legacyCStringPointer(), file.utf8().legacyCStringPointer());
+        CRASH();
     }
-    return internalModuleString(m.codeOffset, m.codeLength);
+    return WTF::String::fromUTF8(contents.value());
 }
 #else
 static String internalModuleSource(uint32_t id)

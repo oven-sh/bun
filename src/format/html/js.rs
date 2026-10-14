@@ -5,14 +5,15 @@
 
 use super::map_strings::{MapString, write_mapped};
 use crate::ir::element::{Interned, TextWidth};
-use crate::js::comments::collect;
+use crate::js::comments::{ParsedBy, collect};
 use crate::js::context::JsFormatContext;
 use crate::js::print::program::{FormatStatements, write_hashbang};
 use crate::js::sort_imports::{SortImports, sorted_text};
+use crate::js::utils::tailwindcss::{Collapse, Texts, collapse_among, ends_in_template};
 use crate::options::{Code, Flavor, HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript, Then};
 use crate::prelude::*;
-use crate::tailwind::{Ends, Tailwind};
-use crate::{format_args, text, write};
+use crate::tailwind::{Tailwind, Tidies};
+use crate::{format_args, write};
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::linter::{TypesInJavaScript, refused_by_prettier_with};
@@ -42,11 +43,12 @@ pub(crate) enum SourceType {
 }
 
 /// The name of a file whose text is `(`, an expression and `)`. See `AstNodes::parent`.
-const EXPRESSION_JSX: &[u8] = b"\0.jsx";
-const EXPRESSION_TS: &[u8] = b"\0.ts";
+pub(crate) const EXPRESSION_JSX: &[u8] = b"\0.jsx";
+pub(crate) const EXPRESSION_TS: &[u8] = b"\0.ts";
+pub(crate) const EXPRESSION_TSX: &[u8] = b"\0.tsx";
 
 /// Prettier's `isProbablyJsx`: `/(?:^[^"'`]*<\/|^[^/]{2}.*\/>)/m`
-fn is_probably_jsx(text: &[u8]) -> bool {
+pub fn is_probably_jsx(text: &[u8]) -> bool {
     // `</` with the start of a line before it and no quote in between.
     let mut rest = if strings::contains(text, b"</") {
         text
@@ -75,7 +77,7 @@ fn is_probably_jsx(text: &[u8]) -> bool {
 pub(crate) fn options_in_html(options: &FormatOptions, in_html: InHtml) -> FormatOptions {
     FormatOptions {
         // In an attribute, double quotes would have to be written as entities.
-        quote_style: if in_html.is_in_attribute {
+        quote_style: if in_html.is_in_attribute || in_html.has_single_quotes {
             QuoteStyle::Single
         } else {
             options.quote_style
@@ -125,7 +127,7 @@ impl<'p> Parse<'p> {
         Parse::new(f.context().parse_javascript, f.options())
     }
 
-    fn call(self, path: &[u8], text: &[u8], is_script: bool, then: Then<'_>) {
+    pub(crate) fn call(self, path: &[u8], text: &[u8], is_script: bool, then: Then<'_>) {
         let code = Code {
             path,
             text,
@@ -138,11 +140,11 @@ impl<'p> Parse<'p> {
     }
 }
 
-type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> bool;
+pub(crate) type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> bool;
 
 /// What code is.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Piece {
+pub(crate) enum Piece {
     /// All that is in a `<script>`, and whose output it is. What sorts imports and rewrites JSDoc comments takes it for
     /// a file.
     Script(Flavor),
@@ -164,7 +166,7 @@ enum Attempt {
 /// Parses `code` as the file at each of `paths`, until it is one without errors, and calls `write` with that file and
 /// a formatter that goes on with the document of `f`. Returns what `write` returns, and `false` if `code` cannot be
 /// parsed: nothing has been written then.
-fn with_file(
+pub(crate) fn with_file(
     f: &mut Formatter<'_>,
     code: &[u8],
     paths: &[&[u8]],
@@ -182,10 +184,10 @@ fn with_file(
     if !matches!(piece, Piece::Script(flavor) | Piece::Binding(flavor) if flavor.is_oxfmt()) {
         options.filepath.clone_from(&f.options().filepath);
     }
-    // The plugin that sorts classes takes over the parsers for programs and `__js_expression`, no other. Bindings are
-    // oxfmt's own, and it does not sort there.
+    // The plugin that sorts classes takes over the parsers for programs and `__js_expression`, no other. In oxfmt bindings
+    // are its own, and it does not sort there.
     let sorts_classes = match (piece, in_html.root) {
-        (Piece::Binding(_), _) => false,
+        (Piece::Binding(_), _) => (options.tailwind.as_deref()).is_some_and(|it| it.follows_plugin),
         (_, HtmlRoot::Program) => true,
         (_, HtmlRoot::JsExpression) => paths == [EXPRESSION_JSX],
         _ => false,
@@ -202,7 +204,9 @@ fn with_file(
         options.flavor = flavor;
         options.jsdoc = f.options().jsdoc;
         match f.options().sort_imports.clone() {
-            Some(how) if how.is_applied_by_format() => options.sort_imports = Some(how),
+            Some(how) if how.is_applied_by_format() => {
+                (options.sort_imports, sorts_text) = (Some(std::sync::Arc::clone(&how)), Some(how));
+            }
             how => sorts_text = how,
         }
     }
@@ -223,7 +227,11 @@ fn with_file(
                     }
                     let comments = file.extension(|| {
                         let mut comments = Vec::new();
-                        collect(file, options.flavor, &mut comments);
+                        let parsed_by = match options.in_html.has_tree_of_babel {
+                            true => ParsedBy::Babel,
+                            false => ParsedBy::WhatItsNameSays,
+                        };
+                        collect(file, options.flavor, parsed_by, &mut comments);
                         comments
                     });
                     let comments = comments.map_or(&[][..], |comments: &Vec<Comment>| comments);
@@ -275,81 +283,94 @@ pub(crate) fn sorted_script(parse: Parse<'_>, code: &[u8], how: &SortImports) ->
     None
 }
 
+/// What an expression with classes is in.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Host {
+    Vue,
+    Angular,
+    Svelte,
+}
+
 /// Finds the strings and the templates of a program, and sorts the classes in them.
-struct ClassSorter<'t> {
+struct ClassSorter<'t, 'a> {
     tailwind: &'t Tailwind,
-    /// The plugin's `canCollapseWhitespaceIn`: every `+` around a text counts. If not, the nearest does.
-    is_angular: bool,
-    /// The operands of each `+` around what is visited, and on which sides of those further out it is.
-    concatenations: Vec<(Span, Span, (bool, bool))>,
+    host: Host,
+    /// Each `+` and each template around what is visited, from the outside to the inside.
+    around: Vec<Expr<'a>>,
     /// What is written in the place of what, in the order of the text.
     changes: Vec<(Span, Vec<u8>)>,
 }
 
-impl ClassSorter<'_> {
-    /// Whether what is at `span` is on the left, and on the right, of a `+` that counts.
-    fn sides_of(&self, span: Span) -> (bool, bool) {
-        let is_in = |operand: Span| operand.start <= span.start && span.end <= operand.end;
-        self.concatenations
-            .last()
-            .map_or((false, false), |&(left, right, outer)| {
-                (outer.0 || is_in(left), outer.1 || is_in(right))
-            })
+impl ClassSorter<'_, '_> {
+    /// How the texts of the template or the string at `whole` are sorted.
+    fn how(&self, whole: Span) -> (Collapse, Tidies) {
+        let among = |rules| collapse_among(&self.around, whole, self.tailwind, rules);
+        match self.host {
+            Host::Angular => (among((true, Texts::AsWritten)), self.tailwind.tidies()),
+            Host::Vue => (among((false, Texts::Unseen)), self.tailwind.tidies()),
+            // `removeDuplicates: false, collapseWhitespace: false`
+            Host::Svelte => (
+                Collapse::ALL,
+                Tidies {
+                    collapses_white_space: false,
+                    removes_duplicates: false,
+                },
+            ),
+        }
     }
 
-    /// `text`, which is at `span`, is text of a template, or what is between the quotes of a string. `index`, `count`: which of
-    /// how many texts of the template.
-    fn sort(&mut self, text: &[u8], span: Span, (index, count): (usize, usize)) {
-        // What is added to has to stay apart.
-        let (is_left, is_right) = self.sides_of(span);
-        let ends = Ends {
-            ignores_first: index > 0 && !text::starts_with_white_space(text),
-            ignores_last: index + 1 < count
-                && strings::trim_js_whitespace_end(text).len() == text.len(),
-            collapses_start: !is_right && index == 0,
-            collapses_end: !is_left && index + 1 == count,
-        };
-        let sorted = self.tailwind.sorted_between(text, ends);
-        if *sorted != *text {
-            self.changes.push((span, sorted.into_owned()));
+    /// `texts`: those of the template at `whole`, or what is between the quotes of the string there, and where each is.
+    fn sort<'s>(&mut self, whole: Span, texts: impl ExactSizeIterator<Item = (&'s [u8], Span)>) {
+        let (around, tidies) = self.how(whole);
+        let count = texts.len();
+        for (index, (text, span)) in texts.enumerate() {
+            let ends = ends_in_template(text, (index == 0, index + 1 == count), around);
+            let sorted = self.tailwind.sorted_with(text, ends, tidies);
+            if *sorted != *text {
+                self.changes.push((span, sorted.into_owned()));
+            }
         }
     }
 
     /// `span`: of a string with its quotes, or of a template without substitutions.
     fn sort_literal(&mut self, file: &File<'_>, span: Span) {
         if let [b'"' | b'\'' | b'`', content @ .., _] = file.slice(span) {
-            self.sort(content, Span::new(span.start + 1, span.end - 1), (0, 1));
+            let inner = Span::new(span.start + 1, span.end - 1);
+            self.sort(span, std::iter::once((content, inner)));
         }
     }
 }
 
-impl<'a> Visitor<'a> for ClassSorter<'_> {
+fn is_around_classes(e: Expr<'_>) -> bool {
+    matches!(
+        e.kind(),
+        ExprKind::Template(_) | ExprKind::Binary { op: BinOp::Add, .. }
+    )
+}
+
+impl<'a> Visitor<'a> for ClassSorter<'_, 'a> {
     fn enter(&mut self, node: Node<'a>) {
         match node {
-            Node::Expr(e) => match e.kind() {
-                ExprKind::Binary {
-                    op: BinOp::Add,
-                    left,
-                    right,
-                } => {
-                    let outer = match self.is_angular {
-                        true => self.sides_of(e.span()),
-                        false => (false, false),
-                    };
-                    self.concatenations.push((left.span(), right.span(), outer));
-                }
-                ExprKind::String(_) if !e.is_jsx_text() => self.sort_literal(e.file(), e.span()),
-                ExprKind::Template(template) => {
-                    let count = template.quasi_count();
-                    for index in 0..count {
-                        let span = template.quasi_span(index);
-                        let end = span.end - if index + 1 == count { 1 } else { 2 };
-                        let span = Span::new(span.start + 1, end);
-                        self.sort(template.raw(index), span, (index, count));
+            Node::Expr(e) => {
+                match e.kind() {
+                    ExprKind::String(_) if !e.is_jsx_text() => {
+                        self.sort_literal(e.file(), e.span())
                     }
+                    ExprKind::Template(template) => {
+                        let count = template.quasi_count();
+                        let text = |index: usize| {
+                            let span = template.quasi_span(index);
+                            let end = span.end - if index + 1 == count { 1 } else { 2 };
+                            (template.raw(index), Span::new(span.start + 1, end))
+                        };
+                        self.sort(e.span(), (0..count).map(text));
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+                if is_around_classes(e) {
+                    self.around.push(e);
+                }
+            }
             Node::Prop(property) => {
                 if let Some(key) = property.key()
                     && matches!(key.kind(), KeyKind::String(_) | KeyKind::ComputedString(_))
@@ -363,9 +384,8 @@ impl<'a> Visitor<'a> for ClassSorter<'_> {
     }
 
     fn exit(&mut self, node: Node<'a>) {
-        if matches!(node, Node::Expr(e) if matches!(e.kind(), ExprKind::Binary { op: BinOp::Add, .. }))
-        {
-            self.concatenations.pop();
+        if matches!(node, Node::Expr(e) if is_around_classes(e)) {
+            self.around.pop();
         }
     }
 }
@@ -386,8 +406,11 @@ pub(crate) fn with_sorted_classes(
             if !file.has_parse_errors() {
                 let mut sorter = ClassSorter {
                     tailwind,
-                    is_angular,
-                    concatenations: Vec::new(),
+                    host: match is_angular {
+                        true => Host::Angular,
+                        false => Host::Vue,
+                    },
+                    around: Vec::new(),
                     changes: Vec::new(),
                 };
                 walk(file, &mut sorter);
@@ -411,7 +434,26 @@ pub(crate) fn with_sorted_classes(
     Some(sorted)
 }
 
-fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
+/// For `file`, which is the expression in the braces of an attribute for classes of Svelte: what is written in the place
+/// of what. The plugin's `transformSvelte` sorts all its strings and templates, and does nothing else to them.
+pub(crate) fn sorted_in_svelte<'a>(
+    file: &'a File<'a>,
+    tailwind: &Tailwind,
+) -> Vec<(Span, Vec<u8>)> {
+    if file.has_parse_errors() {
+        return Vec::new();
+    }
+    let mut sorter = ClassSorter {
+        tailwind,
+        host: Host::Svelte,
+        around: Vec::new(),
+        changes: Vec::new(),
+    };
+    walk(file, &mut sorter);
+    sorter.changes
+}
+
+pub(crate) fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
     match syntax {
         Syntax::Babel => &[b"dummy.jsx"],
         Syntax::BabelTs => &[b"dummy.tsx", b"dummy.ts"],
@@ -544,7 +586,7 @@ pub(crate) fn write_hugged<'b>(
 }
 
 /// The expression that `file` is made of, if its text is `(`, an expression, a line break and `)`.
-fn expression_of<'b>(file: &'b File<'b>) -> Option<Expr<'b>> {
+pub(crate) fn expression_of<'b>(file: &'b File<'b>) -> Option<Expr<'b>> {
     let mut statements = file.body().iter();
     let (Some(statement), None) = (statements.next(), statements.next()) else {
         return None;
@@ -614,7 +656,7 @@ fn is_reserved_word(name: &[u8]) -> bool {
 
 /// Most expressions in templates are `a`, `a.b.c` or `!a`. Those are written here, as `printMemberExpression` has them,
 /// without being parsed. Returns whether `code` is one.
-fn write_path(f: &mut Formatter<'_>, code: &[u8], hug: Hug) -> bool {
+pub(crate) fn write_path(f: &mut Formatter<'_>, code: &[u8], hug: Hug) -> bool {
     let code = code.trim_ascii();
     let path = &code[code.iter().take_while(|byte| **byte == b'!').count()..];
     let is_name = |name: &[u8]| {

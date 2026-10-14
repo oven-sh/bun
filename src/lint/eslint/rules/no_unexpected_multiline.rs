@@ -55,7 +55,7 @@ fn break_after_type_args<'a>(call: Call<'a>, file: &'a File<'a>) -> Option<Span>
 
 /// With `--fix-dangerously` oxlint puts a `;` before it.
 fn report<'a>(at: Span, message: Message, cx: &Cx<'a, NoUnexpectedMultiline>) {
-    let report = cx.report(at, message);
+    let report = cx.report(at, message).hint("This line continues the one before. End that one with a semicolon.");
     if cx.language().is_oxlint {
         report.fix_dangerously(|fixer| fixer.insert_before(at, ";"));
     }
@@ -157,7 +157,7 @@ impl NoUnexpectedMultiline {
 }
 
 impl Rule for NoUnexpectedMultiline {
-    const META: Meta = Meta::eslint("no-unexpected-multiline", Kind::Problem).recommended();
+    const META: Meta = Meta::eslint("no-unexpected-multiline", Kind::Problem).recommended().hints();
     const ON: On = On::new()
         .exprs(&[ExprTag::Index, ExprTag::Call, ExprTag::TaggedTemplate])
         .binaries(&[BinOp::Div]);

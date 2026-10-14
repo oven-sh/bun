@@ -527,7 +527,9 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             self.print_opening_tag(id);
             self.out.end_group();
             self.out.text(tags.node_content(id));
-            self.out.built_text(|out| tags.closing_tag(id, out));
+            if !tags.is_written_to_its_end(id) {
+                self.out.built_text(|out| tags.closing_tag(id, out));
+            }
             self.out.built_text(|out| tags.closing_tag_suffix(id, out));
             return;
         }

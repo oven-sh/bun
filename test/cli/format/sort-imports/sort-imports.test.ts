@@ -26,7 +26,7 @@ const tools = {
 async function format(files: Record<string, string>, names: string[], flags: string[] = []) {
   using dir = tempDir("bun-format-sort-imports", files);
   await using proc = spawn({
-    cmd: [bunExe(), "format", "--log-level=warn", ...flags, "."],
+    cmd: [bunExe(), "fmt", "--log-level=warn", ...flags, "."],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
@@ -92,9 +92,9 @@ describe.concurrent("when imports are sorted", () => {
     const result = await format({ ".prettierrc.json": config, "a.ts": unsorted, "b.ts": unsorted }, ["a.ts", "b.ts"]);
     expect(result.files).toEqual([unsorted, unsorted]);
     expect(result.stderr).toBe(
-      `[warn] Ignored unknown option { importOrder: ["^[./]"] }.\n` +
-        `[warn] Ignored unknown option { importOrderSeparation: true }.\n` +
-        `[warn] Ignored unknown option { organizeImportsTypeOrder: "last" }.\n`,
+      `warn: Ignored unknown option { importOrder: ["^[./]"] }.\n` +
+        `warn: Ignored unknown option { importOrderSeparation: true }.\n` +
+        `warn: Ignored unknown option { organizeImportsTypeOrder: "last" }.\n`,
     );
     expect(result.exitCode).toBe(0);
   });

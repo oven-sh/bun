@@ -1195,7 +1195,7 @@ describe.concurrent("bun fmt", () => {
   test("a comment before the `:` in an object type of Flow stays there with the configuration of oxfmt", async () => {
     // oxfmt has no Flow, so this is what Prettier prints.
     const files = { ".oxfmtrc.json": "{}", "a.js": "// @flow\ntype A = { a /* comment */ : B };\n" };
-    const result = await format(files, ["--parser", "flow"], { reads: ["a.js"] });
+    const result = await format(files, ["--parser", "flow", "a.js"], { reads: ["a.js"] });
     expect(result.files["a.js"]).toBe("// @flow\ntype A = { a /* comment */: B };\n");
     expect(result.exitCode).toBe(0);
   });

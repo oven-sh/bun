@@ -10,6 +10,7 @@ import {
   gc,
   isASAN,
   isDebug,
+  isGlibc,
   isMusl,
   isWindows,
   nodeExe,
@@ -992,18 +993,25 @@ it("should not hang after destroy", async () => {
 
 describe("abort during lookup #13126", () => {
   const runtimes: [string, string][] = [["bun", bunExe()]];
-  const node = nodeExe();
-  if (node) {
+  let referenceNode = nodeExe();
+  if (referenceNode) {
     const probe = Bun.spawnSync({
-      cmd: [node, "-p", '!process.versions.bun && Number(process.versions.node.split(".")[0]) >= 24'],
+      cmd: [referenceNode, "-p", '!process.versions.bun && Number(process.versions.node.split(".")[0]) >= 24'],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
       timeout: 5000,
       maxBuffer: 1024,
     });
-    if (probe.exitCode === 0 && probe.stdout.toString().trim() === "true") {
-      runtimes.push(["node", node]);
+    if (probe.exitCode !== 0 || probe.stdout.toString().trim() !== "true") {
+      referenceNode = null;
+    }
+  }
+  if (referenceNode) {
+    runtimes.push(["node", referenceNode]);
+  } else {
+    for (const autoSelectFamily of [false, true]) {
+      it.skip(`node pending abort autoSelectFamily=${autoSelectFamily} (requires genuine Node >=24)`);
     }
   }
 
@@ -3503,8 +3511,9 @@ describe.concurrent("uncaughtException from socket listeners", () => {
   });
 });
 
-// The raw libc listener used by blackholePortSource is unavailable on Windows and musl.
-it.skipIf(isWindows || isMusl)("aborting a pending native connection emits one AbortError and closes", async () => {
+// This raw-libc blackhole is qualified on glibc; macOS needs the loopback binding
+// from https://github.com/oven-sh/bun/pull/44413.
+it.skipIf(!isGlibc)("aborting a pending native connection emits one AbortError and closes", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

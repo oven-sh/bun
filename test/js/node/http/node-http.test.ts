@@ -449,7 +449,7 @@ describe("node:http", () => {
   });
 
   describe("request", () => {
-    function runTest(done: Function, callback: (server: Server, port: number, done: (err?: Error) => void) => void) {
+    function runTest(done: Function, callback: (server: Server, port: number, done: (err?: unknown) => void) => void) {
       const server = createServer((req, res) => {
         if (Object.getPrototypeOf(req.headers) !== Object.prototype) {
           // Like Node.js, req.headers is a plain object.
@@ -569,7 +569,7 @@ describe("node:http", () => {
         }
       });
       server.listen({ port: 0 }, () => {
-        const _done = (err?: Error) => {
+        const _done = (err?: unknown) => {
           server.close(closeError => done(err ?? closeError));
         };
         callback(server, (server.address() as AddressInfo).port, _done);

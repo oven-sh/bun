@@ -485,7 +485,6 @@ impl MySQLConnection {
                             .write(&data[offset.get()..])
                             .unwrap_or_else(|_| panic!("failed to write to read buffer"));
                     } else {
-                        bun_core::handle_error_return_trace(err);
                         self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
                         return Err(err);
                     }
@@ -510,7 +509,6 @@ impl MySQLConnection {
                 Err(err) => {
                     debug!("processPackets with buffer: {}", <&'static str>::from(err));
                     if err != any_mysql_error::Error::ShortRead {
-                        bun_core::handle_error_return_trace(err);
                         self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
                         return Err(err);
                     }

@@ -2855,6 +2855,12 @@ unsafe extern "C" {
         path: *const c_char,
         cb: uv_fs_cb,
     ) -> ReturnCode;
+    pub fn uv_utf16_to_wtf8(
+        utf16: *const u16,
+        utf16_len: isize,
+        wtf8_ptr: *mut *mut c_char,
+        wtf8_len_ptr: *mut usize,
+    ) -> ReturnCode;
     pub fn uv_fs_stat(
         loop_: *mut Loop,
         req: *mut fs_t,

@@ -7494,6 +7494,119 @@ describe("req.headers and req.rawHeaders", () => {
   });
 });
 
+describe("the head of a response", () => {
+  // What the server writes for each path, requested one after the other on one connection.
+  async function written(paths: string[], listener: http.RequestListener, setUp?: (server: Server) => void) {
+    const server = createServer(listener);
+    setUp?.(server);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const socket = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    try {
+      const responses: string[] = [];
+      let received = "";
+      let wake = () => {};
+      let ended = false;
+      let failure: Error | undefined;
+      socket.setEncoding("latin1");
+      socket.on("data", chunk => ((received += chunk), wake()));
+      socket.on("error", error => ((failure = error), wake()));
+      socket.on("close", () => ((ended = true), wake()));
+      for (const path of paths) {
+        socket.write(`GET ${path} HTTP/1.1\r\nHost: a\r\n\r\n`);
+        // Every body here is "<end>".
+        while (!received.endsWith(path === "/chunked" ? "<end>\r\n0\r\n\r\n" : "<end>")) {
+          if (failure) throw failure;
+          if (ended) throw new Error(`the connection closed after ${JSON.stringify(received)}`);
+          await new Promise<void>(resolve => (wake = resolve));
+        }
+        responses.push(received);
+        received = "";
+      }
+      return responses;
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  }
+
+  it("names the requests a connection still takes when there is a limit", async () => {
+    const limits: Record<string, unknown> = {
+      "/server": undefined,
+      "/number": 7,
+      "/fraction": 2.5,
+      "/string": "4",
+      "/below-one": 0.5,
+      "/zero": 0,
+      "/negative": -1,
+      "/null": null,
+      "/not-a-number": "many",
+    };
+    const keepAlive = (
+      await written(
+        Object.keys(limits),
+        (req, res) => {
+          if (req.url !== "/server") (res as any)._maxRequestsPerSocket = limits[req.url!];
+          res.end("<end>");
+        },
+        server => void (server.maxRequestsPerSocket = 100),
+      )
+    ).map(response => /^Keep-Alive: (.*)\r$/m.exec(response)?.[1]);
+    expect(Object.fromEntries(Object.keys(limits).map((path, i) => [path, keepAlive[i]]))).toEqual({
+      "/server": "timeout=5, max=100",
+      "/number": "timeout=5, max=7",
+      "/fraction": "timeout=5, max=2.5",
+      "/string": "timeout=5, max=4",
+      "/below-one": "timeout=5",
+      "/zero": "timeout=5",
+      "/negative": "timeout=5",
+      "/null": "timeout=5",
+      "/not-a-number": "timeout=5",
+    });
+  });
+
+  // An exit from optimized code that JSC does not learn from sends the function back to the baseline JIT again and again.
+  // A debug build takes seconds for the requests this needs.
+  it.skipIf(isDebug)("is rendered by code that stays optimized", async () => {
+    const script = `
+      const { createServer } = require("node:http");
+      const { once } = require("node:events");
+      (async () => {
+        const server = createServer((req, res) => {
+          res.setHeader("Content-Type", "text/plain");
+          res.end("ok");
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+        const url = "http://127.0.0.1:" + server.address().port + "/";
+        for (let i = 0; i < 200; i++) await (await fetch(url)).text();
+        server.closeAllConnections();
+        server.close();
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: {
+        ...bunEnv,
+        // Tiers up, and gives up on what it compiled, after a few calls instead of hundreds.
+        // JSC checks after each option that a "soon" threshold is not above its "after warm-up" one.
+        BUN_JSC_useConcurrentJIT: "0",
+        BUN_JSC_useFTLJIT: "0",
+        BUN_JSC_thresholdForJITSoon: "10",
+        BUN_JSC_thresholdForJITAfterWarmUp: "10",
+        BUN_JSC_thresholdForOptimizeSoon: "50",
+        BUN_JSC_thresholdForOptimizeAfterWarmUp: "50",
+        BUN_JSC_osrExitCountForReoptimization: "5",
+        BUN_JSC_dfgAllowlist: "renderNativeHeaders",
+        BUN_JSC_reportDFGCompileTimes: "1",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const compiled = stderr.split("\n").filter(line => line.startsWith("Optimized renderNativeHeaders#"));
+    expect({ stdout, compiled: compiled.length, exitCode }).toEqual({ stdout: "", compiled: 1, exitCode: 0 });
+  });
+});
+
 it("setHeader and appendHeader check a name however often names were set before", () => {
   const message = new OutgoingMessage();
   const invalid = (name: unknown) => {

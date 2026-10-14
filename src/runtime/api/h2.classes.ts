@@ -77,10 +77,6 @@ export default [
         fn: "setStreamReading",
         length: 2,
       },
-      setStreamPriority: {
-        fn: "setStreamPriority",
-        length: 2,
-      },
       getStreamContext: {
         fn: "getStreamContext",
         length: 1,
@@ -93,10 +89,6 @@ export default [
         fn: "getEndAfterHeaders",
         length: 1,
       },
-      isStreamAborted: {
-        fn: "isStreamAborted",
-        length: 1,
-      },
       getStreamState: {
         fn: "getStreamState",
         length: 1,
@@ -104,10 +96,6 @@ export default [
       bufferSize: {
         fn: "getBufferSize",
         length: 0,
-      },
-      hasNativeRead: {
-        fn: "hasNativeRead",
-        length: 1,
       },
       setNextStreamID: {
         fn: "setNextStreamID",

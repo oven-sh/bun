@@ -153,6 +153,43 @@ describe.concurrent("process.on('memoryPressure')", () => {
     expect(exitCode).toBe(0);
   });
 
+  // psi_trigger_create() seeds the trigger window from the rtpoll total, but
+  // an unprivileged trigger is evaluated against the avgs total. The rtpoll
+  // total only moves while a privileged trigger exists, so on most hosts the
+  // first stall after arming counts all stall since boot as growth and fires
+  // the trigger (#42783). Bun reads `some total=` at arm time and on each
+  // POLLPRI, and emits only once the growth reaches the trigger's threshold.
+  test.skipIf(!isLinux)("a PSI event is dropped until the stall grows by the trigger threshold", async () => {
+    const { stdout, stderr, exitCode } = await run(/* js */ `
+      const { memoryPressurePsiFilter, memoryPressurePsiTrigger } = require("bun:internal-for-testing");
+      const thresholdUs = Number(memoryPressurePsiTrigger().toString().split(" ")[1]);
+      const psi = someTotalUs =>
+        "some avg10=0.00 avg60=0.00 avg300=0.00 total=" + someTotalUs + "\\n" +
+        "full avg10=0.00 avg60=0.00 avg300=0.00 total=0\\n";
+      // Stall accumulated since boot when the trigger is armed, far above the threshold.
+      const armedUs = 3_911_888_025;
+      const emitted = memoryPressurePsiFilter(
+        psi(armedUs),
+        psi(armedUs + 115), // first stall after arming: the false event
+        psi(armedUs + 687), // second stall inside the next window: still false
+        psi(armedUs + thresholdUs - 1), // one microsecond short of the threshold
+        psi(armedUs + thresholdUs), // reached the threshold since arming: real
+        psi(armedUs + thresholdUs + 500), // 500 us since the last emitted event
+        psi(armedUs + 2 * thresholdUs), // the threshold again since the last emitted event
+        "", // unreadable file: keep the kernel's verdict
+      );
+      process.stdout.write(JSON.stringify({ thresholdUs, emitted }));
+    `);
+    expect({ stdout, stderr: stderr.trim() }).toEqual({
+      stdout: JSON.stringify({
+        thresholdUs: 150_000,
+        emitted: [false, false, false, true, false, true, true],
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test.skipIf(!canArmPsiTrigger())("first listener arms a PSI trigger on Linux", async () => {
     const { stdout, stderr, exitCode } = await run(/* js */ `
       const { memoryPressureWatcherHasOsBackend } = require("bun:internal-for-testing");

@@ -8,6 +8,7 @@ use bun_ast::lexer_tables as tables;
 use bun_ast::{LexerLog, Loc, Log, Range, Source};
 use bun_core::Environment;
 use bun_core::fmt::hex_digit_value_u32;
+pub(crate) use bun_core::lexer::is_whitespace;
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
 use identifier as js_identifier;
@@ -240,6 +241,8 @@ pub struct Lexer<'a> {
     pub(crate) temp_buffer_u16: Vec<u16>,
     pub(crate) track_comments: bool,
     pub(crate) track_react_suppressions: bool,
+    /// `@name`, an intrinsic in the source of one of JavaScriptCore's builtins, is a name like any other.
+    pub(crate) jsc_builtin_syntax: bool,
     pub(crate) all_comments: Vec<Range>,
 }
 
@@ -691,7 +694,6 @@ impl<'a> Lexer<'a> {
                                     }
                                     j += 1;
                                 }
-                                let _ = width3;
                             }
 
                             iter.c = value as CodePoint; // @truncate
@@ -1328,6 +1330,11 @@ impl<'a> Lexer<'a> {
                     continue;
                 }
                 0x09 | 0x20 => {
+                    // Consumes the remaining white space at once: an indented line has many of these
+                    // characters.
+                    while matches!(contents.get(self.current), Some(b' ' | b'\t')) {
+                        self.current += 1;
+                    }
                     self.step_with(contents);
                     continue;
                 }
@@ -1369,7 +1376,15 @@ impl<'a> Lexer<'a> {
                 }
                 0x40 => {
                     self.step_with(contents);
-                    self.token = T::TAt;
+                    if self.jsc_builtin_syntax && is_identifier_start(self.code_point) {
+                        while is_identifier_continue(self.code_point) {
+                            self.step_with(contents);
+                        }
+                        self.identifier = self.raw();
+                        self.token = T::TIdentifier;
+                    } else {
+                        self.token = T::TAt;
+                    }
                 }
                 0x7E => {
                     self.step_with(contents);
@@ -2271,6 +2286,7 @@ impl<'a> Lexer<'a> {
             temp_buffer_u16: Vec::new(),
             track_comments: false,
             track_react_suppressions: false,
+            jsc_builtin_syntax: false,
             all_comments: Vec::new(),
         }
     }
@@ -3346,12 +3362,6 @@ pub fn is_identifier_start(codepoint: i32) -> bool {
 #[inline]
 pub fn is_identifier_continue(codepoint: i32) -> bool {
     js_identifier::is_identifier_part(codepoint)
-}
-
-pub(crate) fn is_whitespace(codepoint: CodePoint) -> bool {
-    // ECMAScript `WhiteSpace`: TAB VT FF SP ZWNBSP + Unicode Zs.
-    matches!(codepoint, 0x0009 | 0x000B | 0x000C | 0x0020 | 0xFEFF)
-        || strings::is_unicode_space_separator(codepoint as u32)
 }
 
 pub use bun_core::identifier::{is_identifier, is_identifier_utf16};

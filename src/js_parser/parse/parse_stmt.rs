@@ -350,6 +350,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `value`/`stmt_opts` are reinitialized every iteration before any read, so
                 // declare per-iteration.
                 let mut value: Option<js_ast::Expr> = None;
+                let clause_loc = p.lexer.loc();
                 if p.lexer.token == T::TDefault {
                     if found_default {
                         p.log().add_range_error(
@@ -386,7 +387,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 cases.push(js_ast::Case {
                     value,
                     body: bun_ast::StoreSlice::from_bump(body),
-                    loc: bun_ast::Loc::EMPTY,
+                    loc: clause_loc,
                 });
             }
             p.lexer.expect(T::TCloseBrace)?;

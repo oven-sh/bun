@@ -86,27 +86,6 @@ fn write_formatted<'a>(
         )
     };
 
-    // Comments that directly follow each other have been made one. Each is formatted by itself, and they go on
-    // following each other directly if each has several lines.
-    if first.comment_span().end < comment.span().end {
-        let mut formatted = Vec::new();
-        let mut start = comment.span().start;
-        while start < comment.span().end {
-            let Some(doc) = docs.at(start) else {
-                return false;
-            };
-            match format(doc, f) {
-                Some(FormattedJsdoc::MultiLine(lines)) => formatted.push(lines),
-                _ => return false,
-            }
-            start = doc.comment_span().end;
-        }
-        for lines in &formatted {
-            write_lines(lines, f);
-        }
-        return true;
-    }
-
     match format(first, f) {
         None => return false,
         Some(FormattedJsdoc::Empty) => {}

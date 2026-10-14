@@ -1121,8 +1121,7 @@ impl<'a> Rules<'_, 'a, '_> {
         &self,
         ignored_node: &mut Option<Owner<'a>>,
     ) -> Option<Attachment<'a>> {
-        let Some(Owner::Node(N::ConditionalExpression(mut conditional))) = self.enclosing_node
-        else {
+        let Some(Owner::Node(N::ConditionalExpression(conditional))) = self.enclosing_node else {
             return None;
         };
         let is_alternate_of = |e: Expr<'a>, conditional: Expr<'a>| matches!(conditional.kind(), ExprKind::Cond { no, .. } if no == e);
@@ -1132,16 +1131,14 @@ impl<'a> Rules<'_, 'a, '_> {
         if self.following_node.is_some() {
             return None;
         }
-        // `a ? b : c ? d : (e // comment⏎)`
-        while let Node::Expr(parent) = conditional.parent()
-            && is_alternate_of(conditional, parent)
-            && self.cx.owner_of_expr(conditional)
-                == Owner::Node(N::ConditionalExpression(conditional))
+        // `a ? <b /> : c ? d : (e // comment⏎)`: next to JSX the parentheses are written.
+        let mut outermost = conditional;
+        while let Node::Expr(parent) = outermost.parent()
+            && is_alternate_of(outermost, parent)
         {
-            conditional = parent;
+            outermost = parent;
         }
-        // `a ? <b /> : (<c /> // comment⏎)`: the parentheses are written.
-        if is_jsx_conditional_chain(conditional) {
+        if is_jsx_conditional_chain(outermost) {
             return None;
         }
         if self.context.is_ignore_comment && !self.context.comment.has_newline_before() {
@@ -1164,12 +1161,15 @@ impl<'a> Rules<'_, 'a, '_> {
         &self,
         e: Expr<'a>,
     ) -> Option<Attachment<'a>> {
-        let (operator, right) = (e.binary_op()?, self.following_node?);
-        let comment = self.context.comment;
+        let ExprKind::Binary { op, left, .. } = e.kind() else {
+            return None;
+        };
+        let (comment, right) = (self.context.comment, self.following_node?);
         let first_behind_operator = self.ids_of_comments_between_same_tokens(comment).start;
         let last_before_operator = self.cx.file.comment(first_behind_operator.checked_sub(1)?);
-        let operator_end = last_before_operator.next_token_start() + operator.as_str().len() as u32;
-        (operator_end == comment.prev_token_end()
+        let operator_end = last_before_operator.next_token_start() + op.as_str().len() as u32;
+        (left.outer_span().end <= last_before_operator.span().start
+            && operator_end == comment.prev_token_end()
             && self
                 .ids_of_comments_between_same_tokens(last_before_operator)
                 .any(|id| self.cx.file.comment(id).has_newline_before()))

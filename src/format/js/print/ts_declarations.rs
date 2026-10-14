@@ -13,10 +13,10 @@ use super::union_type::{
 };
 use crate::cursor::around_node;
 use crate::js::comments::OwnedComments;
-use crate::js::format::{format_name, format_node, identifier};
-use crate::js::trivia::comments_stay_between_head_and_body;
+use crate::js::format::{format_name, format_node, identifier, write_ignored_node};
 use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::object::{FormatKey, key_requires_quotes};
+use crate::js::utils::statement_body::write_space_before_body;
 use crate::js::utils::typescript::{should_hug_type, without_lone_operator};
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -26,24 +26,6 @@ fn is_declared(statement: Stmt<'_>) -> bool {
         .modifiers()
         .iter()
         .any(|it| it.flag() == Flags::AMBIENT)
-}
-
-/// For oxfmt a comment on its own line between a head and its body stays there, so the body starts on a new line.
-///
-/// ```ts
-/// enum A
-/// // comment
-/// {}
-/// ```
-fn write_space_before_body<'a>(body: AstNodes<'a>, f: &mut Formatter<'a>) {
-    let starts_on_new_line = !f.is_quiet()
-        && comments_stay_between_head_and_body(f)
-        && (f.comments().of_node(body).leading.first())
-            .is_some_and(|comment| comment.has_newline_before());
-    match starts_on_new_line {
-        true => write!(f, hard_line_break()),
-        false => write!(f, space()),
-    }
 }
 
 /// The name or the type parameters of an interface, with the comments `owned` by it. Prettier's `printClass` indents the
@@ -113,6 +95,9 @@ pub(crate) fn write_ts_interface_declaration<'a>(
                 is_type_or_interface_decl: true,
             };
             let type_parameters = format_with(|f| {
+                if type_parameters_comments.is_ignored {
+                    return write_ignored_node(type_parameters_node, f);
+                }
                 type_parameters(type_params, Node::Stmt(statement))
                     .with_options(options)
                     .write_without_comments(f)

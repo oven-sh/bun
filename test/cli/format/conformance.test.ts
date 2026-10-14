@@ -99,6 +99,7 @@ test.skipIf(!hasRunner)("comments are attached to the nodes that Prettier attach
   const isSameOwner = (theirs: Owner, ours: Owner, text: Buffer) => {
     if (theirs.placement !== ours.placement || theirs.start !== ours.start || theirs.rest !== ours.rest) return false;
     if (theirs.end === ours.end || ours.type === "Name") return true;
+    if (theirs.type !== ours.type) return false;
     const between = text.subarray(theirs.end, ours.end).toString();
     return between.replace(/\/\*.*?\*\/|\/\/[^\n]*/gs, "").trim() === ";";
   };

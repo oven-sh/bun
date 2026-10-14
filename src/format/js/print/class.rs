@@ -1,7 +1,5 @@
 use super::decorators::FormatDecorators;
-use super::function::{
-    FormatFunctionBody, should_group_function_parameters, write_space_before_body,
-};
+use super::function::{FormatFunctionBody, should_group_function_parameters};
 use super::function_type::write_accessor_keyword;
 use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
@@ -16,6 +14,7 @@ use crate::js::parentheses::expression::needs_parentheses;
 use crate::js::utils::assignment_like::AssignmentLike;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
+use crate::js::utils::statement_body::write_space_before_body;
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typecast::{

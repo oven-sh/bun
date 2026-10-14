@@ -64,7 +64,9 @@ for (const [path, bytes] of [...files].sort(([a], [b]) => (a < b ? -1 : 1))) {
     ({ ast } = await prettier.__debug.parse(text, { filepath: name }));
     // Attaches the comments.
     await prettier.__debug.formatAST(ast, { filepath: name, originalText: text });
-  } catch {
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+    console.error(`${name}: Prettier does not parse it`);
     continue;
   }
   const lines: [number, string][] = [];

@@ -7,7 +7,7 @@ use super::type_parameters::type_parameters;
 use crate::js::format::{
     ExprOptions, FormatTypeAnnotation, format_node, identifier, write_expression,
 };
-use crate::js::trivia::comments_stay_between_head_and_body;
+use crate::js::utils::statement_body::write_space_before_body;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
@@ -171,25 +171,6 @@ pub(crate) fn write_called_function_with_comments<'a>(
     });
     write!(f, ["(", soft_block_indent(&content), ")"]);
     true
-}
-
-/// Writes the space between a head and `body`. For oxfmt a comment on its own line between the two stays there, so the body
-/// starts on a new line.
-///
-/// ```js
-/// function a()
-/// // comment
-/// {}
-/// ```
-pub(crate) fn write_space_before_body<'a>(body: AstNodes<'a>, f: &mut Formatter<'a>) {
-    let starts_on_new_line = !f.is_quiet()
-        && comments_stay_between_head_and_body(f)
-        && (f.comments().of_node(body).leading.first())
-            .is_some_and(|comment| comment.has_newline_before());
-    match starts_on_new_line {
-        true => write!(f, hard_line_break()),
-        false => write!(f, space()),
-    }
 }
 
 /// The `{ .. }` of a function.

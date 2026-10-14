@@ -256,8 +256,8 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
             }
             write!(f, [space(), "=", space(), initializer]);
         };
-        // `private a = 1`: the `AssignmentPattern` in a `TSParameterProperty` is a node of its own.
-        match param.is_parameter_property() {
+        // `private a = 1`: the `AssignmentPattern` in a `TSParameterProperty` is a node of its own. Not for oxfmt.
+        match param.is_parameter_property() && !f.options().flavor.is_oxfmt() {
             true => format_node(
                 AstNodes::AssignmentPattern(Node::Param(param)),
                 f,

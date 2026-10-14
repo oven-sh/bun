@@ -44,7 +44,8 @@ pub(crate) fn chain_expression_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<
 /// needs none. What is formatted gets them further in, or is written otherwise: `({}.a) && b` is `({}).a && b`,
 /// `(new A).b` is `new A().b`. Prettier leaves them out of what it writes as it is.
 pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    if !e.is_parenthesized() {
+    // The parentheses of a type cast are written anyway.
+    if (e.parens()).all(|paren| f.comments().is_cast_parenthesis(paren.start)) {
         return false;
     }
     match e.kind() {

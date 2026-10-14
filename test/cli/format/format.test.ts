@@ -969,6 +969,12 @@ describe.concurrent("bun fmt", () => {
       [
         [
           "js",
+          "/** @type {Foo} */ (new Foo // prettier-ignore\n).bar;\n",
+          "/** @type {Foo} */ (\n  new Foo // prettier-ignore\n).bar;\n",
+          "/** @type {Foo} */ new Foo.bar; // prettier-ignore\n",
+        ],
+        [
+          "js",
           "const x = (a  +  b // prettier-ignore\n)(1);\n",
           "const x = (a  +  b) // prettier-ignore\n(1);\n",
           "const x = a  +  b // prettier-ignore\n(1);\n",

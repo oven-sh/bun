@@ -1766,7 +1766,7 @@ describe.concurrent("exports", () => {
       "a.test.js": `import { assert, test } from "vitest"; test("test", () => assert(true));`,
     });
     expect({ errors, exitCode }).toEqual({
-      errors: [`error: Cannot find package 'chai' from '<dir>/a.test.js'`],
+      errors: [`error: Cannot find package 'chai' from '${join("<dir>", "a.test.js")}'`],
       exitCode: 1,
     });
   });

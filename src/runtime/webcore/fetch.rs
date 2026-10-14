@@ -1233,9 +1233,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             Some(from_fetch_headers(
+                global_this,
                 Some(headers_ref),
                 any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
-            ))
+            )?)
         } else {
             headers
         };
@@ -1487,9 +1488,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     if headers.is_none() && body.has_body() && body.has_content_type_from_user() {
         headers = Some(from_fetch_headers(
+            global_this,
             None,
             any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
-        ));
+        )?);
     }
 
     // Userinfo in the URL is the request's credentials, like curl and

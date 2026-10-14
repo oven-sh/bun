@@ -5048,6 +5048,18 @@ maybe(() => { return f; });
           ],
           ["no-implied-eval", 'setTimeout("alert(1)", 1);\n', '(setTimeout)("alert(1)", 1);\n', 1],
           [
+            "no-duplicate-type-constituents",
+            "export function f(a?: string | undefined) {\n  return a;\n}\n",
+            "export function f(a?: (string | undefined)) {\n  return a;\n}\n",
+            1,
+          ],
+          [
+            "prefer-regexp-exec",
+            "declare const s: string;\nexport const m = s.match(/x/);\n",
+            "declare const s: string;\nexport const m = (s.match)(/x/);\n",
+            1,
+          ],
+          [
             "await-thenable",
             "export async function f() {\n  await Promise.all([1, 2]);\n}\n",
             "export async function f() {\n  await Promise.all(([1, 2]));\n}\n",

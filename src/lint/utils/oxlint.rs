@@ -40,6 +40,9 @@ fn is_unambiguous_await<'a>(e: Expr<'a>, in_function: &mut AncestorMemo<'a, ()>)
 pub fn is_visited_as_pattern(node: Expr) -> bool {
     let (mut at, mut allows_pattern) = (node, false);
     loop {
+        if at.is_parenthesized() {
+            return allows_pattern;
+        }
         at = match at.parent() {
             Node::Expr(parent) => match parent.as_assign() {
                 // The left of an assignment that is itself in a pattern is visited as an expression.

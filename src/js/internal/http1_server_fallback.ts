@@ -628,7 +628,14 @@ function connectionListenerHTTP1(server, socket, options) {
     }
   }
   function onHttp1SocketData(data) {
-    AsyncContextFrame.run(connectionFrame, parseHttp1SocketData, undefined, data);
+    const frame = AsyncContextFrame.current();
+    if (frame === connectionFrame) return parseHttp1SocketData(data);
+    AsyncContextFrame.exchange(connectionFrame);
+    try {
+      parseHttp1SocketData(data);
+    } finally {
+      AsyncContextFrame.exchange(frame);
+    }
   }
   function parseHttp1SocketData(data) {
     const ret = parser.execute(data);

@@ -545,7 +545,7 @@ fn attach_in_link<'a>(
             }
             Some(_) => {
                 let is_adjacent = source.all_bytes(Span::after(comment.span, leading_start), |b| {
-                    is_white_space(b) || b == b'('
+                    b.is_ascii_whitespace() || b == b'('
                 });
                 match is_adjacent {
                     true => {
@@ -675,7 +675,7 @@ fn attach_between_sides_of_assignment<'a>(
         } else {
             is_tie_broken = is_tie_broken
                 || !source.all_bytes(Span::after(comment.span, leading_start), |b| {
-                    is_white_space(b) || b == b'('
+                    b.is_ascii_whitespace() || b == b'('
                 });
             if !is_tie_broken {
                 leading_start = comment.span.start;
@@ -1480,7 +1480,7 @@ impl<'a> Comments<'a> {
                     continue;
                 }
                 let is_adjacent = source_text.all_bytes(Span::new(start, comment.start()), |b| {
-                    is_white_space(b) || matches!(b, b')' | b',' | b';')
+                    b.is_ascii_whitespace() || matches!(b, b')' | b',' | b';')
                 });
                 if !is_adjacent {
                     return &comments[..index];
@@ -1532,7 +1532,7 @@ impl<'a> Comments<'a> {
             .rev()
         {
             let is_adjacent = source_text.all_bytes(Span::new(comment.end(), gap_end), |b| {
-                is_white_space(b) || b == b'('
+                b.is_ascii_whitespace() || b == b'('
             });
             if !is_adjacent {
                 return &comments[..=index];
@@ -1627,7 +1627,7 @@ impl<'a> Comments<'a> {
             let gap = Span::new(reached, comment.start());
             let is_adjacent = self
                 .source_text
-                .all_bytes(gap, |b| is_white_space(b) || matches!(b, b',' | b';'));
+                .all_bytes(gap, |b| b.is_ascii_whitespace() || matches!(b, b',' | b';'));
             if !is_adjacent {
                 break;
             }
@@ -1688,7 +1688,7 @@ impl<'a> Comments<'a> {
                 self.is_type_cast_comment(comment)
                     && self
                         .source_text
-                        .all_bytes(Span::after(comment.span, open), is_white_space)
+                        .all_bytes(Span::after(comment.span, open), |b| b.is_ascii_whitespace())
             })
     }
 

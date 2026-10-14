@@ -18,14 +18,19 @@ pub(crate) fn write_binding_pattern<'a>(pat: Pat<'a>, f: &mut Formatter<'a>) {
 }
 
 fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mut Formatter<'a>) {
-    let node = pat.as_ast_nodes();
     write!(f, "[");
     if elements.is_empty() {
-        write!(f, dangling_comments(node).with_soft_block_indent());
+        write!(
+            f,
+            dangling_comments(pat.as_ast_nodes()).with_soft_block_indent()
+        );
     } else {
         // `[, /* comment */]`: a hole is no node, so the comment dangles. Prettier's `printArray` writes it after the elements.
-        let has_dangling_line_comment = !f.is_quiet()
-            && (f.comments().of_node(node).dangling.iter()).any(|comment| comment.is_line());
+        let dangling_comments = match f.is_quiet() {
+            true => CommentList::empty(),
+            false => f.comments().of_node(pat.as_ast_nodes()).dangling,
+        };
+        let has_dangling_line_comment = dangling_comments.iter().any(|comment| comment.is_line());
         let rest = elements.last().filter(|it| is_rest_element(*it));
         let count = elements.len() - usize::from(rest.is_some());
         write!(
@@ -45,7 +50,13 @@ fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mu
                 if let Some(rest) = rest {
                     write!(f, group(&rest));
                 }
-                write!(f, dangling_comments(node));
+                write!(
+                    f,
+                    FormatDanglingComments::Comments {
+                        comments: dangling_comments,
+                        indent: DanglingIndentMode::None,
+                    }
+                );
             })))
             .should_expand(has_dangling_line_comment)
         );

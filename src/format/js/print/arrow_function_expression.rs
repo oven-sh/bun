@@ -9,7 +9,7 @@ use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::expression::ExpressionLeftSide;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typecast::{
-    comments_of_expression, has_leading_own_line_comment, is_cast_target,
+    cast_parentheses, has_leading_own_line_comment, is_cast_target,
     is_cast_target_that_hides_its_kind,
 };
 use crate::prelude::*;
@@ -150,13 +150,13 @@ fn write_arrow<'a>(
         }
     }
 
-    let is_block_after_comments = body_has_leading_own_line_comment(tail, f)
+    let has_own_line_comment = body_has_leading_own_line_comment(tail, f);
+    let is_block_after_comments = has_own_line_comment
         && options.call_argument_layout.is_some()
         && !is_nested
         && get_expression(tail).is_none()
         && block_of_grouped_argument_stays_after_arrow(f);
-    let has_own_line_comment =
-        !is_block_after_comments && body_has_leading_own_line_comment(tail, f);
+    let has_own_line_comment = has_own_line_comment && !is_block_after_comments;
     // For Prettier the body is a `ParenthesizedExpression` then, whatever is in it.
     let is_body_type_cast = get_expression(tail).is_some_and(|body| is_cast_target(body, f));
     let add_parens_if_not_break = !is_body_type_cast && should_add_parens_if_not_break(tail);
@@ -372,8 +372,8 @@ fn has_complex_signature(arrow: Func<'_>) -> bool {
 /// Prettier's `hasLeadingOwnLineComment` for the body of `arrow`: the body goes on the next line, after the comment.
 fn body_has_leading_own_line_comment<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
     match arrow.body() {
-        FnBody::Expr(body) => has_leading_own_line_comment(body, f),
         _ if f.is_quiet() => false,
+        FnBody::Expr(body) => has_leading_own_line_comment(body, f),
         _ => {
             // `() =>⏎/* comment */ {}` stays as it is for oxfmt. See `write_space_before_body`.
             let keeps_line_break_before = comments_stay_between_head_and_body(f);
@@ -490,14 +490,18 @@ fn write_comments_on_line_of_arrow_for_oxfmt<'a>(
     {
         return false;
     }
-    let leading_comments = f.comments().of_node(AstNodes::FunctionBody(arrow)).leading;
+    let owned = f.comments().of_node(AstNodes::FunctionBody(arrow));
+    let leading_comments = owned.leading;
     let count = (leading_comments.iter())
         .take_while(|comment| !comment.has_newline_before())
         .count();
     let comments = leading_comments.slice(0, count);
     let content = FormatTrailingComments::Comments(comments);
     write_comments_once(comments, content, cache_mode, f);
-    (comments.last()).is_some_and(|comment| comment.has_newline_after())
+    // `a(() => /* prettier-ignore */⏎{ b( ) })` is `a(() => /* prettier-ignore */ { b( ) })`
+    (comments.last()).is_some_and(|comment| {
+        comment.is_line() || (comment.has_newline_after() && !owned.is_ignored)
+    })
 }
 
 /// `arrow` is the body of another arrow function: `(a) => /* comment */ (b) => c`
@@ -509,9 +513,10 @@ fn write_leading_comments_of_arrow<'a>(
     if f.is_quiet() {
         return;
     }
-    // `() => /** @type {T} */ (a) => a`: oxfmt leaves out the parentheses of the type cast.
-    if let Some(e) = arrow.owner().as_expr().filter(|e| is_cast_target(*e, f)) {
-        let comments = comments_of_expression(e, f).leading;
+    // `() => /** @type {A} */ (/** @type {B} */ ((a) => a))` is `() => /** @type {A} */ /** @type {B} */ (a) => a` for oxfmt,
+    // which leaves out the parentheses of a type cast here.
+    for parenthesis in cast_parentheses_of_arrow(arrow, f) {
+        let comments = f.comments().of_cast_parens(parenthesis.start).leading;
         let content = FormatLeadingComments::Comments(comments);
         write_comments_once(comments, content, cache_mode, f);
     }
@@ -532,10 +537,18 @@ fn write_trailing_comments_of_arrow<'a>(
     let comments = f.comments().of_node(arrow.as_ast_nodes()).trailing;
     let content = FormatTrailingComments::Comments(comments);
     write_comments_once(comments, content, cache_mode, f);
-    if let Some(e) = arrow.owner().as_expr().filter(|e| is_cast_target(*e, f)) {
-        let comments = comments_of_expression(e, f).trailing;
+    for parenthesis in cast_parentheses_of_arrow(arrow, f).iter().rev() {
+        let comments = f.comments().of_cast_parens(parenthesis.start).trailing;
         let content = FormatTrailingComments::Comments(comments);
         write_comments_once(comments, content, cache_mode, f);
+    }
+}
+
+/// The parentheses of the type casts around `arrow`, from the outside in.
+fn cast_parentheses_of_arrow<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> SmallVec<[Span; 2]> {
+    match arrow.owner().as_expr() {
+        Some(e) if is_cast_target(e, f) => cast_parentheses(e, f),
+        _ => SmallVec::new(),
     }
 }
 
@@ -646,7 +659,8 @@ impl<'a> Format<'a> for FormatSignature<'a> {
 }
 
 /// `a((b) => // comment⏎{ c; })` is `a((b) => // comment⏎{⏎  c;⏎});` for oxfmt. Anywhere else, as in `a((b) => (c) => ..)`,
-/// the comment and the block are indented, on lines of their own.
+/// the comment and the block are indented, on lines of their own. Prettier moves the comment into the block:
+/// `a((b) => {⏎  // comment⏎  c;⏎});`
 fn block_of_grouped_argument_stays_after_arrow(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }

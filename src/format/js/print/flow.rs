@@ -96,6 +96,7 @@ pub(crate) fn is_no_source_element(node: AstNodes<'_>) -> bool {
 // ───────────────────────────── expressions ─────────────────────────────
 
 /// `(e: T)`
+#[inline(never)]
 pub(crate) fn write_type_cast_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     if let ExprKind::As { expr, ty } = e.kind() {
         write!(f, ["(", expr, FormatTypeAnnotation(ty), ")"]);
@@ -385,24 +386,29 @@ pub(crate) fn predicate_prefix(ty: TypeNode<'_>) -> &'static str {
     }
 }
 
+/// The `T` and the `e` of the return type `T %checks(e)`, which is a type query with `T` as its type argument in the tree.
+pub(crate) fn as_declared_predicate(ty: TypeNode<'_>) -> Option<(Option<TypeNode<'_>>, Expr<'_>)> {
+    match ty.kind() {
+        TypeKind::Typeof { expr, args, .. } if ty.first_token() != b"typeof" => {
+            Some((args.first(), expr))
+        }
+        _ => None,
+    }
+}
+
 /// `: T %checks(e)` as a return type. Returns whether the type query `ty` is that. Of a function
 /// that is only declared, the `T` is written: the rest is not part of the signature.
-pub(crate) fn write_declared_predicate<'a>(
-    ty: TypeNode<'a>,
-    expr: Expr<'a>,
-    args: List<'a, TypeNode<'a>>,
-    f: &mut Formatter<'a>,
-) -> bool {
-    if ty.first_token() == b"typeof" {
+pub(crate) fn write_declared_predicate<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) -> bool {
+    let Some((return_type, expr)) = as_declared_predicate(ty) else {
         return false;
-    }
-    write!(f, args.first());
+    };
+    write!(f, return_type);
     let is_of_declared_function = matches!(
         ty.parent(),
         Node::Func(func) if !func.has_body() && matches!(func.owner(), Node::Stmt(_))
     );
     if !is_of_declared_function {
-        write!(f, [args.first().map(|_| space()), "%checks(", expr, ")"]);
+        write!(f, [return_type.map(|_| space()), "%checks(", expr, ")"]);
     }
     true
 }
@@ -668,6 +674,7 @@ pub(crate) fn is_inexact_mark(member: Member<'_>) -> bool {
 
 /// `{ a: A }`, `{| a: A |}`, `{ a: A, ... }`. Prettier's `printClassBody` for an object type that is
 /// not the body of an interface or a class.
+#[inline(never)]
 pub(crate) fn write_object_type<'a>(
     ty: TypeNode<'a>,
     members: List<'a, Member<'a>>,
@@ -821,6 +828,7 @@ pub(crate) fn is_flow_opaque_type(statement: Stmt<'_>) -> bool {
 }
 
 /// `opaque type A<T>: B = C`, `opaque type A super B extends C = D`
+#[inline(never)]
 pub(crate) fn write_opaque_type<'a>(
     statement: Stmt<'a>,
     interface: Interface<'a>,
@@ -904,6 +912,7 @@ pub(crate) fn is_declared_class(class: Class<'_>) -> bool {
 }
 
 /// Writes `declare class` and `record`. Returns whether `class` is one of them.
+#[inline(never)]
 pub(crate) fn write_class<'a>(class: Class<'a>, f: &mut Formatter<'a>) -> bool {
     let is_record = is_record(class, f);
     if is_record || is_declared_class(class) {
@@ -1091,6 +1100,7 @@ fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut
 /// `hook` or `function`: what the declaration of `func` starts with. A component, and a function
 /// that is only declared, which is written like a function type, are written here: then it is
 /// `None`.
+#[inline(never)]
 pub(crate) fn write_component_or_keyword<'a>(
     func: Func<'a>,
     f: &mut Formatter<'a>,
@@ -1121,10 +1131,7 @@ pub(crate) fn write_component_or_keyword<'a>(
             ]
         );
         write_ts_call_signature_declaration(func, f);
-        if let Some(ty) = func.return_type()
-            && let TypeKind::Typeof { expr, .. } = ty.kind()
-            && ty.first_token() != b"typeof"
-        {
+        if let Some((_, expr)) = func.return_type().and_then(as_declared_predicate) {
             // `%checks(a) /* comment */`
             let comments = f.comments().of_node(AstNodes::Function(func)).dangling;
             write!(

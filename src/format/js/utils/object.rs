@@ -42,7 +42,17 @@ fn write_key<'a>(key: Key<'a>, parent: impl Fn() -> AstNodes<'a>, f: &mut Format
             _ => 0,
         };
     }
-    let printed = printed_key(key, span, parent(), f);
+    let mut printed = printed_key(key, span, parent(), f);
+    // Prettier's `printPropertyKey` prints a key like any other node unless it adds or removes the quotes, so a
+    // `prettier-ignore` comment applies to `0XAB` and `'a-b'`, and not to the `'a'` that is printed as `a`.
+    let source = f.source_text().text_for(&span);
+    let has_quotes = |text: &[u8]| matches!(text.first(), Some(b'"' | b'\''));
+    if !f.is_quiet()
+        && has_quotes(source) == has_quotes(&printed)
+        && f.comments().of_name(span.start).is_ignored
+    {
+        printed = Cow::Borrowed(source);
+    }
     format_name(span, f, |f| match &printed {
         Cow::Borrowed(_) if is_name => write!(f, source_text(span)),
         _ => write!(f, text(&printed)),

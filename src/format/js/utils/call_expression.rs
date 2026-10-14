@@ -47,12 +47,23 @@ pub(crate) fn strip_chain_element_wrappers(mut e: Expr<'_>) -> Expr<'_> {
 ///
 /// Not after `new A` without type arguments, not after `a[b]`, not between `a.b` and `?.`, and not after a call that is a link
 /// of a member chain.
-pub(crate) fn comments_stay_behind_callee<'a>(callee: Expr<'a>, f: &Formatter<'a>) -> bool {
-    f.options().flavor.is_oxfmt() && comments_stay_after_callee_for_oxfmt(callee)
+///
+/// `is_in_member_chain`: whether `callee` is written as a part of a member chain.
+pub(crate) fn comments_stay_behind_callee<'a>(
+    callee: Expr<'a>,
+    is_in_member_chain: bool,
+    f: &Formatter<'a>,
+) -> bool {
+    f.options().flavor.is_oxfmt()
+        && comments_stay_after_callee_for_oxfmt(callee, |_| is_in_member_chain)
 }
 
-/// See [`comments_stay_behind_callee`]. The attachment of comments asks this too.
-pub(crate) fn comments_stay_after_callee_for_oxfmt(callee: Expr<'_>) -> bool {
+/// See [`comments_stay_behind_callee`]. The attachment of comments asks this too, and finds out from the tree whether a call
+/// is a link of a member chain.
+pub(crate) fn comments_stay_after_callee_for_oxfmt<'a>(
+    callee: Expr<'a>,
+    is_link_of_member_chain: impl FnOnce(Expr<'a>) -> bool,
+) -> bool {
     matches!(callee.parent(), Node::Expr(parent) if match parent.kind() {
         ExprKind::Call(call) => call.callee() == callee && match callee.tag() {
             ExprTag::Index => false,
@@ -65,31 +76,16 @@ pub(crate) fn comments_stay_after_callee_for_oxfmt(callee: Expr<'_>) -> bool {
     })
 }
 
-/// Whether `e` is written as a link of a member chain: it is the `a()` of `a().b()`, `a().b.c()` or `a()().b()`.
-fn is_link_of_member_chain(mut e: Expr<'_>) -> bool {
-    while let Node::Expr(parent) = e.parent() {
-        match parent.kind() {
-            ExprKind::Dot { .. } | ExprKind::NonNull(_) => {}
-            ExprKind::Index { obj, .. } if obj == e => {}
-            ExprKind::Call(call) if call.callee() == e => {
-                if matches!(e.tag(), ExprTag::Dot | ExprTag::Index) {
-                    return true;
-                }
-            }
-            _ => return false,
-        }
-        e = parent;
-    }
-    false
-}
-
 /// The callee of a call or a `new`, with its comments.
-pub(crate) struct FormatCallee<'a>(pub(crate) Expr<'a>);
+pub(crate) struct FormatCallee<'a> {
+    pub(crate) callee: Expr<'a>,
+    pub(crate) is_in_member_chain: bool,
+}
 
 impl<'a> Format<'a> for FormatCallee<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let callee = self.0;
-        if f.is_quiet() || !comments_stay_behind_callee(callee, f) {
+        let callee = self.callee;
+        if f.is_quiet() || !comments_stay_behind_callee(callee, self.is_in_member_chain, f) {
             return write!(f, callee);
         }
         write!(f, FormatNodeWithoutTrailingComments(&callee));

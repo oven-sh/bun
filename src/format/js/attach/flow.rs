@@ -4,9 +4,9 @@
 
 use crate::js::ast_nodes::{AsAstNodes, AstNodes as N};
 use crate::js::print::flow::{
-    as_match_expression, head_of_match_statement, is_directly_in_function_type,
-    is_function_type_param, is_inexact_mark, is_unknown_members_mark, is_variance,
-    keyword_of_function_type,
+    as_declared_predicate, as_match_expression, head_of_match_statement,
+    is_directly_in_function_type, is_function_type_param, is_inexact_mark, is_unknown_members_mark,
+    is_variance, keyword_of_function_type,
 };
 use bun_lint::ast::comments::NodeOrName;
 use bun_lint::ast::{
@@ -259,18 +259,19 @@ pub(super) fn is_no_node(node: N<'_>) -> bool {
     }
 }
 
-/// The `a` of `(a: A) => B`. A `FunctionTypeParam` has an `Identifier` for its name. A parameter of a function is that `Identifier`.
+/// The `a` of `(a: A) => B`. A `FunctionTypeParam` has an `Identifier` for its name. In a real function the parameter itself is the
+/// `Identifier`.
 pub(super) fn is_name_of_function_type_param(name: Pat<'_>) -> bool {
-    matches!(name.parent(), Node::Param(param)
-        if is_function_type_param(param) && !is_this_of_function_type(param))
+    matches!(name.parent(), Node::Param(param) if is_function_type_param(param) && !is_this(param))
 }
 
 /// `(this: A) => B`: the `FunctionTypeParam` has no name.
 fn is_this_of_function_type(param: Param<'_>) -> bool {
-    is_function_type_param(param)
-        && param
-            .func()
-            .is_some_and(|it| it.this_param() == Some(param))
+    is_function_type_param(param) && is_this(param)
+}
+
+fn is_this(param: Param<'_>) -> bool {
+    (param.func()).is_some_and(|it| it.this_param() == Some(param))
 }
 
 /// The parent of the type `node`, where `AstNodes::parent` gives that of TypeScript's tree:
@@ -296,10 +297,7 @@ pub(super) fn parent_of_type(node: N<'_>) -> Option<N<'_>> {
             return Some(N::Class(class));
         }
         // The `T` of `: T %checks(e)`, which is a type query with `T` as its type argument in the tree.
-        Node::Type(parent)
-            if matches!(parent.kind(), TypeKind::Typeof { .. })
-                && parent.first_token() != b"typeof" =>
-        {
+        Node::Type(parent) if as_declared_predicate(parent).is_some() => {
             return Some(parent.as_ast_nodes());
         }
         _ => false,
@@ -373,7 +371,6 @@ fn members_of_enum_with_explicit_type(
 /// Whether `offset` is after the `(` of a function type that `enclosing_node` stands for together with its name.
 fn is_in_function_type(enclosing_node: Option<Node<'_>>, offset: u32) -> bool {
     let func = match enclosing_node {
-        Some(Node::Func(func)) => Some(func),
         Some(Node::Member(member)) => member.func(),
         Some(Node::Stmt(statement)) => match statement.kind() {
             StmtKind::Fn(func) => Some(func),
@@ -398,6 +395,7 @@ fn is_name_of_type_parameter(enclosing_node: Option<Node<'_>>, start: u32) -> bo
 /// A node of Flow's tree that ends before `offset` in `enclosing_node` and that the parser does not record:
 /// - `component A(a /* comment */ as b) {}`: the `a`.
 /// - `{ + /* comment */ a: A }`, `<+ /* comment */ T>`: the `Variance`.
+/// - `<const /* comment */ T>`: the `const`.
 pub(super) fn unrecorded_preceding_node(
     enclosing_node: Option<Node<'_>>,
     offset: u32,
@@ -408,7 +406,8 @@ pub(super) fn unrecorded_preceding_node(
             return (outer_name.end <= offset).then_some(NodeOrName::Name(outer_name.start));
         }
         Node::Member(member) => member.modifiers(),
-        // `<const /* comment */ T>`, which Prettier does not parse: the name is no node, so that nothing else is next to the comment.
+        // `<const /* comment */ T>`: Prettier cannot parse this. The name `T` is not a node in Flow's tree, so the modifier is the only
+        // thing the comment can attach to.
         Node::TypeParam(param) => {
             let modifier = (param.modifiers().iter())
                 .map(|it| it.token_span())
@@ -457,9 +456,7 @@ pub(super) fn following_node<'a>(
     }
     // `: /* comment */ T %checks(e)` is a type query with `T` as its type argument in the tree.
     if let Node::Type(ty) = node
-        && let TypeKind::Typeof { args, .. } = ty.kind()
-        && ty.first_token() != b"typeof"
-        && let Some(return_type) = args.first()
+        && let Some((Some(return_type), _)) = as_declared_predicate(ty)
     {
         return Some(NodeOrName::Node(Node::Type(return_type)));
     }

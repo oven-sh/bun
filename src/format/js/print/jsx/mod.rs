@@ -9,9 +9,7 @@ pub(crate) use self::element::ignored_jsx_gets_no_parentheses;
 use crate::js::format::{ExprOptions, format_name, format_node, identifier, write_expression};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::tailwindcss::{InTailwindContext, context_of_attribute};
-use crate::js::utils::typecast::{
-    comments_of_expression, is_cast_target, is_chain_expression_without_comments,
-};
+use crate::js::utils::typecast::{comments_of_expression, has_comments_that_count, is_cast_target};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -229,20 +227,9 @@ impl<'a> Format<'a> for FormatJsxEmptyExpression<'a> {
 /// />
 /// ```
 ///
-/// Prettier on the left, oxfmt on the right.
-fn comments_alone_in_braces_are_not_hugged(f: &Formatter<'_>) -> bool {
-    !f.options().flavor.is_oxfmt()
-}
-
-/// Prettier's `hasComment(node)`, for what is in braces.
+/// Prettier on the left, oxfmt on the right: see [`has_comments_that_count`].
 fn has_comments_in_braces<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
-    if f.is_quiet() || is_chain_expression_without_comments(expression, f) {
-        return false;
-    }
-    let comments = comments_of_expression(expression, f);
-    !comments.leading.is_empty()
-        || !comments.trailing.is_empty()
-        || (!comments.dangling.is_empty() && comments_alone_in_braces_are_not_hugged(f))
+    !f.is_quiet() && has_comments_that_count(expression, f)
 }
 
 /// Prettier's `shouldInline` in `printJsxExpressionContainer`: it starts right after the `{` and
@@ -325,10 +312,11 @@ struct FormatJsxAttributeValue<'a>(Expr<'a>);
 impl<'a> Format<'a> for FormatJsxAttributeValue<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let value = self.0;
+        if f.is_quiet() || value.jsx_container_span().is_some() {
+            return FormatJsxChild(value).fmt(f);
+        }
         let node = value.as_ast_nodes();
-        if f.is_quiet()
-            || value.jsx_container_span().is_some()
-            || !matches!(node, AstNodes::StringLiteral(_))
+        if !matches!(node, AstNodes::StringLiteral(_))
             || !f.comments().is_ignored(node)
             || !ignored_string_of_attribute_is_formatted(f)
         {
@@ -371,6 +359,7 @@ fn write_jsx_spread<'a>(argument: Expr<'a>, f: &mut Formatter<'a>) {
 }
 
 /// `{...e}` among the children of an element. `e`: the `Spread`.
+#[inline(never)]
 pub(crate) fn write_jsx_spread_child<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     if let ExprKind::Spread(argument) = e.kind() {
         write_jsx_spread(argument, f);

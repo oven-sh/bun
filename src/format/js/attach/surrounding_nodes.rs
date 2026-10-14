@@ -18,7 +18,7 @@ use bun_lint::ast::{
     Expr, ExprKind, File, FnBody, FnKind, Func, List, Node, Param, Pat, Stmt, StmtKind, StmtTag,
     TypeKind, TypeNode,
 };
-use bun_lint::span::Span;
+use bun_lint::span::{Span, Spanned};
 use std::cell::Cell;
 use std::ops::Range;
 
@@ -40,6 +40,47 @@ pub(super) struct AttachContext<'a, 'c> {
     cast_parens: &'c [u32],
     /// The last two answers of [`AttachContext::comments_between_same_tokens`].
     last_comments_between_tokens: Cell<[CommentsBetweenTokens; 2]>,
+    /// The last answer of [`AttachContext::has_bracket_in`].
+    last_search_for_bracket: Cell<(Span, bool)>,
+    /// An expression, and what a chain of member accesses and calls that ends with it starts with. All comments between two
+    /// tokens ask about the same expression.
+    pub(super) last_start_of_chain: Cell<Option<(Expr<'a>, Owner<'a>)>>,
+    pub(super) is_followed_by_operand: AnswerForAncestors,
+    pub(super) is_name_of_type_query_or_jsx_element: AnswerForAncestors,
+    pub(super) is_link_of_member_chain: AnswerForAncestors,
+    pub(super) has_following_node: AnswerForAncestors,
+}
+
+/// The last answer to a question about a node that has the same answer for its parent, for the parent of that, and so on up to
+/// the node that decides it. `a()()()..` can be thousands of calls in each other with a comment in each, so the way up is gone
+/// once for all of them and not once for each.
+#[derive(Default)]
+pub(super) struct AnswerForAncestors(Cell<Option<(Span, Span, bool)>>);
+
+impl AnswerForAncestors {
+    /// `step` returns the parent of a node if that has the same answer, or else the answer.
+    pub(super) fn find<T: Spanned + Copy>(
+        &self,
+        start: T,
+        step: impl Fn(T) -> Result<T, bool>,
+    ) -> bool {
+        let mut node = start;
+        let (last, answer) = loop {
+            // What contains the one node and is in the other is on the way from the one to the other.
+            if let Some((first, last, answer)) = self.0.get()
+                && node.span().contains(first)
+                && last.contains(node.span())
+            {
+                break (last, answer);
+            }
+            match step(node) {
+                Ok(parent) => node = parent,
+                Err(answer) => break (node.span(), answer),
+            }
+        };
+        self.0.set(Some((start.span(), last, answer)));
+        answer
+    }
 }
 
 /// What the rules ask about all the comments between two tokens. There can be thousands of them, so this is found once for all
@@ -49,11 +90,11 @@ pub(super) struct CommentsBetweenTokens {
     pub(super) first_id: u32,
     /// The id after the last one.
     pub(super) end_id: u32,
-    /// The first comment that has a line break before it.
-    pub(super) first_on_new_line: Option<u32>,
+    /// One of them has a line break before it.
+    pub(super) has_line_break_before_one: bool,
     /// The first and the last comment that have no line break before them.
-    pub(super) first_on_same_line: Option<u32>,
-    pub(super) last_on_same_line: Option<u32>,
+    pub(super) first_without_line_break_before: Option<u32>,
+    pub(super) last_without_line_break_before: Option<u32>,
     /// The first comment that is the last thing on its line, if it is on the line of the token before the comments.
     pub(super) first_that_ends_line_of_prev_token: Option<u32>,
 }
@@ -197,8 +238,8 @@ fn recorded_nodes_without_import_attribute_braces<'a>(
     (enclosing_node, preceding_node, following_node)
 }
 
-/// `import { type as /* comment */ as as } from "a"`: the parser takes a `type` or an `as` for a name until it has seen what
-/// follows, so it can have recorded a keyword. This replaces it with the name before or after the comment.
+/// `import { type /* comment */ a } from "b"`: the parser takes a `type` or an `as` for a name until it has seen what follows,
+/// so it can have recorded a keyword. This replaces it with the name before or after the comment.
 fn without_keywords_of_specifier<'a>(
     enclosing_node: Option<Node<'a>>,
     preceding_node: &mut Option<NodeOrName<'a>>,
@@ -232,9 +273,8 @@ fn import_attribute_of_value(node: N<'_>) -> Option<N<'_>> {
         Node::Type(import_type) => import_type.import_attributes(),
         _ => None,
     };
-    let mut attributes = attributes?.entries().iter();
-    attributes
-        .find(|attribute| attribute.value() == Some(value))
+    (attributes?.entries().around(value.span().start))
+        .filter(|attribute| attribute.value() == Some(value))
         .map(N::ObjectProperty)
 }
 
@@ -316,7 +356,7 @@ fn account_for_type_annotation_of_identifier(nodes: &mut SurroundingNodes<'_>) {
     {
         nodes.enclosing_node = Some(identifier);
         nodes.preceding_node = decorated_identifier(name)
-            .and_then(|param| param.decorators().last())
+            .and_then(|param| param.modifiers().iter().rev().find_map(|it| it.decorator()))
             .map(|decorator| Owner::Node(N::Decorator(decorator)));
     }
     // `let a: T /* comment */ = b`: the preceding node is `a: T`.
@@ -371,7 +411,24 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             options,
             cast_parens,
             last_comments_between_tokens: Cell::default(),
+            last_search_for_bracket: Cell::default(),
+            last_start_of_chain: Cell::default(),
+            is_followed_by_operand: AnswerForAncestors::default(),
+            is_name_of_type_query_or_jsx_element: AnswerForAncestors::default(),
+            is_link_of_member_chain: AnswerForAncestors::default(),
+            has_following_node: AnswerForAncestors::default(),
         }
+    }
+
+    /// Whether there is a `[` in the text of `span`. All comments between two tokens ask about the same text.
+    pub(super) fn has_bracket_in(&self, span: Span) -> bool {
+        let (last_span, last_answer) = self.last_search_for_bracket.get();
+        if last_span == span {
+            return last_answer;
+        }
+        let answer = bun_core::strings::contains_char(self.source.text_for(&span), b'[');
+        self.last_search_for_bracket.set((span, answer));
+        answer
     }
 
     pub(super) fn is_babel(&self) -> bool {
@@ -596,9 +653,16 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         }
     }
 
-    /// Most comments are before a statement of a body or a member of a class, an interface or an enum, and after the one before
-    /// it or after the `{`. The parser has recorded the nodes that Prettier finds, and the enclosing node is a `Program`, a
-    /// `BlockStatement`, a `ClassBody`, a `TSInterfaceBody`, a `TSTypeLiteral` or a `TSEnumBody`, for which Prettier has no rule.
+    pub(super) fn next_token_starts_with(&self, comment: comments::Comment<'a>, byte: u8) -> bool {
+        self.file.text().get(comment.next_token_start() as usize) == Some(&byte)
+    }
+
+    pub(super) fn prev_token_ends_with(&self, comment: comments::Comment<'a>, byte: u8) -> bool {
+        let end = comment.prev_token_end() as usize;
+        end > 0 && self.file.text().get(end - 1) == Some(&byte)
+    }
+
+    /// What the rules ask about all the comments between the same two tokens as `comment`.
     pub(super) fn comments_between_same_tokens(
         &self,
         comment: comments::Comment<'a>,
@@ -617,19 +681,20 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         let first_id = before.last().unwrap_or(id);
         let mut all = CommentsBetweenTokens {
             first_id,
-            end_id: after.last().map_or(id, |last| last + 1),
+            end_id: after.last().unwrap_or(id) + 1,
             ..CommentsBetweenTokens::default()
         };
         for id in all.ids() {
             let it = self.file.comment(id);
             match it.has_newline_before() {
-                true => all.first_on_new_line = all.first_on_new_line.or(Some(id)),
+                true => all.has_line_break_before_one = true,
                 false => {
-                    all.first_on_same_line = all.first_on_same_line.or(Some(id));
-                    all.last_on_same_line = Some(id);
+                    all.first_without_line_break_before =
+                        all.first_without_line_break_before.or(Some(id));
+                    all.last_without_line_break_before = Some(id);
                 }
             }
-            if all.first_on_new_line.is_none()
+            if !all.has_line_break_before_one
                 && all.first_that_ends_line_of_prev_token.is_none()
                 && (it.is_line() || it.has_newline_after())
             {
@@ -640,6 +705,9 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         all
     }
 
+    /// Most comments are before a statement of a body or a member of a class, an interface or an enum, and after the one before
+    /// it or after the `{`. The parser has recorded the nodes that Prettier finds, and the enclosing node is a `Program`, a
+    /// `BlockStatement`, a `ClassBody`, a `TSInterfaceBody`, a `TSTypeLiteral` or a `TSEnumBody`, for which Prettier has no rule.
     fn list_elements_around(&self, comment: comments::Comment<'a>) -> Option<SurroundingNodes<'a>> {
         if self.file.is_flow() {
             return None;
@@ -657,7 +725,9 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                 && self.file.comment(comment.id() + 1).next_token_start()
                     == comment.next_token_start();
             if is_followed_by_comment
-                && (self.comments_between_same_tokens(comment).last_on_same_line)
+                && (self
+                    .comments_between_same_tokens(comment)
+                    .last_without_line_break_before)
                     .is_some_and(|id| id > comment.id())
             {
                 return None;
@@ -694,9 +764,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             }
             (None, _) if enclosing_node.is_none() => None,
             // What is before the `{` is not in the body.
-            _ if text.get((comment.prev_token_end() as usize).wrapping_sub(1)) == Some(&b'{') => {
-                None
-            }
+            _ if self.prev_token_ends_with(comment, b'{') => None,
             _ => return None,
         };
         Some(SurroundingNodes {
@@ -857,7 +925,6 @@ impl<'a, 'c> AttachContext<'a, 'c> {
     }
 
     /// The children of Babel's `ObjectMethod` are the key, the parameters and the body. Here the parameters and the body are in
-
     /// a function expression, which Babel does not have.
     fn account_for_object_method_of_babel(&self, nodes: &mut SurroundingNodes<'a>, comment: Span) {
         let Some(Owner::Node(N::ObjectProperty(prop))) = nodes.enclosing_node else {
@@ -924,8 +991,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         }
     }
 
-    /// Prettier does not let a comment move from one `${}` of a template literal to another. The comment is before the
-    /// expression, directly after the `${`, or after it, directly before the `}`.
+    /// Prettier does not let a comment move from one `${}` of a template literal to another. The comment is in the parentheses
+    /// around one of the two expressions next to it, directly after the `${`, or directly before the `}`.
     fn stay_in_template_substitution(
         &self,
         nodes: &mut SurroundingNodes<'a>,
@@ -934,11 +1001,19 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         let Some(Owner::Node(N::TemplateLiteral(_))) = nodes.enclosing_node else {
             return;
         };
-        let text = self.file.text();
-        if text.get((comment.prev_token_end() as usize).wrapping_sub(1)) == Some(&b'{') {
+        let is_in_parentheses_of = |owner: Option<Owner<'a>>| {
+            let expression = match owner {
+                Some(Owner::Node(node)) => node.as_expression(),
+                Some(Owner::CastParens(e, _)) => Some(e),
+                Some(Owner::Name(_)) | None => None,
+            };
+            expression.is_some_and(|e| e.outer_span().contains(comment.span()))
+        };
+        let (preceding_node, following_node) = (nodes.preceding_node, nodes.following_node);
+        if is_in_parentheses_of(following_node) || self.prev_token_ends_with(comment, b'{') {
             nodes.preceding_node = None;
         }
-        if text.get(comment.next_token_start() as usize) == Some(&b'}') {
+        if is_in_parentheses_of(preceding_node) || self.next_token_starts_with(comment, b'}') {
             nodes.following_node = None;
         }
     }

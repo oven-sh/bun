@@ -533,8 +533,7 @@ impl<Content: ?Sized> IfGroupBreaks<'_, Content> {
 }
 
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for IfGroupBreaks<'_, Content> {
-    /// A trailing comma is written for every call, array and object. Where this is inlined, all that is left for it is to
-    /// write one element that is known at compile time.
+    /// A trailing comma is written for every call, array and object. Inlined, this is one write of a constant element.
     #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'a>) {
         if let (Some(text), None, PrintMode::Expanded) =

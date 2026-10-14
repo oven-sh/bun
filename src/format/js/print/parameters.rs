@@ -32,8 +32,9 @@ fn has_modifier(param: Param<'_>) -> bool {
 
 /// Prettier's `printFunctionParameters`.
 fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
-    // Only oxfmt attaches comments to the parentheses: `class A { b ⏎// comment⏎ () {} }` is `b () {}⏎// comment`, and
-    // `b /* prettier-ignore */ ( c ) {}` is `b/* prettier-ignore */ ( c ) {}`.
+    // Comments that are attached to the parentheses. For oxfmt `class A { b ⏎// comment⏎ () {} }` is `b () {}⏎// comment`, and
+    // `b /* prettier-ignore */ ( c ) {}` is `b/* prettier-ignore */ ( c ) {}`. For Prettier only in Flow:
+    // `declare function a /* comment */ (): void`
     if !f.is_quiet() {
         let node = AstNodes::FormalParameters(func);
         let owned = f.comments().of_node(node);
@@ -153,11 +154,16 @@ fn write_dangling_comments_in_parentheses<'a>(func: Func<'a>, f: &mut Formatter<
 }
 
 /// Prettier's `hasComment(parameter)`. A parameter without a default value is the same node as its pattern in ESTree.
+///
+/// The pattern and the type in the parameter ask this too while they are written, so [`Formatter::is_quiet`] says nothing
+/// about it.
 fn parameter_has_comment<'a>(param: Param<'a>, f: &Formatter<'a>) -> bool {
-    f.comments().has_comments(param.as_ast_nodes())
-        || (param.default().is_none()
+    let comments = f.comments();
+    (comments.is_owner(Node::Param(param)) && comments.has_comments(param.as_ast_nodes()))
+        || (comments.is_owner(Node::Pat(param.pat()))
+            && param.default().is_none()
             && !hugs_pattern_with_comments(f)
-            && f.comments().has_comments(param.pat().as_ast_nodes()))
+            && comments.has_comments(param.pat().as_ast_nodes()))
 }
 
 /// ```js

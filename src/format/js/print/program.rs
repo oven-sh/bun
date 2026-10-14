@@ -164,7 +164,8 @@ impl<'a> Format<'a> for FormatStatements<'a> {
 }
 
 /// `a ⏎ /* comment */; ⏎⏎ b`: see [`comment_before_semicolon_keeps_its_line`]. The comment is written on its own line behind
-/// `a;`, so an empty line is kept between the two only if there is one before the comment.
+/// `a;`, so an empty line is kept between the two only if there is one before the comment. A comment on the line of `a` can
+/// come first: `a // comment ⏎ // comment ⏎; ⏎⏎ b`
 fn own_line_comment_before_semicolon<'a>(
     statement: Stmt<'a>,
     f: &Formatter<'a>,
@@ -173,9 +174,11 @@ fn own_line_comment_before_semicolon<'a>(
         return None;
     }
     let semicolon = statement.span().end.checked_sub(1)?;
-    (f.source_text().byte_at(semicolon) == Some(b';'))
-        .then(|| f.comments().comments_directly_before(semicolon).first())?
-        .filter(|comment| comment.has_newline_before())
+    if f.source_text().byte_at(semicolon) != Some(b';') {
+        return None;
+    }
+    (f.comments().comments_directly_before(semicolon).iter())
+        .find(|comment| comment.has_newline_before())
 }
 
 /// `a()⏎⏎; [b].c()`: oxfmt looks for an empty line before a statement, and over a `;` only if that is right before it.

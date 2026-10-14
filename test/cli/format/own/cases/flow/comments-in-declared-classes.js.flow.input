@@ -16,6 +16,8 @@ declare class I extends J.K // 1
 
 declare class M { static /* 1 */ (): void }
 
+declare class M1 { static <T> /* 1 */ (): void }
+
 declare class N { m(): void
 
 // 1

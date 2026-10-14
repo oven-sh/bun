@@ -8,7 +8,7 @@
 //! is a candidate for the preceding node, and every finished node that starts after it is a candidate for the following
 //! node. The closest candidate wins, and the larger one if two are equally close.
 //!
-//! A finished node is only held against the closest pending comment before it. Say comment 1 is before comment 2, which is
+//! A finished node is only compared with the closest pending comment before it. Say comment 1 is before comment 2, which is
 //! before the node. Either the enclosing node of 2 starts after 1, and then that node is closer to 1. Or it is the enclosing
 //! node of 1 too, and then 1 takes the following node of 2 if nothing starts between them. So nested code with a comment at
 //! each level takes linear time.
@@ -133,12 +133,15 @@ pub(crate) struct CommentTracker {
 }
 
 impl CommentTracker {
-    /// Restores the pending comments to what they were when `undo_log` had `len` entries.
-    fn undo_until(&mut self, len: usize) {
+    /// Restores the pending comments to what they were when `undo_log` had `len` entries. Not those from `forgotten_from` on.
+    fn undo_until(&mut self, len: usize, forgotten_from: u32) {
         while self.undo_log.len() > len {
             let Some(previous) = self.undo_log.pop() else {
                 break;
             };
+            if previous.first_id >= forgotten_from {
+                continue;
+            }
             let pending = &mut self.pending;
             match pending.binary_search_by_key(&previous.first_id, |comments| comments.first_id) {
                 Ok(index) => pending[index] = previous,
@@ -362,7 +365,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[cold]
     #[inline(never)]
     fn undo_last_finished_node(&mut self) {
-        self.comments.undo_until(self.comments.last_finished.1);
+        (self.comments).undo_until(self.comments.last_finished.1, u32::MAX);
         self.lx.max_relevant_node_start = u32::MAX;
     }
 
@@ -761,15 +764,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !COMMENTS || !self.options.attach_comments {
             return;
         }
-        self.comments.undo_until(to.comments.undo_log_len as usize);
+        // Comments that were first seen after the checkpoint will be seen again. There can be thousands, so they are not
+        // restored first.
+        (self.comments).forget_comments_from(to.comments.tracked_count);
+        (self.comments).undo_until(to.comments.undo_log_len as usize, to.comments.tracked_count);
         self.comments
             .last_expr_with_width
             .truncate(self.f.exprs.len());
         self.comments
             .last_non_empty_stmt
             .truncate(self.f.stmts.len());
-        // Comments that were first seen after the checkpoint will be seen again.
-        (self.comments).forget_comments_from(to.comments.tracked_count);
         self.comments.last_name = to.comments.last_name;
         self.lx.max_relevant_node_start = u32::MAX;
     }

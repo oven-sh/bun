@@ -2281,7 +2281,7 @@ impl Lexer<'_> {
                 if pos > before && self.scans_jsx_strings_as_typescript_5() {
                     return self.refuse(Refusal::Unterminated);
                 }
-                // What was refused was no token.
+                // The refused string was not a token. The next token is the string at `pos`.
                 for comment in self.comments.iter_mut().skip(first_comment) {
                     comment.next_token_start = pos as u32;
                 }

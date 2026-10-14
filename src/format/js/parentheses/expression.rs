@@ -3,7 +3,7 @@
 use crate::js::ast_nodes::ExpressionStatement;
 use crate::js::print::binary_like_expression::{is_angular_pipe, should_flatten};
 use crate::js::print::return_or_throw_statement::has_argument_leading_comments;
-use crate::js::utils::typecast::{has_comments, is_cast_target};
+use crate::js::utils::typecast::{has_comments, has_comments_that_count, is_cast_target};
 use crate::prelude::*;
 use AstNodes as N;
 
@@ -48,21 +48,17 @@ pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'
     if (e.parens()).all(|paren| f.comments().is_cast_parenthesis(paren.start)) {
         return false;
     }
-    // What follows would be taken for a part of it: `(a<T>) + b`, `(a<T>).b`, `(new A).b`, `(new A)()`.
-    let is_instantiation = matches!(e.kind(), ExprKind::Instantiation { .. });
-    if (is_instantiation || matches!(e.kind(), ExprKind::New(call) if call.close_paren().is_none()))
-        && let Node::Expr(parent) = e.parent()
-        && match parent.kind() {
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj == e,
-            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
-                call.callee() == e
-            }
-            ExprKind::Binary { op, left, .. } => {
-                is_instantiation && left == e && op != BinOp::Comma
-            }
-            ExprKind::NonNull(_) | ExprKind::Unary { .. } => is_instantiation,
-            _ => false,
-        }
+    // What follows would be taken for a part of it, or `<T>` for two comparisons.
+    let continues_with: &[u8] = match e.kind() {
+        // `(a<T>) + b`, `(a<T>).b`, `(a<T>)()`, `(a<T>)<U>`, `(a<T>)!`
+        ExprKind::Instantiation { .. } => b"+-<>.[(`!",
+        // `(new A).b`, `(new A)()`, `(new A)<T>`, `(new A)!.b`
+        ExprKind::New(call) if call.close_paren().is_none() => b".[(`<!",
+        _ => b"",
+    };
+    if !continues_with.is_empty()
+        && start_of_token_after(e, f)
+            .is_some_and(|byte| bun_core::strings::contains_char(continues_with, byte))
     {
         return true;
     }
@@ -100,6 +96,65 @@ pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'
     }
     // `in` ends the initializer of a `for`.
     is_in_for_statement_initializer(e, f) && has_bare_in(e)
+}
+
+/// The first byte of the token that is written after `e`, if it is a token of an expression that `e` is in. `None` for what ends
+/// an expression: `)`, `]`, `}`, `;`.
+///
+/// `b + e + c`: `e` is the end of `b + e`, and the `+` of `(b + e) + c` is written after it.
+fn start_of_token_after<'a>(e: Expr<'a>, f: &Formatter<'a>) -> Option<u8> {
+    let mut current = e;
+    loop {
+        let parent = match current.parent() {
+            Node::Expr(parent) => parent,
+            // The body of an arrow function.
+            Node::Func(func) => func.owner().as_expr()?,
+            _ => return None,
+        };
+        let is = |child: Expr<'a>| child == current;
+        match parent.kind() {
+            ExprKind::Dot { obj, .. } if is(obj) => return Some(b'.'),
+            ExprKind::Index { obj, .. } if is(obj) => return Some(b'['),
+            ExprKind::Call(call) | ExprKind::New(call) if is(call.callee()) => return Some(b'('),
+            ExprKind::TaggedTemplate(call) if is(call.callee()) => return Some(b'`'),
+            ExprKind::NonNull(_) => return Some(b'!'),
+            ExprKind::Instantiation { .. } => return Some(b'<'),
+            ExprKind::Binary { op, left, .. } if is(left) => {
+                return op.as_str().as_bytes().first().copied();
+            }
+            ExprKind::Unary { op, .. } if !op.is_prefix() => {
+                return op.as_str().as_bytes().first().copied();
+            }
+            ExprKind::Cond { test, .. } if is(test) => return Some(b'?'),
+            ExprKind::Cond { yes, .. } if is(yes) => return Some(b':'),
+            ExprKind::Assign { target, .. } if is(target) => return Some(b'='),
+            ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. }
+                if !parent.is_angle_bracket_assertion() =>
+            {
+                return Some(b'a');
+            }
+            // It writes parentheses around an operand with comments.
+            ExprKind::Unary { .. } if !f.is_quiet() && has_comments_that_count(current, f) => {
+                return None;
+            }
+            // `current` is the end of `parent`.
+            ExprKind::Binary { .. }
+            | ExprKind::Unary { .. }
+            | ExprKind::Cond { .. }
+            | ExprKind::Assign { .. }
+            | ExprKind::As { .. }
+            | ExprKind::AsConst(_)
+            | ExprKind::Await(_)
+            | ExprKind::Yield { .. }
+            | ExprKind::Fn(_) => {}
+            // An argument, an element, an index, ..
+            _ => return None,
+        }
+        if is_cast_target(parent, f) || expression_needs_parentheses(parent, f) {
+            return None;
+        }
+        current = parent;
+    }
 }
 
 /// Whether `first`, which the text of `e` starts with, would be taken for the start of a block, a function declaration or a

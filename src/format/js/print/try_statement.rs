@@ -25,6 +25,7 @@ fn write_part_before_keyword<'a>(
     }
 }
 
+#[inline(never)]
 pub(crate) fn write_try_statement<'a>(
     statement: Stmt<'a>,
     block: Stmt<'a>,
@@ -43,7 +44,6 @@ pub(crate) fn write_try_statement<'a>(
             false => owned.leading,
         }
     };
-
     let before_finally = |f: &Formatter<'a>| {
         f.comments()
             .of_node(AstNodes::TryStatement(statement))

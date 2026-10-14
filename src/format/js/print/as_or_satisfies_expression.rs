@@ -19,6 +19,8 @@ fn comments_stay_around_cast_operator(f: &Formatter<'_>) -> bool {
 }
 
 /// See [`comments_stay_around_cast_operator`]. `cast`: the whole expression. `type_annotation`: `None` for `const`.
+#[cold]
+#[inline(never)]
 fn write_with_comments_in_place<'a>(
     cast: Expr<'a>,
     expression: Expr<'a>,
@@ -123,6 +125,13 @@ fn write_with_comments_in_place<'a>(
     }
 }
 
+/// Not inlined: `a as b as c` is nested as deep as it is long, and what this needs of the stack would be taken at each level.
+#[inline(never)]
+fn ends_with_line_comment<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
+    (comments_of_expression(expression, f).trailing.last()).is_some_and(|comment| comment.is_line())
+}
+
+#[inline(never)]
 pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     let (expression, type_annotation, operation) = match e.kind() {
         ExprKind::As { expr, ty } => (expr, Some(ty), "as"),
@@ -138,10 +147,7 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
         write!(f, [expression, space(), operation]);
         // Prettier's space is text. It shows before a line comment that trails the expression if the type starts on the
         // next line: `a as  // comment`.
-        let is_after_line_comment = !f.is_quiet()
-            && (comments_of_expression(expression, f).trailing.last())
-                .is_some_and(|comment| comment.is_line());
-        match is_after_line_comment {
+        match !f.is_quiet() && ends_with_line_comment(expression, f) {
             true => write!(f, " "),
             false => write!(f, space()),
         }

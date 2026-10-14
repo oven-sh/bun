@@ -34,9 +34,9 @@ impl<'a> FormatDecorators<'a> {
 
     /// Whether one of them is followed by a line break in the source.
     fn should_expand(&self, f: &Formatter<'a>) -> bool {
-        self.decorators.iter().any(|it| {
+        (self.decorators.iter()).any(|it| {
             f.source_text()
-                .has_line_terminator_after(FormatDecorator(*it).span().end)
+                .has_line_terminator_after(it.outer_span().end)
         })
     }
 }

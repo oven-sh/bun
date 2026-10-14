@@ -18,7 +18,7 @@ use crate::js::utils::statement_body::write_space_before_body;
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typecast::{
-    comments_of_expression, has_comments, is_chain_expression_without_comments,
+    comments_of_expression, has_comments_that_count, is_chain_expression_without_comments,
 };
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -50,31 +50,11 @@ fn write_class_body<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
         let mut iter = class.members().iter().peekable();
         let mut is_first = true;
         while let Some(element) = iter.next() {
-            let span = element.span();
-            // `a = 1 ⏎ ⏎ ;[b] = 2`: the `;` is the end of the member before, which this one follows on
-            // the same line.
-            let follows_semicolon =
-                span.start != 0 && f.source_text().byte_at(span.start - 1) == Some(b';');
-            // `a() {}⏎// comment⏎;⏎⏎b() {}`: the comment leads `b`, and the empty line is after the comment.
-            let has_comments = !f.is_quiet() && f.comments().is_owner(Node::Member(element));
-            let comment_before_stray_semicolon = match has_comments {
-                true => (f.comments().of_node(element.as_ast_nodes()).leading.first())
-                    .filter(|comment| comment.next_token_start() != span.start),
-                false => None,
-            };
-            let has_empty_line_before = match comment_before_stray_semicolon {
-                Some(comment) => crate::text::is_previous_line_empty(
-                    f.source_text().as_bytes(),
-                    comment.span().start as usize,
-                ),
-                None => !follows_semicolon && f.lines_before(span) > 1,
-            };
             match is_first {
                 true => is_first = false,
-                false if has_empty_line_before => write!(f, empty_line()),
+                false if has_empty_line_before(element, f) => write!(f, empty_line()),
                 false => write!(f, hard_line_break()),
             }
-
             let next_element = iter.peek().copied();
             write!(
                 f,
@@ -90,6 +70,29 @@ fn write_class_body<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
     if is_consistent {
         f.context_mut().pop_quote_needed();
     }
+}
+
+/// Whether there is an empty line between `element` and the member before it.
+fn has_empty_line_before<'a>(element: Member<'a>, f: &Formatter<'a>) -> bool {
+    let span = element.span();
+    // `a() {}⏎// comment⏎;⏎⏎b() {}`: the comment leads `b`, and the empty line is after the comment.
+    let has_comments = !f.is_quiet() && f.comments().is_owner(Node::Member(element));
+    let comment_before_stray_semicolon = match has_comments {
+        true => (f.comments().of_node(element.as_ast_nodes()).leading.first())
+            .filter(|comment| comment.next_token_start() != span.start),
+        false => None,
+    };
+    if let Some(comment) = comment_before_stray_semicolon {
+        return crate::text::is_previous_line_empty(
+            f.source_text().as_bytes(),
+            comment.span().start as usize,
+        );
+    }
+    // `a = 1 ⏎ ⏎ ;[b] = 2`: the `;` is the end of the member before, which this one follows on
+    // the same line.
+    let follows_semicolon =
+        span.start != 0 && f.source_text().byte_at(span.start - 1) == Some(b';');
+    !follows_semicolon && f.lines_before(span) > 1
 }
 
 /// A member of a class, an interface or a type literal.
@@ -327,6 +330,7 @@ pub(crate) fn dangling_comments_with_marker<'a>(
 }
 
 /// A class declaration or expression.
+#[inline(never)]
 pub(crate) fn write_class<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
     match class.owner() {
         Node::Expr(e) if class.decorators().next().is_some() && needs_parentheses(e, f) => {
@@ -577,24 +581,6 @@ impl<'a> Format<'a> for FormatSuperClass<'a> {
     }
 }
 
-/// Prettier's `hasComment(node.superClass)`. For oxfmt only the comments around the super class count:
-///
-/// ```js
-/// class A              class A extends b(
-///   extends b(           // comment
-///     // comment       ) {}
-///   ) {}
-/// ```
-///
-/// Prettier on the left, oxfmt on the right.
-fn super_class_has_comments<'a>(super_class: Expr<'a>, f: &Formatter<'a>) -> bool {
-    if !f.options().flavor.is_oxfmt() {
-        return has_comments(super_class, f);
-    }
-    let comments = comments_of_expression(super_class, f);
-    !comments.leading.is_empty() || !comments.trailing.is_empty()
-}
-
 /// Prettier's `hasMultipleHeritage`.
 fn has_multiple_heritage(class: Class<'_>) -> bool {
     usize::from(class.extends().is_some()) + class.implements().len() > 1
@@ -637,7 +623,7 @@ fn should_group<'a>(class: Class<'a>, parent: AstNodes<'a>, f: &Formatter<'a>) -
         let type_parameters = AstNodes::TSTypeParameterDeclaration(Node::Class(class));
         if (class.name()).is_some_and(|id| !comments.of_name(id.span().start).trailing.is_empty())
             || !comments.of_node(type_parameters).trailing.is_empty()
-            || super_class.is_some_and(|super_class| super_class_has_comments(super_class, f))
+            || super_class.is_some_and(|super_class| has_comments_that_count(super_class, f))
         {
             return true;
         }
@@ -772,15 +758,12 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
                 Semicolons::Always => !is_ignored,
                 Semicolons::AsNeeded => self.needs_semicolon(),
             };
-        // Without semicolons, Prettier's `printClassBody` adds the `;` that is needed after the member and its comments:
-        // `static /* comment */;`
         let is_added_after_comments =
-            f.options().semicolons.is_as_needed() && !f.options().flavor.is_oxfmt();
+            f.options().semicolons.is_as_needed() && needed_semicolon_is_after_comments(f);
         if !needs_semi || f.is_quiet() || is_added_after_comments {
             return write!(f, [self.element, needs_semi.then_some(";")]);
         }
         // The `;` is part of the member, so the comments that trail the member are behind it.
-
         write!(
             f,
             [
@@ -790,6 +773,12 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
             ]
         );
     }
+}
+
+/// Without semicolons, Prettier's `printClassBody` adds the `;` that is needed after the member and its comments:
+/// `static /* comment */;`. oxfmt prints `static; /* comment */`
+fn needed_semicolon_is_after_comments(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
 }
 
 /// Prettier's `printMethodValue`: the type parameters, the parameters and the return type of a

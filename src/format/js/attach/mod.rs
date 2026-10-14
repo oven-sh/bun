@@ -6,7 +6,8 @@
 //! 3. Any other comment is attached by its position in the line: a comment on its own line becomes a leading comment of the
 //!    following node, and a comment at the end of a line becomes a trailing comment of the preceding node.
 //!
-//! Nothing here searches the tree or scans the source text.
+//! Nothing here searches the tree. Of the source text, the rules look at the byte at an offset that the lexer has recorded, to
+//! tell which token is before or after a comment.
 
 mod debug;
 mod flow;
@@ -172,7 +173,7 @@ impl TextPositions {
     ) -> TextPosition {
         let comment = |id: usize| file.comment(id as u32);
         let (first, last) = self.with_same_preceding_node;
-        if !(first <= id && id <= last) || nodes[id].preceding_node.is_none() {
+        if !(first <= id && id <= last) {
             let is_in_run = |id: usize| {
                 are_on_same_line(comment(id - 1), comment(id))
                     && nodes[id - 1].preceding_node == nodes[id].preceding_node
@@ -192,7 +193,7 @@ impl TextPositions {
             return TextPosition::OwnLine;
         }
         let (first, last) = self.with_same_following_node;
-        if !(first <= id && id <= last) || nodes[id].following_node.is_none() {
+        if !(first <= id && id <= last) {
             let mut last = id;
             while nodes[id].following_node.is_some()
                 && last + 1 < nodes.len()

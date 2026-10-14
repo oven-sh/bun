@@ -151,10 +151,12 @@ impl<'a> Format<'a> for FormatOpeningElement<'a> {
                     if !attributes.is_empty() {
                         write!(f, soft_line_indent_or_space(&format_attributes));
                     }
-                    write!(
-                        f,
-                        FormatTrailingComments::Comments(self.comments_after_slash(f))
-                    );
+                    if !f.is_quiet() {
+                        write!(
+                            f,
+                            FormatTrailingComments::Comments(self.comments_after_slash(f))
+                        );
+                    }
                     // Prettier's `shouldPrintBracketSameLine`
                     let bracket_same_line = match attributes.is_empty() {
                         true => !name_has_comments,

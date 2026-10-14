@@ -207,6 +207,7 @@ pub(crate) fn write_expression_statement<'a>(
     }
 }
 
+#[inline(never)]
 pub(crate) fn write_do_while_statement<'a>(
     statement: Stmt<'a>,
     body: Stmt<'a>,
@@ -312,6 +313,7 @@ fn write_while_or_with_statement<'a>(
     );
 }
 
+#[inline(never)]
 pub(crate) fn write_while_statement<'a>(
     _statement: Stmt<'a>,
     test: Expr<'a>,
@@ -361,22 +363,21 @@ impl<'a> FormatForHead<'a> {
     }
 }
 
+/// Whether the token before `comment` is `token`, which is one byte.
+fn follows_token(comment: Comment<'_>, token: u8, f: &Formatter<'_>) -> bool {
+    let last_byte = comment.prev_token_end().checked_sub(1);
+    last_byte.and_then(|at| f.source_text().byte_at(at)) == Some(token)
+}
+
 /// Of `comments`, which follow a `;` in the head of a `for`, those on the line of the `;`, if the line ends after them.
 fn comments_ending_line_of_semicolon<'a>(
     comments: CommentList<'a>,
     f: &Formatter<'a>,
 ) -> CommentList<'a> {
-    let follows_semicolon = comments.first().is_some_and(|first| {
-        f.source_text()
-            .byte_at(first.prev_token_end().saturating_sub(1))
-            == Some(b';')
-    });
-    let count = comments
-        .iter()
-        .take_while(|comment| follows_semicolon && !comment.has_newline_before())
-        .position(|comment| comment.has_newline_after())
-        .map_or(0, |last| last + 1);
-    comments.slice(0, count)
+    match (comments.first()).is_some_and(|first| follows_token(first, b';', f)) {
+        true => comments.split_at_end_of_line().0,
+        false => CommentList::empty(),
+    }
 }
 
 /// See `comments_stay_between_head_and_body`: what is between the parentheses of a `for` that has comments there. Each
@@ -392,18 +393,19 @@ fn comments_ending_line_of_semicolon<'a>(
 ///   c
 /// );
 /// ```
+#[cold]
+#[inline(never)]
 fn write_for_head_with_comments_in_place<'a>(
     (init, test, update): (Option<Stmt<'a>>, Option<Expr<'a>>, Option<Expr<'a>>),
     dangling: CommentList<'a>,
     f: &mut Formatter<'a>,
 ) {
     let source = f.source_text();
-    let follows_parenthesis = |comment: &Comment<'a>| {
-        source.byte_at(comment.prev_token_end().saturating_sub(1)) == Some(b'(')
-    };
     let precedes_parenthesis =
         |comment: &Comment<'a>| source.byte_at(comment.next_token_start()) == Some(b')');
-    let init_count = dangling.iter().take_while(follows_parenthesis).count();
+    let init_count = (dangling.iter())
+        .take_while(|comment| follows_token(*comment, b'(', f))
+        .count();
     let update_count = (dangling.iter().rev())
         .take_while(precedes_parenthesis)
         .count();
@@ -414,11 +416,8 @@ fn write_for_head_with_comments_in_place<'a>(
     let separator = (!is_empty).then_some(soft_line_break_or_space());
 
     // `a; /* comment */ // comment⏎b`: comments that end the line of the `;` trail `a`.
-    let split_at_semicolon = |trailing: CommentList<'a>| {
-        let follows_semicolon = |comment: Comment<'a>| {
-            source.byte_at(comment.prev_token_end().saturating_sub(1)) == Some(b';')
-        };
-        let count = trailing.iter().position(follows_semicolon);
+    let split_at_semicolon = |trailing: CommentList<'a>, f: &Formatter<'a>| {
+        let count = (trailing.iter()).position(|comment| follows_token(comment, b';', f));
         trailing.split_at(count.unwrap_or(trailing.len()))
     };
 
@@ -427,7 +426,7 @@ fn write_for_head_with_comments_in_place<'a>(
         write!(f, FormatNodeWithoutTrailingComments(init));
     }
     let (before_semicolon, after_semicolon) = match init {
-        Some(init) => split_at_semicolon(init.comments(f).trailing),
+        Some(init) => split_at_semicolon(init.comments(f).trailing, f),
         None => (in_init, CommentList::empty()),
     };
     write_comments_before_token(before_semicolon, f);
@@ -446,7 +445,7 @@ fn write_for_head_with_comments_in_place<'a>(
         write!(f, FormatNodeWithoutTrailingComments(test));
     }
     let (before_semicolon, after_semicolon) = match test {
-        Some(test) => split_at_semicolon(comments_of_expression(test, f).trailing),
+        Some(test) => split_at_semicolon(comments_of_expression(test, f).trailing, f),
         None => (in_test, CommentList::empty()),
     };
 
@@ -471,6 +470,7 @@ fn write_for_head_with_comments_in_place<'a>(
     }
 }
 
+#[inline(never)]
 pub(crate) fn write_for_statement<'a>(
     statement: Stmt<'a>,
     init: Option<Stmt<'a>>,
@@ -536,6 +536,7 @@ fn boundary_before_parenthesis(f: &Formatter<'_>) -> Option<LineSuffixBoundary> 
     (!f.is_quiet() && comments_stay_between_head_and_body(f)).then_some(line_suffix_boundary())
 }
 
+#[inline(never)]
 pub(crate) fn write_for_in_statement<'a>(
     _statement: Stmt<'a>,
     left: Stmt<'a>,
@@ -561,6 +562,7 @@ pub(crate) fn write_for_in_statement<'a>(
     );
 }
 
+#[inline(never)]
 pub(crate) fn write_for_of_statement<'a>(
     _statement: Stmt<'a>,
     left: Stmt<'a>,
@@ -588,6 +590,7 @@ pub(crate) fn write_for_of_statement<'a>(
     );
 }
 
+#[inline(never)]
 pub(crate) fn write_if_statement<'a>(
     statement: Stmt<'a>,
     test: Expr<'a>,

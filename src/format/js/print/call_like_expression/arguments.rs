@@ -14,7 +14,8 @@ use crate::js::utils::call_expression::{is_call_expression, strip_chain_element_
 use crate::js::utils::is_long_curried_call;
 use crate::js::utils::member_chain::simple_argument::SimpleArgument;
 use crate::js::utils::typecast::{
-    comments_of_expression, comments_of_outermost_node, has_comments, is_cast_target,
+    comments_of_expression, comments_of_outermost_node, has_comments, has_comments_that_count,
+    is_cast_target,
 };
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -397,13 +398,21 @@ fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Format
         return false;
     }
 
-    if match f.options().flavor.is_oxfmt() {
-        true => has_comment_around_first_argument_for_oxfmt(first, second, f),
-        false => !f.is_quiet() && has_comments(first, f),
-    } {
+    if !f.is_quiet()
+        && match only_comments_around_first_argument_count(f) {
+            true => has_comment_around_first_argument_for_oxfmt(first, second, f),
+            false => has_comments(first, f),
+        }
+    {
         return false;
     }
     is_hopefully_short_call_argument(second, f)
+}
+
+/// `a(function (/* comment */) { c; }, b)` is `a(function (/* comment */) {⏎  c;⏎}, b)` for oxfmt. For Prettier the function
+/// has a comment, so each argument is on its own line.
+fn only_comments_around_first_argument_count(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// oxfmt goes by where the comments are: before `first`, between it and the comma, or between it and `second` at the end of a
@@ -413,9 +422,6 @@ fn has_comment_around_first_argument_for_oxfmt<'a>(
     second: Expr<'a>,
     f: &Formatter<'a>,
 ) -> bool {
-    if f.is_quiet() {
-        return false;
-    }
     let between = Span::new(first.span().end, second.span().start);
     !comments_of_expression(first, f).leading.is_empty()
         || (f.comments().comments_in_span(between).iter()).any(|comment| {
@@ -523,10 +529,11 @@ fn is_hopefully_short_call_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -
 
 /// `hasComment(arg)` in Prettier's `couldExpandArg`, for `{}` and `[]`. oxfmt only looks at the comments inside.
 fn empty_literal_has_comment<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
-    match f.options().flavor.is_oxfmt() {
-        true => !f.is_quiet() && !comments_of_outermost_node(argument, f).dangling.is_empty(),
-        false => !f.is_quiet() && has_comments(argument, f),
-    }
+    !f.is_quiet()
+        && match f.options().flavor.is_oxfmt() {
+            true => !comments_of_outermost_node(argument, f).dangling.is_empty(),
+            false => has_comments(argument, f),
+        }
 }
 
 /// Prettier's `couldExpandArg`.
@@ -929,22 +936,8 @@ fn is_react_hook_with_deps_array<'a>(arguments: &FormatArguments<'a>, f: &Format
     {
         return false;
     }
-    f.is_quiet()
-        || !arguments
-            .iter()
-            .any(|argument| match only_comments_around_arguments_count(f) {
-                true => {
-                    let owned = comments_of_outermost_node(argument, f);
-                    !owned.leading.is_empty() || !owned.trailing.is_empty()
-                }
-                false => !f.is_quiet() && has_comments(argument, f),
-            })
-}
-
-/// `useEffect(() => {}, [/* comment */])`: for Prettier the array has a comment, so this is a call like any other. oxfmt
-/// only looks at the comments around the arguments.
-fn only_comments_around_arguments_count(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
+    // `useEffect(() => {}, [/* comment */])`: for Prettier the array has a comment, so this is a call like any other.
+    f.is_quiet() || !(arguments.iter()).any(|argument| has_comments_that_count(argument, f))
 }
 
 /// Prettier's `isDecoratedFunction`:

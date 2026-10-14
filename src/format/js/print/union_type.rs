@@ -65,6 +65,7 @@ fn comments_stay_outside_of_parentheses(f: &Formatter<'_>) -> bool {
 ///
 /// `is_indented_by_parent`: `ty` is the right side of a type alias, which has written a line break and an indentation
 /// after the `=`.
+#[inline(never)]
 pub(crate) fn write_ts_union_type_in<'a>(
     ty: TypeNode<'a>,
     types: List<'a, TypeNode<'a>>,

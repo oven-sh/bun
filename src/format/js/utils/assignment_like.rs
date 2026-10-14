@@ -7,7 +7,7 @@ use super::object::{FormatKey, format_computed_or_property_key, write_member_nam
 use super::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use super::suppressed::FormatSuppressedNode;
 use super::typecast::{
-    has_comments, has_leading_own_line_comment, is_cast_target, leading_comments_of_expression,
+    comments_of_outermost_node, has_comments, has_leading_own_line_comment, is_cast_target,
 };
 use crate::js::format::{ExprOptions, FormatExpr, FormatTypeAnnotation};
 use crate::js::parentheses::expression::expression_needs_parentheses;
@@ -739,7 +739,7 @@ fn has_leading_comment_that_breaks_after_operator<'a>(right: Expr<'a>, f: &Forma
         return false;
     }
     has_leading_own_line_comment(right, f)
-        || (leading_comments_of_expression(right, f).iter())
+        || (comments_of_outermost_node(right, f).leading.iter())
             .any(|comment| comment.is_indentable_block())
         || (block_comment_in_parentheses_of_cast_breaks(f)
             && is_cast_target(right, f)

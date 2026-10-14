@@ -128,6 +128,12 @@ const knownDifferences = [
   // The `1` of the type `-1` is no node here.
   "comments/behind-a-negative-number-that-is-a-type.ts:71 Prettier: L Literal 79, bun: D TSLiteralType 69",
   // `a!!` is one node here. It prints the comment after the `!` that it comes after.
+  "comments/between-three-non-null-marks.ts:7 Prettier: T TSNonNullExpression 4, bun: D TSNonNullExpression 4",
+  "comments/between-three-non-null-marks.ts:25 Prettier: T TSNonNullExpression 4, bun: D TSNonNullExpression 4",
+  "comments/between-three-non-null-marks.ts:53 Prettier: T TSNonNullExpression 49, bun: D TSNonNullExpression 49",
+  "comments/between-three-non-null-marks.ts:80 Prettier: T TSNonNullExpression 77, bun: D TSNonNullExpression 77",
+  "comments/between-three-non-null-marks.ts:98 Prettier: T TSNonNullExpression 77, bun: D TSNonNullExpression 77",
+  "comments/between-three-non-null-marks.ts:116 Prettier: T TSNonNullExpression 77, bun: D TSNonNullExpression 77",
   "comments/between-two-non-null-marks.ts:7 Prettier: T TSNonNullExpression 4, bun: D TSNonNullExpression 4",
   "comments/between-two-non-null-marks.ts:25 Prettier: T TSNonNullExpression 22, bun: D TSNonNullExpression 22",
   "comments/between-two-non-null-marks.ts:33 Prettier: T TSNonNullExpression 22, bun: D TSNonNullExpression 22",
@@ -161,4 +167,11 @@ const knownDifferences = [
   // Nor is the `symbol` of `unique symbol`.
   "types/prettier-ignore-after-unique.ts:17 Prettier: L TSSymbolKeyword 39, bun: D TSTypeOperator 9",
   "types/prettier-ignore-after-unique.ts:63 Prettier: L TSSymbolKeyword 82, bun: D TSTypeOperator 56",
+  // As in `types/comments-in-the-options-of-an-import-type.ts`. The import type after `typeof` is no node here either.
+  "types/prettier-ignore-in-an-import-type.ts:117 Prettier: L TSImportType 139, bun: L Name 146",
+  "types/prettier-ignore-in-an-import-type.ts:174 Prettier: L ObjectExpression 196, bun: T Name 169",
+  "types/prettier-ignore-in-an-import-type.ts:249 Prettier: L Property 271, bun: T Name 242",
+  "types/prettier-ignore-in-an-import-type.ts:469 Prettier: T Property 448, bun: T ObjectExpression 454",
+  "types/prettier-ignore-in-an-import-type.ts:544 Prettier: T ObjectExpression 519, bun: T ObjectExpression 527",
+  "types/prettier-ignore-in-an-import-type.ts:600 Prettier: T Identifier 595, bun: T Name 588",
 ];

@@ -2,7 +2,6 @@
 
 use super::block_statement::is_empty_block;
 use super::import_declaration::FormatStringLiteral;
-
 use super::intersection_type::lone_type_of_intersection_is_a_group;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
@@ -74,6 +73,7 @@ fn only_comments_before_extends_break_the_head(f: &Formatter<'_>) -> bool {
 }
 
 /// `interface A<T> extends B { .. }`. Prettier's `printClass`.
+#[inline(never)]
 pub(crate) fn write_ts_interface_declaration<'a>(
     statement: Stmt<'a>,
     interface: Interface<'a>,
@@ -208,6 +208,7 @@ pub(crate) fn write_ts_interface_declaration<'a>(
 
 /// `type A = B`. Prettier's `printTypeAlias`, with what its `printAssignment` does if the right side
 /// is a type.
+#[inline(never)]
 pub(crate) fn write_ts_type_alias_declaration<'a>(
     statement: Stmt<'a>,
     alias: Alias<'a>,
@@ -224,9 +225,9 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
         || (type_alias_comments_stay_around_operator(f)
             && (comments_trailing_type_alias_left_side(statement, f).last())
                 .is_some_and(|comment| comment.is_line()));
-    let layout = match type_alias_layout(statement, alias, ty, f) {
-        _ if has_line_comment_on_operator_line => AssignmentLikeLayout::BreakAfterOperator,
-        layout => layout,
+    let layout = match has_line_comment_on_operator_line {
+        true => AssignmentLikeLayout::BreakAfterOperator,
+        false => type_alias_layout(statement, alias, ty, f),
     };
 
     let left = format_with(|f| {
@@ -414,6 +415,7 @@ fn type_alias_layout<'a>(
 }
 
 /// `enum A { B, C = 1 }`
+#[inline(never)]
 pub(crate) fn write_ts_enum_declaration<'a>(
     statement: Stmt<'a>,
     declaration: Enum<'a>,
@@ -521,6 +523,7 @@ pub(crate) fn write_ts_enum_member<'a>(member: EnumMember<'a>, f: &mut Formatter
 }
 
 /// `namespace A.B { .. }`, `declare module "a" { .. }`, `declare global { .. }`
+#[inline(never)]
 pub(crate) fn write_ts_module_declaration<'a>(
     statement: Stmt<'a>,
     module: Module<'a>,

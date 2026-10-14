@@ -114,7 +114,13 @@ impl<'a> Format<'a> for ChainMember<'a> {
                 position: CallExpressionPosition::End,
                 ..
             } => self.write_link(f),
-            Self::Node(node) => write!(f, FormatCallee(node)),
+            Self::Node(callee) => write!(
+                f,
+                FormatCallee {
+                    callee,
+                    is_in_member_chain: true
+                }
+            ),
             // A `prettier-ignore` comment has no effect on a link.
             _ => {
                 if let Some(object) = (self.expr().object())
@@ -126,7 +132,7 @@ impl<'a> Format<'a> for ChainMember<'a> {
                 FormatLeadingComments::Comments(self.leading_comments(f)).fmt(f);
                 self.write_link(f);
                 let trailing_comments = self.comments(f).trailing;
-                if comments_stay_behind_callee(self.expr(), f) {
+                if comments_stay_behind_callee(self.expr(), true, f) {
                     write_comments_behind_callee(trailing_comments, f);
                 } else if !comments_behind_inner_chain_lead_next_link(self.expr(), f) {
                     FormatTrailingComments::Comments(trailing_comments).fmt(f);

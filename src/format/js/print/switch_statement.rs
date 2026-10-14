@@ -6,6 +6,7 @@ use crate::js::utils::typecast::comments_of_expression;
 use crate::prelude::*;
 use crate::{format_args, write};
 
+#[inline(never)]
 pub(crate) fn write_switch_statement<'a>(
     statement: Stmt<'a>,
     discriminant: Expr<'a>,

@@ -445,7 +445,9 @@ fn parent_of_expr<'a>(e: Expr<'a>, above: Level) -> AstNodes<'a> {
         Node::PatProp(prop) => N::BindingProperty(prop),
         Node::PatElem(element) => N::AssignmentPattern(Node::PatElem(element)),
         Node::Prop(prop) => prop.as_ast_nodes(),
-        Node::Member(member) if member.decorators().any(|it| it == e) => N::Decorator(e),
+        Node::Member(member) if member.modifiers().around(e.span().start).is_some() => {
+            N::Decorator(e)
+        }
         Node::Member(member) => member.as_ast_nodes(),
         Node::Func(func) => N::ExpressionStatement(ExpressionStatement::ArrowBody(func)),
         Node::EnumMember(member) => N::TSEnumMember(member),
@@ -1140,8 +1142,7 @@ impl<'a> AstNodes<'a> {
                     Node::Param(param) => param.modifiers(),
                     _ => return e.outer_span(),
                 };
-                (modifiers.iter())
-                    .find(|modifier| modifier.decorator() == Some(e))
+                (modifiers.around(e.span().start))
                     .map_or_else(|| e.outer_span(), |modifier| modifier.span())
             }
             N::AssignmentTargetRest(e) => match (e.kind(), e.parent()) {
@@ -1219,7 +1220,11 @@ impl<'a> AstNodes<'a> {
                 let end = arrow_behind_parameters(func).unwrap_or(span.end);
                 Span::new(span.start, end)
             }
-            N::Class(class) => class.estree_span(),
+            N::Class(class) => match class.owner() {
+                // `estree_span` looks at every decorator for an `export`.
+                Node::Stmt(statement) if !statement.is_exported() => statement.span(),
+                _ => class.estree_span(),
+            },
             N::ClassBody(class) => class.body_span(),
             N::FormalParameter(param)
             | N::FormalParameterRest(param)

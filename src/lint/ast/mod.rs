@@ -191,7 +191,7 @@ pub(crate) struct Lazy {
     pub(crate) kind_index_offsets: OnceCell<[u32; node::KINDS + 1]>,
     /// [`Stmt::directive`]
     pub(crate) directives: Cell<Option<(u32, u32)>>,
-    /// The last expression in an array or an object that [`Expr::is_assignment_target`] was asked about, and the answer.
+    /// The array or the object of the last expression that [`Expr::is_assignment_target`] was asked about, and the answer.
     pub(crate) last_assignment_target: Cell<Option<(hir::ExprId, bool)>>,
     /// For each `a, b` that is the start of a long `a, b, c, ..`: all of that.
     pub(crate) sequence_roots: OnceCell<rustc_hash::FxHashMap<hir::ExprId, hir::ExprId>>,

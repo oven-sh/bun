@@ -16,6 +16,7 @@ pub struct Scratch {
     printer: super::printer::PrinterBuffers,
     /// A line for each comment of the last file that no printer has printed.
     unprinted_comments: Vec<u8>,
+    /// Their ids, for the second pass.
     unprinted_comment_ids: Vec<u32>,
 }
 
@@ -49,7 +50,7 @@ pub(crate) fn format_with_marks<'a>(
         out.append(&mut scratch.unprinted_comments);
         return Ok([None; 2]);
     }
-    if !scratch.unprinted_comment_ids.is_empty() {
+    if matches!(root, Err(FormatError::InvalidDocument)) {
         let comments_without_printer = std::mem::take(&mut scratch.unprinted_comment_ids);
         root = write_document(
             file,
@@ -152,7 +153,7 @@ fn finish(formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, F
         return Err(FormatError::NestedTooDeeply);
     }
     // Prettier's `ensureAllCommentsPrinted`: a file is left alone rather than written without one of its comments.
-    if !scratch.unprinted_comments.is_empty() {
+    if !scratch.unprinted_comment_ids.is_empty() {
         return Err(FormatError::InvalidDocument);
     }
     Ok(root)

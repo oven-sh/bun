@@ -5,6 +5,7 @@ use crate::prelude::*;
 use crate::{format_args, write};
 
 /// `A & B`
+#[inline(never)]
 pub(crate) fn write_ts_intersection_type<'a>(
     ty: TypeNode<'a>,
     types: List<'a, TypeNode<'a>>,

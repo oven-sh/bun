@@ -6,6 +6,8 @@ arrows/comments-before-the-block-of-a-grouped-argument.js
 101 105 L ExpressionStatement 108 109 -
 127 145 L ExpressionStatement 148 152 -
 170 188 L BlockStatement 189 198 -
+220 224 L BlockStatement 225 231 -
+246 267 L ExpressionStatement 270 274 -
 arrows/comments-before-the-parenthesis-that-ends-the-body.js
 121 137 T LogicalExpression 49 116 -
 142 154 T LogicalExpression 49 116 -
@@ -34,6 +36,11 @@ casts/argument-of-return-that-breaks.js
 28 49 L ParenthesizedExpression 50 146 -
 178 198 L ParenthesizedExpression 199 295 -
 327 348 L ParenthesizedExpression 349 364 -
+casts/arrow-function-in-two-type-casts-in-an-arrow-function.js
+10 26 L ParenthesizedExpression 27 56 -
+28 44 L ParenthesizedExpression 45 55 -
+66 82 L ParenthesizedExpression 83 112 -
+84 100 L ParenthesizedExpression 101 111 -
 casts/arrow-function-that-is-the-body-of-an-arrow-function.js
 6 22 L ParenthesizedExpression 23 31 -
 32 36 T ExpressionStatement 0 31 -
@@ -148,6 +155,8 @@ classes/comment-before-the-semicolon-of-a-private-property.ts
 133 137 T Literal 131 132 -
 151 158 T PropertyDefinition 144 150 -
 169 176 T PropertyDefinition 161 178 -
+classes/comment-between-a-decorator-and-export-default-class.ts
+3 16 T Decorator 0 2 -
 classes/comment-in-the-parentheses-of-the-super-class.ts
 22 29 T SequenceExpression 17 21 -
 56 60 D ClassBody 63 65 -
@@ -344,6 +353,13 @@ comments/between-key-and-value.tsx
 15 25 L Literal 30 37 -
 50 60 L JSXElement 65 77 -
 92 102 L CallExpression 107 111 -
+comments/between-three-non-null-marks.ts
+7 22 T TSNonNullExpression 4 6 -
+25 40 T TSNonNullExpression 4 24 -
+53 66 T TSNonNullExpression 49 52 -
+80 95 T TSNonNullExpression 77 79 -
+98 113 T TSNonNullExpression 77 97 -
+116 131 T TSNonNullExpression 77 115 -
 comments/between-two-non-null-marks.ts
 7 14 T TSNonNullExpression 4 6 -
 25 32 T TSNonNullExpression 22 24 -
@@ -575,6 +591,10 @@ comments/in-the-parentheses-around-a-link-of-a-chain.js
 380 387 L MemberExpression 388 391 -
 408 415 L MemberExpression 416 419 -
 438 445 L MemberExpression 446 449 -
+comments/in-the-parentheses-of-an-expression-in-a-template.js
+9 19 L Identifier 20 21 -
+33 43 T Identifier 31 32 -
+65 75 L Identifier 76 77 -
 comments/in-the-parentheses-of-the-alternate.js
 15 22 T Identifier 13 14 -
 40 44 T Identifier 38 39 -
@@ -675,6 +695,18 @@ comments/on-its-own-line-in-a-pattern-with-a-default.js
 177 193 L Identifier 219 220 -
 196 218 L AssignmentPattern 173 220 -
 243 247 L AssignmentPattern 239 253 -
+comments/on-the-line-of-a-statement-and-on-the-next-before-its-semicolon.ts
+4 14 T ExpressionStatement 0 3 -
+16 26 L ExpressionStatement 30 33 -
+39 52 T ExpressionStatement 35 38 -
+53 63 L ExpressionStatement 67 70 -
+84 94 T VariableDeclaration 72 83 -
+95 105 L ExpressionStatement 120 123 -
+106 116 L ExpressionStatement 120 123 -
+129 139 T ExpressionStatement 125 128 -
+141 151 L ExpressionStatement 154 157 -
+170 180 T TSLiteralType 168 169 -
+181 191 T TSLiteralType 168 169 -
 comments/only-comments-in-the-value-of-a-jsx-attribute.tsx
 32 42 D ObjectExpression 24 48 -
 86 99 D ObjectExpression 84 101 -
@@ -1088,6 +1120,16 @@ ignore/jsx-element-in-a-sequence.jsx
 ignore/jsx-in-parentheses-that-is-assigned.tsx
 56 74 L JSXFragment 81 149 -
 182 200 L JSXElement 207 220 -
+ignore/key-that-is-a-number.js
+19 40 L NumericLiteral 41 45 -
+60 81 L NumericLiteral 82 86 -
+107 128 L NumericLiteral 129 133 -
+146 167 L NumericLiteral 168 172 -
+ignore/key-that-is-a-string.js
+19 40 L StringLiteral 41 46 -
+61 82 L StringLiteral 83 86 -
+107 128 L StringLiteral 129 134 -
+147 168 L StringLiteral 169 172 -
 ignore/namespace-export.js
 7 28 L ExportNamespaceSpecifier 29 38 -
 ignore/namespace-import-and-require.ts
@@ -1147,6 +1189,19 @@ ignore/type-parameters-of-an-interface.ts
 ignore/type-that-needs-parentheses.ts
 16 37 L TSIntersectionType 39 60 -
 74 95 L TSConstructorType 96 108 -
+imports/comment-like-a-type-cast-after-the-last-specifier.js
+19 35 L StringLiteral 44 47 -
+63 79 T ImportSpecifier 61 62 -
+107 123 T ImportSpecifier 104 105 -
+148 164 L ImportSpecifier 165 166 -
+190 206 T ImportSpecifier 188 189 -
+237 253 T ExportSpecifier 234 235 -
+281 297 T ExportSpecifier 278 279 -
+313 320 T ImportSpecifier 310 311 -
+345 349 T ImportSpecifier 342 343 -
+378 394 T ImportSpecifier 373 374 -
+422 438 T ImportSpecifier 419 420 -
+463 479 T ImportSpecifier 460 461 -
 imports/comment-next-to-a-name-that-is-a-keyword.ts
 14 27 T Identifier 9 13 -
 63 76 L Identifier 77 79 -
@@ -1333,6 +1388,34 @@ types/comment-in-the-brackets-of-an-array-type.ts
 134 141 T TSTypeReference 131 132 -
 175 182 T TSInferType 165 172 -
 214 221 T TSTypeReference 211 212 -
+240 247 T TSTypeReference 238 239 -
+261 268 T TSTypeReference 259 260 -
+270 274 T VariableDeclaration 251 269 -
+285 292 T TSTypeReference 283 284 -
+315 322 T TSTypeReference 313 314 -
+342 349 T TSTypeReference 340 341 -
+368 375 T TSTypeReference 366 367 -
+396 403 T TSTypeReference 394 395 -
+428 435 T TSTypeReference 426 427 -
+459 466 T TSTypeReference 457 458 -
+492 499 T TSTypeReference 490 491 -
+534 541 T TSTypeReference 532 533 -
+562 569 T TSTypeReference 560 561 -
+592 599 T TSTypeReference 590 591 -
+623 630 T TSTypeReference 621 622 -
+649 656 T TSTypeReference 647 648 -
+681 688 T TSTypeReference 679 680 -
+714 721 T TSTypeReference 712 713 -
+748 755 T TSTypeReference 746 747 -
+785 792 T TSTypeReference 783 784 -
+813 820 T TSTypeReference 811 812 -
+842 849 T TSTypeReference 840 841 -
+878 885 T TSTypeReference 876 877 -
+915 922 T TSTypeReference 913 914 -
+939 946 T TSTypeReference 937 938 -
+971 978 T TSTypeReference 969 970 -
+1000 1007 T TSTypeReference 998 999 -
+1009 1016 T TSArrayType 998 1008 -
 types/comment-that-touches-the-bracket-of-a-mapped-type.ts
 11 18 L Identifier 19 20 -
 44 51 D TSMappedType 42 65 -
@@ -1388,6 +1471,17 @@ types/comments-in-the-parentheses-of-a-union.ts
 188 192 L TSUnionType 193 200 -
 214 218 L TSUnionType 224 231 -
 219 223 L TSUnionType 224 231 -
+245 252 L TSTypeReference 261 262 -
+253 260 L TSTypeReference 261 262 -
+282 286 L TSUnionType 295 300 -
+287 294 L TSTypeReference 295 296 -
+316 323 L TSUnionType 332 337 -
+324 331 L TSTypeReference 332 333 -
+353 360 L TSUnionType 377 382 -
+361 368 L TSTypeReference 377 378 -
+369 376 L TSTypeReference 377 378 -
+398 405 L TSUnionType 411 416 -
+406 410 L TSUnionType 411 416 -
 types/line-comment-after-the-comma-of-an-import-type.ts
 21 25 T Literal 16 19 -
 93 97 L ObjectExpression 101 142 -
@@ -1400,6 +1494,18 @@ types/prettier-ignore-after-the-minus-of-a-number.ts
 types/prettier-ignore-after-unique.ts
 17 38 L TSSymbolKeyword 39 45 -
 63 81 L TSSymbolKeyword 82 88 -
+types/prettier-ignore-in-an-import-type.ts
+17 38 L Literal 39 42 -
+71 92 T Literal 67 70 -
+117 138 L TSImportType 139 150 -
+174 195 L ObjectExpression 196 220 -
+249 270 L Property 271 291 -
+318 336 L Literal 339 342 -
+381 402 L ObjectExpression 403 417 -
+469 490 T Property 448 468 -
+544 565 T ObjectExpression 519 543 -
+600 621 T Identifier 595 599 -
+666 687 T Literal 662 665 -
 types/type-assertion-next-to-an-operator.ts
 48 55 L BinaryExpression 56 69 -
 types/type-with-only-a-comment-beside-a-pattern-that-breaks.ts

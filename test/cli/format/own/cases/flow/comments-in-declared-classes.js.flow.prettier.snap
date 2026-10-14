@@ -22,6 +22,10 @@ declare class M {
   static /* 1 */ (): void;
 }
 
+declare class M1 {
+  static <T> /* 1 */(): void;
+}
+
 declare class N {
   m(): void;
 
@@ -76,6 +80,10 @@ declare class I extends J.K<L> {} // 1
 
 declare class M {
   static /* 1 */ (): void;
+}
+
+declare class M1 {
+  static <T> /* 1 */(): void;
 }
 
 declare class N {

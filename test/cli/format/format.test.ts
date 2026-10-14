@@ -952,6 +952,30 @@ describe.concurrent("bun fmt", () => {
           "new   A // prettier-ignore\n  .foo();\n",
         ],
         [
+          "ts",
+          "b + (/* prettier-ignore */ a<T>) + c;\n",
+          "b + /* prettier-ignore */ (a<T>) + c;\n",
+          "b + /* prettier-ignore */ a<T> + c;\n",
+        ],
+        [
+          "ts",
+          "(/* prettier-ignore */ new A)!.b;\n",
+          "/* prettier-ignore */ (new A)!.b;\n",
+          "/* prettier-ignore */ new A!.b;\n",
+        ],
+        [
+          "ts",
+          "(/* prettier-ignore */ a<T>)<U>;\n",
+          "/* prettier-ignore */ (a<T>)<U>;\n",
+          "/* prettier-ignore */ a<T><U>;\n",
+        ],
+        [
+          "ts",
+          "x = b = (/* prettier-ignore */ a<T>) > c;\n",
+          "x = b = /* prettier-ignore */ (a<T>) > c;\n",
+          "x = b = /* prettier-ignore */ a<T> > c;\n",
+        ],
+        [
           "js",
           "(function(){}()) // prettier-ignore\n  .b();\n",
           "(function(){}()) // prettier-ignore\n  .b();\n",
@@ -4015,6 +4039,13 @@ try {
       ["ts", "class A {\n", "a = 1; // c\n", "}"],
       ["ts", "interface I {\n", "a: 1; // c\n", "}"],
       ["ts", "enum E {\n", "A, // c\n", "}"],
+      ["js", "f()", "(/* c */)", ";"],
+      ["js", "f()", " /* c */ ()", ";"],
+      ["js", "a[0]", "(/* c */)", ".b();"],
+      ["js", `"${"a".repeat(100 * count)}"\n`, "// c\n", "[b];"],
+      ["js", "a", "\n// c\n.b", ";"],
+      ["js", "(", "/* c */ ", `a${".b".repeat(count)})();`],
+      ["js", "(", "/* c */ ", `a${".b".repeat(count)}).c;`],
     ];
     const texts = shapes.map(([, before, unit, after]) => before + unit.repeat(count) + after);
     const ordinary =
@@ -4031,7 +4062,8 @@ try {
         );
       const odd = await run(index => texts[index]);
       const plain = await run(() => ordinary.repeat(length / ordinary.length));
-      expect(slowdown(odd, plain)).toBeLessThan(4);
+      // 2.3 on Linux and 5 on Windows when all is well. 10 and more with one shape that takes quadratic time.
+      expect(slowdown(odd, plain)).toBeLessThan(8);
     }
   }, 120_000);
 

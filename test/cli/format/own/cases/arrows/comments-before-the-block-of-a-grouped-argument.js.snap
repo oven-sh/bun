@@ -22,6 +22,13 @@ a(b, (c) => // prettier-ignore
 { d( ); });
 a(b, (c) => // prettier-ignore
 { d( ); });
+a(b, (c) => (d) =>
+  // 6
+  {
+    e;
+  },
+);
+a(b, (c) => /* prettier-ignore */ { d( ); });
 
 -------------------
 { printWidth: 100 }
@@ -47,5 +54,12 @@ a(b, (c) => // prettier-ignore
 { d( ); });
 a(b, (c) => // prettier-ignore
 { d( ); });
+a(b, (c) => (d) =>
+  // 6
+  {
+    e;
+  },
+);
+a(b, (c) => /* prettier-ignore */ { d( ); });
 
 ===================== End =====================

@@ -16,7 +16,8 @@ use super::{Attachment, CommentContext, Marker, Owner};
 use crate::js::ast_nodes::{AsAstNodes, AstNodes as N, ExpressionStatement};
 use crate::js::comments::CommentExt;
 use crate::js::print::flow::{
-    is_declared_class, is_flow_declare_export, is_flow_opaque_type, is_flow_record,
+    as_declared_predicate, is_declared_class, is_flow_declare_export, is_flow_opaque_type,
+    is_flow_record,
 };
 use bun_lint::ast::{
     Case, Expr, ExprKind, Flags, FnBody, Func, List, Member, Node, Param, PatKind, PropKind, Stmt,
@@ -77,19 +78,42 @@ fn is_block(owner: Owner<'_>) -> bool {
     )
 }
 
-/// Whether `e` is the `a.b`, or the `a.b` in the `a.b.c`, of `typeof a.b.c` or `<a.b.c />`.
-fn is_name_of_type_query_or_jsx_element(mut e: Expr<'_>) -> bool {
-    loop {
-        match e.parent() {
-            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { .. }) => e = parent,
-            Node::Expr(parent) => {
-                return matches!(parent.kind(), ExprKind::Jsx(jsx)
-                    if jsx.tag() == Some(e) || jsx.close_tag() == Some(e));
-            }
-            Node::Type(ty) => return matches!(ty.kind(), TypeKind::Typeof { .. }),
-            _ => return false,
-        }
+/// One step of [`Rules::is_name_of_type_query_or_jsx_element`]: the member access that `e` is the object of, or else the answer.
+fn member_access_or_is_name(e: Expr<'_>) -> Result<Expr<'_>, bool> {
+    match e.parent() {
+        Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { .. }) => Ok(parent),
+        Node::Expr(parent) => Err(matches!(parent.kind(), ExprKind::Jsx(jsx)
+            if jsx.tag() == Some(e) || jsx.close_tag() == Some(e))),
+        Node::Type(ty) => Err(matches!(ty.kind(), TypeKind::Typeof { .. })),
+        _ => Err(false),
     }
+}
+
+/// The statement after `statement` in the program, the block or the namespace that it is in. Empty statements do not count.
+fn statement_after(statement: Stmt<'_>) -> Option<Stmt<'_>> {
+    let statements = match statement.parent() {
+        Node::File(file) => file.body(),
+        Node::Func(func) => func.body_statements()?,
+        Node::Stmt(parent) => match parent.kind() {
+            StmtKind::Block(statements) => statements,
+            StmtKind::Module(module) => module.innermost().body(),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let mut next = statements.after(statement.span().start)?;
+    while next.tag() == StmtTag::Empty {
+        next = statements.after(next.span().start)?;
+    }
+    Some(next)
+}
+
+/// A parameter of a function that is not `this`.
+fn is_parameter(owner: Owner<'_>) -> bool {
+    matches!(
+        owner,
+        Owner::Node(N::FormalParameter(_) | N::FormalParameterRest(_))
+    )
 }
 
 /// `{ a() {} }`, `{ get a() {} }` or `{ set a(b) {} }`.
@@ -102,13 +126,11 @@ impl<'a> Rules<'_, 'a, '_> {
     // ───────────────────────────── tokens around the comment ─────────────────────────────
 
     fn next_token_starts_with(&self, byte: u8) -> bool {
-        let start = self.context.comment.next_token_start();
-        self.cx.file.text().get(start as usize) == Some(&byte)
+        self.cx.next_token_starts_with(self.context.comment, byte)
     }
 
     fn prev_token_ends_with(&self, byte: u8) -> bool {
-        let end = self.context.comment.prev_token_end() as usize;
-        end > 0 && self.cx.file.text().get(end - 1) == Some(&byte)
+        self.cx.prev_token_ends_with(self.context.comment, byte)
     }
 
     /// Whether there is no token between the comment and `owner`, which comes after it.
@@ -321,6 +343,11 @@ impl<'a> Rules<'_, 'a, '_> {
             .or_else(|| self.handle_union_type_leading_comments(ignored_node))
     }
 
+    /// Whether `e` is the `a.b`, or the `a.b` in the `a.b.c`, of `typeof a.b.c` or `<a.b.c />`.
+    fn is_name_of_type_query_or_jsx_element(&self, e: Expr<'a>) -> bool {
+        (self.cx.is_name_of_type_query_or_jsx_element).find(e, member_access_or_is_name)
+    }
+
     /// `a! /* comment */ !`: in ESTree the comment trails the `a!` inside `a!!`. Here `a!!` is one node, which prints the comment
     /// after the `!` that it comes after.
     fn handle_comment_between_non_null_marks(
@@ -340,33 +367,6 @@ impl<'a> Rules<'_, 'a, '_> {
             *ignored_node = Some(self.cx.owner_of_expr(operand));
         }
         Some(Attachment::dangling(Owner::Node(N::TSNonNullExpression(e))))
-    }
-
-    /// The statement after `statement` in the program, the block or the namespace that it is in. Empty statements do not count.
-    fn statement_after(&self, statement: Stmt<'a>) -> Option<Stmt<'a>> {
-        let statements = match statement.parent() {
-            Node::File(file) => file.body(),
-            Node::Func(func) => func.body_statements()?,
-            Node::Stmt(parent) => match parent.kind() {
-                StmtKind::Block(statements) => statements,
-                StmtKind::Module(module) => module.innermost().body(),
-                _ => return None,
-            },
-            _ => return None,
-        };
-        let (mut low, mut high) = (0, statements.len());
-        while low < high {
-            let middle = low + (high - low) / 2;
-            match (statements.get(middle))
-                .is_some_and(|it| it.span().start <= statement.span().start)
-            {
-                true => low = middle + 1,
-                false => high = middle,
-            }
-        }
-        (low..statements.len())
-            .filter_map(|index| statements.get(index))
-            .find(|it| it.tag() != StmtTag::Empty)
     }
 
     /// Whether the comment is directly before the `;` that `statement` ends with.
@@ -397,7 +397,7 @@ impl<'a> Rules<'_, 'a, '_> {
             return None;
         }
         let following_statement = match self.context.text_position {
-            OwnLine => self.statement_after(statement),
+            OwnLine => statement_after(statement),
             _ => None,
         };
         Some(match following_statement {
@@ -502,7 +502,7 @@ impl<'a> Rules<'_, 'a, '_> {
                 self.handle_member_expression_comments_for_oxfmt(node)
             }
             // The `a.b` of `typeof a.b` is a `TSQualifiedName` in ESTree, that of `<a.b />` a `JSXMemberExpression`.
-            N::StaticMemberExpression(e) if is_name_of_type_query_or_jsx_element(e) => None,
+            N::StaticMemberExpression(e) if self.is_name_of_type_query_or_jsx_element(e) => None,
             // `handleMemberExpressionComments`
             N::StaticMemberExpression(_)
             | N::ComputedMemberExpression(_)
@@ -869,9 +869,8 @@ impl<'a> Rules<'_, 'a, '_> {
                 Owner::Node(N::ClassBody(class)),
             ),
             N::Class(class) => (
-                class
-                    .decorators()
-                    .last()
+                (class.modifiers().iter().rev())
+                    .find_map(|it| it.decorator())
                     .map(|e| Owner::Node(N::Decorator(e))),
                 class.name().map(|it| Owner::Name(it.span().start)),
                 type_parameters(Node::Class(class), class.type_params().is_empty()),
@@ -953,7 +952,8 @@ impl<'a> Rules<'_, 'a, '_> {
         self.preceding_node.map(Attachment::trailing)
     }
 
-    /// Flow: a comment before the `(` of a function type that comes after a name or a modifier.
+    /// Flow: a comment before the `(` of a function type that comes directly after a name or a modifier. After type parameters it is
+    /// between two nodes like any other comment: `f<T> /* comment */(): void`
     ///
     /// - `declare function f /* comment */ (): void` and `{ static /* comment */ (): void }`: the comment leads the function type,
     ///   which starts at the `(`. Prettier prints `f/* comment */ (): void`.
@@ -966,6 +966,7 @@ impl<'a> Rules<'_, 'a, '_> {
     ) -> Option<Attachment<'a>> {
         let func = function_of(node)?;
         if func.open_paren() != Some(self.context.comment.next_token_start())
+            || !func.type_params().is_empty()
             || flow::function_type(func) == Some(FunctionType::ComponentTypeAnnotation)
         {
             return None;
@@ -1000,7 +1001,7 @@ impl<'a> Rules<'_, 'a, '_> {
             return None;
         };
         let return_type = func.return_type()?;
-        (matches!(return_type.kind(), TypeKind::Typeof { .. })
+        (as_declared_predicate(return_type).is_some()
             && self.preceding_node == Some(self.cx.owner_of_type(return_type))
             && self.following_node.is_none())
         .then(|| Attachment {
@@ -1046,12 +1047,7 @@ impl<'a> Rules<'_, 'a, '_> {
             if member.func().is_some_and(|func| !func.has_body()))
         };
         let is_parameter = |owner: Owner<'a>| {
-            matches!(
-                owner,
-                Owner::Node(
-                    N::FormalParameter(_) | N::FormalParameterRest(_) | N::TSThisParameter(_)
-                )
-            )
+            is_parameter(owner) || matches!(owner, Owner::Node(N::TSThisParameter(_)))
         };
         // `type A = (a: B) // comment⏎ => C`. In `declare component` the comment has to be before the `)`. A hook type has no rule.
         if self.cx.file.is_flow()
@@ -1095,7 +1091,7 @@ impl<'a> Rules<'_, 'a, '_> {
         if let Some(preceding_node) = self.preceding_node
             && match node {
                 // Not in `{ key: (/* comment */ (value)) }`.
-                N::ObjectProperty(prop) => !self.cx.is_babel() && prop.func().is_some(),
+                N::ObjectProperty(_) => !self.cx.is_babel() && is_object_method(node),
                 // `TSAbstractMethodDefinition`
                 N::MethodDefinition(member) => member.flags().contains(Flags::ABSTRACT),
                 _ => false,
@@ -1420,7 +1416,7 @@ impl<'a> Rules<'_, 'a, '_> {
         let last_child = match pattern.kind() {
             PatKind::Object(properties) => properties.last().map(N::BindingProperty),
             PatKind::Array(elements) => {
-                let last = elements.iter().filter(|it| it.pat().is_some()).last();
+                let last = elements.iter().rev().find(|it| it.pat().is_some());
                 last.and_then(|element| match (element.default(), element.is_rest()) {
                     (Some(_), _) => Some(N::AssignmentPattern(Node::PatElem(element))),
                     (None, true) => Some(N::BindingRestElement(Node::PatElem(element))),

@@ -37,7 +37,10 @@ fn write_call<'a>(
 ) {
     let callee = call.callee();
     let head = format_args!(
-        FormatCallee(callee),
+        FormatCallee {
+            callee,
+            is_in_member_chain: false
+        },
         boundary_behind_callee(f),
         call.is_optional().then_some("?."),
         type_arguments(call.type_args(), Node::Expr(e)),
@@ -107,7 +110,10 @@ pub(crate) fn write_new_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Form
     let head = format_args!(
         "new",
         space(),
-        FormatCallee(call.callee()),
+        FormatCallee {
+            callee: call.callee(),
+            is_in_member_chain: false
+        },
         boundary_behind_callee(f),
         type_arguments(call.type_args(), Node::Expr(e)),
         boundary_behind_callee(f).filter(|_| !call.type_args().is_empty())
@@ -122,6 +128,7 @@ pub(crate) fn write_new_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Form
     }
 }
 
+#[inline(never)]
 pub(crate) fn write_import_expression<'a>(
     e: Expr<'a>,
     args: List<'a, Expr<'a>>,
@@ -242,15 +249,13 @@ fn is_commonjs_or_amd_module_definition<'a>(
         // `require(path.join(__dirname, "a"))` can break.
         b"require" => {
             (args.len() > 1 || (args.len() == 1 && is_string(args.first())))
-                && !args
-                    .first()
-                    .is_some_and(|first| match only_leading_comment_breaks_require(f) {
-                        true => {
-                            !f.is_quiet()
-                                && !comments_of_outermost_node(first, f).leading.is_empty()
-                        }
-                        false => !f.is_quiet() && has_comments(first, f),
-                    })
+                && (f.is_quiet()
+                    || !args.first().is_some_and(
+                        |first| match only_leading_comment_breaks_require(f) {
+                            true => !comments_of_outermost_node(first, f).leading.is_empty(),
+                            false => has_comments(first, f),
+                        },
+                    ))
         }
         b"define" => {
             matches!(e.as_chain_element().parent(), AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body())

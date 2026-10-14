@@ -6,6 +6,19 @@ declare function c
 
 declare function d /* prettier-ignore */ (b: number): void;
 
+declare function d1<T> /* 1 */ (): void;
+
+declare function d2<T> // 1
+(): void;
+
+declare function d3<T>
+// 1
+(b: T): void;
+
+declare function d4 /* 1 */ <T> /* 2 */ (): void;
+
+declare export function d5<T> /* 1 */ (): void;
+
 declare function e(/* 1 */): void;
 
 declare function f(): // 1
@@ -16,6 +29,11 @@ declare function g(): void /* 1 */;
 declare function h(x: mixed): boolean %checks(x) /* 1 */ ;
 
 declare function i(x: mixed): /* 1 */ boolean %checks(x);
+
+declare function i1(x: mixed): typeof y /* 1 */;
+
+declare function i2(x: mixed): typeof y // 1
+;
 
 declare hook useA /* 1 */ (): void;
 

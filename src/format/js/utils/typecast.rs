@@ -26,17 +26,16 @@ pub(crate) fn is_cast_target_that_hides_its_kind<'a>(e: Expr<'a>, f: &Formatter<
 }
 
 /// The parentheses around `e` that stay, from the outside in.
-fn cast_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> SmallVec<[Span; 2]> {
+pub(crate) fn cast_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> SmallVec<[Span; 2]> {
     e.parens()
         .rev()
         .filter(|it| f.comments().is_cast_parenthesis(it.start))
         .collect()
 }
 
-/// The comments attached to the node that Prettier has in the place of `e`. If `e` is in type cast parentheses, that node is
-/// the outermost `ParenthesizedExpression`.
-///
-/// For an optional chain, these are the comments of the member access or the call. See [`is_chain_expression_without_comments`].
+/// The comments that are written before and after `e`. If `e` is in type cast parentheses, they are those of the outermost
+/// `ParenthesizedExpression`. If `e` is an optional chain, they are those of the member access or the call, also where Prettier
+/// has a `ChainExpression` around that. To ask what Prettier's `hasComment(node)` asks, use [`comments_of_outermost_node`].
 pub(crate) fn comments_of_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> OwnedComments<'a> {
     if f.comments().has_type_cast_comments()
         && e.is_parenthesized()
@@ -64,8 +63,8 @@ pub(crate) fn has_comments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     !comments_of_outermost_node(e, f).is_empty()
 }
 
-/// The comments of the outermost node that Prettier has in the place of `e`. They are those of [`comments_of_expression`],
-/// but a `ChainExpression` has none.
+/// `node.comments` of the node that Prettier has in the place of `e`. The same as [`comments_of_expression`], except for an
+/// optional chain with typescript-estree: the node is a `ChainExpression` then, which has no comments.
 pub(crate) fn comments_of_outermost_node<'a>(e: Expr<'a>, f: &Formatter<'a>) -> OwnedComments<'a> {
     match is_chain_expression_without_comments(e, f) {
         true => OwnedComments::NONE,
@@ -73,15 +72,18 @@ pub(crate) fn comments_of_outermost_node<'a>(e: Expr<'a>, f: &Formatter<'a>) -> 
     }
 }
 
-/// The leading comments of the node that Prettier has in the place of `e`.
-pub(crate) fn leading_comments_of_expression<'a>(
-    e: Expr<'a>,
-    f: &Formatter<'a>,
-) -> CommentList<'a> {
-    match is_chain_expression_without_comments(e, f) {
-        true => CommentList::empty(),
-        false => comments_of_expression(e, f).leading,
-    }
+/// `!a(/* comment */)`: the comment is in `a()`. For Prettier `a()` has a comment. oxfmt only looks at the comments before and
+/// after it.
+fn comments_inside_count(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
+}
+
+/// Prettier's `hasComment(node)`, where oxfmt asks for less: see [`comments_inside_count`].
+pub(crate) fn has_comments_that_count<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let comments = comments_of_outermost_node(e, f);
+    !comments.leading.is_empty()
+        || !comments.trailing.is_empty()
+        || (!comments.dangling.is_empty() && comments_inside_count(f))
 }
 
 /// Prettier's `hasLeadingOwnLineComment`: whether a leading comment of `e` is the last thing on its line. A JSX element
@@ -90,7 +92,8 @@ pub(crate) fn has_leading_own_line_comment<'a>(e: Expr<'a>, f: &Formatter<'a>) -
     if e.tag() == ExprTag::Jsx && !is_cast_target(e, f) {
         return ignored_jsx_gets_no_parentheses(f) && f.comments().is_ignored(e.as_ast_nodes());
     }
-    (leading_comments_of_expression(e, f).iter()).any(|comment| comment.has_newline_after())
+    let comments = comments_of_outermost_node(e, f).leading;
+    comments.iter().any(|comment| comment.has_newline_after())
 }
 
 /// If `e` is in parentheses that stay, writes them with the comments they own, and `e` in them with `write_target`.
@@ -151,9 +154,7 @@ impl<'a> FormatParenthesizedExpression<'a, '_> {
         let comments = f.comments().of_node(self.target.as_chain_element());
         let hugs = inner.is_empty()
             && matches!(self.target.kind(), ExprKind::Object(_) | ExprKind::Array(_))
-            && comments.leading.is_empty()
-            && comments.trailing.is_empty()
-            && comments.dangling.is_empty();
+            && comments.is_empty();
         let content = FormatParenthesizedExpression {
             parentheses: inner,
             ..*self

@@ -5,7 +5,6 @@ use crate::js::utils::object::FormatKey;
 use crate::js::utils::string::{
     FormatLiteralStringToken, StringLiteralParentKind, is_name_without_quotes,
 };
-
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -105,7 +104,9 @@ fn write_import_specifiers<'a>(import: Import<'a>, f: &mut Formatter<'a>) {
     match named.first() {
         None => write!(f, "{}"),
         Some(only)
-            if is_only_specifier && !f.comments().has_comments(AstNodes::ImportSpecifier(only)) =>
+            if is_only_specifier
+                && (f.is_quiet()
+                    || !f.comments().has_comments(AstNodes::ImportSpecifier(only))) =>
         {
             write!(
                 f,

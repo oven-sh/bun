@@ -105,19 +105,6 @@ fn span_for_comments<'a>(node: AstNodes<'a>, f: &Formatter<'a>) -> Span {
         {
             f.file().without_semicolon(span)
         }
-        // What is exported ends where the `export` around it ends.
-        AstNodes::TSTypeAliasDeclaration(statement)
-        | AstNodes::TSImportEqualsDeclaration(statement)
-            if statement.is_exported() =>
-        {
-            f.file().without_semicolon(span)
-        }
-        AstNodes::Function(func)
-            if !func.has_body()
-                && matches!(func.owner(), Node::Stmt(statement) if statement.is_exported()) =>
-        {
-            f.file().without_semicolon(span)
-        }
         _ => span,
     }
 }
@@ -226,7 +213,7 @@ pub(crate) fn format_name<'a>(
     f: &mut Formatter<'a>,
     write: impl FnOnce(&mut Formatter<'a>),
 ) {
-    format_name_that(false, span, f, write);
+    format_name_or_copy(false, span, f, write);
 }
 
 /// [`format_name`] for what Prettier prints like any other node, so that a `prettier-ignore` comment applies to it:
@@ -237,11 +224,11 @@ pub(crate) fn format_ignorable_name<'a>(
     f: &mut Formatter<'a>,
     write: impl FnOnce(&mut Formatter<'a>),
 ) {
-    format_name_that(true, span, f, write);
+    format_name_or_copy(true, span, f, write);
 }
 
 #[inline(always)]
-fn format_name_that<'a>(
+fn format_name_or_copy<'a>(
     can_be_ignored: bool,
     span: Span,
     f: &mut Formatter<'a>,
@@ -414,7 +401,7 @@ impl<'a> FormatExpr<'a> {
         } {
             return self.write_in_parentheses(is_chain_expression, f);
         }
-        // A JSX element prints its comments together with its parentheses. For Prettier not one that is ignored:
+        // A JSX element prints its comments together with its parentheses. Prettier copies an ignored element without them:
         // `((<a   />) /* prettier-ignore */, b)`
         if matches!(node, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_))
             && !(print::jsx::ignored_jsx_gets_no_parentheses(f) && f.comments().is_ignored(node))
@@ -840,17 +827,19 @@ fn format_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     }
 }
 
-/// Writes the comments in `span`, which is a statement or a class member, that have no printer. See
+/// Writes the comments inside `span` (a statement or a class member) that no printer wrote in the first pass. See
 /// [`crate::ir::run::format_with_marks`].
 #[cold]
 #[inline(never)]
 fn write_comments_without_printer<'a>(span: Span, f: &mut Formatter<'a>) {
     let ids = std::mem::take(&mut f.context_mut().comments_without_printer);
-    for &id in &ids {
+    // The ids are in source order.
+    let start_of = |id: u32| f.file().comment(id).span().start;
+    let first = ids.partition_point(|&id| start_of(id) < span.start);
+    let end = ids.partition_point(|&id| start_of(id) < span.end);
+    for &id in ids.get(first..end).unwrap_or_default() {
         let comment = f.comments().all().slice(id as usize, id as usize + 1);
-        if comment.first().is_some_and(|it| span.contains(it.span())) {
-            FormatTrailingComments::Comments(comment).fmt(f);
-        }
+        FormatTrailingComments::Comments(comment).fmt(f);
     }
     f.context_mut().comments_without_printer = ids;
 }
@@ -909,6 +898,9 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
 /// `prettier-ignore` comment protects: it is written, or not, as for any other. Prettier only adds
 /// one to a statement that has one, and writes members, type aliases and functions without a body
 /// as they are.
+///
+/// The exception is a declaration that is ignored after its `export`, which oxfmt copies with its `;` too: see
+/// `is_ignored_with_its_semicolon` in `print/export_declarations.rs`.
 pub(crate) fn terminator_of_what_is_ignored_follows_semi(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -1267,7 +1259,7 @@ fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &
     }
     let node = AstNodes::TSTypeAnnotation(ty);
     if !f.comments().of_node(node).leading.is_empty()
-        && !(comment_sticks_to_name_of_variable(f)
+        && !(comment_sticks_to_name_before_type_annotation(f)
             && matches!(
                 node.parent(),
                 AstNodes::VariableDeclarator(_)
@@ -1282,7 +1274,7 @@ fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &
 
 /// `const a /* comment */ : T = 1` is `const a/* comment */ : T = 1` for oxfmt. The same after `this` and after `...a` in
 /// the parameters of a function.
-fn comment_sticks_to_name_of_variable(f: &Formatter<'_>) -> bool {
+fn comment_sticks_to_name_before_type_annotation(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 

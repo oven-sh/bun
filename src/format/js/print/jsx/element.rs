@@ -205,10 +205,6 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let node = self.expr.as_ast_nodes();
         if !f.is_quiet() && f.comments().is_ignored(node) {
-            // Prettier's `printIgnored` comes before `maybeWrapJsxElementInParens`.
-            if ignored_jsx_gets_no_parentheses(f) {
-                return self.fmt_ignored(f);
-            }
             return self.fmt_in_parentheses(&format_with(|f| self.fmt_ignored(f)), f);
         }
         let format_with_comments =

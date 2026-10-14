@@ -1,7 +1,7 @@
 use super::semicolon::OptionalSemicolon;
 use crate::js::utils::typecast::{
-    has_leading_own_line_comment, is_cast_target, is_cast_target_that_hides_its_kind,
-    is_chain_expression_without_comments, leading_comments_of_expression,
+    comments_of_outermost_node, has_leading_own_line_comment, is_cast_target,
+    is_cast_target_that_hides_its_kind, is_chain_expression_without_comments,
 };
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -22,6 +22,7 @@ pub(crate) fn write_throw_statement<'a>(
     write_return_or_throw("throw", statement, Some(argument), f);
 }
 
+#[inline(never)]
 fn write_return_or_throw<'a>(
     keyword: &'static str,
     statement: Stmt<'a>,
@@ -183,7 +184,7 @@ pub(crate) fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatte
     let is_cast = is_cast_target(argument, f);
     let has_leading_comment = match argument.tag() == ExprTag::Jsx && !is_cast {
         true => has_leading_own_line_comment(argument, f),
-        false => (leading_comments_of_expression(argument, f).iter())
+        false => (comments_of_outermost_node(argument, f).leading.iter())
             .any(|comment| comment.has_newline_after() || comment.is_multiline_block()),
     };
     if has_leading_comment {

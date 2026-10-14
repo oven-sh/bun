@@ -160,6 +160,16 @@ impl<'a> CommentList<'a> {
     pub(crate) fn split_at(self, index: usize) -> (CommentList<'a>, CommentList<'a>) {
         (self.slice(0, index), self.slice(index, self.len()))
     }
+
+    /// Splits off the comments at the start that are on the line of the token before them, if that line ends after one of
+    /// them. Otherwise none.
+    pub(crate) fn split_at_end_of_line(self) -> (CommentList<'a>, CommentList<'a>) {
+        let count = (self.iter())
+            .take_while(|comment| !comment.has_newline_before())
+            .position(|comment| comment.has_newline_after())
+            .map_or(0, |last| last + 1);
+        self.split_at(count)
+    }
 }
 
 impl Default for CommentList<'_> {

@@ -248,7 +248,7 @@ fn write_signatures<'a>(members: List<'a, Member<'a>>, is_interface: bool, f: &m
             next_signature: iter.peek().copied(),
             is_interface,
         };
-        // `a: 1⏎⏎// comment⏎; b: 2`: a member of Flow's ends before its separator, and Prettier's `isNextLineEmpty` starts there.
+        // `a: 1⏎⏎// comment⏎; b: 2`: a member in Flow ends before its separator, and Prettier's `isNextLineEmpty` starts there.
         let is_after_empty_line = is_flow
             && previous.replace(signature).is_some_and(|previous| {
                 crate::text::is_next_line_empty(text, previous.span().end as usize)
@@ -285,7 +285,7 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
         if !f.is_quiet() {
             if f.comments().is_ignored(node) {
                 write!(f, signature);
-                // It is not part of a member of Flow's. In an interface or a declared class Prettier writes none after an ignored
+                // In Flow the separator is not part of the member. In an interface or a declared class Prettier writes none after an ignored
                 // member, which is a syntax error before another member.
                 if f.file().is_flow() && !(self.is_interface && self.next_signature.is_none()) {
                     self.write_separator(f);
@@ -402,7 +402,7 @@ pub(crate) fn write_ts_type_query<'a>(
     args: List<'a, TypeNode<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    if f.file().is_flow() && super::flow::write_declared_predicate(ty, expr, args, f) {
+    if f.file().is_flow() && super::flow::write_declared_predicate(ty, f) {
         return;
     }
     write!(f, "typeof ");
@@ -431,6 +431,7 @@ fn write_qualified_name<'a>(name: Expr<'a>, f: &mut Formatter<'a>) {
 }
 
 /// `import("a").B<C>`, `typeof import("a")`
+#[inline(never)]
 pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     let TypeKind::Import {
         name,
@@ -458,6 +459,11 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
             FormatLeadingComments::Comments(comments.leading_import)
         ]
     );
+    if let Some(import) = ty.import_span()
+        && has_ignore_comment(&[comments.leading_import], CommentList::empty(), f)
+    {
+        return write!(f, FormatSuppressedNode(import));
+    }
     match options {
         Some(options) => {
             let arguments =
@@ -493,12 +499,14 @@ struct ImportTypeComments<'a> {
     leading_import: CommentList<'a>,
     leading_source: CommentList<'a>,
     trailing_source: CommentList<'a>,
-    /// Before the `{` of `{ with: { .. } }`. Here and in the next two: the comments that the module specifier owns, then those that
-    /// the inner object owns.
+    /// Before the `{` of `{ with: { .. } }`: the comments that the module specifier owns, then those that the inner object owns.
     leading_options: [CommentList<'a>; 2],
-    /// Before `with`. Then those that end a line between `with` and the `{` of `{ .. }`, before the `:` and after it: Prettier's
-    /// `handlePropertyComments`.
-    leading_property: [CommentList<'a>; 4],
+    /// Before `with`: the comments that the module specifier owns, then those that the inner object owns.
+    leading_property: [CommentList<'a>; 2],
+    /// `with // comment ⏎: { .. }`. With Prettier's `handlePropertyComments` it leads the property.
+    at_end_of_line_before_colon: CommentList<'a>,
+    /// `with: // comment ⏎ { .. }`, likewise.
+    at_end_of_line_after_colon: CommentList<'a>,
     /// `with /* comment */: { .. }`
     trailing_keyword: CommentList<'a>,
     /// Before the `{` of `{ .. }`.
@@ -520,17 +528,6 @@ impl<'a> ImportTypeComments<'a> {
             let count = (comments.iter())
                 .take_while(|comment| comment.next_token_start() <= token_start)
                 .count();
-            let (taken, rest) = comments.split_at(count);
-            *comments = rest;
-            taken
-        }
-        /// Splits off the comments at the start of `comments` that are on the line of the token before them, if the last of
-        /// them ends the line.
-        fn take_up_to_end_of_line<'a>(comments: &mut CommentList<'a>) -> CommentList<'a> {
-            let count = (comments.iter())
-                .take_while(|comment| !comment.has_newline_before())
-                .position(|comment| comment.has_newline_after())
-                .map_or(0, |index| index + 1);
             let (taken, rest) = comments.split_at(count);
             *comments = rest;
             taken
@@ -564,28 +561,27 @@ impl<'a> ImportTypeComments<'a> {
             of_attributes.trailing,
         );
         // `"a" /* 1 */, // 2 ⏎ { .. }`: before the `,`, or after it up to the end of its line.
-        let before_comma = take_up_to(&mut after_source, outer.start.saturating_sub(1)).len();
-        let mut after_comma = take_up_to(&mut after_source, outer.start);
-        let on_line_of_comma = take_up_to_end_of_line(&mut after_comma).len();
+        let before_comma = take_up_to(&mut after_source, outer.start.saturating_sub(1));
+        let (on_line_of_comma, after_comma) =
+            take_up_to(&mut after_source, outer.start).split_at_end_of_line();
         let (keyword, attributes) = (options.keyword_span().start, options.braces_span().start);
         let leading_options = [after_comma, take_up_to(&mut before_attributes, outer.start)];
-        let before_keyword = [
+        let leading_property = [
             take_up_to(&mut after_source, keyword),
             take_up_to(&mut before_attributes, keyword),
         ];
-        let mut before_colon = take_up_to(&mut after_source, attributes.saturating_sub(1));
+        let (at_end_of_line_before_colon, trailing_keyword) =
+            take_up_to(&mut after_source, attributes.saturating_sub(1)).split_at_end_of_line();
         ImportTypeComments {
             leading_import,
             leading_source,
-            trailing_source: of_source.trailing.slice(0, before_comma + on_line_of_comma),
+            trailing_source: (of_source.trailing)
+                .slice(0, before_comma.len() + on_line_of_comma.len()),
             leading_options,
-            leading_property: [
-                before_keyword[0],
-                before_keyword[1],
-                take_up_to_end_of_line(&mut before_colon),
-                after_source,
-            ],
-            trailing_keyword: before_colon,
+            leading_property,
+            at_end_of_line_before_colon,
+            at_end_of_line_after_colon: after_source,
+            trailing_keyword,
             leading_attributes: before_attributes,
             trailing_property: take_up_to(&mut after_attributes, outer.end.saturating_sub(1)),
             trailing_options: after_attributes,
@@ -596,21 +592,41 @@ impl<'a> ImportTypeComments<'a> {
     fn format_source(&self, source: Span) -> impl Format<'a> {
         let (leading, trailing) = (self.leading_source, self.trailing_source);
         format_with(move |f: &mut Formatter<'a>| {
-            let string = f.source_text().text_for(&source);
-            write!(
-                f,
-                [
-                    FormatLeadingComments::Comments(leading),
+            write!(f, FormatLeadingComments::Comments(leading));
+            match has_ignore_comment(&[leading], trailing, f) {
+                true => write!(f, FormatSuppressedNode(source)),
+                false => write!(
+                    f,
                     FormatLiteralStringToken::new(
-                        string,
+                        f.source_text().text_for(&source),
                         false,
                         StringLiteralParentKind::Expression
-                    ),
-                    FormatTrailingComments::Comments(trailing)
-                ]
-            );
+                    )
+                ),
+            }
+            write!(f, FormatTrailingComments::Comments(trailing));
         })
     }
+}
+
+/// `import('a' /* prettier-ignore */)` is `import("a" /* prettier-ignore */)` for oxfmt: a `prettier-ignore` comment after a node
+/// applies to it only if it ends its line. For Prettier every comment of a node counts.
+fn trailing_ignore_comment_has_to_end_its_line(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// Whether a `prettier-ignore` comment applies to the ESTree node that has the comments `leading` and `trailing`.
+fn has_ignore_comment<'a>(
+    leading: &[CommentList<'a>],
+    trailing: CommentList<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    let is_ignore_comment = |comment: Comment<'a>| f.comments().is_suppression_comment(comment);
+    leading.iter().any(|it| it.iter().any(is_ignore_comment))
+        || trailing.iter().any(|comment| {
+            is_ignore_comment(comment)
+                && (comment.has_newline_after() || !trailing_ignore_comment_has_to_end_its_line(f))
+        })
 }
 
 /// ```ts
@@ -641,7 +657,10 @@ fn write_import_type_arguments<'a>(
         for comments in comments.leading_options {
             write!(f, FormatLeadingComments::Comments(comments));
         }
-        write_import_type_options(options, comments, f);
+        match has_ignore_comment(&comments.leading_options, comments.trailing_options, f) {
+            true => write!(f, FormatSuppressedNode(options.options_span())),
+            false => write_import_type_options(options, comments, f),
+        }
         write!(
             f,
             FormatTrailingComments::Comments(comments.trailing_options)
@@ -747,7 +766,7 @@ fn write_import_type_options<'a>(
             f,
             FormatLeadingComments::Comments(comments.leading_attributes)
         );
-        if f.comments().is_ignored(attributes) {
+        if has_ignore_comment(&[comments.leading_attributes], CommentList::empty(), f) {
             return write!(f, FormatSuppressedNode(inner));
         }
         let Some(first) = entries.first() else {
@@ -776,14 +795,28 @@ fn write_import_type_options<'a>(
         );
     });
     let format_property = format_with(|f| {
-        let [before_keyword @ .., before_colon, after_colon] = comments.leading_property;
-        let at_end_of_line = [before_colon, after_colon];
-        for comments in before_keyword {
+        for comments in comments.leading_property {
             write!(f, FormatLeadingComments::Comments(comments));
         }
+        if has_ignore_comment(&comments.leading_property, comments.trailing_property, f) {
+            return write!(
+                f,
+                [
+                    FormatSuppressedNode(keyword.to(inner)),
+                    FormatTrailingComments::Comments(comments.trailing_property),
+                    FormatTrailingCommas::ES5
+                ]
+            );
+        }
+        let at_end_of_line = [
+            comments.at_end_of_line_before_colon,
+            comments.at_end_of_line_after_colon,
+        ];
         let stay_after_colon = comments_at_end_of_line_stay_after_colon(f);
-        for comments in at_end_of_line.into_iter().filter(|_| !stay_after_colon) {
-            write!(f, FormatLeadingComments::Comments(comments));
+        if !stay_after_colon {
+            for comments in at_end_of_line {
+                write!(f, FormatLeadingComments::Comments(comments));
+            }
         }
         write!(
             f,
@@ -793,8 +826,10 @@ fn write_import_type_options<'a>(
                 ":"
             ]
         );
-        for comments in at_end_of_line.into_iter().filter(|_| stay_after_colon) {
-            write!(f, FormatTrailingComments::Comments(comments));
+        if stay_after_colon {
+            for comments in at_end_of_line {
+                write!(f, FormatTrailingComments::Comments(comments));
+            }
         }
         // The layout `break-after-operator` of Prettier's `printAssignment`.
         let breaks_after_colon = (comments.leading_attributes.iter())

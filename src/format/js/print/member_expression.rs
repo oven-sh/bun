@@ -32,7 +32,17 @@ fn boundary_behind_object(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
 fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, f: &mut Formatter<'a>) {
     let start = f.elements().len();
     write!(f, [object, boundary_behind_object(f)]);
+    write_property_after_object(e, object, start, f);
+}
 
+/// Not inlined: `a.b.c.d` is nested as deep as it is long, and what this needs of the stack would be taken at each level.
+#[inline(never)]
+fn write_property_after_object<'a>(
+    e: Expr<'a>,
+    object: Expr<'a>,
+    start: usize,
+    f: &mut Formatter<'a>,
+) {
     let comments = comments_on_lines_before_property(e, f);
     let lookup = format_with(|f| match comments.is_empty() {
         true => write_lookup(e, f),

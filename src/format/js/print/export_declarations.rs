@@ -2,11 +2,9 @@ use super::decorators::FormatDecorators;
 use super::import_declaration::{
     FormatSpecifiers, format_import_and_export_source_with_clause, module_export_name,
 };
-
 use super::semicolon::OptionalSemicolon;
 use crate::js::ast_nodes::inner_of_stmt;
 use crate::js::format::{FormatDeclaration, format_ignorable_name, format_node, write_declaration};
-
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::write;
@@ -17,20 +15,29 @@ fn comments_of_decorated_class_start_a_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
+/// `export /* prettier-ignore */ const a = 1 ;` stays as it is for oxfmt. Prettier writes `const a = 1;`.
+fn ignored_variable_declaration_is_copied_with_its_semicolon(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `export /* prettier-ignore */ type A = 1 ;`: the `;` is part of a type alias, an `import a = b`, a function without a body
-/// and a module without a body, so it is copied with them, whatever the options say. For oxfmt also that of `const a = 1 ;`.
+/// and a module without a body, so it is copied with them, whatever the options say.
+///
+/// Both tools do that after `export`. Where the whole statement is ignored, oxfmt writes the `;` as the options say: see
+/// [`terminator_of_what_is_ignored_follows_semi`](crate::js::format::terminator_of_what_is_ignored_follows_semi).
 fn is_ignored_with_its_semicolon<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
     let ends_with_its_semicolon = match statement.kind() {
         StmtKind::TypeAlias(_) | StmtKind::ImportEquals(_) => true,
         StmtKind::Fn(func) => !func.has_body(),
         StmtKind::Module(module) => !module.innermost().has_body(),
-        StmtKind::Var(_) => f.options().flavor.is_oxfmt(),
+        StmtKind::Var(_) => ignored_variable_declaration_is_copied_with_its_semicolon(f),
         _ => false,
     };
     ends_with_its_semicolon && !f.is_quiet() && f.comments().is_ignored(inner_of_stmt(statement))
 }
 
 /// `export` or `export default` and the declaration `statement`.
+#[inline(never)]
 pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     let node = statement.as_ast_nodes();
     let first_modifier = statement
@@ -218,7 +225,8 @@ pub(crate) fn write_export_named_declaration<'a>(
         None => write!(f, "{}"),
         Some(only)
             if specifiers.len() == 1
-                && !f.comments().has_comments(AstNodes::ExportSpecifier(only)) =>
+                && (f.is_quiet()
+                    || !f.comments().has_comments(AstNodes::ExportSpecifier(only))) =>
         {
             write!(
                 f,

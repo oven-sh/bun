@@ -42,6 +42,7 @@ fn is_jest_each_template_literal<'a>(e: Expr<'a>, template: Template<'a>) -> boo
 }
 
 /// `` `a${b}c` ``
+#[inline(never)]
 pub(crate) fn write_template_literal<'a>(
     e: Expr<'a>,
     template: Template<'a>,
@@ -83,6 +84,7 @@ pub(crate) fn write_embedded_template_expression<'a>(
 }
 
 /// `` tag`a${b}c` ``. Prettier's `printTaggedTemplateExpression`.
+#[inline(never)]
 pub(crate) fn write_tagged_template_expression<'a>(
     e: Expr<'a>,
     call: Call<'a>,

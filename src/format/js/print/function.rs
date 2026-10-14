@@ -26,6 +26,7 @@ fn comments_of_type_parameters_are_in_a_group_with_them(f: &Formatter<'_>) -> bo
 }
 
 /// A function declaration or expression. Not a method: see `class.rs`.
+#[inline(never)]
 pub(crate) fn write_function<'a>(
     func: Func<'a>,
     options: FormatFunctionOptions,

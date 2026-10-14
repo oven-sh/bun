@@ -28,6 +28,8 @@ type K = { get g // 1
 // 2
 (): 1 };
 
+type K1 = { m<T> /* 1 */ (): void, n<T> /* 2 */ (a: T): void, <T> /* 3 */ (): void };
+
 type L = { m(/* 1 */): void };
 
 type M = hook /* 1 */ () => void;

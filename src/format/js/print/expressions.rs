@@ -12,7 +12,7 @@ use crate::js::utils::array::write_array_node;
 use crate::js::utils::assignment_like::AssignmentLike;
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::object::{format_computed_or_property_key, should_preserve_quote};
-use crate::js::utils::typecast::{comments_of_expression, has_comments};
+use crate::js::utils::typecast::has_comments_that_count;
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
 
@@ -173,6 +173,7 @@ fn write_object_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
 }
 
 /// `import.meta`, `new.target`. Both words are `Identifier` nodes for Prettier, so comments can be attached to them.
+#[inline(never)]
 pub(crate) fn write_meta_property<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     let span = e.span();
     let is_import_meta = matches!(e.kind(), ExprKind::ImportMeta);
@@ -213,19 +214,10 @@ pub(crate) fn write_update_expression<'a>(op: UnOp, operand: Expr<'a>, f: &mut F
     }
 }
 
-/// Prettier's `hasComment(node.argument)`. For oxfmt a comment inside the operand does not count: `!a(/* comment */)`.
-fn operand_has_comments<'a>(operand: Expr<'a>, f: &Formatter<'a>) -> bool {
-    if !f.options().flavor.is_oxfmt() {
-        return has_comments(operand, f);
-    }
-    let comments = comments_of_expression(operand, f);
-    !comments.leading.is_empty() || !comments.trailing.is_empty()
-}
-
 /// `!a`, `typeof a`
 pub(crate) fn write_unary_expression<'a>(op: UnOp, operand: Expr<'a>, f: &mut Formatter<'a>) {
     write!(f, [op.as_str(), op.is_keyword().then_some(space())]);
-    if !f.is_quiet() && operand_has_comments(operand, f) {
+    if !f.is_quiet() && has_comments_that_count(operand, f) {
         write!(
             f,
             group(&format_args!("(", soft_block_indent(&operand), ")"))
@@ -297,6 +289,7 @@ pub(crate) fn write_object_assignment_target<'a>(
 }
 
 /// `await a`
+#[inline(never)]
 pub(crate) fn write_await_expression<'a>(e: Expr<'a>, argument: Expr<'a>, f: &mut Formatter<'a>) {
     let format_inner = format_args!("await", space(), argument);
     let is_callee_or_object = match e.ast_parent() {
@@ -320,6 +313,7 @@ pub(crate) fn write_await_expression<'a>(e: Expr<'a>, argument: Expr<'a>, f: &mu
 }
 
 /// `yield a`, `yield* a`
+#[inline(never)]
 pub(crate) fn write_yield_expression<'a>(
     argument: Option<Expr<'a>>,
     delegate: bool,
@@ -357,6 +351,7 @@ fn yield_writes_its_argument_as_return_does(f: &Formatter<'_>) -> bool {
 }
 
 /// `<T>a`
+#[inline(never)]
 pub(crate) fn write_ts_type_assertion<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     let Some(expression) = e.expression() else {
         return;

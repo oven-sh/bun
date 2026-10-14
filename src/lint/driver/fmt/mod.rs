@@ -934,7 +934,7 @@ fn print<'a>(
                     Program::new(&**hir, &out, atoms),
                 ),
             };
-            (!has_parse_errors || file.has_parse_errors())
+            !has_parse_errors
                 && bun_format::verify::compare(file, program, &after, options, &mut scratch.verify)
                     .is_ok()
         });

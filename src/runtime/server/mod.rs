@@ -2101,6 +2101,30 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// Listens on a descriptor that the caller bound. On failure the caller keeps the descriptor.
     pub(crate) fn listen_fd(&mut self, app: *mut uws_sys::NewApp<SSL>, fd: i32) {
         let global = self.global_this();
+        // listen(2) takes a SOCK_SEQPACKET socket too; a non-socket gets its errno from listen(2).
+        #[cfg(unix)]
+        {
+            let mut sock_type: c_int = 0;
+            let mut len = core::mem::size_of::<c_int>() as libc::socklen_t;
+            // SAFETY: `sock_type` and `len` are valid out-params that outlive the call.
+            let rc = unsafe {
+                libc::getsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_TYPE,
+                    (&raw mut sock_type).cast(),
+                    &raw mut len,
+                )
+            };
+            if rc == 0 && sock_type != libc::SOCK_STREAM {
+                let _ = global.throw_value(Self::listen_fd_error(
+                    global,
+                    fd,
+                    bun_sys::E::EINVAL as c_int,
+                ));
+                return;
+            }
+        }
         // Bun never closes descriptors 0 to 2, so a server on one of them owns a duplicate.
         #[cfg(unix)]
         let adopted = if fd <= 2 {

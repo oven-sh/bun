@@ -62,9 +62,13 @@ enum Unhandled {
 }
 
 fn is_async_iife(expression: Expr) -> bool {
-    // ESLint has a `ChainExpression` around `(() => {})?.()`.
-    !expression.is_chain_root()
-        && expression.as_call().is_some_and(|call| call.callee().as_fn().is_some())
+    // ESLint has a `ChainExpression` around `(() => {})?.()`, tsgolint a `ParenthesizedExpression`
+    // around `(function () {}())`.
+    let is_call_expression = match expression.file().language().is_oxlint {
+        true => !expression.is_parenthesized(),
+        false => !expression.is_chain_root(),
+    };
+    is_call_expression && expression.as_call().is_some_and(|call| call.callee().as_fn().is_some())
 }
 
 fn is_valid_rejection_handler(rejection_handler: Expr) -> bool {
@@ -177,7 +181,9 @@ impl NoFloatingPromises {
         };
         let callee = call.callee();
         let ty = callee.ty();
-        value_matches_some_specifier(callee, specifiers, ty)
+        // tsgolint has no name for a callee in parentheses.
+        let is_parenthesized_expression = callee.is_parenthesized() && callee.file().language().is_oxlint;
+        (!is_parenthesized_expression && value_matches_some_specifier(callee, specifiers, ty))
             || type_matches_some_specifier(ty, specifiers)
     }
 
@@ -191,7 +197,11 @@ impl NoFloatingPromises {
         known: &mut State<'a>,
     ) -> Option<(Unhandled, Expr<'a>)> {
         let is_oxlint = node.file().language().is_oxlint;
+        // tsgolint skips the parentheses of the statement's expression only. Any other
+        // `ParenthesizedExpression` is none of the kinds that it looks into.
+        let is_parenthesized_expression = is_oxlint && !is_statement_expression && node.is_parenthesized();
         match node.kind() {
+            _ if is_parenthesized_expression => {}
             ExprKind::Assign { .. } => return None,
             // Any operand of a comma expression can be an unhandled promise, whatever the type of
             // the last is.
@@ -213,18 +223,25 @@ impl NoFloatingPromises {
         }
         // `await` handles a promise, but not an array of promises. The type does not tell: that of
         // `await (promise as Promise<number> & number)` is `Promise<number> & number`.
-        if let ExprKind::Await(_) = node.kind() {
+        if !is_parenthesized_expression && let ExprKind::Await(_) = node.kind() {
             return None;
         }
         if !self.is_promise_like(node, ty, known) {
             return None;
+        }
+        if is_parenthesized_expression {
+            return Some((Unhandled::Promise, node));
         }
 
         match node.kind() {
             // tsgolint has no `ChainExpression`, and knows the method by the checker's name of it.
             ExprKind::Call(call) if is_oxlint => {
                 let callee = call.callee();
-                let method_name = callee.file().type_checker().get_accessed_property_name(callee);
+                // A callee in parentheses is not an access expression.
+                let method_name = match callee.is_parenthesized() {
+                    true => None,
+                    false => callee.file().type_checker().get_accessed_property_name(callee),
+                };
                 let arguments = call.args();
                 let mut known_arguments =
                     arguments.iter().take_while(|argument| !matches!(argument.kind(), ExprKind::Spread(_)));
@@ -348,12 +365,13 @@ impl Rule for NoFloatingPromises {
         }
     }
 
-    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new().stmts(&[StmtTag::Expr]);
 
         // The body of an arrow function that is a unary expression. Only what `void` is applied to
-        // can be a promise, and only if `void` is not a way to ignore one.
-        if !self.ignore_void {
+        // can be a promise, and only if `void` is not a way to ignore one. tsgolint looks at
+        // statements only.
+        if !self.ignore_void && !file.language().is_oxlint {
             on = on.exprs(&[ExprTag::Unary]);
         }
         on

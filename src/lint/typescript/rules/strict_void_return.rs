@@ -325,6 +325,8 @@ impl StrictVoidReturn {
                     _ => return,
                 }
             }
+            // tsgolint listens to no accessor.
+            MemberKind::Getter | MemberKind::Setter if is_oxlint => return,
             MemberKind::Method | MemberKind::Getter | MemberKind::Setter => match member.func() {
                 Some(func) if func.has_body() => FuncNode::Method(func),
                 _ => return,
@@ -352,6 +354,11 @@ impl StrictVoidReturn {
         let func = match func_node {
             FuncNode::Method(func) => func,
             FuncNode::Expr(e) => match e.kind() {
+                // For tsgolint what is in parentheses is a `ParenthesizedExpression`, not a function, and is reported whole.
+                _ if cx.language().is_oxlint && e.is_parenthesized() => {
+                    cx.report(e.outer_span(), NON_VOID_FUNC);
+                    return;
+                }
                 ExprKind::Fn(func) => func,
                 _ => {
                     cx.report(e, NON_VOID_FUNC);

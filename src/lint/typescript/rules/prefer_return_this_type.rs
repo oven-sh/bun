@@ -6,17 +6,21 @@ pub struct PreferReturnThisType;
 
 const USE_THIS_TYPE: Message = Message::new("useThisType", "Use `this` type instead.");
 
-fn try_get_name_in_type<'a>(name: Name<'a>, type_node: TypeNode<'a>) -> Option<TypeNode<'a>> {
+fn try_get_name_in_type<'a>(name: Name<'a>, type_node: TypeNode<'a>, is_oxlint: bool) -> Option<TypeNode<'a>> {
+    // tsgolint does not look into a ParenthesizedType.
+    if is_oxlint && type_node.is_parenthesized() {
+        return None;
+    }
     match type_node.kind() {
         TypeKind::Ref { name: type_name, .. } => {
             type_name.as_ident().is_some_and(|it| it.name() == name).then_some(type_node)
         }
-        TypeKind::Union(types) => types.iter().find_map(|ty| try_get_name_in_type(name, ty)),
+        TypeKind::Union(types) => types.iter().find_map(|ty| try_get_name_in_type(name, ty, is_oxlint)),
         _ => None,
     }
 }
 
-fn is_function_returning_this<'a>(original_func: Func<'a>, original_class: Class<'a>) -> bool {
+fn is_function_returning_this<'a>(original_func: Func<'a>, original_class: Class<'a>, is_oxlint: bool) -> bool {
     if original_func.this_param().is_some() {
         return false;
     }
@@ -39,6 +43,10 @@ fn is_function_returning_this<'a>(original_func: Func<'a>, original_class: Class
             has_return_this = true;
             continue;
         }
+        // For tsgolint the type of a class expression is not an InterfaceType: only the keyword counts.
+        if is_oxlint && class_type.this_type().is_none() {
+            continue;
+        }
         let ty = expr.ty();
         if class_type == ty {
             return false;
@@ -47,7 +55,7 @@ fn is_function_returning_this<'a>(original_func: Func<'a>, original_class: Class
             has_return_this = true;
             continue;
         }
-        if is_union_type(ty) && ty.types().contains(class_type) {
+        if !is_oxlint && is_union_type(ty) && ty.types().contains(class_type) {
             return false;
         }
     }
@@ -77,8 +85,12 @@ impl Rule for PreferReturnThisType {
             return;
         }
         let original_func = match node.kind() {
-            MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor => node.func(),
-            MemberKind::Property => node.init().and_then(Expr::as_fn),
+            MemberKind::Method => node.func(),
+            MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor if !is_oxlint => node.func(),
+            // For tsgolint the initializer itself is the function, not a ParenthesizedExpression.
+            MemberKind::Property => {
+                node.init().filter(|init| !is_oxlint || !init.is_parenthesized()).and_then(Expr::as_fn)
+            }
             _ => None,
         };
         let Some(original_func) = original_func else {
@@ -93,10 +105,10 @@ impl Rule for PreferReturnThisType {
         let Some(class_name) = original_class.name() else {
             return;
         };
-        let Some(found) = try_get_name_in_type(class_name.name(), return_type) else {
+        let Some(found) = try_get_name_in_type(class_name.name(), return_type, is_oxlint) else {
             return;
         };
-        if is_function_returning_this(original_func, original_class) {
+        if is_function_returning_this(original_func, original_class, is_oxlint) {
             cx.report(found, USE_THIS_TYPE).fix(|fixer| fixer.replace(found, "this"));
         }
     }

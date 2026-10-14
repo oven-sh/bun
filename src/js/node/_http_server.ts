@@ -1666,6 +1666,8 @@ function getNodeHTTPServerSocket() {
   if (NodeHTTPServerSocket) return NodeHTTPServerSocket;
   const { Socket: NetSocket }: { Socket: NetSocketConstructor } = require("node:net");
   const { getTimerDuration } = require("internal/timers");
+  // What a stream has for `writecb` while it writes a chunk that came without a callback.
+  let noWriteCallback: Function;
   NodeHTTPServerSocket = class Socket extends NetSocket {
     bytesRead = 0;
     connecting = false;
@@ -1695,7 +1697,12 @@ function getNodeHTTPServerSocket() {
     #closeError: Error | undefined = undefined;
     declare encrypted: boolean;
     declare resetAndClosing: boolean;
-    declare _writableState: { emitClose: boolean; decodeStrings: boolean };
+    declare _writableState: {
+      emitClose: boolean;
+      decodeStrings: boolean;
+      writecb: Function;
+      bufferedRequestCount: number;
+    };
     declare _readableState: { emitClose: boolean };
     constructor(server: Server, handle, encrypted, listenerGeneration) {
       // allowHalfOpen: node's connectionListener sockets never auto-end the
@@ -1714,6 +1721,7 @@ function getNodeHTTPServerSocket() {
       this._writableState.emitClose = true;
       this._readableState.emitClose = true;
       this._writableState.decodeStrings = true;
+      noWriteCallback ??= this._writableState.writecb;
       this.server = server;
       this.#resetSupported = !encrypted && !listenerGeneration?.isUnix;
       this[kHandle] = handle;
@@ -1765,7 +1773,14 @@ function getNodeHTTPServerSocket() {
         }
       }
     }
-    #onDrain() {
+    // What the kernel refused of the writes that the handle held back: like any write that it refuses, it waits for the drain.
+    #onWritesRefused(refused: Buffer) {
+      // The stream would queue it behind the writes that a cork() has collected since. In the handle, those wait for it.
+      if (this._writableState.bufferedRequestCount > 0) this.#write(refused, "buffer", noWriteCallback, false);
+      else super.write(refused);
+    }
+    #onDrain(refused?: Buffer) {
+      if (refused) return this.#onWritesRefused(refused);
       const handle = this[kHandle];
       this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
       const callback = this.#pendingCallback;
@@ -2010,6 +2025,12 @@ function getNodeHTTPServerSocket() {
         callback();
         return;
       }
+      // The FIN and 'finish' follow what the kernel refused of the writes that the handle held back.
+      const refused = handle.flushWrites();
+      if (refused) {
+        this.#write(refused, "buffer", err => (err ? callback(err) : this._final(callback)), false);
+        return;
+      }
       handle.end(this[kDestroySoon]);
       callback();
     }
@@ -2205,12 +2226,17 @@ function getNodeHTTPServerSocket() {
     }
 
     _write(_chunk, _encoding, _callback) {
+      // The callback of a write tells its caller that the kernel has the bytes, so the handle holds back only writes without one.
+      this.#write(_chunk, _encoding, _callback, this._writableState.writecb === noWriteCallback);
+    }
+
+    #write(_chunk, _encoding, _callback, mayHoldBack: boolean) {
       const handle = this[kHandle];
       let err;
       this._unrefTimer();
       try {
         if (handle) {
-          const flushed = handle.write(_chunk, _encoding);
+          const flushed = handle.write(_chunk, _encoding, mayHoldBack);
           if (!flushed && handle.ondrain) {
             // Streaming mode (CONNECT tunnels): wait for the native drain
             // callback before completing the write.

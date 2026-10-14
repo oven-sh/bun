@@ -149,6 +149,7 @@ extern "C" bool Bun__getEnvValue(JSC::JSGlobalObject* globalObject, const Encode
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 extern "C" void Bun__writeProfilesBeforeSelfKill(bool signalEndsProcess);
+extern "C" void Bun__runDeferredTasksBeforeProcessEnds();
 #if !OS(WINDOWS)
 extern "C" void onExitSignal(int);
 #endif
@@ -1867,6 +1868,7 @@ static void restoreDefaultSignalDisposition(int signalNumber)
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, CallFrame*))
 {
+    Bun__runDeferredTasksBeforeProcessEnds();
 #if OS(WINDOWS)
     // Raising SIGABRT is handled in the CRT in windows, calling _exit() with ambiguous code "3" by default.
     // This adjustment to the abort behavior gives a more sane exit code on abort, by calling _exit directly with code 134.
@@ -2045,6 +2047,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionExecve, __attribute__((
     for (auto& s : envStorage)
         envp.append(const_cast<char*>(s.legacyCStringPointer()));
     envp.append(nullptr);
+
+    Bun__runDeferredTasksBeforeProcessEnds();
+    RETURN_IF_EXCEPTION(scope, {});
 
     // Set stdin, stdout and stderr to be non-close-on-exec so that the new
     // process will inherit them. Record the previous flags so a failed
@@ -4835,6 +4840,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * glob
     if (signal > 0 && (pid == 0 || pid == -1 || pid == ownPid || pid == -ownPid)
         && !(Bun__isMainThreadVM() && signalToContextIdsMap && signalToContextIdsMap->contains(signal))) {
         Bun__writeProfilesBeforeSelfKill(selfSentSignalEndsProcess(pid, ownPid, signal));
+        // Whatever selfSentSignalEndsProcess() says: it is false for many signals that end or stop the process (SIGUSR1, SIGSTOP, ...).
+        Bun__runDeferredTasksBeforeProcessEnds();
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
 #if !OS(WINDOWS)

@@ -721,6 +721,37 @@ impl VMHolder {
             crate::bytecode_order_recorder::write_at_exit(vm, standalone_module_graph());
         }
     }
+
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__runDeferredTasksBeforeProcessEnds() {
+        let Some(vm_ptr) = VM.get() else { return };
+        // SAFETY: called on the JS thread that owns this VM.
+        unsafe { &*vm_ptr }.run_deferred_tasks_before_process_ends();
+    }
+
+    /// `task(ctx)` runs after the microtasks of the running task, again after each later task while it returns true. False: nothing would run it in time.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__postDeferredTask(
+        ctx: *mut c_void,
+        task: bun_event_loop::DeferredTaskQueue::DeferredRepeatingTask,
+    ) -> bool {
+        let vm = VirtualMachine::get();
+        if vm.is_inside_deferred_task_queue.get() || vm.is_shutting_down() {
+            return false;
+        }
+        vm.event_loop_mut()
+            .deferred_tasks
+            .post_task(NonNull::new(ctx), task);
+        true
+    }
+
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__VM__unregisterDeferredTask(ctx: *mut c_void) {
+        VirtualMachine::get()
+            .event_loop_mut()
+            .deferred_tasks
+            .unregister_task(NonNull::new(ctx));
+    }
 }
 
 #[thread_local]
@@ -1043,6 +1074,15 @@ impl VirtualMachine {
     pub fn event_loop_shared(&self) -> &EventLoop {
         // SAFETY: see `event_loop_mut`.
         unsafe { &*self.event_loop }
+    }
+
+    /// process.exit(), a signal to itself, process.abort() and process.execve() never reach drain_microtasks.
+    fn run_deferred_tasks_before_process_ends(&self) {
+        if !self.is_inside_deferred_task_queue.get() {
+            self.is_inside_deferred_task_queue.set(true);
+            self.event_loop_mut().deferred_tasks.run();
+            self.is_inside_deferred_task_queue.set(false);
+        }
     }
 
     /// A clone of this VM's uncounted [`crate::VmHandle`] — what something
@@ -2256,12 +2296,7 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
 
-        // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here.
-        if !self.is_inside_deferred_task_queue.get() {
-            self.is_inside_deferred_task_queue.set(true);
-            self.event_loop_mut().deferred_tasks.run();
-            self.is_inside_deferred_task_queue.set(false);
-        }
+        self.run_deferred_tasks_before_process_ends();
 
         self.is_shutting_down = true;
 

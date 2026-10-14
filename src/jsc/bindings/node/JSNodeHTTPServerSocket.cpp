@@ -22,6 +22,8 @@ extern "C" void Bun__NodeHTTPResponse_markTunneled(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_spillPendingWrite(void* zigResponse);
 extern "C" void Bun__NodeHTTPResponse_onClose(void* zigResponse, JSC::EncodedJSValue jsValue);
 extern "C" void us_socket_free_stream_buffer(us_socket_stream_buffer_t* streamBuffer);
+extern "C" bool Bun__VM__postDeferredTask(void* ctx, bool (*task)(void*));
+extern "C" void Bun__VM__unregisterDeferredTask(void* ctx);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, bool flushesBufferOnDrain, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
@@ -96,6 +98,7 @@ static void flushPartialResponseBeforeClose(us_socket_t* socket)
 void JSNodeHTTPServerSocket::close()
 {
     if (socket) {
+        flushWriteBatch();
         if (!upgraded && !us_socket_is_closed(socket) && !us_socket_is_shut_down(socket)) {
             if (is_ssl) {
                 flushPartialResponseBeforeClose<true>(socket);
@@ -120,6 +123,7 @@ void JSNodeHTTPServerSocket::close()
 void JSNodeHTTPServerSocket::reset()
 {
     if (socket) {
+        flushWriteBatch();
         us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, nullptr);
     }
 }
@@ -541,6 +545,7 @@ JSNodeHTTPServerSocket::~JSNodeHTTPServerSocket()
             clearSocketData<false>(this->upgraded, socket);
         }
     }
+    cancelWriteBatch();
     us_socket_free_stream_buffer(&streamBuffer);
 }
 
@@ -554,6 +559,7 @@ JSNodeHTTPServerSocket::JSNodeHTTPServerSocket(JSC::VM& vm, JSC::Structure* stru
 
 void JSNodeHTTPServerSocket::detach()
 {
+    cancelWriteBatch();
     this->m_duplex.clear();
     this->m_currentResponse.clear();
     {
@@ -754,6 +760,8 @@ void JSNodeHTTPServerSocket::onUpgraded(us_socket_t* adopted)
 {
     socket = adopted;
     upgraded = true;
+    // The 101 went out behind what was held back, and the WebSocket owns the uWS buffer now.
+    cancelWriteBatch();
     releaseTunnelReadsForUpgrade();
 
     // The HTTP connection is gone for the responses that did not upgrade it. They stay queued: the close still tells them.
@@ -885,6 +893,109 @@ static bool writeBehindResponse(us_socket_t* socket, const char* data, size_t le
 extern "C" bool Bun__NodeHTTPServerSocket__writeBehindResponse(us_socket_t* socket, bool is_ssl, const char* data, size_t length)
 {
     return is_ssl ? writeBehindResponse<true>(socket, data, length) : writeBehindResponse<false>(socket, data, length);
+}
+
+void JSNodeHTTPServerSocket::openWriteBatch()
+{
+    if (writeBatchOpen || !flushesStreamBufferOnDrain() || !isTunnel(this)) {
+        return;
+    }
+    // A pipelined CONNECT stays queued. The responses ahead of it put their own bytes into the uWS buffer.
+    if (!m_pipelinedResponses.isEmpty()) {
+        return;
+    }
+    writeBatchOpen = Bun__VM__postDeferredTask(this, [](void* cell) {
+        static_cast<JSNodeHTTPServerSocket*>(cell)->endWriteBatch();
+        return false;
+    });
+}
+
+static uWS::BackPressure& uwsBuffer(const JSNodeHTTPServerSocket* self)
+{
+    return self->is_ssl
+        ? reinterpret_cast<uWS::AsyncSocket<true>*>(self->socket)->getAsyncSocketData()->buffer
+        : reinterpret_cast<uWS::AsyncSocket<false>*>(self->socket)->getAsyncSocketData()->buffer;
+}
+
+bool JSNodeHTTPServerSocket::batchWrite(std::span<const uint8_t> bytes)
+{
+    constexpr size_t maxWriteBatch = 64 * 1024;
+    // A write behind bytes that the kernel refused has to wait for the drain, like them.
+    if (!writeBatchOpen || streamBuffer.bufferedSize() > 0 || (!writeBatchHeld && hasUnsentResponseBytes())) {
+        return false;
+    }
+    auto& buffer = uwsBuffer(this);
+    // The copy of a larger chunk costs more than the send() that it saves (bench/snippets/http-upgrade-socket-write.mjs).
+    if (bytes.size() > uWS::LoopData::CORK_COPY_MAX || buffer.length() > maxWriteBatch - bytes.size()) {
+        return false;
+    }
+    buffer.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    writeBatchHeld = true;
+    streamBuffer.total_bytes_written += bytes.size();
+    return true;
+}
+
+bool JSNodeHTTPServerSocket::flushWriteBatch()
+{
+    if (!writeBatchHeld) {
+        return false;
+    }
+    writeBatchHeld = false;
+    if (isClosed()) {
+        return false;
+    }
+    if (is_ssl) {
+        reinterpret_cast<uWS::AsyncSocket<true>*>(socket)->flush();
+    } else {
+        reinterpret_cast<uWS::AsyncSocket<false>*>(socket)->flush();
+    }
+    return hasUnsentResponseBytes();
+}
+
+JSC::JSUint8Array* JSNodeHTTPServerSocket::takeRefusedWrites(JSC::JSGlobalObject* globalObject)
+{
+    auto& buffer = uwsBuffer(this);
+    auto* refused = WebCore::createBuffer(globalObject, std::span { reinterpret_cast<const uint8_t*>(buffer.data()), buffer.length() });
+    if (!refused) {
+        return nullptr;
+    }
+    buffer.clear();
+    // The write that sends them counts them again. The unused response of the handoff can have put bytes behind them that were never counted.
+    streamBuffer.total_bytes_written -= std::min(streamBuffer.total_bytes_written, refused->byteLength());
+    return refused;
+}
+
+void JSNodeHTTPServerSocket::endWriteBatch()
+{
+    writeBatchOpen = false;
+    if (flushWriteBatch()) [[unlikely]] {
+        auto* globalObject = defaultGlobalObject(this->globalObject());
+        auto* callback = functionToCallOnDrain.get();
+        // Without a stream to take the rest, uWS sends it at the writable event.
+        if (callback && globalObject->scriptExecutionStatus(globalObject, this) == ScriptExecutionStatus::Running) {
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+            auto* refused = takeRefusedWrites(globalObject);
+            if (auto* exception = scope.exception()) {
+                (void)scope.tryClearException();
+                globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
+            } else {
+                MarkedArgumentBuffer args;
+                args.append(refused);
+                EnsureStillAliveScope ensureStillAlive(this);
+                callStoredCallback(globalObject, callback, this, args);
+            }
+        }
+    }
+    updateTunnelIdle();
+}
+
+void JSNodeHTTPServerSocket::cancelWriteBatch()
+{
+    writeBatchHeld = false;
+    if (writeBatchOpen) {
+        writeBatchOpen = false;
+        Bun__VM__unregisterDeferredTask(this);
+    }
 }
 
 void JSNodeHTTPServerSocket::updateTunnelIdle()

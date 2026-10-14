@@ -69,18 +69,67 @@ impl DirectDependencies {
             return;
         }
         redirect(lockfile, self.moved_pairs(lockfile));
+        self.rebind_root_peers(lockfile);
     }
 
+    /// A peer edge still on the package a root dependency used to resolve to follows it whatever the new package is, as the hoister dedupes such a peer onto the root's dependency of its name regardless of range (`Tree::hoist_dependency`).
+    fn rebind_root_peers(&self, lockfile: &mut Lockfile) {
+        let mut new_of: Vec<(PackageID, PackageNameHash)> =
+            vec![(invalid_package_id, 0); lockfile.packages.len()];
+        let mut any = false;
+        for (owner, name_hash, old, new) in self.moved(lockfile) {
+            if owner != 0 || new_of[old as usize].0 != invalid_package_id {
+                continue;
+            }
+            new_of[old as usize] = (new, name_hash);
+            any = true;
+        }
+        if !any {
+            return;
+        }
+        let buffers = &mut lockfile.buffers;
+        let deps = buffers.dependencies.as_slice();
+        for (j, target) in buffers.resolutions.iter_mut().enumerate() {
+            let Some(&(new, name_hash)) = new_of.get(*target as usize) else {
+                continue;
+            };
+            let dep = &deps[j];
+            if new != invalid_package_id
+                && dep.name_hash == name_hash
+                && dep.behavior.is_peer()
+                && !dep.behavior.is_bundled()
+            {
+                *target = new;
+            }
+        }
+    }
+
+    /// `(old, new)` npm pairs of the rows that moved, for `redirect` and the update rows.
     fn moved_pairs(&self, lockfile: &Lockfile) -> Vec<(PackageID, PackageID)> {
-        let packages_len = lockfile.packages.len();
         let pkg_res = lockfile.packages.items_resolution();
         let name_hashes = lockfile.packages.items_name_hash();
+        self.moved(lockfile)
+            .into_iter()
+            .filter(|&(_, _, old, new)| {
+                pkg_res[new as usize].tag == ResolutionTag::Npm
+                    && name_hashes[old as usize] == name_hashes[new as usize]
+            })
+            .map(|(_, _, old, new)| (old, new))
+            .collect()
+    }
+
+    /// `(owner, dependency name hash, old, new)` for each root/workspace row that resolves to a different package than before.
+    fn moved(
+        &self,
+        lockfile: &Lockfile,
+    ) -> Vec<(PackageID, PackageNameHash, PackageID, PackageID)> {
+        let packages_len = lockfile.packages.len();
         let dep_slices = lockfile.packages.items_dependencies();
         let res_slices = lockfile.packages.items_resolutions();
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
-        let mut pairs: Vec<(PackageID, PackageID)> = Vec::new();
+        let mut pairs: Vec<(PackageID, PackageNameHash, PackageID, PackageID)> = Vec::new();
         for &(owner, start, len) in &self.owners {
             let owner = owner as usize;
             if owner >= packages_len {
@@ -123,15 +172,10 @@ impl DirectDependencies {
                     k
                 };
                 let old = rows[index].2;
-                if old == new
-                    || (old as usize) >= packages_len
-                    || (new as usize) >= packages_len
-                    || pkg_res[new as usize].tag != ResolutionTag::Npm
-                    || name_hashes[old as usize] != name_hashes[new as usize]
-                {
+                if old == new || (old as usize) >= packages_len || (new as usize) >= packages_len {
                     continue;
                 }
-                pairs.push((old, new));
+                pairs.push((owner as PackageID, dep.name_hash, old, new));
             }
         }
         pairs

@@ -224,6 +224,8 @@ fn write_js_function(
                     .open_paren()
                     .is_some_and(|open| it.span.start < open)
                     || (!it.is_line()
+                        // One on a line of its own is printed before the parameter.
+                        && !it.preceded_by_newline()
                         && (it.followed_by_newline() || {
                             let behind = file.text().get(it.span.end as usize..);
                             strings::trim_js_whitespace_start(behind.unwrap_or_default())

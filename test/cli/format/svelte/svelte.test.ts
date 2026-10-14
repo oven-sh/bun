@@ -865,6 +865,18 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "{#snippet row /* c */( // d\n  b,\n)}y{/snippet}\n",
       ],
       ["{#snippet  row(b   /* c */)}y{/snippet}\n", "{#snippet row(b /* c */)}y{/snippet}\n", null],
+      // On a line of its own it is printed before the parameter.
+      ["{#snippet row(\n  /* c */\n  b)}y{/snippet}\n", "{#snippet row(\n  /* c */\n  b,\n)}y{/snippet}\n", null],
+      [
+        "{#snippet row(\n  /** c */\n  b, d)}y{/snippet}\n",
+        "{#snippet row(\n  /** c */\n  b,\n  d,\n)}y{/snippet}\n",
+        null,
+      ],
+      [
+        "{#snippet row(\n/* c */ // d\n b)}y{/snippet}\n",
+        "{#snippet row(\n  /* c */ // d\n  b,\n)}y{/snippet}\n",
+        null,
+      ],
     ],
     "no comment is behind the parameters of a snippet": [
       // The only parameter is a pattern, so no line ends before the `)`.

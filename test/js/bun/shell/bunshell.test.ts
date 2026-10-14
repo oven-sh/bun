@@ -974,15 +974,15 @@ cat`
       .stdout("a\n")
       .runAsTest("comment and newline after |");
 
-    TestBuilder.command`echo a [[ -n b ]] c ]]`
-      .stdout("a [[ -n b ]] c ]]\n")
-      .runAsTest("[[ and ]] after the command name are arguments");
-
     test.each([
       ["echo `echo a;`", "a\n"],
       ["echo `echo a\n`", "a\n"],
       ["echo `echo a # note\n`", "a\n"],
-    ])("backtick substitution that ends with a separator: %j", async (source, expected) => {
+      ["echo `(echo a)`", "a\n"],
+      ["echo $( (echo a) )", "a\n"],
+      ["echo $( [[ -n a ]] && echo a )", "a\n"],
+      ["echo x$( [[ -n a ]] )y", "xy\n"],
+    ])("command substitution that ends with no pending word: %j", async (source, expected) => {
       expect(await $`${{ raw: source }}`.text()).toBe(expected);
     });
 

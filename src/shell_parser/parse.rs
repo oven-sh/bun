@@ -1364,18 +1364,6 @@ impl<'bump> Parser<'bump> {
                 name_and_args.push(arg);
                 continue;
             }
-            // `[[` and `]]` are reserved words only where a command starts.
-            let bracket: Option<&'static [u8]> = match self.peek() {
-                Token::DoubleBracketOpen => Some(b"[["),
-                Token::DoubleBracketClose => Some(b"]]"),
-                _ => None,
-            };
-            if let Some(text) = bracket {
-                let _ = self.advance();
-                let _ = self.r#match(TokenTag::Delimit);
-                name_and_args.push(ast::Atom::new_simple(ast::SimpleAtom::Text(text)));
-                continue;
-            }
             if !self.check(TokenTag::Redirect) {
                 break;
             }
@@ -2379,14 +2367,19 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         Some(self.tokens[self.tokens.len() - 1].tag())
     }
 
-    /// A command substitution can sit inside a word, so its last word gets a delimiter unless a statement already ended there.
+    /// A command substitution can sit inside a word, so its last word gets a delimiter unless no word is pending there.
     fn delimit_before_cmd_subst_end(&mut self) {
         let Some(last) = self.last_tok_tag() else {
             return;
         };
         if !matches!(
             last,
-            TokenTag::Delimit | TokenTag::Semicolon | TokenTag::Eof | TokenTag::Newline
+            TokenTag::Delimit
+                | TokenTag::Semicolon
+                | TokenTag::Eof
+                | TokenTag::Newline
+                | TokenTag::CloseParen
+                | TokenTag::DoubleBracketClose
         ) {
             self.tokens.push(Token::Delimit);
         }

@@ -783,6 +783,32 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(1);
     });
 
+    // Deleting several hundred names and defining them again for each file makes JSC stop caching reads of globals.
+    test("the names stay on globalThis between files of one environment", async () => {
+      using dir = tempDir("test-environment", {
+        ...fakePackages,
+        "bunfig.toml": `[test]\nenvironment = "happy-dom"\n`,
+        "1.test.js": `globalThis.definedByTheFirstFile = true;\n${logEnvironment}`,
+        "2.test.js": `
+          import { expect, test } from "bun:test";
+          test("order", () => {
+            const names = Object.getOwnPropertyNames(globalThis);
+            expect(names).toContain("definedByTheFirstFile");
+            expect(names.indexOf("document")).toBeLessThan(names.indexOf("definedByTheFirstFile"));
+          });`,
+        "3.test.js": `// ${VITEST} node\n${logEnvironment}`,
+        "4.test.js": logEnvironment,
+      });
+      const { stdout, stderr, exitCode } = await bunTest(String(dir));
+      expect(stdout.filter(line => !line.startsWith("open "))).toEqual([
+        "1.test.js happy-dom#1 http://localhost:3000",
+        "3.test.js node ",
+        "4.test.js happy-dom#1 http://localhost:3000",
+      ]);
+      expect(summary(stderr)).toEqual(["4 pass", "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
     test("tears down the rest of the environment when one global can't be restored", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,

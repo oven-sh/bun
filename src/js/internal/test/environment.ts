@@ -12,6 +12,7 @@ const lastingCopyOfThisModule: () => typeof setup = $newCppFunction(
 );
 
 const { captureStackTrace } = Error;
+const { isExtensible } = Object;
 const NativeBlob = Blob;
 const NativeFormData = FormData;
 const NativeRequest = Request;
@@ -372,7 +373,13 @@ function find(name: string, file: string, outlivesTestFiles: boolean) {
   };
 }
 
-function open(name: "jsdom" | "happy-dom", optionsText: string | undefined, file: string, keep: boolean) {
+function open(
+  name: "jsdom" | "happy-dom",
+  optionsText: string | undefined,
+  file: string,
+  keep: boolean,
+  beforeCreating: () => void,
+) {
   // With --isolate every file has a new global. Loaded into that, the package would be evaluated and compiled again for each file.
   const found = (keep ? find : lastingCopyOfThisModule().find)(name, file, !keep);
   if (typeof found === "string") return found;
@@ -381,6 +388,8 @@ function open(name: "jsdom" | "happy-dom", optionsText: string | undefined, file
   const id = `${packagePath}\n${optionsText ?? ""}`;
   const last = kept.$get(id);
   if (last && !isClosed(last.window)) return last;
+  // Which names a new window gives globalThis depends on the names that are there.
+  beforeCreating();
 
   let options;
   try {
@@ -408,6 +417,10 @@ function putBack(key: string, original: PropertyDescriptor | undefined) {
   }
 }
 
+// Without --isolate. JSC stops caching reads of globals once several hundred names have been deleted from globalThis
+// and defined again a few times. So the last file's names stay until a file needs another environment.
+let left: { environment: Environment; teardown(isLoadingFileAgain: boolean): unknown; leave(): unknown } | undefined;
+
 function enter(name: string, environment: Environment, keep: boolean) {
   const { properties, keys } = environment;
   const defined: string[] = [];
@@ -429,12 +442,19 @@ function enter(name: string, environment: Environment, keep: boolean) {
   }
   environment.forgetLastFile?.();
 
-  return function teardown(isLoadingFileAgain: boolean) {
+  function teardown(isLoadingFileAgain: boolean) {
     if (isLoadingFileAgain) {
       environment.forgetLastFile?.();
       return isClosed(environment.window);
     }
+    // What can't be put back is this file's error, not the next one's.
+    if (!keep || !isExtensible(globalThis)) return leave();
+    for (let i = 0; i < defined.length; i++) if (ownProperty(defined[i])?.configurable === false) return leave();
+    left = { environment, teardown, leave };
+    return true;
+  }
 
+  function leave() {
     let stuck: string | undefined;
     for (let i = 0; i < defined.length; i++) {
       const key = defined[i];
@@ -455,26 +475,45 @@ function enter(name: string, environment: Environment, keep: boolean) {
       );
     }
     return closed;
-  };
+  }
+
+  return teardown;
 }
 
 // Returns a teardown function, or undefined if a preload already set up a DOM.
 // On failure it throws, or returns a warning string if `isFromComment`.
 function setup(
-  name: "jsdom" | "happy-dom",
+  name: "node" | "jsdom" | "happy-dom",
   optionsText: string | undefined,
   file: string,
   keep: boolean,
   isFromComment: boolean,
 ) {
-  if ("document" in globalThis) return;
+  let last = left;
+  left = undefined;
+  function leaveLast() {
+    const { leave } = last!;
+    last = undefined;
+    leave();
+  }
+  if (name === "node") return last && leaveLast();
+  if (!last && "document" in globalThis) return;
 
   let result;
   try {
-    result = open(name, optionsText, file, keep);
+    result = open(name, optionsText, file, keep, () => last && leaveLast());
   } catch (error) {
+    if (last) leaveLast();
     if (!isFromComment) throw error;
     result = String((error as Error)?.message ?? error);
+  }
+  if (last) {
+    if (result === last.environment) {
+      last.environment.forgetLastFile?.();
+      return last.teardown;
+    }
+    leaveLast();
+    if ("document" in globalThis) return;
   }
   if (typeof result !== "string") result = enter(name, result, keep);
   if (typeof result !== "string") return result;

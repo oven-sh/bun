@@ -1935,6 +1935,7 @@ impl TestCommand {
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
                 node_test_used: false,
+                environment_is_left: false,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),

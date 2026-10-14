@@ -151,6 +151,9 @@ pub(crate) struct TestRunner<'a> {
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
     pub(crate) node_test_used: bool,
 
+    /// Without `--isolate`: the last file's DOM is still on `globalThis`. See `left` in environment.ts.
+    pub(crate) environment_is_left: bool,
+
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 

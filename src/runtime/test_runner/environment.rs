@@ -225,7 +225,9 @@ fn setup(
     path: &[u8],
     is_from_comment: bool,
 ) -> JsResult<Option<Strong>> {
-    if kind == TestEnvironment::Node {
+    let is_left =
+        Jest::runner().is_some_and(|runner| core::mem::take(&mut runner.environment_is_left));
+    if kind == TestEnvironment::Node && !is_left {
         return Ok(None);
     }
     let global = vm.global();
@@ -262,6 +264,9 @@ fn teardown(vm: &mut VirtualMachine, function: &Strong) {
     {
         Ok(result) => {
             let Some(promise) = result.as_any_promise() else {
+                if let (true, Some(runner)) = (result == JSValue::TRUE, Jest::runner()) {
+                    runner.environment_is_left = true;
+                }
                 return;
             };
             let _protected = result.protected();

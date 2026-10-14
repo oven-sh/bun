@@ -70,6 +70,8 @@ element instanceof HTMLElement; // true
 
 `require("jsdom")` in a test file loads a second copy of the package. The window's own `JSDOM` object is `globalThis.jsdom`.
 
+For the same reason, the timers that jsdom sets for itself are real while [fake timers](/test/dates-times) are on. `input.select()`, `input.focus()`, `window.postMessage()` and a click on a `#fragment` link each set one. With `--isolate`, they don't count in `vi.getTimerCount()`, and `vi.runAllTimers()` doesn't run them.
+
 Preload scripts run in the project's environment. With `--isolate`, they run again for each file, in that file's environment.
 
 With jsdom, an error thrown in an event listener or a timer fails the running test, like in Vitest and Jest. If the file or a preload script has added an `error` listener to `window`, the test doesn't fail.

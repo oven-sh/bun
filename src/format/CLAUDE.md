@@ -318,6 +318,35 @@ oxfmt's option, which is made of `prettier-plugin-tailwindcss`: the classes of T
 - **Tailwind**: `tailwind.rs`, the plugin's `transformSvelte`.
 - **Tests**: `test/cli/format/svelte`. `cases.json` has what the real plugin and the real oxfmt print, and is made by `test/cli/format/oracle/svelte/make-fixtures.ts`. An oracle has to repair two things after every file: see there.
 
+## Highlighting
+
+`Bun.highlight` (`src/runtime/api/HighlightObject.rs`), the code blocks of `Bun.markdown.ansi()` and the input line of `bun repl` use the same parsers as the formatter.
+
+```
+code ─ <language>/highlight.rs ─→ Spans ─ finish ─→ [Span] ─ highlight/html.rs, highlight/ansi.rs ─→ text
+```
+
+| File | What |
+| --- | --- |
+| `highlight/mod.rs` | `Language`, `highlight(code, language, scratch)`, `Spans::embed` for code in other code |
+| `highlight/token.rs` | `Token`. The names are public API: theme keys and CSS classes |
+| `highlight/spans.rs` | `Spans::add(start, end, token)`. Spans can nest and come in any order. The inner one wins |
+| `highlight/theme.rs` | `Theme`, and the built-in `DARK`, `LIGHT` and `TERMINAL` (16 colors) |
+| `<language>/highlight.rs` | One per language, next to its parser |
+
+Rules for a `highlight.rs`:
+
+- **It never fails.** The formatter gives up at the first syntax error. A highlighter gets snippets with `...` in them, half-typed code, and code that is still streaming in. What comes before an error looks the same as without the error, and what comes after it is still highlighted.
+- **Tokens first, tree second.** The lexer's tokens cover every byte and are easy to make tolerant. The tree only refines them: this name is a type, that one is a property. If the parser gives up, the tokens are still there.
+- **No regular expressions**, and no second parser. If a lexer stops at an error, give it a tolerant mode that the formatter doesn't turn on.
+- **Offsets never move.** To hide something from a parser (a `\r`, the `${..}` of a template, the `> ` in front of a quoted code block), overwrite it in a copy with something of the same length.
+- Linear time, no limits, and anything that recurses asks the stack first, as everywhere in this crate.
+- Adding spans in source order without overlap skips the sort and the flattening. `js/highlight.rs` does.
+
+JavaScript and TypeScript (`js/highlight.rs`): the tokens are `bun lint`'s (`File::tokens`), the parser is the one that recovers from errors like `tsc`, a walk marks the names whose place says what they are, and the scopes (`bun_lint::semantic`) say what every other name refers to. A name that is neither is a contextual keyword. JSON is parsed as an expression in parentheses.
+
+Tests: `test/js/bun/highlight/highlight.test.ts`. Each file in `fixtures/` is highlighted whole (a snapshot), cut off at many places, and with pieces missing.
+
 ## Languages that only a plugin of Prettier reads
 
 `.astro`, `.php` and the like, and `.svelte` with another version of the plugin than the one that is built in. In Prettier's flavor, a file whose language a plugin of the configuration reads is handed to the Prettier of the project. So is a `package.json` with `prettier-plugin-packagejson`, whose order is not that of `sortPackageJson`.

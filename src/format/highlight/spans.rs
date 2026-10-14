@@ -22,6 +22,8 @@ pub struct Spans {
     pub(super) base: u32,
     /// Where that code ends in the whole text.
     pub(super) limit: u32,
+    /// The languages, as bits, of the code being highlighted and of the code around it that ends at `limit` too.
+    pub(super) ending_at_limit: u32,
     needs_sort: bool,
     needs_flattening: bool,
 }
@@ -30,7 +32,7 @@ impl Spans {
     pub(super) fn reset(&mut self, len: u32) {
         self.list.clear();
         self.flat.clear();
-        (self.base, self.limit) = (0, len);
+        (self.base, self.limit, self.ending_at_limit) = (0, len, 0);
         (self.needs_sort, self.needs_flattening) = (false, false);
     }
 
@@ -42,7 +44,12 @@ impl Spans {
         if start >= end {
             return;
         }
-        if let Some(last) = self.list.last() {
+        if let Some(last) = self.list.last_mut() {
+            // `</` is two tokens for the parser, `))` too.
+            if last.end == start && last.token == token && !self.needs_flattening {
+                last.end = end;
+                return;
+            }
             self.needs_flattening |= start < last.end;
             self.needs_sort |= start < last.start || start == last.start && end > last.end;
         }

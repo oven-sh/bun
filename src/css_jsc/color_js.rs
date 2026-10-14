@@ -109,12 +109,44 @@ fn zero_if_none(component: f32) -> f32 {
     if component.is_nan() { 0.0 } else { component }
 }
 
+/// `None` for a color that depends on where it is used, like `currentColor`.
+fn srgb_of(color: &bun_css::CssColor) -> Option<bun_css::values::color::SRGB> {
+    use bun_css::CssColor;
+    Some(match color {
+        CssColor::Float(float) => match &**float {
+            bun_css::FloatColor::Rgb(rgb) => *rgb,
+            other => other.into_srgb(),
+        },
+        CssColor::Rgba(rgba) => rgba.into_srgb(),
+        CssColor::Lab(lab) => lab.into_srgb(),
+        _ => return None,
+    })
+}
+
+/// The red, green and blue of a CSS color.
+pub fn parse_rgb(input: &[u8]) -> Option<[u8; 3]> {
+    let arena = Arena::new();
+    let mut parser_input = bun_css::ParserInput::new(input, &arena);
+    let mut parser = bun_css::Parser::new(
+        &mut parser_input,
+        None,
+        bun_css::css_parser::ParserOpts::default(),
+        None,
+    );
+    let color = bun_css::CssColor::parse(&mut parser).ok()?;
+    if !parser.is_exhausted() {
+        return None;
+    }
+    let rgba = srgb_of(&color)?.into_rgba();
+    Some([rgba.red, rgba.green, rgba.blue])
+}
+
 pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::symbol::Map as SymbolMap;
     use bun_core::Utf8Bytes;
     use bun_css as css;
     use bun_css::CssColor;
-    use bun_css::values::color::{HSL, LAB, RGBA, SRGB};
+    use bun_css::values::color::{HSL, LAB, RGBA};
     use bun_jsc::StringJsc as _;
 
     let args = frame.arguments_as_array::<2>();
@@ -285,14 +317,8 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                         | OutputColorFormat::RgbObject
                         | OutputColorFormat::RgbaArray
                         | OutputColorFormat::RgbArray) => {
-                            let srgba: SRGB = match &result {
-                                CssColor::Float(float) => match &**float {
-                                    css::FloatColor::Rgb(rgb) => *rgb,
-                                    other => other.into_srgb(),
-                                },
-                                CssColor::Rgba(rgba) => rgba.into_srgb(),
-                                CssColor::Lab(lab) => lab.into_srgb(),
-                                _ => break 'formatted,
+                            let Some(srgba) = srgb_of(&result) else {
+                                break 'formatted;
                             };
                             let rgba = srgba.into_rgba();
                             match tag {

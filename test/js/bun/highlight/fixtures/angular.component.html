@@ -1,0 +1,92 @@
+<!-- The cart page. -->
+@let total = cart.items.length * price | currency: "EUR" : "symbol";
+@let label = `Cart (${cart.items.length})`;
+
+<header class="cart" [class.empty]="!cart.items.length" [style.width.px]="width" [attr.aria-label]="label">
+  <h1 #title i18n="cart title|The heading of the cart@@cartTitle">Your cart &ndash; {{ total }}</h1>
+  <input [(ngModel)]="query" (keyup.enter)="search(query); query = ''" placeholder="Search {{ cart.name }}&hellip;" />
+  <button
+    // Clears everything.
+    type="button"
+    /* The handler asks first. */
+    (click)="clear($event)"
+    [disabled]="cart.items.length === 0 || busy"
+    style="margin-left: auto"
+    onclick="console.log('native')"
+  >
+    Clear
+  </button>
+</header>
+
+@if (user$ | async; as user) {
+  <p>Hello, {{ user.name | titlecase }}! {{ user?.address?.city ?? "Unknown" }}</p>
+} @else if (loading) {
+  <app-spinner [size]="32" />
+} @else {
+  <a routerLink="/login" [queryParams]="{ next: '/cart', retry: true }">Sign in</a>
+}
+
+<ul>
+  @for (item of cart.items; track item.id; let i = $index, last = $last) {
+    <li [class]="{ odd: i % 2 === 1, last: last }" (click)="select(item, i)">
+      {{ i + 1 }}. {{ item.title }} &times; {{ item.count }} {{ item.tags.map(tag => tag.name).join(", ") }}
+    </li>
+  } @empty {
+    <li>Nothing here.</li>
+  }
+</ul>
+
+@switch (cart.state) {
+  @case ("open") {
+    <span>Open</span>
+  }
+  @case ("paid")
+  @case ("shipped") {
+    <span>Done</span>
+  }
+  @default {
+    <span>{{ cart.state // the raw state }}</span>
+  }
+}
+
+@defer (on viewport; prefetch on idle) {
+  <app-recommendations [for]="cart" />
+} @placeholder (minimum 500ms) {
+  <p>Recommendations</p>
+} @loading (after 100ms; minimum 1s) {
+  <app-spinner />
+} @error {
+  <p>Could not load.</p>
+}
+
+@defer (when cart.items.length > 3; on timer(5s), hover(title)) {
+  <app-upsell />
+}
+
+<p i18n>
+  {cart.items.length, plural, =0 {No items} =1 {One item} other {<b>{{ cart.items.length }}</b> items}}
+  for {user.gender, select, male {him} female {her} other {them}}
+</p>
+
+<ng-container *ngIf="legacy; else modern">
+  <div *ngFor="let row of rows | slice: 0 : 5; trackBy: trackById; let odd = odd; index as n" [ngClass]="{ odd: odd }">
+    {{ n }}: {{ row.value | number: "1.0-2" }} {{ typeof row.value === "number" ? row.value! : null }}
+  </div>
+  <ng-container [ngSwitch]="mode">
+    <b *ngSwitchCase="'a'">A</b>
+    <i *ngSwitchDefault>Other</i>
+  </ng-container>
+  <ng-container *ngTemplateOutlet="tpl; context: { $implicit: rows[0], extra: /^a+$/i.test(name) }"></ng-container>
+</ng-container>
+<ng-template #modern let-data="data">
+  <MatCard bind-title="data.title" on-close="closed = true">{{ this.data }}</MatCard>
+</ng-template>
+
+<style>
+  .cart {
+    display: flex;
+  }
+</style>
+<script type="application/json">
+  { "version": 1 }
+</script>

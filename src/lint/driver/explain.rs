@@ -361,14 +361,17 @@ pub(crate) fn explain(
         b"\n",
     ]
     .concat();
+    let light = detect_light_background();
+    let highlight = bun_format::highlight::for_markdown(light);
     let theme = Theme {
-        light: detect_light_background(),
+        light,
         columns: (environment.columns)(),
         colors,
         hyperlinks,
         kitty_graphics: false,
         remote_image_paths: None,
         image_base_dir: None,
+        highlight: Some(&highlight),
     };
     let rendered = render_to_ansi(&markdown, bun_md::root::Options::default(), theme);
     Ok(match rendered {

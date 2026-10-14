@@ -1,0 +1,114 @@
+@import (reference, optional) "mixins.less";
+@import url("theme.css");
+@plugin "my-plugin";
+
+// Variables
+@primary: #0af;
+@padding: 10px;
+@min768: ~"(min-width: 768px)";
+@selector: ~".banner";
+@property: color;
+@images: "../img";
+@name: "primary";
+@list: 1px, 2px, 3px;
+@enabled: true;
+
+/* Maps and detached rulesets */
+@config: {
+  width: 100px;
+  @colors: {
+    link: blue;
+  }
+}
+@detached: {
+  background: red;
+};
+
+// Mixins
+.bordered(@width: 2px; @style: solid) {
+  border: @width @style black;
+}
+
+.rounded(@radius, @rest...) when (isnumber(@radius)) and (@radius > 0), (default()) {
+  border-radius: @radius;
+  box-shadow: @arguments;
+}
+
+.theme(@mode) when (@mode = dark) {
+  color: white;
+}
+
+.loop(@i) when (@i > 0) {
+  .w-@{i} {
+    width: (@i * 100% / 12);
+  }
+  .loop(@i - 1);
+}
+
+#namespace {
+  .mixin() {
+    color: blue;
+  }
+}
+
+@{selector} {
+  .bordered(4px; dashed);
+  .rounded(5px) !important;
+  .plain;
+  #namespace > .mixin();
+  #namespace.mixin();
+  @detached();
+  @{property}: @primary;
+  background-@{property}: fade(@primary, 50%);
+  background+: url("@{images}/a.png");
+  background+_: url(@{images}/b.png);
+  width: @config[width];
+  color: @config[@colors][link];
+  height: $width;
+  border-color: @@name;
+  margin: -@padding (@padding * 2) ~"calc(100% - @{padding})";
+  filter: ~"ms:alwaysHasItsOwnSyntax.For.Stuff()";
+  content: %("%d/%d", 1, 2);
+  opacity: if((@enabled), 1, 0.5);
+
+  &:extend(.alert all);
+  &:hover,
+  &-suffix {
+    color: darken(@primary, 10%); // trailing comment, isn't it
+  }
+
+  .inner when (@enabled) {
+    display: block;
+  }
+
+  @media @min768 {
+    float: left;
+  }
+
+  @media (min-width: 768px) and (max-width: (@padding * 100)) {
+    float: right;
+  }
+}
+
+.a:extend(.b, .c all) {
+  .theme(dark);
+  .loop(3);
+}
+
+.call-with-rules {
+  .wrap({
+    color: red;
+  });
+}
+
+each(@list, {
+  .size-@{key} {
+    width: @value;
+  }
+});
+
+.guard when (ispixel(@padding)) and not (@padding = 0) {
+  #id[data-x="@{name}"] > li + li {
+    padding: @padding;
+  }
+}

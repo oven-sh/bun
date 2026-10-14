@@ -70,17 +70,29 @@ struct Scanner<'i, 't> {
     /// Where there is white space that is none to TypeScript.
     odd_blanks: &'t mut Vec<u32>,
     brace_stack: Vec<Brace>,
+    /// For the highlighter: a string goes on behind a `\u` without digits.
+    is_tolerant: bool,
 }
 
 /// Appends the tokens of `input` to `tokens`, and to `odd_blanks` where there is a character between them that is white
 /// space to Angular and not to TypeScript.
 pub(crate) fn tokenize(input: &[u8], tokens: &mut Vec<Token>, odd_blanks: &mut Vec<u32>) {
+    tokenize_with(input, false, tokens, odd_blanks);
+}
+
+pub(crate) fn tokenize_with(
+    input: &[u8],
+    is_tolerant: bool,
+    tokens: &mut Vec<Token>,
+    odd_blanks: &mut Vec<u32>,
+) {
     let mut scanner = Scanner {
         input,
         index: 0,
         tokens,
         odd_blanks,
         brace_stack: Vec::new(),
+        is_tolerant,
     };
     while let Some(token) = scanner.scan_token() {
         scanner.tokens.push(token);
@@ -320,7 +332,7 @@ impl Scanner<'_, '_> {
         while self.peek() != quote {
             match self.peek() {
                 b'\\' => {
-                    if !self.scan_string_backslash() {
+                    if !self.scan_string_backslash() && !self.is_tolerant {
                         return self.error(start);
                     }
                 }
@@ -336,7 +348,7 @@ impl Scanner<'_, '_> {
         while self.peek() != b'`' {
             match self.peek() {
                 b'\\' => {
-                    if !self.scan_string_backslash() {
+                    if !self.scan_string_backslash() && !self.is_tolerant {
                         return self.error(start);
                     }
                 }

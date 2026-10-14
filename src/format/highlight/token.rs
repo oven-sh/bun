@@ -4,7 +4,7 @@ macro_rules! tokens {
     ($($(#[$doc:meta])* $variant:ident = $name:literal $(in $parent:ident)?,)*) => {
         /// What a piece of source code is.
         ///
-        /// The name is public API: it is the key in a theme, and each of its parts is a CSS class.
+        /// The name is public API: it is the key in a theme, and with `-` for `.` the CSS class.
         /// A token without a style of its own takes its parent's: `keyword.control` falls back to
         /// `keyword`.
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

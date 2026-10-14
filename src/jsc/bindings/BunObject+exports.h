@@ -35,6 +35,7 @@
     macro(embeddedFiles) \
     macro(enableANSIColors) \
     macro(hash) \
+    macro(highlight) \
     macro(inspect) \
     macro(isStandaloneExecutable) \
     macro(origin) \

@@ -3531,8 +3531,10 @@ impl RunCommand {
         // downstream would treat the file path itself as a directory.
         let image_base_dir: &[u8] = if !dir.is_empty() { dir } else { b"." };
 
+        let light = md::detect_light_background();
+        let highlight = bun_format::highlight::for_markdown(light);
         let theme = md::AnsiTheme {
-            light: md::detect_light_background(),
+            light,
             columns,
             colors,
             hyperlinks: colors && is_tty,
@@ -3543,6 +3545,7 @@ impl RunCommand {
                 None
             },
             image_base_dir: Some(image_base_dir),
+            highlight: Some(&highlight),
         };
 
         let rendered = match md::render_to_ansi(&contents, md_opts, theme) {

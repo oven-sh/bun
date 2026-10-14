@@ -119,17 +119,15 @@ pub fn write_ansi(
             continue;
         };
         at = end;
-        // A color doesn't show on a blank.
-        let shows = writer
-            .current
-            .font
-            .intersects(Font::UNDERLINE | Font::STRIKETHROUGH)
-            || before.iter().any(|&byte| byte != b' ' && byte != b'\t');
-        if shows {
+        let style = theme.style(span.token);
+        // A color doesn't show on a blank, so it can stay on until the next one replaces it.
+        let stays_on = style != Style::default()
+            && !(writer.current.font).intersects(Font::UNDERLINE | Font::STRIKETHROUGH)
+            && before.iter().all(|&byte| byte == b' ' || byte == b'\t');
+        if !stays_on {
             writer.reset();
         }
         writer.out.extend_from_slice(before);
-        let style = theme.style(span.token);
         let foreground = foregrounds[span.token as usize].bytes();
         while let Some(line_end) = strings::index_of_char_usize(text, b'\n') {
             if line_end > 0 {

@@ -2057,6 +2057,248 @@ declare module "bun" {
   }
 
   /**
+   * Syntax highlighting.
+   *
+   * - `html()` returns HTML with a `<span>` around each token
+   * - `ansi()` returns text with ANSI colors for a terminal
+   * - `css()` returns the style sheet for the HTML
+   *
+   * Bun highlights with the parsers behind `bun format`, `bun lint` and `bun check`, so it
+   * knows a type from a function from a parameter. Code with syntax errors, or code that
+   * stops in the middle of a token, is still highlighted.
+   *
+   * @example
+   * ```ts
+   * const code = `const greet = (name: string) => "Hello, " + name;`;
+   *
+   * process.stdout.write(Bun.highlight.ansi(code, "ts") + "\n");
+   *
+   * const page = `
+   *   <style>${Bun.highlight.css()}</style>
+   *   <pre class="hl"><code>${Bun.highlight.html(code, "ts")}</code></pre>
+   * `;
+   * ```
+   */
+  namespace highlight {
+    /**
+     * A language that Bun highlights, by its name or by a file extension. Case doesn't matter.
+     */
+    type Language =
+      | "javascript"
+      | "js"
+      | "mjs"
+      | "cjs"
+      | "jsx"
+      | "typescript"
+      | "ts"
+      | "mts"
+      | "cts"
+      | "tsx"
+      | "json"
+      | "jsonc"
+      | "json5"
+      | "css"
+      | "scss"
+      | "less"
+      | "html"
+      | "htm"
+      | "vue"
+      | "svelte"
+      | "angular"
+      | "handlebars"
+      | "hbs"
+      | "markdown"
+      | "md"
+      | "mdx"
+      | "yaml"
+      | "yml"
+      | "toml"
+      | "graphql"
+      | "gql";
+
+    /**
+     * What a piece of code is.
+     *
+     * A name with a dot is a more specific kind of the name before the dot:
+     * `keyword.control` is a `keyword`.
+     */
+    type Token =
+      | "comment"
+      | "comment.doc"
+      | "string"
+      | "string.escape"
+      | "string.regexp"
+      | "string.special"
+      | "number"
+      | "number.unit"
+      | "boolean"
+      | "constant"
+      | "constant.builtin"
+      | "keyword"
+      | "keyword.control"
+      | "keyword.import"
+      | "keyword.operator"
+      | "keyword.modifier"
+      | "keyword.directive"
+      | "operator"
+      | "punctuation"
+      | "punctuation.bracket"
+      | "punctuation.delimiter"
+      | "punctuation.special"
+      | "variable"
+      | "variable.parameter"
+      | "variable.builtin"
+      | "property"
+      | "function"
+      | "function.method"
+      | "type"
+      | "type.builtin"
+      | "type.parameter"
+      | "namespace"
+      | "label"
+      | "decorator"
+      | "tag"
+      | "tag.component"
+      | "tag.delimiter"
+      | "attribute"
+      | "selector"
+      | "selector.class"
+      | "selector.id"
+      | "selector.pseudo"
+      | "markup.heading"
+      | "markup.bold"
+      | "markup.italic"
+      | "markup.strikethrough"
+      | "markup.link"
+      | "markup.link.url"
+      | "markup.raw"
+      | "markup.quote"
+      | "markup.list";
+
+    /** How a theme draws one kind of token. */
+    interface Style {
+      /** Any CSS color: `"#ff7b72"`, `"rgb(255 123 114)"`, `"tomato"`. */
+      color?: string | undefined;
+      bold?: boolean | undefined;
+      italic?: boolean | undefined;
+      underline?: boolean | undefined;
+      strikethrough?: boolean | undefined;
+    }
+
+    /**
+     * The colors to highlight with. Each key is a {@link Token} and each value is a CSS
+     * color or a {@link Style}.
+     *
+     * A token that the theme leaves out looks like its parent: without `keyword.control`,
+     * `if` gets the style of `keyword`. The same goes for each property that a
+     * {@link Style} leaves out. A token with no style at all is plain text.
+     *
+     * @example
+     * ```ts
+     * const theme: Bun.highlight.Theme = {
+     *   foreground: "#d4d4d4",
+     *   background: "#1e1e1e",
+     *   comment: { color: "#6a9955", italic: true },
+     *   keyword: "#569cd6",
+     *   "keyword.control": "#c586c0",
+     *   string: "#ce9178",
+     * };
+     * ```
+     */
+    type Theme = {
+      /** The color of plain text. Only `css()` uses it. */
+      foreground?: string | undefined;
+      /** The color behind the code. Only `css()` uses it. */
+      background?: string | undefined;
+    } & { [K in Token]?: string | Style | undefined };
+
+    interface AnsiOptions<L extends string = Language> {
+      language: L;
+      /**
+       * `"dark"` and `"light"` are for a terminal with a dark or a light background.
+       *
+       * @default "light" if the `COLORFGBG` environment variable says the background is light, otherwise "dark"
+       */
+      theme?: "dark" | "light" | Theme | undefined;
+      /**
+       * How many colors the terminal has, as `process.stdout.getColorDepth()` counts them:
+       *
+       * - `24`: 16 million colors
+       * - `8`: 256 colors. Each color of the theme becomes the closest one.
+       * - `4`: 16 colors. `"dark"` and `"light"` use the terminal's own palette.
+       * - `1`: no colors. The code comes back as it is.
+       *
+       * @default What the environment says: `NO_COLOR`, `FORCE_COLOR`, `COLORTERM`, `TERM`
+       */
+      colorDepth?: 1 | 4 | 8 | 24 | undefined;
+    }
+
+    type Code = string | NodeJS.TypedArray | DataView<ArrayBufferLike> | ArrayBufferLike;
+
+    /**
+     * Highlight code as HTML.
+     *
+     * Each token becomes a `<span>`. Its class is `hl-` and the token's name with `-` for
+     * `.`, after the classes of its parents: a `keyword.control` is
+     * `<span class="hl-keyword hl-keyword-control">`. `&`, `<` and `>` are escaped. There is
+     * no element around the whole: put the result in a `<pre class="hl"><code>`.
+     *
+     * No `<span>` crosses a line break, so you can split the result on `"\n"` to number
+     * or wrap the lines.
+     *
+     * @param code The code, as a string or as UTF-8 bytes
+     * @returns `null` if Bun doesn't highlight that language
+     *
+     * @example
+     * ```ts
+     * Bun.highlight.html("let a = 1;", "js");
+     * // <span class="hl-keyword">let</span> <span class="hl-variable">a</span> ...
+     *
+     * // In a Markdown renderer, where the language can be anything
+     * Bun.highlight.html(code, lang) ?? Bun.escapeHTML(code);
+     * ```
+     */
+    export function html(code: Code, language: Language): string;
+    export function html(code: Code, language: string): string | null;
+
+    /**
+     * Highlight code with ANSI escape sequences, for a terminal.
+     *
+     * Every line resets the styles it sets, so you can split the result on `"\n"`.
+     *
+     * @param code The code, as a string or as UTF-8 bytes
+     * @returns `null` if Bun doesn't highlight that language
+     *
+     * @example
+     * ```ts
+     * console.log(Bun.highlight.ansi(await Bun.file("index.ts").text(), "ts"));
+     *
+     * Bun.highlight.ansi(code, { language: "css", theme: "light", colorDepth: 8 });
+     * ```
+     */
+    export function ansi(code: Code, language: Language | AnsiOptions): string;
+    export function ansi(code: Code, language: string | AnsiOptions<string>): string | null;
+
+    /**
+     * The style sheet that colors what {@link html} returns.
+     *
+     * It styles `.hl`, which is the class to give the element around the code, and the
+     * `.hl-*` classes of the tokens.
+     *
+     * @param theme Without one, the style sheet is light and switches to dark with
+     * `prefers-color-scheme`.
+     *
+     * @example
+     * ```ts
+     * const styles = Bun.highlight.css();
+     * const dark = Bun.highlight.css("dark");
+     * const custom = Bun.highlight.css({ keyword: "#c678dd", string: "#98c379" });
+     * ```
+     */
+    export function css(theme?: "dark" | "light" | Theme): string;
+  }
+
+  /**
    * JSON5 related APIs
    */
   namespace JSON5 {

@@ -47,6 +47,8 @@ pub(crate) mod glob;
 pub(crate) mod hash_object;
 #[path = "api/html_rewriter.rs"]
 pub(crate) mod html_rewriter;
+#[path = "api/HighlightObject.rs"]
+pub(crate) mod highlight_object;
 #[path = "api/js_bundle_completion_task.rs"]
 pub(crate) mod js_bundle_completion_task;
 #[path = "api/JSBundler.rs"]

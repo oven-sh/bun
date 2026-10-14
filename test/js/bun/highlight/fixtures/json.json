@@ -1,0 +1,13 @@
+{
+  // JSON with comments, and what JSON5 adds
+  "name": "bun",
+  "version": "1.5.0",
+  "private": true,
+  "nothing": null,
+  "numbers": [0, -1, 2.5e10, 0xFF, +1, .5, Infinity, NaN],
+  "escapes": "a\n\"b\"é",
+  "nested": { "a": { "b": [] }, "c": {} },
+  unquoted: 'single',
+  /* block */
+  "trailing": [1, 2,],
+}

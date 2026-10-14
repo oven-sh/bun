@@ -160,6 +160,7 @@
               "/runtime/toml",
               "/runtime/yaml",
               "/runtime/markdown",
+              "/runtime/highlight",
               "/runtime/json5",
               "/runtime/xml",
               "/runtime/jsonl",

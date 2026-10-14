@@ -5,19 +5,25 @@ use crate::text::ByteSet;
 use bun_core::strings::{self, html_escape_entity};
 use std::io::Write as _;
 
-/// In front of every class.
-const PREFIX: &[u8] = b"hl-";
-
-/// `keyword.control` is `hl-keyword hl-control` with `between` a space, `.hl-keyword.hl-control` with a dot in front of it
-/// and between.
-fn write_classes(out: &mut Vec<u8>, token: Token, between: &[u8]) {
-    for (index, part) in strings::split(token.name().as_bytes(), b".").enumerate() {
-        if index > 0 {
-            out.extend_from_slice(between);
+/// `keyword.control` is `hl-keyword-control`.
+fn write_class(out: &mut Vec<u8>, token: Token) {
+    out.extend_from_slice(b"hl-");
+    let start = out.len();
+    out.extend_from_slice(token.name().as_bytes());
+    for byte in &mut out[start..] {
+        if *byte == b'.' {
+            *byte = b'-';
         }
-        out.extend_from_slice(PREFIX);
-        out.extend_from_slice(part);
     }
+}
+
+/// The class of `token` after those of its parents: `hl-keyword hl-keyword-control`.
+fn write_classes(out: &mut Vec<u8>, token: Token) {
+    if let Some(parent) = token.parent() {
+        write_classes(out, parent);
+        out.push(b' ');
+    }
+    write_class(out, token);
 }
 
 /// `<span class="..">` for each token, one after the other.
@@ -29,12 +35,12 @@ struct OpenTags {
 impl OpenTags {
     fn new() -> OpenTags {
         let mut tags = OpenTags {
-            bytes: Vec::with_capacity(Token::COUNT * 48),
+            bytes: Vec::with_capacity(Token::COUNT * 64),
             ends: [0; Token::COUNT],
         };
         for &token in Token::ALL {
             tags.bytes.extend_from_slice(b"<span class=\"");
-            write_classes(&mut tags.bytes, token, b" ");
+            write_classes(&mut tags.bytes, token);
             tags.bytes.extend_from_slice(b"\">");
             tags.ends[token as usize] = tags.bytes.len() as u16;
         }
@@ -100,8 +106,8 @@ fn write_span(out: &mut Vec<u8>, text: &[u8], open: &[u8]) {
     }
 }
 
-/// Appends `code` as HTML: each span is a `<span>` whose classes are the parts of the token's name. No element crosses
-/// a line break, so the result can be split into lines.
+/// Appends `code` as HTML: each span is a `<span>` with a class for the token and one for each of its parents. No
+/// element crosses a line break, so the result can be split into lines.
 pub fn write_html(code: &[u8], spans: &[Span], out: &mut Vec<u8>) {
     let tags = OpenTags::new();
     out.reserve(code.len() + spans.len() * 40);
@@ -167,7 +173,7 @@ pub fn write_css(theme: &Theme, out: &mut Vec<u8>) {
             continue;
         }
         out.push(b'.');
-        write_classes(out, token, b".");
+        write_class(out, token);
         out.push(b'{');
         write_declarations(out, style, inherited);
         out.extend_from_slice(b"}\n");

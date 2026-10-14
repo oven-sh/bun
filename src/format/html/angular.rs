@@ -4,6 +4,7 @@
 //! An expression is checked by a parser that accepts what Angular accepts, which makes TypeScript of it: `parser`. That is
 //! parsed and written by the formatter for JavaScript, which knows from `InHtml::root` that `a | b(c)` is a pipe.
 
+pub(super) mod highlight;
 mod lexer;
 mod microsyntax;
 mod parser;
@@ -111,6 +112,31 @@ fn is_blank(mut code: &[u8]) -> bool {
             _ => return false,
         };
     }
+}
+
+/// The parser for the value of the attribute `name`: `__ng_action`, `__ng_binding` or `__ng_directive`.
+pub(super) fn root_of_attribute(name: &[u8]) -> Option<HtmlRoot> {
+    if (name.starts_with(b"(") && name.ends_with(b")")) || name.starts_with(b"on-") {
+        Some(HtmlRoot::NgAction)
+    } else if (name.starts_with(b"[") && name.ends_with(b"]"))
+        || name.starts_with(b"bind-")
+        || name.starts_with(b"bindon-")
+        || matches!(
+            name,
+            b"ng-if" | b"ng-show" | b"ng-hide" | b"ng-class" | b"ng-style"
+        )
+    {
+        Some(HtmlRoot::NgBinding)
+    } else if name.starts_with(b"*") {
+        Some(HtmlRoot::NgDirective)
+    } else {
+        None
+    }
+}
+
+/// Whether the parameters of the block `name` are what the value of `*directive` is.
+pub(super) fn has_microsyntax_parameters(name: &[u8]) -> bool {
+    matches!(name, b"if" | b"else if" | b"for" | b"switch" | b"case")
 }
 
 /// What `text.split(/\{\{(.+?)\}\}/s)` returns: a text, and then, any number of times, what is between `{{` and `}}` and
@@ -491,23 +517,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     ) -> bool {
         let name = attr.full_name();
         let name = &name[..];
-        let root = if (name.starts_with(b"(") && name.ends_with(b")")) || name.starts_with(b"on-") {
-            Some(HtmlRoot::NgAction)
-        } else if (name.starts_with(b"[") && name.ends_with(b"]"))
-            || name.starts_with(b"bind-")
-            || name.starts_with(b"bindon-")
-            || matches!(
-                name,
-                b"ng-if" | b"ng-show" | b"ng-hide" | b"ng-class" | b"ng-style"
-            )
-        {
-            Some(HtmlRoot::NgBinding)
-        } else if name.starts_with(b"*") {
-            Some(HtmlRoot::NgDirective)
-        } else {
-            None
-        };
-        if let Some(root) = root {
+        if let Some(root) = root_of_attribute(name) {
             let in_html = InHtml {
                 root,
                 is_in_attribute: true,
@@ -538,10 +548,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         block: Id,
         parameters: Id,
     ) -> bool {
-        if !matches!(
-            &self.tree[block].name[..],
-            b"if" | b"else if" | b"for" | b"switch" | b"case"
-        ) {
+        if !has_microsyntax_parameters(&self.tree[block].name) {
             return false;
         }
         let content = self.tree[parameters].span.of(self.options.original_text);

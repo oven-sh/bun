@@ -189,6 +189,15 @@ impl ResolveMessage {
                         BStr::new(specifier),
                         BStr::new(referrer),
                     );
+                    if let Some(actual) = bun_paths::dirname(referrer)
+                        .and_then(|dir| bun_resolver::case_near_miss(specifier, dir))
+                    {
+                        let _ = write!(
+                            &mut out,
+                            ". Did you mean '{}'? File names are case-sensitive on this filesystem",
+                            BStr::new(&actual),
+                        );
+                    }
                 }
                 return out;
             }

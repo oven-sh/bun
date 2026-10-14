@@ -1,11 +1,10 @@
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::borrow::Cow;
 use std::io::Write as _;
 
 use bun_alloc::{AllocError, allocators};
 use bun_collections::VecExt as _;
-use bun_core::Generation;
-use bun_core::MutableString;
+use bun_core::{Generation, MutableString};
 use bun_paths::MAX_PATH_BYTES;
 use bun_paths::strings;
 use bun_ptr::Interned;
@@ -281,6 +280,14 @@ pub struct EntryLookup<'a> {
 }
 
 impl<'a> EntryLookup<'a> {
+    #[inline(always)]
+    fn new(entry: *mut Entry) -> Self {
+        Self {
+            entry,
+            _marker: core::marker::PhantomData,
+        }
+    }
+
     /// Shared borrow of the looked-up `Entry`.
     ///
     /// # Safety (encapsulated)
@@ -309,7 +316,9 @@ impl<'a> EntryLookup<'a> {
 pub mod dir_entry {
     use super::{Entry, EntryStoreBacking};
 
-    /// Lowercased-basename → entry-pointer map backing `DirEntry::data`.
+    /// Lowercased-basename → entry-pointer map backing `DirEntry::data`. Names
+    /// that differ only in case share one lowercased key: the all-lowercase
+    /// spelling owns it, every other spelling is keyed by its exact name.
     pub(crate) type EntryMap = bun_collections::StringHashMap<*mut Entry>;
 
     /// Process-wide append-only store that owns all `Entry` allocations.
@@ -371,6 +380,25 @@ impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
     }
 }
 
+/// Whether the filesystem under one directory folds ASCII case.
+#[repr(u8)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum CaseVerdict {
+    Unknown = 0,
+    Exact = 1,
+    Folds = 2,
+}
+
+impl CaseVerdict {
+    fn from_u8(v: u8) -> CaseVerdict {
+        match v {
+            1 => CaseVerdict::Exact,
+            2 => CaseVerdict::Folds,
+            _ => CaseVerdict::Unknown,
+        }
+    }
+}
+
 pub struct DirEntry {
     // `dir` is interned in
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
@@ -378,6 +406,9 @@ pub struct DirEntry {
     pub fd: Fd,
     pub(crate) generation: Generation,
     pub data: dir_entry::EntryMap,
+    /// Settled once, by the first case-mismatched lookup (see `pick_case`).
+    /// Atomic only so `DirEntry` stays `Sync`; accessed under `entries_mutex`.
+    case_verdict: AtomicU8,
 }
 
 impl DirEntry {
@@ -387,6 +418,21 @@ impl DirEntry {
             data: dir_entry::EntryMap::default(),
             generation,
             fd: Fd::INVALID,
+            case_verdict: AtomicU8::new(CaseVerdict::Unknown as u8),
+        }
+    }
+
+    pub(crate) fn case_verdict(&self) -> CaseVerdict {
+        CaseVerdict::from_u8(self.case_verdict.load(Ordering::Relaxed))
+    }
+
+    pub(crate) fn set_case_verdict(&self, verdict: CaseVerdict) {
+        self.case_verdict.store(verdict as u8, Ordering::Relaxed);
+    }
+
+    pub(crate) fn inherit_case_verdict(&self, prev: &DirEntry) {
+        if self.case_verdict() == CaseVerdict::Unknown {
+            self.set_case_verdict(prev.case_verdict());
         }
     }
 
@@ -454,10 +500,19 @@ impl DirEntry {
 
         let stored: *mut Entry = 'brk: {
             if let Some(map) = prev_map {
-                // `data` keys are the lowercased basenames, so an exact match on
-                // `name_lc` is the case-insensitive match — and reuses
-                // `name_hash` instead of re-hashing.
-                if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc) {
+                // Recycle the previous generation's slot for this exact name
+                // only; a sibling differing in case gets a fresh `Entry`.
+                let recycled: Option<*mut Entry> = match map.get_hashed(name_hash, name_lc) {
+                    // SAFETY: EntryStore-owned pointer, valid for lifetime of store
+                    Some(&p) if unsafe { (*p).base() } == name_slice => Some(p),
+                    Some(_) => map
+                        .get(name_slice)
+                        .copied()
+                        // SAFETY: EntryStore-owned pointer, valid for lifetime of store
+                        .filter(|&p| unsafe { (*p).base() } == name_slice),
+                    None => None,
+                };
+                if let Some(existing_ptr) = recycled {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
                     let existing = unsafe { &mut *existing_ptr };
                     // `MutexGuard` stores a `BackRef<Mutex>` (lifetime-erased), so
@@ -543,9 +598,6 @@ impl DirEntry {
             }
         };
 
-        // SAFETY: just produced from EntryStore append or prev_map lookup
-        let stored_ref = unsafe { &mut *stored };
-
         // PERF: the
         // generic `put` here would heap-box a second key copy. `base_lowercase`
         // points either into the `Entry`'s inline `StringOrTinyString` buffer
@@ -558,9 +610,30 @@ impl DirEntry {
         let key: &'static [u8] =
             unsafe { &*core::ptr::from_ref::<[u8]>((*stored).base_lowercase()) };
         // `(*stored).base_lowercase()` equals `name_lc` byte-for-byte (a fresh
-        // entry interned `name_lc`; a recycled one matched it exactly above), so
-        // `name_hash` is its hash too — insert without re-hashing.
-        self.data.put_static_key_hashed(name_hash, key, stored)?;
+        // entry interned `name_lc`; a recycled one matched `name_slice` above),
+        // so `name_hash` is its hash too — insert without re-hashing.
+        let lowercase_slot = self
+            .data
+            .get_or_put_static_key_hashed(name_hash, key, stored);
+        if lowercase_slot.found_existing {
+            // Two names differing only in case: the all-lowercase one keeps
+            // the lowercased key, the other is keyed by its exact name.
+            let other: *mut Entry = *lowercase_slot.value_ptr;
+            let spilled: *mut Entry = if name_slice == name_lc {
+                *lowercase_slot.value_ptr = stored;
+                other
+            } else {
+                stored
+            };
+            // SAFETY: as for `key` above; `base_` is never mutated either.
+            let exact_key: &'static [u8] =
+                unsafe { &*core::ptr::from_ref::<[u8]>((*spilled).base()) };
+            self.data.put_static_key(exact_key, spilled)?;
+            self.set_case_verdict(CaseVerdict::Exact);
+        }
+
+        // SAFETY: just produced from EntryStore append or prev_map lookup
+        let stored_ref = unsafe { &mut *stored };
 
         if !I::IS_VOID {
             iterator.next(stored_ref, self.fd);
@@ -587,10 +660,10 @@ impl DirEntry {
         );
     }
 
-    // `query_` borrow is detached from the returned `Entry` lifetime so callers
-    // can pass a slice into the same threadlocal buffer they then mutate. The
-    // lookup key is the lowercased basename; a case-mismatched query still
-    // returns the stored entry.
+    /// Looks up `query_` the way the filesystem would (see `pick_case`).
+    /// `query_` borrow is detached from the returned `Entry` lifetime so
+    /// callers can pass a slice into the same threadlocal buffer they then
+    /// mutate.
     pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
         Self::debug_assert_entries_mutex_held();
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
@@ -600,30 +673,139 @@ impl DirEntry {
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;
-        Some(EntryLookup {
-            entry: result_ptr,
-            _marker: core::marker::PhantomData,
-        })
+        self.pick_case(result_ptr, query_)
     }
 
-    /// Looks up a cached entry by name. Takes a `&'static [u8]` that is
-    /// already lowercase, so no per-call lowercasing buffer is needed.
+    /// [`Self::get`] for a `&'static [u8]` that is already lowercase, so no
+    /// per-call lowercasing buffer is needed.
     pub(crate) fn get_comptime_query<'a>(
         &'a self,
         query_lower: &'static [u8],
     ) -> Option<EntryLookup<'a>> {
         Self::debug_assert_entries_mutex_held();
         let &result_ptr = self.data.get(query_lower)?;
-        Some(EntryLookup {
-            entry: result_ptr,
-            _marker: core::marker::PhantomData,
-        })
+        self.pick_case(result_ptr, query_lower)
     }
 
-    /// True if a cached entry exists for the given already-lowercase name.
+    /// True if [`Self::get`] would find the given already-lowercase name.
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
+        self.get_comptime_query(query_lower).is_some()
+    }
+
+    /// `candidate` holds `query`'s lowercased key. An entry spelled exactly
+    /// `query` wins; otherwise the directory's case verdict decides, probed
+    /// from the filesystem rather than guessed from the platform.
+    fn pick_case<'a>(&'a self, candidate: *mut Entry, query: &[u8]) -> Option<EntryLookup<'a>> {
+        // SAFETY: ARENA — `data` holds EntryStore slots, which are never freed,
+        // and `base_` is never mutated after construction.
+        if unsafe { (*candidate).base() } == query {
+            return Some(EntryLookup::new(candidate));
+        }
+        let verdict = match self.case_verdict() {
+            CaseVerdict::Unknown => {
+                let verdict = self.probe_case_verdict(query, candidate);
+                debug!(
+                    "case verdict for {}: {:?} (asked for {})",
+                    bstr::BStr::new(self.dir),
+                    verdict,
+                    bstr::BStr::new(query)
+                );
+                self.set_case_verdict(verdict);
+                verdict
+            }
+            settled => settled,
+        };
+        match verdict {
+            CaseVerdict::Folds => Some(EntryLookup::new(candidate)),
+            CaseVerdict::Exact => self
+                .data
+                .get(query)
+                .copied()
+                // SAFETY: as above.
+                .filter(|&exact| unsafe { (*exact).base() } == query)
+                .map(EntryLookup::new),
+            CaseVerdict::Unknown => None,
+        }
+    }
+
+    /// Error path: the listed name that `base`, or `base` plus a source
+    /// extension, differs from only in case.
+    pub fn case_near_miss(&self, base: &[u8]) -> Option<&'static [u8]> {
         Self::debug_assert_entries_mutex_held();
-        self.data.contains_key(query_lower)
+        if self.case_verdict() != CaseVerdict::Exact {
+            return None;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let try_name = |name: &[u8]| -> Option<&'static [u8]> {
+            if name.is_empty() || name.len() > MAX_PATH_BYTES {
+                return None;
+            }
+            let mut lower = bun_paths::path_buffer_pool::get();
+            let key = strings::copy_lowercase_if_needed(name, &mut lower[..]);
+            let &entry = self.data.get(key)?;
+            // SAFETY: ARENA — EntryStore slot, never freed; `base_` is never
+            // mutated after construction.
+            let actual = unsafe { &*core::ptr::from_ref::<[u8]>((*entry).base()) };
+            (actual != name).then_some(actual)
+        };
+        if let Some(actual) = try_name(base) {
+            return Some(actual);
+        }
+        const EXTENSIONS: [&[u8]; 9] = [
+            b".tsx", b".ts", b".jsx", b".js", b".mjs", b".cjs", b".mts", b".cts", b".json",
+        ];
+        for ext in EXTENSIONS {
+            if base.len() + ext.len() > MAX_PATH_BYTES {
+                continue;
+            }
+            buf[..base.len()].copy_from_slice(base);
+            buf[base.len()..base.len() + ext.len()].copy_from_slice(ext);
+            if let Some(actual) = try_name(&buf[..base.len() + ext.len()]) {
+                return Some(actual);
+            }
+        }
+        None
+    }
+
+    /// `Unknown` means a transient error; the next mismatched lookup asks again.
+    #[cfg(windows)]
+    fn probe_case_verdict(&self, _query: &[u8], _candidate: *mut Entry) -> CaseVerdict {
+        CaseVerdict::Folds
+    }
+
+    #[cfg(not(windows))]
+    fn probe_case_verdict(&self, query: &[u8], candidate: *mut Entry) -> CaseVerdict {
+        let queried = match self.lstat_in_dir(query) {
+            Ok(st) => st,
+            Err(bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => return CaseVerdict::Exact,
+            Err(_) => return CaseVerdict::Unknown,
+        };
+        // SAFETY: as in `pick_case`.
+        match self.lstat_in_dir(unsafe { (*candidate).base() }) {
+            Ok(st) if st.st_dev == queried.st_dev && st.st_ino == queried.st_ino => {
+                CaseVerdict::Folds
+            }
+            // A distinct file under `query`: the listing is stale, and the
+            // filesystem provably tells the two spellings apart.
+            Ok(_) => CaseVerdict::Exact,
+            Err(_) => CaseVerdict::Unknown,
+        }
+    }
+
+    #[cfg(not(windows))]
+    fn lstat_in_dir(&self, name: &[u8]) -> core::result::Result<bun_sys::Stat, bun_sys::E> {
+        use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+        let mut buf = bun_paths::path_buffer_pool::get();
+        // Leave room for the NUL.
+        let len = join_abs_string_buf_checked::<platform::Auto>(
+            crate::fs::FileSystem::get().fs.cwd,
+            &mut buf[..MAX_PATH_BYTES - 1],
+            &[self.dir, name],
+        )
+        .map(<[u8]>::len)
+        .ok_or(bun_sys::E::ENAMETOOLONG)?;
+        buf[len] = 0;
+        bun_sys::lstat(bun_core::ZStr::from_buf(&buf[..], len)).map_err(|e| e.get_errno())
     }
 }
 

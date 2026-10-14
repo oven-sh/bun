@@ -1,7 +1,18 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  isCaseSensitiveFS,
+  isLinux,
+  isMacOS,
+  isWindows,
+  joinP,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1987,3 +1998,286 @@ test.concurrent.each(["import", "require"])(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
   },
 );
+
+// The resolver's directory listing cache is keyed by lowercased file name. A
+// lookup must still behave like the filesystem underneath it: the file spelled
+// exactly like the specifier wins, and a file spelled differently only counts
+// on a filesystem that folds case itself (default macOS/Windows volumes).
+describe.concurrent("file name case", () => {
+  const caseSensitiveFS = isCaseSensitiveFS();
+
+  async function runBun(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: stripAsanWarning(stderr), exitCode };
+  }
+
+  // Only a case-sensitive filesystem can hold all three of these at once.
+  describe.skipIf(!caseSensitiveFS)("files differing only in case in one directory", () => {
+    const variants = {
+      "case.js": `console.log("lower");`,
+      "Case.js": `console.log("mixed");`,
+      "CASE.js": `console.log("upper");`,
+    };
+
+    it("runs the entry point spelled like the argument", async () => {
+      using dir = tempDir("resolve-case-entry", variants);
+      const results = await Promise.all(
+        Object.keys(variants).map(async name => [name, (await runBun(String(dir), name)).stdout]),
+      );
+      expect(Object.fromEntries(results)).toEqual({
+        "case.js": "lower",
+        "Case.js": "mixed",
+        "CASE.js": "upper",
+      });
+    });
+
+    it("import and require load the file spelled like the specifier", async () => {
+      using dir = tempDir("resolve-case-import", {
+        ...variants,
+        "imports.mjs": `
+          import "./case.js";
+          import "./Case.js";
+          import "./CASE.js";
+        `,
+        "requires.cjs": `
+          require("./case.js");
+          require("./Case.js");
+          require("./CASE.js");
+        `,
+      });
+      const [esm, cjs] = await Promise.all([runBun(String(dir), "imports.mjs"), runBun(String(dir), "requires.cjs")]);
+      expect(esm).toEqual({ stdout: "lower\nmixed\nupper", stderr: "", exitCode: 0 });
+      expect(cjs).toEqual({ stdout: "lower\nmixed\nupper", stderr: "", exitCode: 0 });
+    });
+
+    it("does not resolve a spelling that matches none of them", async () => {
+      using dir = tempDir("resolve-case-none", {
+        ...variants,
+        "imports.mjs": `import "./cAsE.js";`,
+      });
+      const result = await runBun(String(dir), "imports.mjs");
+      expect(result.stderr).toContain("Cannot find module './cAsE.js'");
+      expect(result.exitCode).toBe(1);
+    });
+
+    // An extensionless import probes `.tsx` before `.ts`, so `./fooBar`
+    // used to hit the `FooBar.tsx` entry: from FooBar.tsx itself that was a
+    // self-import, from any other file it was an ENOENT for `fooBar.tsx`.
+    // https://github.com/oven-sh/bun/issues/44659
+    it("extensionless import picks the file spelled like the specifier, whatever its extension", async () => {
+      const files = {
+        "fooBar.ts": `export const value = "from fooBar.ts";`,
+        "FooBar.tsx": `import { value } from "./fooBar"; export const shown = value;`,
+        "main.ts": `import { shown } from "./FooBar"; console.log(shown);`,
+        "direct.ts": `import { value } from "./fooBar"; console.log(value);`,
+      };
+      using dir = tempDir("resolve-case-ext", files);
+      using buildDir = tempDir("resolve-case-ext-build", files);
+      const [main, direct, build] = await Promise.all([
+        runBun(String(dir), "main.ts"),
+        runBun(String(dir), "direct.ts"),
+        runBun(String(buildDir), "build", "main.ts", "--outdir", "out"),
+      ]);
+      expect(main).toEqual({ stdout: "from fooBar.ts", stderr: "", exitCode: 0 });
+      expect(direct).toEqual({ stdout: "from fooBar.ts", stderr: "", exitCode: 0 });
+      expect(build.stderr).toBe("");
+      expect(build.exitCode).toBe(0);
+    });
+
+    it("extensionless imports of two files differing only in case load both, in either order", async () => {
+      const files = {
+        "fooBar.ts": `export const value = "from fooBar.ts";`,
+        "FooBar.ts": `export const other = "from FooBar.ts";`,
+        "lower-first.ts": `
+          import { value } from "./fooBar";
+          import { other } from "./FooBar";
+          console.log(value, other);
+        `,
+        "upper-first.ts": `
+          import { other } from "./FooBar";
+          import { value } from "./fooBar";
+          console.log(value, other);
+        `,
+      };
+      using dir = tempDir("resolve-case-same-ext", files);
+      const [lowerFirst, upperFirst] = await Promise.all([
+        runBun(String(dir), "lower-first.ts"),
+        runBun(String(dir), "upper-first.ts"),
+      ]);
+      expect(lowerFirst).toEqual({ stdout: "from fooBar.ts from FooBar.ts", stderr: "", exitCode: 0 });
+      expect(upperFirst).toEqual({ stdout: "from fooBar.ts from FooBar.ts", stderr: "", exitCode: 0 });
+    });
+
+    // Every probe site shares the one lookup: the extension loop, the
+    // `index` probe, the `.js` to `.ts` rewrite, and the `exports` wildcard
+    // loops. Each row holds the file the old case-folded hit picked first
+    // and the file spelled like the specifier.
+    const sites: [string, Record<string, string>, string, string][] = [
+      [
+        "index probe",
+        { "lib/Index.tsx": `export const which = "upper";`, "lib/index.ts": `export const which = "lower";` },
+        "./lib",
+        "lib/index.ts",
+      ],
+      [
+        "js to ts rewrite",
+        { "Mod.ts": `export const which = "upper";`, "mod.tsx": `export const which = "lower";` },
+        "./mod.js",
+        "mod.tsx",
+      ],
+      [
+        "exports wildcard",
+        {
+          "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./*": "./dist/*" } }),
+          "node_modules/pkg/dist/Foo.tsx": `export const which = "upper";`,
+          "node_modules/pkg/dist/foo.ts": `export const which = "lower";`,
+        },
+        "pkg/foo",
+        "node_modules/pkg/dist/foo.ts",
+      ],
+      [
+        "exports wildcard js to ts rewrite",
+        {
+          "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./*": "./dist/*.js" } }),
+          "node_modules/pkg/dist/Mod.ts": `export const which = "upper";`,
+          "node_modules/pkg/dist/mod.tsx": `export const which = "lower";`,
+        },
+        "pkg/mod",
+        "node_modules/pkg/dist/mod.tsx",
+      ],
+    ];
+    it.each(sites)("%s picks the file spelled like the specifier", async (_site, files, specifier, expected) => {
+      using dir = tempDir("resolve-case-site", {
+        ...files,
+        "entry.ts": `
+          import { which } from ${JSON.stringify(specifier)};
+          console.log(which);
+          console.log(Bun.resolveSync(${JSON.stringify(specifier)}, import.meta.dir));
+        `,
+      });
+      const result = await runBun(String(dir), "entry.ts");
+      expect(result).toEqual({ stdout: `lower\n${join(String(dir), expected)}`, stderr: "", exitCode: 0 });
+    });
+
+    it("names the differently cased file in the error", async () => {
+      using dir = tempDir("resolve-case-hint", {
+        "Helper.ts": `export const x = 1;`,
+        "with-ext.ts": `import "./helper.ts";`,
+        "without-ext.ts": `import "./helper";`,
+        "build.ts": `import "./helper";`,
+      });
+      const [withExt, withoutExt, build] = await Promise.all([
+        runBun(String(dir), "with-ext.ts"),
+        runBun(String(dir), "without-ext.ts"),
+        runBun(String(dir), "build", "build.ts", "--outdir", "out"),
+      ]);
+      expect(withExt.stderr).toContain(
+        `Cannot find module './helper.ts' from '${join(String(dir), "with-ext.ts")}'. Did you mean './Helper.ts'? File names are case-sensitive on this filesystem`,
+      );
+      expect(withoutExt.stderr).toContain("Did you mean './Helper.ts'?");
+      expect(build.stderr).toContain(`Could not resolve: "./helper". Did you mean "./Helper.ts"?`);
+      expect([withExt.exitCode, withoutExt.exitCode, build.exitCode]).toEqual([1, 1, 1]);
+    });
+
+    // The fixed-name probes (`package.json`, `tsconfig.json`) go through the
+    // same lookup, so a `Package.json` is no longer mistaken for one.
+    it("ignores a differently cased package.json and tsconfig.json", async () => {
+      using dir = tempDir("resolve-case-pkg", {
+        "Package.json": `{ "name": "not-read" }`,
+        "Tsconfig.json": `not json`,
+        "entry.js": `console.log("ok");`,
+      });
+      const result = await runBun(String(dir), "entry.js");
+      expect(result).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+    });
+  });
+
+  describe("only a differently cased file exists", () => {
+    const files = {
+      "ZED.ts": `console.log("ZED.ts");`,
+      "bar.js": `console.log("bar.js");`,
+    };
+
+    it("as the entry point", async () => {
+      using dir = tempDir("resolve-case-lone-entry", files);
+      const result = await runBun(String(dir), "zed.ts");
+      if (caseSensitiveFS) {
+        expect(result.stderr).toContain('Module not found "zed.ts"');
+        expect(result.exitCode).toBe(1);
+      } else {
+        expect(result).toEqual({ stdout: "ZED.ts", stderr: "", exitCode: 0 });
+      }
+    });
+
+    it("as an import, with and without extension", async () => {
+      using dir = tempDir("resolve-case-lone-import", {
+        ...files,
+        "with-ext.mjs": `import "./zed.ts";`,
+        "without-ext.mjs": `import "./zed";`,
+      });
+      const [withExt, withoutExt] = await Promise.all([
+        runBun(String(dir), "with-ext.mjs"),
+        runBun(String(dir), "without-ext.mjs"),
+      ]);
+      if (caseSensitiveFS) {
+        expect(withExt.stderr).toContain("Cannot find module './zed.ts'");
+        expect(withExt.exitCode).toBe(1);
+        expect(withoutExt.stderr).toContain("Cannot find module './zed'");
+        expect(withoutExt.exitCode).toBe(1);
+      } else {
+        expect(withExt).toEqual({ stdout: "ZED.ts", stderr: "", exitCode: 0 });
+        expect(withoutExt).toEqual({ stdout: "ZED.ts", stderr: "", exitCode: 0 });
+      }
+    });
+
+    // `bun run BAR` used to find bar.js in the listing, then try to read the
+    // non-existent BAR.js it built from the argument and fail with ENOENT.
+    it("as the target of `bun run`", async () => {
+      using dir = tempDir("resolve-case-lone-run", files);
+      const result = await runBun(String(dir), "run", "BAR");
+      if (caseSensitiveFS) {
+        expect(result.stderr).toContain('Script not found "BAR"');
+        expect(result.exitCode).toBe(1);
+      } else {
+        expect(result).toEqual({ stdout: "bar.js", stderr: "", exitCode: 0 });
+      }
+    });
+
+    // A specifier with a trailing slash still goes through the `.js` to `.ts`
+    // rewrite. The cached path must come from the entry, not the probed
+    // spelling, or every later import of `foo.ts` in the process breaks.
+    it("caches the on-disk path for a rewrite reached through a trailing slash", async () => {
+      using dir = tempDir("resolve-case-trailing-slash", {
+        "foo.ts": `export const which = "foo-ts";`,
+        "entry.ts": `
+          const dir = import.meta.dir;
+          console.log(Bun.resolveSync("./foo.js/", dir));
+          console.log(Bun.resolveSync("./foo.js", dir));
+          console.log(Bun.resolveSync("./foo.ts", dir));
+          const { which } = await import("./foo.ts");
+          console.log(which);
+        `,
+      });
+      const result = await runBun(String(dir), "entry.ts");
+      const fooTs = join(String(dir), "foo.ts");
+      expect(result).toEqual({ stdout: [fooTs, fooTs, fooTs, "foo-ts"].join("\n"), stderr: "", exitCode: 0 });
+    });
+
+    it("the exact spelling still resolves", async () => {
+      using dir = tempDir("resolve-case-exact", {
+        ...files,
+        "imports.mjs": `import "./ZED.ts"; import "./bar";`,
+      });
+      const [entry, imports] = await Promise.all([runBun(String(dir), "ZED.ts"), runBun(String(dir), "imports.mjs")]);
+      expect(entry).toEqual({ stdout: "ZED.ts", stderr: "", exitCode: 0 });
+      expect(imports).toEqual({ stdout: "ZED.ts\nbar.js", stderr: "", exitCode: 0 });
+    });
+  });
+});

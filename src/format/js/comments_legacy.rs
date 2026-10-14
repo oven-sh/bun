@@ -15,10 +15,6 @@ impl<'a> Comments<'a> {
         CommentList::empty()
     }
 
-    pub(crate) fn first_unprinted_span(&self) -> Option<Span> {
-        None
-    }
-
     pub(crate) fn printed_comments(&self) -> CommentList<'a> {
         CommentList::empty()
     }
@@ -122,5 +118,4 @@ impl<'a> Comments<'a> {
 
     pub(crate) fn restore_view_limit(&mut self, _limit: Option<usize>) {}
 
-    pub(crate) fn skip_comments_before(&mut self, _pos: u32) {}
 }

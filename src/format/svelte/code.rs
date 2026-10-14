@@ -153,7 +153,7 @@ fn write_js_expression(
             let Some(e) = js::expression_of(file) else {
                 return false;
             };
-            let comments = f.comments().unprinted_comments();
+            let comments = f.comments().all();
             // As it is written, there is none: `{#each a[0 // b\n]}`. Nor is there an `as` that Svelte takes for that of the
             // block, as there is in `{#each () => (a as B)}` without the parentheses.
             if js.is_without_comment_behind
@@ -169,21 +169,19 @@ fn write_js_expression(
                 (js.follows).is_some_and(|brace| starts_like_a_tag(e, brace, f));
             let content = format_with(|f| {
                 if is_in_parentheses {
-                    write!(f, ["(", e, ")"]);
-                    let rest = f.comments().unprinted_comments();
-                    return write!(f, FormatTrailingComments::Comments(rest));
+                    return write!(f, ["(", e, ")"]);
                 }
                 match js.is_without_parentheses {
                     // `removeParentheses` takes a block comment at the start for one that never ends, and leaves the
                     // parentheses, which Svelte refuses around the two functions of a `bind:`.
                     true => {
-                        write!(f, FormatLeadingComments::Node(e.span()));
+                        let node = e.as_chain_element();
+                        write!(f, leading_comments(node));
                         write_expression(e, ExprOptions::None, f);
+                        write!(f, trailing_comments(node));
                     }
                     false => write!(f, e),
                 }
-                let rest = f.comments().unprinted_comments();
-                write!(f, FormatTrailingComments::Comments(rest));
             });
             // Without its line breaks, the plugin has what follows a `//` before it: `{#if a && b} // c`.
             match js.is_on_one_line && !comments.iter().any(|it| it.is_line()) {
@@ -288,7 +286,7 @@ fn write_js_function(
                     && code.starts_with(b"(")
                     && starts().binary_search(&at).is_ok()
             };
-            let comments = f.comments().unprinted_comments();
+            let comments = f.comments().all();
             if (comments.iter())
                 .any(|it| is_behind_name(it) || is_behind_hugged(it) || is_before_parenthesis(it))
             {
@@ -321,7 +319,7 @@ fn write_js_statement(
                 return false;
             };
             // As it is written, there is none: `{const a = (b /* c */)}`.
-            let comments = f.comments().unprinted_comments();
+            let comments = f.comments().all();
             if js.is_without_comment_behind && can_end_with_comment(&js.text, comments) {
                 return false;
             }

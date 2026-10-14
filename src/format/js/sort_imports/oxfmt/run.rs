@@ -74,7 +74,7 @@ impl<'a> Written<'a> {
             };
             let comment = f
                 .comments()
-                .comments_in(Span::before(position, source))
+                .comments_in_span(Span::before(position, source))
                 .iter()
                 .find(|comment| {
                     is_after_from |= bun_core::strings::contains(
@@ -94,7 +94,7 @@ impl<'a> Written<'a> {
                 .filter(|_| import.default().is_none());
             written.has_comment_for_default = star.is_some_and(|star| {
                 !f.comments()
-                    .comments_in(Span::before(keyword_end, star))
+                    .comments_in_span(Span::before(keyword_end, star))
                     .is_empty()
             });
         }
@@ -474,10 +474,8 @@ impl<'a> ImportRun<'a> {
 
     /// An import that is written as it is in the source ends a run.
     fn is_sortable(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
-        let span = statement.span();
         matches!(statement.kind(), StmtKind::Import(_))
-            && !f.comments().is_suppressed(span.start)
-            && !f.comments().has_trailing_suppression_comment(span.end)
+            && !f.comments().is_ignored(statement.as_ast_nodes())
     }
 
     /// To be called before the line break between the previous statement and `next` is written.
@@ -571,7 +569,7 @@ impl<'a> ImportRun<'a> {
         self.line_start = f.elements().len();
 
         // One line at a time. What is left for the statement to write is its own line.
-        let mut comments = f.comments().comments_before(statement.span().start);
+        let mut comments = f.comments().of_node(statement.as_ast_nodes()).leading;
         while let Some(first) = comments.first() {
             // Comments without anything between them belong together.
             let mut end = first.span().end;

@@ -261,6 +261,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 | StmtKind::ForOf { body, .. }
                 | StmtKind::While { body, .. }
                 | StmtKind::Labeled { body, .. } => body,
+                // `with (a) b;` is stored as a block of `a` and `b;`. A real block ends with `}`, so it is not affected.
+                StmtKind::Block(statements) => match self.f.ids(statements).last() {
+                    Some(last) => last,
+                    None => return end,
+                },
                 _ => return end,
             };
             match self.f.stmts.get(last_child.idx()) {

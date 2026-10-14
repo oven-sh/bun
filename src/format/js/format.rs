@@ -480,24 +480,13 @@ fn format_expression_in_general<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     FormatExpr::with_options(e, ExprOptions::None).fmt(f);
 }
 
-/// Every `!` of `x!!`, which is one expression, with the comments between them.
+/// Every `!` of `x!!`, which is one expression.
 pub(crate) struct FormatNonNullMarks<'a>(pub(crate) Expr<'a>);
 
 impl<'a> Format<'a> for FormatNonNullMarks<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let mut inner = self.0.inner_non_null_spans().peekable();
-        while inner.next().is_some() {
-            let next_mark = inner
-                .peek()
-                .map_or_else(|| self.0.span().end, |next| next.end)
-                .saturating_sub(1);
-            write!(
-                f,
-                [
-                    "!",
-                    FormatTrailingComments::Comments(f.comments().comments_before(next_mark))
-                ]
-            );
+        for _ in self.0.inner_non_null_spans() {
+            write!(f, "!");
         }
         write!(f, "!");
     }

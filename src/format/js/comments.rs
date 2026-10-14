@@ -162,10 +162,6 @@ impl<'a> CommentList<'a> {
         CommentList { ids, ..self }
     }
 
-    pub(crate) fn split_first(self) -> Option<(Comment<'a>, CommentList<'a>)> {
-        Some((self.first()?, self.slice(1, self.len())))
-    }
-
     pub(crate) fn split_last(self) -> Option<(Comment<'a>, CommentList<'a>)> {
         Some((self.last()?, self.slice(0, self.len() - 1)))
     }
@@ -481,6 +477,17 @@ impl<'a> Comments<'a> {
         id
     }
 
+    /// Every comment of the file.
+    pub(crate) fn all(&self) -> CommentList<'a> {
+        CommentList {
+            file: self.file,
+            ids: Ids::Consecutive {
+                first: 0,
+                len: self.count(),
+            },
+        }
+    }
+
     /// The comments that start inside `span`, printed or not.
     pub(crate) fn comments_in_span(&self, span: Span) -> CommentList<'a> {
         let first = self.first_id_at_or_after(span.start);
@@ -527,6 +534,15 @@ impl<'a> Comments<'a> {
                 len,
             },
         }
+    }
+
+    /// The first of the comments directly before the token at `token_start` that is a leading comment. The ones before it
+    /// trail the previous node.
+    pub(crate) fn first_leading_comment_before(&self, token_start: u32) -> Option<Comment<'a>> {
+        (self.comments_directly_before(token_start).iter()).find(|comment| {
+            (self.attachment(*comment))
+                .is_some_and(|attachment| attachment.placement == Placement::Leading)
+        })
     }
 
     /// Whether there is a comment between the token that starts at `token_start` and the token before it.

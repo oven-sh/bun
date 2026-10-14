@@ -19,7 +19,7 @@ impl<'a> Formatter<'a> {
         let looks_past_comma = !comma_ends_the_search_for_line_breaks(self);
         self.source_text().get_lines_before(
             span,
-            self.comments().first_unprinted_span(),
+            (self.comments().first_leading_comment_before(span.start)).map(|comment| comment.span()),
             looks_past_comma,
         )
     }
@@ -66,8 +66,6 @@ impl<'a> Formatter<'a> {
     /// printed.
     pub(crate) fn speculate_will_break(&mut self, content: &(impl Format<'a> + Spanned)) -> bool {
         let snapshot = self.comments().snapshot();
-        self.comments_mut()
-            .skip_comments_before(content.span().start);
         let will_break = match self.intern(content) {
             Some(element) => element.will_break(self),
             None => false,

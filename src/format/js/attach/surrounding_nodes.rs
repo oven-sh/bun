@@ -71,6 +71,11 @@ fn method_of(func: Func<'_>) -> Option<Node<'_>> {
     }
 }
 
+fn is_object_of_with<'a>(statement: Stmt<'a>, e: Expr<'a>) -> bool {
+    matches!(statement.parent(), Node::Stmt(parent)
+        if matches!(parent.kind(), StmtKind::With { object, .. } if object == e))
+}
+
 pub(super) fn has_parameters(func: Func<'_>) -> bool {
     func.this_param().is_some() || !func.params().is_empty()
 }
@@ -145,8 +150,10 @@ impl<'a, 'c> AttachContext<'a, 'c> {
 
     pub(super) fn owner_of_stmt(&self, statement: Stmt<'a>) -> Owner<'a> {
         match statement.kind() {
-            // The HIR wraps an expression in the head of a `for` in a statement. ESTree does not.
-            StmtKind::Expr(e) if is_in_head_of_for(statement) => self.owner_of_expr(e),
+            // The HIR wraps an expression in the head of a `for`, and the object of a `with`, in a statement. ESTree does not.
+            StmtKind::Expr(e) if is_in_head_of_for(statement) || is_object_of_with(statement, e) => {
+                self.owner_of_expr(e)
+            }
             _ => Owner::Node(statement.as_ast_nodes()),
         }
     }
@@ -372,6 +379,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         };
         self.account_for_empty_body(&mut nodes, comment);
         self.stay_in_template_substitution(&mut nodes, comment);
+        self.stay_in_jsx_tag(&mut nodes, comment);
         // With typescript-estree, Prettier gives a top-level comment no enclosing node.
         if !self.is_babel() && nodes.enclosing_node == Some(self.program()) {
             nodes.enclosing_node = None;
@@ -420,6 +428,24 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         };
         nodes.preceding_node = nodes.preceding_node.filter(is_in_same_substitution);
         nodes.following_node = nodes.following_node.filter(is_in_same_substitution);
+    }
+
+    /// ESTree has a node for the closing tag of an element, and for the `<>` and `</>` of a fragment. `AstNodes` does not. A
+    /// comment inside one of them can only be next to something in the same tag.
+    fn stay_in_jsx_tag(&self, nodes: &mut SurroundingNodes<'a>, comment: Span) {
+        let Some(Owner::Node(N::JSXElement(e) | N::JSXFragment(e))) = nodes.enclosing_node else {
+            return;
+        };
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
+        };
+        let tags = [Some(jsx.opening_span()), jsx.closing_span()];
+        let Some(tag) = tags.into_iter().flatten().find(|tag| tag.contains(comment)) else {
+            return;
+        };
+        let is_in_tag = |node: &Owner<'a>| tag.contains_offset(self.start_of(*node));
+        nodes.preceding_node = nodes.preceding_node.filter(is_in_tag);
+        nodes.following_node = nodes.following_node.filter(is_in_tag);
     }
 
     /// Indexed by comment id.

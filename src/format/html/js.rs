@@ -5,6 +5,7 @@
 
 use super::map_strings::{MapString, write_mapped};
 use crate::ir::element::{Interned, TextWidth};
+use crate::js::ast_nodes::node_as_ast_nodes;
 use crate::js::comments::{self, NO_COMMENTS, ParsedBy};
 use crate::js::context::JsFormatContext;
 use crate::js::print::program::{FormatStatements, write_hashbang};
@@ -464,33 +465,20 @@ pub(crate) fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] 
 
 /// What Prettier makes of a `Program`, without the line break at the end.
 fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
-    // Nothing that a comment could belong to. Without a statement at all the comments keep the empty lines between
-    // them, as in `write_program`, which counts on being at the start of a line.
-    let is_all_empty = file
-        .body()
-        .iter()
-        .all(|it| matches!(it.kind(), StmtKind::Empty));
-    write_hashbang(
-        is_all_empty && f.comments().unprinted_comments().is_empty(),
+    let program = node_as_ast_nodes(Node::File(file));
+    let owned = f.comments().of_node(program);
+    let has_statements = (file.body().iter()).any(|it| !matches!(it.kind(), StmtKind::Empty));
+    let is_hashbang_last = !has_statements && owned.leading.is_empty() && owned.dangling.is_empty();
+    write_hashbang(is_hashbang_last, f);
+    // The program only owns comments if there is no statement to attach them to.
+    write!(
         f,
+        [
+            leading_comments(program),
+            FormatStatements(file.body()),
+            dangling_comments(program)
+        ]
     );
-    if is_all_empty && (!file.body().is_empty() || f.options().in_html.is_in_attribute) {
-        let comments = f.comments().unprinted_comments();
-        let indent = DanglingIndentMode::None;
-        return write!(f, FormatDanglingComments::Comments { comments, indent });
-    }
-    write!(f, FormatStatements(file.body()));
-    let mut rest = f.comments().unprinted_comments();
-    // The empty lines before the first thing in a script go.
-    if let Some((first, others)) = rest.split_first()
-        && (file.text().get(..first.span().start as usize))
-            .is_some_and(|before| before.trim_ascii().is_empty())
-    {
-        let (comments, indent) = (CommentList::of(first), DanglingIndentMode::None);
-        write!(f, FormatDanglingComments::Comments { comments, indent });
-        rest = others;
-    }
-    write!(f, FormatTrailingComments::Comments(rest));
 }
 
 /// `textToDoc(code, { parser })` for a program. `flavor`: whose output it is. Returns whether it has been written.
@@ -722,8 +710,6 @@ pub(crate) fn write_expression(
             let should_hug = hug.of_expression(e, in_html.root);
             let content = format_with(|f| {
                 write!(f, e);
-                let rest = f.comments().unprinted_comments();
-                write!(f, FormatTrailingComments::Comments(rest));
             });
             write_hugged(should_hug, &content, f);
             true

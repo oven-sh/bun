@@ -49,6 +49,7 @@
     "bundler/transpiler/esbuild-decorator-tests.ts", // standard decorators, this project sets experimentalDecorators
     "regression/issue/14477/*-mismatch.tsx", // deliberately-mismatched JSX, the test asserts the parse error
     "integration/bun-types/fixture", // declares globals, bun-types.test.ts checks it with its own tsconfig.json
+    "js/bun/highlight/fixtures", // code to highlight, which imports and declares whatever it likes
     // Apps with their own package.json and tsconfig.json. Their dependencies are installed by the test.
     "integration/expo-app/app",
     "integration/expo-app/components",

@@ -3258,7 +3258,7 @@ impl<'a> Parser<'a> {
         self.input.token_list_parse_failures += 1;
     }
 
-    pub(crate) fn is_exhausted(&mut self) -> bool {
+    pub fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
 

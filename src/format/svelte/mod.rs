@@ -3,6 +3,7 @@
 mod ast;
 mod code;
 mod doc;
+pub(crate) mod highlight;
 mod js;
 mod parser;
 mod pattern;

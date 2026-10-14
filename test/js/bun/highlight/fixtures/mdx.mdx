@@ -1,0 +1,82 @@
+---
+title: "Components"
+description: How to use components in MDX
+---
+
+import { Chart, Legend } from "../components/chart";
+import Note from "./note.jsx";
+
+export const meta = {
+  author: "Jarred",
+
+  year: 2026,
+};
+
+export function Badge({ children }) {
+  return <span className="badge">{children}</span>;
+}
+
+# Hello, {meta.author}!
+
+{/* A comment that readers don't see */}
+
+Some **bold** text, an expression {1 + 1} and <Badge>inline *JSX*</Badge> in a paragraph.
+Literal braces are {"{"} and {'}'}, a template is {`a ${meta.year} b`}.
+
+<Note type="warning" title={`Since ${meta.year}`}>
+  This is **Markdown** between two tags, with `code` and a [link](https://bun.sh).
+</Note>
+
+<Chart
+  data={[
+    { x: 1, y: 2 },
+
+    { x: 2, y: 4 },
+  ]}
+  color="#fbf0df"
+  {...meta}
+/>
+
+<Chart.Legend position="top" />
+
+<>
+  A fragment with <Legend.Item name="a" />.
+</>
+
+{meta.year > 2025 ? <p>Don't panic</p> : null}
+
+{
+  [1, 2, 3].map(n => (
+    <li key={n}>{n * 2}</li>
+  ))
+}
+
+<Tabs>
+  <Tab label="One">
+
+    Indented by four columns, and still a paragraph with _emphasis_.
+
+    - a list
+    - [x] a task
+
+  </Tab>
+</Tabs>
+
+> A quote with <Badge>JSX</Badge> and {meta.author}.
+
+- An item with {meta.year}
+- <Badge>An item that starts with a tag</Badge>
+
+| Name          | Value         |
+| ------------- | ------------- |
+| <b>author</b> | {meta.author} |
+
+```jsx
+<Chart data={[]} />
+```
+
+<div style={{ color: "red" }}>text in a div</div>
+
+Math works too: $a_{1} + b$ and a footnote[^1].
+
+[^1]: Rendered by {meta.author}.

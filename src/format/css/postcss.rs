@@ -116,7 +116,7 @@ impl Texts<'_> {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum TokenKind {
+pub(super) enum TokenKind {
     Space,
     /// `[`, `]`, `{`, `}`, `:`, `;`, `(`, `)`
     Control(u8),
@@ -125,13 +125,23 @@ enum TokenKind {
     AtWord,
     Word,
     Comment,
+    /// `#{` in SCSS, `@{` in Less. Only [`Tokenizer::next_tolerant_token`] makes this one and the ones below.
+    InterpolationStart,
+    /// The `}` of an interpolation.
+    InterpolationEnd,
+    /// What's in `url()` without quotes.
+    Url,
+    /// A string whose line ends before its quote.
+    UnclosedString,
+    /// The same for `url(`.
+    UnclosedUrl,
 }
 
 #[derive(Debug, Copy, Clone)]
-struct Token {
-    kind: TokenKind,
+pub(super) struct Token {
+    pub(super) kind: TokenKind,
     /// `token[1]`
-    range: Range,
+    pub(super) range: Range,
     /// `token[2]`: where it starts. It is not `range.start` after `postcss-less` has started anew
     /// with the rest of the text.
     start: u32,
@@ -159,7 +169,7 @@ impl Token {
     }
 }
 
-struct Tokenizer<'a> {
+pub(super) struct Tokenizer<'a> {
     css: &'a [u8],
     syntax: Syntax,
     /// Why the tokenizer or the parser refuses the text.
@@ -174,6 +184,12 @@ struct Tokenizer<'a> {
     last_bad_paren: Option<usize>,
     /// Where the first `)` is behind the last `(` that was looked at, if that is known.
     next_close: Option<Option<usize>>,
+    /// For `next_tolerant_token`: the quote of the string that `pos` is in, `)` in `url()`, 0 elsewhere.
+    quote: u8,
+    /// The same for where each open interpolation started.
+    interpolations: Vec<u8>,
+    /// Where what's in the last `url(` starts.
+    url_start: usize,
 }
 
 static AT_END: ByteSet = ByteSet::new(b"\t\n\x0C\r \"#'()/;[\\]{}");
@@ -181,6 +197,23 @@ static WORD_END: ByteSet = ByteSet::new(b"\t\n\x0C\r !\"#'():;@[\\]{}/");
 static SCSS_WORD_END: ByteSet = ByteSet::new(b",\t\n\x0C\r !\"#'():;@[\\]{}/");
 
 impl<'a> Tokenizer<'a> {
+    pub(super) fn new(css: &'a [u8], syntax: Syntax, pos: usize) -> Tokenizer<'a> {
+        Tokenizer {
+            css,
+            syntax,
+            refusal: Refusal::default(),
+            pos,
+            shift: 0,
+            buffer: Vec::new(),
+            returned: Vec::new(),
+            last_bad_paren: None,
+            next_close: None,
+            quote: 0,
+            interpolations: Vec::new(),
+            url_start: usize::MAX,
+        }
+    }
+
     fn end_of_file(&self) -> bool {
         self.returned.is_empty() && self.pos >= self.css.len()
     }
@@ -462,6 +495,149 @@ impl<'a> Tokenizer<'a> {
             _ => (kind, next) = (TokenKind::Word, self.end_of_word(pos) - 1),
         }
         Ok(self.token(kind, pos, next, inline))
+    }
+
+    /// Whether `#{` (SCSS) or `@{` (Less) is at `at`. Outside of strings they mean nothing else in any syntax, and code
+    /// that is highlighted as CSS is often SCSS.
+    fn is_interpolation(&self, at: usize, is_in_string: bool) -> bool {
+        self.css.get(at + 1) == Some(&b'{')
+            && match self.css[at] {
+                b'#' => !is_in_string || self.syntax == Syntax::Scss,
+                b'@' => !is_in_string || self.syntax == Syntax::Less,
+                _ => false,
+            }
+    }
+
+    /// Where the first byte from `from` on is that isn't white space.
+    fn skip_white_space(&self, from: usize) -> usize {
+        let rest = self.css.get(from..).unwrap_or_default();
+        from + rest.len() - rest.trim_ascii_start().len()
+    }
+
+    /// Where the piece of a string that starts at `from` ends: behind its `quote`, or before an interpolation. What's in
+    /// `url()` has `)` for a `quote`, and a piece ends before that or before a blank. Also returns whether the line ends
+    /// first.
+    fn end_of_string_piece(&mut self, from: usize, quote: u8) -> (usize, bool) {
+        static STOPS: ByteSet = ByteSet::new(b"\"'`)\\#@ \t\n\r\x0C");
+        let css = self.css;
+        let mut at = from;
+        while let Some(stop) = STOPS.find(css, at) {
+            at = stop + 1;
+            match css[stop] {
+                b'\\' => at += if css[at..].starts_with(b"\r\n") { 2 } else { 1 },
+                b' ' | b'\t' | b'\n' | b'\r' | 0x0C if quote == b')' => {
+                    let next = self.skip_white_space(stop);
+                    if css.get(next) == Some(&b')') {
+                        return (stop, false);
+                    }
+                    let has_line_break =
+                        bun_core::strings::index_of_any(&css[stop..next], b"\n\r\x0C").is_some();
+                    if has_line_break || next == css.len() {
+                        return (stop, true);
+                    }
+                    // The URL goes on behind the blanks.
+                    self.quote = quote;
+                    return (stop, false);
+                }
+                b'\n' | b'\r' | 0x0C if quote != b'`' => return (stop, true),
+                b'#' | b'@' if self.is_interpolation(stop, true) => {
+                    self.quote = quote;
+                    return (stop, false);
+                }
+                b')' if quote == b')' => return (stop, false),
+                byte if byte == quote => return (at, false),
+                _ => {}
+            }
+        }
+        (css.len(), true)
+    }
+
+    /// `next_token` for a highlighter. It takes any text:
+    /// - An unclosed string or `url(` ends with its line, an unclosed comment with the text.
+    /// - An interpolation isn't part of a word or a string: `"a#{$b}c"` is `"a`, `#{`, `$b`, `}`, `c"`.
+    /// - `(` is always a token of its own, so there are no `Brackets`.
+    /// - `//` starts a comment in Less too.
+    pub(super) fn next_tolerant_token(&mut self) -> Option<Token> {
+        let (css, pos) = (self.css, self.pos);
+        let &code = css.get(pos)?;
+        // The last token, if it was a word.
+        let word = self.buffer.pop();
+        let inside = match std::mem::take(&mut self.quote) {
+            0 if pos == self.url_start => b')',
+            quote => quote,
+        };
+        // Less has JavaScript between backticks, on any number of lines.
+        let is_less = self.syntax == Syntax::Less;
+        if inside != 0 || matches!(code, b'"' | b'\'') || (code == b'`' && is_less) {
+            let (end, is_unclosed) = match inside {
+                0 => self.end_of_string_piece(pos + 1, code),
+                _ => self.end_of_string_piece(pos, inside),
+            };
+            if end > pos {
+                let kind = match (inside, is_unclosed) {
+                    (b')', false) => TokenKind::Url,
+                    (b')', true) => TokenKind::UnclosedUrl,
+                    (_, false) => TokenKind::String,
+                    (_, true) => TokenKind::UnclosedString,
+                };
+                if is_unclosed {
+                    self.interpolations.clear();
+                }
+                return Some(self.token(kind, pos, end - 1, false));
+            }
+        }
+        if self.is_interpolation(pos, self.quote != 0) {
+            let around = std::mem::take(&mut self.quote);
+            self.interpolations.push(around);
+            return Some(self.token(TokenKind::InterpolationStart, pos, pos + 1, false));
+        }
+        match code {
+            b'}' => {
+                if let Some(around) = self.interpolations.pop() {
+                    self.quote = around;
+                    return Some(self.token(TokenKind::InterpolationEnd, pos, pos, false));
+                }
+            }
+            // Neither can be in an interpolation, so the `}` is missing.
+            b'{' | b';' => self.interpolations.clear(),
+            b'(' => {
+                // In CSS and Less, `,url` is one word.
+                let is_url = word
+                    .and_then(|word| word.of(css).split_last_chunk::<3>())
+                    .is_some_and(|(before, name)| {
+                        name.eq_ignore_ascii_case(b"url")
+                            && !before.last().is_some_and(|&byte| {
+                                byte.is_ascii_alphanumeric()
+                                    || matches!(byte, b'-' | b'_' | b'\\')
+                                    || byte >= 0x80
+                            })
+                    });
+                // With a string or a variable in it, it's a function like any other.
+                let argument = self.skip_white_space(pos + 1);
+                let is_raw = match css.get(argument) {
+                    Some(b'"' | b'\'') => false,
+                    Some(b'$') => self.syntax != Syntax::Scss,
+                    Some(b'@') => {
+                        self.syntax != Syntax::Less || self.is_interpolation(argument, true)
+                    }
+                    _ => true,
+                };
+                if is_url && is_raw {
+                    self.url_start = argument;
+                }
+                return Some(self.token(TokenKind::Control(b'('), pos, pos, false));
+            }
+            b'~' if is_less && css.get(pos + 1) == Some(&b'`') => {
+                return Some(self.token(TokenKind::Word, pos, pos, false));
+            }
+            b'/' if is_less && css.get(pos + 1) == Some(&b'/') => {
+                let end = bun_core::strings::index_of_any(&css[pos..], b"\n\x0C\r")
+                    .map_or(css.len(), |at| pos + at);
+                return Some(self.token(TokenKind::Comment, pos, end - 1, true));
+            }
+            _ => {}
+        }
+        self.next_token(true).ok().flatten()
     }
 }
 
@@ -1654,17 +1830,7 @@ fn parse_from(
             is_in_order: syntax != Syntax::Less,
         },
         syntax,
-        tokenizer: Tokenizer {
-            css,
-            syntax,
-            refusal: Refusal::default(),
-            pos,
-            shift: 0,
-            buffer: Vec::new(),
-            returned: Vec::new(),
-            last_bad_paren: None,
-            next_close: None,
-        },
+        tokenizer: Tokenizer::new(css, syntax, pos),
         nodes: Vec::with_capacity((css.len() - pos.min(css.len())) / 32 + 1),
         current: 0,
         last_node: 0,

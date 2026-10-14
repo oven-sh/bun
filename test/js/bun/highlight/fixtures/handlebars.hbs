@@ -1,0 +1,62 @@
+---
+title: Users
+layout: main
+---
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>{{title}} &mdash; {{@root.site.name}}</title>
+    <style>
+      .user { color: {{theme.color}}; margin: 0 auto; }
+    </style>
+    <script>
+      window.users = {{{json users}}};
+      console.log("loaded", window.users.length);
+    </script>
+  </head>
+  <body class="page {{if dark "dark" 'light'}} wide" data-count={{users.length}} style="margin: 0">
+    <!-- The header, with {{a mustache}} that is text -->
+    {{!-- A comment with }} in it --}}
+    {{! a short comment }}
+    {{> header title=title subtitle="All \"users\"" }}
+    {{#> layouts/card class="wide"}}
+      Nothing here.
+    {{/layouts/card}}
+    {{#*inline "badge"}}<b>{{this}}</b>{{/inline}}
+
+    {{#if users}}
+      <ul id=list>
+        {{#each users as |user index|}}
+          <li class={{if user.active "on"}} data-index="{{index}}">
+            {{@index}}/{{@key}}: {{user.name.first}} {{{user.bio}}} {{&user.html}}
+            {{format-date user.joined format="short" utc=true limit=-1.5 fallback=null other=undefined}}
+            {{~#unless @last~}}, {{~/unless~}}
+          </li>
+        {{else}}
+          <li>Nobody &amp; nothing</li>
+        {{/each}}
+      </ul>
+    {{else if (and loading (not (eq retries 3)))}}
+      <p>Loading&hellip;</p>
+    {{else}}
+      <p>{{t "users.empty" count=0}}</p>
+    {{/if}}
+
+    {{#with ../owner as |owner|}}{{owner.[full name]}} {{this.id}} {{./id}}{{/with}}
+    {{#let (hash a=1 b="two") (array 1 2) as |options list|}}{{options.a}}{{/let}}
+    {{#each-in settings as |key value|}}{{key}}={{value}}{{/each-in}}
+    {{^users}}No users{{/users}}
+    {{#my-helper users size=10}}{{yield}}{{^}}none{{/my-helper}}
+
+    \{{escaped}} and \\{{not-escaped}}
+    {{{{raw-helper}}}} {{this is text}} {{{{/raw-helper}}}}
+
+    <Ui::Card @title="Hello" @user={{this.user}} class="card" ...attributes as |card|>
+      <:header>{{card.title}}</:header>
+      <card.Body @onSave={{fn this.save user}} {{on "click" this.open}} {{did-insert this.focus}} />
+      <this.Footer /><@icon />
+      <Button disabled {{! why not }} type="submit">Save</Button>
+      <img src="/a.png" alt="a &lt; b"><br/>
+    </Ui::Card>
+  </body>
+</html>

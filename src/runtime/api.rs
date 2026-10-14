@@ -45,6 +45,8 @@ pub(crate) mod filesystem_router;
 pub(crate) mod glob;
 #[path = "api/HashObject.rs"]
 pub(crate) mod hash_object;
+#[path = "api/HighlightObject.rs"]
+pub(crate) mod highlight_object;
 #[path = "api/html_rewriter.rs"]
 pub(crate) mod html_rewriter;
 #[path = "api/js_bundle_completion_task.rs"]

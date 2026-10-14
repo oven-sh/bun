@@ -19,6 +19,7 @@ pub mod cursor;
 mod front_matter;
 pub mod graphql;
 pub mod handlebars;
+pub mod highlight;
 pub mod html;
 mod ir;
 mod js;

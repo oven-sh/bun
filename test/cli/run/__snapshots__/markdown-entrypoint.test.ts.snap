@@ -48,8 +48,8 @@ below\x1B[0m
 
 exports[`bun <file.md> renders fenced code block with JS syntax highlighting 1`] = `
 "\x1B[2m┌─ \x1B[0m\x1B[2m\x1B[3mjs\x1B[0m
-\x1B[2m│ \x1B[0m\x1B[0m\x1B[35mconst\x1B[0m name = \x1B[0m\x1B[32m"world"\x1B[0m\x1B[0m\x1B[2m;\x1B[0m
-\x1B[2m│ \x1B[0mconsole\x1B[0m\x1B[3m\x1B[1m.log\x1B[0m(\x1B[0m\x1B[32m\`hello \x1B[0m\${name}\x1B[0m\x1B[32m\`\x1B[0m)\x1B[0m\x1B[2m;\x1B[0m
+\x1B[2m│ \x1B[0m\x1B[35mconst\x1B[39m name = \x1B[32m"world"\x1B[39m;
+\x1B[2m│ \x1B[0mconsole.\x1B[34mlog\x1B[39m(\x1B[32m\`hello \x1B[35m\${\x1B[39mname\x1B[35m}\x1B[32m\`\x1B[39m);
 \x1B[2m└─\x1B[0m
 "
 `;

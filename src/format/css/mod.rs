@@ -7,6 +7,7 @@
 
 pub(crate) mod doc;
 pub(crate) mod embed;
+pub(crate) mod highlight;
 mod media_query;
 mod memo;
 mod misc;

@@ -133,7 +133,7 @@ pub(crate) fn adjust_strings(value: &[u8], single_quote: bool) -> Cow<'_, [u8]> 
 }
 
 /// `/(?:\d*\.\d+|\d+\.?)(?:e[+-]?\d+)?/i` at the start of `text`: the length of the match.
-fn number_len(text: &[u8]) -> Option<usize> {
+pub(super) fn number_len(text: &[u8]) -> Option<usize> {
     let digits = |from: usize| {
         text.get(from..)
             .unwrap_or_default()

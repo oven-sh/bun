@@ -11,6 +11,7 @@
 //! have to print, or the text of the smallest node around the place as it is written (`ast::Node::is_as_written`).
 
 mod ast;
+pub(crate) mod highlight;
 mod lexer;
 mod parser;
 mod printer;

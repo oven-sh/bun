@@ -318,6 +318,49 @@ oxfmt's option, which is made of `prettier-plugin-tailwindcss`: the classes of T
 - **Tailwind**: `tailwind.rs`, the plugin's `transformSvelte`.
 - **Tests**: `test/cli/format/svelte`. `cases.json` has what the real plugin and the real oxfmt print, and is made by `test/cli/format/oracle/svelte/make-fixtures.ts`. An oracle has to repair two things after every file: see there.
 
+## Highlighting
+
+`Bun.highlight` (`src/runtime/api/HighlightObject.rs`), the code blocks of `Bun.markdown.ansi()` and the input line of `bun repl` use the same parsers as the formatter.
+
+```
+code ─ <language>/highlight.rs ─→ Spans ─ finish ─→ [Span] ─ highlight/html.rs, highlight/ansi.rs ─→ text
+```
+
+| File                      | What                                                                                      |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| `highlight/mod.rs`        | `Language`, `highlight(code, language, scratch)`, `Spans::embed` for code in other code   |
+| `highlight/token.rs`      | `Token`. The names are public API: theme keys and CSS classes                             |
+| `highlight/spans.rs`      | `Spans::add(start, end, token)`. Spans can nest and come in any order. The inner one wins |
+| `highlight/theme.rs`      | `Theme`, and the built-in `DARK`, `LIGHT` and `TERMINAL` (16 colors)                      |
+| `<language>/highlight.rs` | One per language, next to its parser                                                      |
+
+Rules for a `highlight.rs`:
+
+- **It never fails.** The formatter gives up at the first syntax error. A highlighter gets snippets with `...` in them, half-typed code, and code that is still streaming in. What comes before an error looks the same as without the error, and what comes after it is still highlighted.
+- **Tokens first, tree second.** The lexer's tokens cover every byte and are easy to make tolerant. The tree only refines them: this name is a type, that one is a property. If the parser gives up, the tokens are still there.
+- **No regular expressions**, and no second parser. If a lexer stops at an error, give it a tolerant mode that the formatter doesn't turn on.
+- **Offsets never move.** To hide something from a parser (a `\r`, the `${..}` of a template, the `> ` in front of a quoted code block), overwrite it in a copy with something of the same length.
+- Linear time, no limits, and anything that recurses asks the stack first, as everywhere in this crate.
+- **A language can be in itself once** (`Spans::can_embed`): Markdown in a code block of Markdown is highlighted, and a code block of Markdown in there is raw. Each level reads its code again, and both unclosed code and longer and longer fences nest as deep as the text allows.
+- Adding spans in source order without overlap skips the sort and the flattening. `js/highlight.rs` does.
+
+What each language starts from:
+
+| Language                          | Tokens                                                                                        | What refines them                                                                                                                                                                                     |
+| --------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JavaScript, TypeScript, JSX, JSON | `bun lint`'s (`File::tokens`), on the tree of the parser that recovers from errors like `tsc` | A tree walk marks names by where they appear. The scopes (`bun_lint::semantic`) resolve every other name. A name with neither is a contextual keyword. JSON is parsed as an expression in parentheses |
+| CSS, SCSS, Less                   | `postcss.rs`: `Tokenizer::next_tolerant_token`                                                | A lookahead to `{`, `;` or `}` tells a rule from a declaration, for valid and broken code alike. No tree                                                                                              |
+| HTML, Vue, Angular                | `html/lexer.rs` with `Options::is_tolerant`                                                   | The last start tag says what language the raw text after it is in. Angular expressions: `html/angular/highlight.rs`, on Angular's own lexer                                                           |
+| Svelte                            | A scan shaped like `Parser::run`                                                              | `js/skim.rs` finds where each `{ }` ends                                                                                                                                                              |
+| Handlebars                        | `handlebars/lexer.rs`: `lex_tolerantly`                                                       | The tokens next to a name. A small state machine reads the HTML between mustaches                                                                                                                     |
+| Markdown, MDX                     | `bun_md`'s events, with `wants_source`                                                        | `js/skim.rs` finds where `{ }`, `import` and `export` end in MDX                                                                                                                                      |
+| GraphQL                           | The lexer in `graphql/parser.rs`                                                              | The nodes that the parser built before it gave up                                                                                                                                                     |
+| YAML, TOML                        | `bun_parsers`: `tokens_despite_errors`                                                        | The next token: a scalar before a `:` is a key                                                                                                                                                        |
+
+`js/skim.rs` goes over JavaScript token by token without parsing it. It's for code whose end has to be found before it can be parsed.
+
+Tests: `test/js/bun/highlight/highlight.test.ts`. Each file in `fixtures/` is highlighted whole (a snapshot), cut off at many places, and with pieces missing.
+
 ## Languages that only a plugin of Prettier reads
 
 `.astro`, `.php` and the like, and `.svelte` with another version of the plugin than the one that is built in. In Prettier's flavor, a file whose language a plugin of the configuration reads is handed to the Prettier of the project. So is a `package.json` with `prettier-plugin-packagejson`, whose order is not that of `sortPackageJson`.

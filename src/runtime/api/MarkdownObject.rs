@@ -142,6 +142,7 @@ pub(crate) fn render_to_ansi(
         columns: 80,
         remote_image_paths: None,
         image_base_dir: None,
+        highlight: None,
     };
     if theme_value.is_object() {
         if let Some(v) = theme_value.get_boolean_loose(global_this, "colors")? {
@@ -167,6 +168,11 @@ pub(crate) fn render_to_ansi(
             }
         }
     }
+
+    // The rest of the output has the terminal's 16 colors too, so it doesn't depend on where it's made.
+    let highlight =
+        bun_format::highlight::for_markdown(theme.light, bun_core::output::ColorDepth::C16);
+    theme.highlight = Some(&highlight);
 
     let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
         Ok(Some(r)) => r,

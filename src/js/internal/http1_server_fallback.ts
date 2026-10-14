@@ -356,6 +356,7 @@ function connectionListenerHTTP1(server, socket, options) {
     continueExpression,
     MAX_HEADER_PAIRS,
   } = require("node:_http_common");
+  const { readStart, readStop } = require("node:_http_incoming");
   const { ConnResetException } = require("internal/shared");
   const { kHandle: kHttp1ResponseHandle, kHeaderSource, http1ServerPipeline } = require("internal/http");
   // Populated by node:_http_server, which the require("node:http") above loads.
@@ -385,6 +386,11 @@ function connectionListenerHTTP1(server, socket, options) {
   connections.add(socket);
   socket[kHttp1ActiveRequests] = 0;
   socket[kHttp1MessageOpen] = false;
+  // readStart() leaves a socket alone while the pipelining read gate holds it.
+  socket._paused = false;
+  const canTimeOut = typeof socket.setTimeout === "function";
+  // Node's state.keepAliveTimeoutSet.
+  let keepAliveTimeoutSet = false;
 
   const kOnHeaders = HTTPParser.kOnHeaders | 0;
   const kOnMessageBegin = HTTPParser.kOnMessageBegin | 0;
@@ -438,6 +444,12 @@ function connectionListenerHTTP1(server, socket, options) {
     if (url === undefined) {
       url = flushedUrl;
       flushedUrl = "";
+    }
+
+    // Node's resetSocketTimeout: the keep-alive timeout ends when the next request arrives.
+    if (keepAliveTimeoutSet) {
+      keepAliveTimeoutSet = false;
+      socket.setTimeout(server.timeout || 0);
     }
 
     socket[kHttp1ActiveRequests]++;
@@ -524,7 +536,11 @@ function connectionListenerHTTP1(server, socket, options) {
         }
         return;
       }
-      advanceResponsePipeline(server, socket);
+      if (lastPipelinedResponse(socket) === undefined) {
+        armKeepAliveTimeout();
+      } else {
+        advanceResponsePipeline(server, socket);
+      }
     });
 
     // Node's parserOnIncoming read gate: stop reading once the connection's
@@ -570,8 +586,9 @@ function connectionListenerHTTP1(server, socket, options) {
     server.emit("request", req, res);
     return 0;
   };
+  // Node's parserOnBody: a full request buffer stops the socket, and req._read() restarts it.
   parser[kOnBody] = function onHttp1Body(chunk) {
-    if (req && !req._dumped) req.push(chunk);
+    if (req && !req._dumped && !req.push(chunk)) readStop(socket);
   };
   parser[kOnMessageComplete] = function onHttp1MessageComplete() {
     socket[kHttp1MessageOpen] = false;
@@ -584,6 +601,8 @@ function connectionListenerHTTP1(server, socket, options) {
       req._addHeaderLines(rawTrailers, rawTrailers.length);
       req.push(null);
     }
+    // Node's parserOnMessageComplete: the next request is read while this body is still buffered.
+    readStart(socket);
   };
 
   function onHttp1SocketError(err, rawPacket) {
@@ -622,6 +641,7 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.removeListener("error", onHttp1SocketErrorListener);
       socket.removeListener("end", onHttp1SocketEnd);
       socket.removeListener("drain", onHttp1SocketDrain);
+      socket.removeListener("timeout", onHttp1SocketTimeout);
       connections.delete(socket);
       try {
         parser.close();
@@ -667,10 +687,32 @@ function connectionListenerHTTP1(server, socket, options) {
     // Node's socketOnDrain then emits 'drain' on the response that waits for it.
     socket._httpMessage?.[kHttp1ResponseHandle]?.socketDrained();
   }
+  // Node's socketOnTimeout.
+  function onHttp1SocketTimeout() {
+    const reqTimeout = req && !req.complete && req.emit("timeout", socket);
+    const res = socket._httpMessage;
+    const resTimeout = res && res.emit("timeout", socket);
+    const serverTimeout = server.emit("timeout", socket);
+    if (!reqTimeout && !resTimeout && !serverTimeout) socket.destroy();
+  }
+  // The keep-alive branch of Node's resOnFinish. A socket that readStop() stopped reads no FIN, so this timeout is what closes it.
+  function armKeepAliveTimeout() {
+    if (!canTimeOut || socket.destroyed) return;
+    const { keepAliveTimeout, keepAliveTimeoutBuffer } = server;
+    if (!(Number.isFinite(keepAliveTimeout) && keepAliveTimeout > 0)) return;
+    socket.setTimeout(
+      keepAliveTimeout +
+        (Number.isFinite(keepAliveTimeoutBuffer) && keepAliveTimeoutBuffer >= 0 ? keepAliveTimeoutBuffer : 1000),
+    );
+    keepAliveTimeoutSet = true;
+  }
   socket.on("data", onHttp1SocketData);
   socket.on("error", onHttp1SocketErrorListener);
   socket.once("end", onHttp1SocketEnd);
   socket.on("drain", onHttp1SocketDrain);
+  socket.on("timeout", onHttp1SocketTimeout);
+  // Node's connectionListenerInternal: server.timeout applies from the first byte on.
+  if (canTimeOut && server.timeout) socket.setTimeout(server.timeout);
   socket.once("finish", () => {
     const inflight = socket._httpMessage;
     // An ended socket emits no 'drain', and all that the response wrote is out: the write callbacks that wait succeed.

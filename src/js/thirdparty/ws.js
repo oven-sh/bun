@@ -60,6 +60,7 @@ function extractAgentOptions(agent) {
 }
 
 const eventIds = {
+  __proto__: null,
   open: 1,
   close: 2,
   message: 3,
@@ -67,9 +68,6 @@ const eventIds = {
   ping: 5,
   pong: 6,
 };
-
-// Identity-stable placeholder for `#armNativeBridge`.
-function noopBridgeListener() {}
 
 function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
   const res = new (lazyHttp().IncomingMessage)(null);
@@ -116,6 +114,8 @@ function controlPayload(binaryType, data) {
 
 // https://github.com/oven-sh/bun/issues/11866
 let WebSocket;
+// native socket -> its client, for the native listeners: all clients share them.
+const clients = new WeakMap();
 
 /**
  * @link https://github.com/websockets/ws/blob/master/doc/ws.md#class-websocket
@@ -297,8 +297,68 @@ class BunWebSocket extends EventEmitter {
   #ensureHandshakeListener() {
     if (this.#handshakeListenerRegistered) return;
     this.#handshakeListenerRegistered = true;
-    this.#ws.addEventListener("handshake", event => this.#onHandshake(event.data), onceObject);
+    this.#addNativeListener("handshake", BunWebSocket.#onNativeHandshake, onceObject);
   }
+
+  #addNativeListener(event, listener, options) {
+    const ws = this.#ws;
+    clients.set(ws, this);
+    ws.addEventListener(event, listener, options);
+  }
+
+  // The native listeners. One function serves every client: `this` is the native socket.
+  static #onNativeHandshake(event) {
+    clients.get(this).#onHandshake(event.data);
+  }
+
+  static #onNativeOpen() {
+    clients.get(this).emit("open");
+  }
+
+  static #onNativeClose(event) {
+    clients.get(this).emit("close", event.code, event.reason, event.wasClean);
+  }
+
+  static #onNativeMessage(event) {
+    const client = clients.get(this);
+    const data = event.data;
+    const isBinary = typeof data !== "string";
+    if (isBinary) {
+      client.emit("message", client.#fragments ? [data] : data, isBinary);
+    } else {
+      let encoded = encoder.encode(data);
+      if (client.#binaryType !== "arraybuffer") {
+        encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
+      }
+      client.emit("message", client.#fragments ? [encoded] : encoded, isBinary);
+    }
+  }
+
+  static #onNativeError(event) {
+    const client = clients.get(this);
+    if (client.#unexpectedResponseEmitted) return;
+    client.emit("error", event);
+  }
+
+  static #onNativePing(event) {
+    const client = clients.get(this);
+    client.emit("ping", controlPayload(client.#binaryType, event.data));
+  }
+
+  static #onNativePong(event) {
+    const client = clients.get(this);
+    client.emit("pong", controlPayload(client.#binaryType, event.data));
+  }
+
+  static #bridges = {
+    __proto__: null,
+    open: BunWebSocket.#onNativeOpen,
+    close: BunWebSocket.#onNativeClose,
+    message: BunWebSocket.#onNativeMessage,
+    error: BunWebSocket.#onNativeError,
+    ping: BunWebSocket.#onNativePing,
+    pong: BunWebSocket.#onNativePong,
+  };
 
   // Minimal ClientRequest stub for the first 'unexpected-response' argument.
   #syntheticRequest;
@@ -363,94 +423,20 @@ class BunWebSocket extends EventEmitter {
     if (event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
-    if (event === "upgrade" || event === "unexpected-response") {
-      this.#ensureHandshakeListener();
-      return once ? super.once(event, listener) : super.on(event, listener);
-    }
-    const mask = 1 << eventIds[event];
-    const hasPersistentListener = mask && (this.#eventId & mask) === mask;
-    // Add a native listener if:
-    // 1. For `on()`: no native listener exists yet (will be persistent)
-    // 2. For `once()`: no persistent `on()` listener exists (otherwise the persistent one forwards events)
-    //    If only `once()` listeners exist, each needs its own native listener since they auto-remove
-    if (mask && !hasPersistentListener) {
-      // Only set the eventId bit for persistent `on` listeners, not for `once`
-      if (!once) {
-        this.#eventId |= mask;
-      }
-      if (event === "open") {
-        this.#ws.addEventListener(
-          "open",
-          () => {
-            this.emit("open");
-          },
-          once,
-        );
-      } else if (event === "close") {
-        this.#ws.addEventListener(
-          "close",
-          ({ code, reason, wasClean }) => {
-            this.emit("close", code, reason, wasClean);
-          },
-          once,
-        );
-      } else if (event === "message") {
-        this.#ws.addEventListener(
-          "message",
-          ({ data }) => {
-            const isBinary = typeof data !== "string";
-            if (isBinary) {
-              this.emit("message", this.#fragments ? [data] : data, isBinary);
-            } else {
-              let encoded = encoder.encode(data);
-              if (this.#binaryType !== "arraybuffer") {
-                encoded = Buffer.from(encoded.buffer, encoded.byteOffset, encoded.byteLength);
-              }
-              this.emit("message", this.#fragments ? [encoded] : encoded, isBinary);
-            }
-          },
-          once,
-        );
-      } else if (event === "error") {
-        this.#ws.addEventListener(
-          "error",
-          err => {
-            if (this.#unexpectedResponseEmitted) return;
-            this.emit("error", err);
-          },
-          once,
-        );
-      } else if (event === "ping") {
-        this.#ws.addEventListener(
-          "ping",
-          ({ data }) => {
-            this.emit("ping", controlPayload(this.#binaryType, data));
-          },
-          once,
-        );
-      } else if (event === "pong") {
-        this.#ws.addEventListener(
-          "pong",
-          ({ data }) => {
-            this.emit("pong", controlPayload(this.#binaryType, data));
-          },
-          once,
-        );
-      }
-    }
+    this.#armNativeBridge(event);
     return once ? super.once(event, listener) : super.on(event, listener);
   }
 
   on(event, listener) {
-    return this.#onOrOnce(event, listener, undefined);
+    return this.#onOrOnce(event, listener, false);
   }
 
   once(event, listener) {
-    return this.#onOrOnce(event, listener, onceObject);
+    return this.#onOrOnce(event, listener, true);
   }
 
   addListener(event, listener) {
-    return this.#onOrOnce(event, listener, undefined);
+    return this.#onOrOnce(event, listener, false);
   }
 
   prependListener(event, listener) {
@@ -463,17 +449,19 @@ class BunWebSocket extends EventEmitter {
     return super.prependOnceListener(event, listener);
   }
 
-  // Install the native forwarder for `event` without adding a listener.
+  // Adds the native listener of `event`, one time for the client. on(), once() and prepend*() all come here,
+  // and once() calls on(), so a second listener would give each native event to emit() twice.
   #armNativeBridge(event) {
     if (event === "upgrade" || event === "unexpected-response") {
       this.#ensureHandshakeListener();
       return;
     }
-    if (eventIds[event] === undefined) return;
-    const mask = 1 << eventIds[event];
+    const id = eventIds[event];
+    if (id === undefined) return;
+    const mask = 1 << id;
     if ((this.#eventId & mask) === mask) return;
-    this.#onOrOnce(event, noopBridgeListener, undefined);
-    super.off(event, noopBridgeListener);
+    this.#eventId |= mask;
+    this.#addNativeListener(event, BunWebSocket.#bridges[event]);
   }
 
   send(data, opts, cb) {

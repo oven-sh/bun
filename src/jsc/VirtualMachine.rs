@@ -4469,42 +4469,35 @@ impl VirtualMachine {
 
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.
     pub fn report_exception_in_hot_reloaded_module_if_needed(&mut self) {
-        let promise = match self.pending_internal_promise() {
-            Some(p) => p,
-            None => {
-                self.add_main_to_watcher_if_needed();
-                return;
-            }
-        };
-        // SAFETY: `promise` is a live JSC heap cell tracked by the VM.
-        match crate::JSPromise::status_ptr(promise) {
-            crate::js_promise::Status::Pending => {
-                self.add_main_to_watcher_if_needed();
-                return;
-            }
-            crate::js_promise::Status::Rejected => {
-                if self.pending_internal_promise_reported_at != self.hot_reload_counter {
-                    self.pending_internal_promise_reported_at = self.hot_reload_counter;
-                    // `global()` is `&'static`, so it survives the `&mut self`
-                    // call below.
-                    let global_ref = self.global();
-                    // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_mut`
-                    // is the centralised non-null deref proof (live JSC heap
-                    // cell tracked by the VM's strong-ref slot).
-                    let result = crate::JSPromise::opaque_mut(promise).result(global_ref.vm());
-                    let promise_js = JSValue::from_cell(promise);
-                    self.unhandled_rejection(global_ref, result, promise_js);
-                    crate::JSPromise::opaque_mut(promise).set_handled();
+        while let Some(promise) = self.pending_internal_promise() {
+            // SAFETY: `promise` is a live JSC heap cell tracked by the VM.
+            match crate::JSPromise::status_ptr(promise) {
+                crate::js_promise::Status::Pending => break,
+                crate::js_promise::Status::Rejected => {
+                    if self.pending_internal_promise_reported_at != self.hot_reload_counter {
+                        self.pending_internal_promise_reported_at = self.hot_reload_counter;
+                        // `global()` is `&'static`, so it survives the `&mut self`
+                        // call below.
+                        let global_ref = self.global();
+                        // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_mut`
+                        // is the centralised non-null deref proof (live JSC heap
+                        // cell tracked by the VM's strong-ref slot).
+                        let result = crate::JSPromise::opaque_mut(promise).result(global_ref.vm());
+                        let promise_js = JSValue::from_cell(promise);
+                        self.unhandled_rejection(global_ref, result, promise_js);
+                        crate::JSPromise::opaque_mut(promise).set_handled();
+                    }
                 }
+                crate::js_promise::Status::Fulfilled => {}
             }
-            crate::js_promise::Status::Fulfilled => {}
-        }
 
-        if self.hot_reload_deferred {
+            if !self.hot_reload_deferred {
+                break;
+            }
             self.reload(None);
-            // No tick follows this reload, as one does a reload that a task starts. Pre-arm the
-            // waker so the run loop runs what the reload queued before it parks.
-            self.wakeup();
+            // A reload that a task starts is inside a tick, and the tick then runs what the
+            // reload queued. This one is between ticks: tick for it, then look at its promise.
+            self.tick();
         }
         self.add_main_to_watcher_if_needed();
     }

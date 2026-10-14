@@ -374,13 +374,11 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
         scope.clearException();
         Ref messageError = MessageEvent::create(eventNames().messageerrorEvent, MessageEvent::Init { {}, jsNull() }, MessageEvent::IsTrusted::Yes);
         // node hands on('messageerror') listeners the error that deserialization threw. They get undefined here.
-        NodeStyleEventValue nodeValue(vm, messageError.get(), jsUndefined());
-        dispatchEvent(messageError);
+        NodeStyleEventValue::dispatch(vm, *this, messageError.get(), jsUndefined());
         return;
     }
     // on('message') listeners get the message, not the MessageEvent.
-    NodeStyleEventValue nodeValue(vm, event->event.get(), event->event->cachedData().getValue());
-    dispatchEvent(event->event);
+    NodeStyleEventValue::dispatch(vm, *this, event->event.get(), event->event->cachedData().getValue());
 }
 
 JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& hadMessage)

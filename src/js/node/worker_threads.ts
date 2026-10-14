@@ -122,57 +122,63 @@ function injectFakeEmitter(Class) {
   // list, marked to receive the value its dispatcher supplies and not the Event. Every method
   // below reads or edits that one list, so it agrees with addEventListener() and
   // removeEventListener(). Each native function checks its receiver: a MessagePort, or the
-  // worker's global scope when the shim passes `standIn`.
+  // worker's global scope when the shim passes `standIn`. on() and once() add natively, where
+  // node's call addEventListener(): the mark does not travel through a replaced method. Only a
+  // null or undefined listener, which adds nothing, goes to addEventListener() for its warning.
   const addNodeStyleListener = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetAddListener", 5);
-  const removeListener = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetRemoveListener", 5);
+  const assertMessagePort = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetAssert", 1);
   const countListeners = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetListenerCount", 3);
   const listEventNames = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetEventNames", 2);
   const removeListeners = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetRemoveAllListeners", 3);
   const dispatchWithValue = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventTargetEmit", 3);
+  const { kMaxEventTargetListeners, kMaxEventTargetListenersWarned } = EventEmitter as typeof EventEmitter &
+    Record<"kMaxEventTargetListeners" | "kMaxEventTargetListenersWarned", symbol>;
 
   function isStandIn(self) {
     return fakePort !== null && self === fakePort;
   }
 
+  // The receiver check of the methods that have no other native part.
+  function assertNodeEventTarget(self) {
+    if (!isStandIn(self)) assertMessagePort(self);
+  }
+
   function on(type, listener) {
     const standIn = isStandIn(this);
-    addNodeStyleListener(standIn ? globalThis : this, type, listener, false, standIn);
+    if (!addNodeStyleListener(standIn ? globalThis : this, type, listener, false, standIn))
+      this.addEventListener(type, listener);
     return this;
   }
 
   function off(type, listener, options) {
-    const standIn = isStandIn(this);
-    removeListener(standIn ? globalThis : this, type, listener, options, standIn);
+    assertNodeEventTarget(this);
+    // removeEventListener() rejects the same listeners. This is node's error for them.
+    if (listener != null && !$isObject(listener)) throw $ERR_INVALID_ARG_TYPE("listener", ["EventListener"], listener);
+    this.removeEventListener(type, listener, options);
     return this;
   }
 
   function once(type, listener) {
     const standIn = isStandIn(this);
-    addNodeStyleListener(standIn ? globalThis : this, type, listener, true, standIn);
+    if (!addNodeStyleListener(standIn ? globalThis : this, type, listener, true, standIn))
+      this.addEventListener(type, listener);
     return this;
   }
 
   function emit(type, arg) {
-    if (typeof type !== "string") {
-      // node checks the receiver before the type.
-      countListeners(this, "", false);
-      validateString(type, "type");
-    }
-    // addEventListener() listeners get this event. on() listeners get `arg` itself.
-    const event =
-      type === "message" || type === "messageerror"
-        ? new MessageEvent(type, { __proto__: null, data: arg } as MessageEventInit)
-        : new CustomEvent(type, { __proto__: null, detail: arg } as ConstructorParameters<typeof CustomEvent>[1]);
-    return dispatchWithValue(this, event, arg);
+    return dispatchWithValue(this, type, arg);
   }
 
-  const kMaxListeners = Symbol("kMaxListeners");
   function setMaxListeners(n) {
-    this[kMaxListeners] = n;
-    return this;
+    assertNodeEventTarget(this);
+    if (n === undefined) n = EventEmitter.defaultMaxListeners;
+    validateNumber(n, "setMaxListeners", 0);
+    this[kMaxEventTargetListeners] = n;
+    this[kMaxEventTargetListenersWarned] = false;
   }
   function getMaxListeners() {
-    return this[kMaxListeners] ?? 10;
+    assertNodeEventTarget(this);
+    return (this[kMaxEventTargetListeners] ??= EventEmitter.defaultMaxListeners);
   }
   function listenerCount(type) {
     const standIn = isStandIn(this);

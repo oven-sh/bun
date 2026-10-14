@@ -6,19 +6,18 @@
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "JSEventTarget.h"
-#include "JSEvent.h"
+#include "AddEventListenerOptions.h"
+#include "CustomEvent.h"
+#include "EventNames.h"
 #include "JSEventListener.h"
-#include "JSEventListenerOptions.h"
 #include "JSMessagePort.h"
-#include "JSDOMConvertBoolean.h"
-#include "JSDOMConvertDictionary.h"
 #include "JSDOMConvertStrings.h"
-#include "JSDOMConvertUnion.h"
-#include "JSDOMExceptionHandling.h"
+#include "MessageEvent.h"
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/Symbol.h"
 #include "wtf/text/MakeString.h"
 #include "../ErrorCode.h"
+#include "../NodeValidator.h"
 
 namespace Bun {
 
@@ -88,7 +87,8 @@ static AtomString toEventTypeString(JSGlobalObject* globalObject, JSValue type)
     return makeAtomString(type.toWTFString(globalObject));
 }
 
-// (receiver, type, listener, once, standIn)
+// (receiver, type, listener, once, standIn). Returns false for a null or undefined listener: it adds
+// nothing, and the shim lets addEventListener() give the warning for it.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventTargetAddListener, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -100,53 +100,33 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventTargetAddListener, (JSGlobalObject *
 
     // node validates the listener before it converts the type.
     JSValue listenerValue = callFrame->argument(2);
-    if (!listenerValue.isObject() && !listenerValue.isUndefinedOrNull()) [[unlikely]]
+    if (!listenerValue.isObject()) [[unlikely]] {
+        if (listenerValue.isUndefinedOrNull())
+            return JSValue::encode(jsBoolean(false));
         return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, globalObject, "listener"_s, "EventListener"_s, listenerValue);
+    }
 
     auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(throwScope, {});
 
     JSObject& wrapper = target;
-    if (!listenerValue.isObject()) {
-        emitAddEventListenerArgumentTypeWarning(*globalObject, wrapper, type, listenerValue);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        return JSValue::encode(jsUndefined());
-    }
-
     auto listener = JSEventListener::create(*asObject(listenerValue), wrapper, false, currentWorld(*globalObject));
     listener->setIsNodeStyle();
     AddEventListenerOptions options;
     options.once = callFrame->argument(3).isTrue();
     target.wrapped().addEventListener(type, WTF::move(listener), options);
     vm.writeBarrier(&wrapper, listenerValue);
-    return JSValue::encode(jsUndefined());
+    return JSValue::encode(jsBoolean(true));
 }
 
-// (receiver, type, listener, options, standIn)
-JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventTargetRemoveListener, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// (receiver): the receiver check of the methods that the shim implements in JS.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventTargetAssert, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    auto target = nodeEventTarget(vm, callFrame->argument(0), callFrame->argument(4).isTrue());
-    if (target.isNull()) [[unlikely]]
+    if (nodeEventTarget(vm, callFrame->argument(0), false).isNull()) [[unlikely]]
         return Bun::ERR::INVALID_THIS(throwScope, globalObject, "NodeEventTarget"_s);
-
-    JSValue listenerValue = callFrame->argument(2);
-    if (!listenerValue.isObject()) {
-        if (listenerValue.isUndefinedOrNull())
-            return JSValue::encode(jsUndefined());
-        return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, globalObject, "listener"_s, "EventListener"_s, listenerValue);
-    }
-
-    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*globalObject, callFrame->argument(1));
-    RETURN_IF_EXCEPTION(throwScope, {});
-    JSValue optionsValue = callFrame->argument(3);
-    auto options = optionsValue.isUndefined() ? false : convert<IDLUnion<IDLDictionary<EventListenerOptions>, IDLBoolean>>(*globalObject, optionsValue);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    JSObject& wrapper = target;
-    target.wrapped().removeEventListenerForBindings(type, JSEventListener::create(*asObject(listenerValue), wrapper, false, currentWorld(*globalObject)), WTF::move(options));
     return JSValue::encode(jsUndefined());
 }
 
@@ -215,8 +195,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventTargetRemoveAllListeners, (JSGlobalO
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
-    // One removeEventListener() per listener: the target's own bookkeeping (the loop ref of a
-    // MessagePort) then runs as it does for off().
+    // One removeEventListener() per listener, so the target's own bookkeeping (the loop ref of a
+    // MessagePort) runs as it does for off(), and a dispatch in progress skips them. node drops
+    // its list without either: the port keeps its ref, and that dispatch still calls them.
     for (auto& type : types) {
         EventListenerVector listeners = impl.eventListeners(type);
         for (auto& registered : listeners) {
@@ -227,7 +208,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventTargetRemoveAllListeners, (JSGlobalO
     return JSValue::encode(jsUndefined());
 }
 
-// (port, event, value): emit(). Returns whether the port had a listener for the event's type.
+// (port, type, value): emit(). Returns whether the port had a listener for `type`.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventTargetEmit, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -237,19 +218,32 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventTargetEmit, (JSGlobalObject * global
     if (target.isNull()) [[unlikely]]
         return Bun::ERR::INVALID_THIS(throwScope, globalObject, "NodeEventTarget"_s);
 
-    auto* event = JSEvent::toWrapped(vm, callFrame->argument(1));
-    if (!event) [[unlikely]]
-        return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, globalObject, "event"_s, "Event"_s, callFrame->argument(1));
+    JSValue typeValue = callFrame->argument(1);
+    Bun::V::validateString(throwScope, globalObject, typeValue, "type"_s);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*globalObject, typeValue);
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     auto& impl = target.wrapped();
-    bool hadListeners = !impl.eventListeners(event->type()).isEmpty();
-    NodeStyleEventValue nodeValue(vm, *event, callFrame->argument(2));
-    auto dispatched = impl.dispatchEventForBindings(*event);
-    if (dispatched.hasException()) [[unlikely]] {
-        propagateException(*globalObject, throwScope, dispatched.releaseException());
-        return {};
+    if (!impl.hasEventListeners(type))
+        return JSValue::encode(jsBoolean(false));
+
+    // on() listeners get `value` itself. addEventListener() listeners get the event that
+    // `new MessageEvent(type, { data: value })` or `new CustomEvent(type, { detail: value })` makes.
+    JSValue value = callFrame->argument(2);
+    JSValue inEvent = value.isUndefined() ? jsNull() : value;
+    RefPtr<Event> event;
+    if (type == eventNames().messageEvent || type == eventNames().messageerrorEvent) {
+        MessageEvent::Init init;
+        init.data = inEvent;
+        event = MessageEvent::create(type, WTF::move(init));
+    } else {
+        CustomEvent::Init init;
+        init.detail = inEvent;
+        event = CustomEvent::create(type, init);
     }
-    return JSValue::encode(jsBoolean(hadListeners));
+    NodeStyleEventValue::dispatch(vm, impl, *event, value);
+    return JSValue::encode(jsBoolean(true));
 }
 
 }

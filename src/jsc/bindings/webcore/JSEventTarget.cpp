@@ -201,21 +201,6 @@ JSC_DEFINE_CUSTOM_GETTER(jsEventTargetConstructor, (JSGlobalObject * lexicalGlob
     return JSValue::encode(JSEventTarget::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
-void emitAddEventListenerArgumentTypeWarning(JSGlobalObject& lexicalGlobalObject, JSObject& target, const AtomString& type, JSValue listener)
-{
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    String warningMessage = listener.isNull() ? "addEventListener called with null listener, which has no effect."_s : "addEventListener called with undefined listener, which has no effect."_s;
-    auto errorInstance = JSC::ErrorInstance::create(vm, lexicalGlobalObject.errorStructure(JSC::ErrorType::Error), warningMessage, JSValue(), nullptr, RuntimeType::TypeNothing, JSC::ErrorType::Error);
-    RETURN_IF_EXCEPTION(throwScope, );
-    errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, String("AddEventListenerArgumentTypeWarning"_s)));
-    errorInstance->putDirect(vm, vm.propertyNames->target, &target);
-    RETURN_IF_EXCEPTION(throwScope, );
-    errorInstance->putDirect(vm, vm.propertyNames->type, jsString(vm, type.string()));
-    throwScope.release();
-    Bun::Process::emitWarningErrorInstance(&lexicalGlobalObject, errorInstance);
-}
-
 static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListenerBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSEventTarget>::ClassParameter castedThis)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -234,8 +219,22 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
     EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto options = argument2.value().isUndefined() ? false : convert<IDLUnion<IDLDictionary<AddEventListenerOptions>, IDLBoolean>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
+    // Emit a warning if listener is null, as it has no effect
     if (!listener) {
-        emitAddEventListenerArgumentTypeWarning(*lexicalGlobalObject, *castedThis, type, argument1.value());
+        String warningMessage;
+        if (argument1.value().isNull()) {
+            warningMessage = "addEventListener called with null listener, which has no effect."_s;
+        } else {
+            warningMessage = "addEventListener called with undefined listener, which has no effect."_s;
+        }
+        auto errorInstance = JSC::ErrorInstance::create(vm, lexicalGlobalObject->errorStructure(JSC::ErrorType::Error), warningMessage, JSValue(), nullptr, RuntimeType::TypeNothing, JSC::ErrorType::Error);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, String("AddEventListenerArgumentTypeWarning"_s)));
+        JSObject& target = *castedThis;
+        errorInstance->putDirect(vm, vm.propertyNames->target, &target);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        errorInstance->putDirect(vm, vm.propertyNames->type, jsString(vm, WTF::move(type)));
+        Bun::Process::emitWarningErrorInstance(lexicalGlobalObject, errorInstance);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addEventListenerForBindings(WTF::move(type), WTF::move(listener), WTF::move(options)); }));

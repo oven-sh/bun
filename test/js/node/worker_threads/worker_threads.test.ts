@@ -1282,10 +1282,27 @@ describe("MessagePort on()/once() listeners live in the EventTarget listener lis
     }
   });
 
+  // Serializes, but does not deserialize: the DataView is in bounds only after the getter resized
+  // the buffer, and the buffer was serialized before that.
+  function postUndeserializable(port: MessagePort) {
+    const buffer = new ArrayBuffer(8, { maxByteLength: 65536 });
+    port.postMessage({
+      buffer,
+      get grow() {
+        buffer.resize(65536);
+        return 1;
+      },
+      get view() {
+        return new DataView(buffer, 4096, 16);
+      },
+    });
+  }
+
   // One dispatch hands every addEventListener() listener the same Event object, also when an
   // on() listener in between (which does not get that object) runs a collection.
   test.each([
     ["a posted message", "message", (port2: MessagePort) => port2.postMessage(1)],
+    ["a message that fails to deserialize", "messageerror", postUndeserializable],
     ["the close event", "close", (port2: MessagePort) => port2.close()],
   ] as const)("an on() listener that collects garbage does not replace the Event of %s", async (_name, type, send) => {
     const { port1, port2 } = new MessageChannel();
@@ -1294,13 +1311,10 @@ describe("MessagePort on()/once() listeners live in the EventTarget listener lis
       port1.addEventListener(type, event => {
         (event as any).tag = "first listener";
       });
-      port1.on(
-        type,
-        function collect() {
-          Bun.gc(true);
-        }.bind(null),
-      );
+      port1.on(type, () => Bun.gc(true));
       port1.addEventListener(type, event => resolve((event as any).tag));
+      // Delivery starts with the first 'message' listener.
+      port1.on("message", () => {});
       send(port2);
       expect(await promise).toBe("first listener");
     } finally {
@@ -1345,6 +1359,111 @@ describe("MessagePort on()/once() listeners live in the EventTarget listener lis
     } finally {
       globalThis.removeEventListener("custom", onGlobalScope);
     }
+  });
+
+  // removeAllListeners() is one removal per listener, so the port releases its loop ref as it
+  // does for off(). (node keeps the ref.) Spawned: the symptom is a process that stays alive.
+  test.concurrent.each(
+    [
+      ["on(f)", `port1.on("message", f);`],
+      ["once(f)", `port1.once("message", f);`],
+      ["addEventListener(f)", `port1.addEventListener("message", f);`],
+      ["on(f) and addEventListener(g)", `port1.on("message", f); port1.addEventListener("message", () => {});`],
+    ].flatMap(([name, add]) => [
+      [name, "removeAllListeners('message')", add, `port1.removeAllListeners("message");`],
+      [name, "removeAllListeners()", add, `port1.removeAllListeners();`],
+    ]),
+  )("%s, then %s lets the process exit", async (_name, _removal, add, remove) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { MessageChannel } = require("node:worker_threads");
+         const { port1, port2 } = new MessageChannel();
+         globalThis.keep = port2;
+         const f = () => {};
+         ${add}
+         const added = port1.hasRef();
+         ${remove}
+         console.log(JSON.stringify({ added, count: port1.listenerCount("message"), hasRef: port1.hasRef() }));
+         // Never fires when nothing keeps the process alive. It bounds the failure with its own exit code.
+         setTimeout(() => process.exit(7), 2_000).unref();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode, signalCode: proc.signalCode }).toEqual({
+      stdout: JSON.stringify({ added: true, count: 0, hasRef: false }),
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // With no 'message' listener left the port stops its delivery, and the next listener gets
+  // what arrived in between.
+  test("removeAllListeners() holds the messages back until a listener is added again", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const other = new MessageChannel();
+    try {
+      port1.on("message", () => {});
+      port1.removeAllListeners();
+      port2.postMessage("while no listener");
+      // A message through another channel, posted later: port1 had its turn to deliver.
+      const { promise: turn, resolve: onTurn } = Promise.withResolvers<void>();
+      other.port1.on("message", () => onTurn());
+      other.port2.postMessage(0);
+      await turn;
+
+      const got: unknown[] = [];
+      const { promise: done, resolve: onDone } = Promise.withResolvers<void>();
+      port1.on("message", value => {
+        got.push(value);
+        if (value === "after") onDone();
+      });
+      port2.postMessage("after");
+      await done;
+      expect(got).toEqual(["while no listener", "after"]);
+    } finally {
+      for (const port of [port1, port2, other.port1, other.port2]) port.close();
+    }
+  });
+
+  // A dispatcher's value belongs to its one dispatch. A worker's uncaught error is cloned for the
+  // parent after its ErrorEvent was dispatched, and the clone reads the `code` getter.
+  test("an ErrorEvent that is dispatched again reaches on() listeners as the Event", async () => {
+    const worker = new Worker(
+      `const { MessageChannel, parentPort } = require("node:worker_threads");
+       const { port1 } = new MessageChannel();
+       const error = new Error("from the worker");
+       let saved;
+       let dispatchedAgain = false;
+       globalThis.addEventListener("error", event => { saved = event; });
+       port1.on("error", value => {
+         parentPort.postMessage(value === saved ? "the Event" : value === error ? "the error" : String(value));
+       });
+       Object.defineProperty(error, "code", {
+         enumerable: true,
+         get() {
+           if (saved && !dispatchedAgain) {
+             dispatchedAgain = true;
+             port1.dispatchEvent(saved);
+           }
+           return "E_X";
+         },
+       });
+       throw error;`,
+      { eval: true },
+    );
+    const { promise: message, resolve: onMessage } = Promise.withResolvers<unknown>();
+    const { promise: failed, resolve: onError } = Promise.withResolvers<Error>();
+    worker.on("message", onMessage);
+    worker.on("error", onError);
+    expect({ message: await message, error: (await failed).message }).toEqual({
+      message: "the Event",
+      error: "from the worker",
+    });
   });
 
   // A web Worker that loads node:worker_threads gets a stand-in parentPort whose listeners
@@ -1429,6 +1548,27 @@ describe("MessagePort on()/once() listeners live in the EventTarget listener lis
           "self.addEventListener:event",
         ],
       }),
+      exitCode: 0,
+    });
+  });
+
+  // An uncaught error of the worker is an ErrorEvent on its global scope. An on('error') listener
+  // of the stand-in gets the error itself, and the listeners around it get one ErrorEvent object.
+  test.concurrent("the parentPort of a web Worker gives on('error') listeners the error", async () => {
+    const result = await inWebWorker(
+      `const { parentPort } = require("node:worker_threads");
+       let got;
+       self.addEventListener("error", event => { event.tag = "first listener"; });
+       parentPort.on("error", value => {
+         Bun.gc(true);
+         got = value instanceof Error ? "Error: " + value.message : String(value);
+       });
+       self.addEventListener("error", event => self.postMessage({ got, tag: event.tag, event: event.constructor.name }));
+       throw new Error("from the worker");`,
+      `worker.onerror = () => {};`,
+    );
+    expect(result).toEqual({
+      stdout: [JSON.stringify({ got: "Error: from the worker", tag: "first listener", event: "ErrorEvent" }), "exit 1"],
       exitCode: 0,
     });
   });

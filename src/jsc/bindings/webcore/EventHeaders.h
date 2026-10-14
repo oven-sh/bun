@@ -32,6 +32,8 @@
 #include "JSEvent.h"
 #include "CloseEvent.h"
 #include "JSCloseEvent.h"
+#include "CustomEvent.h"
+#include "JSCustomEvent.h"
 #include "ErrorEvent.h"
 #include "JSErrorEvent.h"
 #include "MessageEvent.h"

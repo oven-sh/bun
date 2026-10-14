@@ -73,14 +73,24 @@ NodeStyleEventValue::NodeStyleEventValue(VM& vm, const Event& event, JSValue val
 
 NodeStyleEventValue::~NodeStyleEventValue()
 {
+    ASSERT(m_clientData.nodeStyleEventValue == this);
     m_clientData.nodeStyleEventValue = m_outer;
+    JSC::ensureStillAliveHere(m_eventWrapper);
+}
+
+void NodeStyleEventValue::dispatch(VM& vm, EventTarget& target, Event& event, JSValue value)
+{
+    NodeStyleEventValue supplied(vm, event, value);
+    target.dispatchEvent(event);
 }
 
 JSValue NodeStyleEventValue::find(VM& vm, const Event& event)
 {
     for (auto* supplied = WebCore::clientData(vm)->nodeStyleEventValue; supplied; supplied = supplied->m_outer) {
-        if (&supplied->m_event == &event)
+        if (&supplied->m_event == &event) {
+            supplied->m_eventWrapper = event.wrapper();
             return supplied->m_value;
+        }
     }
     return {};
 }

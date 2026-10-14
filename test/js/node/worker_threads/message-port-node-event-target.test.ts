@@ -5,12 +5,13 @@
  * register a wrapper closure, so removeEventListener(f) did not remove what on(f) added.
  *
  * This file uses node:test/node:assert so the identical file also runs under `node --test`, which
- * is where every expected value comes from (v26.3.0 and v26.11.1). It cannot import from "harness"
- * for the same reason. A test marked todo for Bun names a result that Bun does not give yet.
+ * is where every expected value comes from (v26.3.0 and v26.11.1). That is why these cases are
+ * not in worker_threads.test.ts, and why the file cannot import from "harness". A test marked
+ * todo for Bun names a result that Bun does not give yet.
  */
 import assert from "node:assert";
-import { spawnSync } from "node:child_process";
-import { getEventListeners, once } from "node:events";
+import { spawn } from "node:child_process";
+import EventEmitter, { getEventListeners, once, setMaxListeners } from "node:events";
 import { describe, test } from "node:test";
 import { MessageChannel, MessagePort, Worker } from "node:worker_threads";
 
@@ -32,6 +33,8 @@ type Port = MessagePort &
     | "removeAllListeners"
     | "addEventListener"
     | "removeEventListener"
+    | "setMaxListeners"
+    | "getMaxListeners"
     | "close",
     (...args: any[]) => any
   >;
@@ -74,12 +77,48 @@ const kind = (value: unknown) => (value instanceof Event ? "event" : `data:${val
 const eventNames = (port: Port): string[] =>
   port.eventNames().filter((name: string) => name !== "newListener" && name !== "removeListener");
 
+// Posts a message that serializes, but does not deserialize: the DataView is in bounds only after
+// the getter resized the buffer, and the buffer was serialized before that.
+function postUndeserializable(port: Port) {
+  const buffer = new ArrayBuffer(8, { maxByteLength: 65536 });
+  port.postMessage({
+    buffer,
+    get grow() {
+      buffer.resize(65536);
+      return 1;
+    },
+    get view() {
+      return new DataView(buffer, 4096, 16);
+    },
+  });
+}
+
+// The shape that a listener-wrapping patch installs (zone.js, for example): addEventListener()
+// registers a wrapper of the listener, and removeEventListener() removes the wrapper it made.
+function wrapListeners(port: Port) {
+  const wrappers = new WeakMap<object, (...args: unknown[]) => unknown>();
+  const { addEventListener, removeEventListener } = port;
+  port.addEventListener = function (this: Port, type: string, listener: (...args: unknown[]) => unknown, options) {
+    let wrapper = wrappers.get(listener);
+    if (!wrapper) {
+      wrapper = function (this: unknown, ...args) {
+        return listener.apply(this, args);
+      };
+      wrappers.set(listener, wrapper);
+    }
+    return addEventListener.call(this, type, wrapper, options);
+  };
+  port.removeEventListener = function (this: Port, type: string, listener: object, options) {
+    return removeEventListener.call(this, type, wrappers.get(listener) ?? listener, options);
+  };
+}
+
 // Runs `script` in its own process, with `port1` and `port2` of a fresh channel in scope. port2
 // stays reachable: Bun closes a port whose peer was collected. The unref'd timer never fires when
 // nothing keeps the loop alive. It bounds the failure (a process that stays alive), so the test
 // does not run into its timeout.
-function inOwnProcess(script: string) {
-  const { stdout, status, signal } = spawnSync(
+async function inOwnProcess(script: string) {
+  const child = spawn(
     process.execPath,
     [
       "-e",
@@ -89,8 +128,11 @@ function inOwnProcess(script: string) {
        ${script}
        setTimeout(() => { console.log("still alive"); process.exit(1); }, 2_000).unref();`,
     ],
-    { encoding: "utf8", env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" } },
+    { stdio: ["ignore", "pipe", "ignore"] },
   );
+  let stdout = "";
+  child.stdout.setEncoding("utf8").on("data", chunk => (stdout += chunk));
+  const [status, signal] = await once(child, "close");
   return { stdout: stdout.trim().split("\n"), status, signal };
 }
 
@@ -290,6 +332,61 @@ describe("MessagePort: on()/once() listeners are entries of the EventTarget list
       assert.deepStrictEqual(counts, [1, 1]);
     },
   );
+
+  test("off() and removeListener() call the port's removeEventListener()", async () => {
+    const result = await withChannel(({ port1 }) => {
+      const seen: unknown[] = [];
+      const { removeEventListener } = port1;
+      const f = () => {};
+      port1.removeEventListener = function (this: Port, type: string, listener: unknown, options) {
+        seen.push([type, listener === f, options]);
+        return removeEventListener.call(this, type, listener, options);
+      };
+      port1.on("message", f);
+      port1.off("message", f);
+      port1.on("message", f);
+      port1.removeListener("message", f, { capture: false });
+      return { seen, count: port1.listenerCount("message") };
+    });
+    assert.deepStrictEqual(result, {
+      seen: [
+        ["message", true, undefined],
+        ["message", true, { capture: false }],
+      ],
+      count: 0,
+    });
+  });
+
+  for (const add of ["on", "addEventListener"]) {
+    for (const remove of ["off", "removeEventListener"]) {
+      test(`${add}(f) then ${remove}(f) leaves no listener on a port whose methods wrap listeners`, async () => {
+        const result = await withChannel(({ port1 }) => {
+          wrapListeners(port1);
+          const f = () => {};
+          port1[add]("message", f);
+          const added = port1.listenerCount("message");
+          port1[remove]("message", f);
+          return { added, count: port1.listenerCount("message"), hasRef: port1.hasRef() };
+        });
+        assert.deepStrictEqual(result, { added: 1, count: 0, hasRef: false });
+      });
+    }
+  }
+
+  test("off() rejects a listener that is not an object, before it converts the type", async () => {
+    await withChannel(({ port1 }) => {
+      const type = {
+        toString() {
+          throw new RangeError("the type was converted first");
+        },
+      };
+      assert.throws(() => port1.off(type, 5), {
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: 'The "listener" argument must be an instance of EventListener. Received type number (5)',
+      });
+    });
+  });
 
   test("removeEventListener() during dispatch stops an on() listener that has not run yet", async () => {
     const result = await withChannel(async ({ port1, port2 }) => {
@@ -584,6 +681,18 @@ describe("MessagePort: an on() listener receives what the dispatcher supplies, o
     assert.deepStrictEqual(got, [1]);
   });
 
+  test("a message that fails to deserialize gives addEventListener('messageerror') a MessageEvent", async () => {
+    const got = await withChannel(async ({ port1, port2 }) => {
+      const { promise: seen, resolve } = Promise.withResolvers<string>();
+      port1.addEventListener("messageerror", (event: Event) => resolve(event.constructor.name));
+      // Delivery starts with the first 'message' listener.
+      port1.on("message", () => {});
+      postUndeserializable(port2);
+      return await seen;
+    });
+    assert.strictEqual(got, "MessageEvent");
+  });
+
   test("dispatchEvent(): on() listeners get the Event itself", async () => {
     const result = await withChannel(({ port1 }) => {
       const got: unknown[] = [];
@@ -603,18 +712,19 @@ describe("MessagePort: an on() listener receives what the dispatcher supplies, o
     assert.deepStrictEqual(result, { length: 5, sameObjects: [true, true, true, true, true] });
   });
 
-  // node's 'close' is dispatchEvent(new MessagePortCloseEvent()).
-  for (const [name, close] of [
-    ["the port is closed", ({ port1 }) => port1.close()],
-    ["the peer is closed", ({ port2 }) => port2.close()],
-  ] as [string, (ports: Ports) => void][]) {
+  // node's 'close' is dispatchEvent(new MessagePortCloseEvent()). close(cb) is once("close", cb).
+  type Recorder = (via: string) => (...args: unknown[]) => void;
+  for (const [name, close, vias] of [
+    ["the port is closed", ({ port1 }, record) => port1.close(record("close(cb)")), ["on", "once", "close(cb)"]],
+    ["the peer is closed", ({ port2 }) => port2.close(), ["on", "once"]],
+  ] as [string, (ports: Ports, record: Recorder) => void, string[]][]) {
     test(`'close' listeners receive the close Event when ${name}`, async () => {
       const seen = await withChannel(async ports => {
         const { port1 } = ports;
         const seen: unknown[] = [];
-        const record =
-          (via: string) =>
-          (...args: unknown[]) => {
+        const record: Recorder =
+          via =>
+          (...args) => {
             const event = args[0] as Event | undefined;
             seen.push({
               via,
@@ -627,14 +737,14 @@ describe("MessagePort: an on() listener receives what the dispatcher supplies, o
         port1.on("close", record("on"));
         port1.once("close", record("once"));
         const closing = closed(port1);
-        close(ports);
+        close(ports, record);
         await closing;
         return seen;
       });
-      assert.deepStrictEqual(seen, [
-        { via: "on", argc: 1, isEvent: true, type: "close", target: true },
-        { via: "once", argc: 1, isEvent: true, type: "close", target: true },
-      ]);
+      assert.deepStrictEqual(
+        seen,
+        vias.map(via => ({ via, argc: 1, isEvent: true, type: "close", target: true })),
+      );
     });
   }
 
@@ -649,8 +759,10 @@ describe("MessagePort: an on() listener receives what the dispatcher supplies, o
         });
       }
       const returned = ["message", "messageerror", "error", "custom", "unheard"].map(type => port1.emit(type, payload));
+      // With no argument, on() gets undefined and the event carries null.
       const omitted: unknown[] = [];
       port1.on("omitted", (...args: unknown[]) => void omitted.push(args));
+      port1.addEventListener("omitted", (event: CustomEvent) => void omitted.push(event.detail));
       port1.emit("omitted");
       return { got, returned, omitted };
     });
@@ -666,8 +778,32 @@ describe("MessagePort: an on() listener receives what the dispatcher supplies, o
         ["custom", "CustomEvent", false, true],
       ],
       returned: [true, true, true, true, false],
-      omitted: [[undefined]],
+      omitted: [[undefined], null],
     });
+  });
+
+  // A DOM polyfill, for example, replaces these globals.
+  test("emit() does not build its event with the global MessageEvent or CustomEvent", async () => {
+    const result = await withChannel(({ port1 }) => {
+      const globals = { MessageEvent: globalThis.MessageEvent, CustomEvent: globalThis.CustomEvent };
+      class Replaced {
+        constructor() {
+          throw new Error("emit() used the replaced global");
+        }
+      }
+      const got: unknown[] = [];
+      port1.on("message", (value: unknown) => void got.push(value));
+      port1.addEventListener("message", (event: Event) => void got.push(event instanceof globals.MessageEvent));
+      port1.on("custom", (value: unknown) => void got.push(value));
+      port1.addEventListener("custom", (event: Event) => void got.push(event instanceof globals.CustomEvent));
+      Object.assign(globalThis, { MessageEvent: Replaced, CustomEvent: Replaced });
+      try {
+        return { returned: [port1.emit("message", 1), port1.emit("custom", 2)], got };
+      } finally {
+        Object.assign(globalThis, globals);
+      }
+    });
+    assert.deepStrictEqual(result, { returned: [true, true], got: [1, true, 2, true] });
   });
 
   test("emit() counts addEventListener() listeners and accepts a primitive", async () => {
@@ -695,9 +831,78 @@ describe("MessagePort: an on() listener receives what the dispatcher supplies, o
     });
   });
 
+  test("emit() and dispatchEvent() in a listener of a posted message leave the later listeners their message", async () => {
+    const got = await withChannel(async ({ port1, port2 }) => {
+      const got: unknown[] = [];
+      port1.on("message", (value: unknown) => {
+        got.push(["a", kind(value)]);
+        if (value !== "posted") return;
+        // Each of these dispatches runs to its end inside this listener.
+        got.push(["emit message", port1.emit("message", "emitted")]);
+        got.push(["emit custom", port1.emit("custom", "custom")]);
+        port1.dispatchEvent(new MessageEvent("message", { data: "dispatched" }));
+      });
+      port1.on("message", (value: unknown) => void got.push(["b", kind(value)]));
+      port1.on("custom", (value: unknown) => void got.push(["custom", kind(value)]));
+      const seen = delivered(port1, "posted");
+      port2.postMessage("posted");
+      await seen;
+      return got;
+    });
+    assert.deepStrictEqual(got, [
+      ["a", "data:posted"],
+      ["a", "data:emitted"],
+      ["b", "data:emitted"],
+      ["emit message", true],
+      ["custom", "data:custom"],
+      ["emit custom", true],
+      ["a", "event"],
+      ["b", "event"],
+      ["b", "data:posted"],
+    ]);
+  });
+
+  test("emit() in a listener of emit() leaves the later listeners the outer argument", async () => {
+    const got = await withChannel(({ port1 }) => {
+      const got: unknown[] = [];
+      port1.on("outer", (value: unknown) => {
+        got.push(["a", value]);
+        port1.emit("inner", 2);
+      });
+      port1.on("inner", (value: unknown) => void got.push(["inner", value]));
+      port1.on("outer", (value: unknown) => void got.push(["b", value]));
+      port1.emit("outer", 1);
+      return got;
+    });
+    assert.deepStrictEqual(got, [
+      ["a", 1],
+      ["inner", 2],
+      ["b", 1],
+    ]);
+  });
+
+  // Bun delivers the queued message inside close(), node after the listeners of the first one,
+  // so the order within `b` is not compared.
+  test("close() in a 'message' listener: the later listeners get each queued message, never the Event", async () => {
+    const { port1, port2 } = new MessageChannel() as unknown as Ports;
+    const a: string[] = [];
+    const b: string[] = [];
+    port1.on("message", (value: unknown) => {
+      a.push(kind(value));
+      port1.close();
+    });
+    port1.on("message", (value: unknown) => void b.push(kind(value)));
+    const closing = closed(port1);
+    port2.postMessage(1);
+    port2.postMessage(2);
+    await closing;
+    port2.close();
+    assert.deepStrictEqual({ a, b: b.sort() }, { a: ["data:1", "data:2"], b: ["data:1", "data:2"] });
+  });
+
   // Spawned because the test runner would otherwise see the exceptions itself.
-  test("a rejecting async on()/once() listener is reported as an uncaughtException", () => {
-    const result = inOwnProcess(
+  test("a rejecting async on()/once() listener is reported as an uncaughtException", async () => {
+    const result = await inOwnProcess(
       `const seen = [];
        process.on("uncaughtException", error => {
          seen.push(error.message);
@@ -732,8 +937,8 @@ describe("MessagePort: what on(), once() and addListener() accept", () => {
   }
 
   // Spawned: the process warning would land in this runner's own stderr.
-  test("on() with a null listener warns like addEventListener() and registers nothing", () => {
-    const result = inOwnProcess(
+  test("on() with a null listener warns like addEventListener() and registers nothing", async () => {
+    const result = await inOwnProcess(
       `process.on("warning", warning => {
          console.log(JSON.stringify({
            name: warning.name,
@@ -772,6 +977,8 @@ describe("MessagePort: what on(), once() and addListener() accept", () => {
       "listenerCount",
       "eventNames",
       "removeAllListeners",
+      "setMaxListeners",
+      "getMaxListeners",
     ];
     let calls = 0;
     const f = () => void calls++;
@@ -817,6 +1024,28 @@ describe("MessagePort: what on(), once() and addListener() accept", () => {
   });
 });
 
+describe("MessagePort: setMaxListeners() and getMaxListeners()", () => {
+  test("the limit is the one that events.setMaxListeners() sets", async () => {
+    const result = await withChannel(({ port1, port2 }) => {
+      const initial = port1.getMaxListeners();
+      const returned = port1.setMaxListeners(5);
+      const own = port1.getMaxListeners();
+      port1.setMaxListeners();
+      setMaxListeners(7, port2);
+      return { initial, returned, own, reset: port1.getMaxListeners(), viaEvents: port2.getMaxListeners() };
+    });
+    const byDefault = EventEmitter.defaultMaxListeners;
+    assert.deepStrictEqual(result, { initial: byDefault, returned: undefined, own: 5, reset: byDefault, viaEvents: 7 });
+  });
+
+  test("setMaxListeners() rejects a limit that is not a number of 0 or more", async () => {
+    await withChannel(({ port1 }) => {
+      assert.throws(() => port1.setMaxListeners(-1), { name: "RangeError", code: "ERR_OUT_OF_RANGE" });
+      assert.throws(() => port1.setMaxListeners("5"), { name: "TypeError", code: "ERR_INVALID_ARG_TYPE" });
+    });
+  });
+});
+
 describe("MessagePort: a removed on() listener does not keep the thread alive", () => {
   for (const [name, calls] of [
     ["on(f), removeEventListener(f)", `port1.on("message", f); port1.removeEventListener("message", f);`],
@@ -826,8 +1055,8 @@ describe("MessagePort: a removed on() listener does not keep the thread alive", 
       `port1.onmessage = () => {}; port1.on("message", f); port1.removeEventListener("message", f); port1.onmessage = null;`,
     ],
   ]) {
-    test(`${name} lets the process exit`, () => {
-      const result = inOwnProcess(
+    test(`${name} lets the process exit`, async () => {
+      const result = await inOwnProcess(
         `const f = () => {};
          ${calls}
          console.log("count=" + port1.listenerCount("message") + " hasRef=" + port1.hasRef());`,
@@ -856,10 +1085,10 @@ describe("MessagePort: a removed on() listener does not keep the thread alive", 
   });
 });
 
-describe("MessagePort: a result that Bun does not give yet", () => {
+describe("MessagePort: results that Bun does not give yet", () => {
   test(
     "a closed port and a transferred port keep their listeners",
-    todoOnBun("Bun drops the listeners of a closed or a transferred port, so listenerCount() is 0"),
+    todoOnBun("Bun drops the listeners of a closed or a transferred port: listenerCount() is 0, eventNames() is []"),
     async () => {
       const toClose = new MessageChannel() as unknown as Ports;
       const toTransfer = new MessageChannel() as unknown as Ports;
@@ -867,14 +1096,20 @@ describe("MessagePort: a result that Bun does not give yet", () => {
       const f = () => {};
       try {
         toClose.port1.on("message", f);
-        const closing = closed(toClose.port1);
+        // Not closed(): node keeps the type of a { once: true } listener that fired in eventNames().
+        const { promise: closing, resolve: onClose } = Promise.withResolvers<void>();
+        toClose.port1.addEventListener("close", onClose);
         toClose.port1.close();
         await closing;
+        toClose.port1.removeEventListener("close", onClose);
         toTransfer.port1.on("message", f);
         carrier.port1.postMessage(null, [toTransfer.port1]);
         assert.deepStrictEqual(
-          { closed: toClose.port1.listenerCount("message"), transferred: toTransfer.port1.listenerCount("message") },
-          { closed: 1, transferred: 1 },
+          {
+            closed: [toClose.port1.listenerCount("message"), eventNames(toClose.port1)],
+            transferred: [toTransfer.port1.listenerCount("message"), eventNames(toTransfer.port1)],
+          },
+          { closed: [1, ["message"]], transferred: [1, ["message"]] },
         );
       } finally {
         for (const { port1, port2 } of [toClose, toTransfer, carrier]) {
@@ -882,6 +1117,68 @@ describe("MessagePort: a result that Bun does not give yet", () => {
           port2.close();
         }
       }
+    },
+  );
+
+  test(
+    "on('messageerror') receives the error that deserialization threw",
+    todoOnBun("Bun gives on('messageerror') listeners undefined. #39408 changes the value."),
+    async () => {
+      const got = await withChannel(async ({ port1, port2 }) => {
+        const { promise, resolve } = Promise.withResolvers<unknown>();
+        port1.on("messageerror", resolve);
+        // Delivery starts with the first 'message' listener.
+        port1.on("message", () => {});
+        postUndeserializable(port2);
+        return await promise;
+      });
+      assert.ok(got instanceof Error, `received ${String(got)}`);
+    },
+  );
+
+  test(
+    "on() and once() call the port's addEventListener()",
+    todoOnBun("Bun adds the listener natively: its node-style mark does not travel through a replaced method"),
+    async () => {
+      const seen = await withChannel(({ port1 }) => {
+        const seen: unknown[] = [];
+        const { addEventListener } = port1;
+        const f = () => {};
+        port1.addEventListener = function (this: Port, type: string, listener: unknown, options) {
+          seen.push([type, listener === f]);
+          return addEventListener.call(this, type, listener, options);
+        };
+        port1.on("message", f);
+        port1.once("custom", f);
+        return seen;
+      });
+      assert.deepStrictEqual(seen, [
+        ["message", true],
+        ["custom", true],
+      ]);
+    },
+  );
+
+  test(
+    "removeAllListeners() in a listener does not stop the listeners after it for that event",
+    todoOnBun("Bun removes them from the dispatch in progress too, as removeEventListener() does"),
+    async () => {
+      const log = await withChannel(async ({ port1, port2 }) => {
+        const log: string[] = [];
+        const { promise: dispatched, resolve } = Promise.withResolvers<void>();
+        port1.on("message", () => {
+          log.push("a");
+          port1.removeAllListeners("message");
+          // Runs after every listener of this dispatch.
+          queueMicrotask(resolve);
+        });
+        port1.on("message", () => void log.push("b"));
+        port1.addEventListener("message", () => void log.push("c"));
+        port2.postMessage(1);
+        await dispatched;
+        return log;
+      });
+      assert.deepStrictEqual(log, ["a", "b", "c"]);
     },
   );
 });

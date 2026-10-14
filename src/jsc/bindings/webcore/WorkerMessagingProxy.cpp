@@ -351,8 +351,7 @@ void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionConte
     bool more = drainInbox(m_toWorker, globalObject, context, DrainBudget::Bounded, [&](Event& event) {
         // For the on() listeners of the parentPort that node:worker_threads gives a web Worker: the message,
         // or undefined for 'messageerror'.
-        NodeStyleEventValue nodeValue(globalObject.vm(), event, static_cast<MessageEvent&>(event).cachedData().getValue());
-        globalObject.globalEventScope->dispatchEvent(event);
+        NodeStyleEventValue::dispatch(globalObject.vm(), globalObject.globalEventScope.get(), event, static_cast<MessageEvent&>(event).cachedData().getValue());
     });
     if (more) {
         // Budget spent with messages left: continue after the loop has polled,

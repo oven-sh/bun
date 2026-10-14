@@ -421,6 +421,28 @@ describe("Bun.markdown.render", () => {
     expect(links[0].href).toBe("https://example.com/docs");
     expect(result).toBe("Docs: [https://example.com/docs], mail [me@example.com], and a <b>raw</b> tag.");
   });
+
+  test.each([
+    ["<https://example.com/x>", {}, "https://example.com/x"],
+    ["<https://example.com/x>", { noHtmlSpans: true }, "https://example.com/x"],
+    ["https://example.com/x", { autolinks: true }, "https://example.com/x"],
+    ["www.example.com", { autolinks: true }, "www.example.com"],
+    ["me@example.com", { autolinks: true }, "me@example.com"],
+    ["[[Page]]", { wikiLinks: true }, "Page"],
+  ])("%s in the description of an image is text, options %j", (link, options, text) => {
+    const links: string[] = [];
+    const result = Markdown.render(
+      `![a ${link} b](/i.png)\n`,
+      {
+        link: (children: string) => (links.push(children), `[${children}]`),
+        image: (children: string, { src }: any) => `<img src="${src}" alt="${children}" />`,
+        paragraph: (children: string) => children,
+      },
+      options,
+    );
+    expect(links).toEqual([]);
+    expect(result).toBe(`<img src="/i.png" alt="a ${text} b" />`);
+  });
 });
 
 describe("Bun.markdown buffer input", () => {

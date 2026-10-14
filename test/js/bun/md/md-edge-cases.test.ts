@@ -2017,6 +2017,21 @@ describe("noHtmlSpans", () => {
   });
 });
 
+// render() and react() have these rows in md-render-callback.test.ts and md-react.test.ts.
+describe("the description of an image is text", () => {
+  test.each([
+    ["<https://example.com/x>", {}, "https://example.com/x"],
+    ["https://example.com/x", { autolinks: true }, "https://example.com/x"],
+    ["[[Page]]", { wikiLinks: true }, "Page"],
+  ])("%s in html(), options %j", (link, options, text) => {
+    expect(Markdown.html(`![a ${link} b](/i.png)\n`, options)).toBe(`<p><img src="/i.png" alt="a ${text} b" /></p>\n`);
+  });
+
+  test("a wiki link in ansi()", () => {
+    expect(Markdown.ansi("![a [[Page]] b](/i.png)\n", { colors: false })).toBe("[img] a Page b\n");
+  });
+});
+
 describe("punctuation that is newer than Unicode 15", () => {
   test("a * between a letter and punctuation does not open emphasis", () => {
     // U+1B4E BALINESE INVERTED CARIK SIKI (Po, Unicode 16), beside U+00A1 and a letter.

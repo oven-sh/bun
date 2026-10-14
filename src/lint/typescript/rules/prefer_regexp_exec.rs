@@ -331,7 +331,10 @@ impl Rule for PreferRegexpExec {
             false
         };
 
-        if let ExprKind::String(pattern) = argument_node.kind() {
+        if let ExprKind::String(pattern) = argument_node.kind()
+            // For tsgolint a string literal in parentheses is not one.
+            && !(is_oxlint && argument_node.is_parenthesized())
+        {
             let reg_exp = match Regex::from_bytes(pattern.bytes(), b"") {
                 Ok(reg_exp) => reg_exp,
                 Err(_) => return,

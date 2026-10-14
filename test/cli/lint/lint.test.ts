@@ -5060,6 +5060,12 @@ maybe(() => { return f; });
             1,
           ],
           [
+            "prefer-regexp-exec",
+            'declare const s: string;\nconst r = RegExp("a");\nexport const m = s.match(r);\n',
+            'declare const s: string;\nconst r = (RegExp)("a");\nexport const m = s.match(r);\n',
+            1,
+          ],
+          [
             "await-thenable",
             "export async function f() {\n  await Promise.all([1, 2]);\n}\n",
             "export async function f() {\n  await Promise.all(([1, 2]));\n}\n",

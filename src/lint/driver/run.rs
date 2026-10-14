@@ -1363,6 +1363,11 @@ impl Run<'_> {
                 Err(Fatal(error)) => return self.fail(&error),
             },
         };
+        for result in &mut results {
+            if LintMessage::hide_claimed(&mut result.messages) {
+                result.counts = Counts::of(&result.messages);
+            }
+        }
         let has_unused = suppressed.has_unused && !options.pass_on_unpruned_suppressions;
         // oxlint reports it like problems, after those of all files.
         let about_suppressions = match is_oxlint {

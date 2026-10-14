@@ -10,7 +10,7 @@ pub struct PreferArrayFind;
 const PREFER_ARRAY_FIND: Message = Message::new("", "Prefer `find` over filtering and accessing the first result.");
 
 impl Rule for PreferArrayFind {
-    const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-find", Kind::Suggestion);
+    const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-find", Kind::Suggestion).with_types("prefer-find");
     const ON: On = On::new().method_calls(&["filter"]);
     no_state!();
 
@@ -30,7 +30,7 @@ impl Rule for PreferArrayFind {
             // The name `filter`.
             let callee = call.callee();
             let property = static_property_info(callee).filter(|_| !callee.is_parenthesized());
-            cx.report(property.map_or_else(|| e.span(), |it| it.0), PREFER_ARRAY_FIND);
+            cx.report(property.map_or_else(|| e.span(), |it| it.0), PREFER_ARRAY_FIND).unless_claimed(e);
         }
     }
 }

@@ -47,7 +47,7 @@ impl PreferPromiseRejectErrors {
             None if self.allow_empty_reject => return,
             None => {}
         }
-        cx.report(call_expression, REJECT_AN_ERROR);
+        cx.report(call_expression, REJECT_AN_ERROR).claims(call_expression);
     }
 
     /// `Promise.reject(..)`

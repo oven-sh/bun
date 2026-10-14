@@ -381,6 +381,9 @@ pub struct Meta {
     pub is_deprecated: bool,
     /// The rule of ESLint that this rule of typescript-eslint replaces.
     pub extends_base_rule: Option<&'static str>,
+    /// For a rule without types: the rule of typescript-eslint that looks for the same with types. See
+    /// [`Pairs`](crate::rule_set::Pairs), which is made of it when the linter is compiled.
+    pub(crate) with_types: Option<&'static str>,
     /// It is about several files: see [`modules`](crate::modules).
     pub needs_modules: bool,
     /// The rule is a port of oxlint's version, not of the ESLint plugin's, so the messages, locations, fixes and options are
@@ -413,6 +416,7 @@ impl Meta {
             uses_types: false,
             is_deprecated: false,
             extends_base_rule: None,
+            with_types: None,
             needs_modules: false,
             follows_oxlint: false,
             hands_back: false,
@@ -535,6 +539,12 @@ impl Meta {
 
     pub const fn deprecated(mut self) -> Meta {
         self.is_deprecated = true;
+        self
+    }
+
+    /// [`Meta::with_types`]
+    pub const fn with_types(mut self, name: &'static str) -> Meta {
+        self.with_types = Some(name);
         self
     }
 

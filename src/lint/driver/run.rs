@@ -1363,7 +1363,7 @@ impl Run<'_> {
                 Err(Fatal(error)) => return self.fail(&error),
             },
         };
-        for result in results.iter_mut().filter(|_| is_oxlint) {
+        for result in &mut results {
             if LintMessage::hide_claimed(&mut result.messages) {
                 result.counts = Counts::of(&result.messages);
             }

@@ -236,10 +236,14 @@ impl LintMessage {
             };
             is_hidden[from] = true;
             let fix = messages[from].fix.take();
-            let mut suggestions = std::mem::take(&mut messages[from].suggestions);
+            let suggestions = std::mem::take(&mut messages[from].suggestions);
             let shown = &mut messages[with_types[found].1];
             shown.fix = shown.fix.take().or(fix);
-            shown.suggestions.append(&mut suggestions);
+            for suggestion in suggestions {
+                if !shown.suggestions.iter().any(|it| it.fix == suggestion.fix) {
+                    shown.suggestions.push(suggestion);
+                }
+            }
         }
         let mut is_hidden = is_hidden.into_iter();
         let before = messages.len();

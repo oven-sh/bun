@@ -4833,6 +4833,41 @@ maybe(() => { return f; });
           `);
         });
 
+        // Without a configuration in the working directory the formats are ESLint's, whose JSON has the suggestions.
+        test("the configuration of the file counts, not that of the working directory", async () => {
+          const project = {
+            "throw/.oxlintrc.json": on(throw_),
+            "throw/tsconfig.json": tsconfig,
+            "throw/a.ts": 'throw "a";\n',
+            // Both rules suggest the same.
+            "await/.oxlintrc.json": on(await_),
+            "await/tsconfig.json": tsconfig,
+            "await/a.ts": f,
+          };
+          const results: { messages: { ruleId: string; suggestions?: { desc: string }[] }[] }[] = JSON.parse(
+            (await lint(project, ["--type-aware", "-f", "json"])).raw,
+          );
+          const reported = results.flatMap(it =>
+            it.messages.map(it => [it.ruleId, it.suggestions?.map(it => it.desc)]),
+          );
+          expect(reported).toMatchInlineSnapshot(`
+            [
+              [
+                "@typescript-eslint/require-await",
+                [
+                  "Remove 'async'.",
+                ],
+              ],
+              [
+                "@typescript-eslint/only-throw-error",
+                [
+                  "Expected an error object to be thrown",
+                ],
+              ],
+            ]
+          `);
+        });
+
         test("dot-notation and consistent-return have no version without types", async () => {
           const code =
             'declare const o: { a: number };\nexport const a = o["a"];\nexport function f(x: boolean) {\n  if (x) return 1;\n  return;\n}\n';

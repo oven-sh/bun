@@ -8,6 +8,7 @@
 use crate::options::Options;
 use crate::rule::{Meta, On, Plugin, Rule};
 use crate::runner::Starts;
+use bun_core::strings::const_str_eq;
 
 /// A set of rules, by their numbers.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -79,21 +80,6 @@ pub struct Pairs {
     pub(crate) typed: [u16; NUMBERS],
 }
 
-const fn is_same_text(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut at = 0;
-    while at < a.len() {
-        if a[at] != b[at] {
-            return false;
-        }
-        at += 1;
-    }
-    true
-}
-
 impl Pairs {
     const fn of(metas: &[Option<&'static Meta>]) -> Pairs {
         let mut pairs = Pairs {
@@ -115,9 +101,9 @@ impl Pairs {
                     && !it.requires_types
                 {
                     let is_pair = match (it.with_types, with_types.extends_base_rule) {
-                        (Some(name), _) => is_same_text(name, with_types.name),
+                        (Some(name), _) => const_str_eq(name, with_types.name),
                         (None, Some(base)) => {
-                            matches!(it.plugin, Plugin::Eslint) && is_same_text(base, it.name)
+                            matches!(it.plugin, Plugin::Eslint) && const_str_eq(base, it.name)
                         }
                         (None, None) => false,
                     };

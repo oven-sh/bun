@@ -84,6 +84,10 @@ interface ScanOptions {
 }
 ```
 
+Another process can remove a directory, or replace it with a file, while a scan runs. The open of that directory then fails with `ENOENT` or `ENOTDIR`. The scan leaves out the contents of that directory and continues. The scan does the same for a directory that still exists and fails to open with `ENOENT`.
+
+Two cases still fail the scan with that error: the directory is the one the scan starts in, or the pattern has a `..` component.
+
 ## Supported Glob Patterns
 
 Bun supports the following glob patterns:

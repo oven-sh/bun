@@ -20,6 +20,10 @@ fn is_array_method_call_with_predicate_of_tsgolint(node: Expr<'_>) -> bool {
         return false;
     };
     let callee = call.callee();
+    // `(a?.filter)(f)`: the parentheses end the chain, and the call is not a part of it.
+    if callee.is_chain_root() {
+        return false;
+    }
     let Some(object) = callee.object() else {
         return false;
     };

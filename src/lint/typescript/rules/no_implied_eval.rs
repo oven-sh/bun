@@ -52,7 +52,9 @@ fn is_function_type(node: Expr) -> bool {
 fn is_bind(node: Expr, is_oxlint: bool) -> bool {
     match node.kind() {
         ExprKind::Ident(name) => name.is("bind"),
-        ExprKind::Dot { name, .. } if is_oxlint || !node.is_chain_root() => name.name().is("bind"),
+        ExprKind::Dot { name, .. } if !node.is_chain_root() || (is_oxlint && !node.is_parenthesized()) => {
+            name.name().is("bind")
+        }
         ExprKind::Index { index, .. } if !is_oxlint && !node.is_chain_root() => is_bind(index, is_oxlint),
         _ => false,
     }

@@ -57,7 +57,11 @@ impl Rule for PreferReduceTypeParameter {
         let is_oxlint = cx.language().is_oxlint;
         let is_reduce = match is_oxlint {
             // tsgolint asks the checker's `getAccessedPropertyName`.
-            true => matches!(callee.file().type_checker().get_accessed_property_name(callee), Some(b"reduce")),
+            true => {
+                // Not `(a?.reduce)(f, x)`, where the parentheses end the chain.
+                !callee.is_chain_root()
+                    && matches!(callee.file().type_checker().get_accessed_property_name(callee), Some(b"reduce"))
+            }
             false => is_static_member_access_of_value(callee, &["reduce"]),
         };
         if !is_reduce {

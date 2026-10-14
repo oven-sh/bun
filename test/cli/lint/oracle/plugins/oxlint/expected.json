@@ -8052,6 +8052,11 @@
   "element-paren-literal-name.ts:6:1+22 typescript(no-floating-promises)",
   "generic-union-constraint.ts:5:3+5 typescript(no-floating-promises)",
   "handler-optional-union.ts:7:1+21 typescript(no-floating-promises)",
+  "paren-callee.ts:6:1+19 typescript(no-floating-promises)",
+  "paren-catch-finally.ts:6:1+37 typescript(no-floating-promises)",
+  "paren-comma-operand.ts:7:1+19 typescript(no-floating-promises)",
+  "paren-conditional-branch.ts:7:5+19 typescript(no-floating-promises)",
+  "paren-logical-assignment.ts:8:6+19 typescript(no-floating-promises)",
   "paren-range.ts:7:1+9 typescript(no-floating-promises)",
   "private-name-catch.ts:10:5+21 typescript(no-floating-promises)",
   "sentinel.ts:2:1+17 typescript(no-floating-promises)",
@@ -8063,6 +8068,7 @@
  ],
  "audit/no-floating-promises/option-allow-for-known-safe-calls": [
   "calls-package-destructured.ts:11:1+9 typescript(no-floating-promises)",
+  "calls-paren-callee.ts:6:1+13 typescript(no-floating-promises)",
   "sentinel.ts:2:1+17 typescript(no-floating-promises)",
   "sentinel.ts:4:3+17 typescript(no-floating-promises)",
   "sentinel.ts:6:1+19 typescript(no-floating-promises)",
@@ -8078,6 +8084,7 @@
   "sentinel.ts:7:1+30 typescript(no-floating-promises)"
  ],
  "audit/no-floating-promises/option-ignore-iife": [
+  "iife-call-inside-parens.ts:4:2+22 typescript(no-floating-promises)",
   "sentinel.ts:2:1+17 typescript(no-floating-promises)",
   "sentinel.ts:4:3+17 typescript(no-floating-promises)",
   "sentinel.ts:6:1+19 typescript(no-floating-promises)",
@@ -8086,7 +8093,9 @@
  "audit/no-floating-promises/option-ignore-void-false": [
   "sentinel.ts:2:1+17 typescript(no-floating-promises)",
   "sentinel.ts:3:6+17 typescript(no-floating-promises)",
-  "sentinel.ts:4:1+19 typescript(no-floating-promises)"
+  "sentinel.ts:4:1+19 typescript(no-floating-promises)",
+  "void-paren-assignment.ts:7:6+19 typescript(no-floating-promises)",
+  "void-paren-catch.ts:6:6+19 typescript(no-floating-promises)"
  ],
  "audit/no-implied-eval/default": [
   "bind-private-name.ts:7:16+12 typescript(no-implied-eval)",
@@ -8203,6 +8212,16 @@
   "union-of-generic-alias.ts:6:23+9 typescript(no-misused-spread)"
  ],
  "audit/no-unnecessary-boolean-literal-compare/option-allow-comparing-nullable-booleans": [
+  "extra-number-member-null.ts:6:1+11 typescript(no-unnecessary-boolean-literal-compare)",
+  "extra-number-member-null.ts:7:1+10 typescript(no-unnecessary-boolean-literal-compare)",
+  "extra-number-member-null.ts:8:5+10 typescript(no-unnecessary-boolean-literal-compare)",
+  "extra-object-member.ts:7:1+10 typescript(no-unnecessary-boolean-literal-compare)",
+  "extra-object-member.ts:8:1+10 typescript(no-unnecessary-boolean-literal-compare)",
+  "extra-object-member.ts:9:1+11 typescript(no-unnecessary-boolean-literal-compare)",
+  "extra-string-member.ts:6:1+10 typescript(no-unnecessary-boolean-literal-compare)",
+  "extra-string-member.ts:7:1+11 typescript(no-unnecessary-boolean-literal-compare)",
+  "extra-string-member.ts:8:1+9 typescript(no-unnecessary-boolean-literal-compare)",
+  "extra-void-member.ts:7:1+10 typescript(no-unnecessary-boolean-literal-compare)",
   "fix-comma-nullish.ts:7:11+10 typescript(no-unnecessary-boolean-literal-compare)",
   "fix-comma-nullish.ts:8:12+10 typescript(no-unnecessary-boolean-literal-compare)",
   "fix-conditional-branch.ts:6:9+10 typescript(no-unnecessary-boolean-literal-compare)",
@@ -8217,9 +8236,13 @@
   "optional-chain-nullable.ts:7:1+13 typescript(no-unnecessary-boolean-literal-compare)",
   "optional-chain-nullable.ts:8:1+16 typescript(no-unnecessary-boolean-literal-compare)",
   "optional-chain-nullable.ts:9:1+15 typescript(no-unnecessary-boolean-literal-compare)",
+  "optional-property-mixed.ts:6:1+12 typescript(no-unnecessary-boolean-literal-compare)",
+  "optional-property-mixed.ts:7:1+14 typescript(no-unnecessary-boolean-literal-compare)",
   "sentinel.ts:3:1+24 typescript(no-unnecessary-boolean-literal-compare)",
   "sentinel.ts:4:1+25 typescript(no-unnecessary-boolean-literal-compare)",
-  "sentinel.ts:5:1+26 typescript(no-unnecessary-boolean-literal-compare)"
+  "sentinel.ts:5:1+26 typescript(no-unnecessary-boolean-literal-compare)",
+  "type-param-extra-member.ts:5:10+10 typescript(no-unnecessary-boolean-literal-compare)",
+  "type-param-extra-member.ts:8:10+11 typescript(no-unnecessary-boolean-literal-compare)"
  ],
  "audit/no-unnecessary-condition/option-check-type-predicates": [
   "array-predicate-type-guard-inline.ts:5:30+9 typescript(no-unnecessary-condition)",
@@ -8336,7 +8359,8 @@
  ],
  "audit/no-unnecessary-type-assertion/exact-optional-property-types": [
   "sentinel.ts:2:18+11 typescript(no-unnecessary-type-assertion)",
-  "sentinel.ts:4:18+2 typescript(no-unnecessary-type-assertion)"
+  "sentinel.ts:4:18+2 typescript(no-unnecessary-type-assertion)",
+  "union-identical-structure.ts:6:11+30 typescript(no-unnecessary-type-assertion)"
  ],
  "audit/no-unnecessary-type-conversion/default": [
   "chain-inner-tostring.ts:7:18+4 typescript(no-unnecessary-type-conversion)",
@@ -8589,11 +8613,15 @@
   "array-hole-index.ts:5:14+1 typescript(no-useless-default-assignment)",
   "declare-function-pattern.ts:5:33+3 typescript(no-useless-default-assignment)",
   "empty-string-key.ts:5:17+3 typescript(no-useless-default-assignment)",
+  "intersection-contextual-signatures.ts:5:26+3 typescript(no-useless-default-assignment)",
   "message-null-type.ts:5:13+1 typescript(no-useless-default-assignment)",
   "numeric-key-hex.ts:5:18+3 typescript(no-useless-default-assignment)",
+  "overloaded-contextual-first-signature.ts:8:26+3 typescript(no-useless-default-assignment)",
+  "overloaded-contextual-second-has-fewer-parameters.ts:8:26+3 typescript(no-useless-default-assignment)",
   "parameter-with-initializer-pattern.ts:4:25+1 typescript(no-useless-default-assignment)",
   "parenthesized-default-range.ts:5:13+5 typescript(no-useless-default-assignment)",
   "parenthesized-undefined.ts:4:23+11 typescript(no-useless-default-assignment)",
+  "rest-element-object-pattern.ts:5:29+1 typescript(no-useless-default-assignment)",
   "rest-parameter-array-pattern.ts:4:27+3 typescript(no-useless-default-assignment)",
   "satisfies-contextual.ts:4:24+3 typescript(no-useless-default-assignment)",
   "sentinel.ts:2:39+9 typescript(no-useless-default-assignment)",
@@ -8624,17 +8652,30 @@
   "optional-param-union-undefined.ts:5:9+7 typescript(only-throw-error)",
   "paren-literal-range.ts:6:9+18 typescript(only-throw-error)",
   "rethrow-any-object.ts:6:9+1 typescript(only-throw-error)",
+  "rethrow-const-key.ts:10:9+1 typescript(only-throw-error)",
+  "rethrow-const-key.ts:7:9+1 typescript(only-throw-error)",
   "rethrow-custom-thenable.ts:18:9+6 typescript(only-throw-error)",
+  "rethrow-element-access.ts:6:9+1 typescript(only-throw-error)",
+  "rethrow-element-access.ts:9:9+1 typescript(only-throw-error)",
+  "rethrow-paren-arrow.ts:10:9+1 typescript(only-throw-error)",
+  "rethrow-paren-arrow.ts:6:9+1 typescript(only-throw-error)",
+  "rethrow-paren-callee.ts:7:9+1 typescript(only-throw-error)",
+  "rethrow-paren-throw.ts:7:9+3 typescript(only-throw-error)",
+  "rethrow-undefined-narrowed.ts:10:7+8 typescript(only-throw-error)",
+  "rethrow-undefined-then-param.ts:6:3+8 typescript(only-throw-error)",
+  "rethrow-undefined-then-param.ts:9:3+8 typescript(only-throw-error)",
   "sentinel.ts:3:9+10 typescript(only-throw-error)",
   "sentinel.ts:6:9+23 typescript(only-throw-error)",
   "sentinel.ts:9:3+16 typescript(only-throw-error)"
  ],
  "audit/only-throw-error/option-allow-throwing-any-false": [
+  "catch-destructured.ts:9:11+7 typescript(only-throw-error)",
   "sentinel.ts:4:9+11 typescript(only-throw-error)",
   "sentinel.ts:7:9+10 typescript(only-throw-error)",
   "unresolved-name.ts:6:9+19 typescript(only-throw-error)"
  ],
  "audit/only-throw-error/option-allow-throwing-unknown-false": [
+  "catch-paren-throw.ts:10:11+3 typescript(only-throw-error)",
   "sentinel.ts:4:9+15 typescript(only-throw-error)",
   "sentinel.ts:7:9+10 typescript(only-throw-error)"
  ],
@@ -8957,6 +8998,7 @@
   "sentinel.ts:3:29+28 typescript(prefer-reduce-type-parameter)"
  ],
  "audit/prefer-return-this-type/no-unchecked-indexed-access": [
+  "element-access.ts:7:8+3 typescript(prefer-return-this-type)",
   "sentinel.ts:2:8+8 typescript(prefer-return-this-type)"
  ],
  "audit/promise-function-async/default": [
@@ -9131,6 +9173,9 @@
   "logical-assignment.ts:5:14+1 typescript(strict-void-return)",
   "object-method-numeric-key.ts:9:5+9 typescript(strict-void-return)",
   "object-method-union-contextual.ts:8:5+9 typescript(strict-void-return)",
+  "paren-arrow-arg.ts:6:6+23 typescript(strict-void-return)",
+  "paren-async-arg.ts:5:6+44 typescript(strict-void-return)",
+  "paren-var-decl.ts:4:24+29 typescript(strict-void-return)",
   "return-optional-call.ts:8:10+9 typescript(strict-void-return)",
   "return-union-void-undefined.ts:8:10+9 typescript(strict-void-return)",
   "returns-nested-statements.ts:13:7+9 typescript(strict-void-return)",
@@ -9483,6 +9528,7 @@
   "merged-class-before-interface.ts:5:11+1 typescript(no-unnecessary-type-parameters)",
   "merged-interface-before-class.ts:8:11+1 typescript(no-unnecessary-type-parameters)",
   "no-infer-class.ts:5:18+1 typescript(no-unnecessary-type-parameters)",
+  "qualified-name-reference.ts:4:25+1 typescript(no-unnecessary-type-parameters)",
   "sentinel.ts:2:35+1 typescript(no-unnecessary-type-parameters)",
   "sentinel.ts:3:32+1 typescript(no-unnecessary-type-parameters)",
   "sentinel.ts:6:29+1 typescript(no-unnecessary-type-parameters)",

@@ -117,7 +117,6 @@ test.skipIf(!hasRunner)("comments are attached to the nodes that Prettier attach
   expect(differences).toEqual(knownDifferences);
 });
 
-// What is printed for these inputs is what Prettier prints all the same.
 const knownDifferences = [
   // Prettier turns `a && (b && c)` into `(a && b) && c` before it attaches comments.
   "comments/before-the-parentheses-of-a-nested-chain.js:33 Prettier: T LogicalExpression 6, bun: T BinaryExpression 25",
@@ -127,17 +126,6 @@ const knownDifferences = [
   "comments/before-the-parentheses-of-a-nested-chain.js:139 Prettier: T Identifier 137, bun: T LogicalExpression 132",
   // The `1` of the type `-1` is no node here.
   "comments/behind-a-negative-number-that-is-a-type.ts:71 Prettier: L Literal 79, bun: D TSLiteralType 69",
-  // A pattern with a default ends before the `)` around the default here.
-  "comments/on-its-own-line-in-a-pattern-with-a-default.js:196 Prettier: L AssignmentPattern 173, bun: L IdentifierReference 219",
-  "comments/prettier-ignore-in-the-parentheses-of-a-default.js:13 Prettier: T Identifier 11, bun: T AssignmentPattern 6",
-  "comments/prettier-ignore-in-the-parentheses-of-a-default.js:66 Prettier: T BinaryExpression 56, bun: T AssignmentPattern 51",
-  "comments/prettier-ignore-in-the-parentheses-of-a-default.js:122 Prettier: T BinaryExpression 112, bun: L BindingProperty 104",
   // An `Identifier` includes its type annotation in ESTree.
   "ignore/comment-that-trails-on-its-own-line.ts:432 Prettier: T Identifier 418, bun: T TSTypeAnnotation 419",
-  // A literal in the brackets of a computed key is no node here.
-  "objects/computed-key-that-is-short.js:11 Prettier: T NumericLiteral 9, bun: L StringLiteral 57",
-  "objects/computed-key-that-is-short.js:474 Prettier: L NumericLiteral 482, bun: L StringLiteral 486",
-  "objects/computed-key-that-is-short.js:672 Prettier: T StringLiteral 668, bun: L StringLiteral 700",
-  // The `K` of `[K in A]` is no node here.
-  "types/line-comment-behind-in-before-a-union.ts:24 Prettier: T Identifier 19, bun: L TSUnionType 35",
 ];

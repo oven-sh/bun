@@ -10,6 +10,7 @@ use crate::js::ast_nodes::{
     node_as_ast_nodes,
 };
 use crate::js::format::is_in_head_of_for;
+use crate::js::print::expressions::start_of_meta_property_name;
 use crate::js::print::flow::is_flow_opaque_type;
 use crate::js::source_text::SourceText;
 use bun_lint::ast::comments::{self, NodeOrName};
@@ -266,7 +267,7 @@ fn account_for_names_of_meta_property(nodes: &mut SurroundingNodes<'_>) {
     };
     nodes.preceding_node = Some(Owner::Name(e.span().start));
     if matches!(e.kind(), ExprKind::ImportMeta) {
-        nodes.following_node = Some(Owner::Name(e.span().end - "meta".len() as u32));
+        nodes.following_node = Some(Owner::Name(start_of_meta_property_name(e)));
     }
 }
 

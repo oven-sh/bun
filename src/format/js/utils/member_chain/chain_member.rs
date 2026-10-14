@@ -93,6 +93,14 @@ fn write_call_without_callee<'a>(expression: Expr<'a>, f: &mut Formatter<'a>) {
     );
 }
 
+/// `(a?.b()) /* comment */?.c()`: oxfmt drops the parentheses and prints the comment before the `?.c`, not behind `a?.b()`.
+/// `link` is the `a?.b()`.
+fn comments_behind_inner_chain_lead_next_link<'a>(link: Expr<'a>, f: &Formatter<'a>) -> bool {
+    f.options().flavor.is_oxfmt()
+        && link.is_chain_root()
+        && matches!(link.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Dot)
+}
+
 impl<'a> Format<'a> for ChainMember<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         if f.is_quiet() {
@@ -107,12 +115,19 @@ impl<'a> Format<'a> for ChainMember<'a> {
             Self::Node(node) => write!(f, FormatCallee(node)),
             // A `prettier-ignore` comment has no effect on a link.
             _ => {
+                if let Some(object) = (self.expr().object())
+                    .filter(|object| comments_behind_inner_chain_lead_next_link(*object, f))
+                {
+                    let comments = f.comments().of_node(object.as_chain_element()).trailing;
+                    FormatLeadingComments::Comments(comments).fmt(f);
+                }
                 FormatLeadingComments::Comments(self.leading_comments(f)).fmt(f);
                 self.write_link(f);
                 let trailing_comments = self.comments(f).trailing;
-                match comments_stay_behind_callee(self.expr(), f) {
-                    true => write_comments_behind_callee(trailing_comments, f),
-                    false => FormatTrailingComments::Comments(trailing_comments).fmt(f),
+                if comments_stay_behind_callee(self.expr(), f) {
+                    write_comments_behind_callee(trailing_comments, f);
+                } else if !comments_behind_inner_chain_lead_next_link(self.expr(), f) {
+                    FormatTrailingComments::Comments(trailing_comments).fmt(f);
                 }
             }
         }

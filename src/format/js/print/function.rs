@@ -9,6 +9,7 @@ use crate::js::format::{
 };
 use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::js::utils::suppressed::FormatSuppressedNode;
+use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
 use crate::write;
 
@@ -145,9 +146,11 @@ pub(crate) fn write_called_function_with_comments<'a>(
     options: ExprOptions,
     f: &mut Formatter<'a>,
 ) -> bool {
+    // In the parentheses of a type cast it is not what is called.
     if e.as_fn().is_none()
         || !is_iife_callee_or_tagged_template_tag(e)
         || comments_of_called_function_are_outside_of_its_parentheses(f)
+        || is_cast_target(e, f)
     {
         return false;
     }

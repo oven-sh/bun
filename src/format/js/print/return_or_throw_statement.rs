@@ -88,6 +88,13 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
                     if_group_breaks(&")")
                 ))
             );
+        } else if argument.binary_op() == Some(BinOp::Comma) && is_cast_target(argument, f) {
+            // `return (/** @type {T} */ (a, b));`: oxfmt looks at what is in the parentheses of the type cast, and writes the
+            // parentheses of a sequence around all of it.
+            write!(
+                f,
+                group(&format_args!("(", soft_block_indent(&argument), ")"))
+            );
         } else {
             write!(f, argument);
         }

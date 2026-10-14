@@ -1002,8 +1002,17 @@ pub fn format_for_tests(
 
 /// A line for each comment of the file at `path`: the node that owns it, or with `only_unprinted` the comments that no
 /// printer has printed. `None` if the file has a syntax error.
-pub fn debug_comments(path: &[u8], text: &[u8], only_unprinted: bool) -> Option<Vec<u8>> {
+pub fn debug_comments(
+    path: &[u8],
+    text: &[u8],
+    only_unprinted: bool,
+    is_oxfmt: bool,
+) -> Option<Vec<u8>> {
     let options = FormatOptions {
+        flavor: match is_oxfmt {
+            true => bun_format::options::Flavor::Oxfmt,
+            false => bun_format::options::Flavor::Prettier,
+        },
         debug_comments: match only_unprinted {
             true => bun_format::options::DebugComments::Unprinted,
             false => bun_format::options::DebugComments::Owners,

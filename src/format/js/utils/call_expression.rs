@@ -53,9 +53,13 @@ pub(crate) fn comments_around_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> 
 /// The comments attached to the node that Prettier has for `e`.
 ///
 /// For `a?.b` in TypeScript, that node is a `ChainExpression`, which cannot have comments. They are attached to the member
-/// access inside it.
+/// access inside it. For oxfmt the `ChainExpression` has them.
 pub(crate) fn comments_of_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> OwnedComments<'a> {
-    if !f.context().has_tree_of_babel() && e.is_chain_root() && !is_cast_target(e, f) {
+    if !f.context().has_tree_of_babel()
+        && !f.options().flavor.is_oxfmt()
+        && e.is_chain_root()
+        && !is_cast_target(e, f)
+    {
         return OwnedComments {
             leading: CommentList::empty(),
             trailing: CommentList::empty(),

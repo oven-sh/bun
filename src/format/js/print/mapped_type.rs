@@ -1,6 +1,5 @@
 use super::semicolon::OptionalSemicolon;
 use crate::js::format::identifier;
-use crate::js::utils::typescript::has_leading_own_line_comment;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -43,10 +42,11 @@ pub(crate) fn write_ts_mapped_type<'a>(
         let format_key = format_with(|f| {
             // The blank after `in` stays if a comment that trails the key ends up behind it.
             let comment_brings_its_blank = one_blank_before_line_comment_behind_in(f)
-                && param.constraint().is_some_and(|constraint| {
-                    matches!(constraint.kind(), TypeKind::Union(_))
-                        && has_leading_own_line_comment(constraint.as_ast_nodes(), f)
-                });
+                && !f.is_quiet()
+                && (param.constraint())
+                    .is_some_and(|constraint| matches!(constraint.kind(), TypeKind::Union(_)))
+                && (f.comments().of_name(key.span().start).trailing.iter())
+                    .any(|comment| comment.has_newline_after());
             write!(
                 f,
                 [

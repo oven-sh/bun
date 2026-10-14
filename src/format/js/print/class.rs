@@ -191,6 +191,18 @@ fn write_static_block<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
         .and_then(Func::body_statements)
         .filter(|body| !is_empty(body))
     {
+        // `static {⏎;⏎// comment⏎}` is `static {⏎}⏎// comment` for oxfmt.
+        Some(body) if body.iter().all(|it| it.tag() == StmtTag::Empty) => {
+            let comments = f.comments().of_node(AstNodes::StaticBlock(member)).dangling;
+            return write!(
+                f,
+                [
+                    hard_line_break(),
+                    "}",
+                    FormatTrailingComments::Comments(comments)
+                ]
+            );
+        }
         Some(body) => write!(f, block_indent(&FormatStatements(body))),
         None => write!(
             f,

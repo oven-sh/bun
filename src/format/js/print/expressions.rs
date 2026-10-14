@@ -175,21 +175,9 @@ fn write_object_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
 /// `import.meta`, `new.target`. Both words are `Identifier` nodes for Prettier, so comments can be attached to them.
 pub(crate) fn write_meta_property<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     let span = e.span();
-    let (meta, property_start) = match e.kind() {
-        ExprKind::ImportMeta => ("import", span.end.saturating_sub("meta".len() as u32)),
-        _ => {
-            // With its escapes: `new.t\u0061rget`, `new.t\u{61}rget`.
-            let is_in_name = |byte: &u8| {
-                byte.is_ascii_alphanumeric()
-                    || matches!(byte, b'_' | b'$' | b'\\' | b'{' | b'}' | 0x80..)
-            };
-            let property = (e.text().iter())
-                .rposition(|byte| !is_in_name(byte))
-                .map_or(0, |at| at + 1);
-            ("new", span.start + property as u32)
-        }
-    };
-    let property = Span::new(property_start, span.end);
+    let is_import_meta = matches!(e.kind(), ExprKind::ImportMeta);
+    let meta = if is_import_meta { "import" } else { "new" };
+    let property = Span::new(start_of_meta_property_name(e), span.end);
     format_name(
         Span::new(span.start, span.start + meta.len() as u32),
         f,
@@ -198,8 +186,23 @@ pub(crate) fn write_meta_property<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
         },
     );
     write!(f, ".");
-    // `new.targ` is an error.
-    format_name(property, f, |f| write!(f, source_text(property)));
+    format_name(property, f, |f| match is_import_meta {
+        // `import.m\u0065ta`
+        true => write!(f, "meta"),
+        // With its escapes. `new.targ` is an error.
+        false => write!(f, source_text(property)),
+    });
+}
+
+/// Where the second word of `import.meta` or `new.target` starts. It can have escapes: `new.t\u0061rget`, `new.t\u{61}rget`.
+pub(crate) fn start_of_meta_property_name(e: Expr<'_>) -> u32 {
+    let is_in_name = |byte: &u8| {
+        byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$' | b'\\' | b'{' | b'}' | 0x80..)
+    };
+    let name = (e.text().iter())
+        .rposition(|byte| !is_in_name(byte))
+        .map_or(0, |at| at + 1);
+    e.span().start + name as u32
 }
 
 /// `++a`, `a--`

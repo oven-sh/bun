@@ -2442,15 +2442,18 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 self.expect(T::CloseBracket);
                 // `IsDynamicName`: only a bare literal is a name.
                 let is_bare = self.f.parens.len() == parens;
-                let kind = self.f.exprs.get(expression.idx()).map(|it| it.kind);
-                return match kind {
+                let written = self.f.exprs.get(expression.idx()).copied();
+                let literal = written.map_or((0, 0), |it| (it.pos, it.end));
+                return match written.map(|it| it.kind) {
                     Some(ExprKind::String(name)) if is_bare => {
                         self.drop_last_expr(expression);
+                        self.finish_name(literal.0, literal.1);
                         (PropKey::Name(name), NameKind::ComputedString, pos)
                     }
                     Some(ExprKind::Number(n)) if is_bare => {
                         let name = self.number_name(self.f.numbers[n as usize]);
                         self.drop_last_expr(expression);
+                        self.finish_name(literal.0, literal.1);
                         (PropKey::Name(name), NameKind::ComputedNumber, pos)
                     }
                     _ => {

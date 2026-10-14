@@ -17,9 +17,12 @@ use crate::js::ast_nodes::{AsAstNodes, AstNodes as N, ExpressionStatement};
 use crate::js::comments::{Comment, CommentExt};
 use crate::js::fields::ExprFields;
 use crate::js::format::is_in_head_of_for;
-use crate::js::print::flow::{is_declared_class, is_flow_opaque_type, is_flow_record};
+use crate::js::print::flow::{
+    is_declared_class, is_flow_declare_export, is_flow_opaque_type, is_flow_record,
+};
 use crate::js::utils::call_expression::comments_stay_behind_callee_for_oxfmt;
 use crate::js::utils::expression::ExpressionLeftSide;
+use crate::js::utils::operators::BinOpExt;
 use bun_lint::ast::{
     BinOp, Case, Expr, ExprKind, Flags, FnBody, Func, List, Member, Node, PatKind, PropKind, Stmt,
     StmtKind, StmtTag, TypeKind, TypeNode, assign_op_text,
@@ -379,6 +382,7 @@ impl<'a> Rules<'_, 'a, '_> {
         if self.cx.options.flavor.is_oxfmt()
             && let Some(attachment) = self
                 .handle_comment_before_body_for_oxfmt()
+                .or_else(|| self.handle_comment_after_empty_statement_for_oxfmt())
                 .or_else(|| node.and_then(|node| self.handle_statement_comments_for_oxfmt(node)))
         {
             return Some(attachment);
@@ -389,6 +393,8 @@ impl<'a> Rules<'_, 'a, '_> {
                     self.handle_comment_around_assignment_operator_for_oxfmt(node, ignored_node)
                 })
                 .or_else(|| self.handle_comment_in_dropped_parentheses_for_oxfmt())
+                .or_else(|| self.handle_comment_before_type_annotation_of_variable_for_oxfmt())
+                .or_else(|| self.handle_comment_before_semicolon_of_return_for_oxfmt())
         {
             return Some(attachment);
         }
@@ -409,17 +415,15 @@ impl<'a> Rules<'_, 'a, '_> {
         {
             return Some(attachment);
         }
-        // `handleClosureTypeCastComments`. Between two nodes on one line it is left to `break_ties`, which makes it a leading
-        // comment too, together with the comments before it: `f(a, /* comment */ /** @type {T} */ (b))`.
-        let is_tie = self.context.text_position == Remaining && self.preceding_node.is_some();
         if comment.looks_like_type_cast()
             && self.cx.options.flavor.is_oxfmt()
             && let Some(attachment) = self.handle_closure_type_cast_comments_for_oxfmt()
         {
             return Some(attachment);
         }
+        // `handleClosureTypeCastComments`, which is only in Prettier's list for comments at the end of a line.
         if comment.looks_like_type_cast()
-            && !is_tie
+            && self.context.text_position == EndOfLine
             && let Some(following_node) = self.following_node
         {
             return Some(Attachment::leading(following_node));
@@ -465,6 +469,32 @@ impl<'a> Rules<'_, 'a, '_> {
             is_unignored: !matches!(body, Owner::Node(N::FunctionBody(_))),
             ..Attachment::leading(body)
         })
+    }
+
+    /// Bundlers write a comment after an empty statement that starts its line. The empty statement is not printed, so the comment
+    /// starts the line, and for oxfmt it leads `b`. For Prettier it trails `a`.
+    ///
+    /// ```js
+    /// a;
+    /// ;// comment
+    /// b;
+    /// ```
+    fn handle_comment_after_empty_statement_for_oxfmt(&self) -> Option<Attachment<'a>> {
+        let (preceding_node, following_node) = (self.preceding_node?, self.following_node?);
+        let comment = self.context.comment;
+        if comment.has_newline_before() || !self.prev_token_ends_with(b';') {
+            return None;
+        }
+        let empty_statements = Span::new(self.cx.span_of(preceding_node).end, comment.span().start);
+        let text = self
+            .cx
+            .file
+            .text()
+            .get(empty_statements.start as usize..empty_statements.end as usize)?;
+        let starts_line = (text.iter().rev())
+            .find(|byte| !matches!(byte, b' ' | b'\t' | b';'))
+            .is_some_and(|byte| matches!(byte, b'\n' | b'\r'));
+        starts_line.then(|| Attachment::leading(following_node))
     }
 
     /// oxfmt leaves a comment between two parts of a statement where it is.
@@ -787,7 +817,8 @@ impl<'a> Rules<'_, 'a, '_> {
         let is_before_semicolon = self.following_node.is_none()
             && self.next_token_starts_with(b';')
             && self.context.comment.next_token_start() + 1 == statement.span().end;
-        (statement.is_exported() && is_before_semicolon)
+        // Flow's `declare export function a(): B /* comment */;` is a `DeclareExportDeclaration`, which ends behind its `;`.
+        (statement.is_exported() && !is_flow_declare_export(statement) && is_before_semicolon)
             .then(|| Attachment::trailing(self.cx.owner_of_stmt(statement)))
     }
 
@@ -1023,6 +1054,91 @@ impl<'a> Rules<'_, 'a, '_> {
                 N::ReturnStatement(_) | N::ThrowStatement(_)
             ))
         .then(|| Attachment::leading(Owner::Node(sequence)))
+    }
+
+    /// `if (a) return // comment⏎;`: the `;` ends both statements. For Prettier the comment trails the `if` statement. For oxfmt it
+    /// trails the `return` or `throw` statement, which writes it as text that has to fit on the line:
+    ///
+    /// ```js
+    /// if (a)
+    ///   return; // a comment that does not fit behind `if (a) return;`
+    /// ```
+    fn handle_comment_before_semicolon_of_return_for_oxfmt(&self) -> Option<Attachment<'a>> {
+        let (comment, preceding_node) = (self.context.comment, self.preceding_node?);
+        let Owner::Node(node) = preceding_node else {
+            return None;
+        };
+        let Node::Stmt(mut statement) = node.raw() else {
+            return None;
+        };
+        if comment.has_newline_before()
+            || self.context.is_ignore_comment
+            || self.cx.span_of(preceding_node).end < comment.span().end
+        {
+            return None;
+        }
+        loop {
+            statement = match statement.kind() {
+                StmtKind::If { yes, no, .. } => no.unwrap_or(yes),
+                StmtKind::For { body, .. }
+                | StmtKind::ForIn { body, .. }
+                | StmtKind::ForOf { body, .. }
+                | StmtKind::While { body, .. }
+                | StmtKind::With { body, .. }
+                | StmtKind::Labeled { body, .. } => body,
+                StmtKind::Return(_) | StmtKind::Throw(_) => {
+                    return Some(Attachment::trailing(Owner::Node(statement.as_ast_nodes())));
+                }
+                _ => return None,
+            };
+        }
+    }
+
+    /// oxfmt keeps the two comments in their order: both lead `b`. For Prettier the second one trails `a`, so it is written first.
+    ///
+    /// ```js
+    /// a
+    ///   // comment 1
+    ///   + // comment 2
+    ///   b;
+    /// ```
+    fn handle_comment_behind_binary_operator_for_oxfmt(
+        &self,
+        e: Expr<'a>,
+    ) -> Option<Attachment<'a>> {
+        let (operator, right) = (e.binary_op()?, self.following_node?);
+        let comment = self.context.comment;
+        let first_behind_operator = self.ids_of_comments_between_same_tokens(comment).start;
+        let last_before_operator = self.cx.file.comment(first_behind_operator.checked_sub(1)?);
+        let operator_end = last_before_operator.next_token_start() + operator.as_str().len() as u32;
+        (operator_end == comment.prev_token_end()
+            && self
+                .ids_of_comments_between_same_tokens(last_before_operator)
+                .any(|id| self.cx.file.comment(id).has_newline_before()))
+        .then(|| Attachment::leading(right))
+    }
+
+    /// For oxfmt a comment between a variable and its type leads the type if the variable has a value. Without a value, one that
+    /// ends its line trails the variable. For Prettier it always leads the type.
+    ///
+    /// ```ts
+    /// const a// comment 1
+    /// : T = 1;
+    /// let b: T; // comment 2, which was behind `b`
+    /// ```
+    fn handle_comment_before_type_annotation_of_variable_for_oxfmt(
+        &self,
+    ) -> Option<Attachment<'a>> {
+        let Some(Owner::Node(N::VariableDeclarator(declarator))) = self.enclosing_node else {
+            return None;
+        };
+        let type_annotation =
+            (self.following_node).filter(|it| matches!(it, Owner::Node(N::TSTypeAnnotation(_))))?;
+        match (declarator.init(), self.context.text_position) {
+            (Some(_), _) => Some(Attachment::leading(type_annotation)),
+            (None, EndOfLine) => self.preceding_node.map(Attachment::trailing),
+            (None, _) => None,
+        }
     }
 
     /// oxfmt moves the comment to a line of its own before `c`. For Prettier it trails `a || b` and stays where it is.
@@ -1271,10 +1387,11 @@ impl<'a> Rules<'_, 'a, '_> {
             N::SequenceExpression(_) if self.cx.options.flavor.is_oxfmt() => {
                 self.handle_sequence_expression_leading_comment_for_oxfmt(node)
             }
-            N::LogicalExpression(e)
+            N::LogicalExpression(e) | N::BinaryExpression(e)
                 if text_position == EndOfLine && self.cx.options.flavor.is_oxfmt() =>
             {
                 self.handle_comment_before_parenthesized_logical_expression_for_oxfmt(e)
+                    .or_else(|| self.handle_comment_behind_binary_operator_for_oxfmt(e))
             }
 
             N::TSUnionType(_) if text_position == OwnLine => {
@@ -1743,6 +1860,11 @@ impl<'a> Rules<'_, 'a, '_> {
     /// After some callees, such as `new A` without type arguments and `a[b]`, the comment is attached by its position in the
     /// line, on both sides of the `(`: `new A( // comment⏎b)` is `new A(b); // comment`.
     fn handle_call_expression_comments_for_oxfmt(&self, e: Expr<'a>) -> Option<Attachment<'a>> {
+        if matches!(e.kind(), ExprKind::Call(_))
+            && let Some(attachment) = self.handle_comment_before_link_in_parentheses_for_oxfmt()
+        {
+            return Some(attachment);
+        }
         let call = e.as_call_like()?;
         let callee = call.callee();
         let stays_behind_callee = comments_stay_behind_callee_for_oxfmt(callee);
@@ -1780,6 +1902,30 @@ impl<'a> Rules<'_, 'a, '_> {
         is_followed_by_operand(e).then(|| Attachment::trailing(before_parenthesis))
     }
 
+    /// `(/* comment */ a.b)(c).d()` is `/* comment */ a.b(c).d()` for oxfmt: the comment leads `a`, the first thing that is printed
+    /// after it. For Prettier it leads `a.b`, so it is printed before the `.b`.
+    fn handle_comment_before_link_in_parentheses_for_oxfmt(&self) -> Option<Attachment<'a>> {
+        let Owner::Node(following_node) = self
+            .following_node
+            .filter(|_| self.preceding_node.is_none())?
+        else {
+            return None;
+        };
+        let mut first = following_node.as_expression()?;
+        // An optional chain keeps its parentheses, and so does a type cast.
+        while !first.is_chain_root()
+            && !matches!(self.cx.owner_of_expr(first), Owner::CastParens(..))
+        {
+            first = match first.kind() {
+                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+                ExprKind::NonNull(operand) => operand,
+                ExprKind::Call(call) => call.callee(),
+                _ => break,
+            };
+        }
+        Some(Attachment::leading(self.cx.owner_of_expr(first)))
+    }
+
     /// oxfmt leaves a comment on its own line in a member access where it is. Prettier moves it before the object.
     ///
     /// ```js
@@ -1792,6 +1938,9 @@ impl<'a> Rules<'_, 'a, '_> {
     ///
     /// Comment 1 leads the name `b`, as it does by its position. Comment 2 would lead `c`, inside the brackets.
     fn handle_member_expression_comments_for_oxfmt(&self, node: N<'a>) -> Option<Attachment<'a>> {
+        if let Some(attachment) = self.handle_comment_before_link_in_parentheses_for_oxfmt() {
+            return Some(attachment);
+        }
         (matches!(node, N::ComputedMemberExpression(_))
             && self.context.text_position == OwnLine
             && self.preceding_node.is_some()
@@ -2004,7 +2153,7 @@ impl<'a> Rules<'_, 'a, '_> {
             .map(Attachment::trailing)
     }
 
-    /// `handleIgnoreComments`, `handleTSMappedTypeComments` and `handlePropertySignatureComments`, which all apply to mapped types.
+    /// `handleIgnoreComments` and `handleTSMappedTypeComments`.
     fn handle_mapped_type_comments(
         &self,
         ty: TypeNode<'a>,
@@ -2027,10 +2176,7 @@ impl<'a> Rules<'_, 'a, '_> {
             ));
         }
         // `{ /* comment */ [K in T]: V }`
-        if comment.next_token_start() < key_start {
-            return Some(Attachment::dangling(enclosing_node));
-        }
-        self.handle_property_signature_comments()
+        (comment.next_token_start() < key_start).then(|| Attachment::dangling(enclosing_node))
     }
 
     /// `{ a: // comment ⏎ | B | C }` in a type.

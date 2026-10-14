@@ -704,7 +704,8 @@ fn write_expression_body<'a>(
     });
     match !is_on_its_own_line
         && sequence_behind_comments_is_on_its_own_line(f)
-        && (f.comments()).has_comment_in_span(Span::before(arrow.span().start, body.span()))
+        && (!owned.leading.is_empty()
+            || (f.comments()).has_comment_in_span(Span::before(arrow.span().start, body.span())))
     {
         true => write!(f, group(&indent(&format_args!(hard_line_break(), content)))),
         false => write!(f, content),

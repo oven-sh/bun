@@ -1177,7 +1177,7 @@ impl<'a> AstNodes<'a> {
             | N::AssignmentTargetWithDefault(e)
             | N::TypeCastExpression(e) => e.span(),
             N::AssignmentPattern(Node::PatProp(prop)) => match prop.default() {
-                Some(default) => prop.value().span().to(default.span()),
+                Some(default) => prop.value().span().to(default.outer_span()),
                 None => prop.span(),
             },
             N::SpreadElement(node) | N::AssignmentPattern(node) | N::BindingRestElement(node) => {

@@ -232,7 +232,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     pub(crate) fn function_block(&mut self, context: u32) -> (FnBody, u32) {
         let open = self.pos();
         let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::DECORATOR | ctx::CLASS_MEMBER;
-        let cleared = cleared | ctx::IN_LOOP | ctx::IN_SWITCH;
+        let cleared = cleared | ctx::IN_LOOP | ctx::IN_SWITCH | ctx::OUTSIDE_BODIES;
         let cleared = cleared | self.disallow_in_if_brackets_end_it();
         let saved = self.enter_context(context, cleared);
         // Only a block whose `{` is put up with has none.
@@ -916,7 +916,14 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.eat(T::Async) {
             flags |= Flags::ASYNC;
         }
+        // For oxc the type parameters and the return type of one that is `async` are in it, as in `function_rest_or`.
+        let in_types = match self.options.dialect.oxc && flags.contains(Flags::ASYNC) {
+            true => (ctx::AWAIT, ctx::TOP_LEVEL),
+            false => (0, 0),
+        };
+        let saved = self.enter_context(in_types.0, in_types.1);
         let type_params = self.type_parameters();
+        self.context = saved;
         let ambiguity = match allow_ambiguity {
             true => Ambiguity::Allowed,
             false => Ambiguity::Refused,
@@ -939,7 +946,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             true => {
                 self.next();
-                self.type_or_type_predicate()
+                let saved = self.enter_context(in_types.0, in_types.1);
+                let ret = self.type_or_type_predicate();
+                self.context = saved;
+                ret
             }
             false => TypeNodeId::NONE,
         };
@@ -1065,7 +1075,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         {
             return self.function_block(context);
         }
-        let saved = self.enter_context(context, ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL);
+        let cleared = ctx::YIELD | ctx::AWAIT | ctx::TOP_LEVEL | ctx::OUTSIDE_BODIES;
+        let saved = self.enter_context(context, cleared);
         let body = self.assignment_expression_or_higher(allow_return_type);
         self.context = saved;
         (FnBody::Expr(body), 0)

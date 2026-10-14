@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdSet;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashSet;
 
@@ -27,7 +28,7 @@ pub struct State<'a> {
     /// with its declarator.
     candidates: Vec<(Func<'a>, VarDecl<'a>)>,
     /// The arrow functions that are the innermost function around a `this` or a `super`.
-    with_this_or_super: FxHashSet<Func<'a>>,
+    with_this_or_super: IdSet<Func<'a>>,
     functions: AncestorMemo<'a, Func<'a>>,
     /// The overload signatures of the file, once a function declaration asks: what has the list of
     /// statements it is in, its name, and whether it is exported.
@@ -217,7 +218,7 @@ impl Rule for FuncStyle {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         for (func, declarator) in &cx.state.candidates {
-            if !cx.state.with_this_or_super.contains(func) {
+            if !cx.state.with_this_or_super.contains(*func) {
                 cx.report(declarator, DECLARATION);
             }
         }

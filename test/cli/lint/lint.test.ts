@@ -623,6 +623,49 @@ describe.concurrent("bun lint", () => {
 
   // Each row is what oxlint 1.87 prints. oxc's parser reports these, so the file isn't linted. tsc leaves them to its checker
   // (TS1308, TS1163), and typescript-estree says nothing.
+  // Every row was run on oxlint 1.87.
+  test("with .oxlintrc.json an `await` that is put up with outside every body makes the file a module", async () => {
+    // What the `await` of `await (z);` in the next line is. In a script it is the name of a function.
+    const rows: [extensions: string, code: string, found: "the operator" | "a name"][] = [
+      ["ts tsx", "function f(): { [await g()]: 1 } { return null!; }", "the operator"],
+      ["ts", "const f = function (): { [await g()]: 1 } { return null!; };", "the operator"],
+      ["ts", "function* f(): { [await g()]: 1 } {}", "the operator"],
+      ["ts", "function f<T extends { [await g()]: 1 }>(t: T) {}", "the operator"],
+      ["ts", "function f<T = { [await g()]: 1 }>() {}", "the operator"],
+      ["ts", "function f(this: { [await g()]: 1 }) {}", "the operator"],
+      ["ts", "declare function f(): { [await g()]: 1 };", "the operator"],
+      ["ts", "class A { m(): { [await g()]: 1 } { return null!; } }", "the operator"],
+      ["ts", "class A { get x(): { [await g()]: 1 } { return null!; } }", "the operator"],
+      ["ts", "const o = { m(): { [await g()]: 1 } { return null!; } };", "the operator"],
+      ["ts", "function f(a = (): { [await g()]: 1 } => null!) {}", "the operator"],
+      ["ts", "function f(a = function (): { [await g()]: 1 } { return null!; }) {}", "the operator"],
+      ["ts", "class A { x = function (): { [await g()]: 1 } { return null!; }; }", "the operator"],
+      ["ts", "class A { static { function f(): { [await g()]: 1 } { return null!; } } }", "the operator"],
+      ["ts js", "class A { x = await g(); }", "the operator"],
+      ["ts", "enum E { A = await g }", "the operator"],
+      ["ts", "type T = { [await g()]: 1 };", "the operator"],
+      ["ts", "const f = (): { [await g()]: 1 } => null!;", "the operator"],
+      ["ts js", "function f() {}", "a name"],
+      ["ts", "function f(): { [await (g)]: 1 } { return null!; }", "a name"],
+      ["ts", "async function f(): { [await g()]: Promise<1> } { return null!; }", "a name"],
+      ["ts", "const f = async (): { [await g()]: 1 } => null!;", "a name"],
+      ["ts", "const f = async <T extends { [await g()]: 1 }>() => {};", "a name"],
+      ["ts", "async function o() { const f = (): { [await g()]: 1 } => null!; }", "a name"],
+    ];
+    const cases = rows.flatMap(([extensions, code, found], i) =>
+      extensions.split(" ").map(extension => ({ name: `${i}.${extension}`, code, found })),
+    );
+    const files = Object.fromEntries(cases.map(({ name, code }) => [name, code + "\nawait (z);\n"]));
+    const config = { categories: { correctness: "off" }, rules: { "no-undef": "error" } };
+    const { raw } = await lint({ ".oxlintrc.json": JSON.stringify(config), ...files }, ["-f", "json"]);
+    const found: Record<string, string> = Object.fromEntries(cases.map(({ name }) => [name, "the operator"]));
+    for (const { filename, code, message } of JSON.parse(raw).diagnostics as Diagnostic[]) {
+      if (code !== "eslint(no-undef)") found[filename] = message;
+      else if (message === "'await' is not defined.") found[filename] = "a name";
+    }
+    expect(found).toEqual(Object.fromEntries(cases.map(({ name, found }) => [name, found])));
+  });
+
   test("with .oxlintrc.json `await` outside an async function and `yield` outside a generator are errors", async () => {
     const all = "ts tsx mts cts js jsx mjs cjs";
     const typescript = "ts tsx mts cts";
@@ -723,6 +766,28 @@ describe.concurrent("bun lint", () => {
       [typescript, "function f() { type T = { [await g]: 1 }; }", "await@27"],
       ["ts tsx", "function f(): { [await g]: 1 } { return null!; }", "linted"],
       ["mts cts", "function f(): { [await g]: 1 } { return null!; }", "await@17"],
+      // A signature in a type starts nothing: it is in the block.
+      [
+        "ts tsx",
+        "class A { static { type F = { (): { [await g()]: 1 } }; } }",
+        "Cannot use await in class static initialization block @37+5",
+      ],
+      ["mts cts", "class A { static { type F = { (): { [await g()]: 1 } }; } }", "await@37"],
+      [
+        "ts tsx",
+        "class A { static { interface I { m<T extends { [await g()]: 1 }>(): void } } }",
+        "Cannot use await in class static initialization block @48+5",
+      ],
+      ["mts cts", "class A { static { interface I { m<T extends { [await g()]: 1 }>(): void } } }", "await@48"],
+      // The type of a variable is read in the context of the block, where `await` is the operator.
+      [
+        typescript,
+        "class A { static { let v: { get x(): { [await g()]: 1 } }; } }",
+        "Cannot use await in class static initialization block @40+5",
+      ],
+      // A function does, with or without a body.
+      ["ts tsx", "class A { static { abstract class B { abstract m(): { [await g()]: 1 }; } } }", "linted"],
+      ["ts tsx", "class A { static { function f(): { [await g()]: 1 } { return null!; } } }", "linted"],
       [typescript, "function o() { @dec(await g()) class A {} }", "await@20"],
       [typescript, "async function o() { @dec(await g()) class A {} }", "linted"],
       ["ts tsx", "declare const x = await g;", "linted"],
@@ -4229,6 +4294,75 @@ describe.concurrent("bun lint", () => {
         expect(results.map(it => it.exitCode)).toEqual(rows.map(() => 1));
       });
 
+      // Recorded from oxlint 1.87.0 with tsgolint. typescript-eslint passes over `finally`, which waits for the Promise.
+      test("no-misused-promises reports an async function that is handed to finally()", async () => {
+        const texts = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+          "a.ts": `declare const p: Promise<number>;
+declare function f(): Promise<void>;
+void p.finally(async () => {});
+void p.finally(f);
+void p
+  .then(() => 1)
+  // oxlint-disable-next-line typescript/no-misused-promises
+  .finally(async () => {});
+void p.finally(() => {});
+`,
+        };
+        const rule = { "no-misused-promises": ["error", { checksVoidReturn: { attributes: false } }] };
+        const oxlint = {
+          categories: { correctness: "off" },
+          rules: { "typescript/no-misused-promises": rule["no-misused-promises"] },
+        };
+        const flags = ["--type-aware", "--report-unused-disable-directives", "-f", "json", "a.ts"];
+        const [forOxlint, alone] = await Promise.all([
+          lint({ ...texts, ".oxlintrc.json": JSON.stringify(oxlint) }, flags),
+          lint({ ...texts, "bunfig.toml": `[lint.rules]\n"typescript/no-misused-promises" = "error"\n` }, flags),
+        ]);
+        expect(places(forOxlint.raw)).toEqual([
+          "a.ts:3 typescript(no-misused-promises) error",
+          "a.ts:4 typescript(no-misused-promises) error",
+        ]);
+        const found = JSON.parse(alone.raw)[0].messages as { line: number; message: string }[];
+        expect(found.map(it => `${it.line} ${it.message}`)).toEqual([
+          "7 Unused oxlint-disable directive (no problems were reported from 'typescript/no-misused-promises').",
+        ]);
+      });
+
+      // Recorded from oxlint 1.87.0 with tsgolint.
+      test("no-misused-promises on what a function returns: a type in parentheses, and the type that a callback is given", async () => {
+        const texts = {
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
+          "a.ts": `declare function f(): Promise<void>;
+declare function on(callback: () => () => void): void;
+declare function maybe(callback?: () => () => void): void;
+export function a(): () => void { return f; }
+export function b(): (() => void) { return f; }
+on(() => { return f; });
+maybe(() => { return f; });
+`,
+        };
+        const oxlint = { categories: { correctness: "off" }, rules: { "typescript/no-misused-promises": "error" } };
+        const flags = ["--type-aware", "-f", "json", "a.ts"];
+        const [forOxlint, alone] = await Promise.all([
+          lint({ ...texts, ".oxlintrc.json": JSON.stringify(oxlint) }, flags),
+          lint({ ...texts, "bunfig.toml": `[lint.rules]\n"typescript/no-misused-promises" = "error"\n` }, flags),
+        ]);
+        type Label = { label?: string; span: { line: number; column: number; length: number } };
+        const found = (JSON.parse(forOxlint.raw).diagnostics as { labels: Label[] }[]).map(it =>
+          it.labels.map(({ label, span }) => `${span.line}:${span.column}+${span.length} ${label ?? ""}`.trimEnd()),
+        );
+        const value = "This callback has type \`() => Promise<void>\`.";
+        const context = "This context accepts a \`void\`-returning callback through type \`() => void\`.";
+        expect(found).toEqual([
+          [`4:42+1 ${value}`, `4:22+10 ${context}`, "4:42+1"],
+          [`6:19+1 ${value}`, `2:37+10 ${context}`, "6:19+1"],
+          [`7:22+1 ${value}`, "7:22+1"],
+        ]);
+        const lines = (JSON.parse(alone.raw)[0].messages as { line: number }[]).map(it => it.line);
+        expect(lines).toEqual([4, 5, 6, 7]);
+      });
+
       // Recorded from oxlint 1.87.0 with tsgolint.
       test("a type-aware rule reports with the severity of the ESLint rule of the same name, if that one is on", async () => {
         const texts = {
@@ -4435,11 +4569,11 @@ describe.concurrent("bun lint", () => {
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
-      // Each project is a program of its own. In four runs: one takes seconds in a debug build.
-      test.serial.each([0, 1, 2, 3])(
+      // Each project is a program of its own. In twelve runs: one takes seconds in a debug build.
+      test.serial.each([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])(
         "the rules that need types report what tsgolint's report: part %d",
         async part => {
-          const some = projects.filter(it => it.typed).filter((_, index) => index % 4 === part);
+          const some = projects.filter(it => it.typed).filter((_, index) => index % 12 === part);
           const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
           const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
           for (const { name, config, files: texts } of some) {
@@ -4806,6 +4940,94 @@ describe.concurrent("bun lint", () => {
         },
         isDebug || isASAN ? 120_000 : 30_000,
       );
+
+      // tsgolint's fix writes code that does not parse, or that does something else. `bun lint` makes the same report and
+      // leaves the code, or writes the code that does the same.
+      test("a fix of tsgolint that changes what the code does is not copied", async () => {
+        const shapes: [rule: string, file: string, text: string, fixed?: string, options?: object][] = [
+          // One match where `match` gave all of them.
+          ["prefer-regexp-exec", "a.ts", "declare const s: string;\nexport const a = s.match(new RegExp(/x/g));\n"],
+          [
+            "prefer-regexp-exec",
+            "a.ts",
+            "declare const s: string;\nexport const a = s.match(new RegExp(/x/g, undefined));\n",
+          ],
+          // `p` is `/b+/` there, and tsgolint writes `s.includes('abc')`.
+          [
+            "prefer-includes",
+            "a.ts",
+            "declare const s: string;\nlet p = /abc/;\np = /b+/;\nexport const a = p.test(s);\n",
+          ],
+          [
+            "prefer-string-starts-ends-with",
+            "a.ts",
+            "declare const s: string;\nlet p = /^a/;\np = /b/;\nexport const a = p.test(s);\n",
+          ],
+          // `<Icons["default"] />` does not parse.
+          [
+            "dot-notation",
+            "a.tsx",
+            "declare const Icons: { default: () => null };\nexport const a = <Icons.default />;\n",
+            undefined,
+            { allowKeywords: false },
+          ],
+          // An `await` in a parameter does not parse.
+          [
+            "no-misused-spread",
+            "a.ts",
+            "declare const p: Promise<{ a: 1 }>;\nexport async function f(o = { ...p }) {\n  return o;\n}\n",
+          ],
+        ];
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        shapes.forEach(([rule, file, text, , options], index) => {
+          const it = {
+            rule: `typescript/${rule}`,
+            file,
+            text,
+            typed: true,
+            options,
+            compilerOptions: { jsx: "preserve" },
+          };
+          for (const [path, text] of Object.entries(filesOf(it))) files[`${index}/${path}`] = text;
+        });
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        const reported = shapes.map((_, index) =>
+          JSON.parse(raw)
+            .diagnostics.filter((it: { filename: string }) => it.filename.startsWith(`${index}/`))
+            .map((it: { code: string }) => it.code),
+        );
+        expect(reported).toEqual(shapes.map(([rule]) => [`typescript(${rule})`]));
+        const reads = shapes.map(([, file], index) => `${index}/${file}`);
+        const result = await lint(files, ["--fix-dangerously", "--type-aware"], { reads });
+        expect(result.files).toEqual(
+          Object.fromEntries(shapes.map(([, file, text, fixed], index) => [`${index}/${file}`, fixed ?? text])),
+        );
+      });
+
+      test("what is left after the fixes is reported once, where it was", async () => {
+        const tsconfig = JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } });
+        const { files, raw } = await lint(
+          {
+            ".oxlintrc.json": JSON.stringify({
+              plugins: ["typescript"],
+              categories: { correctness: "off" },
+              rules: { "no-var": "error", "no-debugger": "error", "typescript/await-thenable": "error" },
+            }),
+            "tsconfig.json": tsconfig,
+            // `var` becomes `const` twice: a name that is declared twice, which is not said about the text that is written.
+            "a.ts": "var a = 1; debugger;\nvar a = 2;\nexport async function f() {\n  await a;\n}\n",
+          },
+          ["--fix", "--type-aware", "-f", "json"],
+          { reads: ["a.ts"] },
+        );
+        expect(files).toEqual({
+          "a.ts": "const a = 1; debugger;\nconst a = 2;\nexport async function f() {\n  await a;\n}\n",
+        });
+        const places = JSON.parse(raw).diagnostics.map(
+          (it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`,
+        );
+        expect(places.sort()).toEqual(["a.ts:1:12 eslint(no-debugger)", "a.ts:4:9 typescript(await-thenable)"]);
+      });
 
       test("the options that oxlint accepts are accepted", async () => {
         // A configuration that is refused ends the run. options.json is what oxlint 1.87.0 accepts. Each of the configurations has

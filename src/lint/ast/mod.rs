@@ -483,7 +483,7 @@ impl<'a> File<'a> {
         loop {
             match text[..end].last() {
                 None => return 0,
-                Some(b' ' | b'\t') => end -= 1,
+                Some(b' ' | b'\t' | 0x0B | 0x0C) => end -= 1,
                 Some(b'\n' | b'\r') => {
                     end -= 1;
                     // The line before can end in a comment only if it has a `//`.
@@ -770,6 +770,12 @@ macro_rules! handle {
             }
         }
         impl Eq for $name<'_> {}
+        impl $crate::types::Indexed for $name<'_> {
+            #[inline]
+            fn index(self) -> u32 {
+                self.id.0
+            }
+        }
         impl std::hash::Hash for $name<'_> {
             #[inline]
             fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

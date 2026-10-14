@@ -1,8 +1,8 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::is_method_call;
-use rustc_hash::FxHashMap;
 
 /// Disallow useless `undefined`.
 pub struct NoUselessUndefined {
@@ -17,7 +17,7 @@ pub struct State<'a> {
     /// Whether the function around something has a return type.
     return_types: AncestorMemo<'a, bool>,
     /// Where the first optional parameter of a function with many parameters starts.
-    first_optional_parameters: FxHashMap<Func<'a>, Option<u32>>,
+    first_optional_parameters: IdMap<Func<'a>, Option<u32>>,
 }
 
 impl Rule for NoUselessUndefined {
@@ -38,7 +38,7 @@ impl Rule for NoUselessUndefined {
         Some(State {
             undefined: file.find_name("undefined")?,
             return_types: AncestorMemo::default(),
-            first_optional_parameters: FxHashMap::default(),
+            first_optional_parameters: IdMap::new(),
         })
     }
 
@@ -112,8 +112,7 @@ impl NoUselessUndefined {
                     0..=8 => first_optional(),
                     _ => *state
                         .first_optional_parameters
-                        .entry(func)
-                        .or_insert_with(first_optional),
+                        .get_or_insert_with(func, first_optional),
                 };
                 if first_optional.is_some_and(|it| it < parameter.span().start) {
                     return;

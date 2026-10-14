@@ -1,7 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_intrinsic_error_type;
-use bun_lint::types::{Type, TypeFlags};
-use rustc_hash::FxHashMap;
+use bun_lint::types::{IdMap, Type, TypeFlags};
 use smallvec::SmallVec;
 
 /// Disallow duplicate constituents of union or intersection types.
@@ -215,6 +214,24 @@ fn is_repeated_by<'a>(earlier: TypeNode<'a>, later: TypeNode<'a>) -> bool {
     !earlier.span().contains(later.span()) && is_same_ast_node(earlier, later)
 }
 
+/// Whether tsgolint's scanner sees no `|` or `&` in `before_constituent`: from the start of the union or intersection to
+/// a constituent. The `}` that ends a substitution of a template type is a brace for it, so the `` ` `` that ends the
+/// template starts a string, to the next `` ` ``.
+fn is_separator_before_unseen<'a>(file: &'a File<'a>, before_constituent: Span) -> bool {
+    let mut is_in_string = false;
+    for token in file.tokens_in(before_constituent) {
+        match token.kind() {
+            TokenKind::Template => {
+                let text = token.text();
+                is_in_string = text.ends_with(b"`") && text.starts_with(b"`") == is_in_string;
+            }
+            TokenKind::Punctuator if !is_in_string && (token.is("|") || token.is("&")) => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
 /// `previous`: for [`DUPLICATE`], `Union` or `Intersection` and the constituent that it repeats.
 fn report<'a>(
     cx: &Cx<'a, NoDuplicateTypeConstituents>,
@@ -227,13 +244,26 @@ fn report<'a>(
     let is_union_or_intersection_token =
         |token: &Token<'a>| (token.is("&") || token.is("|")) && parent.contains(token.span());
 
-    // The `|` or `&` and the parentheses around the constituent, which go with it.
+    // The `|` or `&` and the parentheses around the constituent, which go with it. tsgolint's constituent is the
+    // parenthesized type: it goes whole, with the comments and line breaks between its parentheses.
+    let is_oxlint = cx.language().is_oxlint;
     let mut removed: SmallVec<[Span; 8]> = SmallVec::new();
-    removed.push(constituent_node.span());
-    let before_union_or_intersection_token = file
-        .tokens_before(constituent_node)
-        .take_while(|token| token.start() >= parent.start)
-        .find(is_union_or_intersection_token);
+    removed.push(match is_oxlint {
+        true => constituent_node.outer_span(),
+        false => constituent_node.span(),
+    });
+    // tsgolint removes the `|` or `&` after the constituent where its scanner sees none before it.
+    let outer = constituent_node.outer_span();
+    let is_before_unseen = is_oxlint
+        && is_separator_before_unseen(file, Span::new(parent.start, outer.start))
+        && file.token_after(outer).is_some_and(|token| is_union_or_intersection_token(&token));
+    let before_union_or_intersection_token = match is_before_unseen {
+        true => None,
+        false => file
+            .tokens_before(constituent_node)
+            .take_while(|token| token.start() >= parent.start)
+            .find(is_union_or_intersection_token),
+    };
     let (bracket_before_tokens, bracket_after_tokens) = match before_union_or_intersection_token {
         Some(before) => {
             removed.push(before.span());
@@ -256,16 +286,19 @@ fn report<'a>(
         }
     };
     let mut end = constituent_node.span().end;
-    removed.extend(bracket_before_tokens.map(|token| token.span()));
-    for token in bracket_after_tokens {
-        end = token.end();
-        removed.push(token.span());
+    if !is_oxlint {
+        removed.extend(bracket_before_tokens.map(|token| token.span()));
+        for token in bracket_after_tokens {
+            end = token.end();
+            removed.push(token.span());
+        }
     }
 
-    // oxlint points at the first of the two.
-    let place = match previous.filter(|_| cx.language().is_oxlint) {
-        Some((_, previous)) => previous.outer_span(),
-        None => Span::new(constituent_node.span().start, end),
+    // oxlint points at the first of the two. tsgolint's constituent is the parenthesized type.
+    let place = match (is_oxlint, previous) {
+        (true, Some((_, previous))) => previous.outer_span(),
+        (true, None) => constituent_node.outer_span(),
+        (false, _) => Span::new(constituent_node.span().start, end),
     };
     let mut report = cx.report(place, message).comments_apply_at(constituent_node.outer_span());
     if let Some((union_or_intersection, previous)) = previous {
@@ -289,7 +322,7 @@ struct Constituents<'a> {
     /// The union is the type of an optional parameter.
     is_of_optional_parameter: bool,
     unique_constituents: Vec<TypeNode<'a>>,
-    cached_type_map: FxHashMap<Type<'a>, TypeNode<'a>>,
+    cached_type_map: IdMap<Type<'a>, TypeNode<'a>>,
 }
 
 impl<'a> Constituents<'a> {
@@ -318,7 +351,12 @@ impl<'a> Constituents<'a> {
         if is_intrinsic_error_type(ty) || ty.is_unresolved() {
             return;
         }
-        if let Some(&previous) = self.cached_type_map.get(&ty) {
+        let mut is_new = false;
+        let previous = *self.cached_type_map.get_or_insert_with(ty, || {
+            is_new = true;
+            constituent_node
+        });
+        if !is_new {
             report_duplicate(previous);
             return;
         }
@@ -326,7 +364,6 @@ impl<'a> Constituents<'a> {
         if self.is_of_optional_parameter && ty.has_flags(TypeFlags::UNDEFINED) {
             report(cx, UNNECESSARY, constituent_node, None);
         }
-        self.cached_type_map.insert(ty, constituent_node);
         self.unique_constituents.push(constituent_node);
 
         if constituent_node.tag() == self.tag
@@ -348,18 +385,29 @@ impl NoDuplicateTypeConstituents {
         if matches!(parent, Node::Type(parent) if parent.tag() == tag) {
             return;
         }
+        // tsgolint asks only for the question token. Its parent of a union in parentheses is the parenthesized type,
+        // and only a constructor has parameter properties.
         let is_of_optional_parameter = tag == TypeTag::Union
             && matches!(parent, Node::Param(param) if param.is_optional()
-                && param.pat().tag() == PatTag::Ident
-                && !param.is_rest()
-                && !param.is_parameter_property()
-                && param.default().is_none()
-                && param.func().is_some_and(|func| func.kind() != FnKind::IndexSignature));
+                && match cx.language().is_oxlint {
+                    true => {
+                        !node.is_parenthesized()
+                            && !(param.is_parameter_property()
+                                && param.func().is_some_and(|func| func.kind() == FnKind::Constructor))
+                    }
+                    false => {
+                        param.pat().tag() == PatTag::Ident
+                            && !param.is_rest()
+                            && !param.is_parameter_property()
+                            && param.default().is_none()
+                            && param.func().is_some_and(|func| func.kind() != FnKind::IndexSignature)
+                    }
+                });
         let mut constituents = Constituents {
             tag,
             is_of_optional_parameter,
             unique_constituents: Vec::new(),
-            cached_type_map: FxHashMap::default(),
+            cached_type_map: IdMap::new(),
         };
         for ty in types {
             constituents.check_duplicate_recursively(ty, cx);

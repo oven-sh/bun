@@ -850,6 +850,20 @@ describe.concurrent("bun fmt", () => {
     expect(checked.exitCode).toBe(0);
   });
 
+  test("a vertical tab next to a comment is white space", async () => {
+    const text = "function a(b\v/* c */) {}\nfunction d(/* e */\vf) {}\nconst g = /* h */\vi;\n";
+    const result = await format({ "a.js": text }, [], { reads: ["a.js"] });
+    expect(result.files).toEqual({ "a.js": text.replaceAll("\v", " ") });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.each(["\v", "\f"])("%j between a comment and a type is white space", async space => {
+    const text = `let a: /* b */${space}C;\nfunction d(e: /* f */${space}G) {}\n`;
+    const result = await format({ "a.ts": text }, [], { reads: ["a.ts"] });
+    expect(result.files).toEqual({ "a.ts": text.replaceAll(space, " ") });
+    expect(result.exitCode).toBe(0);
+  });
+
   test("Handlebars", async () => {
     const result = await format({ "a.hbs": '<div   class="a  b">{{foo   bar}}</div>\n', "b.handlebars": "{{a}}" }, [], {
       reads: ["a.hbs", "b.handlebars"],

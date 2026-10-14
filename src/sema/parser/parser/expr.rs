@@ -514,6 +514,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     #[cold]
     fn operand_of_await_outside_async(&mut self, start: u32) -> ExprId {
         self.flag(DiagnosticKind::Grammar, 1308, (start, 0), &[]);
+        // Outside every body oxc puts up with it in a file that can be a module, which is one from then on: in the return type
+        // of a function, in what a field of a class starts with.
+        if self.context & (ctx::OUTSIDE_BODIES | ctx::IN_NAMESPACE) == ctx::OUTSIDE_BODIES {
+            self.has_top_level_await = true;
+            self.has_plain_top_level_await = true;
+        }
         let saved = self.enter_context(ctx::AWAIT, 0);
         let operand = self.simple_unary_expression();
         self.context = saved;

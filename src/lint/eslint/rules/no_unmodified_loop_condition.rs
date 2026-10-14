@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
+use bun_lint::types::{IdMap, IdSet};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 /// Disallow unmodified loop conditions.
 pub struct NoUnmodifiedLoopCondition {
@@ -108,7 +109,7 @@ impl<'a> Modifiers<'a> {
         let all = &self.all;
         self.calls.get_or_insert_with(|| {
             let mut calls: Vec<Reference<'a>> = Vec::new();
-            let mut seen: FxHashSet<Symbol<'a>> = FxHashSet::default();
+            let mut seen: IdSet<Symbol<'a>> = IdSet::new();
             for modifier in all {
                 let declaration = functions.declarations.find(modifier.node(), |_, it| {
                     it.as_func().filter(|it| it.kind() == FnKind::Decl && it.has_body())
@@ -160,7 +161,7 @@ pub struct State<'a> {
     /// The tests of the loops.
     tests: Vec<Span>,
     /// `has_dynamic_expressions`
-    is_dynamic: FxHashMap<Expr<'a>, bool>,
+    is_dynamic: IdMap<Expr<'a>, bool>,
     is_oxlint: bool,
 }
 
@@ -270,7 +271,9 @@ impl NoUnmodifiedLoopCondition {
         let statement = statement?;
         // What is dynamic in a group is so in those around it.
         let is_oxlint = state.is_oxlint;
-        if group.is_some_and(|it| *state.is_dynamic.entry(it).or_insert_with(|| has_dynamic_expressions(it, is_oxlint)))
+        let is_dynamic = group
+            .is_some_and(|it| *state.is_dynamic.get_or_insert_with(it, || has_dynamic_expressions(it, is_oxlint)));
+        if is_dynamic
             // What nothing defines is not a variable. For oxlint the file has to declare it.
             || reference.symbol().is_none() && (is_oxlint || reference.global().is_none())
         {
@@ -335,14 +338,15 @@ impl Rule for NoUnmodifiedLoopCondition {
             }
             end = end.max(test.end);
         }
-        let mut modified_groups: FxHashSet<Expr<'a>> = FxHashSet::default();
-        let mut of_symbols: FxHashMap<Symbol<'a>, Modifiers<'a>> = FxHashMap::default();
+        let mut modified_groups: IdSet<Expr<'a>> = IdSet::new();
+        let mut of_symbols: IdMap<Symbol<'a>, Modifiers<'a>> = IdMap::new();
         let mut of_globals: FxHashMap<Name<'a>, Modifiers<'a>> = FxHashMap::default();
         for condition in &mut conditions {
             let modifiers = match condition.reference.symbol() {
                 Some(symbol) if !symbol.has_writes() => continue,
-                Some(symbol) => (of_symbols.entry(symbol))
-                    .or_insert_with(|| Modifiers::new(&mut symbol.references(), &mut functions)),
+                Some(symbol) => {
+                    of_symbols.get_or_insert_with(symbol, || Modifiers::new(&mut symbol.references(), &mut functions))
+                }
                 None => {
                     let name = condition.reference.name();
                     let references = || cx.file().unresolved_references_to(name.bytes());
@@ -350,12 +354,14 @@ impl Rule for NoUnmodifiedLoopCondition {
                 }
             };
             condition.is_modified = condition.has_modifier_in_loop(modifiers, &mut functions);
-            if condition.is_modified {
-                modified_groups.extend(condition.group);
+            if condition.is_modified
+                && let Some(group) = condition.group
+            {
+                modified_groups.insert(group);
             }
         }
         // It is fine if anything in a group is modified.
-        conditions.retain(|it| !it.is_modified && !it.group.is_some_and(|it| modified_groups.contains(&it)));
+        conditions.retain(|it| !it.is_modified && !it.group.is_some_and(|it| modified_groups.contains(it)));
         if is_oxlint {
             // oxlint reports a variable once in a loop: where it is in no group, or else where it is first.
             let variable_in_loop = |it: &Condition<'a>| (it.inside.start, it.reference.symbol().map(Symbol::key));

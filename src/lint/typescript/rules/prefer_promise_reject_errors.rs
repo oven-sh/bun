@@ -16,6 +16,19 @@ pub struct PreferPromiseRejectErrors {
 const REJECT_AN_ERROR: Message =
     Message::new("rejectAnError", "Expected the Promise rejection reason to be an Error.");
 
+/// Whether tsgolint's `checker.getAccessedPropertyName(callee)` is `reject`: `a.#reject` is named
+/// `#reject`.
+fn is_access_of_reject(callee: Expr<'_>) -> bool {
+    match callee.kind() {
+        ExprKind::Dot { name, .. } => name.bytes() == b"reject",
+        ExprKind::Index { .. } => matches!(
+            callee.file().type_checker().get_accessed_property_name(callee),
+            Some(b"reject")
+        ),
+        _ => false,
+    }
+}
+
 impl PreferPromiseRejectErrors {
     fn check_reject_call<'a>(&self, call_expression: Expr<'a>, call: Call<'a>, cx: &Cx<'a, Self>) {
         match call.args().first() {
@@ -46,7 +59,11 @@ impl PreferPromiseRejectErrors {
         let Some(obj) = callee.object() else {
             return;
         };
-        if !is_static_member_access_of_value(callee, &["reject"]) {
+        let is_reject = match cx.language().is_oxlint {
+            true => is_access_of_reject(callee),
+            false => is_static_member_access_of_value(callee, &["reject"]),
+        };
+        if !is_reject {
             return;
         }
         let object_type = obj.ty();
@@ -60,28 +77,33 @@ impl PreferPromiseRejectErrors {
         let Some(new) = node.as_new() else {
             return;
         };
-        let Some(executor) = new.args().first().and_then(Expr::as_fn) else {
-            return;
-        };
-        let Some(reject_param) = executor.params_with_this().nth(1) else {
-            return;
-        };
-        if reject_param.pat().tag() != PatTag::Ident || reject_param.default().is_some() || reject_param.is_rest() {
-            return;
-        }
-        if !is_promise_constructor_like(new.callee().ty()) {
-            return;
-        }
-        let Some(reject_variable) = reject_param.pat().symbol() else {
-            return;
-        };
-        for reference in reject_variable.references() {
-            if let Some(identifier) = reference.expr()
-                && let Node::Expr(parent) = identifier.parent()
-                && let Some(call) = parent.as_call()
-                && call.callee() == identifier
+        let is_oxlint = cx.language().is_oxlint;
+        // tsgolint starts at the call of a parameter: it asks neither which argument the function
+        // is, nor whether the parameter has a default or is a rest parameter.
+        let arguments = new.args().iter().take(if is_oxlint { usize::MAX } else { 1 });
+        for executor in arguments.filter_map(Expr::as_fn) {
+            let Some(reject_param) = executor.params_with_this().nth(1) else {
+                continue;
+            };
+            if reject_param.pat().tag() != PatTag::Ident
+                || !is_oxlint && (reject_param.default().is_some() || reject_param.is_rest())
             {
-                self.check_reject_call(parent, call, cx);
+                continue;
+            }
+            if !is_promise_constructor_like(new.callee().ty()) {
+                return;
+            }
+            let Some(reject_variable) = reject_param.pat().symbol() else {
+                continue;
+            };
+            for reference in reject_variable.references() {
+                if let Some(identifier) = reference.expr()
+                    && let Node::Expr(parent) = identifier.parent()
+                    && let Some(call) = parent.as_call()
+                    && call.callee() == identifier
+                {
+                    self.check_reject_call(parent, call, cx);
+                }
             }
         }
     }

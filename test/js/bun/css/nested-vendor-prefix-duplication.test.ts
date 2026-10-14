@@ -87,10 +87,11 @@ test("pretty-printed output has no dangling separators when the rule has declara
   );
 });
 
-test("bun build --target=browser does not blow up on deeply nested prefixed selectors", async () => {
+test("bun build --target=browser does not blow up on deeply nested selectors", async () => {
   // Mirrors the fuzzer input: deeply nested `:fullscreen` blocks. The default
-  // browser targets (safari 14) require the `-webkit-` prefix for
-  // `:fullscreen` and don't support CSS nesting, so this hits the same path.
+  // browser targets support `:fullscreen` unprefixed but not CSS nesting, so
+  // the nesting is compiled away. The prefixed variant is covered above with
+  // explicit safari 8 targets.
   const depth = 16;
   using dir = tempDir("css-nested-vendor-prefix", {
     "app.css": nestedFullscreen(depth, "color: red;"),
@@ -114,9 +115,8 @@ test("bun build --target=browser does not blow up on deeply nested prefixed sele
   expect({ exitCode, stderr: stderr.includes("error") ? stderr : "" }).toEqual({ exitCode: 0, stderr: "" });
 
   const output = await Bun.file(path.join(outdir, "app.css")).text();
-  // Two rules (one per prefix variant), each `depth` selectors long.
+  // One rule, `depth` selectors long.
   expect(output.length).toBeLessThan(10_000);
-  expect(output).toContain(Array(depth).fill(":-webkit-full-screen").join(" "));
   expect(output).toContain(Array(depth).fill(":fullscreen").join(" "));
 });
 

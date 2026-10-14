@@ -1,17 +1,13 @@
 //! The Rust half of `Bun::isEmbeddedCode`: the JavaScript in this executable that is outside the builtins section.
 
-use bun_bundler::entry_points::{BUN_MAIN_SOURCE, BUN_MAIN_SOURCE_HOT};
-
 use crate::jsc_hooks::{
     SQLITE_MODULE_SOURCE, SQLITE_MODULE_SOURCE_HOT, SQLITE_MODULE_SOURCE_STANDALONE,
     WASI_RUNNER_SOURCE,
 };
 
 /// The modules whose source is a `static` in Bun.
-fn static_module_sources() -> [&'static [u8]; 6] {
+fn static_module_sources() -> [&'static [u8]; 4] {
     [
-        BUN_MAIN_SOURCE,
-        BUN_MAIN_SOURCE_HOT,
         SQLITE_MODULE_SOURCE,
         SQLITE_MODULE_SOURCE_HOT,
         SQLITE_MODULE_SOURCE_STANDALONE,

@@ -3,6 +3,7 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_core::fmt as bun_fmt;
+use bun_core::strings;
 use bun_paths::MAX_PATH_BYTES;
 use bun_wyhash::{self, Wyhash11};
 
@@ -23,75 +24,103 @@ pub struct ClientEntryPoint {
     pub(crate) source: bun_ast::Source,
 }
 
-macro_rules! bun_main_entry_specifier {
-    () => {
-        "bun:main/entry"
-    };
+#[derive(Default)]
+pub struct ServerEntryPoint {
+    /// The generated wrapper source for `bun:main`. Always a valid slice
+    /// (either empty or owned by `bun.default_allocator`) so readers never
+    /// see `undefined` memory regardless of the `generated` flag's state.
+    pub contents: Box<[u8]>,
+    pub generated: bool,
 }
 
-/// What `bun:main` imports. The module loader's resolve hook answers it with the entry point's path.
-pub const BUN_MAIN_ENTRY_SPECIFIER: &[u8] = bun_main_entry_specifier!().as_bytes();
+// `deinit` only freed `contents` and reset flags; with `Box<[u8]>` this is the
+// auto-generated `Drop`, so no explicit impl is needed.
 
-/// The source of `bun:main` with `--hot` or `--watch`. A static, like [`BUN_MAIN_SOURCE`], to have one address: see `static_module_sources`.
-pub static BUN_MAIN_SOURCE_HOT: &[u8] = concat!(
-    "// @bun\n\
-     import * as start from '",
-    bun_main_entry_specifier!(),
-    "';\n\
-     var hmrSymbol = Symbol(\"BunServerHMR\");\n\
-     var entryNamespace = start;\n\
-     function isServerConfig(def) {\n\
-     \x20  return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.stop !== 'function';\n\
-     }\n\
-     if (typeof entryNamespace?.then === 'function') {\n\
-     \x20  entryNamespace = entryNamespace.then((entryNamespace) => {\n\
-     \x20     var def = entryNamespace?.default;\n\
-     \x20     if (isServerConfig(def))  {\n\
-     \x20       var server = globalThis[hmrSymbol];\n\
-     \x20       if (server) {\n\
-     \x20          server.reload(def);\n\
-     \x20          console.debug(`Reloaded ${server.development ? 'development ' : ''}server: ${server.protocol}://${server.hostname}:${server.port}`);\n\
-     \x20       } else {\n\
-     \x20          server = globalThis[hmrSymbol] = Bun.serve(def);\n\
-     \x20          console.debug(`Started ${server.development ? 'development ' : ''}server: ${server.protocol}://${server.hostname}:${server.port}`);\n\
-     \x20       }\n\
-     \x20     }\n\
-     \x20  }, reportError);\n\
-     } else if (isServerConfig(entryNamespace?.default)) {\n\
-     \x20  var server = globalThis[hmrSymbol];\n\
-     \x20  if (server) {\n\
-     \x20     server.reload(entryNamespace.default);\n\
-     \x20     console.debug(`Reloaded ${server.development ? 'development ' : ''}server: ${server.protocol}://${server.hostname}:${server.port}`);\n\
-     \x20  } else {\n\
-     \x20     server = globalThis[hmrSymbol] = Bun.serve(entryNamespace.default);\n\
-     \x20     console.debug(`Started ${server.development ? 'development ' : ''}server: ${server.protocol}://${server.hostname}:${server.port}`);\n\
-     \x20  }\n\
-     }\n",
-)
-.as_bytes();
+impl ServerEntryPoint {
+    pub fn generate(
+        entry: &mut ServerEntryPoint,
+        is_hot_reload_enabled: bool,
+        path_to_use: &[u8],
+    ) -> crate::Result<()> {
+        // Use the global arena so this buffer's lifetime is decoupled
+        // from whichever arena the caller's VM happens to be using; the
+        // slice is read later from `getHardcodedModule` which outlives any
+        // per-transpile arena.
+        let code: Vec<u8> = 'brk: {
+            if is_hot_reload_enabled {
+                let mut v: Vec<u8> = Vec::new();
+                write!(
+                    &mut v,
+                    "// @bun\n\
+                     import * as start from '{}';\n\
+                     var hmrSymbol = Symbol(\"BunServerHMR\");\n\
+                     var entryNamespace = start;\n\
+                     function isServerConfig(def) {{\n\
+                     \x20  return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.stop !== 'function';\n\
+                     }}\n\
+                     if (typeof entryNamespace?.then === 'function') {{\n\
+                     \x20  entryNamespace = entryNamespace.then((entryNamespace) => {{\n\
+                     \x20     var def = entryNamespace?.default;\n\
+                     \x20     if (isServerConfig(def))  {{\n\
+                     \x20       var server = globalThis[hmrSymbol];\n\
+                     \x20       if (server) {{\n\
+                     \x20          server.reload(def);\n\
+                     \x20          console.debug(`Reloaded ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
+                     \x20       }} else {{\n\
+                     \x20          server = globalThis[hmrSymbol] = Bun.serve(def);\n\
+                     \x20          console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
+                     \x20       }}\n\
+                     \x20     }}\n\
+                     \x20  }}, reportError);\n\
+                     }} else if (isServerConfig(entryNamespace?.default)) {{\n\
+                     \x20  var server = globalThis[hmrSymbol];\n\
+                     \x20  if (server) {{\n\
+                     \x20     server.reload(entryNamespace.default);\n\
+                     \x20     console.debug(`Reloaded ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
+                     \x20  }} else {{\n\
+                     \x20     server = globalThis[hmrSymbol] = Bun.serve(entryNamespace.default);\n\
+                     \x20     console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
+                     \x20  }}\n\
+                     }}\n",
+                    strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'\'', ..Default::default() }),
+                )
+                .map_err(|_| crate::Error::FormatError)?;
+                break 'brk v;
+            }
+            let mut v: Vec<u8> = Vec::new();
+            write!(
+                &mut v,
+                "// @bun\n\
+                 import * as start from \"{}\";\n\
+                 var entryNamespace = start;\n\
+                 function isServerConfig(def) {{\n\
+                 \x20  return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.stop !== 'function';\n\
+                 }}\n\
+                 if (typeof entryNamespace?.then === 'function') {{\n\
+                 \x20  entryNamespace = entryNamespace.then((entryNamespace) => {{\n\
+                 \x20     if (isServerConfig(entryNamespace?.default))  {{\n\
+                 \x20       const server = Bun.serve(entryNamespace.default);\n\
+                 \x20       console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
+                 \x20     }}\n\
+                 \x20  }}, reportError);\n\
+                 }} else if (isServerConfig(entryNamespace?.default)) {{\n\
+                 \x20  const server = Bun.serve(entryNamespace.default);\n\
+                 \x20  console.debug(`Started ${{server.development ? 'development ' : ''}}server: ${{server.protocol}}://${{server.hostname}}:${{server.port}}`);\n\
+                 }}\n",
+                strings::format_escapes(path_to_use, strings::QuoteEscapeFormatFlags { quote_char: b'"', ..Default::default() }),
+            )
+            .map_err(|_| crate::Error::FormatError)?;
+            v
+        };
 
-pub static BUN_MAIN_SOURCE: &[u8] = concat!(
-    "// @bun\n\
-     import * as start from \"",
-    bun_main_entry_specifier!(),
-    "\";\n\
-     var entryNamespace = start;\n\
-     function isServerConfig(def) {\n\
-     \x20  return def && def !== globalThis && (typeof def.fetch === 'function' || def.app != undefined) && typeof def.stop !== 'function';\n\
-     }\n\
-     if (typeof entryNamespace?.then === 'function') {\n\
-     \x20  entryNamespace = entryNamespace.then((entryNamespace) => {\n\
-     \x20     if (isServerConfig(entryNamespace?.default))  {\n\
-     \x20       const server = Bun.serve(entryNamespace.default);\n\
-     \x20       console.debug(`Started ${server.development ? 'development ' : ''}server: ${server.protocol}://${server.hostname}:${server.port}`);\n\
-     \x20     }\n\
-     \x20  }, reportError);\n\
-     } else if (isServerConfig(entryNamespace?.default)) {\n\
-     \x20  const server = Bun.serve(entryNamespace.default);\n\
-     \x20  console.debug(`Started ${server.development ? 'development ' : ''}server: ${server.protocol}://${server.hostname}:${server.port}`);\n\
-     }\n",
-)
-.as_bytes();
+        // Free the previous buffer on regenerate (hot reload) instead of
+        // leaking it. `contents` is either "" or a previously generated buffer.
+        // (Handled implicitly: assigning to `Box<[u8]>` drops the old one.)
+        entry.contents = code.into_boxed_slice();
+        entry.generated = true;
+        Ok(())
+    }
+}
 
 // This is not very fast. The idea is: we want to generate a unique entry point
 // per macro function export that registers the macro Registering the macro

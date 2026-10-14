@@ -3546,30 +3546,6 @@ extern "C" bool Bun__standaloneModuleHasModuleInfo(const Latin1Character*, size_
 extern "C" bool Bun__hasStandaloneModuleGraph();
 extern "C" int ModuleLoader__builtinAliasIndex(const Latin1Character*, size_t);
 extern "C" bool Bun__hasPlugins(Zig::GlobalObject*);
-extern "C" bool Bun__VM__resolveEntryPointSpecifier(void* bunVM, const BunString* specifier, BunString* entryPointPath);
-
-static constexpr ASCIILiteral bunMain = "bun:main"_s;
-
-static JSValue resolveEntryPointSpecifierSlow(Zig::GlobalObject* globalObject, JSValue key, JSString* referrer)
-{
-    if (!key.isString() || WTF::String(referrer->tryGetValue()) != bunMain)
-        return key;
-    WTF::String specifierString = uncheckedDowncast<JSString>(key)->tryGetValue();
-    BunString specifier = Bun::toString(specifierString);
-    BunString entryPointPath = BunStringEmpty;
-    if (!Bun__VM__resolveEntryPointSpecifier(globalObject->bunVM(), &specifier, &entryPointPath))
-        return key;
-    return jsString(globalObject->vm(), entryPointPath.transferToWTFString());
-}
-
-// bun:main is the same text whatever the entry point is: it imports a specifier that stands for the entry point's path.
-static inline JSValue resolveEntryPointSpecifier(Zig::GlobalObject* globalObject, JSValue key, JSValue referrer)
-{
-    if (!referrer || !referrer.isString() || uncheckedDowncast<JSString>(referrer)->length() != bunMain.length()) [[likely]]
-        return key;
-    return resolveEntryPointSpecifierSlow(globalObject, key, uncheckedDowncast<JSString>(referrer));
-}
-
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap)
@@ -3581,8 +3557,6 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     // JSC asks this way about the key of a top-level load (JSModuleLoader::loadModule), which is resolved already.
     if (!useImportMap)
         RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
-
-    key = resolveEntryPointSpecifier(globalObject, key, referrer);
 
     WTF::String keyString;
     if (key.isString()) {
@@ -3653,8 +3627,6 @@ JSC::Identifier StandaloneGlobalObject::moduleLoaderResolve(JSGlobalObject* glob
 {
     // Embedded modules import each other by their final `/$bunfs/` key; hand it straight back (unless a plugin could claim it).
     auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
-    if (useImportMap)
-        key = resolveEntryPointSpecifier(zigGlobalObject, key, referrer);
     if (key.isString() && !zigGlobalObject->onLoadPlugins.hasVirtualModules() && !Bun__hasPlugins(zigGlobalObject)) {
         auto* string = uncheckedDowncast<JSString>(key);
         if (!string->isRope()) {

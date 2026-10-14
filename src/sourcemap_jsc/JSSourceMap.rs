@@ -53,14 +53,12 @@ fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
     if let Some(source_url_index) = strings::index_of(source_url_slice.slice(), b"://") {
         if &source_url_slice.slice()[..source_url_index] == b"file" {
-            let path = bun_url::path_from_file_url(&source_url_string);
-
-            if path.is_dead() {
+            let Some(path) = bun_url::path_from_file_url(&source_url_string) else {
                 return Err(global.throw_value(global.err_invalid_url(format_args!(
                     "Invalid URL: {}",
                     BStr::new(source_url_slice.slice())
                 ))));
-            }
+            };
 
             // Replace the file:// URL with the absolute path.
             drop(source_url_slice);

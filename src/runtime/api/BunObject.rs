@@ -1113,13 +1113,13 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
 ) -> JsResult<Resolved> {
     let mut query_string = BunString::EMPTY;
 
-    let decoded_specifier;
-    let specifier_for_resolve = if specifier.starts_with_ascii(b"file://") {
-        decoded_specifier = bun_url::path_from_file_url(specifier);
-        &decoded_specifier
+    // A `file:` URL that has no path stays as it is, so that the `ResolveMessage` names it.
+    let decoded_specifier = if specifier.starts_with_ascii(b"file://") {
+        bun_url::path_from_file_url(specifier)
     } else {
-        specifier
+        None
     };
+    let specifier_for_resolve = decoded_specifier.as_ref().unwrap_or(specifier);
 
     let result_value = match VirtualMachine::resolve_maybe_needs_trailing_slash::<IS_FILE_PATH>(
         ctx,

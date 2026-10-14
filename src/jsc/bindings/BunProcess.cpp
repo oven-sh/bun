@@ -35,6 +35,7 @@
 #include "ModuleGraph.h"
 #include "FormatStackTraceForJS.h"
 #include "headers.h"
+#include "NodeURLHelpers.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
 #include "JavaScriptCore/ScriptCallStackFactory.h"
@@ -496,13 +497,14 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(Process_functionDlopen, __attribute__((
     }
 
     if (filename.startsWith("file://"_s)) {
-        WTF::URL fileURL = WTF::URL(filename);
-        if (!fileURL.isValid() || !fileURL.protocolIsFile()) {
+        // Empty for a URL that is not valid, and for a path that does not percent-decode to UTF-8.
+        auto path = Bun::fileSystemPath(WTF::URL(filename));
+        if (!path) {
             JSC::throwTypeError(globalObject, scope, "invalid file: URL passed to dlopen"_s);
             return {};
         }
 
-        filename = fileURL.fileSystemPath();
+        filename = WTF::move(*path);
     }
 
     UTF8CString utf8;

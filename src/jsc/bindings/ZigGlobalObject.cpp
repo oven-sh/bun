@@ -185,6 +185,8 @@
 #include "v8/shim/GlobalInternals.h"
 #include "EventLoopTask.h"
 #include "NodeModuleModule.h"
+#include "NodeURLHelpers.h"
+#include "PathInlines.h"
 #include <JavaScriptCore/JSCBytecodeCacheVersion.h>
 #include "JSPerformanceServerTiming.h"
 #include "JSPerformanceResourceTiming.h"
@@ -3548,6 +3550,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         RELEASE_AND_RETURN(scope, key.toPropertyKey(globalObject));
 
     WTF::String keyString;
+    bool isUndecodableFileURL = false;
     if (key.isString()) {
         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
@@ -3568,7 +3571,13 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                keyString = url.fileSystemPath();
+                if (auto path = Bun::fileSystemPath(url)) {
+                    keyString = WTF::move(*path);
+                } else {
+                    // Resolves as it is written: a build.module() module or an onResolve plugin can claim it.
+                    isUndecodableFileURL = true;
+                    keyString = moduleName;
+                }
             } else {
                 keyString = moduleName;
             }
@@ -3600,6 +3609,15 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     Zig__GlobalObject__resolve(&res, globalObject, &keyZ, &referrerZ, &queryZ);
     RETURN_IF_EXCEPTION(scope, {});
     if (!res.success) {
+        if (isUndecodableFileURL) [[unlikely]] {
+            // As Node: the error of the conversion, with the URL and the importer on it.
+            auto* error = Bun::createURIMalformedError(globalObject);
+            error->putDirect(vm, vm.propertyNames->input, jsString(vm, keyString));
+            if (isAbsolutePath(referrerString))
+                error->putDirect(vm, Identifier::fromString(vm, "module"_s), jsString(vm, WTF::URL::fileURLWithFileSystemPath(referrerString).string()));
+            scope.throwException(globalObject, error);
+            return {};
+        }
         throwException(scope, res.result.err, globalObject);
         return {};
     }
@@ -3678,7 +3696,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     if (sourceURL.isEmpty()) {
         sourceOriginStringHolder = String("."_s);
     } else if (sourceURL.protocolIsFile()) {
-        sourceOriginStringHolder = sourceURL.fileSystemPath();
+        sourceOriginStringHolder = Bun::fileSystemPathOfInternalURL(sourceURL);
         auto query = sourceURL.queryWithLeadingQuestionMark();
         auto referrerKey = query.isEmpty()
             ? JSC::Identifier::fromString(vm, sourceOriginStringHolder)

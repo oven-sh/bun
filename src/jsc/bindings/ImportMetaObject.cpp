@@ -47,6 +47,7 @@
 #include "ModuleGraph.h"
 #include <JavaScriptCore/JSPromise.h>
 #include "PathInlines.h"
+#include "NodeURLHelpers.h"
 #include "wtf/text/StringView.h"
 
 #include "isBuiltinModule.h"
@@ -537,7 +538,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
         WTF::URL url(thisObject->url);
         auto mainKey = asString(mainPath)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())));
+        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(Bun::fileSystemPathOfInternalURL(url), url.queryWithLeadingQuestionMark())));
     }
 
     if (!globalObject->scriptExecutionContext()->isMainThread())
@@ -652,7 +653,7 @@ void ImportMetaObject::finishCreation(VM& vm)
 
         if (url.isValid()) {
             if (url.protocolIsFile()) {
-                path = url.fileSystemPath();
+                path = Bun::fileSystemPathOfInternalURL(url);
             } else {
                 path = url.path().toString();
             }
@@ -676,7 +677,7 @@ void ImportMetaObject::finishCreation(VM& vm)
         WTF::String dirname;
 
         if (url.protocolIsFile()) {
-            dirname = url.fileSystemPath();
+            dirname = Bun::fileSystemPathOfInternalURL(url);
         } else {
             dirname = url.path().toString();
         }
@@ -696,7 +697,7 @@ void ImportMetaObject::finishCreation(VM& vm)
         WTF::String path;
 
         if (url.protocolIsFile()) {
-            path = url.fileSystemPath();
+            path = Bun::fileSystemPathOfInternalURL(url);
         } else {
             path = url.path().toString();
         }
@@ -715,7 +716,7 @@ void ImportMetaObject::finishCreation(VM& vm)
 
         WTF::URL url(meta->url);
         if (url.protocolIsFile()) {
-            init.set(jsString(init.vm, url.fileSystemPath()));
+            init.set(jsString(init.vm, Bun::fileSystemPathOfInternalURL(url)));
         } else {
             init.set(jsString(init.vm, url.path()));
         }

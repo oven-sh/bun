@@ -20,6 +20,7 @@
 #include "root.h"
 #include <JavaScriptCore/JSClassRef.h>
 #include "headers-handwritten.h"
+#include "NodeURLHelpers.h"
 #include "webcore/WebSocketDeflate.h"
 
 namespace JSC {
@@ -52,7 +53,7 @@ CPP_DECL JSC::EncodedJSValue EncodedSlice__external(const EncodedSlice* arg0, JS
 CPP_DECL JSC::EncodedJSValue EncodedSlice__toExternalValue(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::EncodedJSValue EncodedSlice__toValueGC(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL WebCore::DOMURL* WebCore__DOMURL__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* arg1);
-CPP_DECL BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode);
+CPP_DECL BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, Bun::FileURLToPathError* error);
 
 #pragma mark - WebCore::DOMFormData
 

@@ -115,6 +115,32 @@ bool hasValidPunycodeHost(WTF::StringView host)
     return !icuToASCII(host.toString(), IDNAMode::Default).isNull();
 }
 
+bool hasEncodedPathSeparator(WTF::StringView path)
+{
+    for (size_t i = path.find('%'); i != notFound && i + 2 < path.length(); i = path.find('%', i + 1)) {
+        const char16_t second = path[i + 1];
+        const char16_t third = path[i + 2] | 0x20;
+        if (second == '2' && third == 'f')
+            return true;
+#if OS(WINDOWS)
+        if (second == '5' && third == 'c')
+            return true;
+#endif
+    }
+    return false;
+}
+
+// V8's message for decodeURIComponent(). JSC's is "URI error".
+JSC::JSObject* createURIMalformedError(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::createURIError(globalObject, "URI malformed"_s);
+}
+
+extern "C" JSC::EncodedJSValue Bun__createURIMalformedError(JSC::JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(createURIMalformedError(globalObject));
+}
+
 // Mirrors Node's url.domainToASCII/domainToUnicode, which run the input
 // through a WHATWG URL host parse (ada's url.set_hostname on a "ws://x"
 // base). Returns a null String when host parsing fails.

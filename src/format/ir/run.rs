@@ -3,7 +3,7 @@
 use super::element::Interned;
 use super::formatter::Formatter;
 use crate::cursor::CursorRegion;
-use crate::js::comments::{self, ParsedBy};
+use crate::js::comments;
 use crate::js::context::JsFormatContext;
 use crate::options::DebugComments;
 use crate::{FormatError, FormatOptions};
@@ -29,7 +29,7 @@ pub(crate) fn format_with_marks<'a>(
     write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
 ) -> Result<[Option<u32>; 2], FormatError> {
     if options.debug_comments == DebugComments::Owners {
-        let has_tree_of_babel = file.is_javascript();
+        let has_tree_of_babel = crate::js::context::has_tree_of_babel(file, options);
         let attach_options = crate::js::attach::Options {
             has_tree_of_babel,
             experimental_ternaries: options.experimental_ternaries,
@@ -85,7 +85,7 @@ fn write_document<'a>(
     if file.has_parse_errors() {
         return Err(FormatError::SyntaxError);
     }
-    let comments = comments::of_file(file, options, ParsedBy::WhatItsNameSays);
+    let comments = comments::of_file(file, options);
     let mut context = JsFormatContext::new(file, options.clone(), comments);
     context.cursor = cursor;
     write_with(context, file.text(), scratch, |f| write(file, f))
@@ -108,6 +108,7 @@ pub(crate) fn write_with<'a>(
 /// Gives the vectors of `formatter` back to `scratch`. Returns where the document is.
 fn finish(formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, FormatError> {
     let ran_out_of_stack = formatter.context().ran_out_of_stack;
+    let has_unprinted_comments = formatter.context().has_unprinted_comments;
     scratch.unprinted_comments.clear();
     for comment in formatter.context().comments().unprinted() {
         use std::io::Write;
@@ -132,7 +133,7 @@ fn finish(formatter: Formatter<'_>, scratch: &mut Scratch) -> Result<Interned, F
         return Err(FormatError::NestedTooDeeply);
     }
     // Prettier's `ensureAllCommentsPrinted`: a file is left alone rather than written without one of its comments.
-    if !scratch.unprinted_comments.is_empty() {
+    if has_unprinted_comments || !scratch.unprinted_comments.is_empty() {
         return Err(FormatError::InvalidDocument);
     }
     Ok(root)

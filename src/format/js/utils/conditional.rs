@@ -188,7 +188,7 @@ impl ConditionalLayout {
     }
 }
 
-fn is_jsx_conditional_chain(e: Expr<'_>) -> bool {
+pub(crate) fn is_jsx_conditional_chain(e: Expr<'_>) -> bool {
     let mut pending = smallvec::SmallVec::<[Expr<'_>; 8]>::new();
     pending.push(e);
     while let Some(e) = pending.pop() {

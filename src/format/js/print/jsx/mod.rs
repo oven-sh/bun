@@ -296,12 +296,24 @@ fn write_jsx_spread<'a>(argument: Expr<'a>, f: &mut Formatter<'a>) {
     if !has_comments(argument, f) {
         return write!(f, ["{...", argument, "}"]);
     }
+    let comments = comments_of_expression(argument, f);
+    // `{⏎// prettier-ignore⏎...a⏎// comment⏎.b}`: a leading comment can be inside the argument. An ignored argument is copied
+    // with it.
+    let leading_comments = match comments.is_ignored {
+        true => {
+            let count_before_argument = (comments.leading.iter())
+                .take_while(|comment| comment.span().start < argument.span().start)
+                .count();
+            comments.leading.slice(0, count_before_argument)
+        }
+        false => comments.leading,
+    };
     write!(
         f,
         [
             "{",
             soft_block_indent(&format_args!(
-                FormatLeadingComments::Comments(comments_of_expression(argument, f).leading),
+                FormatLeadingComments::Comments(leading_comments),
                 "...", argument
             )),
             "}"

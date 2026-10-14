@@ -1045,11 +1045,11 @@ describe.concurrent("bun fmt", () => {
     });
   });
 
-  test("a comment in what a `prettier-ignore` comment leads is not lost where that is formatted all the same", async () => {
+  test("a comment in what a `prettier-ignore` comment leads is copied with it, once", async () => {
     const text = "x = <a {\n  // prettier-ignore\n  ...b\n  // c1\n  .c} />;\n";
     const result = await format({ "a.jsx": text }, [], { reads: ["a.jsx"] });
     expect(result.files).toEqual({
-      "a.jsx": "x = (\n  <a\n    {\n      // prettier-ignore\n      // c1\n      ...b.c\n    }\n  />\n);\n",
+      "a.jsx": "x = (\n  <a\n    {\n      // prettier-ignore\n      ...b\n  // c1\n  .c\n    }\n  />\n);\n",
     });
     expect(result.exitCode).toBe(0);
   });

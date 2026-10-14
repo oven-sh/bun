@@ -250,7 +250,14 @@ fn trailing_ignore_comment_counts_for_oxfmt<'a>(
     text_position: TextPosition,
 ) -> bool {
     let text = cx.file.text();
-    let owner_end = cx.file.without_semicolon(cx.span_of(owner)).end as usize;
+    let owner_end = match owner {
+        // `span_of` gives a name no width.
+        Owner::Name(start) => {
+            let name = text.get(start as usize..).unwrap_or_default();
+            start as usize + bun_lint::tokens::token_len(name)
+        }
+        _ => cx.file.without_semicolon(cx.span_of(owner)).end as usize,
+    };
     let between = (text.get(owner_end..comment.prev_token_end() as usize)).unwrap_or_default();
     let is_at_end_of_line_of_owner = text_position == TextPosition::EndOfLine
         && (between.iter()).all(|byte| matches!(byte, b' ' | b'\t' | b'=' | b':' | b',' | b';'));

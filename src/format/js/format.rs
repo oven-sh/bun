@@ -182,8 +182,11 @@ fn format_ignored_node<'a>(
     let count_before_node = (owned.leading.iter())
         .take_while(|comment| comment.span().start < node_start)
         .count();
-    FormatLeadingComments::Comments(owned.leading.slice(0, count_before_node)).fmt(f);
+    let (before_node, in_node) = owned.leading.split_at(count_before_node);
+    FormatLeadingComments::Comments(before_node).fmt(f);
     write_source_text(f);
+    // Only those that were not copied.
+    FormatTrailingComments::Comments(in_node).fmt(f);
     if !skip_trailing {
         FormatTrailingComments::Comments(owned.trailing).fmt(f);
     }
@@ -365,8 +368,10 @@ impl<'a> FormatExpr<'a> {
         let node = expr.as_chain_element();
         // typescript-estree has a `ChainExpression` around an optional chain, which cannot own comments. The comments
         // belong to the member access or the call in it, so they are printed inside its parentheses. Babel has no such
-        // node, so there they are printed outside.
-        let has_chain_expression_node = !f.context().has_tree_of_babel();
+        // node, so there they are printed outside. So they are for oxfmt, whose `ChainExpression` prints them:
+        // `(/* comment */ a?.b).c` is `/* comment */ (a?.b).c`.
+        let has_chain_expression_node =
+            !f.context().has_tree_of_babel() && !f.options().flavor.is_oxfmt();
         if match has_chain_expression_node {
             true => is_chain_expression,
             false => self.is_in_chain_expression,
@@ -395,10 +400,15 @@ impl<'a> FormatExpr<'a> {
     }
 }
 
-/// `a as B // prettier-ignore ⏎ ? c : d`: Prettier writes `(a as B)`, as it does where it formats. oxfmt writes no
-/// parentheses that are not there.
-fn adds_parentheses_to_what_is_ignored(f: &Formatter<'_>) -> bool {
-    !f.options().flavor.is_oxfmt()
+/// `a as B // prettier-ignore ⏎ && c`: both tools write `(a as B)`, as they do where they format.
+///
+/// `a as B // prettier-ignore ⏎ ? c : d`: oxfmt writes no parentheses that are not there around an operand of a conditional
+/// expression that a comment behind it ignores.
+fn adds_parentheses_to_what_is_ignored<'a>(expr: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let comments = f.comments().of_node(expr.as_chain_element()).trailing;
+    !(f.options().flavor.is_oxfmt()
+        && matches!(expr.ast_parent(), AstNodes::ConditionalExpression(_))
+        && (comments.iter()).any(|comment| f.comments().is_suppression_comment(comment)))
 }
 
 /// Prettier's `printIgnored` for an expression, in the parentheses that it needs.
@@ -418,7 +428,9 @@ fn write_suppressed_expression<'a>(
         ExprKind::Object(_) | ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Ident(_)
     );
     let needs_parentheses = (needs_parentheses
-        && (adds_parentheses_to_what_is_ignored(f) || expr.is_parenthesized() || starts_statement))
+        && (adds_parentheses_to_what_is_ignored(expr, f)
+            || expr.is_parenthesized()
+            || starts_statement))
         || parentheses::expression::source_text_needs_its_parentheses(expr, f);
     // A class expression with decorators is on lines of its own.
     let is_decorated_class =

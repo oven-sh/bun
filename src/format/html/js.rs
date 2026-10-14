@@ -6,7 +6,7 @@
 use super::map_strings::{MapString, write_mapped};
 use crate::ir::element::{Interned, TextWidth};
 use crate::js::ast_nodes::node_as_ast_nodes;
-use crate::js::comments::{self, NO_COMMENTS, ParsedBy};
+use crate::js::comments::{self, NO_COMMENTS};
 use crate::js::context::JsFormatContext;
 use crate::js::print::program::{FormatStatements, write_hashbang};
 use crate::js::sort_imports::{SortImports, sorted_text};
@@ -226,11 +226,7 @@ pub(crate) fn with_file(
                     {
                         return;
                     }
-                    let parsed_by = match options.in_html.has_tree_of_babel {
-                        true => ParsedBy::Babel,
-                        false => ParsedBy::WhatItsNameSays,
-                    };
-                    let comments = comments::of_file(file, &options, parsed_by);
+                    let comments = comments::of_file(file, &options);
                     // Only in what is known to be a script are `<!--` and `-->` comments to Babel.
                     let is_html_like = |comment: Comment<'_>| {
                         matches!(
@@ -247,7 +243,13 @@ pub(crate) fn with_file(
                         return;
                     }
                     let context = JsFormatContext::new(file, options.clone(), comments);
-                    let is_written = f.write_embedded(context, file.text(), |f| write(file, f));
+                    let is_written = f.write_embedded(context, file.text(), |f| {
+                        let is_written = write(file, f);
+                        if is_written && f.comments().unprinted().next().is_some() {
+                            f.context_mut().has_unprinted_comments = true;
+                        }
+                        is_written
+                    });
                     result = Attempt::Written(is_written);
                 });
                 result

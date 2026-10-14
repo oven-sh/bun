@@ -77,6 +77,34 @@ struct PendingComments {
     following: Candidate,
 }
 
+/// The index of the last element of a growing list that meets a condition. Each call only looks at the elements that were added
+/// since the previous call, so that a long run of elements that do not meet the condition is not walked again and again.
+#[derive(Default)]
+struct LastMatch {
+    checked_len: usize,
+    index: Option<usize>,
+}
+
+impl LastMatch {
+    fn update<T>(&mut self, list: &[T], meets_condition: impl Fn(&T) -> bool) -> Option<usize> {
+        self.truncate(list.len());
+        let added = list.get(self.checked_len..).unwrap_or_default();
+        if let Some(position) = added.iter().rposition(meets_condition) {
+            self.index = Some(self.checked_len + position);
+        }
+        self.checked_len = list.len();
+        self.index
+    }
+
+    /// Call when the list is cut to `len` elements.
+    #[inline(always)]
+    fn truncate(&mut self, len: usize) {
+        if self.checked_len > len {
+            *self = LastMatch::default();
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct CommentTracker {
     /// Sorted by id, which is source order.
@@ -90,6 +118,9 @@ pub(crate) struct CommentTracker {
     /// The last node that changed a pending comment, and the length of `undo_log` before it did. See
     /// [`Parser::unfinish_node`].
     last_finished: (NodeOrName, usize),
+    /// A hole in an array literal and the `{}` of `<a>{}</a>` are expressions without a width.
+    last_expr_with_width: LastMatch,
+    last_non_empty_stmt: LastMatch,
 }
 
 impl CommentTracker {
@@ -230,8 +261,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// Removes the last expression, which nothing refers to.
     #[inline(always)]
     pub(crate) fn pop_expr(&mut self) -> Option<Expr> {
-        let last = ExprId(self.f.exprs.len().saturating_sub(1) as u32);
-        self.unfinish_node(NodeData::Expr(last));
+        let last = self.f.exprs.len().saturating_sub(1);
+        self.unfinish_node(NodeData::Expr(ExprId(last as u32)));
+        self.comments.last_expr_with_width.truncate(last);
         self.f.exprs.pop()
     }
 
@@ -395,6 +427,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             list.len().saturating_sub(1) as u32
         }
         let file = &self.f;
+        let last_expr = (self.comments.last_expr_with_width).update(&file.exprs, |e| e.pos < e.end);
+        let last_stmt = (self.comments.last_non_empty_stmt).update(&file.stmts, |statement| {
+            !matches!(statement.kind, StmtKind::Empty)
+        });
         let (name_start, name_end) = self.comments.last_name;
         // The name comes first so that a node with the same range replaces it.
         let last_finished = [
@@ -403,12 +439,11 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 start: name_start,
                 end: name_end,
             }),
-            // A hole in an array literal is an expression without a width.
-            (file.exprs.iter().enumerate())
-                .rfind(|(_, e)| e.pos < e.end)
+            last_expr
+                .and_then(|index| Some((index, file.exprs.get(index)?)))
                 .map(|(index, e)| candidate(NodeData::Expr(ExprId(index as u32)), e.pos, e.end)),
-            (file.stmts.iter().enumerate())
-                .rfind(|(_, statement)| !matches!(statement.kind, StmtKind::Empty))
+            last_stmt
+                .and_then(|index| Some((index, file.stmts.get(index)?)))
                 .map(|(index, statement)| {
                     let id = StmtId(index as u32);
                     candidate(NodeData::Stmt(id), statement.start, statement.loc.end)
@@ -493,19 +528,25 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 pending, undo_log, ..
             } = &mut self.comments;
 
-            // `pending` is in source order, so from the back: comments after the node, inside it, and before it.
-            let mut index = pending.len();
-            while let Some(comment) = index.checked_sub(1).and_then(|last| pending.get_mut(last))
-                && comment.start >= end
-            {
-                if finished.is_better_preceding_node_than(comment.preceding) {
-                    undo_log.push(*comment);
-                    comment.preceding = finished;
+            // `pending` is in source order: comments before the node, inside it, and after it.
+            let after_node = match pending.last() {
+                Some(last) if last.start >= end => {
+                    pending.partition_point(|comment| comment.start < end)
                 }
-                index -= 1;
+                _ => pending.len(),
+            };
+            // The preceding node of a later comment ends at least as late as that of an earlier one. So if the node is not
+            // better for one comment, it is not better for the comments after it. Without this, a long list in which every
+            // element has a comment would take quadratic time, because its elements are finished after the whole list.
+            for comment in pending.get_mut(after_node..).unwrap_or_default() {
+                if !finished.is_better_preceding_node_than(comment.preceding) {
+                    break;
+                }
+                undo_log.push(*comment);
+                comment.preceding = finished;
             }
 
-            let after_node = index;
+            let mut index = after_node;
             while index > 0 && pending[index - 1].start >= start {
                 index -= 1;
             }
@@ -581,6 +622,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             return;
         }
         self.comments.undo_until(to.comments.undo_log_len as usize);
+        self.comments
+            .last_expr_with_width
+            .truncate(self.f.exprs.len());
+        self.comments
+            .last_non_empty_stmt
+            .truncate(self.f.stmts.len());
         let CommentTracker {
             pending,
             tracked_count,

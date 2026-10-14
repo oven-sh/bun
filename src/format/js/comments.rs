@@ -229,14 +229,6 @@ pub(crate) struct AttachmentInfo {
     pub(crate) owner_kind: u8,
 }
 
-/// Which parser Prettier would use for the file. It decides a few details of comment attachment.
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum ParsedBy {
-    /// Babel for JavaScript and typescript-estree for TypeScript, going by the file name.
-    WhatItsNameSays,
-    Babel,
-}
-
 /// What the formatter computes once per file about its comments.
 pub(crate) struct FileComments {
     /// Indexed by comment id.
@@ -291,13 +283,9 @@ pub(crate) fn cast_parens<'a>(
 }
 
 /// Attaches the comments of `file`. The result is cached in the file, so that it lives as long as the handles.
-pub(crate) fn of_file<'a>(
-    file: &'a File<'a>,
-    options: &FormatOptions,
-    parsed_by: ParsedBy,
-) -> &'a FileComments {
+pub(crate) fn of_file<'a>(file: &'a File<'a>, options: &FormatOptions) -> &'a FileComments {
     let comments = file.extension(|| {
-        let has_tree_of_babel = parsed_by == ParsedBy::Babel || file.is_javascript();
+        let has_tree_of_babel = super::context::has_tree_of_babel(file, options);
         let cast_parens = cast_parens(file, options.flavor, has_tree_of_babel);
         let attach_options = attach::Options {
             has_tree_of_babel,

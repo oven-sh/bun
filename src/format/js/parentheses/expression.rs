@@ -78,32 +78,81 @@ pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'
         if next.is_parenthesized() {
             break;
         }
-        let starts_statement = matches!(
-            next.kind(),
-            ExprKind::Object(_) | ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Ident(_)
-        );
-        if starts_statement && needs_parentheses(next, f) {
+        if match next.kind() {
+            ExprKind::Ident(_) => needs_parentheses(next, f),
+            _ => would_start_statement(next, e),
+        } {
             return true;
         }
         first = next;
     }
     // `in` ends the initializer of a `for`.
-    is_in_for_statement_initializer(e, f) && has_bare_in(Node::Expr(e))
+    is_in_for_statement_initializer(e, f) && has_bare_in(e)
 }
 
-/// Whether there is an `a in b` in `node` with no parentheses around it in `node`.
-fn has_bare_in(node: Node<'_>) -> bool {
+/// Whether `first`, which the text of `e` starts with, would be taken for the start of a block, a function declaration or a
+/// class declaration if `e` had no parentheses.
+fn would_start_statement<'a>(first: Expr<'a>, e: Expr<'a>) -> bool {
+    let (is_object, is_declaration) = match first.kind() {
+        ExprKind::Object(_) => (true, false),
+        ExprKind::Fn(func) => (false, !func.is_arrow()),
+        ExprKind::Class(_) => (false, true),
+        _ => (false, false),
+    };
+    if !is_object && !is_declaration {
+        return false;
+    }
+    let (outermost, container) = left_edge_end(e, e.as_ast_nodes());
+    let is_sequence = outermost.binary_op() == Some(BinOp::Comma);
+    match container {
+        // A sequence is in parentheses there.
+        N::ExpressionStatement(ExpressionStatement::Stmt(_)) => !is_sequence,
+        // So are a sequence and an assignment there.
+        N::ExpressionStatement(ExpressionStatement::ArrowBody(_)) => {
+            is_object && !is_sequence && !matches!(outermost.kind(), ExprKind::Assign { .. })
+        }
+        N::ExportDefaultDeclaration(_) => is_declaration,
+        _ => false,
+    }
+}
+
+/// Whether there is an `a in b` in `e` that no parentheses, brackets or braces in `e` are around.
+fn has_bare_in(e: Expr<'_>) -> bool {
     // A loop: what is written as it is can be nested to any depth.
-    let mut pending = vec![node];
+    let mut pending = vec![e];
     while let Some(next) = pending.pop() {
-        if matches!(next, Node::Expr(it) if it.binary_op() == Some(BinOp::In)) {
+        if next.binary_op() == Some(BinOp::In) {
             return true;
         }
-        next.for_each_child(|child| {
-            if !matches!(child, Node::Expr(it) if it.is_parenthesized()) {
-                pending.push(child);
+        let (first, second) = match next.kind() {
+            ExprKind::Binary { left, right, .. } => (Some(left), Some(right)),
+            ExprKind::Assign { target, value, .. } => (Some(target), Some(value)),
+            // Any expression can be between `?` and `:`.
+            ExprKind::Cond { test, no, .. } => (Some(test), Some(no)),
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => (Some(obj), None),
+            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
+                (Some(call.callee()), None)
             }
-        });
+            ExprKind::Unary { operand: it, .. }
+            | ExprKind::Await(it)
+            | ExprKind::As { expr: it, .. }
+            | ExprKind::Satisfies { expr: it, .. }
+            | ExprKind::AsConst(it)
+            | ExprKind::NonNull(it)
+            | ExprKind::Instantiation { expr: it, .. } => (Some(it), None),
+            ExprKind::Yield { value, .. } => (value, None),
+            ExprKind::Fn(func) => match func.body() {
+                FnBody::Expr(body) if func.is_arrow() => (Some(body), None),
+                _ => (None, None),
+            },
+            _ => (None, None),
+        };
+        pending.extend(
+            [first, second]
+                .into_iter()
+                .flatten()
+                .filter(|it| !it.is_parenthesized()),
+        );
     }
     false
 }

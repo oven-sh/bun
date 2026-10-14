@@ -51,9 +51,14 @@ fn write_with_comments_in_place<'a>(
     let (before_operator, after_operator) = after_expression.split_at(before_operator_count);
     // No line break can be before the operator: only block comments on the line of the expression stay
     // there. A line comment is written behind the operator anyway.
+    // `(a /* prettier-ignore */⏎) as T` is `a as /* prettier-ignore */ T`.
+    let has_ignore_comment =
+        (before_operator.iter()).any(|comment| f.comments().is_suppression_comment(comment));
     let glued_before_count = before_operator
         .iter()
-        .take_while(|comment| !comment.has_newline_before() && !comment.is_multiline_block())
+        .take_while(|comment| {
+            !has_ignore_comment && !comment.has_newline_before() && !comment.is_multiline_block()
+        })
         .count();
     let (glued_before, moved) = before_operator.split_at(glued_before_count);
     // Those on the line of the operator.

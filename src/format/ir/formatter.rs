@@ -536,6 +536,7 @@ impl<'a> Formatter<'a> {
     fn end_embedded(&mut self, inner: Formatter<'_>, first: usize) {
         let source = inner.source;
         self.context.ran_out_of_stack |= inner.context.ran_out_of_stack;
+        self.context.has_unprinted_comments |= inner.context.has_unprinted_comments;
         self.next_group_id.set(inner.next_group_id.get());
         (self.storage, self.tracker, self.spare, self.cleaned) =
             (inner.storage, inner.tracker, inner.spare, inner.cleaned);

@@ -438,7 +438,7 @@ fn parent_of_expr<'a>(e: Expr<'a>, above: Level) -> AstNodes<'a> {
             _ => inner_of_stmt(statement),
         },
         Node::VarDecl(declaration) => declaration.as_ast_nodes(),
-        Node::Param(param) if param.default() == Some(e) => param.as_ast_nodes(),
+        Node::Param(param) if param.default() == Some(e) => parent_in_parameter(param),
         Node::Param(_) => N::Decorator(e),
         Node::PatProp(prop) if prop.default() == Some(e) => {
             N::AssignmentPattern(Node::PatProp(prop))
@@ -769,8 +769,18 @@ impl<'a> AsAstNodes<'a> for Pat<'a> {
                 AstNodes::AssignmentPattern(Node::PatElem(element))
             }
             Node::PatElem(element) => node_as_ast_nodes(element.parent()),
+            Node::Param(param) => parent_in_parameter(param),
             other => node_as_ast_nodes(other),
         }
+    }
+}
+
+/// What the pattern, the type annotation and the default value of `param` are in. `constructor(private a = 1) {}` is two nodes
+/// in ESTree: a `TSParameterProperty`, which is the `FormalParameter` here, and the `AssignmentPattern` `a = 1` in it.
+fn parent_in_parameter(param: Param<'_>) -> AstNodes<'_> {
+    match param.is_parameter_property() && param.default().is_some() {
+        true => AstNodes::AssignmentPattern(Node::Param(param)),
+        false => param.as_ast_nodes(),
     }
 }
 
@@ -1013,11 +1023,15 @@ impl<'a> AstNodes<'a> {
             }
             N::BindingProperty(prop) => node_as_ast_nodes(prop.parent()),
             N::AssignmentPattern(Node::PatProp(prop)) => N::BindingProperty(prop),
+            N::AssignmentPattern(Node::Param(param)) => param.as_ast_nodes(),
             N::AssignmentPattern(node) | N::BindingRestElement(node) => {
                 node_as_ast_nodes(node.parent())
             }
 
-            N::TSTypeAnnotation(ty) => node_as_ast_nodes(ty.parent()),
+            N::TSTypeAnnotation(ty) => match ty.parent() {
+                Node::Param(param) => parent_in_parameter(param),
+                parent => node_as_ast_nodes(parent),
+            },
             N::TSKeywordType(ty)
             | N::TSThisType(ty)
             | N::TSTypeReference(ty)
@@ -1179,6 +1193,10 @@ impl<'a> AstNodes<'a> {
             N::AssignmentPattern(Node::PatProp(prop)) => match prop.default() {
                 Some(default) => prop.value().span().to(default.outer_span()),
                 None => prop.span(),
+            },
+            N::AssignmentPattern(Node::Param(param)) => match param.default() {
+                Some(default) => param.pat().span().to(default.outer_span()),
+                None => param.span(),
             },
             N::SpreadElement(node) | N::AssignmentPattern(node) | N::BindingRestElement(node) => {
                 node.span()

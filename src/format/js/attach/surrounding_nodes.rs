@@ -443,6 +443,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             | N::Elision(_)
             | N::ExpressionStatement(ExpressionStatement::ArrowBody(_)) => false,
             N::FunctionBody(func) => matches!(func.body(), FnBody::Block(_)),
+            // The `a = 1` of `constructor(private a = 1) {}`. For oxfmt the parameter is one node.
+            N::AssignmentPattern(Node::Param(_)) => !self.options.flavor.is_oxfmt(),
             // The `FunctionExpression` inside a method. Babel has no such node. With typescript-estree, Prettier does not attach
             // comments to it if it has no body, or if it is in a class and has neither parameters nor a return type.
             N::Function(func) => match method_of(func) {

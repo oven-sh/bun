@@ -1,6 +1,6 @@
 import type { Socket } from "bun";
 import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
-import { createSocketPair, socketFaultInjection } from "bun:internal-for-testing";
+import { createSocketPair, setSocketOptions, socketFaultInjection } from "bun:internal-for-testing";
 import { afterAll, afterEach, describe, expect, it, jest } from "bun:test";
 import { closeSync, fstatSync, readFileSync } from "fs";
 import {
@@ -5589,56 +5589,79 @@ it("a paused socket does not wake the event loop for every segment its peer send
   expect(await child.exited).toBe(0);
 });
 
-it("a socket whose peer refills the receive buffer during data() does not hold the event loop", async () => {
-  const chunk = Buffer.alloc(1024 * 1024);
-  const pump = (socket: Socket) => {
-    while (socket.write(chunk) === chunk.length);
-  };
-  using server = Bun.listen({
-    hostname: "127.0.0.1",
-    port: 0,
-    socket: { open: pump, drain: pump, data() {}, close() {}, error() {} },
-  });
-  await using child = spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      let reads = 0, readsThisTurn = 0, mostReadsInOneTurn = 0;
-      (function turn() {
-        readsThisTurn = 0;
-        setImmediate(turn);
-      })();
+// setSocketOptions does nothing on Windows, where a readable event is at most two reads anyway.
+it.skipIf(isWindows)(
+  "a socket with more full reads queued than one readable event takes lets the loop turn",
+  async () => {
+    const fullRead = 512 * 1024;
+    const payload = Buffer.alloc(14 * fullRead);
+    let sent = 0;
+    let received = 0;
+    let reads = 0;
+    let readsThisTurn = 0;
+    let mostReadsInOneTurn = 0;
+    let client: Socket | undefined;
+    let peer: Socket | undefined;
+    const { promise, resolve } = Promise.withResolvers<void>();
+
+    // The client only starts reading once the kernel holds the whole payload, so every read is full.
+    function fill() {
+      if (!client || !peer) return;
+      while (sent < payload.length) {
+        const wrote = peer.write(payload.subarray(sent));
+        if (wrote <= 0) return;
+        sent += wrote;
+      }
+      client.resume();
+    }
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          peer = socket;
+          setSocketOptions(socket, 1, 8 * 1024 * 1024);
+          fill();
+        },
+        drain: fill,
+        data() {},
+        close() {},
+        error() {},
+      },
+    });
+    let immediate = setImmediate(function turn() {
+      readsThisTurn = 0;
+      immediate = setImmediate(turn);
+    });
+    try {
       await Bun.connect({
         hostname: "127.0.0.1",
-        port: Number(process.env.PORT),
+        port: server.port,
         socket: {
-          data() {
-            mostReadsInOneTurn = Math.max(mostReadsInOneTurn, ++readsThisTurn);
-            if (++reads === 150) {
-              console.log(mostReadsInOneTurn);
-              process.exit(0);
-            }
-            // The kernel sizes the receive buffer by how fast it is drained, so drain it at full
-            // speed first. From then on, take long enough for the peer to fill it again.
-            // SO_RCVBUF cannot do this: Linux caps it at net.core.rmem_max, by default too small for a full read.
-            if (reads > 50) Bun.sleepSync(1);
+          open(socket) {
+            client = socket;
+            setSocketOptions(socket, 2, 8 * 1024 * 1024);
+            socket.pause();
+            fill();
           },
+          data(socket, chunk) {
+            reads++;
+            mostReadsInOneTurn = Math.max(mostReadsInOneTurn, ++readsThisTurn);
+            if ((received += chunk.length) === payload.length) resolve();
+          },
+          close() {},
+          error() {},
         },
       });
-      `,
-    ],
-    env: { ...bunEnv, PORT: String(server.port) },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: expect.stringMatching(/^([1-9]|1[01])\n$/),
-    stderr: "",
-    exitCode: 0,
-  });
-});
+      await promise;
+    } finally {
+      clearImmediate(immediate);
+      client?.end();
+    }
+    expect({ reads, mostReadsInOneTurn }).toEqual({ reads: 14, mostReadsInOneTurn: 11 });
+  },
+);
 
 // A paused socket polls for nothing, but a peer reset still reaches it (epoll reports EPOLLERR
 // regardless of interest; kqueue keeps a read knote registered while reads are off, see

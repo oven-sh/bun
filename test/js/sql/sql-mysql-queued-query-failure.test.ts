@@ -435,7 +435,7 @@ describeWithContainer("mysql", { image: "mysql_plain" }, container => {
   // the connection back to the pool when its COMMIT or ROLLBACK settles, and a
   // cancelled one settles with the connection still inside the transaction.
   const failure = new Error("from the callback");
-  test.each<[string, () => string, unknown, { id: number }[]]>([
+  test.each<[string, () => string, { resolved: unknown } | { rejected: unknown }, { id: number }[]]>([
     ["COMMIT", () => "returned", { resolved: "returned" }, [{ id: 0 }, { id: 1 }, { id: 100 }]],
     [
       "ROLLBACK",

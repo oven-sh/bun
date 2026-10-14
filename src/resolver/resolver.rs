@@ -4415,7 +4415,7 @@ impl<'a> Resolver<'a> {
         let mut _safe_path: Option<&'static [u8]> = None;
 
         // Start at the top.
-        while queue_slice_len > 0 {
+        'walk: while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
             let mut queue_top = unsafe { queue[queue_slice_len - 1].assume_init_ref() }.clone();
             // `unsafe_path` was set to a slice of the threadlocal
@@ -4533,7 +4533,22 @@ impl<'a> Resolver<'a> {
                                 }
                             }
 
-                            return Ok(None);
+                            if queue_slice_len == 0 {
+                                return Ok(None);
+                            }
+                            // An ancestor that does not open says nothing about the
+                            // requested directory: on Android, `/storage/emulated/`
+                            // is ENOENT while `/storage/emulated/0/<project>` is not.
+                            // Keep walking from here, with the ancestor cached as not
+                            // found and no parent. The next lookup of the same path
+                            // starts this way anyway, because the queue stops at a
+                            // not-found ancestor.
+                            top_parent = allocators::Result {
+                                index: allocators::NOT_FOUND,
+                                hash: queue_top.result.hash,
+                                status: allocators::ItemStatus::NotFound,
+                            };
+                            continue 'walk;
                         }
                     }
                 }

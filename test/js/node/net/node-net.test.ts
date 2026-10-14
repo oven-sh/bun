@@ -1037,7 +1037,7 @@ describe("abort during lookup #13126", () => {
 
   describe.each(runtimes)("%s pending abort", (_, exe) => {
     for (const autoSelectFamily of [false, true]) {
-      it(`autoSelectFamily=${autoSelectFamily}`, () => runFixture(exe, autoSelectFamily, false));
+      it.concurrent(`autoSelectFamily=${autoSelectFamily}`, () => runFixture(exe, autoSelectFamily, false));
     }
   });
 
@@ -1045,7 +1045,7 @@ describe("abort during lookup #13126", () => {
   // reconnecting after close. Bun's immediate-connect behavior is a separate contract.
   describe("bun already-aborted immediate connect", () => {
     for (const autoSelectFamily of [false, true]) {
-      it(`autoSelectFamily=${autoSelectFamily}`, () => runFixture(bunExe(), autoSelectFamily, true));
+      it.concurrent(`autoSelectFamily=${autoSelectFamily}`, () => runFixture(bunExe(), autoSelectFamily, true));
     }
   });
 });
@@ -3513,7 +3513,7 @@ describe.concurrent("uncaughtException from socket listeners", () => {
 
 // This raw-libc blackhole is qualified on glibc; macOS needs the loopback binding
 // from https://github.com/oven-sh/bun/pull/44413.
-it.skipIf(!isGlibc)("aborting a pending native connection emits one AbortError and closes", async () => {
+it.concurrent.skipIf(!isGlibc)("aborting a pending native connection emits one AbortError and closes", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

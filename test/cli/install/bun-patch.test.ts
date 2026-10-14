@@ -1279,6 +1279,8 @@ describe("bun patch with the isolated linker keeps the link of a dependency", ()
 
   const storeLink = (name: string, version: string) => join(".bun", `${name}@${version}`, "node_modules", name);
   const copyOf = (nodeModules: string, key: string) => join(nodeModules, ".bun-patches", key);
+  // bun prints the path of the copy with the separator of the platform.
+  const copyPath = join("node_modules", ".bun-patches", "no-deps@1.0.0");
   const edit = "module.exports = 'EDITED';\n";
   const rootWithNoDeps = {
     "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.0" } }),
@@ -1557,7 +1559,7 @@ describe("bun patch with the isolated linker keeps the link of a dependency", ()
 
     const refused = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
     expect(refused.stderr).toMatch(
-      /^error: "node_modules\/no-deps" is a link to ".+work", not a folder that bun patch prepared$/m,
+      /^error: "node_modules[\\/]no-deps" is a link to ".+work", not a folder that bun patch prepared$/m,
     );
     expect(existsSync(join(packageDir, "patches"))).toBe(false);
     expect(refused.exitCode).toBe(1);
@@ -1592,7 +1594,7 @@ describe("bun patch with the isolated linker keeps the link of a dependency", ()
 
     const refused = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
     expect(refused.stderr).toContain(
-      `error: "node_modules/no-deps" is a link to "${storeLink("no-deps", "1.0.0")}", not a folder that bun patch prepared\n` +
+      `error: "${join("node_modules", "no-deps")}" is a link to "${storeLink("no-deps", "1.0.0")}", not a folder that bun patch prepared\n` +
         `note: An earlier bun patch prepared a copy. To commit that copy, run bun patch --commit '${copy}'\n` +
         `note: To prepare a new copy, run bun patch 'node_modules/no-deps'\n`,
     );
@@ -1641,11 +1643,9 @@ describe("bun patch with the isolated linker keeps the link of a dependency", ()
 
     const commit = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
     expect(commit.stderr).toContain(
-      `warn: git cannot diff a binary file as text. The patch does not have the changes of the binary files in "node_modules/.bun-patches/no-deps@1.0.0"\n`,
+      `warn: git cannot diff a binary file as text. The patch does not have the changes of the binary files in "${copyPath}"\n`,
     );
-    expect(commit.stderr).toContain(
-      `note: The patch does not have everything in "node_modules/.bun-patches/no-deps@1.0.0", so that copy stays\n`,
-    );
+    expect(commit.stderr).toContain(`note: The patch does not have everything in "${copyPath}", so that copy stays\n`);
     expect(await file(join(packageDir, "patches", "no-deps@1.0.0.patch")).text()).toContain(
       "+module.exports = 'EDITED';",
     );
@@ -1660,9 +1660,7 @@ describe("bun patch with the isolated linker keeps the link of a dependency", ()
     await write(join(copy, "node_modules", "mine", "index.js"), "mine");
 
     const commit = await run(packageDir, ["patch", "--commit", "node_modules/no-deps"]);
-    expect(commit.stderr).toContain(
-      `note: The patch does not have everything in "node_modules/.bun-patches/no-deps@1.0.0", so that copy stays\n`,
-    );
+    expect(commit.stderr).toContain(`note: The patch does not have everything in "${copyPath}", so that copy stays\n`);
     expect(readlinkSync(slot)).toBe(join(".bun-patches", "no-deps@1.0.0"));
     expect(await file(join(copy, "node_modules", "mine", "index.js")).text()).toBe("mine");
     expect(commit.exitCode).toBe(0);

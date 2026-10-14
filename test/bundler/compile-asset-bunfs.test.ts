@@ -140,6 +140,13 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           absoluteLiteralFile: [...new Bun.Glob(rootPosix + "/index.html").scanSync({})],
           enoentCode: errcode(() => [...new Bun.Glob("*").scanSync(missing)]),
           enotdirCode: errcode(() => [...new Bun.Glob("*").scanSync(indexHtml)]),
+          // "." and ".." steps in a pattern: the graph has no entries with those names.
+          dotAlternative: [...new Bun.Glob("{_app,.}/*.html").scanSync(root)],
+          dotAlternativeAbsolute: [...new Bun.Glob("{_app,.}/*.html").scanSync({ cwd: root, absolute: true })],
+          upAlternative: [...new Bun.Glob("_app/{..,x}/*.html").scanSync(root)],
+          dotSegmentAbsolute: [...new Bun.Glob("_app/./immutable/*.css").scanSync({ cwd: root, absolute: true })],
+          // Nothing is above the root of the graph. A ".." alternative there matches nothing.
+          upAlternativeAboveGraph: [...new Bun.Glob("{..,client}/*.html").scanSync(import.meta.dir)],
         };
         fs.rmSync(realDir, { recursive: true, force: true });
 
@@ -234,6 +241,11 @@ describe.concurrent("compile --asset and /$bunfs/ directory semantics", () => {
           absoluteLiteralFile: [],
           enoentCode: "ENOENT",
           enotdirCode: "ENOTDIR",
+          dotAlternative: ["." + sep + "index.html"],
+          dotAlternativeAbsolute: [join(r.client.root, "index.html")],
+          upAlternative: ["_app/.." + sep + "index.html"],
+          dotSegmentAbsolute: [join(r.client.root, "_app", "immutable", "app.css")],
+          upAlternativeAboveGraph: [join("client", "index.html")],
         },
         realDirPosix: expect.any(String),
       });

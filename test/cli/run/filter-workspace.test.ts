@@ -758,6 +758,20 @@ describe("bun", () => {
     });
   });
 
+  test("a `.` alternative of a brace group in a workspace pattern", () => {
+    using dir = tempDir("filter-brace-dot", {
+      "pkgs/a/package.json": JSON.stringify({ name: "a", scripts: { present: "echo out-a" } }),
+      "top/package.json": JSON.stringify({ name: "top", scripts: { present: "echo out-top" } }),
+      // `{pkgs,.}/*` is `pkgs/*` and `./*`.
+      "package.json": JSON.stringify({
+        name: "ws",
+        scripts: { present: "echo out-root" },
+        workspaces: ["{pkgs,.}/*"],
+      }),
+    });
+    runInCwdSuccess({ cwd: String(dir), pattern: "*", target_pattern: [/out-a/, /out-top/], antipattern: /out-root/ });
+  });
+
   test("warning names which package.json failed to parse", async () => {
     await using dir = tempDir("filter-bad-pkgjson", {
       packages: {

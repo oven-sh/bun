@@ -198,7 +198,7 @@ impl ScanOpts {
 /// can walk the embedded `/$bunfs/` tree. Up-tier from the trait on purpose,
 /// like `bun_resolver::DirEntryAccessor`.
 pub(crate) mod standalone_accessor {
-    use bun_core::ZStr;
+    use bun_core::{ZStr, strings};
     use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
     use bun_paths::{PathBuffer, Platform, platform, resolve_path};
     use bun_standalone_graph::Graph;
@@ -229,10 +229,15 @@ pub(crate) mod standalone_accessor {
         }
     }
 
-    /// `path` resolved against the handle's directory when relative.
+    /// `path` resolved against the handle's directory when relative. The graph has no `.` or
+    /// `..` entries, so the walker's `/.` and `/..` steps in an absolute `path` are resolved
+    /// here too.
     fn resolve<'a>(handle: StandaloneHandle, path: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
         if Platform::AUTO.is_absolute(path) {
-            return path;
+            if !strings::contains(path, b"/.") {
+                return path;
+            }
+            return resolve_path::join_string_buf::<platform::Auto>(buf, &[path]);
         }
         let Some(dir) = handle.dir else { return path };
         resolve_path::join_string_buf::<platform::Auto>(buf, &[dir, path])

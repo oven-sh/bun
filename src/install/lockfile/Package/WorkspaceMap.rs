@@ -492,7 +492,21 @@ impl WorkspaceMap {
                             return Err(crate::Error::GlobError);
                         }
                     };
-                    let matched_path: &[u8] = &matched_path_owned;
+                    // A brace alternative can put a `.` or `..` step in the path: `{pkgs,.}/*`
+                    // gives `./a/package.json`. The path is compared as text below, so take the
+                    // steps out, as `join_spill` above does for a pattern that spells them out.
+                    let mut without_steps: Vec<u8> = Vec::new();
+                    let matched_path: &[u8] = if matched_path_owned.starts_with(b".")
+                        || strings::contains(&matched_path_owned, b"/.")
+                    {
+                        without_steps.resize(matched_path_owned.len() + 1, 0);
+                        resolve_path::normalize_string_buf::<true, path::platform::Auto, false>(
+                            &matched_path_owned,
+                            &mut without_steps,
+                        )
+                    } else {
+                        &matched_path_owned
+                    };
 
                     let entry_dir: &[u8] =
                         resolve_path::dirname::<path::platform::Auto>(matched_path);

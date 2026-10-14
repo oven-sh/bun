@@ -159,6 +159,21 @@ describe("brace + glob composition", () => {
     expect(words).toContain("lib/b.ts");
   });
 
+  test("a `.` alternative of a brace group globs the directory itself", async () => {
+    using dir = tempDir("shell-brace-glob-dot", {
+      "package.json": "{}",
+      "src/a.ts": "",
+    });
+    const out = (await $`echo {src,.}/*`.cwd(String(dir)).text()).trim().replaceAll("\\", "/");
+    const words = out.split(" ");
+    expect(words).toContain("src/a.ts");
+    expect(words).toContain("./package.json");
+
+    // An interpolated `{src,.}` is data, not a brace group: its `.` is no step.
+    const literal = await $`echo ${"{src,.}"}/*`.cwd(String(dir)).nothrow().quiet();
+    expect({ stdout: literal.stdout.toString(), exitCode: literal.exitCode }).toEqual({ stdout: "", exitCode: 1 });
+  });
+
   test("an interpolated comma inside a brace group is one literal branch", async () => {
     using dir = tempDir("shell-brace-glob3", {
       "x.ts": "",

@@ -21,7 +21,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-use crate::matcher::{Dots, Shape};
+use crate::matcher::{self, Dots, Shape, Token};
 use bun_alloc::AllocError;
 use bun_collections::AutoBitSet;
 use bun_core::Error;
@@ -256,6 +256,9 @@ pub struct GlobWalker<A: Accessor, const SENTINEL: bool> {
     pub(crate) follow_symlinks: bool,
     pub(crate) error_on_broken_symlinks: bool,
     pub(crate) only_files: bool,
+    /// The pattern has a `.` or `..` that `collapse_dots_disjoint` does not reach: one that is
+    /// an alternative of a brace group, or one after a `**`. `fork_dot_steps` takes those.
+    forks_dot_steps: bool,
 
     pub(crate) path_buf: bun_paths::path_buffer_pool::Guard,
     // iteration state
@@ -581,10 +584,10 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         };
 
         let mut had_dot_dot = false;
-        // Single-index sets (the initial WorkItem) may point to Dot/DotBack
-        // or collapsible `**` runs. Multi-index sets only arise mid-traversal
-        // after `**/X` boundaries and are already past any Dots.
-        let active: ComponentSet = 'set: {
+        // A single index may point to Dot/DotBack, which are collapsed into
+        // `dir_path` here, or to a collapsible `**` run. Multi-index sets only
+        // arise mid-traversal after `**/X` boundaries.
+        let mut active: ComponentSet = 'set: {
             if work_item.active.count() == 1 {
                 let single: u32 =
                     u32::try_from(work_item.active.find_first_set().unwrap()).expect("int cast");
@@ -611,9 +614,20 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 }
                 break 'set self.walker.single_set(norm);
             }
-            // Multi-index sets are already normalized by eval_dir.
+            // eval_dir already collapsed the `**` runs of a multi-index set.
             work_item.active
         };
+        if self.walker.forks_dot_steps {
+            self.walker
+                .fork_dot_steps(&mut active, &dir_path_buf[..dir_path_len]);
+            if active.count() == 0 {
+                if let Some(fd) = work_item.fd {
+                    self.close_disallowing_cwd(fd);
+                }
+                self.iter_state = IterState::GetNext;
+                return Ok(Ok(()));
+            }
+        }
 
         // SAFETY: dir_path_buf[dir_path_len] == 0 written above (or by collapse_dots)
         let dir_path = ZStr::from_buf(&dir_path_buf[..], dir_path_len);
@@ -621,7 +635,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         let mut at_cwd = false;
         let fd: A::Handle = 'fd: {
             if let Some(fd) = work_item.fd {
-                break 'fd fd;
+                // The fd is the directory a followed link leads to. Its `..` is not the
+                // `link/..` that `dir_path` names, so open that by path.
+                if !had_dot_dot {
+                    break 'fd fd;
+                }
+                self.close_disallowing_cwd(fd);
             }
             if ROOT {
                 if had_dot_dot {
@@ -642,6 +661,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
             match A::openat(self.cwd_fd, dir_path)? {
                 Err(err) => {
+                    // A brace alternative that names no directory gives no match and no
+                    // error. That holds for a `.` or `..` alternative too.
+                    if err.get_errno() == E::ENOENT && is_forked_dot_step(work_item_path) {
+                        self.iter_state = IterState::GetNext;
+                        return Ok(Ok(()));
+                    }
                     return Ok(Err(self.walker.handle_sys_err_with_path(&err, dir_path)));
                 }
                 Ok(fd_) => {
@@ -1335,7 +1360,15 @@ pub struct Component {
 
     pub(crate) syntax_hint: SyntaxHint,
     pub(crate) trailing_sep: bool,
+    /// `STAY` and `UP`: the directories it leads to that no entry name leads to.
+    steps: u8,
+    /// It is a `**`, and the component before it has no `steps`. Then its recursion finds all
+    /// that a `**` two components back goes on to find, and `eval_dir` lets that one end.
+    /// `steps` start in every directory that the earlier `**` reaches, so it goes on for them.
+    covers_outer_globstar: bool,
 }
+
+const _: () = assert!(size_of::<Component>() == 16);
 
 impl Default for Component {
     fn default() -> Self {
@@ -1345,11 +1378,18 @@ impl Default for Component {
             index: 0,
             syntax_hint: SyntaxHint::None,
             trailing_sep: false,
+            steps: 0,
+            covers_outer_globstar: false,
         }
     }
 }
 
 impl Component {
+    /// `.`, as the whole segment or as an alternative of a brace group like `{src,.}`.
+    const STAY: u8 = 1 << 0;
+    /// `..`, likewise.
+    const UP: u8 = 1 << 1;
+
     pub(crate) fn pattern_slice<'a>(&self, pattern: &'a [u8]) -> &'a [u8] {
         let end = (self.start + self.len - u32::from(self.trailing_sep)) as usize;
         &pattern[self.start as usize..end]
@@ -1456,6 +1496,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             pattern_components: Vec::new(),
             component_shapes: Vec::new(),
             matched_paths: MatchedMap::default(),
+            forks_dot_steps: false,
             path_buf: bun_paths::path_buffer_pool::get(),
             workbuf: Vec::new(),
             followed_links: Vec::new(),
@@ -1469,10 +1510,24 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             &mut this.end_byte_of_basename_excluding_special_syntax,
             &mut this.basename_excluding_special_syntax_component_idx,
         )?;
+        let mut is_after_globstar = false;
+        let mut previous_steps = 0;
         for (index, component) in this.pattern_components.iter_mut().enumerate() {
             component.index = index as u32;
-            this.component_shapes
-                .push(Shape::of(component.pattern_slice(&this.pattern)));
+            let segment = component.pattern_slice(&this.pattern);
+            let shape = Shape::of(segment);
+            let is_globstar = component.syntax_hint == SyntaxHint::Double;
+            if component.syntax_hint == SyntaxHint::None {
+                component.steps = brace_dot_steps(segment, &shape);
+                this.forks_dot_steps |= component.steps != 0;
+            }
+            // Before the first `**` a whole `.` or `..` is always a single index, which
+            // `collapse_dots_disjoint` takes in place.
+            this.forks_dot_steps |= is_after_globstar && component.steps != 0;
+            component.covers_outer_globstar = is_globstar && previous_steps == 0;
+            is_after_globstar |= is_globstar;
+            previous_steps = component.steps;
+            this.component_shapes.push(shape);
         }
 
         // copy arena after all allocations are successful
@@ -1845,12 +1900,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             ) {
                 child.set(self.normalize_idx(idx + bump) as usize);
                 // At `**/X` boundaries, keep the outer `**` alive unless
-                // idx+2 is itself `**` (whose recursion already covers it)
+                // idx+2 is a `**` whose recursion already covers it
                 // or the entry is hidden (a `**` must not traverse dotdirs).
-                if bump == 2
-                    && !hidden
-                    && comps[(idx + 2) as usize].syntax_hint != SyntaxHint::Double
-                {
+                if bump == 2 && !hidden && !comps[(idx + 2) as usize].covers_outer_globstar {
                     child.set(idx as usize);
                 }
             }
@@ -2007,6 +2059,17 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         self.workbuf.push(item);
     }
 
+    /// Queues a work item for each `.` and `..` step that the components in `active` have from
+    /// the directory `dir`. See `dot_step_forks`.
+    #[cold]
+    #[inline(never)]
+    fn fork_dot_steps(&mut self, active: &mut ComponentSet, dir: &[u8]) {
+        for (path, next) in dot_step_forks(&self.pattern_components, active, dir) {
+            let item = WorkItem::new(path, self.single_set(next), WorkItemKind::Directory);
+            self.push_work_item(item, None);
+        }
+    }
+
     /// Identify `Pending` ancestors in place (each is stat'd at most once) so
     /// the chain can be compared by `(st_dev, st_ino)`. Only called when a
     /// nested followed link actually needs the comparison.
@@ -2090,10 +2153,12 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 &pattern[component.start as usize..(component.start + component.len) as usize];
             if comp_slice == b"." {
                 component.syntax_hint = SyntaxHint::Dot;
+                component.steps = Component::STAY;
                 break 'out;
             }
             if comp_slice == b".." {
                 component.syntax_hint = SyntaxHint::DotBack;
+                component.steps = Component::UP;
                 break 'out;
             }
 
@@ -2258,6 +2323,118 @@ pub(crate) fn match_wildcard_filepath(glob: &[u8], path: &[u8]) -> bool {
 
 pub(crate) fn match_wildcard_literal(literal: &[u8], path: &[u8]) -> bool {
     literal == path
+}
+
+/// Returns `Component::STAY` / `Component::UP` if `segment` is one brace group with an
+/// alternative spelled `.` / `..`, like `{src,.}` or `{{.,x},..}`. `shape` is
+/// `Shape::of(segment)`.
+fn brace_dot_steps(segment: &[u8], shape: &Shape) -> u8 {
+    // Few groups have one, and only the matcher's parse of the segment says for sure.
+    if segment.first() != Some(&b'{')
+        || segment.last() != Some(&b'}')
+        || !has_delimited_dots(segment)
+    {
+        return 0;
+    }
+    let mut steps = 0;
+    // The segment, and then each alternative that is one whole group itself, like the
+    // `{.,x}` of `{{.,x},y}`.
+    let mut group = 0..segment.len();
+    let mut nested: Vec<core::ops::Range<usize>> = Vec::new();
+    loop {
+        if let (Token::Group { first }, after) = matcher::token_at(segment, group.start, shape)
+            && after == group.end
+            // The `..` of a sequence like `{1..3}` is not an alternative.
+            && !shape.is_sequence_at(first)
+        {
+            for alternative in shape.alternatives_at(first) {
+                match &segment[alternative.clone()] {
+                    b"." => steps |= Component::STAY,
+                    b".." => steps |= Component::UP,
+                    [b'{', ..] => nested.push(alternative),
+                    _ => {}
+                }
+            }
+        }
+        match nested.pop() {
+            Some(next) => group = next,
+            None => return steps,
+        }
+    }
+}
+
+/// Returns true if `segment` has a `.` or `..` between a `{` or `,` and a `,` or `}`. Every
+/// brace group with an alternative spelled `.` or `..` has that.
+fn has_delimited_dots(segment: &[u8]) -> bool {
+    let mut from = 0;
+    while let Some(dot) = strings::index_of_char_pos(segment, b'.', from) {
+        let end = dot + 1 + usize::from(segment.get(dot + 1) == Some(&b'.'));
+        if dot > 0
+            && matches!(segment[dot - 1], b'{' | b',')
+            && matches!(segment.get(end), Some(b',' | b'}'))
+        {
+            return true;
+        }
+        from = end;
+    }
+    false
+}
+
+/// Returns the `.` and `..` steps that the components in `active` have from the directory
+/// `dir`: the path of each, and the index of the one component that is active there. No
+/// directory lists those two names, so no entry takes such a step. Each step is a work item
+/// of its own, because the paths below it are spelled with the step, like `dir/./name`. The
+/// path is spelled as `collapse_dots_disjoint` spells a whole segment.
+///
+/// A brace group stays in `active`, to match names with its other alternatives. A whole `.`
+/// or `..` segment matches no name, so it leaves. It is only here in a multi-index set:
+/// `collapse_dots_disjoint` takes a single one in place.
+fn dot_step_forks(
+    components: &[Component],
+    active: &mut ComponentSet,
+    dir: &[u8],
+) -> Vec<(Box<[u8]>, u32)> {
+    let mut forks = Vec::new();
+    for idx in 0..components.len() {
+        if !active.is_set(idx) {
+            continue;
+        }
+        let component = components[idx];
+        let (steps, next) = match component.syntax_hint {
+            SyntaxHint::Dot | SyntaxHint::DotBack => {
+                active.unset(idx);
+                (component.steps, idx + 1)
+            }
+            // `**` also matches no directory at all. Then the component after it starts in
+            // `dir`.
+            SyntaxHint::Double => {
+                let after = components.get(idx + 1);
+                (after.map_or(0, |it| it.steps), idx + 2)
+            }
+            _ => (component.steps, idx + 1),
+        };
+        // A step in the last position names a directory, not an entry of one.
+        if next >= components.len() {
+            continue;
+        }
+        for (step, name) in [(Component::STAY, &b"."[..]), (Component::UP, &b".."[..])] {
+            if steps & step == 0 {
+                continue;
+            }
+            let path = match dir.is_empty() {
+                true => Box::from(name),
+                false => [dir, b"/", name].concat().into_boxed_slice(),
+            };
+            forks.push((path, next as u32));
+        }
+    }
+    forks
+}
+
+/// Returns true for the path of a work item that `fork_dot_steps` pushed. No other work item
+/// has a path that ends with `.` or `..`: no directory lists an entry with that name.
+fn is_forked_dot_step(path: &[u8]) -> bool {
+    path == b"." || path == b".." || path.ends_with(b"/.") || path.ends_with(b"/..")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

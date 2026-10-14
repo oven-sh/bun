@@ -1237,6 +1237,153 @@ describe("extglob and brace sequences", () => {
   });
 });
 
+// No directory lists `.` or `..`, so a pattern cannot find them by name. A
+// pattern can write one as a whole segment (`a/./x`), as an alternative of a
+// brace group (`{src,.}/*`), or after `**` (`**/../x`). Every form gives what
+// its alternatives give when each is written out, and the result keeps the
+// step as written: `./package.json`, `a/../root.txt`.
+describe("`.` and `..` as a brace alternative or after `**`", () => {
+  const norm = (paths: string[]) => paths.map(p => p.replaceAll("\\", "/")).sort();
+  let root: string;
+  let cwd: string;
+  beforeAll(() => {
+    root = String(
+      tempDir("glob-scan-dot-steps", {
+        "up.txt": "",
+        "fx/package.json": "{}",
+        "fx/root.txt": "",
+        "fx/vis/a.txt": "",
+        "fx/a/top.txt": "",
+        "fx/a/b/c.txt": "",
+        "fx/.hid/h.txt": "",
+      }),
+    );
+    // `..` from here is `root`, which the test owns.
+    cwd = path.join(root, "fx");
+  });
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  async function scan(pattern: string, opts: GlobScanOptions = {}) {
+    const glob = new Glob(pattern);
+    const sync = norm([...glob.scanSync({ cwd, ...opts })]);
+    expect(norm(await Array.fromAsync(glob.scan({ cwd, ...opts })))).toEqual(sync);
+    return sync;
+  }
+  const abs = (...parts: string[]) => path.join(cwd, ...parts).replaceAll("\\", "/");
+
+  test.each([
+    ["{src,.}/*", ["./package.json", "./root.txt"]],
+    ["{..,x}/fx/package.json", ["../fx/package.json"]],
+    ["vis/{.,x}/a.txt", ["vis/./a.txt"]],
+    ["{.,vis}/*", ["./package.json", "./root.txt", "vis/a.txt"]],
+    ["a/{b,.}/*.txt", ["a/./top.txt", "a/b/c.txt"]],
+    ["a/{b,..}/*.txt", ["a/../root.txt", "a/b/c.txt"]],
+    ["{.,..}/*.txt", ["../up.txt", "./root.txt"]],
+    ["*/{.,b}/*.txt", ["a/./top.txt", "a/b/c.txt", "vis/./a.txt"]],
+    ["{{.,x},y}/*", ["./package.json", "./root.txt"]],
+    // The empty alternative is not the absolute `/*`.
+    ["{.,}/*", ["./package.json", "./root.txt"]],
+    ["{.,x}/{.,vis}/*.txt", ["././root.txt", "./vis/a.txt"]],
+    ["./{.,vis}/*.txt", ["././root.txt", "./vis/a.txt"]],
+    ["**/{b,.}/*.txt", ["./root.txt", "a/./top.txt", "a/b/./c.txt", "a/b/c.txt", "vis/./a.txt"]],
+    ["**/a/{.,b}/*.txt", ["a/./top.txt", "a/b/c.txt"]],
+    // The first `**` goes on below `a`, where the group matched by name.
+    ["**/{a,.}/**/c.txt", ["./a/b/c.txt", "a/./b/c.txt", "a/b/./c.txt", "a/b/c.txt"]],
+  ])("brace alternative: %s", async (pattern, expected) => {
+    expect(await scan(pattern)).toEqual(expected.sort());
+  });
+
+  test.each([
+    ["**/./*.txt", ["./root.txt", "a/./top.txt", "a/b/./c.txt", "vis/./a.txt"]],
+    ["**/../*.txt", ["../up.txt", "a/../root.txt", "a/b/../top.txt", "vis/../root.txt"]],
+    ["a/**/./*.txt", ["a/./top.txt", "a/b/./c.txt"]],
+    ["**/a/./*.txt", ["a/./top.txt"]],
+    ["**/b/../*.txt", ["a/b/../top.txt"]],
+  ])("whole segment after `**`: %s", async (pattern, expected) => {
+    expect(await scan(pattern)).toEqual(expected.sort());
+  });
+
+  test("the scan options apply to the directory a step leads to", async () => {
+    expect(await scan("{src,.}/*", { onlyFiles: false })).toEqual(["./a", "./package.json", "./root.txt", "./vis"]);
+    expect(await scan("{.hid,.}/*.txt", { dot: true })).toEqual(["./root.txt", ".hid/h.txt"]);
+    expect(await scan("**/{.,x}/h.txt", { dot: true })).toEqual([".hid/./h.txt"]);
+    expect(await scan("**/{.,x}/h.txt")).toEqual([]);
+  });
+
+  test("absolute: true gives normalized paths", async () => {
+    expect(await scan("{src,.}/*", { absolute: true })).toEqual([abs("package.json"), abs("root.txt")]);
+    expect(await scan("{..,x}/fx/package.json", { absolute: true })).toEqual([abs("package.json")]);
+    expect(await scan("**/a/{.,b}/*.txt", { absolute: true })).toEqual([abs("a/b/c.txt"), abs("a/top.txt")]);
+    expect(await scan("**/b/../*.txt", { absolute: true })).toEqual([abs("a/top.txt")]);
+  });
+
+  test("other groups keep their results", async () => {
+    // A wildcard alternative does not reach the parent directory.
+    expect(await scan("{.*,x}/*", { dot: true })).toEqual([".hid/h.txt"]);
+    // A step in the last position names a directory, not an entry of one.
+    expect(await scan("a/{.,b}", { onlyFiles: false })).toEqual(["a/b"]);
+    // An extglob alternative is matched as a name.
+    expect(await scan("@(.|a)/*.txt")).toEqual(["a/top.txt"]);
+    // A name alternative that does not exist is not an error.
+    expect(await scan(path.join(cwd, "{missing,vis}", "*"))).toEqual([abs("vis/a.txt")]);
+    // The `..` of a sequence is not a step.
+    using seq = tempDir("glob-scan-dot-steps-sequence", { "n.txt": "", "2/n.txt": "" });
+    expect(norm([...new Glob("{1..3}/*").scanSync({ cwd: String(seq) })])).toEqual(["2/n.txt"]);
+  });
+
+  describe.skipIf(!canCreateDirSymlink)("with symlinked directories", () => {
+    let dir: string;
+    beforeAll(() => {
+      dir = String(
+        tempDir("glob-scan-dot-steps-symlink", {
+          "root.txt": "",
+          "real/file.txt": "",
+          "real/nested/deep.txt": "",
+          "real/nested/x/other.txt": "",
+          "cells/p/sub/f": "",
+          "cells/p/sub/x/f": "",
+          "cells/.h/sub/f": "",
+          "cells/.h/sub/x/f": "",
+        }),
+      );
+      // `link/..` is `real`, not the directory that holds `link`.
+      fs.symlinkSync(path.join("real", "nested"), path.join(dir, "link"), "dir");
+      fs.symlinkSync("p", path.join(dir, "cells", "q"), "dir");
+    });
+    afterAll(() => {
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    test.each([
+      ["link/../*.txt", ["link/../file.txt"]],
+      ["link/{..,x}/*.txt", ["link/../file.txt", "link/x/other.txt"]],
+      ["link/./*.txt", ["link/./deep.txt"]],
+      ["link/{.,x}/*.txt", ["link/./deep.txt", "link/x/other.txt"]],
+    ])("%s reads the directory that its results name", (pattern, expected) => {
+      const result = norm([...new Glob(pattern).scanSync({ cwd: dir })]);
+      // Not `path.join`: it removes `link/..` from the path, so the check would not go through the link.
+      expect(result.filter(p => !fs.existsSync(`${dir}/${p}`))).toEqual([]);
+      // Windows resolves `link\..` to the directory that holds `link`.
+      if (!isWindows) expect(result).toEqual(expected.sort());
+    });
+
+    // A step is taken where the pattern puts it, in a hidden directory and behind a link too.
+    test.each([
+      [{}, ["p"]],
+      [{ dot: true }, [".h", "p"]],
+      [{ followSymlinks: true }, ["p", "q"]],
+      [{ dot: true, followSymlinks: true }, [".h", "p", "q"]],
+    ] as [GlobScanOptions, string[]][])("a step after `**/sub` with %j", (opts, tops) => {
+      const scan = (pattern: string) =>
+        norm([...new Glob(pattern).scanSync({ cwd: path.join(dir, "cells"), ...opts })]);
+      expect(scan("**/sub/./f")).toEqual(tops.map(top => `${top}/sub/./f`).sort());
+      expect(scan("**/sub/{.,x}/f")).toEqual(tops.flatMap(top => [`${top}/sub/./f`, `${top}/sub/x/f`]).sort());
+    });
+  });
+});
+
 describe.skipIf(!isWindows)("glob scan descends read-only directories", () => {
   test.skipIf(!roDirEnforced)(
     `RX-only directory is descended, creates still fail${roDirEnforced ? "" : " (skipped: ACL not enforced under this token)"}`,

@@ -265,6 +265,41 @@ test.concurrent("extglob and brace sequence workspace patterns", async () => {
   expect(Object.keys(lockfile.workspaces).sort()).toEqual(["", ...good].sort());
 });
 
+// `{pkgs,.}/*` is `pkgs/*` and `./*`. A match of the `.` alternative is the same
+// workspace as when the pattern is written `*`: a later `!` pattern excludes it
+// by its plain path, and the root is not a workspace of itself.
+test.concurrent.each([
+  { workspaces: ["{pkgs,.}/*"], excluded: [], expected: ["", "pkgs/a", "top1", "top2"] },
+  { workspaces: ["{pkgs,.}/*", "!top2"], excluded: ["top2"], expected: ["", "pkgs/a", "top1"] },
+  { workspaces: ["{.,top1}"], excluded: ["top2"], expected: ["", "top1"] },
+])("a `.` alternative of a brace group in workspaces $workspaces", async ({ workspaces, excluded, expected }) => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(join(packageDir, "package.json"), JSON.stringify({ name: "root", workspaces })),
+    ...["pkgs/a", "top1", "top2"].map(dir =>
+      write(
+        join(packageDir, dir, "package.json"),
+        // Installing an excluded one would fail.
+        JSON.stringify({
+          name: dir.split("/").at(-1),
+          dependencies: excluded.includes(dir) ? { "doesnt-exist-oops": "1.2.3" } : {},
+        }),
+      ),
+    ),
+  ]);
+
+  const { exited } = await runBunInstall(env, packageDir);
+  expect(await exited).toBe(0);
+
+  const lockfile = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as {
+    workspaces: object;
+    packages: object;
+  };
+  expect(Object.keys(lockfile.workspaces).sort()).toEqual(expected);
+  expect(Object.keys(lockfile.packages).sort()).toEqual(expected.slice(1).map(dir => dir.split("/").at(-1)!));
+});
+
 test("dependency on same name as workspace and dist-tag", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;

@@ -1192,6 +1192,23 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("`<!-- prettier-ignore` in a script is an ignore comment", async () => {
+    // What oxfmt 0.72 prints. Prettier 3.9.9 does not parse these files.
+    const rows = [
+      ["<!-- prettier-ignore\na(  b  );\nc(  d  );\n", "<!-- prettier-ignore\na(  b  );\nc(d);\n"],
+      ["a;\n--> prettier-ignore\nb(  c  );\nd(  e  );\n", "a;\n--> prettier-ignore\nb(  c  );\nd(e);\n"],
+      ["<!-- a comment\na(  b  );\n", "<!-- a comment\na(b);\n"],
+    ];
+    const names = rows.map((_, index) => `${index}.js`);
+    const texts = Object.fromEntries(rows.map(([text], index) => [names[index], text]));
+    const printed = Object.fromEntries(rows.map(([, printed], index) => [names[index], printed]));
+    for (const configuration of [{}, { ".oxfmtrc.json": "{}" }]) {
+      const result = await format({ ...configuration, ...texts }, [], { reads: names });
+      expect(result.files).toEqual(printed);
+      expect(result.exitCode).toBe(0);
+    }
+  });
+
   test("a comment that waits for the end of the line is not written in the middle of the next one", async () => {
     // Prettier 3.9.9 prints `a; /**⏎// b⏎ * c⏎ */`, and with `/* b */` on its own line what it prints does not parse.
     const rows = [

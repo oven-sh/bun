@@ -78,10 +78,13 @@ impl<'a> Comment<'a> {
         self.file.slice(self.span())
     }
 
-    /// The text between the `/*` and the `*/`, or after the `//`.
+    /// The text between the `/*` and the `*/`, or after the `//`, the `<!--` or the `-->`.
     pub fn content(self) -> &'a [u8] {
         match self.text() {
-            [b'/', b'*', content @ .., b'*', b'/'] | [b'/', b'/', content @ ..] => content,
+            [b'/', b'*', content @ .., b'*', b'/']
+            | [b'/', b'/', content @ ..]
+            | [b'<', b'!', b'-', b'-', content @ ..]
+            | [b'-', b'-', b'>', content @ ..] => content,
             text => text,
         }
     }

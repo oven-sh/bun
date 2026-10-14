@@ -20,8 +20,9 @@ for (const line of readFileSync(manifest, "utf8").split("\n").filter(Boolean)) {
   neededBy.set(path, features === "-" ? undefined : new Set(features.split(",")));
 }
 
-// `<input>[:<member>]: <value> <type> <name>`, the same for ELF, COFF, Mach-O and bitcode. See fetch-cli.ts.
-const line = /^(.*): +(?:[0-9a-f]+ +)?([A-Za-z-]) +(\S+)\s*$/;
+// `<input>[:<member>]: <value> <type> <name>`, the same for ELF, COFF, Mach-O and bitcode, where the value is dashes. It is
+// blank for what is not defined. See fetch-cli.ts.
+const line = /^(.*): +(?:[0-9a-f-]+ +)?([A-Za-z]) +(\S+)\s*$/;
 const definedBy = new Map<string, string>();
 const uses: [symbol: string, by: string][] = [];
 const paths = [...neededBy.keys()];
@@ -41,7 +42,10 @@ for (let start = 0; start < paths.length; start += 100) {
     else if ("TDRBS".includes(type) && neededBy.get(path) !== undefined) definedBy.set(symbol, path);
   }
 }
-if (uses.length === 0) throw new Error(`nothing parsed from the output of ${nm}`);
+// Else the output is not what is parsed above, and nothing would be checked.
+const hasFeatures = [...neededBy.values()].some(features => features !== undefined);
+if (uses.length === 0 || (hasFeatures && definedBy.size === 0))
+  throw new Error(`nothing parsed from the output of ${nm}`);
 
 const offenders = new Set<string>();
 for (const [symbol, by] of uses) {

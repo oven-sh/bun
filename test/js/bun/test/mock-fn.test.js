@@ -2323,7 +2323,7 @@ if (isBun) {
         const Primitive = fn().mockReturnValue(4);
         expect(new Primitive()).toBe(Primitive.mock.instances[0]);
         expect(await new (fn().mockResolvedValue(1))()).toBe(1);
-        expect(new (fn().mockRejectedValue(2))()).rejects.toBe(2);
+        await expect(new (fn().mockRejectedValue(2))()).rejects.toBe(2);
         const This = fn().mockReturnThis();
         const instance = new This();
         expect(instance).toBeInstanceOf(This);

@@ -41,7 +41,7 @@ struct Section {
     flags: u32,
 }
 
-fn sections(file: &[u8]) -> Result<(usize, Vec<Section>)> {
+fn headers(file: &[u8]) -> Result<(usize, Vec<Section>)> {
     let pe = u32_at(file, 0x3c)? as usize;
     if slice(file, pe, 4)? != b"PE\0\0" || u16_at(file, pe + 24)? != 0x20b {
         return Err(Error::UnrecognizedExecutable);
@@ -62,32 +62,30 @@ fn sections(file: &[u8]) -> Result<(usize, Vec<Section>)> {
     Ok((pe, list))
 }
 
-/// Where in the file the section is.
-pub(crate) fn section(file: &[u8], name: &[u8; 8]) -> Result<Option<Range<usize>>> {
-    for s in sections(file)?.1 {
-        if slice(file, s.header, 8)? == name {
-            return Ok(Some(
-                s.raw as usize..(s.raw + s.size.min(s.raw_size)) as usize,
-            ));
-        }
+pub(crate) fn sections(file: &[u8]) -> Result<Vec<crate::Section<'_>>> {
+    let mut sections = Vec::new();
+    for s in headers(file)?.1 {
+        sections.push(crate::Section {
+            name: crate::bytes::fixed_name(slice(file, s.header, 8)?),
+            addresses: s.address..s.address + s.size.min(s.raw_size),
+            offset: s.raw as usize,
+        });
     }
-    Ok(None)
+    Ok(sections)
 }
 
 /// Where in the file the byte at `address` is.
-pub(crate) fn offset_of(file: &[u8], address: u64) -> Result<usize> {
-    let found = sections(file)?
-        .1
-        .into_iter()
-        .find(|s| address >= s.address && address - s.address < s.raw_size);
+fn offset_of(file: &[u8], address: u64) -> Result<usize> {
+    let holds = |s: &Section| address >= s.address && address - s.address < s.raw_size;
+    let found = headers(file)?.1.into_iter().find(holds);
     found
         .map(|s| (s.raw + (address - s.address)) as usize)
-        .ok_or(Error::InvalidTable)
+        .ok_or(Error::InvalidExecutable)
 }
 
 /// `file` without the whole pages of `dead`, which is sorted address ranges.
 pub(crate) fn without_pages(file: &[u8], dead: &[Range<u64>]) -> Result<Vec<u8>> {
-    let (pe, sections) = sections(file)?;
+    let (pe, sections) = headers(file)?;
     let optional = pe + 24;
     let (page, file_alignment) = (
         u64::from(u32_at(file, optional + 32)?),

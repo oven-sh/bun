@@ -456,7 +456,6 @@ const configFlags: { [K in keyof Required<PartialConfig>]: ConfigFlagKind<NonNul
   unifiedSources: "boolean",
   archiveDeps: "boolean",
   timeTrace: "boolean",
-  featureTable: "boolean",
   ci: "boolean",
   buildkite: "boolean",
   webkit: "string",
@@ -662,8 +661,7 @@ Options:
                                   package-manager (bun|npm, installs the
                                   package.json files the build needs),
                                   buildDir, mode (full|codegen),
-                                  unifiedSources, timeTrace, featureTable, os,
-                                  arch, abi,
+                                  unifiedSources, timeTrace, os, arch, abi,
                                   winsysroot (Windows cross-compile SDK root)
   --target=<name>         Build a specific ninja target (repeatable)
   --configure-only        Emit build.ninja, don't run it

@@ -1,174 +1,144 @@
 //! Features of the runtime that `bun build --compile --compile-exclude-features=<name>` can leave out of an executable.
 //!
+//! They work like `#ifdef`: what is gated is gone, what is not gated stays, whoever used it. Two things can be gated.
+//!
+//! A FUNCTION, or a method:
+//!
 //! ```ignore
-//! match feature::enter::<{ feature::LINT }, _>(|| lint_command::run(ctx)) {
+//! #[feature::gate(lint)]
+//! fn run_lint(ctx: &Context) -> CmdResult { ... }
+//! ```
+//!
+//! A CRATE, in its `Cargo.toml`, which is everything that rustc emits when it compiles the crate:
+//!
+//! ```toml
+//! [package.metadata.bun]
+//! gate = ["lint", "fmt"]
+//! ```
+//!
+//! A gate names the features that need the code: it goes once all of them are excluded. A function in a gated crate may have
+//! a gate of its own, with fewer of them.
+//!
+//! Nothing else can be gated. A closure is a function of its own to the compiler and does not go with the function it is
+//! written in (it does go with its crate). Neither do constants, or what the function calls.
+//!
+//! What is not gated reaches what is through [`enter!`], which is the `#ifdef ... #else`:
+//!
+//! ```ignore
+//! match feature::enter!(lint, run_lint(ctx)) {
 //!     Some(result) => result,
 //!     None => built_without_this_command(),
 //! }
 //! ```
 //!
-//! [`enter`] runs the closure in bun itself, at the cost of one no-op. In an executable made without the feature it returns
-//! `None`, and whatever only the closure reached is gone from the file: every function and constant that nothing left in
-//! the executable refers to, the way a linker would drop it had the closure been under an `#[cfg]`.
+//! In bun itself that costs one no-op. [`present!`] is the condition alone.
 //!
-//! So mark the doors, not the rooms. Nothing says which code belongs to a feature. Code that something else still uses
-//! stays, and a door that was missed costs bytes, never correctness.
-//!
-//! The closure is compiled as a function of its own, which is what makes "only the closure" something that can be told from
-//! the machine code. Nothing else about the compiler's output is relied on.
-//!
-//! [`present`] is the condition alone, for where there is nothing to leave out: an error message, a line of `--help`.
+//! Naming gated code anywhere else runs into what is gone. `bun run rust:check-gates` finds that: it type-checks Bun with
+//! each feature compiled out for real, which is what these three macros also do under `--cfg bun_without="<name>"`.
 
 mod ids;
-pub use ids::*;
-
-#[cfg(any(target_os = "linux", target_os = "macos", windows))]
-pub use marked::{enter, present};
+pub use bun_core_macros::{enter, gate, present};
+use ids::NAMES;
 
 /// Nothing can be excluded on this platform.
 #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+#[doc(hidden)]
 #[inline(always)]
-pub fn present<const ID: u32>() -> bool {
+pub fn is_present<const ID: u32>() -> bool {
     true
 }
 
-/// Nothing can be excluded on this platform.
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-#[inline(always)]
-pub fn enter<const ID: u32, R>(door: impl FnOnce() -> R) -> Option<R> {
-    Some(door())
+// An instruction that does nothing and holds the feature's number. It is as long as a jump.
+#[cfg(target_arch = "x86_64")]
+macro_rules! no_op {
+    () => {
+        "2: .byte 0x0f, 0x1f, 0x80\n.long {id}" // nopl id(%rax)
+    };
+}
+#[cfg(target_arch = "aarch64")]
+macro_rules! no_op {
+    () => {
+        "2: movz xzr, #{id}"
+    };
 }
 
+// Where the no-op is and where to jump instead of it, as distances from here, and the number. `bun build --compile` reads
+// these in the file it copies.
+#[cfg(target_os = "linux")]
+macro_rules! marker {
+    () => {
+        ".pushsection .bun_feature_markers,\"aR\",@progbits\n3: .long 2b - 3b\n.long {no} - 3b\n.long {id}\n.long 0\n.popsection"
+    };
+}
+// On x86-64 Mach-O a label can be subtracted only if a symbol the linker sees comes before it in its section.
+#[cfg(target_os = "macos")]
+macro_rules! marker {
+    () => {
+        concat!(
+            ".pushsection __TEXT,__bun_feat_marks,regular,live_support\n.ifndef l_bun_feat_marks\nl_bun_feat_marks:\n.endif\n",
+            "3: .long 2b - 3b\n.long {no} - 3b\n.long {id}\n.long 0\n.popsection"
+        )
+    };
+}
+#[cfg(windows)]
+macro_rules! marker {
+    () => {
+        ".pushsection .bunfmrk,\"dr\"\n3: .long 2b - 3b\n.long {no} - 3b\n.long {id}\n.long 0\n.popsection"
+    };
+}
+
+/// [`present!`], by number.
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
-mod marked {
-    // An instruction that does nothing and holds the feature's id. No other code has it, so the linker cannot fold a
-    // function that has one with a function that has none, or with one of another feature. It is as long as a jump.
-    #[cfg(target_arch = "x86_64")]
-    macro_rules! no_op {
-        () => {
-            "2: .byte 0x0f, 0x1f, 0x80\n.long {id}" // nopl id(%rax)
-        };
+#[doc(hidden)]
+#[inline(always)]
+#[cfg_attr(
+    target_os = "macos",
+    expect(
+        named_asm_labels,
+        reason = "`.ifndef` keeps copies of this from defining it twice"
+    )
+)]
+pub fn is_present<const ID: u32>() -> bool {
+    // SAFETY: does nothing, or jumps to the label.
+    unsafe {
+        core::arch::asm!(
+            no_op!(),
+            marker!(),
+            id = const ID,
+            no = label { return false },
+            options(nomem, nostack, preserves_flags)
+        );
     }
-    #[cfg(target_arch = "aarch64")]
-    macro_rules! no_op {
-        () => {
-            "2: movz xzr, #{id}"
-        };
-    }
-
-    // A record: where the no-op is, where to jump instead of it (0: nowhere, it is in a door), and the id. Bun's build reads
-    // these after linking. ELF: addresses, in a section that is not loaded. Mach-O, PE: distances from the record, in one
-    // that is.
-    #[cfg(target_os = "linux")]
-    macro_rules! record {
-        ($otherwise:literal) => {
-            concat!(
-                ".pushsection .bun_features,\"\",@progbits\n.quad 2b\n.quad ",
-                $otherwise,
-                "\n.long {id}\n.long 0\n.popsection"
-            )
-        };
-    }
-    // On x86-64 Mach-O a label can be subtracted only if a symbol the linker sees comes before it in its section.
-    #[cfg(target_os = "macos")]
-    macro_rules! record {
-        ($otherwise:literal) => {
-            concat!(
-                ".pushsection __TEXT,__bun_feat,regular,live_support\n.ifndef l_bun_feat\nl_bun_feat:\n.endif\n",
-                "3: .long 2b - 3b\n.long ",
-                $otherwise,
-                "\n.long {id}\n.long 0\n.popsection"
-            )
-        };
-    }
-    #[cfg(windows)]
-    macro_rules! record {
-        ($otherwise:literal) => {
-            concat!(
-                ".pushsection .bunft,\"dr\"\n3: .long 2b - 3b\n.long ",
-                $otherwise,
-                "\n.long {id}\n.long 0\n.popsection"
-            )
-        };
-    }
-    #[cfg(target_os = "linux")]
-    macro_rules! record_with_jump {
-        () => {
-            record!("{no}")
-        };
-    }
-    #[cfg(not(target_os = "linux"))]
-    macro_rules! record_with_jump {
-        () => {
-            record!("{no} - 3b")
-        };
-    }
-
-    /// Whether this executable has the feature `ID`.
-    #[inline(always)]
-    #[cfg_attr(
-        target_os = "macos",
-        expect(
-            named_asm_labels,
-            reason = "`.ifndef` keeps copies of this from defining it twice"
-        )
-    )]
-    pub fn present<const ID: u32>() -> bool {
-        const { assert!(ID > 0 && ID < 1 << 16, "the arm64 no-op holds 16 bits") };
-        // SAFETY: does nothing, or jumps to the label.
-        unsafe {
-            core::arch::asm!(
-                no_op!(),
-                record_with_jump!(),
-                id = const ID,
-                no = label { return false },
-                options(nomem, nostack, preserves_flags)
-            );
-        }
-        true
-    }
-
-    /// Runs `door` if this executable has the feature `ID`.
-    #[inline(always)]
-    pub fn enter<const ID: u32, R>(door: impl FnOnce() -> R) -> Option<R> {
-        if present::<ID>() {
-            Some(through::<ID, R>(door))
-        } else {
-            None
-        }
-    }
-
-    /// Only [`enter`] calls this, after it asked. So without the feature nothing runs it, whoever refers to it.
-    #[inline(never)]
-    #[cfg_attr(
-        target_os = "macos",
-        expect(
-            named_asm_labels,
-            reason = "`.ifndef` keeps copies of this from defining it twice"
-        )
-    )]
-    fn through<const ID: u32, R>(door: impl FnOnce() -> R) -> R {
-        // SAFETY: does nothing.
-        unsafe {
-            core::arch::asm!(
-                no_op!(),
-                record!("0"),
-                id = const ID,
-                options(nomem, nostack, preserves_flags)
-            );
-        }
-        door()
-    }
+    true
 }
 
-/// Room for what Bun's build finds out about the executable once it is linked: which bytes only which features need.
-/// `bun build --compile` reads it in the file it copies. Nothing reads it in memory.
+const NAMES_LENGTH: usize = {
+    let (mut length, mut i) = (0, 0);
+    while i < NAMES.len() {
+        length += NAMES[i].len() + 1;
+        i += 1;
+    }
+    length
+};
+
+/// The names, each with a 0 after it. `bun build --compile` reads them in the file it copies.
 #[cfg(any(target_os = "linux", target_os = "macos", windows))]
 #[used(linker)]
-#[cfg_attr(target_os = "linux", unsafe(link_section = ".bun_feature_table"))]
-#[cfg_attr(target_os = "macos", unsafe(link_section = "__TEXT,__bun_feat_tab"))]
-#[cfg_attr(windows, unsafe(link_section = ".bunftab"))]
-static TABLE: [u8; 1 << 15] = [0; 1 << 15];
+#[cfg_attr(target_os = "linux", unsafe(link_section = ".bun_feature_names"))]
+#[cfg_attr(target_os = "macos", unsafe(link_section = "__TEXT,__bun_feat_names"))]
+#[cfg_attr(windows, unsafe(link_section = ".bunfnam"))]
+static NAMES_IN_THE_EXECUTABLE: [u8; NAMES_LENGTH] = {
+    let (mut bytes, mut at, mut i) = ([0; NAMES_LENGTH], 0, 0);
+    while i < NAMES.len() {
+        let (name, mut j) = (NAMES[i].as_bytes(), 0);
+        while j < name.len() {
+            bytes[at] = name[j];
+            (at, j) = (at + 1, j + 1);
+        }
+        (at, i) = (at + 1, i + 1);
+    }
+    bytes
+};
 
 /// Room for program headers. An ELF file with pages left out has one more for each gap, the table of them cannot grow where
 /// the linker put it, and it has to be near the start of the file, where notes are.

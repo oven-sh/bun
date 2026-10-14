@@ -109,7 +109,7 @@ fn section_headers(file: &[u8]) -> Result<(usize, usize)> {
 }
 
 /// Where in the file the section is.
-pub(crate) fn section(file: &[u8], name: &[u8]) -> Result<Option<Range<usize>>> {
+pub(crate) fn sections(file: &[u8]) -> Result<Vec<crate::Section<'_>>> {
     let (first, count) = section_headers(file)?;
     let names = first + usize::from(u16_at(file, 0x3e)?) * SECTION_HEADER;
     let names = slice(
@@ -117,28 +117,21 @@ pub(crate) fn section(file: &[u8], name: &[u8]) -> Result<Option<Range<usize>>> 
         usize_at(file, names + 24)?,
         usize_at(file, names + 32)?,
     )?;
+    let mut sections = Vec::new();
     for at in (0..count).map(|index| first + index * SECTION_HEADER) {
-        let own = names.get(u32_at(file, at)? as usize..).unwrap_or_default();
-        if own
-            .strip_prefix(name)
-            .is_some_and(|rest| rest.first() == Some(&0))
-        {
-            let start = usize_at(file, at + 24)?;
-            return Ok(Some(start..start + usize_at(file, at + 32)?));
+        let is_loaded_from_the_file =
+            u32_at(file, at + 4)? != SHT_NOBITS && u64_at(file, at + 8)? & SHF_ALLOC != 0;
+        if is_loaded_from_the_file {
+            let name = names.get(u32_at(file, at)? as usize..).unwrap_or_default();
+            let start = u64_at(file, at + 16)?;
+            sections.push(crate::Section {
+                name: crate::bytes::fixed_name(name),
+                addresses: start..plus(start, u64_at(file, at + 32)?)?,
+                offset: usize_at(file, at + 24)?,
+            });
         }
     }
-    Ok(None)
-}
-
-/// Where in the file the byte at `address` is.
-pub(crate) fn offset_of(file: &[u8], address: u64) -> Result<usize> {
-    let holds = |h: &ProgramHeader| {
-        h.kind == PT_LOAD && address >= h.address && address - h.address < h.file_size
-    };
-    let found = program_headers(file)?.into_iter().find(holds);
-    found
-        .map(|h| (h.offset + (address - h.address)) as usize)
-        .ok_or(Error::InvalidTable)
+    Ok(sections)
 }
 
 /// `bun_core::feature` has a note whose contents are room for them. A note, because the linker puts those at the start of

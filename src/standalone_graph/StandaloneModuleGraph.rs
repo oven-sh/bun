@@ -2066,26 +2066,25 @@ impl<'a> Injected<'a> {
 
 /// `executable` without the features of `--compile-exclude-features`, or what is wrong with the request.
 fn without_features(executable: Vec<u8>, exclude: &[Box<[u8]>]) -> Result<Vec<u8>, CompileError> {
-    use bun_exe_features::{Error, Features};
+    use bun_exe_features::Error;
     if exclude.is_empty() {
         return Ok(executable);
     }
     let explain = |e: Error| match e {
-        Error::MissingTable => CompileError::fmt(format_args!(
-            "--compile-exclude-features: the Bun to compile from does not say what can be excluded. Release builds for Linux, macOS and Windows x64 do"
+        Error::NoFeatures => CompileError::fmt(format_args!(
+            "--compile-exclude-features: the Bun to compile from does not say what can be excluded"
         )),
         e => CompileError::fmt(format_args!(
             "failed to exclude features from the executable: {e}"
         )),
     };
-    let features = Features::of(&executable).map_err(explain)?;
-    let is_known = |name: &[u8]| features.names().any(|known| known == name);
-    if let Some(unknown) = exclude.iter().find(|name| !is_known(name)) {
+    let names = bun_exe_features::names(&executable).map_err(explain)?;
+    if let Some(unknown) = exclude.iter().find(|name| !names.contains(&&***name)) {
         let mut message = Vec::new();
         message.extend_from_slice(b"--compile-exclude-features: there is no feature called \"");
         message.extend_from_slice(unknown);
         message.extend_from_slice(b"\". These can be excluded:");
-        for known in features.names() {
+        for known in names {
             message.extend_from_slice(b"\n  ");
             message.extend_from_slice(known);
         }

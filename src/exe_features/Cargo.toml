@@ -6,14 +6,8 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
-[[bin]]
-name = "bun-exe-features"
-path = "main.rs"
-required-features = ["tool"]
-
-[features]
-# Making the table, which only Bun's own build does, and the controls that check it. Not in the runtime.
-tool = []
-
 [lints]
 workspace = true
+
+[dependencies]
+bun_core.workspace = true

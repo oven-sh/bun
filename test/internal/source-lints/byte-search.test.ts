@@ -49,8 +49,6 @@ for (const manifest of new Bun.Glob("src/*/Cargo.toml").scanSync({ cwd: root }))
   const build = /^\s*build\s*=\s*"([^"]+)"/m.exec(toml);
   hostOnly.push(path.posix.join(dir, build ? build[1] : "build.rs"));
 }
-// So does what Bun's build runs after the link (scripts/build/feature-table.ts).
-hostOnly.push("src/exe_features/make/");
 const rustSources = globAllSources().rust.filter(abs => {
   if (!abs.endsWith(".rs")) return false;
   const rel = path.relative(root, abs).replaceAll(path.sep, "/");

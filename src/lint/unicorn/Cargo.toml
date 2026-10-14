@@ -3,6 +3,9 @@ name = "bun_lint_unicorn"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.bun]
+gate = ["lint"]
+
 [lib]
 path = "lib.rs"
 

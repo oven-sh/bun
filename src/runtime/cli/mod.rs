@@ -1335,9 +1335,15 @@ pub(crate) mod command {
             Tag::UpdateInteractiveCommand => exec_update_interactive(log),
             Tag::PublishCommand => exec_publish(log),
             Tag::AuditCommand => exec_audit(log),
-            Tag::CheckCommand => unless_excluded::<{ feature::CHECK }>(|| exec_check(log)),
-            Tag::LintCommand => unless_excluded::<{ feature::LINT }>(|| exec_lint(log)),
-            Tag::FormatCommand => unless_excluded::<{ feature::FMT }>(|| exec_format(log)),
+            Tag::CheckCommand => {
+                feature::enter!(check, exec_check(log)).unwrap_or_else(built_without_this_command)
+            }
+            Tag::LintCommand => {
+                feature::enter!(lint, exec_lint(log)).unwrap_or_else(built_without_this_command)
+            }
+            Tag::FormatCommand => {
+                feature::enter!(fmt, exec_format(log)).unwrap_or_else(built_without_this_command)
+            }
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
@@ -1597,13 +1603,10 @@ pub(crate) mod command {
         Ok(())
     }
 
-    /// A command that `bun build --compile --compile-exclude-features` can leave out of an executable.
-    #[inline(always)]
-    fn unless_excluded<const FEATURE: u32>(command: impl FnOnce() -> CmdResult) -> CmdResult {
-        feature::enter::<FEATURE, _>(command).unwrap_or_else(|| {
-            Output::err_generic("this executable was built without this command", ());
-            Global::exit(1)
-        })
+    /// `bun build --compile --compile-exclude-features` left it out.
+    fn built_without_this_command() -> CmdResult {
+        Output::err_generic("this executable was built without this command", ());
+        Global::exit(1)
     }
 
     #[cold]
@@ -2346,9 +2349,10 @@ Execute a shell script directly from Bun.
 <b>Flags:<r>"
                 );
                 Output::flush();
-                feature::enter::<{ feature::CHECK }, _>(|| {
-                    bun_clap::simple_help(crate::cli::check_command::PARAMS);
-                });
+                feature::enter!(
+                    check,
+                    bun_clap::simple_help(crate::cli::check_command::PARAMS)
+                );
                 pretty!(
                     "
       <cyan>--strict<r>, <cyan>--target<r><d><cyan>=\\<val\\><r>, ...  Any compiler option, as for <b>tsc<r>. Overrides tsconfig.json
@@ -2382,9 +2386,10 @@ Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r
   Format JavaScript, TypeScript, CSS, HTML, JSON, YAML, Markdown and more.
 "
                 );
-                feature::enter::<{ feature::FMT }, _>(|| {
-                    print_flags(&crate::cli::format_command::HELP, show_all_flags);
-                });
+                feature::enter!(
+                    fmt,
+                    print_flags(&crate::cli::format_command::HELP, show_all_flags)
+                );
                 pretty!(
                     "
 <b>Examples:<r>
@@ -2408,9 +2413,10 @@ Full documentation is available at <magenta>https://bun.com/docs/format<r>
   Find and fix problems in JavaScript and TypeScript.
 "
                 );
-                feature::enter::<{ feature::LINT }, _>(|| {
-                    print_flags(&crate::cli::lint_command::HELP, show_all_flags);
-                });
+                feature::enter!(
+                    lint,
+                    print_flags(&crate::cli::lint_command::HELP, show_all_flags)
+                );
                 pretty!(
                     "
 <b>Examples:<r>

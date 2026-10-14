@@ -685,3 +685,118 @@ pub fn derive_enum_tag(input: TokenStream) -> TokenStream {
     }
     .into()
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// bun_core::feature
+// ───────────────────────────────────────────────────────────────────────────
+
+mod feature {
+    include!("../bun_core/feature/ids.rs");
+}
+
+/// `lint` → 2
+fn feature_number(name: &syn::Ident) -> syn::Result<u32> {
+    let found = feature::NAMES.iter().position(|known| name == known);
+    found.map(|index| index as u32 + 1).ok_or_else(|| {
+        let known = feature::NAMES.join(", ");
+        syn::Error::new(name.span(), format!("no such feature. There are: {known}"))
+    })
+}
+
+/// True when the feature is compiled out for real (`bun run rust:check-gates`).
+fn is_compiled_out(name: &syn::Ident) -> proc_macro2::TokenStream {
+    let name = name.to_string();
+    quote!(bun_without = #name)
+}
+
+/// See `bun_core::feature`.
+#[proc_macro_attribute]
+pub fn gate(features: TokenStream, function: TokenStream) -> TokenStream {
+    let parser = syn::punctuated::Punctuated::<syn::Ident, Token![,]>::parse_terminated;
+    let features = parse_macro_input!(features with parser);
+    // Also what a function outside of an `impl` parses as.
+    if let Err(e) = syn::parse::<syn::ImplItemFn>(function.clone()) {
+        let message = "a gate goes on a function or a method (or on a crate, in its Cargo.toml)";
+        return syn::Error::new(e.span(), message).to_compile_error().into();
+    }
+    let mut gate = 0u64;
+    for name in &features {
+        match feature_number(name) {
+            Ok(number) => gate |= 1 << (number - 1),
+            Err(e) => return e.to_compile_error().into(),
+        }
+    }
+    if gate == 0 {
+        let message = "which features need this function?";
+        return syn::Error::new(Span::call_site(), message)
+            .to_compile_error()
+            .into();
+    }
+    // scripts/build/rust/crate-gate.cpp and src/exe_features/lib.rs have these names too.
+    let (elf, macho, pe) = (
+        format!(".bun_gate.{gate:x}"),
+        format!("__TEXT,__bun_gate_{gate:x},regular,pure_instructions"),
+        format!(".bg{gate:x}"),
+    );
+    let compiled_out = features.iter().map(is_compiled_out);
+    let function = proc_macro2::TokenStream::from(function);
+    quote! {
+        #[cfg(not(all(#(#compiled_out),*)))]
+        #[cfg_attr(target_os = "linux", unsafe(link_section = #elf))]
+        #[cfg_attr(target_os = "macos", unsafe(link_section = #macho))]
+        #[cfg_attr(windows, unsafe(link_section = #pe))]
+        #function
+    }
+    .into()
+}
+
+/// `present!(lint)`: whether this executable has the feature. See `bun_core::feature`.
+#[proc_macro]
+pub fn present(feature: TokenStream) -> TokenStream {
+    let name = parse_macro_input!(feature as syn::Ident);
+    let number = match feature_number(&name) {
+        Ok(number) => number,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    let compiled_out = is_compiled_out(&name);
+    quote!((!cfg!(#compiled_out) && ::bun_core::feature::is_present::<#number>())).into()
+}
+
+struct Enter {
+    feature: syn::Ident,
+    gated: Expr,
+}
+
+impl Parse for Enter {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let feature = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let gated = input.parse()?;
+        input.parse::<Option<Token![,]>>()?;
+        Ok(Self { feature, gated })
+    }
+}
+
+/// `enter!(lint, expression)`: `Some(expression)` if this executable has the feature, else `None`. See `bun_core::feature`.
+#[proc_macro]
+pub fn enter(input: TokenStream) -> TokenStream {
+    let Enter { feature, gated } = parse_macro_input!(input as Enter);
+    let number = match feature_number(&feature) {
+        Ok(number) => number,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    let compiled_out = is_compiled_out(&feature);
+    quote! {{
+        #[cfg(not(#compiled_out))]
+        #[allow(unreachable_code, reason = "it may not return")]
+        let entered = if ::bun_core::feature::is_present::<#number>() {
+            ::core::option::Option::Some(#gated)
+        } else {
+            ::core::option::Option::None
+        };
+        #[cfg(#compiled_out)]
+        let entered = ::core::option::Option::None;
+        entered
+    }}
+    .into()
+}

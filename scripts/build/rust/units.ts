@@ -24,6 +24,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import type { Config } from "../config.ts";
 import { assert } from "../error.ts";
 import { dylibPathVar, envify } from "./cargo-env.ts";
+import { crateGateDriver, gateOf } from "./gates.ts";
 import type { ManifestLints, MetadataPackage, RustPlan, RustcTargetInfo, UnitGraphUnit } from "./plan.ts";
 
 export type UnitKind = "lib" | "proc-macro" | "bin" | "build-script" | "build-script-run";
@@ -207,6 +208,7 @@ export function buildRustGraph(plan: RustPlan, dir: string): RustGraph {
       unit.platform,
       u.mode,
       [...unit.features].sort(),
+      unit.pkg.gate,
       u.profile,
       unit.isStd,
       plan.rustc.version,
@@ -552,10 +554,14 @@ function rustcUnitManifest(ctx: ManifestContext, unit: RustUnit): RustcUnitManif
   if (unit.buildScript !== undefined) env.OUT_DIR = unit.buildScript.scriptOutDir!;
   if (unit.isStd) env.RUSTC_BOOTSTRAP = "1";
 
+  // A crate with a gate is compiled by the driver, which does not know where it is installed.
+  const driver = isHost || unit.pkg.gate === null ? undefined : crateGateDriver(cfg);
+  if (driver !== undefined) args.unshift(gateOf(cfg, unit.crateName, unit.pkg.gate!), "--sysroot", plan.rustc.sysroot);
+
   return {
     kind: unit.kind,
     crateName: unit.crateName,
-    rustc: plan.rustc.path,
+    rustc: driver ?? plan.rustc.path,
     cwd,
     args,
     env,

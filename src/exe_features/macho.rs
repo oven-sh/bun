@@ -90,34 +90,23 @@ fn commands(file: &[u8]) -> Result<Vec<(u32, usize, usize)>> {
 }
 
 /// Where in the file the section is.
-pub(crate) fn section(file: &[u8], segment: &[u8], section: &[u8]) -> Result<Option<Range<usize>>> {
+/// Those of `__TEXT`.
+pub(crate) fn sections(file: &[u8]) -> Result<Vec<crate::Section<'_>>> {
+    let mut sections = Vec::new();
     for (_, at, _) in commands(file)?.into_iter().filter(|c| c.0 == LC_SEGMENT_64) {
         for s in 0..u32_at(file, at + 64)? as usize {
             let header = at + SEGMENT + s * SECTION;
-            if name(slice(file, header, 16)?) == section
-                && name(slice(file, header + 16, 16)?) == segment
-            {
-                let start = u32_at(file, header + 48)? as usize;
-                return Ok(Some(start..start + usize_at(file, header + 40)?));
+            if name(slice(file, header + 16, 16)?) == b"__TEXT" {
+                let start = u64_at(file, header + 32)?;
+                sections.push(crate::Section {
+                    name: name(slice(file, header, 16)?),
+                    addresses: start..plus(start, u64_at(file, header + 40)?)?,
+                    offset: u32_at(file, header + 48)? as usize,
+                });
             }
         }
     }
-    Ok(None)
-}
-
-/// Where in the file the byte at `address` is.
-pub(crate) fn offset_of(file: &[u8], address: u64) -> Result<usize> {
-    for (_, at, _) in commands(file)?.into_iter().filter(|c| c.0 == LC_SEGMENT_64) {
-        let (start, offset, size) = (
-            u64_at(file, at + 24)?,
-            u64_at(file, at + 40)?,
-            u64_at(file, at + 48)?,
-        );
-        if address >= start && address - start < size {
-            return Ok((offset + (address - start)) as usize);
-        }
-    }
-    Err(Error::InvalidTable)
+    Ok(sections)
 }
 
 /// `file` without the whole pages of `dead`, which is sorted address ranges.

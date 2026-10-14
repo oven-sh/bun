@@ -557,6 +557,9 @@ dependencies = [
 [[package]]
 name = "bun_exe_features"
 version = "0.0.0"
+dependencies = [
+ "bun_core",
+]
 
 [[package]]
 name = "bun_exe_format"

@@ -1,5 +1,3 @@
-//! What the markers of each feature hold. `src/exe_features/make/features.rs`, which compiles this file too, has the names.
-
-pub const CHECK: u32 = 1;
-pub const LINT: u32 = 2;
-pub const FMT: u32 = 3;
+// The features. The first is feature 1, which is bit 0 of a gate. `bun_core_macros` compiles this file too, and Bun's build
+// reads it (scripts/build/rust/gates.ts).
+pub(crate) const NAMES: [&str; 3] = ["check", "lint", "fmt"];

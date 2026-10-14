@@ -3,6 +3,9 @@ name = "bun_format_conformance"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.bun]
+gate = ["lint", "fmt"]
+
 [lib]
 path = "lib.rs"
 

@@ -11,7 +11,6 @@ import { availableParallelism } from "node:os";
 import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
-import { withFeatureTable } from "./feature-table.ts";
 import { linksWithLld } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja, PoolName, Rule } from "./ninja.ts";
@@ -186,14 +185,10 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // empty everywhere else): ninja runs the whole command through `sh -c`,
   // so the fixup runs after the link succeeds and the declared output is
   // already the final, patched, re-signed artifact. See shims.ts.
-  //
-  // A build with a feature table writes it into the executable in between,
-  // before that is signed. See feature-table.ts.
-  const linkCommand = cfg.windows
-    ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp $lazy /Fe$out /link $ldflags`
-    : `${cxx} @$out.rsp $lazy $ldflags -o $out`;
   n.rule("link", {
-    command: `${withFeatureTable(cfg, linkCommand)}${machoPostlinkCommand(cfg)}`,
+    command: cfg.windows
+      ? `${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp $lazy /Fe$out /link $ldflags`
+      : `${cxx} @$out.rsp $lazy $ldflags -o $out${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",

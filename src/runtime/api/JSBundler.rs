@@ -909,7 +909,7 @@ pub(crate) mod js_bundler {
                 this.module_preload = module_preload;
             }
             if let Some(check) = config.get_boolean_loose(global_this, "check")? {
-                if check && !bun_core::feature::present::<{ bun_core::feature::CHECK }>() {
+                if check && !bun_core::feature::present!(check) {
                     return Err(global_this.throw_invalid_arguments(format_args!(
                         "check: this executable was built without type checking"
                     )));

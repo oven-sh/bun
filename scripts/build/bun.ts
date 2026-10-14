@@ -23,7 +23,6 @@ import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { assert } from "./error.ts";
-import { emitFeatureTableTool, featureTableLinkImplicitInputs } from "./feature-table.ts";
 import {
   bunIncludes,
   computeFlags,
@@ -430,12 +429,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const depLink = lazyDepObjects(cfg, depObjects);
   const linkObjects = [...cxxObjects, ...cObjects, ...depLink.eager, ...rustObjects, ...windowsRes];
   const ldflags = [...flags.ldflags, ...systemLibs(cfg)];
-  emitFeatureTableTool(n, cfg);
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     lazyObjects: depLink.lazy,
     flags: ldflags,
-    implicitInputs: [...linkImplicitInputs(cfg), ...shimInputs, ...featureTableLinkImplicitInputs(cfg)],
+    implicitInputs: [...linkImplicitInputs(cfg), ...shimInputs],
     // Declare the maps the release link writes as side-products (`perf`
     // symbolication on linux; the order file tracer's symbol table on windows).
     linkerMapOutputs: linkerMapOutputs(cfg),

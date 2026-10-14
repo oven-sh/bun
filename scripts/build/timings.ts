@@ -800,7 +800,6 @@ const lanes = [
 type Lane = (typeof lanes)[number]["name"];
 
 const ruleLane: Record<RuleName, Lane> = {
-  exe_features_tool: "other",
   dep_build: "dependencies",
   dep_cargo: "dependencies",
   dep_cargo_cross: "dependencies",
@@ -818,6 +817,7 @@ const ruleLane: Record<RuleName, Lane> = {
   esbuild: "codegen",
   npm_install: "codegen",
   rust_build_script: "Rust",
+  rust_crate_gate: "Rust",
   rust_plan: "Rust",
   rust_rustc: "Rust",
   cc: "C and C++",

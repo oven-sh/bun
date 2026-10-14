@@ -3,6 +3,9 @@ name = "bun_sema_baselines"
 version.workspace = true
 edition.workspace = true
 
+[package.metadata.bun]
+gate = ["check"]
+
 [lib]
 path = "lib.rs"
 

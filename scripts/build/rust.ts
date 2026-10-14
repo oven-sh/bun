@@ -41,6 +41,7 @@ import { computeCpuTargetFlags, rustLtoInLink } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { envify } from "./rust/cargo-env.ts";
 import { emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
+import { crateGateDriver, emitCrateGateDriver, registerCrateGateRule } from "./rust/gates.ts";
 import { type PlanInput, planEnv, planPath, readPlan } from "./rust/plan.ts";
 import { buildRustGraph, linkedRlibs } from "./rust/units.ts";
 
@@ -208,6 +209,7 @@ export function rustPlanFiles(cfg: Config): string[] {
 export function registerRustRules(n: Ninja, cfg: Config): void {
   if (cfg.cargo === undefined) return; // emitRust() asserts with a hint
   registerRustUnitRules(n, cfg);
+  registerCrateGateRule(n, cfg);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -788,6 +790,14 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   }
 
   const graph = buildRustGraph(runtime.plan, runtime.dir);
+  const driver = crateGateDriver(cfg);
+  if (driver !== undefined) {
+    emitCrateGateDriver(n, cfg);
+    for (const unit of graph.units) {
+      if (unit.pkg.gate !== null)
+        packageInputs[unit.pkg.name] = [...new Set([...(packageInputs[unit.pkg.name] ?? []), driver])];
+    }
+  }
   assert(
     graph.root.kind === "lib",
     `rust plan root ${graph.root.crateName} is a ${graph.root.kind}, expected a library`,

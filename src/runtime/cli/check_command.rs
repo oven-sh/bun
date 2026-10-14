@@ -6,7 +6,7 @@ use bstr::BStr;
 
 use bun_bundler::options::{TypeChecked, loaders_from_transform_options};
 use bun_clap as clap;
-use bun_core::{Global, Output, ZStr, env_var};
+use bun_core::{Global, Output, ZStr, env_var, feature};
 use bun_sema_driver::format::{self, Layout, Style};
 use bun_sema_driver::host::{AlreadyRead, BeforeRead, Provided};
 use bun_sema_driver::{
@@ -421,18 +421,13 @@ fn style_for(cwd: &[u8], pretty: Option<bool>, to: Destination, show_all: bool) 
 const HAS_TYPESCRIPT_TEST_RUNNER: bool =
     bun_core::Environment::IS_CANARY || bun_core::Environment::IS_DEBUG;
 
-/// Everything here that is used from elsewhere goes through this: `--compile-exclude-features=check` leaves out what only
-/// `door` reaches. `--check` and `check: true` are refused in such an executable, so nothing gets as far as this.
-#[inline(always)]
-fn enter<R>(door: impl FnOnce() -> R) -> R {
-    bun_core::feature::enter::<{ bun_core::feature::CHECK }, R>(door).unwrap_or_else(|| {
-        Output::err_generic("this executable was built without type checking", ());
-        Global::exit(1)
-    })
+/// `--check` and `check: true` are refused in an executable without type checking, so nothing gets as far as this.
+fn built_without_type_checking() -> ! {
+    Output::err_generic("this executable was built without type checking", ());
+    Global::exit(1)
 }
 
 impl CheckCommand {
-    /// Behind the door of the command.
     pub(crate) fn exec(args: &[&ZStr]) -> ! {
         if HAS_TYPESCRIPT_TEST_RUNNER
             && let [first, rest @ ..] = args
@@ -448,7 +443,8 @@ impl CheckCommand {
     /// `bun --check` without an entry point: `bun check` without an argument. The arguments are
     /// those of `bun`, which has read them.
     pub(crate) fn exec_without_arguments() -> ! {
-        enter(|| {
+        feature::enter!(
+            check,
             Self::exec_with(&Options {
                 command_line: CommandLine {
                     project: tsconfig_override().map(<[u8]>::to_vec),
@@ -456,7 +452,8 @@ impl CheckCommand {
                 },
                 ..Default::default()
             })
-        })
+        )
+        .unwrap_or_else(|| built_without_type_checking())
     }
 
     fn exec_with(options: &Options) -> ! {
@@ -560,7 +557,8 @@ impl<'a> EntryPoint<'a> {
 /// Type checks `entry_points` and everything they import before they are run. Returns whether they
 /// have no errors. Reports the errors on stderr, which leaves stdout to the program.
 pub(crate) fn check_before(entry_points: &[EntryPoint], before_read: Option<BeforeRead>) -> bool {
-    enter(|| check_entry_points(entry_points, before_read))
+    feature::enter!(check, check_entry_points(entry_points, before_read))
+        .unwrap_or_else(|| built_without_type_checking())
 }
 
 fn check_entry_points(entry_points: &[EntryPoint], before_read: Option<BeforeRead>) -> bool {
@@ -647,12 +645,14 @@ fn already_read(cwd: &[u8], sources: &mut dyn Iterator<Item = (&[u8], &[u8])>) -
 
 /// `BundleOptions::type_check` for `bun build --check`.
 pub(crate) fn check_for_build_command(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    enter(|| check_for_build(checked, log, true))
+    feature::enter!(check, check_for_build(checked, log, true))
+        .unwrap_or_else(|| built_without_type_checking())
 }
 
 /// `BundleOptions::type_check` for `Bun.build({ check: true })`. It prints nothing.
 pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) -> bool {
-    enter(|| check_for_build(checked, log, false))
+    feature::enter!(check, check_for_build(checked, log, false))
+        .unwrap_or_else(|| built_without_type_checking())
 }
 
 /// The files of the bundle, `sources`, are not read again. The errors are added to `log`, which the
@@ -854,7 +854,11 @@ fn imports_of_page(cwd: &[u8], page: &[u8]) -> Vec<Vec<u8>> {
 /// Type checks the project that contains the working directory, as `bun check` does, before one of
 /// its scripts is run.
 pub(crate) fn check_project_before() -> bool {
-    enter(|| check_and_report(&Paths::EntryPoints(Entries::default()), Provided::default()))
+    feature::enter!(
+        check,
+        check_and_report(&Paths::EntryPoints(Entries::default()), Provided::default())
+    )
+    .unwrap_or_else(|| built_without_type_checking())
 }
 
 /// `--tsconfig-override` of `bun`: what is run is resolved with it, in place of every other.

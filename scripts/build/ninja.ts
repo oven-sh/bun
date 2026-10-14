@@ -26,8 +26,6 @@ import { writeIfChanged } from "./fs.ts";
  * they are the fields of `Rule`, and of a build statement where a value per edge makes sense.
  */
 const ruleVars = {
-  // feature-table.ts
-  exe_features_tool: ["lib"],
   // bun.ts
   binary_verify: ["spec"],
   copy_exe: [],
@@ -57,6 +55,7 @@ const ruleVars = {
   regen: [],
   // rust/emit.ts
   rust_build_script: ["manifest", "crate"],
+  rust_crate_gate: [],
   rust_plan: ["planinput", "plan"],
   rust_rustc: ["manifest", "crate", "what"],
   // shims.ts

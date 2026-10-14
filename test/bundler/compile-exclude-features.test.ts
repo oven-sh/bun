@@ -93,7 +93,7 @@ const hasTable = (() => {
 
 // Else every test below could be skipped without anyone noticing that a release lost its table.
 test.skipIf(!isCI)("the builds that should be able to exclude features are", () => {
-  const isSupportedTarget = isLinux || (isMacOS && isArm64) || (isWindows && !isArm64);
+  const isSupportedTarget = isLinux || isMacOS || (isWindows && !isArm64);
   expect(hasTable).toBe(!isDebug && !isASAN && isSupportedTarget);
 });
 
@@ -231,7 +231,8 @@ describe.skipIf(!hasTable)("with a feature table", () => {
     expect(loads.map(l => l.skew)).toEqual(loads.map(() => 0n));
   });
 
-  test.skipIf(!isMacOS).concurrent("Mach-O: the signature is valid", async () => {
+  // On x64 nothing is signed.
+  test.skipIf(!isMacOS || !isArm64).concurrent("Mach-O: the signature is valid", async () => {
     using dir = tempDir("exclude-features", { "app.ts": app });
     const cwd = String(dir);
     expect((await compile(cwd, "without", "--compile-exclude-features=check,lint,fmt")).exitCode).toBe(0);

@@ -36,6 +36,9 @@ pub(super) struct Functions<'a> {
     /// arm64: the constants that the code in `[start, end)` takes the address of, each with the end of the piece that holds
     /// it. See [`Functions::jump_table_targets`].
     pub(super) constants_taken_by: &'a dyn Fn(u64, u64) -> Vec<(u64, u64)>,
+    /// x86-64 Mach-O: the jump tables among the code, sorted, as {start, end}. The linker says where they are. An entry is the
+    /// distance, in 32 bits, from the table to where it leads.
+    pub(super) jump_tables_in_code: &'a [(u64, u64)],
 }
 
 /// What an instruction does to the flow of control.
@@ -147,6 +150,8 @@ fn kind_x64(mnemonic: &str) -> Kind {
         Kind::Trap
     } else if starts_with(&["call"]) {
         Kind::Call
+    } else if matches!(mnemonic, "lea" | "leaq" | "leal") {
+        Kind::Address
     } else {
         Kind::Plain
     }
@@ -209,6 +214,26 @@ impl Functions<'_> {
                 .map(|(word, at)| decode_arm64(u32::from_le_bytes(*word), at))
                 .collect());
         }
+        // A jump table counts as one instruction that nothing follows.
+        let first = self.jump_tables_in_code.partition_point(|t| t.0 < start);
+        if let Some(&(table, table_end)) = self.jump_tables_in_code.get(first).filter(|t| t.0 < end)
+        {
+            let mut out = if table > start {
+                self.disassemble(start, table)?
+            } else {
+                Vec::new()
+            };
+            out.push(Instruction {
+                at: table,
+                kind: Kind::Trap,
+                target: None,
+                indexed_load: None,
+            });
+            if table_end < end {
+                out.extend(self.disassemble(table_end, end)?);
+            }
+            return Ok(out);
+        }
         let mut out = Vec::new();
         for (at, first, rest) in
             listing(self.objdump, self.path, start + self.bias, end + self.bias)?
@@ -221,15 +246,20 @@ impl Functions<'_> {
                 after = after.trim_start();
             }
             let (mnemonic, operands) = (word, after);
-            // Through a register or memory it is `*…`, and there is no address.
-            let target = operands
-                .strip_prefix("0x")
-                .and_then(hex_prefix)
-                .and_then(|t| t.0.checked_sub(self.bias));
+            let kind = kind_x64(mnemonic);
+            let address = if kind == Kind::Address {
+                // `lea 0x47a9(%rip), %rdx  # 0x104e240e8 <symbol+0x65f8>`
+                operands.split_once("# 0x").map(|(_, address)| address)
+            } else {
+                // Through a register or memory it is `*…`, and there is no address.
+                operands.strip_prefix("0x")
+            };
             out.push(Instruction {
                 at: at.wrapping_sub(self.bias),
-                kind: kind_x64(mnemonic),
-                target,
+                kind,
+                target: address
+                    .and_then(hex_prefix)
+                    .and_then(|t| t.0.checked_sub(self.bias)),
                 indexed_load: None,
             });
         }
@@ -263,7 +293,35 @@ impl Functions<'_> {
                 fail!("cannot disassemble the function at {start:x}");
             }
             let is_instruction: HashSet<u64> = code.iter().map(|x| x.at).collect();
-            let through_register = self.jump_table_targets(&code, &is_instruction, start, end);
+            let mut through_register = self.jump_table_targets(&code, &is_instruction, start, end);
+            for &(tables, tables_end) in self
+                .jump_tables_in_code
+                .iter()
+                .filter(|t| t.0 >= start && t.0 < end)
+            {
+                // Tables that follow each other are listed as one. The function takes the address of each.
+                let taken = code
+                    .iter()
+                    .filter(|x| x.kind == Kind::Address)
+                    .filter_map(|x| x.target);
+                let starts: BTreeSet<u64> =
+                    taken.filter(|&t| t >= tables && t < tables_end).collect();
+                if !starts.contains(&tables) {
+                    fail!("nothing takes the address of the jump table at {tables:x}");
+                }
+                // A jump through a register needs the tables too. They are a block of their own.
+                through_register.insert(tables);
+                for entry in (tables..tables_end).step_by(4) {
+                    let table = *starts.range(..=entry).next_back().unwrap_or(&tables);
+                    let target =
+                        table.wrapping_add_signed(self.bytes.i32((self.file_offset)(entry)).into());
+                    if !is_instruction.contains(&target) {
+                        fail!("an entry of the jump table at {table:x} leaves its function");
+                    }
+                    through_register.insert(target);
+                }
+            }
+            let through_register = through_register;
 
             let mut leaders: BTreeSet<u64> =
                 through_register.iter().copied().chain([start]).collect();
@@ -315,10 +373,10 @@ impl Functions<'_> {
                     continue;
                 }
                 match x.kind {
-                    // x86-64: without a target it goes through a jump table, whose entries are relocations into this function.
-                    Kind::Jump => block.succ.extend(to),
+                    Kind::Jump if x.target.is_some() => block.succ.extend(to),
                     Kind::ConditionalJump => block.succ.extend(to.into_iter().chain(next)),
-                    Kind::JumpThroughRegister => block
+                    // x86-64 ELF and PE know of no tables here: there the entries are relocations into this function.
+                    Kind::Jump | Kind::JumpThroughRegister => block
                         .succ
                         .extend(through_register.iter().filter_map(|&t| starting_at(t))),
                     Kind::Return | Kind::Trap => {}
@@ -375,6 +433,9 @@ impl Functions<'_> {
         start: u64,
         end: u64,
     ) -> BTreeSet<u64> {
+        if self.arch != Arch::Arm64 {
+            return BTreeSet::new();
+        }
         let mut anchors: Vec<(u64, u64)> = Vec::new();
         for (i, x) in code.iter().enumerate() {
             let Some(anchor) = x

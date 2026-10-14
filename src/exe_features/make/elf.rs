@@ -715,6 +715,7 @@ pub(super) fn make(
             is_code: &is_code,
             does_not_return: &does_not_return,
             constants_taken_by: &taken_by,
+            jump_tables_in_code: &[],
         }
         .split()?
     };

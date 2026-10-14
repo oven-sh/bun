@@ -1126,8 +1126,8 @@ A name that does not exist is an error. The error message lists the names that t
 | bun-linux-x64-musl   | Yes                  |
 | bun-linux-arm64-musl | Yes                  |
 | bun-darwin-arm64     | Yes                  |
+| bun-darwin-x64       | Yes                  |
 | bun-windows-x64      | Yes                  |
-| bun-darwin-x64       | Not yet              |
 | bun-windows-arm64    | Not yet              |
 
 This works when cross-compiling: what matters is the target, not the machine you build on. The build fails if the targeted Bun cannot exclude features. That includes debug builds of Bun and versions that predate this option.

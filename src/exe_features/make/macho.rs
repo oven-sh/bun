@@ -1,4 +1,4 @@
-//! Mach-O, arm64, linked by ld64.lld.
+//! Mach-O, arm64 or x86-64, linked by ld64.lld.
 //!
 //! The link has to be made with `-map`, `-object_path_lto` and `-ignore_optimization_hints`: the hints let the linker turn
 //! `adrp` + `add` into `adr` + `nop` and the like, after which the relocations no longer describe the instructions.
@@ -11,8 +11,9 @@
 //! it (hand-written assembly that falls through its labels uses this), and an object without
 //! `MH_SUBSECTIONS_VIA_SYMBOLS` has one atom per section.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
+use std::path::Path;
 
 use super::blocks::{Functions, Marker, marker_patch};
 use super::features::{FEATURES, Select, matches};
@@ -26,6 +27,7 @@ const MH_MAGIC_64: u32 = 0xfeed_facf;
 const MH_SUBSECTIONS_VIA_SYMBOLS: u32 = 0x2000;
 const LC_SYMTAB: u32 = 2;
 const LC_SEGMENT_64: u32 = 0x19;
+const LC_DATA_IN_CODE: u32 = 0x29;
 const LC_MAIN: u32 = 0x8000_0028;
 const LC_DYLD_EXPORTS_TRIE: u32 = 0x8000_0033;
 const LC_DYLD_CHAINED_FIXUPS: u32 = 0x8000_0034;
@@ -40,9 +42,24 @@ const S_ATTR_NO_DEAD_STRIP: u32 = 0x1000_0000;
 /// cstring, 4-, 8- and 16-byte literals, literal pointers: the linker merges these by content.
 const LITERAL_SECTION_TYPES: [u8; 5] = [2, 3, 4, 5, 14];
 
+/// The same for both.
+const RELOC_UNSIGNED: u8 = 0;
+
+/// `X86_64_RELOC_*`
+mod x64 {
+    pub(super) const SIGNED: u8 = 1;
+    pub(super) const BRANCH: u8 = 2;
+    pub(super) const GOT_LOAD: u8 = 3;
+    pub(super) const GOT: u8 = 4;
+    pub(super) const SUBTRACTOR: u8 = 5;
+    pub(super) const SIGNED_1: u8 = 6;
+    pub(super) const SIGNED_2: u8 = 7;
+    pub(super) const SIGNED_4: u8 = 8;
+    pub(super) const TLV: u8 = 9;
+}
+
 /// `ARM64_RELOC_*`
 mod reloc {
-    pub(super) const UNSIGNED: u8 = 0;
     pub(super) const SUBTRACTOR: u8 = 1;
     pub(super) const BRANCH26: u8 = 2;
     pub(super) const PAGE21: u8 = 3;
@@ -247,7 +264,8 @@ fn parse(bytes: &[u8]) -> Parsed<'_> {
 enum Refers {
     /// To an atom of the image: where the atom starts, and the address in (or near) it that is meant.
     Atom(u64, i64),
-    /// To a literal. Where it was merged to is not known here; the sections that hold literals are not moved.
+    /// To a literal, or to a constant that comes before the first symbol of its section. Where it ended up is not known
+    /// here. It has to be where nothing is moved.
     Literal,
     /// To something that comes from a dylib, through a stub or the GOT.
     Imported,
@@ -258,6 +276,8 @@ struct Record {
     place: u64,
     kind: u8,
     log2_length: u8,
+    /// x86-64: how many bytes of the instruction follow the field, which counts from the end of the instruction.
+    following: u8,
     refers: Refers,
     /// For `target - other`: start of the atom that holds `other`.
     minus_atom: Option<u64>,
@@ -321,7 +341,7 @@ struct Reconstructed {
     report: String,
 }
 
-fn reconstruct(map: &Map<'_>, linked: &[u8]) -> Result<Reconstructed> {
+fn reconstruct(map: &Map<'_>, linked: &[u8], arch: Arch) -> Result<Reconstructed> {
     // The Mach-O header, which `__mh_execute_header` and `___dso_handle` stand for. __text follows it in the same 16 MB.
     let image_base = map
         .sections
@@ -331,18 +351,40 @@ fn reconstruct(map: &Map<'_>, linked: &[u8]) -> Result<Reconstructed> {
         >> 24
         << 24;
 
+    // By the number the map gives them. It lists an object only if it credits a symbol to it, and the external symbols of
+    // what LTO generated it credits to the bitcode they came from. So the rest of what LTO generated follows.
+    let listed = map
+        .files
+        .iter()
+        .map(|name| String::from_utf8_lossy(name).into_owned());
+    let mut files: Vec<String> = listed.collect();
+    let generated = files.iter().filter(|name| name.ends_with(".lto.o"));
+    let directories: BTreeSet<&Path> = generated
+        .filter_map(|name| Path::new(name).parent())
+        .collect();
+    let mut unlisted = Vec::new();
+    for directory in directories {
+        for entry in
+            std::fs::read_dir(directory).map_err(|e| format!("{}: {e}", directory.display()))?
+        {
+            let path = entry
+                .map_err(|e| format!("{}: {e}", directory.display()))?
+                .path();
+            unlisted.push(path.to_string_lossy().into_owned());
+        }
+    }
+    let is_listed: HashSet<&str> = files.iter().map(|name| &name[..]).collect();
+    unlisted.retain(|name| name.ends_with(".lto.o") && !is_listed.contains(&name[..]));
+    unlisted.sort_unstable();
+    files.extend(unlisted);
+    let files = files;
+
     let mut archives = Objects::default();
     let mut loaded: Vec<(usize, Object)> = Vec::new();
     let (mut missing, mut bitcode) = (Vec::new(), 0);
-    for (file, name) in map
-        .files
-        .iter()
-        .enumerate()
-        .skip(1)
-        .filter(|f| !f.1.is_empty())
-    {
-        match archives.get(&String::from_utf8_lossy(name)) {
-            None => missing.push(String::from_utf8_lossy(name)),
+    for (file, name) in files.iter().enumerate().skip(1).filter(|f| !f.1.is_empty()) {
+        match archives.get(name) {
+            None => missing.push(name),
             Some(object) if !object.bytes().starts_with(&MH_MAGIC_64.to_le_bytes()) => bitcode += 1,
             Some(object) => loaded.push((file, object)),
         }
@@ -481,7 +523,7 @@ fn reconstruct(map: &Map<'_>, linked: &[u8]) -> Result<Reconstructed> {
             }
         }
 
-        let name_of_file = || String::from_utf8_lossy(map.files[file]);
+        let name_of_file = || &files[file];
         for (index, s) in sections.iter().enumerate() {
             if s.segment == b"__DWARF" || s.segment == b"__LD" || s.section == b"__eh_frame" {
                 continue;
@@ -497,20 +539,63 @@ fn reconstruct(map: &Map<'_>, linked: &[u8]) -> Result<Reconstructed> {
                     word >> 27 & 1 != 0,
                     (word >> 28) as u8,
                 );
-                if kind == reloc::ADDEND {
+                if arch == Arch::Arm64 && kind == reloc::ADDEND {
                     addend = i64::from((number << 8).cast_signed() >> 8); // applies to the relocation that follows
                     continue;
                 }
                 let this_addend = core::mem::take(&mut addend);
-                if !is_external {
-                    fail!(
-                        "{}: relocation against a section number, which arm64 does not use",
-                        name_of_file()
-                    );
-                }
-                let y = &symbols[number as usize];
+                let field = s.offset.wrapping_add_signed(offset as isize);
+                // x86-64 holds every addend in place. One relative to the instruction pointer counts from the end of the field.
+                let is_relative =
+                    arch == Arch::X64 && kind != RELOC_UNSIGNED && kind != x64::SUBTRACTOR;
+                let following: u8 = match kind {
+                    x64::SIGNED_1 if is_relative => 1,
+                    x64::SIGNED_2 if is_relative => 2,
+                    x64::SIGNED_4 if is_relative => 4,
+                    _ => 0,
+                };
+                let relative_addend = if is_relative {
+                    i64::from(b.i32(field)) + i64::from(following)
+                } else {
+                    0
+                };
+
+                let nameless = ObjectSymbol {
+                    name: b"<a section>",
+                    kind: 0,
+                    section: 0,
+                    flags: 0,
+                    value: 0,
+                };
+                let y = if is_external {
+                    &symbols[number as usize]
+                } else {
+                    &nameless
+                };
                 // {start of the atom, the address}, if it is in the image
-                let (target, otherwise) = if y.is_defined() {
+                let (target, otherwise) = if !is_external {
+                    // Against a section, for what has no symbol to go by. What is in place is an address in the object.
+                    if arch == Arch::Arm64 {
+                        fail!(
+                            "{}: relocation against a section number, which arm64 does not use",
+                            name_of_file()
+                        );
+                    }
+                    let address = if is_relative {
+                        s.addr
+                            .wrapping_add_signed(i64::from(offset) + 4 + relative_addend)
+                    } else if log2_length == 3 {
+                        b.u64(field)
+                    } else {
+                        b.u32(field).into()
+                    };
+                    let is_literal =
+                        LITERAL_SECTION_TYPES.contains(&sections[number as usize - 1].kind);
+                    match locate(number as usize, address).filter(|_| !is_literal) {
+                        Some(located) => (Some(located), None),
+                        None => (None, Some(Refers::Literal)),
+                    }
+                } else if y.is_defined() {
                     if LITERAL_SECTION_TYPES.contains(&sections[usize::from(y.section) - 1].kind) {
                         (None, Some(Refers::Literal))
                     } else {
@@ -526,7 +611,13 @@ fn reconstruct(map: &Map<'_>, linked: &[u8]) -> Result<Reconstructed> {
                     )
                 };
 
-                if kind == reloc::SUBTRACTOR {
+                if kind
+                    == (if arch == Arch::Arm64 {
+                        reloc::SUBTRACTOR
+                    } else {
+                        x64::SUBTRACTOR
+                    })
+                {
                     minus = target.map(|t| t.0); // pairs with the UNSIGNED that follows
                     continue;
                 }
@@ -538,13 +629,10 @@ fn reconstruct(map: &Map<'_>, linked: &[u8]) -> Result<Reconstructed> {
                 };
                 // A pointer holds its addend in place. For a difference it does not matter: only the two atoms do.
                 let in_place = match (kind, this_minus, log2_length) {
-                    (reloc::UNSIGNED, None, 3) => {
-                        b.i64(s.offset.wrapping_add_signed(offset as isize))
-                    }
-                    (reloc::UNSIGNED, None, _) => {
-                        b.i32(s.offset.wrapping_add_signed(offset as isize)).into()
-                    }
-                    _ => 0,
+                    _ if !is_external => 0, // it was the address
+                    (RELOC_UNSIGNED, None, 3) => b.i64(field),
+                    (RELOC_UNSIGNED, None, _) => b.i32(field).into(),
+                    _ => relative_addend,
                 };
                 let refers = match (otherwise, target) {
                     (Some(otherwise), _) => otherwise,
@@ -561,6 +649,7 @@ fn reconstruct(map: &Map<'_>, linked: &[u8]) -> Result<Reconstructed> {
                     place,
                     kind,
                     log2_length,
+                    following,
                     refers,
                     minus_atom: this_minus,
                 });
@@ -685,11 +774,11 @@ fn exported(b: Data<'_>, trie: usize, node: usize, out: &mut Vec<u64>) {
     }
 }
 
-pub(super) fn make(link: &Link<'_>, linked: &[u8]) -> Result<Made> {
+pub(super) fn make(link: &Link<'_>, linked: &[u8], arch: Arch) -> Result<Made> {
     let b = Data(linked);
     let map_text = read(link.map)?;
     let map = read_map(&map_text);
-    let reconstructed = reconstruct(&map, linked)?;
+    let reconstructed = reconstruct(&map, linked, arch)?;
 
     // ---- load commands
     let mut commands: Vec<(u32, usize)> = Vec::new();
@@ -928,6 +1017,21 @@ pub(super) fn make(link: &Link<'_>, linked: &[u8]) -> Result<Made> {
         }
     }
 
+    // x86-64: a jump table follows the code of its function, and `LC_DATA_IN_CODE` lists {offset, length u16, kind u16}.
+    let mut jump_tables_in_code: Vec<(u64, u64)> = Vec::new();
+    if let Some(c) = command(LC_DATA_IN_CODE).filter(|_| arch == Arch::X64) {
+        const DICE_KIND_JUMP_TABLE32: u16 = 4;
+        let at = b.u32(c + 8) as usize;
+        for o in (at..at + b.u32(c + 12) as usize)
+            .step_by(8)
+            .filter(|&o| b.u16(o + 6) == DICE_KIND_JUMP_TABLE32)
+        {
+            let start = base + u64::from(b.u32(o));
+            jump_tables_in_code.push((start, start + u64::from(b.u16(o + 4))));
+        }
+        jump_tables_in_code.sort_unstable();
+    }
+
     let mut image = MachO {
         nodes,
         list,
@@ -963,7 +1067,7 @@ pub(super) fn make(link: &Link<'_>, linked: &[u8]) -> Result<Made> {
                 .collect()
         };
         Functions {
-            arch: Arch::Arm64,
+            arch,
             objdump: link.objdump,
             path: link.linked,
             bias: 0,
@@ -974,6 +1078,7 @@ pub(super) fn make(link: &Link<'_>, linked: &[u8]) -> Result<Made> {
             is_code: &is_code,
             does_not_return: &HashSet::new(),
             constants_taken_by: &taken_by,
+            jump_tables_in_code: &jump_tables_in_code,
         }
         .split()?
     };
@@ -1004,6 +1109,13 @@ pub(super) fn make(link: &Link<'_>, linked: &[u8]) -> Result<Made> {
                 .map(|o| base + u64::from(b.u32(s.offset + o))),
         );
     }
+    // x86-64: what comes before the first symbol of its section has no name, so where its relocations apply is not known.
+    // It always stays, and what it points at with it.
+    let has_relocation = |at: u64| !image.records_in(at, at + 1).is_empty();
+    let nameless = rebased
+        .iter()
+        .filter(|&&at| !within(got, at) && !has_relocation(at));
+    roots.extend(nameless.map(|&at| b.u64(file_offset(at)) & 0xf_ffff_ffff));
     // With nothing excluded the graph should reach everything the linker kept. What it does not reach is kept regardless.
     let as_linked = mark(&image, &roots, Excluded::BothSides)?;
     let unexplained: Vec<usize> = (0..n_nodes)
@@ -1130,15 +1242,66 @@ pub(super) fn make(link: &Link<'_>, linked: &[u8]) -> Result<Made> {
         };
         let unit = || atom.and_then(|(atom, target)| unit_for(atom, target));
         let means = |address: u64| atom.is_some_and(|(_, target)| target == address.cast_signed());
-        match r.kind {
-            reloc::UNSIGNED => {
-                if r.minus_atom.is_none() {
-                    // handled with the fixup chains below
-                    atom_of_pointer.extend(atom.map(|(atom, _)| (p, atom)));
-                } else if !within(marker_records, p) {
-                    fail!("a difference of two addresses at {p:x}"); // nothing but the records has them
+        if r.kind == RELOC_UNSIGNED {
+            if r.minus_atom.is_none() {
+                // handled with the fixup chains below
+                atom_of_pointer.extend(atom.map(|(atom, _)| (p, atom)));
+            } else if !within(marker_records, p) {
+                // Tables of constants hold the distances from themselves to other constants. None of those move, so there
+                // is nothing to patch, but what a table leads to lives as long as the table.
+                if atom.is_some_and(|(atom, _)| moves(atom)) || r.minus_atom.is_some_and(moves) {
+                    fail!("a difference of two addresses, one of which can move, at {p:x}");
+                }
+                if unit().is_some() {
+                    parts.add_fixup("distance to a constant", p, Form::None, unit(), 0);
                 }
             }
+            continue;
+        }
+        if arch == Arch::X64 {
+            // Every other field is a distance from the end of its instruction.
+            let t =
+                (p + 4 + u64::from(r.following)).wrapping_add_signed(b.i32(file_offset(p)).into());
+            match r.kind {
+                x64::BRANCH if means(t) && !within(stubs, t) => {
+                    parts.add_fixup("branch", p, Form::Rel32, unit(), 0)
+                }
+                x64::BRANCH if within(stubs, t) => {
+                    parts.add_fixup(
+                        "branch to a stub",
+                        p,
+                        Form::Rel32,
+                        stubs.and_then(|s| unit_at(s.addr)),
+                        0,
+                    );
+                }
+                x64::SIGNED | x64::SIGNED_1 | x64::SIGNED_2 | x64::SIGNED_4 if means(t) => {
+                    parts.add_fixup("relative", p, Form::Rel32, unit(), 0);
+                }
+                // it stays, the instruction moves
+                x64::SIGNED | x64::SIGNED_1 | x64::SIGNED_2 | x64::SIGNED_4
+                    if atom.is_none() && t >= first_fixed =>
+                {
+                    parts.add_fixup("relative, to a literal", p, Form::Rel32, None, 0);
+                }
+                x64::GOT_LOAD | x64::GOT if within(got, t) => {
+                    parts.add_fixup("got slot", p, Form::Rel32, None, 0);
+                    if atom.is_some() {
+                        parts.add_fixup("what a got slot holds", p, Form::None, unit(), 0); // the slot itself keeps nothing alive
+                    }
+                }
+                // The linker turns a load from the GOT into the address itself where it can.
+                x64::GOT_LOAD if means(t) => {
+                    parts.add_fixup("got slot, relaxed to the symbol", p, Form::Rel32, unit(), 0)
+                }
+                x64::TLV if t >= first_fixed => {
+                    parts.add_fixup("thread-local descriptor", p, Form::Rel32, None, 0)
+                }
+                kind => fail!("the relocation of type {kind} at {p:x} means {t:x}, and should not"),
+            }
+            continue;
+        }
+        match r.kind {
             reloc::BRANCH26 => {
                 let w = b.u32(file_offset(p));
                 if w & 0x7c00_0000 != 0x1400_0000 {
@@ -1230,13 +1393,24 @@ pub(super) fn make(link: &Link<'_>, linked: &[u8]) -> Result<Made> {
         }
     }
 
-    // What the linker made has no relocations. A stub is `adrp x16, slot ; ldr x16, [x16, #low] ; br x16`.
-    if let Some(stubs) = stubs {
-        for a in (stubs.addr..stubs.addr + stubs.size).step_by(12) {
+    // What the linker made has no relocations. A stub is `adrp x16, slot ; ldr x16, [x16, #low] ; br x16`, or `jmpq *slot(%rip)`.
+    for a in stubs
+        .into_iter()
+        .flat_map(|s| (s.addr..s.addr + s.size).step_by(if arch == Arch::Arm64 { 12 } else { 6 }))
+    {
+        if arch == Arch::Arm64 {
             if !is_in_got_pages(adrp_target(a)?) {
                 fail!("a stub does not load from the got");
             }
             parts.add_fixup("stub", a, Form::Page21, None, 0);
+        } else {
+            let o = file_offset(a);
+            if linked[o..o + 2] != [0xff, 0x25]
+                || !within(got, (a + 6).wrapping_add_signed(b.i32(o + 2).into()))
+            {
+                fail!("a stub does not jump through the got");
+            }
+            parts.add_fixup("stub", a + 2, Form::Rel32, None, 0);
         }
     }
     for &at in &rebased {
@@ -1252,14 +1426,13 @@ pub(super) fn make(link: &Link<'_>, linked: &[u8]) -> Result<Made> {
                 );
             }
         } else if let Some(n) = nodes.find(pointer).filter(|&n| is_in_table(n)) {
-            // a slot of the got
-            parts.add_fixup(
-                "got slot",
-                at,
-                Form::ChainRebaseWeak,
-                unit_for(nodes.addr[n], pointer.cast_signed()),
-                0,
-            );
+            let (sort, form) = if within(got, at) {
+                ("got slot", Form::ChainRebaseWeak)
+            } else {
+                ("pointer in what has no name", Form::ChainRebase)
+            };
+            let unit = unit_for(nodes.addr[n], pointer.cast_signed());
+            parts.add_fixup(sort, at, form, unit, 0);
         }
     }
     if let Some(s) = init_offsets {
@@ -1278,13 +1451,7 @@ pub(super) fn make(link: &Link<'_>, linked: &[u8]) -> Result<Made> {
     // ---- the table
     let mut patches = Vec::new();
     for &(site, marker) in &markers {
-        patches.push(marker_patch(
-            Arch::Arm64,
-            b,
-            file_offset(site),
-            site,
-            marker,
-        )?);
+        patches.push(marker_patch(arch, b, file_offset(site), site, marker)?);
     }
     let report = format!(
         "{}atoms {n_nodes}, relocations {} (and {duplicates} duplicates), rebased pointers {}, markers {} in {} functions ({} \
@@ -1310,7 +1477,7 @@ pub(super) fn make(link: &Link<'_>, linked: &[u8]) -> Result<Made> {
     let table = Table {
         format: Format {
             container: Container::MachO,
-            arch: Arch::Arm64,
+            arch,
         },
         features: FEATURES
             .iter()
@@ -1325,7 +1492,11 @@ pub(super) fn make(link: &Link<'_>, linked: &[u8]) -> Result<Made> {
                 .ok_or("nothing moves")?],
             high: first_fixed,
             towards_high: true,
-            fill: [0x20, 0x00, 0x20, 0xd4].into(), // brk #1
+            fill: if arch == Arch::Arm64 {
+                [0x20, 0x00, 0x20, 0xd4][..].into()
+            } else {
+                [0xcc][..].into()
+            }, // brk #1, int3
         }],
         code: sections
             .iter()

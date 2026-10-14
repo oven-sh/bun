@@ -68,7 +68,7 @@ fn make(
         .format;
     match format.container {
         Container::Elf => elf::make(link, &linked, format.arch, want_blocks),
-        Container::MachO => Ok((macho::make(link, &linked)?, None)),
+        Container::MachO => Ok((macho::make(link, &linked, format.arch)?, None)),
         Container::Pe => Ok((pe::make(link, &linked, format.arch)?, None)),
     }
 }

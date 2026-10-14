@@ -66,7 +66,7 @@ fn macho(out: &mut Vec<u8>, table: &[u8], page: u64) -> Result<()> {
         None => usize_at(out, linkedit + 40)? + usize_at(out, linkedit + 48)?,
     };
     // The string table is the last thing before the signature, which starts at a multiple of 16.
-    if content_end % 16 != 0
+    if (signature.is_some() && content_end % 16 != 0)
         || content_end
             .checked_sub(strings_end)
             .is_none_or(|gap| gap >= 16)

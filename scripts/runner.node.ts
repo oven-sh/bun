@@ -2876,7 +2876,7 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
   const releasePath = join(cwd, "release");
   mkdirSync(releasePath, { recursive: true });
 
-  let zipPath: string | undefined;
+  let zipPaths: string[] = [];
   downloadLoop: for (let i = 0; i < 10; i++) {
     const args = ["artifact", "download", "*.zip", releasePath, "--step", target];
     if (buildId) {
@@ -2895,13 +2895,12 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
       );
     }
 
-    zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
+    zipPaths = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
       .filter(filename => /^bun.*\.zip$/i.test(filename))
       .map(filename => join(releasePath, filename))
-      .sort((a, b) => Number(b.includes("profile")) - Number(a.includes("profile")))
-      .at(0);
+      .sort((a, b) => Number(b.includes("profile")) - Number(a.includes("profile")));
 
-    if (zipPath) {
+    if (zipPaths.length) {
       break downloadLoop;
     }
 
@@ -2909,14 +2908,18 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
     await new Promise(resolve => setTimeout(resolve, i * 1000));
   }
 
+  const [zipPath] = zipPaths;
   if (!zipPath) {
     throw new Error(`Could not find ${target}.zip from Buildkite: ${releasePath}`);
   }
 
-  await unzip(zipPath, releasePath);
+  // The tests run with what is in the first. The `bun` that ships is unpacked next to it, for the tests that are about it.
+  for (const path of zipPaths) {
+    await unzip(path, releasePath);
+  }
 
   const releaseFiles = readdirSync(releasePath, { recursive: true, encoding: "utf-8" });
-  for (const entry of releaseFiles) {
+  for (const entry of releaseFiles.filter(entry => entry.startsWith(basename(zipPath, ".zip")))) {
     const execPath = join(releasePath, entry);
     if (/bun(?:-[a-z]+)?(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
       return execPath;

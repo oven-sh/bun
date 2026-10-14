@@ -1040,6 +1040,7 @@ pub(super) fn make(link: &Link<'_>, linked: &[u8], arch: Arch) -> Result<Made> {
         is_code: &|n| image.list[n].is_code,
         does_not_return: &HashSet::new(),
         constants_taken_by: &|_, _| Vec::new(),
+        jump_tables_in_code: &[],
     }
     .split()?;
 

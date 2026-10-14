@@ -1285,7 +1285,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           : toolchain.objdump === undefined || toolchain.rustSysroot === undefined
             ? "it takes llvm-objdump and rustc"
             : // Android keeps its unwind tables, which refer to functions and are not kept up to date.
-              !((linux && abi !== "android") || (darwin && arm64) || (windows && x64))
+              !((linux && abi !== "android") || darwin || (windows && x64))
               ? "this target is not supported yet"
               : undefined;
   if (partial.featureTable === true && whyNoFeatureTable !== undefined) {

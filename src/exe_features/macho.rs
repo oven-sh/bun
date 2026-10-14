@@ -417,12 +417,23 @@ pub(crate) fn apply(
         put_u64(&mut header, c + 8, entry)?;
     }
     if let Some(c) = command(LC_DATA_IN_CODE) {
-        let mut blob = blob_of(&bytes, c)?;
+        // {offset from the base, length and kind}, sorted
+        let blob = blob_of(&bytes, c)?;
+        let mut kept = Vec::new();
         for at in (0..blob.len()).step_by(8) {
-            let new = rebased(u32_at(&blob, at)?.into())? as u32;
-            put_u32(&mut blob, at, new)?;
+            let from_base = u64::from(u32_at(&blob, at)?);
+            if is_piece_live_at(base.wrapping_add(from_base)) == Some(true) {
+                kept.push((rebased(from_base)? as u32, u32_at(&blob, at + 4)?));
+            }
         }
+        kept.sort_unstable();
+        let blob: Vec<u8> = kept
+            .iter()
+            .flat_map(|(from_base, rest)| [from_base.to_le_bytes(), rest.to_le_bytes()])
+            .flatten()
+            .collect();
         put_u32(&mut header, c + 8, append(&blob))?;
+        put_u32(&mut header, c + 12, blob.len() as u32)?;
     }
 
     // The symbol table keeps what is exported or imported. The indirect symbol table refers to it by index.

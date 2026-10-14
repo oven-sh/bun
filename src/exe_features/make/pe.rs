@@ -1,4 +1,4 @@
-//! PE, x86-64, linked by lld-link with `/lldmap`, `/lldsavetemps:prelink`, `/verbose` and `/demangle:no`: the map has to name
+//! PE, x86-64, linked by lld-link with `/lldmap`, `/lldltocache`, `/verbose` and `/demangle:no`: the map has to name
 //! symbols as the object files do. Addresses here, and in the table, are relative to the image base.
 //!
 //! A node is a CHUNK: a section of an object file. The map lists them as file:(section name), and in COFF nearly all of them
@@ -129,6 +129,8 @@ struct Chunk<'m> {
 struct Map<'m> {
     /// Sorted by address.
     chunks: Vec<Chunk<'m>>,
+    /// As indexes.
+    chunks_of_file: HashMap<Rc<[u8]>, Vec<usize>>,
     /// Listed under a chunk of that file.
     symbols_of_file: HashMap<Rc<[u8]>, HashMap<&'m [u8], Vec<u64>>>,
     symbols_by_name: HashMap<&'m [u8], Vec<u64>>,
@@ -231,10 +233,22 @@ fn read_map(text: &[u8]) -> Map<'_> {
         }
     }
     map.chunks.sort_by_key(|c| c.rva);
+    for (index, chunk) in map.chunks.iter().enumerate() {
+        let of_file = map.chunks_of_file.entry(Rc::clone(&chunk.file));
+        of_file.or_default().push(index);
+    }
     map
 }
 
-impl Map<'_> {
+impl<'m> Map<'m> {
+    fn chunks_of(&self, file: &[u8]) -> impl Iterator<Item = &Chunk<'m>> {
+        let indexes = self
+            .chunks_of_file
+            .get(file)
+            .map_or(&[][..], |list| &list[..]);
+        indexes.iter().map(|&index| &self.chunks[index])
+    }
+
     fn chunk_at(&self, rva: i64) -> Option<usize> {
         let rva = u64::try_from(rva).ok()?;
         let i = self
@@ -528,8 +542,8 @@ fn generated_objects(
     let all: Vec<usize> = (0..objects.len()).collect();
     let mut candidates: Vec<Vec<usize>> = Vec::new();
     for file in files {
-        let chunks: Vec<&Chunk<'_>> = (map.chunks.iter())
-            .filter(|c| c.file == *file && c.output != b".pdata")
+        let chunks: Vec<&Chunk<'_>> = (map.chunks_of(file))
+            .filter(|c| c.output != b".pdata")
             .collect();
         let may_have = |c: &&&Chunk<'_>| -> Vec<usize> {
             let mut list: Vec<usize> = c
@@ -845,9 +859,9 @@ fn replay(pe: &Pe<'_>, map: &Map<'_>, link: &Link<'_>) -> Result<Replayed> {
             .collect();
         let is_unknown = |c: &&Chunk<'_>| {
             let is_followed = c.output != b".pdata" && c.output != b".bunft";
-            c.file == *file && is_followed && !identified.contains(&c.rva) && left.contains(&c.size)
+            is_followed && !identified.contains(&c.rva) && left.contains(&c.size)
         };
-        if let Some(c) = map.chunks.iter().find(is_unknown) {
+        if let Some(c) = map.chunks_of(file).find(is_unknown) {
             fail!(
                 "{path}: which section the chunk at {:x} is cannot be told, and it may be one that refers to something",
                 c.rva
@@ -856,7 +870,7 @@ fn replay(pe: &Pe<'_>, map: &Map<'_>, link: &Link<'_>) -> Result<Replayed> {
     }
     // The linker makes an object of its own from the resources. What matters is code and constants.
     let is_covered = |c: &Chunk<'_>| c.output == b".text" || c.output == b".rdata";
-    let matters = |file: &&Rc<[u8]>| map.chunks.iter().any(|c| c.file == **file && is_covered(c));
+    let matters = |file: &&Rc<[u8]>| map.chunks_of(file).any(is_covered);
     if let Some(first) = missing.iter().find(matters) {
         fail!(
             "an input of the link is not there: {}",
@@ -1027,6 +1041,9 @@ pub(super) fn graph(link: &Link<'_>, linked: &[u8], is_arm64: bool) -> Result<Gr
     // Every pointer in the image is listed for the loader.
     let mut pointers_from_the_unknown = 0;
     let (mut at, size) = pe.directory(IMAGE_DIRECTORY_ENTRY_BASERELOC);
+    if size == 0 {
+        fail!("the image has no base relocations");
+    }
     let end = at + size;
     while at < end {
         let (page, block) = (u64::from(b.u32(at)), b.u32(at + 4) as usize);

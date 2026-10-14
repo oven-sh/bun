@@ -66,7 +66,7 @@ struct Node {
     can_be_left_out: bool,
     /// The linker keeps it whether or not anything refers to it.
     is_root: bool,
-    /// Symbols at its start. Those that the linker may know it by are among them.
+    /// Symbols at its start, among them one that the linker knows it by. (PE: with those of what was folded into it.)
     names: Vec<String>,
 }
 
@@ -222,7 +222,9 @@ fn needs(graph: &Graph) -> Result<Needs> {
 
     let mut is_explained = vec![false; count];
     reach(&mut is_explained, roots.clone(), &|_| true);
-    let unexplained: Vec<u32> = all().filter(|&n| !is_explained[n as usize]).collect();
+    // (But for a door: only `enter` refers to one. Its record may have kept it.)
+    let is_unexplained = |&n: &u32| !is_explained[n as usize] && door_of[n as usize].is_none();
+    let unexplained: Vec<u32> = all().filter(is_unexplained).collect();
 
     let mut always_stays = vec![false; count];
     let starts = roots.iter().chain(&unexplained).copied().collect();
@@ -230,7 +232,7 @@ fn needs(graph: &Graph) -> Result<Needs> {
     // Else the whole feature would stay, without a word.
     if let Some(door) = (0..count).find(|&n| always_stays[n] && door_of[n].is_some()) {
         fail!(
-            "the door at {:x} is kept by the linker, or by something that the graph does not know",
+            "the door at {:x} is kept by the linker whether or not anything refers to it",
             graph.nodes[door].addresses.start
         );
     }
@@ -483,6 +485,12 @@ pub fn make_table(link: &Link<'_>) -> Result<String> {
 
     linked[room.clone()].fill(0);
     linked[room.start..room.start + bytes.len()].copy_from_slice(&bytes);
+    // What `bun build --compile` is going to do with it, so that it is not there that something about this executable turns out
+    // to be unexpected.
+    let names: Vec<&[u8]> = FEATURES.iter().map(|f| f.0.as_bytes()).collect();
+    if let Err(e) = crate::Features::of(&linked).and_then(|features| features.without(&names)) {
+        fail!("the features cannot be left out of the executable: {e}");
+    }
     std::fs::write(link.linked, linked).map_err(|e| format!("{}: {e}", link.linked.display()))?;
     Ok(report)
 }

@@ -11,7 +11,8 @@
 //! found or changed: not in code, not in data, not in symbols, debug information or unwind tables, and a crash report has
 //! the addresses it would have had, to be read against the symbols of the release. All that changes is where in the file
 //! things are, and into how many segments or sections it is cut, which only the headers of the file say. That is the whole of
-//! what [`elf`], [`macho`] and [`pe`] do. What is left out cannot be read or run: whatever gets there by mistake stops there.
+//! what [`elf`], [`macho`] and [`pe`] do. What is left out cannot be read or run, and what of it shares a page with something
+//! that stays traps: whatever gets there by mistake stops there.
 //!
 //! An executable is loaded in pages, so only whole pages leave the file. Bun's build lays out what each set of features
 //! needs as one stretch, so that is nearly all of it.

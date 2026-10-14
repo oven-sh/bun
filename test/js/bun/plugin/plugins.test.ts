@@ -303,6 +303,40 @@ describe("module", () => {
       expect(there).toBeUndefined();
     }
   });
+
+  it("a bun: module that is not a builtin works with import and require()", async () => {
+    Bun.plugin({
+      name: "a bun: module that is not a builtin",
+      setup(builder) {
+        builder.module("bun:my-virtual-module", () => ({
+          exports: {
+            hello: "world",
+          },
+          loader: "object",
+        }));
+
+        builder.onResolve({ filter: /^my-resolved-module$/, namespace: "bun" }, ({ path }) => ({
+          path,
+          namespace: "my-resolved-namespace",
+        }));
+        builder.onLoad({ filter: /.*/, namespace: "my-resolved-namespace" }, ({ path }) => ({
+          exports: {
+            hello: path,
+          },
+          loader: "object",
+        }));
+      },
+    });
+
+    // @ts-expect-error
+    expect((await import("bun:my-virtual-module")).hello).toBe("world");
+    expect(require("bun:my-virtual-module").hello).toBe("world");
+    expect(require.resolve("bun:my-virtual-module")).toBe("bun:my-virtual-module");
+
+    // @ts-expect-error
+    expect((await import("bun:my-resolved-module")).hello).toBe("my-resolved-module");
+    expect(require("bun:my-resolved-module").hello).toBe("my-resolved-module");
+  });
 });
 
 describe("dynamic import", () => {

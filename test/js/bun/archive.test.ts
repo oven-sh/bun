@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "path";
 
 // Root ignores permission bits, so a test that depends on them proves nothing as root.
@@ -911,149 +922,228 @@ describe("Bun.Archive", () => {
           }
         })();
 
-      describe.each(extractModes)("%s extraction", (_mode, extract) => {
-        // The link that stays inside is refused all the same.
-        test.each([
-          ["points outside the destination", "victim"],
-          ["stays inside the destination", join("out", "real")],
-        ])("rejects an entry below a junction that %s, and names the entry", async (_where, target) => {
-          using dir = tempDir("archive-junction-parent", { "victim/keep.txt": "KEEP", "out/real/keep.txt": "KEEP" });
-          const root = String(dir);
-          const out = join(root, "out");
-          symlinkSync(join(root, target), join(out, "shared"), "junction");
+      // `C:\dir` as `\\localhost\C$\dir`: the same directory through the file
+      // server of this machine. There the server resolves a junction, not the
+      // process that extracts.
+      const throughShare = (path: string) => {
+        const real = realpathSync(path);
+        return `\\\\localhost\\${real[0]}$\\${real.slice(3)}`;
+      };
+      // The administrative share of a drive needs an administrator.
+      const canUseShare = isWindows && existsSync(throughShare(tmpdir()));
 
-          const result = await settled(extract(new Bun.Archive({ "inside.txt": "INSIDE", "shared/f.txt": "F" }), out));
-
-          expect({
-            result,
-            victim: readdirSync(join(root, "victim")),
-            real: readdirSync(join(out, "real")),
-            inside: await Bun.file(join(out, "inside.txt")).text(),
-            junction: lstatSync(join(out, "shared")).isSymbolicLink(),
-          }).toEqual({
-            result: { code: "ELOOP", path: "shared/f.txt" },
-            victim: ["keep.txt"],
-            real: ["keep.txt"],
-            inside: "INSIDE",
-            junction: true,
-          });
-        });
-
-        test("makes no directory below a junction that is not the first component", async () => {
-          using dir = tempDir("archive-junction-nested", { "victim/keep.txt": "KEEP", "out/a/keep.txt": "KEEP" });
-          const root = String(dir);
-          const out = join(root, "out");
-          symlinkSync(join(root, "victim"), join(out, "a", "shared"), "junction");
-
-          const result = await settled(extract(new Bun.Archive({ "a/ok.txt": "OK", "a/shared/b/f.txt": "F" }), out));
-
-          expect({
-            result,
-            victim: readdirSync(join(root, "victim")),
-            ok: await Bun.file(join(out, "a", "ok.txt")).text(),
-          }).toEqual({
-            result: { code: "ELOOP", path: "a/shared/b/f.txt" },
-            victim: ["keep.txt"],
-            ok: "OK",
-          });
-        });
-
-        // Windows takes `\` in the name of an entry as a separator too.
-        test("rejects an entry that names the junction with a backslash", async () => {
-          using dir = tempDir("archive-junction-backslash", { "victim/keep.txt": "KEEP", "out/keep.txt": "KEEP" });
-          const root = String(dir);
-          const out = join(root, "out");
-          symlinkSync(join(root, "victim"), join(out, "shared"), "junction");
-
-          const result = await settled(
-            extract(new Bun.Archive(buildTarball([{ name: "shared\\f.txt", data: "F" }])), out),
-          );
-
-          expect({ result, victim: readdirSync(join(root, "victim")) }).toEqual({
-            result: { code: "ELOOP", path: "shared/f.txt" },
-            victim: ["keep.txt"],
-          });
-        });
-
-        test("rejects a directory entry below a junction", async () => {
-          using dir = tempDir("archive-junction-directory", { "victim/keep.txt": "KEEP", "out/keep.txt": "KEEP" });
-          const root = String(dir);
-          const out = join(root, "out");
-          symlinkSync(join(root, "victim"), join(out, "shared"), "junction");
-          const tarball = new Uint8Array(Buffer.concat([ustarHeader("shared/sub/", 0, "5"), Buffer.alloc(1024)]));
-
-          const result = await settled(extract(new Bun.Archive(tarball), out));
-
-          expect({ result, victim: readdirSync(join(root, "victim")) }).toEqual({
-            result: { code: "ELOOP", path: "shared/sub/" },
-            victim: ["keep.txt"],
-          });
-        });
-
-        test("does not make a directory at the target of a dangling junction", async () => {
-          using dir = tempDir("archive-junction-dangling", { "out/keep.txt": "KEEP" });
-          const root = String(dir);
-          const out = join(root, "out");
-          symlinkSync(join(root, "outside"), join(out, "d"), "junction");
-          const tarball = new Uint8Array(Buffer.concat([ustarHeader("d/", 0, "5"), Buffer.alloc(1024)]));
-
-          const result = await settled(extract(new Bun.Archive(tarball), out));
-
-          expect({
-            result,
-            outside: existsSync(join(root, "outside")),
-            junction: lstatSync(join(out, "d")).isSymbolicLink(),
-          }).toEqual({ result: { count: 1 }, outside: false, junction: true });
-        });
-
-        test("replaces a junction under a file entry's own name", async () => {
-          using dir = tempDir("archive-junction-leaf", { "victim/keep.txt": "KEEP", "out/keep.txt": "KEEP" });
-          const root = String(dir);
-          const out = join(root, "out");
-          symlinkSync(join(root, "victim"), join(out, "cfg"), "junction");
-
-          const result = await settled(extract(new Bun.Archive({ cfg: "OVERWRITTEN" }), out));
-
-          expect({
-            result,
-            victim: readdirSync(join(root, "victim")),
-            cfg: lstatSync(join(out, "cfg")).isFile() && (await Bun.file(join(out, "cfg")).text()),
-          }).toEqual({ result: { count: 1 }, victim: ["keep.txt"], cfg: "OVERWRITTEN" });
-        });
-
-        describe.skipIf(!canSymlink)("and symlinks", () => {
-          test("rejects an entry below a symlink to a directory, and names the entry", async () => {
-            using dir = tempDir("archive-dir-symlink-parent", { "victim/keep.txt": "KEEP", "out/keep.txt": "KEEP" });
+      describe.each([
+        ["its own path", (path: string) => path, false],
+        ["a path through a network share", throughShare, !canUseShare],
+      ] as const)("with the destination given as %s", (_spelling, spell, skip) => {
+        describe.skipIf(skip).each(extractModes)("%s extraction", (mode, extract) => {
+          // The link that stays inside is refused all the same.
+          test.each([
+            ["points outside the destination", "victim"],
+            ["stays inside the destination", join("out", "real")],
+          ])("rejects an entry below a junction that %s, and names the entry", async (_where, target) => {
+            using dir = tempDir("archive-junction-parent", { "victim/keep.txt": "KEEP", "out/real/keep.txt": "KEEP" });
             const root = String(dir);
             const out = join(root, "out");
-            symlinkSync(join(root, "victim"), join(out, "shared"), "dir");
+            symlinkSync(join(root, target), join(out, "shared"), "junction");
 
-            const result = await settled(extract(new Bun.Archive({ "shared/f.txt": "F" }), out));
+            const archive = new Bun.Archive({ "inside.txt": "INSIDE", "shared/f.txt": "F" });
+            const result = await settled(extract(archive, spell(out)));
 
             expect({
               result,
               victim: readdirSync(join(root, "victim")),
-              symlink: lstatSync(join(out, "shared")).isSymbolicLink(),
+              real: readdirSync(join(out, "real")),
+              inside: await Bun.file(join(out, "inside.txt")).text(),
+              junction: lstatSync(join(out, "shared")).isSymbolicLink(),
             }).toEqual({
               result: { code: "ELOOP", path: "shared/f.txt" },
               victim: ["keep.txt"],
-              symlink: true,
+              real: ["keep.txt"],
+              inside: "INSIDE",
+              junction: true,
             });
           });
 
-          test("replaces a symlink under a file entry's own name", async () => {
-            using dir = tempDir("archive-file-symlink-leaf", { "victim/f.txt": "ORIGINAL", "out/keep.txt": "KEEP" });
+          test("makes no directory below a junction that is not the first component", async () => {
+            using dir = tempDir("archive-junction-nested", { "victim/keep.txt": "KEEP", "out/a/keep.txt": "KEEP" });
             const root = String(dir);
             const out = join(root, "out");
-            symlinkSync(join(root, "victim", "f.txt"), join(out, "cfg"), "file");
+            symlinkSync(join(root, "victim"), join(out, "a", "shared"), "junction");
 
-            const result = await settled(extract(new Bun.Archive({ cfg: "OVERWRITTEN" }), out));
+            const archive = new Bun.Archive({ "a/ok.txt": "OK", "a/shared/b/f.txt": "F" });
+            const result = await settled(extract(archive, spell(out)));
 
             expect({
               result,
-              victim: await Bun.file(join(root, "victim", "f.txt")).text(),
+              victim: readdirSync(join(root, "victim")),
+              ok: await Bun.file(join(out, "a", "ok.txt")).text(),
+            }).toEqual({
+              result: { code: "ELOOP", path: "a/shared/b/f.txt" },
+              victim: ["keep.txt"],
+              ok: "OK",
+            });
+          });
+
+          // Windows takes `\` in the name of an entry as a separator too.
+          test("rejects an entry that names the junction with a backslash", async () => {
+            using dir = tempDir("archive-junction-backslash", { "victim/keep.txt": "KEEP", "out/keep.txt": "KEEP" });
+            const root = String(dir);
+            const out = join(root, "out");
+            symlinkSync(join(root, "victim"), join(out, "shared"), "junction");
+
+            const archive = new Bun.Archive(buildTarball([{ name: "shared\\f.txt", data: "F" }]));
+            const result = await settled(extract(archive, spell(out)));
+
+            expect({ result, victim: readdirSync(join(root, "victim")) }).toEqual({
+              result: { code: "ELOOP", path: "shared/f.txt" },
+              victim: ["keep.txt"],
+            });
+          });
+
+          test("rejects a directory entry below a junction", async () => {
+            using dir = tempDir("archive-junction-directory", { "victim/keep.txt": "KEEP", "out/keep.txt": "KEEP" });
+            const root = String(dir);
+            const out = join(root, "out");
+            symlinkSync(join(root, "victim"), join(out, "shared"), "junction");
+            const tarball = new Uint8Array(Buffer.concat([ustarHeader("shared/sub/", 0, "5"), Buffer.alloc(1024)]));
+
+            const result = await settled(extract(new Bun.Archive(tarball), spell(out)));
+
+            expect({ result, victim: readdirSync(join(root, "victim")) }).toEqual({
+              result: { code: "ELOOP", path: "shared/sub/" },
+              victim: ["keep.txt"],
+            });
+          });
+
+          test("does not make a directory at the target of a dangling junction", async () => {
+            using dir = tempDir("archive-junction-dangling", { "out/keep.txt": "KEEP" });
+            const root = String(dir);
+            const out = join(root, "out");
+            symlinkSync(join(root, "outside"), join(out, "d"), "junction");
+            const tarball = new Uint8Array(Buffer.concat([ustarHeader("d/", 0, "5"), Buffer.alloc(1024)]));
+
+            const result = await settled(extract(new Bun.Archive(tarball), spell(out)));
+
+            expect({
+              result,
+              outside: existsSync(join(root, "outside")),
+              junction: lstatSync(join(out, "d")).isSymbolicLink(),
+            }).toEqual({ result: { count: 1 }, outside: false, junction: true });
+          });
+
+          test("replaces a junction under a file entry's own name", async () => {
+            using dir = tempDir("archive-junction-leaf", { "victim/keep.txt": "KEEP", "out/keep.txt": "KEEP" });
+            const root = String(dir);
+            const out = join(root, "out");
+            symlinkSync(join(root, "victim"), join(out, "cfg"), "junction");
+
+            const result = await settled(extract(new Bun.Archive({ cfg: "OVERWRITTEN" }), spell(out)));
+
+            expect({
+              result,
+              victim: readdirSync(join(root, "victim")),
               cfg: lstatSync(join(out, "cfg")).isFile() && (await Bun.file(join(out, "cfg")).text()),
-            }).toEqual({ result: { count: 1 }, victim: "ORIGINAL", cfg: "OVERWRITTEN" });
+            }).toEqual({ result: { count: 1 }, victim: ["keep.txt"], cfg: "OVERWRITTEN" });
+          });
+
+          describe.skipIf(!canSymlink)("and symlinks", () => {
+            test("rejects an entry below a symlink to a directory, and names the entry", async () => {
+              using dir = tempDir("archive-dir-symlink-parent", { "victim/keep.txt": "KEEP", "out/keep.txt": "KEEP" });
+              const root = String(dir);
+              const out = join(root, "out");
+              symlinkSync(join(root, "victim"), join(out, "shared"), "dir");
+
+              const result = await settled(extract(new Bun.Archive({ "shared/f.txt": "F" }), spell(out)));
+
+              expect({
+                result,
+                victim: readdirSync(join(root, "victim")),
+                symlink: lstatSync(join(out, "shared")).isSymbolicLink(),
+              }).toEqual({
+                result: { code: "ELOOP", path: "shared/f.txt" },
+                victim: ["keep.txt"],
+                symlink: true,
+              });
+            });
+
+            test("replaces a symlink under a file entry's own name", async () => {
+              using dir = tempDir("archive-file-symlink-leaf", { "victim/f.txt": "ORIGINAL", "out/keep.txt": "KEEP" });
+              const root = String(dir);
+              const out = join(root, "out");
+              symlinkSync(join(root, "victim", "f.txt"), join(out, "cfg"), "file");
+
+              const result = await settled(extract(new Bun.Archive({ cfg: "OVERWRITTEN" }), spell(out)));
+
+              expect({
+                result,
+                victim: await Bun.file(join(root, "victim", "f.txt")).text(),
+                cfg: lstatSync(join(out, "cfg")).isFile() && (await Bun.file(join(out, "cfg")).text()),
+              }).toEqual({ result: { count: 1 }, victim: "ORIGINAL", cfg: "OVERWRITTEN" });
+            });
+          });
+
+          // `1:` is no drive, so the name is relative, and its `..` go up from the destination.
+          test("does not create an entry whose name climbs out of the destination", async () => {
+            using dir = tempDir("archive-windows-dotdot", { "out/keep.txt": "KEEP" });
+            const root = String(dir);
+            const out = join(root, "out");
+
+            const archive = new Bun.Archive(buildTarball([{ name: "1:/../../x.txt", data: "X" }]));
+            const result = await settled(extract(archive, spell(out)));
+
+            // The extractor that the `glob` option selects cuts the `..` off and keeps the entry.
+            const inside = mode === "glob";
+            expect({ result, root: readdirSync(root), out: readdirSync(out) }).toEqual({
+              result: { count: inside ? 1 : 0 },
+              root: ["out"],
+              out: inside ? ["keep.txt", "x.txt"] : ["keep.txt"],
+            });
+          });
+
+          // `C:f.txt` is relative to the current directory of drive C for Windows. Here it is `f.txt`.
+          test("extracts an entry with a drive prefix and no root into the destination", async () => {
+            using dir = tempDir("archive-windows-drive-relative", { "out/keep.txt": "KEEP" });
+            const out = join(String(dir), "out");
+
+            const archive = new Bun.Archive(buildTarball([{ name: "C:f.txt", data: "F" }]));
+            const result = await settled(extract(archive, spell(out)));
+
+            // The extractor that the `glob` option selects skips every name with a drive prefix.
+            const skipped = mode === "glob";
+            expect({ result, out: readdirSync(out) }).toEqual({
+              result: { count: skipped ? 0 : 1 },
+              out: skipped ? ["keep.txt"] : ["f.txt", "keep.txt"],
+            });
+          });
+
+          test("extracts a deep tree two times", async () => {
+            // 150 levels: more directories than the extractor keeps open.
+            const deep = Buffer.alloc(150 * 2, "d/").toString();
+            const files = {
+              "top.txt": "TOP",
+              "a/b/nested.txt": "NESTED",
+              [deep + "one.txt"]: "ONE",
+              [deep + "e/two.txt"]: "TWO",
+            };
+            using dir = tempDir("archive-windows-deep", {
+              "out/top.txt": "LONGER THAN THE NEW CONTENT",
+              "out/a/b/nested.txt": "LONGER THAN THE NEW CONTENT",
+            });
+            const out = join(String(dir), "out");
+
+            const counts = [
+              await settled(extract(new Bun.Archive(files), spell(out))),
+              await settled(extract(new Bun.Archive(files), spell(out))),
+            ];
+
+            expect({
+              counts,
+              top: await Bun.file(join(out, "top.txt")).text(),
+              nested: await Bun.file(join(out, "a", "b", "nested.txt")).text(),
+              one: await Bun.file(join(out, deep, "one.txt")).text(),
+              two: await Bun.file(join(out, deep, "e", "two.txt")).text(),
+            }).toEqual({ counts: [{ count: 4 }, { count: 4 }], top: "TOP", nested: "NESTED", one: "ONE", two: "TWO" });
           });
         });
       });

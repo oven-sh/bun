@@ -1,14 +1,27 @@
 import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, readdirSync, symlinkSync } from "fs";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, isPosix, tempDir, tls, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, isPosix, isWindows, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import * as nodetls from "node:tls";
 import { join } from "path";
 import { gzipSync } from "zlib";
 
 let x_dir: string;
+
+// A symlink needs a privilege or Developer Mode on Windows.
+const canSymlinkOnWindows =
+  isWindows &&
+  (() => {
+    using probe = tempDir("create-symlink-probe", { target: "" });
+    try {
+      symlinkSync(join(String(probe), "target"), join(String(probe), "link"), "file");
+      return true;
+    } catch {
+      return false;
+    }
+  })();
 
 let testNumber = 0;
 beforeEach(async () => {
@@ -285,6 +298,83 @@ describe("a symlink in the destination where the template needs a directory", ()
     expect(out).not.toContain("Success!");
     expect(readdirSync(join(x_dir, "victim"))).toEqual([]);
     expect(exitCode).toBe(1);
+  });
+});
+
+// `bun create` into `dest`, of a template that a local server gives as the tarball of a GitHub repository.
+async function createFromTarball(template: string, entries: Buffer[]) {
+  const gz = gzipSync(Buffer.concat([...entries, Buffer.alloc(1024)]));
+  using server = Bun.serve({
+    tls,
+    port: 0,
+    fetch() {
+      return new Response(gz, { headers: { "content-type": "application/x-gzip" } });
+    },
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "create", `github.com/owner/${template}`, "dest", "--no-install", "--no-git"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...env,
+      NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+    },
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+it("lists a file with content that is already in the destination as a conflict", async () => {
+  mkdirSync(join(x_dir, "dest"));
+  await Bun.write(join(x_dir, "dest", "index.ts"), "mine");
+
+  const { stdout, stderr, exitCode } = await createFromTarball("conflict-template", [
+    tarEntry("pkg/index.ts", Buffer.from("from-tarball")),
+    tarEntry("pkg/package.json", Buffer.from(JSON.stringify({ name: "conflict-template" }))),
+  ]);
+
+  expect(stderr).toContain("could conflict:\n\n  index.ts\n");
+  expect(stdout).not.toContain("Success!");
+  expect(await Bun.file(join(x_dir, "dest", "index.ts")).text()).toBe("mine");
+  expect(exitCode).toBe(1);
+});
+
+describe("the gitignore of a template", () => {
+  const template = [
+    tarEntry("pkg/gitignore", Buffer.from("node_modules\n")),
+    tarEntry("pkg/package.json", Buffer.from(JSON.stringify({ name: "gitignore-template" }))),
+  ];
+
+  it("becomes .gitignore", async () => {
+    const { stderr, exitCode } = await createFromTarball("gitignore-template", template);
+
+    expect({
+      files: readdirSync(join(x_dir, "dest")).sort(),
+      gitignore: await Bun.file(join(x_dir, "dest", ".gitignore")).text(),
+      stderr: stderr.includes("error"),
+      exitCode,
+    }).toEqual({ files: [".gitignore", "package.json"], gitignore: "node_modules\n", stderr: false, exitCode: 0 });
+  });
+
+  // On POSIX, `.gitignore` is a hard link to the file and is not made when the name is taken.
+  it.skipIf(!canSymlinkOnWindows)("is not written through a symlink that is already in the destination", async () => {
+    mkdirSync(join(x_dir, "dest"));
+    await Bun.write(join(x_dir, "victim.txt"), "keep me");
+    symlinkSync(join(x_dir, "victim.txt"), join(x_dir, "dest", ".gitignore"), "file");
+
+    const { stderr, exitCode } = await createFromTarball("gitignore-template", template);
+
+    const gitignore = join(x_dir, "dest", ".gitignore");
+    expect({
+      victim: await Bun.file(join(x_dir, "victim.txt")).text(),
+      gitignore: lstatSync(gitignore).isFile() && (await Bun.file(gitignore).text()),
+      stderr: stderr.includes("error"),
+      exitCode,
+    }).toEqual({ victim: "keep me", gitignore: "node_modules\n", stderr: false, exitCode: 0 });
   });
 });
 

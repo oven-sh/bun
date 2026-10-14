@@ -47,10 +47,8 @@ public:
 
     DECLARE_EXPORT_INFO;
     bool m_reportOnUncaughtException = false;
-#if !OS(WINDOWS)
-    // The FileSinks behind process.stdout ([0]) and process.stderr ([1]): console.* flushes what they buffered before it writes.
+    // The FileSinks behind process.stdout ([0]) and process.stderr ([1]): console.* output goes behind what they have buffered.
     WriteBarrier<JSObject> m_stdioSinks[2];
-#endif
 
     static void destroy(JSC::JSCell* cell)
     {

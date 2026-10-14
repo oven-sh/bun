@@ -210,42 +210,32 @@ impl FileSink {
     }
 }
 
-#[cfg(unix)]
 unsafe extern "C" {
     /// The `FileSink` wrapper behind `process.stdout` (1) / `process.stderr` (2), or `undefined` before that stream exists.
     safe fn Bun__Process__getStdioSink(global: &JSGlobalObject, fd: i32) -> JSValue;
 }
 
-/// `console.*` is about to write to `fd` (1 or 2): what `process.stdout` / `process.stderr` buffered for it goes out first.
-#[cfg(unix)]
-#[unsafe(no_mangle)]
-fn __bun_flush_stdio_sink(global: &JSGlobalObject, fd: Fd) {
-    use bun_io::pipe_writer::PosixPipeWriter as _;
+/// The writer of that sink, while it holds bytes a full pipe or socket refused.
+fn backed_up_stdio_writer(global: &JSGlobalObject, fd: i32) -> Option<&JsCell<IOWriter>> {
+    let this_ptr = JSSink::from_js(Bun__Process__getStdioSink(global, fd))?;
+    // SAFETY: `from_js` returned the wrapper's live `m_ctx`; `global`'s `Process` keeps the wrapper alive.
+    let writer = unsafe { &(*this_ptr).sink.writer };
+    // A writer whose poll failed to register is closed with bytes left, and nothing writes them.
+    #[cfg(unix)]
+    writer.get().get_poll()?;
+    writer.get().has_pending_data().then_some(writer)
+}
 
-    let Some(this_ptr) = JSSink::from_js(Bun__Process__getStdioSink(global, fd.native())) else {
-        return;
-    };
-    // `on_write` settles the buffered write; its callbacks run after the JS that called the console, not inside it.
-    let _entered = global.bun_vm().enter_event_loop_scope_without_checkpoint();
-    // SAFETY: `from_js` returned the wrapper's live `m_ctx`, the sink's own allocation; `_guard` keeps it live.
-    unsafe {
-        let this = &raw mut (*this_ptr).sink;
-        let _guard = RefPtr::init_ref(this);
-        while (*this).writer.get().has_pending_data()
-            && (*this).writer.get().get_poll().is_some()
-            && sys::wait_for_writable((*this).writer.get().get_fd()).is_ok()
-        {
-            let (written, status) =
-                match (*this).writer.get().drain_buffered_data(usize::MAX, false) {
-                    WriteResult::Pending(written) => (written, WriteStatus::Pending),
-                    WriteResult::Wrote(written) => (written, WriteStatus::Drained),
-                    WriteResult::Done(written) => (written, WriteStatus::EndOfFile),
-                    // Nothing was written. The event loop's poll is still armed: it finds the same error and reports it between two turns of JS, not inside one.
-                    WriteResult::Err(_) => break,
-                };
-            (*this).writer.with_mut(|w| w.on_write(written, status));
-        }
-    }
+#[unsafe(no_mangle)]
+fn __bun_stdio_sink_is_backed_up(global: &JSGlobalObject, fd: i32) -> bool {
+    backed_up_stdio_writer(global, fd).is_some()
+}
+
+/// The poll that is armed for the bytes already there writes `message` after them.
+#[unsafe(no_mangle)]
+fn __bun_stdio_sink_append(global: &JSGlobalObject, fd: i32, message: &[u8]) -> bool {
+    backed_up_stdio_writer(global, fd)
+        .is_some_and(|writer| writer.with_mut(|w| w.outgoing.write(message)).is_ok())
 }
 
 #[unsafe(no_mangle)]

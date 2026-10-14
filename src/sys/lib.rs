@@ -9234,7 +9234,12 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
             #[cfg(unix)]
             Err(e) if e.get_errno() == E::EAGAIN => {
                 // fd 1/2 are O_NONBLOCK once process.stdout/stderr exist (as in Node); wait instead of dropping output.
-                if wait_for_writable(fd).is_err() {
+                let mut pfd = [posix::PollFd {
+                    fd: fd.native(),
+                    events: posix::POLL_OUT,
+                    revents: 0,
+                }];
+                if posix::poll(&mut pfd, -1).is_err() {
                     return false;
                 }
             }
@@ -9242,17 +9247,6 @@ fn fd_write_all_quiet(fd: Fd, mut bytes: &[u8]) -> bool {
         }
     }
     true
-}
-
-/// Blocks until `fd` takes a write, or has an error for the next write to report.
-#[cfg(unix)]
-pub fn wait_for_writable(fd: Fd) -> Maybe<()> {
-    let mut pfd = [posix::PollFd {
-        fd: fd.native(),
-        events: posix::POLL_OUT,
-        revents: 0,
-    }];
-    posix::poll(&mut pfd, -1).map(|_| ())
 }
 
 /// Concrete repr behind the opaque `bun_core::output::QuietWriterAdapter`

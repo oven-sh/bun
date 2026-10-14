@@ -508,9 +508,10 @@ function setup(
     result = String((error as Error)?.message ?? error);
   }
   if (last) {
-    if (result === last.environment) {
-      last.environment.forgetLastFile?.();
-      return last.teardown;
+    const { environment, teardown } = last;
+    if (result === environment) {
+      environment.forgetLastFile?.();
+      return teardown;
     }
     leaveLast();
     if ("document" in globalThis) return;

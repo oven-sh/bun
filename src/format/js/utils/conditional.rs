@@ -35,6 +35,13 @@ impl<'a> Format<'a> for Operand<'a> {
             Operand::Type(ty) => ty.fmt(f),
         }
     }
+
+    fn as_node(&self) -> Option<Node<'a>> {
+        match self {
+            Operand::Expr(e) => e.as_node(),
+            Operand::Type(ty) => ty.as_node(),
+        }
+    }
 }
 
 impl Operand<'_> {

@@ -1616,22 +1616,43 @@ impl<'a> Comments<'a> {
 
     /// Whether a `prettier-ignore` comment between the two sides of `a && b` trails `a`, which ends at `left_end`. Prettier's
     /// `attachComments`: one that starts its line leads `b`, one that ends its line trails `a`, and so does any other
-    /// unless only blanks and `(` are between it and `b`.
+    /// unless only blanks and `(` are between it and `b`. Other comments on the same line are nothing: one behind a comment
+    /// that starts the line starts it too, and so on.
     pub(crate) fn has_suppression_comment_trailing_left_operand(
         &self,
         left_end: u32,
         right_start: u32,
     ) -> bool {
-        self.has_suppression_comments
-            && (self.comments_in(Span::new(left_end, right_start)).iter()).any(|it| {
-                self.is_suppression_comment(it)
-                    && !it.preceded_by_newline()
-                    && (it.is_line()
-                        || it.followed_by_newline()
-                        || !(self.source_text).all_bytes(Span::after(it.span, right_start), |b| {
-                            b.is_ascii_whitespace() || b == b'('
-                        }))
-            })
+        if !self.has_suppression_comments {
+            return false;
+        }
+        let comments = self.comments_in(Span::new(left_end, right_start));
+        if !comments.iter().any(|it| self.is_suppression_comment(it)) {
+            return false;
+        }
+        let is_blank = |gap: Span| (self.source_text).all_bytes(gap, |b| matches!(b, b' ' | b'\t'));
+        // From the last to the first: whether it leads `b`, if it does not start its line.
+        let mut leads: SmallVec<[bool; 8]> = SmallVec::with_capacity(comments.len());
+        let (mut next_start, mut next_ends_line, mut next_leads) = (right_start, false, true);
+        for it in comments.iter().rev() {
+            let gap = Span::after(it.span, next_start);
+            let ends_line =
+                it.is_line() || it.followed_by_newline() || (next_ends_line && is_blank(gap));
+            let is_before_right =
+                (self.source_text).all_bytes(gap, |b| b.is_ascii_whitespace() || b == b'(');
+            (next_start, next_ends_line) = (it.span.start, ends_line);
+            next_leads = !ends_line && next_leads && is_before_right;
+            leads.push(next_leads);
+        }
+        let mut previous: Option<(&Comment, bool)> = None;
+        comments.iter().zip(leads.iter().rev()).any(|(it, &leads)| {
+            let starts_line = it.preceded_by_newline()
+                || previous.is_some_and(|(before, starts_line)| {
+                    starts_line && is_blank(before.span.between(it.span))
+                });
+            previous = Some((it, starts_line));
+            self.is_suppression_comment(it) && !starts_line && !leads
+        })
     }
 
     fn find_trailing_suppression_comment(&self, pos: u32) -> bool {

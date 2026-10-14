@@ -448,6 +448,13 @@ impl<'a> Format<'a> for FormatForHead<'a> {
             _ => write!(f, self.0),
         }
     }
+
+    fn as_node(&self) -> Option<Node<'a>> {
+        match self.0.kind() {
+            StmtKind::Expr(expression) => expression.as_node(),
+            _ => None,
+        }
+    }
 }
 
 /// See `comments_stay_between_head_and_body`: `node`, which is before one of the two `;` in the head of

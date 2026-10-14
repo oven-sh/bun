@@ -380,7 +380,7 @@ impl<'a> FormatExpr<'a> {
             _ => f.comments().has_trailing_suppression_comment(span.end),
         };
         if !self.is_in_chain_expression && is_suppressed {
-            self.fmt_as_it_is(span, f);
+            self.write_as_it_is(f);
             return write_trailing_comments_of(node, f);
         }
 
@@ -443,7 +443,8 @@ impl<'a> FormatExpr<'a> {
     }
 }
 
-/// `a && // prettier-ignore ⏎ b`: for oxfmt the comment is about nothing.
+/// `a && // prettier-ignore ⏎ b`: for oxfmt the comment is about `a` only if nothing but `=` is between the two, as in
+/// `a == // prettier-ignore ⏎ b`.
 fn comment_behind_operator_trails_left_side(f: &Formatter<'_>) -> bool {
     !f.options().flavor.is_oxfmt()
 }
@@ -510,6 +511,31 @@ impl<'a> FormatExpr<'a> {
             )
             && self.expr.is_chain_root()
     }
+
+    /// Prettier's `printIgnored`, and the comments before it.
+    fn write_as_it_is(&self, f: &mut Formatter<'a>) {
+        if print::function::write_called_function_with_comments(self.expr, self.options, f) {
+            return;
+        }
+        format_leading_comments(self.expr.span()).fmt(f);
+        write_suppressed_expression(self.expr, self.is_chain_expression(), f);
+    }
+}
+
+/// What a `prettier-ignore` comment behind it is about, as it is written, and the comments before it. `node`: see
+/// [`Format::as_node`]. `span`: where it is.
+pub(crate) fn write_ignored_node<'a>(node: Option<Node<'a>>, span: Span, f: &mut Formatter<'a>) {
+    match node {
+        Some(Node::Expr(e)) => FormatExpr::with_options(e, ExprOptions::None).write_as_it_is(f),
+        Some(Node::Type(ty)) => {
+            format_leading_comments(span).fmt(f);
+            write_suppressed_type(ty, f);
+        }
+        _ => write!(
+            f,
+            [format_leading_comments(span), FormatSuppressedNode(span)]
+        ),
+    }
 }
 
 impl<'a> Format<'a> for FormatExpr<'a> {
@@ -525,12 +551,8 @@ impl<'a> Format<'a> for FormatExpr<'a> {
         }
     }
 
-    fn fmt_as_it_is(&self, span: Span, f: &mut Formatter<'a>) {
-        if print::function::write_called_function_with_comments(self.expr, self.options, f) {
-            return;
-        }
-        format_leading_comments(span).fmt(f);
-        write_suppressed_expression(self.expr, self.is_chain_expression(), f);
+    fn as_node(&self) -> Option<Node<'a>> {
+        (!self.is_in_chain_expression).then_some(Node::Expr(self.expr))
     }
 }
 
@@ -547,8 +569,9 @@ impl<'a> Format<'a> for Expr<'a> {
         format_expression(*self, f);
     }
 
-    fn fmt_as_it_is(&self, span: Span, f: &mut Formatter<'a>) {
-        FormatExpr::with_options(*self, ExprOptions::None).fmt_as_it_is(span, f);
+    #[inline(always)]
+    fn as_node(&self) -> Option<Node<'a>> {
+        Some(Node::Expr(*self))
     }
 }
 
@@ -928,11 +951,13 @@ fn format_declaration_with_comments<'a>(
     });
 }
 
-fn is_in_head_of_for(declaration: Stmt<'_>) -> bool {
-    matches!(
-        declaration.ast_parent(),
-        AstNodes::ForStatement(_) | AstNodes::ForInStatement(_) | AstNodes::ForOfStatement(_)
-    )
+/// Whether `statement` is in the head of a `for`, and not its body.
+fn is_in_head_of_for(statement: Stmt<'_>) -> bool {
+    matches!(statement.parent(), Node::Stmt(parent) if matches!(
+        parent.kind(),
+        StmtKind::For { body, .. } | StmtKind::ForIn { body, .. } | StmtKind::ForOf { body, .. }
+            if statement.span().end <= body.span().start
+    ))
 }
 
 /// Prettier's `printIgnored` for a statement. `span`: of the statement, without its `;`, which is
@@ -1022,13 +1047,7 @@ fn write_ignored_statement_without_terminator<'a>(
 /// Whether `statement` is written with a `;` at its end, if semicolons are.
 fn ends_with_terminator(statement: Stmt<'_>) -> bool {
     // The `;` after the declaration in the head of a loop separates.
-    let is_in_head = |body: Stmt<'_>| statement.span().end <= body.span().start;
-    if let Node::Stmt(parent) = statement.parent()
-        && let StmtKind::For { body, .. }
-        | StmtKind::ForIn { body, .. }
-        | StmtKind::ForOf { body, .. } = parent.kind()
-        && is_in_head(body)
-    {
+    if is_in_head_of_for(statement) {
         return false;
     }
     let mut last = statement;
@@ -1199,6 +1218,11 @@ impl<'a> Format<'a> for TypeNode<'a> {
             false => format_type_with_comments(*self, f),
         }
     }
+
+    #[inline(always)]
+    fn as_node(&self) -> Option<Node<'a>> {
+        Some(Node::Type(*self))
+    }
 }
 
 #[inline]
@@ -1230,6 +1254,21 @@ fn write_type_in_parentheses<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     if needs_parentheses {
         ")".fmt(f);
     }
+}
+
+/// Prettier's `printIgnored` for a type, in the parentheses that it needs.
+fn write_suppressed_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
+    let needs_parentheses = parentheses::ts_type::needs_parentheses(ty, f);
+    f.around_cursor(ty.span(), |f| {
+        write!(
+            f,
+            [
+                needs_parentheses.then_some("("),
+                FormatSuppressedNode(ty.span()),
+                needs_parentheses.then_some(")")
+            ]
+        );
+    });
 }
 
 #[cold]
@@ -1274,17 +1313,7 @@ fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
         FormatLeadingComments::Comments(&leading[..count]).fmt(f);
     }
     if is_suppressed {
-        let needs_parentheses = parentheses::ts_type::needs_parentheses(ty, f);
-        f.around_cursor(span, |f| {
-            write!(
-                f,
-                [
-                    needs_parentheses.then_some("("),
-                    FormatSuppressedNode(span),
-                    needs_parentheses.then_some(")")
-                ]
-            );
-        });
+        write_suppressed_type(ty, f);
     } else {
         f.in_scope(span, |f| write_type_in_parentheses(ty, f));
     }

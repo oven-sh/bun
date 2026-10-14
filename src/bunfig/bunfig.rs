@@ -1220,12 +1220,59 @@ impl<'a> Parser<'a, '_> {
         .parse_registry_url_string_impl(url)?)
     }
 
-    fn parse_registry_object(&mut self, obj: &E::Object) -> crate::Result<api::NpmRegistry> {
+    fn check_scope_url(
+        &mut self,
+        scope: Option<&[u8]>,
+        url: &[u8],
+        loc: bun_ast::Loc,
+    ) -> crate::Result<()> {
+        if let Some(scope) = scope
+            && url.is_empty()
+        {
+            return self.add_error_format(
+                loc,
+                format_args!(
+                    "Expected a non-empty registry url for scope \"@{}\"",
+                    bstr::BStr::new(scope)
+                ),
+            );
+        }
+        Ok(())
+    }
+
+    fn parse_registry_object(
+        &mut self,
+        obj: &E::Object,
+        scope: Option<&[u8]>,
+    ) -> crate::Result<api::NpmRegistry> {
+        if scope.is_some() {
+            for prop in obj.properties.slice() {
+                let Some(key_expr) = prop.key.as_ref() else {
+                    continue;
+                };
+                let Some(key) = key_expr.as_string(self.bump) else {
+                    continue;
+                };
+                if !matches!(key, b"url" | b"username" | b"password" | b"token") {
+                    self.add_error_format(
+                        key_expr.loc,
+                        format_args!(
+                            "Unknown registry key \"{}\". Expected one of \"url\", \"username\", \"password\", \"token\"",
+                            bstr::BStr::new(key)
+                        ),
+                    )?;
+                }
+            }
+        }
+
         // `user:pass@` / `:token@` in the URL are credentials, as in the string form.
         let mut registry = match obj.get(b"url") {
-            Some(url) => {
-                self.expect_string(&url)?;
-                let url = url.as_string(self.bump).expect("infallible: type checked");
+            Some(url_expr) => {
+                self.expect_string(&url_expr)?;
+                let url = url_expr
+                    .as_string(self.bump)
+                    .expect("infallible: type checked");
+                self.check_scope_url(scope, url, url_expr.loc)?;
                 self.parse_registry_url(url)?
             }
             None => api::NpmRegistry::default(),
@@ -1268,13 +1315,18 @@ impl<'a> Parser<'a, '_> {
         Ok(registry)
     }
 
-    fn parse_registry(&mut self, expr: &Expr) -> crate::Result<api::NpmRegistry> {
+    fn parse_registry(
+        &mut self,
+        expr: &Expr,
+        scope: Option<&[u8]>,
+    ) -> crate::Result<api::NpmRegistry> {
         match &expr.data {
             ExprData::EString(s) => {
                 let url = s.string(self.bump)?;
+                self.check_scope_url(scope, url, expr.loc)?;
                 self.parse_registry_url(url)
             }
-            ExprData::EObject(o) => self.parse_registry_object(o),
+            ExprData::EObject(o) => self.parse_registry_object(o, scope),
             _ => {
                 self.add_error(
                     expr.loc,
@@ -1348,7 +1400,7 @@ impl<'a> Parser<'a, '_> {
         }
 
         if let Some(registry) = install_obj.get(b"registry") {
-            install.default_registry = Some(self.parse_registry(&registry)?);
+            install.default_registry = Some(self.parse_registry(&registry, None)?);
         }
 
         if let Some(scopes) = install_obj.get(b"scopes") {
@@ -1367,7 +1419,7 @@ impl<'a> Parser<'a, '_> {
                     continue;
                 }
                 let name = if name_[0] == b'@' { &name_[1..] } else { name_ };
-                let registry = self.parse_registry(value)?;
+                let registry = self.parse_registry(value, Some(name))?;
                 registry_map.scopes.insert(name, registry);
             }
             install.scoped = Some(registry_map);

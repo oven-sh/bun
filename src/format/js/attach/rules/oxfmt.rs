@@ -776,9 +776,9 @@ impl<'a> Rules<'_, 'a, '_> {
             .then(|| Attachment::leading(return_type))
     }
 
-    /// `interface A { b? /* comment */ : C }`. oxfmt prints `b?/* comment */ : C`: the comment leads the type annotation. For Prettier
-    /// it trails `b`, and for oxfmt too if it ends the line of `b`, or a comment after it does: `b /* 1 */ // 2⏎: C` is
-    /// `b /* 1 */: C; // 2`.
+    /// `interface A { b? /* comment */ : C }`. oxfmt prints `b?/* comment */ : C`: the comment leads the type annotation. So does one
+    /// on a line of its own before the `?`, or before the `]` of `[b]: C`. For Prettier it trails `b`, and for oxfmt too if it ends
+    /// the line of `b`, or a comment after it does: `b /* 1 */ // 2⏎: C` is `b /* 1 */: C; // 2`.
     fn handle_comment_before_type_annotation_of_member_for_oxfmt(&self) -> Option<Attachment<'a>> {
         let Owner::Node(
             N::PropertyDefinition(member)
@@ -788,12 +788,18 @@ impl<'a> Rules<'_, 'a, '_> {
         else {
             return None;
         };
-        // Not the following node: for Prettier the type annotation of a signature has no comments.
-        let type_annotation = Owner::Node(N::TSTypeAnnotation(member.ty()?));
-        if !self.is_directly_before(type_annotation) {
+        let ty = member.ty()?;
+        let type_annotation = Owner::Node(N::TSTypeAnnotation(ty));
+        let comment = self.context.comment;
+        // For Prettier the type annotation of a signature has no comments, so there the type is the following node.
+        let is_between_key_and_colon = [type_annotation, Owner::Node(ty.as_ast_nodes())]
+            .contains(&self.following_node?)
+            && comment.span().end <= self.cx.start_of(type_annotation);
+        if !is_between_key_and_colon
+            || !(self.is_directly_before(type_annotation) || self.context.text_position == OwnLine)
+        {
             return None;
         }
-        let comment = self.context.comment;
         let last_on_line =
             (self.cx.comments_between_same_tokens(comment)).first_that_ends_line_of_prev_token;
         match last_on_line.is_some_and(|last| comment.id() <= last) {

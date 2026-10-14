@@ -1065,6 +1065,14 @@ ignore/before-the-colon-of-a-signature.ts
 246 267 L TSTypeAnnotation 268 277 -
 302 312 L TSTypeReference 317 324 -
 341 354 L TSTypeOperator 359 372 -
+395 416 T Identifier 393 394 -
+427 440 T TSTypeReference 419 426 -
+465 478 L TSTypeReference 484 485 -
+494 507 L TSTypeReference 513 514 -
+522 529 L TSTypeReference 544 545 -
+534 541 T Identifier 518 519 -
+551 564 T Identifier 549 550 -
+576 589 T Identifier 574 575 -
 ignore/before-the-parameters-of-a-function.ts
 11 32 T Identifier 9 10 -
 55 73 L Identifier 76 77 -

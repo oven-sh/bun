@@ -22,3 +22,21 @@ interface R {
   /* comment */
   : unique symbol;
 }
+
+interface S {
+  a /* prettier-ignore */ : B<  C > /* comment */;
+}
+
+interface T {
+  a
+  /* comment */
+  ?: B;
+  [c
+  /* comment */
+  ]: D;
+  e
+  /* 1 */
+  ? /* 2 */ : F;
+  g /* comment */ ?: H;
+  [i /* comment */ ]: J;
+}

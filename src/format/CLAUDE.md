@@ -270,6 +270,8 @@ if !f.is_quiet() && !f.comments().of_node(node).dangling.is_empty() { .. }
 
 A node's own leading and trailing comments are outside its span, so ask for those before entering the node. Calling the `Comments` methods without the check is always correct: `of_node` tests one bit for a node that owns nothing.
 
+**Enter only what the attach step takes for a node.** "From elsewhere" means that the owner is not the node that was recorded before, after or around the comment. A plain leading comment is expected in the scope of the parent, directly before its node. So `format_node(X, ..)` around something that `can_attach_comment` leaves out puts a scope between the two: in `interface A { a⏎// comment⏎: B }` the comment leads `B` for Prettier, the `: B` starts behind the comment, and inside it nothing looks for comments. The second pass then hides the mistake. `conformance.test.ts` checks that no comment of `own/cases` is left to it, in both flavors.
+
 ### Debugging
 
 In builds that have the test runner (debug and canary):
@@ -278,6 +280,7 @@ In builds that have the test runner (debug and canary):
 bun bd fmt --debug-comments out a.ts             # out/a.ts.txt: the owner of each comment, and what the parser recorded
 bun bd fmt --debug-comments-oxfmt out a.ts       # the same in the oxfmt flavor
 bun bd fmt --debug-unprinted-comments out a.ts   # the comments that no printer printed
+bun bd fmt --debug-unprinted-comments-oxfmt out a.ts
 ```
 
 ## Performance rules

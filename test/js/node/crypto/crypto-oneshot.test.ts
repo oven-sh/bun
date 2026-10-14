@@ -91,30 +91,80 @@ describe("crypto.hash", () => {
   });
 });
 
-describe("crypto.verify", () => {
-  test("uses the signature bytes provided at call time", () => {
-    const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+// Node reads the bytes of `data` and `signature` in native code, after its JS layer has read the
+// key options. A getter on those options can change or detach the buffer before that.
+describe("crypto.sign and crypto.verify read their buffers after the key option getters run, like Node", () => {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const privatePem = privateKey.export({ type: "pkcs8", format: "pem" });
+  const publicPem = publicKey.export({ type: "spki", format: "pem" });
+  const keyWithGetter = (key: string | Buffer, onRead: () => void) => ({
+    key,
+    format: "pem" as const,
+    get passphrase() {
+      onRead();
+      return undefined;
+    },
+  });
+
+  test("verify: signature changed by the getter", () => {
     const data = Buffer.from("data to sign");
     const signature = crypto.sign("sha256", data, privateKey);
     expect(crypto.verify("sha256", data, publicKey, signature)).toBe(true);
 
-    const publicPem = publicKey.export({ type: "spki", format: "pem" });
     let passphraseReads = 0;
-    const verified = crypto.verify(
+    const key = keyWithGetter(publicPem, () => {
+      passphraseReads++;
+      signature.fill(0);
+    });
+    const verified = crypto.verify("sha256", data, key, signature);
+    expect(passphraseReads).toBe(1);
+    expect(verified).toBe(false);
+  });
+
+  test("verify: signature detached by the getter", () => {
+    const data = Buffer.from("data to sign");
+    const signature = new Uint8Array(crypto.sign("sha256", data, privateKey));
+    const key = keyWithGetter(publicPem, () => void signature.buffer.transfer());
+    expect(crypto.verify("sha256", data, key, signature)).toBe(false);
+  });
+
+  test("verify: data changed by the getter", () => {
+    const data = new Uint8Array(32).fill(7);
+    const signature = crypto.sign("sha256", new Uint8Array(32).fill(9), privateKey);
+    const key = keyWithGetter(publicPem, () => void data.fill(9));
+    expect(crypto.verify("sha256", data, key, signature)).toBe(true);
+  });
+
+  test("verify: data detached by the getter", () => {
+    const data = new Uint8Array(32).fill(7);
+    const signature = crypto.sign("sha256", new Uint8Array(0), privateKey);
+    const key = keyWithGetter(publicPem, () => void data.buffer.transfer());
+    expect(crypto.verify("sha256", data, key, signature)).toBe(true);
+  });
+
+  test("sign: data changed by the getter", () => {
+    const data = new Uint8Array(32).fill(7);
+    const signature = crypto.sign(
       "sha256",
       data,
-      {
-        key: publicPem,
-        format: "pem",
-        get passphrase() {
-          passphraseReads++;
-          signature.fill(0);
-          return undefined;
-        },
-      } as crypto.VerifyPublicKeyInput,
-      signature,
+      keyWithGetter(privatePem, () => void data.fill(9)),
     );
-    expect(passphraseReads).toBe(1);
-    expect(verified).toBe(true);
+    expect({
+      changed: crypto.verify("sha256", new Uint8Array(32).fill(9), publicKey, signature),
+      original: crypto.verify("sha256", new Uint8Array(32).fill(7), publicKey, signature),
+    }).toEqual({ changed: true, original: false });
+  });
+
+  test("sign: data detached by the getter", () => {
+    const data = new Uint8Array(32).fill(7);
+    const signature = crypto.sign(
+      "sha256",
+      data,
+      keyWithGetter(privatePem, () => void data.buffer.transfer()),
+    );
+    expect({
+      empty: crypto.verify("sha256", new Uint8Array(0), publicKey, signature),
+      original: crypto.verify("sha256", new Uint8Array(32).fill(7), publicKey, signature),
+    }).toEqual({ empty: true, original: false });
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 import crypto from "node:crypto";
+import os from "node:os";
 import { PassThrough, Readable } from "node:stream";
 import util from "node:util";
 import vm from "node:vm";
@@ -1165,69 +1166,404 @@ it("cipher.setAAD on a non-authenticated cipher throws ERR_CRYPTO_INVALID_STATE"
   });
 });
 
-// node:crypto copies key/data/salt/info/signature/oaepLabel arguments into a
-// WTF::Vector<uint8_t>, which cannot hold more than INT32_MAX bytes and crashes the
-// process past that. Node rejects the same arguments with ERR_OUT_OF_RANGE
-// "<name> is too big" (createSecretKey is the one Node accepts). Runs in a subprocess
-// so an unfixed build's abort does not take out the runner; the 2 GiB buffer is never
-// written, so RSS stays small.
-it("node:crypto rejects >2 GiB buffer arguments with ERR_OUT_OF_RANGE instead of aborting", async () => {
-  const script = `
-    import crypto from "node:crypto";
-    let big;
+// node:crypto reads the byte arguments of a synchronous call in place and keeps the bytes it
+// owns in size_t buffers. None of them goes into a WTF::Vector, which holds INT32_MAX bytes
+// at most and ends the process past that. Node's own limit for most of these arguments is the
+// same INT_MAX ("<name> is too big"), and it applies at the same point of each call.
+describe("byte arguments of INT32_MAX bytes and more", () => {
+  // Each case prints what it returned, or the code (or name) and message it threw.
+  async function runCases(source) {
+    const script = `
+      import crypto from "node:crypto";
+      import { promisify } from "node:util";
+      import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+      const { privateKey, publicKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+      let rsaKeys;
+      const rsa = () => (rsaKeys ??= crypto.generateKeyPairSync("rsa", { modulusLength: 1024 }));
+      const OAEP = crypto.constants.RSA_PKCS1_OAEP_PADDING;
+      const x = Buffer.from("x");
+      const iv = Buffer.alloc(12);
+      const noCall = () => {
+        throw new Error("the callback ran");
+      };
+      ${source}
+      const out = {};
+      for (const [label, fn] of Object.entries(cases)) {
+        try {
+          out[label] = await fn();
+        } catch (e) {
+          out[label] = (typeof e.code === "string" ? e.code : e.name) + ": " + e.message;
+        }
+      }
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let cases = stdout;
     try {
-      big = new Uint8Array(2 ** 31);
-    } catch {
-      console.log("SKIP");
-      process.exit(0);
-    }
-    const { publicKey, privateKey } = crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
-    const results = {};
-    const record = (label, fn) => {
+      cases = JSON.parse(stdout);
+    } catch {}
+    return { cases, stderr, exitCode };
+  }
+
+  // The size limit is INT32_MAX bytes. This lowers it to 1 MiB, so the cases are cheap.
+  const lowLimit = `
+    const LIMIT = 1024 * 1024;
+    const overString = Buffer.alloc(LIMIT + 1, "a").toString();
+    setSyntheticAllocationLimitForTesting(LIMIT);
+    const atLimit = () => new Uint8Array(LIMIT);
+    const over = () => new Uint8Array(LIMIT + 1);
+  `;
+
+  it("cipher key and hkdf: the limit is accepted and one byte more is rejected like Node", async () => {
+    const result = await runCases(`
+      ${lowLimit}
+      const cases = {
+        // A key of this size passes the size check. No cipher takes one.
+        "createCipheriv key at limit": () => crypto.createCipheriv("aes-128-gcm", atLimit(), iv),
+        "createCipheriv key": () => crypto.createCipheriv("aes-128-gcm", over(), iv),
+        "createCipheriv key ArrayBuffer": () => crypto.createCipheriv("aes-128-gcm", over().buffer, iv),
+        "createCipheriv key string": () => crypto.createCipheriv("aes-128-gcm", overString, iv),
+        "createDecipheriv key": () => crypto.createDecipheriv("aes-128-gcm", over(), iv),
+
+        "hkdfSync ikm at limit": () => crypto.hkdfSync("sha256", atLimit(), "salt", "info", 16).byteLength,
+        "hkdfSync ikm": () => crypto.hkdfSync("sha256", over(), "salt", "info", 16),
+        "hkdfSync ikm ArrayBuffer": () => crypto.hkdfSync("sha256", over().buffer, "salt", "info", 16),
+        "hkdfSync ikm DataView": () => crypto.hkdfSync("sha256", new DataView(over().buffer), "salt", "info", 16),
+        "hkdfSync ikm string": () => crypto.hkdfSync("sha256", overString, "salt", "info", 16),
+        "hkdfSync salt at limit": () => crypto.hkdfSync("sha256", "key", atLimit(), "info", 16).byteLength,
+        "hkdfSync salt": () => crypto.hkdfSync("sha256", "key", over(), "info", 16),
+        "hkdfSync salt string": () => crypto.hkdfSync("sha256", "key", overString, "info", 16),
+        "hkdfSync info": () => crypto.hkdfSync("sha256", "key", "salt", over(), 16),
+        "hkdf ikm and salt at limit": async () =>
+          (await promisify(crypto.hkdf)("sha256", atLimit(), atLimit(), "info", 16)).byteLength,
+        "hkdf ikm": () => crypto.hkdf("sha256", over(), "salt", "info", 16, noCall),
+        "hkdf salt": () => crypto.hkdf("sha256", "key", over(), "info", 16, noCall),
+      };
+    `);
+    expect(result).toEqual({
+      cases: {
+        "createCipheriv key at limit": "ERR_CRYPTO_INVALID_KEYLEN: Invalid key length",
+        "createCipheriv key": "ERR_OUT_OF_RANGE: key is too big",
+        "createCipheriv key ArrayBuffer": "ERR_OUT_OF_RANGE: key is too big",
+        "createCipheriv key string": "ERR_OUT_OF_RANGE: key is too big",
+        "createDecipheriv key": "ERR_OUT_OF_RANGE: key is too big",
+
+        "hkdfSync ikm at limit": 16,
+        "hkdfSync ikm": "ERR_OUT_OF_RANGE: key is too big",
+        "hkdfSync ikm ArrayBuffer": "ERR_OUT_OF_RANGE: key is too big",
+        "hkdfSync ikm DataView": "ERR_OUT_OF_RANGE: key is too big",
+        "hkdfSync ikm string": "ERR_OUT_OF_RANGE: key is too big",
+        "hkdfSync salt at limit": 16,
+        "hkdfSync salt": "ERR_OUT_OF_RANGE: salt is too big",
+        "hkdfSync salt string": "ERR_OUT_OF_RANGE: salt is too big",
+        "hkdfSync info":
+          'ERR_OUT_OF_RANGE: The value of "info" is out of range. It must be must not contain more than 1024 bytes. Received 1048577',
+        "hkdf ikm and salt at limit": 16,
+        "hkdf ikm": "ERR_OUT_OF_RANGE: key is too big",
+        "hkdf salt": "ERR_OUT_OF_RANGE: salt is too big",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("sign, verify and oaepLabel: the limit is accepted and one byte more is rejected like Node", async () => {
+    const result = await runCases(`
+      ${lowLimit}
+      const cases = {
+        "sign data at limit": () =>
+          crypto.verify("sha256", atLimit(), publicKey, crypto.sign("sha256", atLimit(), privateKey)),
+        "sign data at limit with a callback": async () =>
+          crypto.verify("sha256", atLimit(), publicKey, await promisify(crypto.sign)("sha256", atLimit(), privateKey)),
+        "sign data": () => crypto.sign("sha256", over(), privateKey),
+        "sign data with a callback": () => crypto.sign("sha256", over(), privateKey, noCall),
+        "verify data": () => crypto.verify("sha256", over(), publicKey, x),
+        "verify data with a callback": () => crypto.verify("sha256", over(), publicKey, x, noCall),
+        "verify signature at limit": () => crypto.verify("sha256", x, publicKey, atLimit()),
+        "verify signature at limit with a callback": () =>
+          promisify(crypto.verify)("sha256", x, publicKey, atLimit()),
+        "verify signature": () => crypto.verify("sha256", x, publicKey, over()),
+        "verify signature with a callback": () => crypto.verify("sha256", x, publicKey, over(), noCall),
+        "verify signature ieee-p1363": () =>
+          crypto.verify("sha256", x, { key: publicKey, dsaEncoding: "ieee-p1363" }, over()),
+
+        "publicEncrypt oaepLabel at limit": () => {
+          const oaepLabel = atLimit();
+          const encrypted = crypto.publicEncrypt({ key: rsa().publicKey, padding: OAEP, oaepLabel }, x);
+          return crypto.privateDecrypt({ key: rsa().privateKey, padding: OAEP, oaepLabel }, encrypted).toString();
+        },
+        "publicEncrypt oaepLabel": () =>
+          crypto.publicEncrypt({ key: rsa().publicKey, padding: OAEP, oaepLabel: over() }, x),
+        "privateDecrypt oaepLabel": () =>
+          crypto.privateDecrypt({ key: rsa().privateKey, padding: OAEP, oaepLabel: over() }, Buffer.alloc(128)),
+      };
+    `);
+    expect(result).toEqual({
+      cases: {
+        "sign data at limit": true,
+        "sign data at limit with a callback": true,
+        "sign data": "ERR_OUT_OF_RANGE: data is too big",
+        "sign data with a callback": "ERR_OUT_OF_RANGE: data is too big",
+        "verify data": "ERR_OUT_OF_RANGE: data is too big",
+        "verify data with a callback": "ERR_OUT_OF_RANGE: data is too big",
+        "verify signature at limit": false,
+        "verify signature at limit with a callback": false,
+        "verify signature": "ERR_OUT_OF_RANGE: signature is too big",
+        "verify signature with a callback": "ERR_OUT_OF_RANGE: signature is too big",
+        "verify signature ieee-p1363": "ERR_OUT_OF_RANGE: signature is too big",
+
+        "publicEncrypt oaepLabel at limit": "x",
+        "publicEncrypt oaepLabel": "ERR_OUT_OF_RANGE: oaepLabel is too big",
+        "privateDecrypt oaepLabel": "ERR_OUT_OF_RANGE: oaepLabel is too big",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Each expected error is the one Node v26.3.0 reports for the same call with 2 ** 31 bytes.
+  it("a second invalid argument is reported in Node's order", async () => {
+    const result = await runCases(`
+      ${lowLimit}
+      const cases = {
+        "createCipheriv key, unknown cipher": () => crypto.createCipheriv("nope", over(), iv),
+        "createCipheriv key, iv": () => crypto.createCipheriv("aes-128-gcm", over(), over()),
+        "createCipheriv key, authTagLength": () =>
+          crypto.createCipheriv("aes-128-gcm", over(), iv, { authTagLength: -1 }),
+        "hkdfSync ikm, unknown digest": () => crypto.hkdfSync("nope", over(), "salt", "info", 16),
+        "hkdfSync ikm, salt": () => crypto.hkdfSync("sha256", over(), over(), "info", 16),
+        "hkdfSync ikm, info": () => crypto.hkdfSync("sha256", over(), "salt", Buffer.alloc(1025), 16),
+        "hkdfSync salt, info": () => crypto.hkdfSync("sha256", "key", over(), Buffer.alloc(1025), 16),
+        "hkdfSync salt, unknown digest": () => crypto.hkdfSync("nope", "key", over(), "info", 16),
+        "hkdfSync salt, keylen": () => crypto.hkdfSync("sha256", "key", over(), "info", 255 * 32 + 1),
+        "hkdf ikm, callback": () => crypto.hkdf("sha256", over(), "salt", "info", 16, "nope"),
+        "hkdf unknown digest, callback": () => crypto.hkdf("nope", "key", "salt", "info", 16, "nope"),
+        "sign data, no key": () => crypto.sign("sha256", over(), null),
+        "sign data, unknown digest": () => crypto.sign("nope", over(), privateKey),
+        "sign data, callback": () => crypto.sign("sha256", over(), privateKey, "nope"),
+        "verify signature, unknown digest": () => crypto.verify("nope", x, publicKey, over()),
+        "verify signature, data": () => crypto.verify("sha256", over(), publicKey, over()),
+        "publicEncrypt oaepLabel, unknown oaepHash": () =>
+          crypto.publicEncrypt({ key: rsa().publicKey, padding: OAEP, oaepHash: "nope", oaepLabel: over() }, x),
+        "publicEncrypt oaepLabel, buffer": () =>
+          crypto.publicEncrypt({ key: rsa().publicKey, padding: OAEP, oaepLabel: over() }, 1),
+      };
+    `);
+    expect(result).toEqual({
+      cases: {
+        "createCipheriv key, unknown cipher": "ERR_OUT_OF_RANGE: key is too big",
+        "createCipheriv key, iv": "ERR_OUT_OF_RANGE: key is too big",
+        "createCipheriv key, authTagLength":
+          "ERR_INVALID_ARG_VALUE: The property 'options.authTagLength' is invalid. Received -1",
+        "hkdfSync ikm, unknown digest": "ERR_CRYPTO_INVALID_DIGEST: Invalid digest: nope",
+        "hkdfSync ikm, salt": "ERR_OUT_OF_RANGE: key is too big",
+        "hkdfSync ikm, info":
+          'ERR_OUT_OF_RANGE: The value of "info" is out of range. It must be must not contain more than 1024 bytes. Received 1025',
+        "hkdfSync salt, info":
+          'ERR_OUT_OF_RANGE: The value of "info" is out of range. It must be must not contain more than 1024 bytes. Received 1025',
+        "hkdfSync salt, unknown digest": "ERR_CRYPTO_INVALID_DIGEST: Invalid digest: nope",
+        "hkdfSync salt, keylen": "ERR_OUT_OF_RANGE: salt is too big",
+        "hkdf ikm, callback":
+          "ERR_INVALID_ARG_TYPE: The \"callback\" argument must be of type function. Received type string ('nope')",
+        "hkdf unknown digest, callback":
+          "ERR_INVALID_ARG_TYPE: The \"callback\" argument must be of type function. Received type string ('nope')",
+        "sign data, no key": "ERR_CRYPTO_SIGN_KEY_REQUIRED: No key provided to sign",
+        "sign data, unknown digest": "ERR_OUT_OF_RANGE: data is too big",
+        "sign data, callback":
+          "ERR_INVALID_ARG_TYPE: The \"callback\" argument must be of type function. Received type string ('nope')",
+        "verify signature, unknown digest": "ERR_CRYPTO_INVALID_DIGEST: Invalid digest: nope",
+        "verify signature, data": "ERR_OUT_OF_RANGE: data is too big",
+        "publicEncrypt oaepLabel, unknown oaepHash": "ERR_OSSL_EVP_INVALID_DIGEST: Invalid digest used",
+        "publicEncrypt oaepLabel, buffer":
+          'ERR_INVALID_ARG_TYPE: The "buffer" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView. Received type number (1)',
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // createSecretKey and createHmac have no limit in Node, so a secret key can pass it.
+  // A CryptoKey and the structured clone format still hold their bytes in a WTF::Vector.
+  it("a secret key past the limit works, and the two conversions that cannot hold it throw", async () => {
+    const result = await runCases(`
+      ${lowLimit}
+      const bytes = over().fill(7);
+      bytes[bytes.length - 1] = 9;
+      const key = crypto.createSecretKey(bytes);
+      const hmac = k => crypto.createHmac("sha256", k).update("x").digest("hex");
+      const cases = {
+        "symmetricKeySize": () => key.symmetricKeySize === LIMIT + 1,
+        "export": () => {
+          const exported = key.export();
+          return [exported.length === LIMIT + 1, exported[0], exported[exported.length - 1]];
+        },
+        "equals the same bytes": () => key.equals(crypto.createSecretKey(bytes)),
+        "equals other bytes": () => key.equals(crypto.createSecretKey(over())),
+        "createSecretKey from a string": () => crypto.createSecretKey(overString, "utf8").symmetricKeySize === LIMIT + 1,
+        "createHmac with the key": () => hmac(key) === hmac(bytes),
+        "createHmac with a string": () => hmac(overString) === hmac(Buffer.from(overString)),
+        "hkdfSync with the key as ikm": () => crypto.hkdfSync("sha256", key, "salt", "info", 16).byteLength,
+        "createCipheriv with the key": () => crypto.createCipheriv("aes-128-gcm", key, iv),
+        "toCryptoKey": () => key.toCryptoKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]),
+        "structuredClone": () => structuredClone(key),
+      };
+    `);
+    expect(result).toEqual({
+      cases: {
+        "symmetricKeySize": true,
+        "export": [true, 7, 9],
+        "equals the same bytes": true,
+        "equals other bytes": false,
+        "createSecretKey from a string": true,
+        "createHmac with the key": true,
+        "createHmac with a string": true,
+        "hkdfSync with the key as ikm": 16,
+        "createCipheriv with the key": "ERR_OUT_OF_RANGE: key is too big",
+        "toCryptoKey": "RangeError: Out of memory",
+        "structuredClone": "DataCloneError: The object can not be cloned.",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The child never writes to the 2 GiB, so they stay untouched address space and the test is
+  // cheap. A small host can still refuse to reserve them.
+  it.skipIf(os.totalmem() < 4 * 1024 ** 3)("2 ** 31 bytes are rejected like Node, not with an abort", async () => {
+    const result = await runCases(`
+      const big = new Uint8Array(2 ** 31);
+      const cases = {
+        "createCipheriv key": () => crypto.createCipheriv("aes-128-gcm", big, iv),
+        "createDecipheriv key": () => crypto.createDecipheriv("aes-128-gcm", big, iv),
+        "hkdfSync ikm": () => crypto.hkdfSync("sha256", big, "salt", "info", 16),
+        "hkdfSync salt": () => crypto.hkdfSync("sha256", "key", big, "info", 16),
+        "hkdfSync info": () => crypto.hkdfSync("sha256", "key", "salt", big, 16),
+        "hkdf ikm": () => crypto.hkdf("sha256", big, "salt", "info", 16, noCall),
+        "sign data": () => crypto.sign("sha256", big, privateKey),
+        "verify data": () => crypto.verify("sha256", big, publicKey, x),
+        "verify signature": () => crypto.verify("sha256", x, publicKey, big),
+        "publicEncrypt oaepLabel": () => crypto.publicEncrypt({ key: rsa().publicKey, padding: OAEP, oaepLabel: big }, x),
+        "privateDecrypt oaepLabel": () =>
+          crypto.privateDecrypt({ key: rsa().privateKey, padding: OAEP, oaepLabel: big }, Buffer.alloc(128)),
+      };
+    `);
+    expect(result).toEqual({
+      cases: {
+        "createCipheriv key": "ERR_OUT_OF_RANGE: key is too big",
+        "createDecipheriv key": "ERR_OUT_OF_RANGE: key is too big",
+        "hkdfSync ikm": "ERR_OUT_OF_RANGE: key is too big",
+        "hkdfSync salt": "ERR_OUT_OF_RANGE: salt is too big",
+        "hkdfSync info":
+          'ERR_OUT_OF_RANGE: The value of "info" is out of range. It must be must not contain more than 1024 bytes. Received 2147483648',
+        "hkdf ikm": "ERR_OUT_OF_RANGE: key is too big",
+        "sign data": "ERR_OUT_OF_RANGE: data is too big",
+        "verify data": "ERR_OUT_OF_RANGE: data is too big",
+        "verify signature": "ERR_OUT_OF_RANGE: signature is too big",
+        "publicEncrypt oaepLabel": "ERR_OUT_OF_RANGE: oaepLabel is too big",
+        "privateDecrypt oaepLabel": "ERR_OUT_OF_RANGE: oaepLabel is too big",
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Node v26.3.0 returns the same key. The child copies all 2 GiB, which takes 2 to 3 seconds in
+  // a debug ASAN build. That is too close to the default 5 second limit, so this test has its own.
+  // Inside a container totalmem() is the host's RAM and constrainedMemory() is the cgroup limit.
+  it.skipIf(Math.min(os.totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
+    "createSecretKey returns a key of 2 ** 31 bytes",
+    async () => {
+      const result = await runCases(`
+        const cases = { "symmetricKeySize": () => crypto.createSecretKey(Buffer.allocUnsafe(2 ** 31)).symmetricKeySize };
+      `);
+      expect(result).toEqual({ cases: { "symmetricKeySize": 2147483648 }, stderr: "", exitCode: 0 });
+    },
+    30_000,
+  );
+});
+
+// Node reads the bytes of these arguments in native code, after its JS layer has read the
+// options. A getter on the options can change or detach the buffer before that.
+describe("byte arguments are read after the option getters run, like Node", () => {
+  const iv = Buffer.alloc(12);
+  const encrypt = cipher => Buffer.concat([cipher.update("abc"), cipher.final()]).toString("hex");
+
+  it("createCipheriv key changed by the authTagLength getter", () => {
+    const key = new Uint8Array(16);
+    const options = {
+      get authTagLength() {
+        key.fill(1);
+        return 16;
+      },
+    };
+    const cipher = crypto.createCipheriv("aes-128-gcm", key, iv, options);
+    expect(encrypt(cipher)).toBe(encrypt(crypto.createCipheriv("aes-128-gcm", new Uint8Array(16).fill(1), iv)));
+  });
+
+  it("createCipheriv key detached by the authTagLength getter", () => {
+    const key = new Uint8Array(16);
+    const options = {
+      get authTagLength() {
+        key.buffer.transfer();
+        return 16;
+      },
+    };
+    expect(() => crypto.createCipheriv("aes-128-gcm", key, iv, options)).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INVALID_KEYLEN", message: "Invalid key length" }),
+    );
+  });
+
+  describe("publicEncrypt oaepLabel", () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 1024 });
+    const publicPem = publicKey.export({ type: "spki", format: "pem" });
+    const padding = crypto.constants.RSA_PKCS1_OAEP_PADDING;
+    const decrypt = (encrypted, oaepLabel) => {
       try {
-        fn();
-        results[label] = "returned";
+        return crypto.privateDecrypt({ key: privateKey, padding, oaepLabel }, encrypted).toString();
       } catch (e) {
-        results[label] = e.code + ": " + e.message;
+        return e.code;
       }
     };
-    record("createSecretKey", () => crypto.createSecretKey(big));
-    record("createSecretKey ArrayBuffer", () => crypto.createSecretKey(big.buffer));
-    record("createHmac", () => crypto.createHmac("sha256", big));
-    record("createCipheriv", () => crypto.createCipheriv("aes-128-gcm", big, Buffer.alloc(12)));
-    record("hkdfSync ikm", () => crypto.hkdfSync("sha256", big, "salt", "info", 16));
-    record("hkdfSync ikm ArrayBuffer", () => crypto.hkdfSync("sha256", big.buffer, "salt", "info", 16));
-    record("hkdfSync salt", () => crypto.hkdfSync("sha256", "key", big, "info", 16));
-    record("hkdfSync info", () => crypto.hkdfSync("sha256", "key", "salt", big, 16));
-    record("sign data", () => crypto.sign("sha256", big, privateKey));
-    record("verify signature", () => crypto.verify("sha256", Buffer.from("x"), publicKey, big));
-    record("publicEncrypt oaepLabel", () =>
-      crypto.publicEncrypt({ key: publicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepLabel: big }, Buffer.alloc(16)),
-    );
-    // Normal-sized inputs keep working in the same process.
-    results["small hmac"] = crypto.createHmac("sha256", big.subarray(0, 32)).update("x").digest("hex").length;
-    console.log(JSON.stringify(results));
-  `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  if (stdout.trim() !== "SKIP") {
-    expect(JSON.parse(stdout)).toEqual({
-      "createSecretKey": "ERR_OUT_OF_RANGE: key is too big",
-      "createSecretKey ArrayBuffer": "ERR_OUT_OF_RANGE: key is too big",
-      "createHmac": "ERR_OUT_OF_RANGE: key is too big",
-      "createCipheriv": "ERR_OUT_OF_RANGE: key is too big",
-      "hkdfSync ikm": "ERR_OUT_OF_RANGE: key is too big",
-      "hkdfSync ikm ArrayBuffer": "ERR_OUT_OF_RANGE: key is too big",
-      "hkdfSync salt": "ERR_OUT_OF_RANGE: salt is too big",
-      "hkdfSync info": "ERR_OUT_OF_RANGE: info is too big",
-      "sign data": "ERR_OUT_OF_RANGE: data is too big",
-      "verify signature": "ERR_OUT_OF_RANGE: signature is too big",
-      "publicEncrypt oaepLabel": "ERR_OUT_OF_RANGE: oaepLabel is too big",
-      "small hmac": 64,
+
+    it("changed by a key option getter", () => {
+      const oaepLabel = new Uint8Array(8).fill(1);
+      const options = {
+        key: publicPem,
+        format: "pem",
+        padding,
+        oaepLabel,
+        get passphrase() {
+          oaepLabel.fill(2);
+          return undefined;
+        },
+      };
+      const encrypted = crypto.publicEncrypt(options, Buffer.from("msg"));
+      expect({
+        changed: decrypt(encrypted, new Uint8Array(8).fill(2)),
+        original: decrypt(encrypted, new Uint8Array(8).fill(1)),
+      }).toEqual({ changed: "msg", original: "ERR_OSSL_RSA_OAEP_DECODING_ERROR" });
     });
-  }
-  expect(exitCode).toBe(0);
+
+    it("detached by a key option getter", () => {
+      const oaepLabel = new Uint8Array(8).fill(1);
+      const options = {
+        key: publicPem,
+        format: "pem",
+        padding,
+        oaepLabel,
+        get passphrase() {
+          oaepLabel.buffer.transfer();
+          return undefined;
+        },
+      };
+      const encrypted = crypto.publicEncrypt(options, Buffer.from("msg"));
+      expect({
+        none: decrypt(encrypted, undefined),
+        original: decrypt(encrypted, new Uint8Array(8).fill(1)),
+      }).toEqual({ none: "msg", original: "ERR_OSSL_RSA_OAEP_DECODING_ERROR" });
+    });
+  });
 });
 
 it("generatePrime(Sync) should return an ArrayBuffer", async () => {

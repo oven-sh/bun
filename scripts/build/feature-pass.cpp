@@ -142,11 +142,32 @@ struct FeaturePass : PassInfoMixin<FeaturePass> {
                 runBeforeMain.insert(cast<ConstantStruct>(entry)->getOperand(1)->stripPointerCasts());
         }
 
+        // On ELF what is given the name of a section is one piece to the linker, which then cannot drop a function of it, or fold
+        // two that are identical. In a group of its own each function is a piece. They stay in the order they are written
+        // in, and whatever the order, the section they end up in is of these features alone. LTO undoes a group of one
+        // that nothing outside the unit sees, so there is a byte in it too, which the compiler has to keep.
+        LLVMContext& context = module.getContext();
+        SmallVector<GlobalValue*, 0> kept;
+        auto alone = [&](Function& function) {
+            if (isMachO || isCOFF || function.hasComdat())
+                return;
+            Comdat* group = module.getOrInsertComdat(function.getName());
+            group->setSelectionKind(Comdat::NoDeduplicate);
+            function.setComdat(group);
+            auto* byte = Type::getInt8Ty(context);
+            auto* other = new GlobalVariable(module, byte, true, GlobalValue::PrivateLinkage, ConstantInt::get(byte, 0));
+            other->setSection(constants);
+            other->setComdat(group);
+            keepAsItIs(other);
+            kept.push_back(other);
+        };
+
         Owned owned;
         bool hasCode = false, hasConstants = false;
         for (Function& function : module) {
             if (isThisUnitsAlone(function) && !runBeforeMain.count(&function)) {
                 function.setSection(code);
+                alone(function);
                 owned.insert(&function);
                 hasCode = true;
             }
@@ -176,7 +197,6 @@ struct FeaturePass : PassInfoMixin<FeaturePass> {
 
         // Functions and variables are written in the order of these lists. Where that were not so, what is outside the marks
         // would stay in an executable without the feature. It would not be taken for another unit's.
-        LLVMContext& context = module.getContext();
         if (hasCode) {
             auto mark = [&](StringRef name) {
                 auto* type = FunctionType::get(Type::getVoidTy(context), false);
@@ -189,9 +209,11 @@ struct FeaturePass : PassInfoMixin<FeaturePass> {
             Function *begin = mark("bun_feature_code_begin"), *end = mark("bun_feature_code_end");
             module.getFunctionList().push_front(begin);
             module.getFunctionList().push_back(end);
+            alone(*begin);
+            alone(*end);
             record(module, records, begin, end);
         }
-        if (hasConstants) {
+        if (hasConstants || !kept.empty()) {
             auto mark = [&](StringRef name) {
                 auto* byte = Type::getInt8Ty(context);
                 auto* variable = new GlobalVariable(byte, true, GlobalValue::InternalLinkage, ConstantInt::get(byte, 0), name);
@@ -204,6 +226,7 @@ struct FeaturePass : PassInfoMixin<FeaturePass> {
             module.insertGlobalVariable(module.global_end(), end);
             record(module, records, begin, end);
         }
+        appendToCompilerUsed(module, kept);
         return PreservedAnalyses::all();
     }
 

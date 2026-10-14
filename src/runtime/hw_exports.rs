@@ -109,9 +109,51 @@ pub(crate) fn set_override_module_run_main_promise(
     vm: &mut VirtualMachine,
     promise: *mut JSInternalPromise,
 ) {
-    if vm.pending_internal_promise().is_none() {
-        vm.set_pending_internal_promise(Some(promise));
+    vm.set_pending_internal_promise(Some(promise));
+}
+
+/// Who reports the load `Module.runMain(key)` starts. NodeModuleModule.cpp mirrors the values.
+#[repr(u8)]
+enum RunMainOwner {
+    /// `Module.runMain`: nobody else looks at the promise of this load.
+    Caller = 0,
+    /// `reload_entry_point`: the first load of the `Module.runMain` override it calls is its own.
+    EntryAwaits = 1,
+    /// `reload_entry_point`: it loads the entry point again after the preload that asks for it.
+    EntryLoads = 2,
+}
+
+// HOST_EXPORT(Bun__VirtualMachine__runMainOwner, c)
+pub(crate) fn run_main_owner(vm: &VirtualMachine, key: &bun_core::String) -> u8 {
+    let owner = if vm.has_patched_run_main {
+        if vm.pending_internal_promise().is_none() {
+            RunMainOwner::EntryAwaits
+        } else {
+            RunMainOwner::Caller
+        }
+    } else if vm.is_in_preload
+        && (key.eql_utf8(vm.main()) || key.eql_utf8(bun_jsc::virtual_machine::MAIN_FILE_NAME))
+    {
+        RunMainOwner::EntryLoads
+    } else {
+        RunMainOwner::Caller
+    };
+    owner as u8
+}
+
+// HOST_EXPORT(Bun__onRunMainRejected)
+pub(crate) fn on_run_main_rejected(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> bun_jsc::JsResult<JSValue> {
+    let reason = callframe.argument(0);
+    let vm = global.bun_vm().as_mut();
+    // Rethrown, it reaches the rejection tracker, which keeps a `--hot` or `--watch` process alive.
+    if vm.is_watcher_enabled() {
+        return Err(global.throw_value(reason));
     }
+    let _ = vm.uncaught_exception(global, reason, true);
+    Ok(JSValue::UNDEFINED)
 }
 
 /// Exported as `Bun__VM__setEntryPointEvalResultESM`.

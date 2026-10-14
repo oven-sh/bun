@@ -748,7 +748,9 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     let global: *mut JSGlobalObject = unsafe { &*vm }.global;
     // SAFETY: per fn contract; `global` is the live global of `vm`.
     unsafe {
-        if (*vm).transpiler.options.rewrite_jest_for_tests && (*vm).transpiler.options.vitest_globals {
+        if (*vm).transpiler.options.rewrite_jest_for_tests
+            && (*vm).transpiler.options.vitest_globals
+        {
             crate::test_runner::jest::Jest::define_vitest_globals(&*global)
                 .map_err(|_| bun_jsc::CrateError::JSError)?;
         }

@@ -1,4 +1,4 @@
-//! Which token gets which color.
+//! Themes: the style of each token.
 
 use super::Token;
 use bun_core::output::ColorDepth;
@@ -6,7 +6,7 @@ use bun_core::output::ColorDepth;
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Color {
     Rgb(u8, u8, u8),
-    /// One of the 16 colors that the terminal has a palette for: 0 to 15.
+    /// An index into the terminal's own 16-color palette.
     Palette(u8),
 }
 
@@ -28,7 +28,7 @@ bitflags::bitflags! {
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub struct Style {
-    /// `None`: the color of plain text.
+    /// `None` is the color of plain text.
     pub color: Option<Color>,
     pub font: Font,
 }
@@ -61,11 +61,11 @@ impl Style {
     }
 }
 
-/// What a theme says about one token. What it leaves out comes from the token's parent.
+/// A theme's entry for one token. Whatever it leaves out is inherited from the token's parent.
 #[derive(Copy, Clone, Default)]
 pub struct PartialStyle {
     pub color: Option<Color>,
-    /// The flags that are set either way.
+    /// The flags that the entry turns on or off.
     pub font_given: Font,
     pub font: Font,
 }
@@ -106,14 +106,14 @@ impl Theme {
         self.styles[token as usize]
     }
 
-    /// `given`: by token.
+    /// `given` is indexed by token.
     pub fn new(
         foreground: Option<Color>,
         background: Option<Color>,
         given: &[PartialStyle; Token::COUNT],
     ) -> Theme {
         let mut styles = [Style::PLAIN; Token::COUNT];
-        // A parent comes before its children.
+        // `Token::ALL` lists a parent before its children.
         for &token in Token::ALL {
             let inherited = token.parent().map_or(Style::PLAIN, |it| styles[it as usize]);
             let own = given[token as usize];
@@ -132,7 +132,7 @@ impl Theme {
     /// The theme for a terminal with a light or a dark background.
     pub fn built_in(is_light: bool, depth: ColorDepth) -> &'static Theme {
         match is_light {
-            // The 16 colors are the terminal's own, which suit its background.
+            // With 16 colors, use the terminal's own palette. It suits whatever background the terminal has.
             _ if depth == ColorDepth::C16 => &Theme::TERMINAL,
             true => &Theme::LIGHT,
             false => &Theme::DARK,
@@ -168,7 +168,7 @@ impl Theme {
         }
     }
 
-    const fn from_palette(colors: Palette) -> Theme {
+    const fn from_palette(colors: &Palette) -> Theme {
         use Token::*;
         let muted = Style::hex(colors.muted);
         let keyword = Style::hex(colors.keyword);
@@ -225,7 +225,7 @@ impl Theme {
         )
     }
 
-    pub const DARK: Theme = Theme::from_palette(Palette {
+    pub const DARK: Theme = Theme::from_palette(&Palette {
         foreground: 0xe4e6eb,
         background: 0x0f1115,
         comment: 0x6b7385,
@@ -242,7 +242,7 @@ impl Theme {
         attribute: 0xc8a6ff,
     });
 
-    pub const LIGHT: Theme = Theme::from_palette(Palette {
+    pub const LIGHT: Theme = Theme::from_palette(&Palette {
         foreground: 0x1f2328,
         background: 0xffffff,
         comment: 0x7b8494,
@@ -259,7 +259,7 @@ impl Theme {
         attribute: 0x7a3fd0,
     });
 
-    /// For a terminal with 16 colors, which are whatever its own theme says, on a dark background or a light one.
+    /// For terminals with 16 colors. It only uses palette indexes, so it works on dark and light backgrounds.
     pub const TERMINAL: Theme = {
         use Token::*;
         const RED: Style = Style::palette(1);

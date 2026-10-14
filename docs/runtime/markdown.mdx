@@ -244,11 +244,14 @@ const result = Bun.markdown.render("1. first\n   1. sub-a\n   2. sub-b\n2. secon
 
 #### Code block syntax highlighting
 
+Use [`Bun.highlight`](/runtime/highlight) in the `code` callback. It returns `null` for a language it doesn't know.
+
 ````ts
 const result = Bun.markdown.render("```js\nconsole.log('hi')\n```", {
   code: (children, meta) => {
     const lang = meta?.language ?? "";
-    return `<pre><code class="language-${lang}">${children}</code></pre>`;
+    const html = Bun.highlight.html(children, lang) ?? Bun.escapeHTML(children);
+    return `<pre class="hl"><code class="language-${lang}">${html}</code></pre>`;
   },
 });
 ````

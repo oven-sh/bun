@@ -1179,7 +1179,7 @@ impl<'a, 's> Highlighter<'a, 's> {
             }
             return Token::KeywordOperator;
         }
-        if self.frames.is_empty() && self.keywords.0.iter().any(|word| *word == name) {
+        if self.frames.is_empty() && self.keywords.0.contains(&name) {
             match name {
                 // `@use "a" as b`
                 b"as" => self.state.name = Some(Token::Namespace),

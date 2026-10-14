@@ -119,6 +119,10 @@ struct Lexer<'a> {
     tokens: &'a mut Vec<Token>,
     /// Where the next `\0` at or behind `at` is, if that is known.
     next_nul: Option<usize>,
+    /// For the highlighter: nothing is an error.
+    is_tolerant: bool,
+    /// For the highlighter: from `at` on no `"`, `'` or `]` closes anything.
+    has_no_closing: [bool; 3],
 }
 
 impl Lexer<'_> {
@@ -144,6 +148,9 @@ impl Lexer<'_> {
 
     /// `[^\x00]` matches all of `text[at..end]`.
     fn is_without_nul(&mut self, end: usize) -> bool {
+        if self.is_tolerant {
+            return true;
+        }
         let next = match self.next_nul {
             Some(next) if next >= self.at => next,
             _ => strings::index_of_char_usize(&self.text[self.at..], 0)
@@ -161,6 +168,58 @@ impl Lexer<'_> {
     #[cold]
     fn error(&self, message: Message) -> Error {
         Error::Syntax(self.refusal.note(message, self.at as u32))
+    }
+
+    /// What starts here isn't closed. For the highlighter it runs to the end of the text.
+    #[cold]
+    fn unclosed(&self, message: Message) -> Result<usize, Error> {
+        match self.is_tolerant {
+            true => Ok(self.text.len() - self.at),
+            false => Err(self.error(message)),
+        }
+    }
+
+    /// How long the string or the `[a]` is that starts here and ends with `close`.
+    fn delimited(&mut self, close: u8, message: Message) -> Result<usize, Error> {
+        let rest = &self.text[self.at..];
+        if !self.is_tolerant {
+            return delimited_len(rest, close).ok_or_else(|| self.error(message));
+        }
+        let has_no_closing = &mut self.has_no_closing[match close {
+            b'"' => 0,
+            b'\'' => 1,
+            _ => 2,
+        }];
+        // Not one that ends with `\"` for want of another quote: the rest of it may be on its way.
+        let closed = (!*has_no_closing)
+            .then(|| delimited_len(rest, close))
+            .flatten()
+            .filter(|len| rest[len - 2] != b'\\');
+        *has_no_closing = closed.is_none();
+        // What isn't closed ends before the `}}` on its line, or else with the line.
+        Ok(closed.unwrap_or_else(|| {
+            let line = &rest[..strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len())];
+            strings::index_of(line, b"}}").unwrap_or(line.len())
+        }))
+    }
+
+    /// For the highlighter: goes on behind `len` bytes that can be in a name, with something behind them that cannot follow
+    /// one.
+    #[cold]
+    fn pass_unexpected(&mut self, len: usize) {
+        let rest = &self.text[self.at..];
+        match (&rest[..len], rest) {
+            (b"true" | b"false", _) => self.token(TokenKind::Boolean, len),
+            (b"undefined", _) => self.token(TokenKind::Undefined, len),
+            (b"null", _) => self.token(TokenKind::Null, len),
+            ([b'0'..=b'9', digits @ ..], _) if digits.iter().all(u8::is_ascii_digit) => {
+                self.token(TokenKind::Number, len);
+            }
+            ([_, ..], _) => self.token(TokenKind::Id, len),
+            // The mustache isn't closed: `{{a <p>`.
+            (_, [b'<', b'a'..=b'z' | b'A'..=b'Z' | b'/' | b'!', ..]) => self.pop_state(),
+            _ => self.at += 1,
+        }
     }
 
     fn initial(&mut self) -> Result<(), Error> {
@@ -218,9 +277,12 @@ impl Lexer<'_> {
     fn comment(&mut self) -> Result<(), Error> {
         let mut from = self.at;
         loop {
-            let dashes = self
-                .find(b"--", from)
-                .ok_or_else(|| self.error(Message::UnclosedComment))?;
+            let Some(dashes) = self.find(b"--", from) else {
+                let len = self.unclosed(Message::UnclosedComment)?;
+                self.pop_state();
+                self.token(TokenKind::Comment, len);
+                return Ok(());
+            };
             let rest = &self.text[dashes + 2..];
             let rest_len = rest.len();
             if let Some(rest) = rest.strip_prefix(b"~").unwrap_or(rest).strip_prefix(b"}}") {
@@ -263,9 +325,10 @@ impl Lexer<'_> {
                 }
             }
         }
-        let end = self
-            .find(b"{{{{", self.at + 1)
-            .ok_or_else(|| self.error(Message::UnclosedBlock))?;
+        let end = match self.find(b"{{{{", self.at + 1) {
+            Some(end) => end,
+            None => self.at + self.unclosed(Message::UnclosedBlock)?,
+        };
         if !self.is_without_nul(end) {
             return Err(self.error(Message::UnexpectedCharacter));
         }
@@ -313,10 +376,12 @@ impl Lexer<'_> {
                 self.states.push(State::Com);
             }
             Some(b'!') => {
-                let end = strings::index_of(&rest[at + 1..], b"}}")
-                    .ok_or_else(|| self.error(Message::UnclosedComment))?;
+                let len = match strings::index_of(&rest[at + 1..], b"}}") {
+                    Some(end) => at + 1 + end + 2,
+                    None => self.unclosed(Message::UnclosedComment)?,
+                };
                 self.pop_state();
-                self.token(TokenKind::Comment, at + 1 + end + 2);
+                self.token(TokenKind::Comment, len);
             }
             Some(b'*') => self.token(TokenKind::Open, at + 1),
             _ => {
@@ -350,8 +415,7 @@ impl Lexer<'_> {
             b'(' => self.token(TokenKind::OpenSexpr, 1),
             b')' => self.token(TokenKind::CloseSexpr, 1),
             b'[' => {
-                let len = delimited_len(rest, b']')
-                    .ok_or_else(|| self.error(Message::UnclosedBracket))?;
+                let len = self.delimited(b']', Message::UnclosedBracket)?;
                 self.token(TokenKind::Id, len);
             }
             b'{' if rest.starts_with(b"{{") => return self.open(),
@@ -381,8 +445,7 @@ impl Lexer<'_> {
             b'.' if rest.starts_with(b".#") => self.token(TokenKind::PrivateSep, 2),
             b'.' | b'/' => self.token(TokenKind::Sep, 1),
             quote @ (b'"' | b'\'') => {
-                let len = delimited_len(rest, quote)
-                    .ok_or_else(|| self.error(Message::UnclosedString))?;
+                let len = self.delimited(quote, Message::UnclosedString)?;
                 self.token(TokenKind::String, len);
             }
             b'@' => self.token(TokenKind::Data, 1),
@@ -408,6 +471,10 @@ impl Lexer<'_> {
                 }
                 let len = id_len(rest);
                 if len == 0 || !is_lookahead(&rest[len..]) {
+                    if self.is_tolerant {
+                        self.pass_unexpected(len);
+                        return Ok(());
+                    }
                     let message = match len == rest.len() {
                         true => Message::UnexpectedEnd,
                         false => Message::UnexpectedCharacter,
@@ -448,19 +515,36 @@ fn number_len(text: &[u8]) -> Option<usize> {
 
 /// Writes the tokens of `text` to `tokens`, which is empty. The last is `Eof`.
 pub(crate) fn lex(text: &[u8], tokens: &mut Vec<Token>, refusal: &Refusal) -> Result<(), Error> {
+    lex_from(text, 0, tokens, refusal, false)
+}
+
+/// The same for the highlighter, from `start` on. What is wrong is passed over, and what isn't closed ends somewhere.
+pub(crate) fn lex_tolerantly(text: &[u8], start: usize, tokens: &mut Vec<Token>) {
+    _ = lex_from(text, start, tokens, &Refusal::default(), true);
+}
+
+fn lex_from(
+    text: &[u8],
+    start: usize,
+    tokens: &mut Vec<Token>,
+    refusal: &Refusal,
+    is_tolerant: bool,
+) -> Result<(), Error> {
     let mut lexer = Lexer {
         text,
         refusal,
-        at: 0,
+        at: start,
         states: vec![State::Initial],
         tokens,
         next_nul: None,
+        is_tolerant,
+        has_no_closing: [false; 3],
     };
     loop {
         let state = lexer.states.last().copied().unwrap_or(State::Initial);
         if lexer.at >= text.len() {
             // Only there is the end of the text something that the grammar can go on with.
-            if state != State::Initial {
+            if state != State::Initial && !is_tolerant {
                 return Err(lexer.error(Message::UnexpectedEnd));
             }
             lexer.token(TokenKind::Eof, 0);

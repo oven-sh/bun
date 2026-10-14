@@ -1,4 +1,4 @@
-//! Spans to text with ANSI escape sequences.
+//! Turns spans into text with ANSI escape sequences.
 
 use super::{Color, Font, Span, Style, Theme, Token};
 use bun_core::ansi256;
@@ -48,7 +48,7 @@ struct Writer<'o> {
 }
 
 impl Writer<'_> {
-    /// Writes the escape sequence that changes the style to `style`, whose color is `foreground`.
+    /// Switches to `style`. `foreground` holds the parameters for its color.
     #[inline]
     fn switch_to(&mut self, style: Style, foreground: &[u8]) {
         if style != self.current {
@@ -91,22 +91,31 @@ impl Writer<'_> {
     }
 }
 
-/// Appends `code` with the colors of `theme`. Every line resets what it sets, so the result can be split into lines.
-pub fn write_ansi(
-    code: &[u8],
-    spans: &[Span],
-    theme: &Theme,
+/// A theme prepared for a terminal: the escape sequence parameters for each token's color are already formatted.
+pub struct AnsiStyles {
     depth: ColorDepth,
-    out: &mut Vec<u8>,
-) {
-    if depth == ColorDepth::None {
+    styles: [(Style, Foreground); Token::COUNT],
+}
+
+impl AnsiStyles {
+    pub fn new(theme: &Theme, depth: ColorDepth) -> AnsiStyles {
+        AnsiStyles {
+            depth,
+            styles: std::array::from_fn(|index| {
+                let style = theme.style(Token::ALL[index]);
+                let foreground = style.color.map(|it| Foreground::new(it, depth));
+                (style, foreground.unwrap_or_default())
+            }),
+        }
+    }
+}
+
+/// Appends `code`, colored with `theme`. Every line resets the styles it sets, so callers can split the result on `\n`.
+pub fn write_ansi(code: &[u8], spans: &[Span], theme: &AnsiStyles, out: &mut Vec<u8>) {
+    if theme.depth == ColorDepth::None {
         out.extend_from_slice(code);
         return;
     }
-    let foregrounds: [Foreground; Token::COUNT] = std::array::from_fn(|index| {
-        let color = theme.style(Token::ALL[index]).color;
-        color.map_or(Foreground::default(), |it| Foreground::new(it, depth))
-    });
     out.reserve(code.len() + spans.len() * 12);
     let mut writer = Writer {
         out,
@@ -119,8 +128,9 @@ pub fn write_ansi(
             continue;
         };
         at = end;
-        let style = theme.style(span.token);
-        // A color doesn't show on a blank, so it can stay on until the next one replaces it.
+        let (style, foreground) = &theme.styles[span.token as usize];
+        let (style, foreground) = (*style, foreground.bytes());
+        // A color is invisible on blanks, so leave it on if the next token sets another one anyway.
         let stays_on = style != Style::default()
             && !(writer.current.font).intersects(Font::UNDERLINE | Font::STRIKETHROUGH)
             && before.iter().all(|&byte| byte == b' ' || byte == b'\t');
@@ -128,7 +138,6 @@ pub fn write_ansi(
             writer.reset();
         }
         writer.out.extend_from_slice(before);
-        let foreground = foregrounds[span.token as usize].bytes();
         while let Some(line_end) = strings::index_of_char_usize(text, b'\n') {
             if line_end > 0 {
                 writer.switch_to(style, foreground);

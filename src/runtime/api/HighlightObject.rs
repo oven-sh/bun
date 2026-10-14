@@ -1,29 +1,27 @@
-//! `Bun.highlight`: html/ansi/css host fns over `bun_format::highlight`.
+//! `Bun.highlight`: `html()` and the `Theme` class, over `bun_format::highlight`.
 
 use crate::node::StringOrBuffer;
 use bun_core::output::{ColorDepth, Source as OutputSource};
 use bun_format::highlight::{
-    self, Color, Font, Language, PartialStyle, Scratch, Span, Theme, Token,
+    self, AnsiStyles, Color, Font, Language, PartialStyle, Scratch, Span, Theme, Token,
 };
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult,
     RangeErrorOptions,
 };
-use std::borrow::Cow;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::create_host_function_object(
+    let object = bun_jsc::create_host_function_object(global, &[("html", __jsc_host_html, 2)]);
+    object.put(
         global,
-        &[
-            ("html", __jsc_host_html, 2),
-            ("ansi", __jsc_host_ansi, 2),
-            ("css", __jsc_host_css, 1),
-        ],
-    )
+        b"Theme",
+        bun_jsc::codegen::js::get_constructor::<HighlightTheme>(global),
+    );
+    object
 }
 
-/// `None`: Bun doesn't highlight that language.
+/// Returns `None` for a language that Bun doesn't highlight.
 fn language_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Language>> {
     if !value.is_string() {
         return Err(global.throw_invalid_argument_type_value("language", "string", value));
@@ -31,7 +29,7 @@ fn language_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<
     Ok(Language::from_name(&value.to_utf8(global)?))
 }
 
-/// Calls `then` with the code and its tokens.
+/// Highlights `code` and returns what `then` makes of the code and its tokens, as a string.
 fn with_tokens(
     global: &JSGlobalObject,
     code: JSValue,
@@ -112,32 +110,32 @@ fn style_from_js(global: &JSGlobalObject, name: &[u8], value: JSValue) -> JsResu
     Ok(style)
 }
 
-enum ThemeChoice {
-    /// Nothing was asked for.
-    Default,
+enum Styles {
+    /// The caller didn't pass any. Dark or light, whichever suits where the code is shown.
+    Auto,
     Dark,
     Light,
     Custom(Box<Theme>),
 }
 
-fn theme_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<ThemeChoice> {
+fn styles_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Styles> {
     if value.is_undefined() {
-        return Ok(ThemeChoice::Default);
+        return Ok(Styles::Auto);
     }
     if value.is_string() {
         return match &*value.to_utf8(global)? {
-            b"dark" => Ok(ThemeChoice::Dark),
-            b"light" => Ok(ThemeChoice::Light),
-            _ => Err(global.throw_invalid_argument_property_value(
-                b"theme",
-                Some("\"dark\", \"light\" or an object"),
+            b"dark" => Ok(Styles::Dark),
+            b"light" => Ok(Styles::Light),
+            _ => Err(global.throw_invalid_argument_value_custom(
+                b"styles",
                 value,
+                b"must be \"dark\", \"light\" or an object",
             )),
         };
     }
     let Some(object) = value.get_object() else {
         return Err(global.throw_invalid_argument_type_value(
-            "theme",
+            "styles",
             "string or object",
             value,
         ));
@@ -163,12 +161,12 @@ fn theme_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<ThemeChoic
             }
         }
     }
-    Ok(ThemeChoice::Custom(Box::new(Theme::new(
+    Ok(Styles::Custom(Box::new(Theme::new(
         foreground, background, &styles,
     ))))
 }
 
-/// `process.stdout.getColorDepth()`
+/// Takes the values of `process.stdout.getColorDepth()`.
 fn color_depth_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<ColorDepth> {
     if value.is_undefined() {
         return Ok(OutputSource::color_depth());
@@ -186,55 +184,69 @@ fn color_depth_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Colo
     }
 }
 
-/// `Bun.highlight.ansi(code, language | { language, theme, colorDepth })`
-#[bun_jsc::host_fn]
-fn ansi(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [code, options] = frame.arguments_as_array::<2>();
-    let (language, theme, depth) = match options.is_object() {
-        true => (
-            options.get(global, "language")?.unwrap_or(JSValue::UNDEFINED),
-            options.get(global, "theme")?.unwrap_or(JSValue::UNDEFINED),
-            options.get(global, "colorDepth")?.unwrap_or(JSValue::UNDEFINED),
-        ),
-        false => (options, JSValue::UNDEFINED, JSValue::UNDEFINED),
-    };
-    let language = language_from_js(global, language)?;
-    let theme = theme_from_js(global, theme)?;
-    let depth = color_depth_from_js(global, depth)?;
-    let Some(language) = language else {
-        return Ok(JSValue::NULL);
-    };
-    let theme: Cow<'_, Theme> = match theme {
-        ThemeChoice::Custom(theme) => Cow::Owned(*theme),
-        ThemeChoice::Light => Cow::Borrowed(Theme::built_in(true, depth)),
-        ThemeChoice::Dark => Cow::Borrowed(Theme::built_in(false, depth)),
-        ThemeChoice::Default => Cow::Borrowed(Theme::built_in(
-            bun_md::root::detect_light_background(),
-            depth,
-        )),
-    };
-    with_tokens(global, code, language, |code, spans| {
-        let mut out = Vec::new();
-        highlight::write_ansi(code, spans, &theme, depth, &mut out);
-        out
-    })
+/// `new Bun.highlight.Theme(styles?, { colorDepth }?)`
+#[bun_jsc::JsClass]
+pub(crate) struct HighlightTheme {
+    styles: Styles,
+    ansi: AnsiStyles,
 }
 
-/// `Bun.highlight.css(theme?)`
-#[bun_jsc::host_fn]
-fn css(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let [theme] = frame.arguments_as_array::<1>();
-    let mut out = Vec::new();
-    match theme_from_js(global, theme)? {
-        ThemeChoice::Custom(theme) => highlight::write_css(&theme, &mut out),
-        ThemeChoice::Dark => highlight::write_css(&Theme::DARK, &mut out),
-        ThemeChoice::Light => highlight::write_css(&Theme::LIGHT, &mut out),
-        ThemeChoice::Default => {
-            highlight::write_css(&Theme::LIGHT, &mut out);
-            out.extend_from_slice(b"@media (prefers-color-scheme: dark) {\n");
-            highlight::write_css(&Theme::DARK, &mut out);
-            out.extend_from_slice(b"}\n");
-        }
+impl HighlightTheme {
+    pub(crate) fn constructor(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<Box<HighlightTheme>> {
+        let [styles, options] = frame.arguments_as_array::<2>();
+        let styles = styles_from_js(global, styles)?;
+        let depth = match options.is_undefined() {
+            true => JSValue::UNDEFINED,
+            false if !options.is_object() => {
+                return Err(global.throw_invalid_argument_type_value(
+                    "options", "object", options,
+                ));
+            }
+            false => (options.get(global, "colorDepth")?).unwrap_or(JSValue::UNDEFINED),
+        };
+        let depth = color_depth_from_js(global, depth)?;
+        let theme = match &styles {
+            Styles::Custom(theme) => theme,
+            Styles::Light => Theme::built_in(true, depth),
+            Styles::Dark => Theme::built_in(false, depth),
+            Styles::Auto => Theme::built_in(bun_md::root::detect_light_background(), depth),
+        };
+        let ansi = AnsiStyles::new(theme, depth);
+        Ok(Box::new(HighlightTheme { styles, ansi }))
     }
-    bun_string_jsc::owned_utf8_into_js(global, out)
+
+    /// `theme.ansi(code, language)`
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn ansi(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let [code, language] = frame.arguments_as_array::<2>();
+        let Some(language) = language_from_js(global, language)? else {
+            return Ok(JSValue::NULL);
+        };
+        with_tokens(global, code, language, |code, spans| {
+            let mut out = Vec::new();
+            highlight::write_ansi(code, spans, &self.ansi, &mut out);
+            out
+        })
+    }
+
+    /// `theme.css()`
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn css(&self, global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        let mut out = Vec::new();
+        match &self.styles {
+            Styles::Custom(theme) => highlight::write_css(theme, &mut out),
+            Styles::Dark => highlight::write_css(&Theme::DARK, &mut out),
+            Styles::Light => highlight::write_css(&Theme::LIGHT, &mut out),
+            Styles::Auto => {
+                highlight::write_css(&Theme::LIGHT, &mut out);
+                out.extend_from_slice(b"@media (prefers-color-scheme: dark) {\n");
+                highlight::write_css(&Theme::DARK, &mut out);
+                out.extend_from_slice(b"}\n");
+            }
+        }
+        bun_string_jsc::owned_utf8_into_js(global, out)
+    }
 }

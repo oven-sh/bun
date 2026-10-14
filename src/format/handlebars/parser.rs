@@ -163,6 +163,20 @@ fn expected(kind: TokenKind) -> Message {
     }
 }
 
+pub(super) fn can_start_expression(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::OpenSexpr
+            | TokenKind::Id
+            | TokenKind::Data
+            | TokenKind::String
+            | TokenKind::Number
+            | TokenKind::Boolean
+            | TokenKind::Undefined
+            | TokenKind::Null
+    )
+}
+
 impl Parser<'_> {
     fn peek(&self) -> Token {
         self.peek_at(0)
@@ -304,20 +318,6 @@ impl Parser<'_> {
         }
     }
 
-    fn can_start_expression(kind: TokenKind) -> bool {
-        matches!(
-            kind,
-            TokenKind::OpenSexpr
-                | TokenKind::Id
-                | TokenKind::Data
-                | TokenKind::String
-                | TokenKind::Number
-                | TokenKind::Boolean
-                | TokenKind::Undefined
-                | TokenKind::Null
-        )
-    }
-
     fn is_at_hash(&self) -> bool {
         self.peek().kind == TokenKind::Id && self.peek_at(1).kind == TokenKind::Equals
     }
@@ -422,7 +422,7 @@ impl Parser<'_> {
     fn call(&mut self, path: Expression) -> Result<(Call, bool), Error> {
         let base = self.pending.len();
         let mut is_valid = true;
-        while Self::can_start_expression(self.peek().kind) && !self.is_at_hash() {
+        while can_start_expression(self.peek().kind) && !self.is_at_hash() {
             let param = self.expression()?;
             is_valid &= param.is_valid && param.class != Class::HashLiteral;
             self.pending.push(param.node);

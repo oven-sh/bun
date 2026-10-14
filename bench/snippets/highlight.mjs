@@ -4,6 +4,7 @@ import "prismjs/components/prism-typescript.js";
 import { createHighlighter } from "shiki";
 import { bench, run, summary } from "../runner.mjs";
 
+const theme = typeof Bun !== "undefined" && Bun.highlight ? new Bun.highlight.Theme("dark", { colorDepth: 24 }) : null;
 const shiki = await createHighlighter({ themes: ["github-dark"], langs: ["typescript"] });
 
 const small = `const greet = (name: string) => "Hello, " + name;`;
@@ -52,7 +53,7 @@ for (const [name, code] of [
   summary(() => {
     if (typeof Bun !== "undefined" && Bun.highlight) {
       bench(`${label} - Bun.highlight.html`, () => Bun.highlight.html(code, "ts"));
-      bench(`${label} - Bun.highlight.ansi`, () => Bun.highlight.ansi(code, { language: "ts", colorDepth: 24 }));
+      bench(`${label} - Bun.highlight.Theme#ansi`, () => theme.ansi(code, "ts"));
     }
     bench(`${label} - highlight.js`, () => hljs.highlight(code, { language: "typescript" }).value);
     bench(`${label} - prismjs`, () => Prism.highlight(code, Prism.languages.typescript, "typescript"));

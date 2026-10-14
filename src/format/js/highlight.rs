@@ -1,10 +1,10 @@
 //! Highlights JavaScript, TypeScript, JSX and JSON.
 //!
-//! The tokens are those of `bun lint`, which cover the whole text whatever is wrong with it. They only tell a keyword from
-//! a name from a string, so three things refine them:
-//! - a walk over the tree marks each name whose place says what it is: the name of a function, a property, a type
-//! - the scopes say what every other name refers to: a parameter, a class, an import that is called somewhere
-//! - a name that is neither is a keyword that is only reserved in some places, like `async` or `type`
+//! It starts from `bun lint`'s tokens. They cover the whole text even when the code has syntax errors, but they only
+//! tell keywords, names, strings and punctuation apart. Three things refine them:
+//! - A walk over the tree marks names by where they appear: a function's name, a property, a type.
+//! - Scope analysis resolves every other name: a parameter, a class, an import that gets called somewhere.
+//! - A name with neither is a contextual keyword, like `async` or `type`.
 
 use crate::highlight::{Language, Span as TokenSpan, Spans, Token};
 use bun_core::strings;
@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 
 pub(crate) fn highlight(code: &[u8], language: Language, spans: &mut Spans) {
     let path: &[u8] = match language {
-        // An object at the start of a program would be a block.
+        // A program that starts with `{` would parse as a block.
         Language::Json => return highlight_in_parentheses(code, true, spans),
         Language::Jsx => b"a.jsx",
         Language::TypeScript => b"a.ts",
@@ -33,7 +33,7 @@ pub(crate) fn highlight(code: &[u8], language: Language, spans: &mut Spans) {
         _ => b"a.js",
     };
     with_file(path, code, |file| {
-        Highlighter::new(file, false, 0).run(spans);
+        Highlighter::new(file, false, 0, 0).run(spans);
     });
 }
 
@@ -42,12 +42,13 @@ pub(crate) fn highlight_expression(code: &[u8], spans: &mut Spans) {
 }
 
 fn highlight_in_parentheses(code: &[u8], is_json: bool, spans: &mut Spans) {
-    let mut in_parentheses = Vec::with_capacity(code.len() + 2);
+    let mut in_parentheses = Vec::with_capacity(code.len() + 3);
     in_parentheses.push(b'(');
     in_parentheses.extend_from_slice(code);
-    in_parentheses.push(b')');
+    // The `)` goes on its own line in case the code ends with a `//` comment.
+    in_parentheses.extend_from_slice(b"\n)");
     with_file(b"a.ts", &in_parentheses, |file| {
-        Highlighter::new(file, is_json, 1).run(spans);
+        Highlighter::new(file, is_json, 1, 2).run(spans);
     });
 }
 
@@ -65,7 +66,7 @@ fn with_file(path: &[u8], code: &[u8], then: impl for<'a> FnOnce(&'a File<'a>)) 
         path,
         None,
         code,
-        // Only JSON files take an interner. Every other file has its own atoms.
+        // The parser only uses the interner for `.json` files. Other files keep their own atoms.
         &bun_sema_parser::NoInterner,
         false,
         true,
@@ -82,7 +83,7 @@ fn with_file(path: &[u8], code: &[u8], then: impl for<'a> FnOnce(&'a File<'a>)) 
     );
 }
 
-/// What the token that starts at a position is. Of two marks for one position the first counts.
+/// Maps the start of a token to what it is. If a position is marked twice, the first mark wins.
 #[derive(Default)]
 struct Marks {
     list: Vec<(u32, Token)>,
@@ -97,13 +98,13 @@ impl Marks {
         self.list.push((at, token));
     }
 
-    fn sort(&mut self) {
+    fn put_in_order(&mut self) {
         if !self.is_sorted {
             crate::sort::sort_by_key(&mut self.list, |mark| mark.0);
         }
     }
 
-    /// Positions are asked for in ascending order.
+    /// Callers must ask for positions in ascending order.
     #[inline]
     fn at(&mut self, at: u32) -> Option<Token> {
         while let Some(&(position, token)) = self.list.get(self.next) {
@@ -119,33 +120,36 @@ impl Marks {
 struct Highlighter<'a> {
     file: &'a File<'a>,
     is_json: bool,
-    /// The number of bytes in front of the code that aren't part of it.
+    /// How many bytes were added in front of the code before parsing.
     shift: u32,
-    /// From the tree.
+    /// Where the code ends in the parsed text.
+    end: u32,
+    /// Marks from the tree walk.
     marks: Marks,
-    /// From the scopes.
+    /// Marks from scope analysis.
     references: Marks,
-    /// By [`Symbol::key`].
+    /// A cache, indexed by [`Symbol::key`].
     symbols: Vec<Option<Token>>,
     has_enums: bool,
-    /// The `import` and `export .. from` statements, where `as` renames.
+    /// The spans of `import` and `export .. from` statements. In them `as` renames instead of casting.
     imports: Vec<Span>,
     next_import: usize,
-    /// The templates whose text is in another language, like `` css`a { }` ``.
+    /// Templates that hold another language, like `` css`a { }` ``, with where they start.
     embedded: Vec<(Template<'a>, u32, Language)>,
     next_embedded: usize,
 }
 
-/// The tokens of the text of a template. Their offsets are those of a copy with something short for each `${..}`.
+/// The tokens of a template that holds another language. Offsets are into a copy of its text in which each `${..}` is
+/// replaced by a short placeholder.
 struct Embedded {
     tokens: Vec<TokenSpan>,
     next: usize,
-    /// Where the pieces of text start in the copy. They are asked for one after the other.
+    /// Where each piece of text between two `${..}` starts in the copy.
     pieces: Vec<u32>,
     next_piece: usize,
 }
 
-/// Where the tokens go.
+/// Adds spans, undoing [`Highlighter::shift`].
 struct Out<'s> {
     spans: &'s mut Spans,
     shift: u32,
@@ -159,7 +163,7 @@ impl Out<'_> {
     }
 }
 
-/// `A`, `MAX_SIZE`
+/// `MAX_SIZE`, `ID`
 fn is_constant_name(name: &[u8]) -> bool {
     name.len() > 1
         && name[0].is_ascii_uppercase()
@@ -169,11 +173,13 @@ fn is_constant_name(name: &[u8]) -> bool {
 }
 
 impl<'a> Highlighter<'a> {
-    fn new(file: &'a File<'a>, is_json: bool, shift: u32) -> Self {
+    /// The parsed text has `shift` bytes before the code and `extra` bytes after it.
+    fn new(file: &'a File<'a>, is_json: bool, shift: u32, extra: u32) -> Self {
         Highlighter {
             file,
             is_json,
             shift,
+            end: (file.text().len() as u32).saturating_sub(extra),
             marks: Marks {
                 is_sorted: true,
                 ..Marks::default()
@@ -199,7 +205,7 @@ impl<'a> Highlighter<'a> {
             self.has_enums = enums.next().is_some();
         }
         walk::walk(file, &mut self);
-        self.marks.sort();
+        self.marks.put_in_order();
         if !self.is_json {
             self.resolve_references();
         }
@@ -218,7 +224,7 @@ impl<'a> Highlighter<'a> {
             };
             self.references.add(reference.ident().start(), token);
         }
-        self.references.sort();
+        self.references.put_in_order();
     }
 
     fn token_of_symbol(&mut self, symbol: Symbol<'a>) -> Token {
@@ -239,7 +245,7 @@ impl<'a> Highlighter<'a> {
         self.marks.add(at, token);
     }
 
-    /// The `<` and the `>` around type parameters or type arguments.
+    /// Marks the `<` and `>` around type parameters or type arguments.
     fn mark_angle_brackets(&mut self, span: Option<Span>) {
         if let Some(span) = span {
             self.mark(span.start, Token::PunctuationBracket);
@@ -247,7 +253,7 @@ impl<'a> Highlighter<'a> {
         }
     }
 
-    /// `name` is what is called, constructed or extended.
+    /// Marks the name of something that is called, constructed or extended: `a` or the `b` of `a.b`.
     fn mark_name_of(&mut self, name: Expr<'a>, plain: Token, member: Token) {
         let name = name.skip_type_wrappers();
         match name.tag() {
@@ -277,7 +283,7 @@ impl<'a> Highlighter<'a> {
         }
     }
 
-    /// `A.B.C` in a type: `last` is what `C` is. What a name on its own is, the scopes say.
+    /// Marks `A.B.C` in a type, where `C` is a `last`. A single name is left to scope analysis.
     fn mark_entity_name(&mut self, name: EntityName<'a>, last: Token) {
         let count = name.len();
         if count < 2 {
@@ -388,7 +394,7 @@ impl<'a> Highlighter<'a> {
         }
     }
 
-    /// The `{` and the `}` around an expression in JSX.
+    /// Marks the `{` and `}` around an expression in JSX.
     fn mark_container(&mut self, e: Expr<'a>) {
         if let Some(span) = e.jsx_container_span() {
             self.mark(span.start, Token::PunctuationSpecial);
@@ -498,7 +504,7 @@ impl<'a> Highlighter<'a> {
         }
     }
 
-    /// What the top level of the file declares as `name`.
+    /// What the imported `name` is.
     fn token_of_import(&mut self, name: bun_lint::ast::Ident<'a>) -> Token {
         match self.file.top_level_scope().get_name(name.name()) {
             Some(symbol) => self.token_of_symbol(symbol),
@@ -517,7 +523,7 @@ impl<'a> Highlighter<'a> {
         self.mark_import_attributes(import.attributes());
     }
 
-    /// The label after the `break` or the `continue` that `stmt` starts with.
+    /// Marks the label after `break` or `continue`.
     fn mark_label_after(&mut self, stmt: Stmt<'a>, keyword: &str) {
         let after = stmt.span().start + keyword.len() as u32;
         let label = tokens::skip_trivia(self.file.text(), after);
@@ -600,7 +606,7 @@ impl<'a> Highlighter<'a> {
 
     // ───────────────────────────── tokens ─────────────────────────────
 
-    /// Whether `at` is in an `import` or an `export .. from` statement. Positions are asked for in ascending order.
+    /// Whether `at` is in an `import` or `export .. from` statement. Callers must ask in ascending order.
     fn is_in_import(&mut self, at: u32) -> bool {
         while let Some(span) = self.imports.get(self.next_import) {
             if at < span.end {
@@ -611,7 +617,7 @@ impl<'a> Highlighter<'a> {
         false
     }
 
-    /// The tokens of the text of the template that starts at `start`, if that is in another language.
+    /// Highlights the template that starts at `start`, if it holds another language.
     fn embedded_at(&mut self, start: u32, spans: &Spans) -> Option<Embedded> {
         while self.embedded.get(self.next_embedded)?.1 < start {
             self.next_embedded += 1;
@@ -620,11 +626,11 @@ impl<'a> Highlighter<'a> {
         if at != start {
             return None;
         }
-        // Something that can stand wherever a value can. It is short, so that a template in a `${..}` of a template, and so
-        // on, is only read once.
+        // A placeholder that parses wherever a value can appear. It's short so that templates nested in `${..}` don't make
+        // the outer ones longer, which would be quadratic.
         let hole: &[u8] = match language {
             Language::GraphQl => b" ",
-            // `${a}px` is a number with a unit.
+            // So that `${a}px` is a number with a unit.
             Language::Scss => b"0",
             _ => b"_",
         };
@@ -640,10 +646,10 @@ impl<'a> Highlighter<'a> {
             }
             pieces.push(text.len() as u32);
             text.extend_from_slice(written.get(from..to)?);
-            is_unclosed = !is_closed && span.end as usize + self.shift as usize >= code.len();
+            is_unclosed = !is_closed && span.end >= self.end;
         }
         Some(Embedded {
-            tokens: spans.tokens_of(language, &text, is_unclosed),
+            tokens: spans.tokens_of(language, &text, is_unclosed)?,
             next: 0,
             pieces,
             next_piece: 0,
@@ -652,10 +658,9 @@ impl<'a> Highlighter<'a> {
 
     fn write(&mut self, spans: &mut Spans) {
         let file = self.file;
-        let (text, shift) = (file.text(), self.shift);
-        let end_of_code = (text.len() as u32).saturating_sub(shift);
+        let (text, shift, end_of_code) = (file.text(), self.shift, self.end);
         let out = &mut Out { spans, shift };
-        // The templates that are open. `None`: its text is a string.
+        // One entry per open template. `None` is a plain string.
         let mut templates: Vec<Option<Embedded>> = Vec::new();
         let mut is_after_export = false;
         for token in file.tokens().with_comments() {
@@ -663,7 +668,7 @@ impl<'a> Highlighter<'a> {
             if start < shift || start >= end_of_code {
                 continue;
             }
-            // In code with errors a mark can be off, so one for punctuation only counts for punctuation.
+            // In code with errors a mark's position can be off, so only punctuation takes a punctuation mark.
             let (mark, punctuation_mark) = match self.marks.at(start) {
                 mark @ Some(
                     Token::TagDelimiter | Token::PunctuationBracket | Token::PunctuationSpecial,
@@ -793,7 +798,7 @@ impl<'a> Visitor<'a> for Highlighter<'a> {
     fn exit(&mut self, _: Node<'a>) {}
 }
 
-/// What a name is that refers to `symbol`.
+/// The token for every name that refers to `symbol`.
 fn token_of_declaration(symbol: Symbol<'_>) -> Token {
     let Some(declaration) = symbol.declarations().next() else {
         return match symbol.is_implicit_arguments() {
@@ -830,7 +835,8 @@ fn token_of_declaration(symbol: Symbol<'_>) -> Token {
     }
 }
 
-/// Nothing in the file says what `symbol` is, but it is a function if it is called and a type if it is used as one.
+/// For a symbol whose declaration doesn't say what it is, like an import: a function if it's called somewhere, a type if
+/// it's used as one.
 fn token_by_use(symbol: Symbol<'_>) -> Token {
     for reference in symbol.references() {
         if reference.is_type() && !reference.is_value() {
@@ -855,7 +861,7 @@ fn token_by_use(symbol: Symbol<'_>) -> Token {
     Token::Variable
 }
 
-/// A name that nothing in the file declares.
+/// The token for a name that the file doesn't declare.
 fn token_of_global(name: &[u8]) -> Token {
     match name {
         b"undefined" | b"NaN" | b"Infinity" => Token::ConstantBuiltin,
@@ -867,7 +873,7 @@ fn token_of_global(name: &[u8]) -> Token {
     }
 }
 
-/// A reserved word.
+/// The token for a reserved word.
 fn keyword(word: &[u8]) -> Token {
     match word {
         b"if" | b"else" | b"for" | b"while" | b"do" | b"switch" | b"case" | b"default"
@@ -881,7 +887,7 @@ fn keyword(word: &[u8]) -> Token {
     }
 }
 
-/// A word that is a keyword where it isn't a name.
+/// The token for a word that is a keyword unless it's used as a name.
 fn contextual_keyword(word: &[u8]) -> Option<Token> {
     Some(match word {
         b"await" => Token::KeywordControl,
@@ -926,7 +932,7 @@ fn escape_len(text: &[u8]) -> usize {
     }
 }
 
-/// Adds `written`, which starts at `start`, as `token`, except for its escape sequences.
+/// Adds `written`, which starts at `start`, as `token`, with its escape sequences as [`Token::StringEscape`].
 fn add_with_escapes(out: &mut Out, written: &[u8], start: u32, token: Token) {
     let mut from = 0;
     while let Some(found) = strings::index_of_char_usize(&written[from..], b'\\') {
@@ -939,7 +945,7 @@ fn add_with_escapes(out: &mut Out, written: &[u8], start: u32, token: Token) {
     out.add(start + from as u32, start + written.len() as u32, token);
 }
 
-/// Where the text is in `` `a${ ``, `}b${` or `` }c` ``, and whether something closes it.
+/// For `` `a${ ``, `}b${` or `` }c` ``: where the text starts and ends, and whether a delimiter follows it.
 fn text_of_template_piece(written: &[u8]) -> (usize, usize, bool) {
     let from = written.len().min(1);
     match written.get(from..).unwrap_or_default() {
@@ -985,13 +991,13 @@ fn add_template(
                 if token.start >= end_in_copy {
                     break;
                 }
-                // What stands for a `${..}` is a token too.
+                // A placeholder is a token too. It's before `in_copy`, so this adds nothing for it.
                 out.add(
                     from + token.start.saturating_sub(in_copy),
                     from + token.end.min(end_in_copy).saturating_sub(in_copy),
                     token.token,
                 );
-                // The rest of it is behind the `${..}`.
+                // It continues after the `${..}`.
                 if token.end > end_in_copy {
                     break;
                 }
@@ -1003,7 +1009,7 @@ fn add_template(
     !continues
 }
 
-/// The text between tags, which stays plain but for `&amp;` and the like, or with `mark` the value of an attribute.
+/// Adds JSX text, which stays plain apart from `&amp;` and the like. With `mark` it's the value of an attribute.
 fn add_jsx_text(out: &mut Out, written: &[u8], start: u32, mark: Option<Token>) {
     let (mut from, mut search) = (0, 0);
     while let Some(found) = strings::index_of_char_usize(&written[search..], b'&') {
@@ -1052,7 +1058,7 @@ fn add_doc_comment<'a>(out: &mut Out, file: &'a File<'a>, start: u32, end: u32) 
             b"typedef" | b"callback" => Token::Type,
             _ => continue,
         };
-        // Without the brackets of `[name = default]`.
+        // Skip the brackets of `[name = default]`.
         if let Some(name) = name
             && let Some(at) = strings::index_of(name.raw(), name.parsed())
         {
@@ -1063,7 +1069,7 @@ fn add_doc_comment<'a>(out: &mut Out, file: &'a File<'a>, start: u32, end: u32) 
     out.add(at, end, Token::CommentDoc);
 }
 
-/// The language of the text of the template `e`, if its tag or a comment in front of it says so.
+/// The language inside the template `e`, going by its tag or the comment before it.
 fn language_of_template(e: Expr<'_>) -> Option<Language> {
     if crate::css::embed::is_embed_css(e) {
         return Some(Language::Scss);

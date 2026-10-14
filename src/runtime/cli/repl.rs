@@ -1591,7 +1591,7 @@ impl<'a> Repl<'a> {
 
     fn write_highlighted(&self, text: &[u8]) {
         use bun_core::output::{ColorDepth, Source};
-        use bun_format::highlight::{self, Language, Scratch, Theme};
+        use bun_format::highlight::{self, AnsiStyles, Language, Scratch, Theme};
         let depth = match Source::color_depth() {
             ColorDepth::None => ColorDepth::C16,
             depth => depth,
@@ -1599,7 +1599,7 @@ impl<'a> Repl<'a> {
         let theme = Theme::built_in(bun_md::root::detect_light_background(), depth);
         let (mut scratch, mut out) = (Scratch::default(), Vec::new());
         let spans = highlight::highlight(text, Language::Tsx, &mut scratch);
-        highlight::write_ansi(text, spans, theme, depth, &mut out);
+        highlight::write_ansi(text, spans, &AnsiStyles::new(theme, depth), &mut out);
         self.write(&out);
     }
 

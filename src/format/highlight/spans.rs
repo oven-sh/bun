@@ -1,4 +1,4 @@
-//! Where the highlighter of a language puts what it finds.
+//! Collects the spans that a language's highlighter finds.
 
 use super::Token;
 
@@ -10,19 +10,19 @@ pub struct Span {
     pub token: Token,
 }
 
-/// Collects spans in any order. A span inside another one wins over it, so an escape sequence is
-/// added on top of its string and embedded code on top of the text it is in. Of two spans with the
-/// same range the one added last wins. [`Spans::finish`] cuts them into pieces that don't overlap.
+/// Spans can be added in any order and can nest. An inner span wins over the one around it, so an escape sequence goes
+/// on top of its string. If two spans have the same range, the one added last wins. [`Spans::finish`] cuts them into
+/// pieces that don't overlap.
 #[derive(Default)]
 pub struct Spans {
     list: Vec<Span>,
     flat: Vec<Span>,
     open: Vec<Span>,
-    /// Added to every offset: where the code being highlighted starts in the whole text.
+    /// Where the code being highlighted starts in the whole text. Added to every offset.
     pub(super) base: u32,
     /// Where that code ends in the whole text.
     pub(super) limit: u32,
-    /// The languages, as bits, of the code being highlighted and of the code around it that ends at `limit` too.
+    /// A bit for the language being highlighted, and for each language around it whose code also ends at `limit`.
     pub(super) ending_at_limit: u32,
     needs_sort: bool,
     needs_flattening: bool,
@@ -36,7 +36,7 @@ impl Spans {
         (self.needs_sort, self.needs_flattening) = (false, false);
     }
 
-    /// Offsets are relative to the code that the highlighter was given.
+    /// Offsets are relative to the code that the highlighter was called with.
     #[inline]
     pub(crate) fn add(&mut self, start: u32, end: u32, token: Token) {
         let start = self.base.saturating_add(start);
@@ -45,7 +45,7 @@ impl Spans {
             return;
         }
         if let Some(last) = self.list.last_mut() {
-            // `</` is two tokens for the parser, `))` too.
+            // `</` is two tokens to the parser, and so is `))`.
             if last.end == start && last.token == token && !self.needs_flattening {
                 last.end = end;
                 return;
@@ -67,7 +67,7 @@ impl Spans {
         );
     }
 
-    /// Sorted by `start`, and no two overlap.
+    /// Returns the spans sorted by `start`, without overlaps.
     pub(super) fn finish(&mut self) -> &[Span] {
         if !self.needs_flattening {
             return &self.list;
@@ -82,7 +82,7 @@ impl Spans {
         } = self;
         flat.reserve(list.len());
         open.clear();
-        // In `open`, `start` is where the part of the span begins that nothing inside it has covered.
+        // `open` is the stack of spans around the current position. Each one's `start` moves past the inner spans.
         let mut emit = |span: Span| {
             if span.start < span.end {
                 flat.push(span);

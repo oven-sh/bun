@@ -1,11 +1,12 @@
-//! Spans to HTML, and a theme to the CSS that colors it.
+//! Turns spans into HTML, and a theme into the CSS for that HTML.
 
 use super::{Color, Font, Span, Style, Theme, Token};
 use crate::text::ByteSet;
 use bun_core::strings::{self, html_escape_entity};
 use std::io::Write as _;
+use std::sync::OnceLock;
 
-/// `keyword.control` is `hl-keyword-control`.
+/// Appends the class for `token`: `hl-keyword-control` for `keyword.control`.
 fn write_class(out: &mut Vec<u8>, token: Token) {
     out.extend_from_slice(b"hl-");
     let start = out.len();
@@ -17,7 +18,7 @@ fn write_class(out: &mut Vec<u8>, token: Token) {
     }
 }
 
-/// The class of `token` after those of its parents: `hl-keyword hl-keyword-control`.
+/// Appends the classes of `token`'s parents and then its own: `hl-keyword hl-keyword-control`.
 fn write_classes(out: &mut Vec<u8>, token: Token) {
     if let Some(parent) = token.parent() {
         write_classes(out, parent);
@@ -26,13 +27,18 @@ fn write_classes(out: &mut Vec<u8>, token: Token) {
     write_class(out, token);
 }
 
-/// `<span class="..">` for each token, one after the other.
+/// The `<span class="..">` of every token, back to back in one buffer.
 struct OpenTags {
     bytes: Vec<u8>,
     ends: [u16; Token::COUNT],
 }
 
 impl OpenTags {
+    fn get() -> &'static OpenTags {
+        static TAGS: OnceLock<OpenTags> = OnceLock::new();
+        TAGS.get_or_init(OpenTags::new)
+    }
+
     fn new() -> OpenTags {
         let mut tags = OpenTags {
             bytes: Vec::with_capacity(Token::COUNT * 64),
@@ -60,7 +66,7 @@ impl OpenTags {
 
 const CLOSE: &[u8] = b"</span>";
 
-/// Most tokens are a few bytes long, where a loop beats a call into the vectorized search.
+/// Finds the next byte to stop at. Most tokens are a few bytes long, and there a plain loop beats the SIMD search.
 #[inline]
 fn find(text: &[u8], from: usize, few: &ByteSet, many: &[u8]) -> Option<usize> {
     if text.len() - from < 32 {
@@ -82,7 +88,7 @@ fn write_text(out: &mut Vec<u8>, text: &[u8]) {
     out.extend_from_slice(&text[from..]);
 }
 
-/// Appends `text` in the element that `open` opens, one for each line that isn't empty.
+/// Appends `text` wrapped in `open` and `</span>`. Each non-empty line gets its own element.
 #[inline]
 fn write_span(out: &mut Vec<u8>, text: &[u8], open: &[u8]) {
     const STOPS: ByteSet = ByteSet::new(b"&<>\n");
@@ -106,10 +112,10 @@ fn write_span(out: &mut Vec<u8>, text: &[u8], open: &[u8]) {
     }
 }
 
-/// Appends `code` as HTML: each span is a `<span>` with a class for the token and one for each of its parents. No
-/// element crosses a line break, so the result can be split into lines.
+/// Appends `code` as HTML, with a `<span>` for each span. No element crosses a line break, so callers can split the
+/// result on `\n`.
 pub fn write_html(code: &[u8], spans: &[Span], out: &mut Vec<u8>) {
-    let tags = OpenTags::new();
+    let tags = OpenTags::get();
     out.reserve(code.len() + spans.len() * 40);
     let mut at = 0;
     for span in spans {
@@ -159,15 +165,14 @@ fn write_declarations(out: &mut Vec<u8>, style: Style, inherited: Style) {
     }
 }
 
-/// Appends the style sheet that gives what [`write_html`] writes the colors of `theme`. The element around the code
-/// has the class `hl`.
+/// Appends the style sheet that colors [`write_html`]'s output with `theme`. `.hl` is for the element around the code.
 pub fn write_css(theme: &Theme, out: &mut Vec<u8>) {
     out.extend_from_slice(b".hl{");
     write_color(out, "color", theme.foreground);
     write_color(out, "background", theme.background);
     out.extend_from_slice(b"}\n");
     for &token in Token::ALL {
-        let inherited = token.parent().map_or(Style::default(), |it| theme.style(it));
+        let inherited = token.parent().map(|it| theme.style(it)).unwrap_or_default();
         let style = theme.style(token);
         if style == inherited {
             continue;

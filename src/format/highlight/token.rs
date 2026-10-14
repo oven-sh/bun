@@ -4,9 +4,8 @@ macro_rules! tokens {
     ($($(#[$doc:meta])* $variant:ident = $name:literal $(in $parent:ident)?,)*) => {
         /// What a piece of source code is.
         ///
-        /// The name is public API: it is the key in a theme, and with `-` for `.` the CSS class.
-        /// A token without a style of its own takes its parent's: `keyword.control` falls back to
-        /// `keyword`.
+        /// The names are public API. A name is the key in a theme and, with `-` for `.`, the CSS class.
+        /// A token that a theme doesn't style falls back to its parent: `keyword.control` to `keyword`.
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
         #[repr(u8)]
         pub enum Token {
@@ -55,7 +54,7 @@ tokens! {
     /// `null`, `undefined`, `NaN`, `Infinity`
     ConstantBuiltin = "constant.builtin" in Constant,
 
-    /// `const`, `function`, `class`, `interface` and every keyword that fits nothing below.
+    /// `const`, `function`, `class`, `interface`, and any keyword that none of the kinds below fits.
     Keyword = "keyword",
     /// `if`, `for`, `return`, `await`, `throw`
     KeywordControl = "keyword.control" in Keyword,
@@ -75,7 +74,7 @@ tokens! {
     PunctuationBracket = "punctuation.bracket" in Punctuation,
     /// `,` `;` `.` `:`
     PunctuationDelimiter = "punctuation.delimiter" in Punctuation,
-    /// What switches languages or marks up text: `${` `}`, `{{` `}}`, the `#` of a heading.
+    /// Delimiters that switch languages or mark up text: `${` `}`, `{{` `}}`, the `#` of a heading.
     PunctuationSpecial = "punctuation.special" in Punctuation,
 
     Variable = "variable",
@@ -108,7 +107,7 @@ tokens! {
     TagDelimiter = "tag.delimiter" in Tag,
     Attribute = "attribute",
 
-    /// `&`, `*` and whatever else of a CSS selector fits nothing below. An element is a `tag`.
+    /// `&`, `*`, and any part of a CSS selector that none of the kinds below fits. An element is a `tag`.
     Selector = "selector",
     SelectorClass = "selector.class" in Selector,
     SelectorId = "selector.id" in Selector,

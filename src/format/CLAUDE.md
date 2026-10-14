@@ -326,13 +326,13 @@ oxfmt's option, which is made of `prettier-plugin-tailwindcss`: the classes of T
 code ─ <language>/highlight.rs ─→ Spans ─ finish ─→ [Span] ─ highlight/html.rs, highlight/ansi.rs ─→ text
 ```
 
-| File | What |
-| --- | --- |
-| `highlight/mod.rs` | `Language`, `highlight(code, language, scratch)`, `Spans::embed` for code in other code |
-| `highlight/token.rs` | `Token`. The names are public API: theme keys and CSS classes |
-| `highlight/spans.rs` | `Spans::add(start, end, token)`. Spans can nest and come in any order. The inner one wins |
-| `highlight/theme.rs` | `Theme`, and the built-in `DARK`, `LIGHT` and `TERMINAL` (16 colors) |
-| `<language>/highlight.rs` | One per language, next to its parser |
+| File                      | What                                                                                      |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| `highlight/mod.rs`        | `Language`, `highlight(code, language, scratch)`, `Spans::embed` for code in other code   |
+| `highlight/token.rs`      | `Token`. The names are public API: theme keys and CSS classes                             |
+| `highlight/spans.rs`      | `Spans::add(start, end, token)`. Spans can nest and come in any order. The inner one wins |
+| `highlight/theme.rs`      | `Theme`, and the built-in `DARK`, `LIGHT` and `TERMINAL` (16 colors)                      |
+| `<language>/highlight.rs` | One per language, next to its parser                                                      |
 
 Rules for a `highlight.rs`:
 

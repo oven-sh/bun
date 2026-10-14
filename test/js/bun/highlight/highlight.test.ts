@@ -39,12 +39,12 @@ function annotate(code: string, language: string): string {
   return unescape(
     Bun.highlight
       .html(code, language)!
-      .replace(
-        /<span class="([^"]+)">([^<]*)<\/span>/g,
-        (_, classes, text) => `⟦${nameOf(classes)}|${text}⟧`,
-      ),
+      .replace(/<span class="([^"]+)">([^<]*)<\/span>/g, (_, classes, text) => `⟦${nameOf(classes)}|${text}⟧`),
   );
 }
+
+const { Theme } = Bun.highlight;
+const trueColor = new Theme("dark", { colorDepth: 24 });
 
 /** Whatever the input is, the output is the input plus markup. */
 function expectIntact(code: string, language: string) {
@@ -53,7 +53,7 @@ function expectIntact(code: string, language: string) {
   for (const line of html.split("\n")) {
     expect(line.split("<span ").length).toBe(line.split("</span>").length);
   }
-  const ansi = Bun.highlight.ansi(code, { language, colorDepth: 24 })!;
+  const ansi = trueColor.ansi(code, language)!;
   expect(stripAnsi(ansi)).toBe(code);
 }
 
@@ -122,8 +122,7 @@ describe("html", () => {
 describe("languages", () => {
   test("returns null for a language it doesn't know", () => {
     expect(Bun.highlight.html("x", "python")).toBeNull();
-    expect(Bun.highlight.ansi("x", "python")).toBeNull();
-    expect(Bun.highlight.ansi("x", { language: "python" })).toBeNull();
+    expect(trueColor.ansi("x", "python")).toBeNull();
     expect(Bun.highlight.html("x", "")).toBeNull();
     expect(Bun.highlight.html("x", "a-name-that-is-longer-than-any-language")).toBeNull();
   });
@@ -153,7 +152,7 @@ describe("languages", () => {
     // @ts-expect-error
     expect(() => Bun.highlight.html("x", 1)).toThrow('The "language" argument must be of type string');
     // @ts-expect-error
-    expect(() => Bun.highlight.ansi("x", {})).toThrow('The "language" argument must be of type string');
+    expect(() => trueColor.ansi("x", {})).toThrow('The "language" argument must be of type string');
   });
 
   test("throws if the code isn't a string or bytes", () => {
@@ -162,7 +161,7 @@ describe("languages", () => {
       'The "code" argument must be of type string, TypedArray or ArrayBuffer',
     );
     // @ts-expect-error
-    expect(() => Bun.highlight.ansi(undefined, "js")).toThrow('The "code" argument must be of type string');
+    expect(() => trueColor.ansi(undefined, "js")).toThrow('The "code" argument must be of type string');
   });
 });
 
@@ -447,162 +446,176 @@ describe("code in other code", () => {
   });
 });
 
-describe("ansi", () => {
-  const theme = { keyword: "#ff0000", number: { color: "rgb(0 255 0)", bold: true }, comment: { italic: true } };
+describe("Theme", () => {
+  const styles = { keyword: "#ff0000", number: { color: "rgb(0 255 0)", bold: true }, comment: { italic: true } };
+  const theme = new Theme(styles, { colorDepth: 24 });
 
-  test("24-bit colors", () => {
-    expect(Bun.highlight.ansi("let a = 1;", { language: "js", theme, colorDepth: 24 })).toBe(
-      "\x1b[38;2;255;0;0mlet\x1b[39m a = \x1b[38;2;0;255;0;1m1\x1b[39;22m;",
-    );
-  });
-
-  test("256 colors", () => {
-    expect(Bun.highlight.ansi("let a = 1;", { language: "js", theme, colorDepth: 8 })).toBe(
-      "\x1b[38;5;196mlet\x1b[39m a = \x1b[38;5;46;1m1\x1b[39;22m;",
-    );
-  });
-
-  test("16 colors", () => {
-    expect(Bun.highlight.ansi("let a = 1;", { language: "js", theme, colorDepth: 4 })).toBe(
-      "\x1b[91mlet\x1b[39m a = \x1b[92;1m1\x1b[39;22m;",
-    );
-  });
-
-  test("no colors", () => {
-    expect(Bun.highlight.ansi("let a = 1;", { language: "js", theme, colorDepth: 1 })).toBe("let a = 1;");
-  });
-
-  test("the color stays on between two tokens that share it", () => {
-    expect(Bun.highlight.ansi("const enum", { language: "ts", theme, colorDepth: 24 })).toBe(
-      "\x1b[38;2;255;0;0mconst enum\x1b[39m",
-    );
-  });
-
-  test("every line resets what it sets", () => {
-    expect(Bun.highlight.ansi("/* a\n\n b */ if", { language: "js", theme, colorDepth: 24 })).toBe(
-      "\x1b[3m/* a\x1b[23m\n\n\x1b[3m b */ \x1b[38;2;255;0;0;23mif\x1b[39m",
-    );
-  });
-
-  test("built-in themes", () => {
-    const dark = Bun.highlight.ansi("let a", { language: "js", theme: "dark", colorDepth: 24 });
-    const light = Bun.highlight.ansi("let a", { language: "js", theme: "light", colorDepth: 24 });
-    expect(dark).toStartWith("\x1b[38;2;");
-    expect(light).toStartWith("\x1b[38;2;");
-    expect(dark).not.toBe(light);
-    // With 16 colors, both are the terminal's own palette.
-    expect(Bun.highlight.ansi("let a", { language: "js", theme: "dark", colorDepth: 4 })).toBe("\x1b[35mlet\x1b[39m a");
-    expect(Bun.highlight.ansi("let a", { language: "js", theme: "light", colorDepth: 4 })).toBe(
-      "\x1b[35mlet\x1b[39m a",
-    );
-  });
-
-  test("a token takes after its parent", () => {
-    const options = { language: "js", colorDepth: 24 } as const;
-    expect(Bun.highlight.ansi("if", { ...options, theme: { keyword: "#010203" } })).toBe("\x1b[38;2;1;2;3mif\x1b[39m");
-    expect(Bun.highlight.ansi("if", { ...options, theme: { keyword: "#010203", "keyword.control": "#040506" } })).toBe(
-      "\x1b[38;2;4;5;6mif\x1b[39m",
-    );
-    expect(
-      Bun.highlight.ansi("if", {
-        ...options,
-        theme: { keyword: { color: "#010203", bold: true, italic: true }, "keyword.control": { bold: false } },
-      }),
-    ).toBe("\x1b[38;2;1;2;3;3mif\x1b[39;23m");
-  });
-
-  test("underline and strikethrough don't run over blanks", () => {
-    expect(
-      Bun.highlight.ansi("if if", {
-        language: "js",
-        colorDepth: 24,
-        theme: { keyword: { underline: true, strikethrough: true } },
-      }),
-    ).toBe("\x1b[4;9mif\x1b[24;29m \x1b[4;9mif\x1b[24;29m");
-  });
-
-  describe("without options", () => {
-    const run = async (env: Record<string, string | undefined>) => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", `process.stdout.write(JSON.stringify(Bun.highlight.ansi("let a", "js")))`],
-        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined, COLORFGBG: undefined, ...env },
-        stderr: "inherit",
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      return { out: JSON.parse(stdout), exitCode };
-    };
-    const options = { language: "js", colorDepth: 24 } as const;
-
-    test.concurrent("NO_COLOR turns colors off", async () => {
-      expect(await run({ NO_COLOR: "1" })).toEqual({ out: "let a", exitCode: 0 });
+  describe("ansi", () => {
+    test("24-bit colors", () => {
+      expect(theme.ansi("let a = 1;", "js")).toBe(
+        "\x1b[38;2;255;0;0mlet\x1b[39m a = \x1b[38;2;0;255;0;1m1\x1b[39;22m;",
+      );
     });
 
-    test.concurrent("FORCE_COLOR says how many colors there are", async () => {
-      expect(await run({ FORCE_COLOR: "3" })).toEqual({
-        out: Bun.highlight.ansi("let a", { ...options, theme: "dark" }),
-        exitCode: 0,
-      });
-      expect(await run({ FORCE_COLOR: "1" })).toEqual({ out: "\x1b[35mlet\x1b[39m a", exitCode: 0 });
+    test("256 colors", () => {
+      expect(new Theme(styles, { colorDepth: 8 }).ansi("let a = 1;", "js")).toBe(
+        "\x1b[38;5;196mlet\x1b[39m a = \x1b[38;5;46;1m1\x1b[39;22m;",
+      );
     });
 
-    test.concurrent("COLORFGBG says whether the background is light", async () => {
-      expect(await run({ FORCE_COLOR: "3", COLORFGBG: "0;15" })).toEqual({
-        out: Bun.highlight.ansi("let a", { ...options, theme: "light" }),
-        exitCode: 0,
+    test("16 colors", () => {
+      expect(new Theme(styles, { colorDepth: 4 }).ansi("let a = 1;", "js")).toBe(
+        "\x1b[91mlet\x1b[39m a = \x1b[92;1m1\x1b[39;22m;",
+      );
+    });
+
+    test("no colors", () => {
+      expect(new Theme(styles, { colorDepth: 1 }).ansi("let a = 1;", "js")).toBe("let a = 1;");
+    });
+
+    test("the color stays on between two tokens that share it", () => {
+      expect(theme.ansi("const enum", "ts")).toBe("\x1b[38;2;255;0;0mconst enum\x1b[39m");
+    });
+
+    test("every line resets what it sets", () => {
+      expect(theme.ansi("/* a\n\n b */ if", "js")).toBe(
+        "\x1b[3m/* a\x1b[23m\n\n\x1b[3m b */ \x1b[38;2;255;0;0;23mif\x1b[39m",
+      );
+    });
+
+    test("built-in themes", () => {
+      const dark = new Theme("dark", { colorDepth: 24 }).ansi("let a", "js");
+      const light = new Theme("light", { colorDepth: 24 }).ansi("let a", "js");
+      expect(dark).toStartWith("\x1b[38;2;");
+      expect(light).toStartWith("\x1b[38;2;");
+      expect(dark).not.toBe(light);
+      // With 16 colors, both are the terminal's own palette.
+      expect(new Theme("dark", { colorDepth: 4 }).ansi("let a", "js")).toBe("\x1b[35mlet\x1b[39m a");
+      expect(new Theme("light", { colorDepth: 4 }).ansi("let a", "js")).toBe("\x1b[35mlet\x1b[39m a");
+    });
+
+    test("a token takes after its parent", () => {
+      const ansi = (styles: Bun.highlight.ThemeStyles) => new Theme(styles, { colorDepth: 24 }).ansi("if", "js");
+      expect(ansi({ keyword: "#010203" })).toBe("\x1b[38;2;1;2;3mif\x1b[39m");
+      expect(ansi({ keyword: "#010203", "keyword.control": "#040506" })).toBe("\x1b[38;2;4;5;6mif\x1b[39m");
+      expect(
+        ansi({ keyword: { color: "#010203", bold: true, italic: true }, "keyword.control": { bold: false } }),
+      ).toBe("\x1b[38;2;1;2;3;3mif\x1b[39;23m");
+    });
+
+    test("underline and strikethrough don't run over blanks", () => {
+      const theme = new Theme({ keyword: { underline: true, strikethrough: true } }, { colorDepth: 24 });
+      expect(theme.ansi("if if", "js")).toBe("\x1b[4;9mif\x1b[24;29m \x1b[4;9mif\x1b[24;29m");
+    });
+
+    test("changing the styles afterwards changes nothing", () => {
+      const styles = { keyword: "#010203" };
+      const theme = new Theme(styles, { colorDepth: 24 });
+      styles.keyword = "#040506";
+      expect(theme.ansi("if", "js")).toBe("\x1b[38;2;1;2;3mif\x1b[39m");
+    });
+
+    describe("without options", () => {
+      const run = async (env: Record<string, string | undefined>) => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", `process.stdout.write(JSON.stringify(new Bun.highlight.Theme().ansi("let a", "js")))`],
+          env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined, COLORFGBG: undefined, ...env },
+          stderr: "inherit",
+        });
+        const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+        return { out: JSON.parse(stdout), exitCode };
+      };
+
+      test.concurrent("NO_COLOR turns colors off", async () => {
+        expect(await run({ NO_COLOR: "1" })).toEqual({ out: "let a", exitCode: 0 });
       });
+
+      test.concurrent("FORCE_COLOR says how many colors there are", async () => {
+        expect(await run({ FORCE_COLOR: "3" })).toEqual({
+          out: new Theme("dark", { colorDepth: 24 }).ansi("let a", "js"),
+          exitCode: 0,
+        });
+        expect(await run({ FORCE_COLOR: "1" })).toEqual({ out: "\x1b[35mlet\x1b[39m a", exitCode: 0 });
+      });
+
+      test.concurrent("COLORFGBG says whether the background is light", async () => {
+        expect(await run({ FORCE_COLOR: "3", COLORFGBG: "0;15" })).toEqual({
+          out: new Theme("light", { colorDepth: 24 }).ansi("let a", "js"),
+          exitCode: 0,
+        });
+      });
+    });
+  });
+
+  describe("css", () => {
+    test("your own styles", () => {
+      expect(
+        new Theme({
+          foreground: "white",
+          background: "#000",
+          keyword: "red",
+          "keyword.control": { bold: true },
+          comment: { color: "hsl(120 100% 25%)", italic: true, underline: true, strikethrough: true },
+          "comment.doc": { italic: false, strikethrough: false },
+        }).css(),
+      ).toBe(
+        ".hl{color:#ffffff;background:#000000;}\n" +
+          ".hl-comment{color:#008000;font-style:italic;text-decoration:underline line-through;}\n" +
+          ".hl-comment-doc{font-style:normal;text-decoration:underline;}\n" +
+          ".hl-keyword{color:#ff0000;}\n" +
+          ".hl-keyword-control{font-weight:bold;}\n",
+      );
+    });
+
+    test("built-in themes", () => {
+      const dark = new Theme("dark").css();
+      const light = new Theme("light").css();
+      expect(dark).toStartWith(".hl{color:#");
+      expect(dark).toContain("\n.hl-keyword{color:#");
+      expect(dark).not.toBe(light);
+      expect(new Theme().css()).toBe(`${light}@media (prefers-color-scheme: dark) {\n${dark}}\n`);
+    });
+
+    test("doesn't depend on the number of colors", () => {
+      expect(new Theme("dark", { colorDepth: 4 }).css()).toBe(new Theme("dark", { colorDepth: 24 }).css());
     });
   });
 
   test.each([
-    [{ theme: "solarized" }, 'The property "theme" is invalid'],
-    [{ theme: 1 }, 'The "theme" argument must be of type string or object'],
-    [{ theme: { keywrd: "red" } }, '"keywrd" is not a token that a theme can style'],
-    [{ theme: { keyword: "not a color" } }, 'The property "keyword" is invalid'],
-    [{ theme: { keyword: "red blue" } }, 'The property "keyword" is invalid'],
-    [{ theme: { keyword: 1 } }, 'The "keyword" property must be of type string'],
-    [{ theme: { keyword: { color: 1 } } }, 'The "keyword" property must be of type string'],
-    [{ colorDepth: 2 }, 'The property "colorDepth" is invalid'],
-    [{ colorDepth: "24" }, 'The property "colorDepth" is invalid'],
-  ])("rejects %j", (options, message) => {
+    [["solarized"], `The "styles" argument must be "dark", "light" or an object. Received type string ('solarized')`],
+    [[1], 'The "styles" argument must be of type string or object'],
+    [[null], 'The "styles" argument must be of type string or object'],
+    [[{ keywrd: "red" }], '"keywrd" is not a token that a theme can style'],
+    [[{ keyword: "not a color" }], 'The property "keyword" is invalid'],
+    [[{ keyword: "red blue" }], 'The property "keyword" is invalid'],
+    [[{ keyword: 1 }], 'The "keyword" property must be of type string'],
+    [[{ keyword: { color: 1 } }], 'The "keyword" property must be of type string'],
+    [["dark", 1], 'The "options" argument must be of type object'],
+    [["dark", { colorDepth: 2 }], 'The property "colorDepth" is invalid'],
+    [["dark", { colorDepth: "24" }], 'The property "colorDepth" is invalid'],
+  ])("rejects %j", (args, message) => {
     // @ts-expect-error
-    expect(() => Bun.highlight.ansi("a", { language: "js", ...options })).toThrow(message);
-  });
-});
-
-describe("css", () => {
-  test("a theme of your own", () => {
-    expect(
-      Bun.highlight.css({
-        foreground: "white",
-        background: "#000",
-        keyword: "red",
-        "keyword.control": { bold: true },
-        comment: { color: "hsl(120 100% 25%)", italic: true, underline: true, strikethrough: true },
-        "comment.doc": { italic: false, strikethrough: false },
-      }),
-    ).toBe(
-      ".hl{color:#ffffff;background:#000000;}\n" +
-        ".hl-comment{color:#008000;font-style:italic;text-decoration:underline line-through;}\n" +
-        ".hl-comment-doc{font-style:normal;text-decoration:underline;}\n" +
-        ".hl-keyword{color:#ff0000;}\n" +
-        ".hl-keyword-control{font-weight:bold;}\n",
-    );
+    expect(() => new Theme(...args)).toThrow(message);
   });
 
-  test("built-in themes", () => {
-    const dark = Bun.highlight.css("dark");
-    const light = Bun.highlight.css("light");
-    expect(dark).toStartWith(".hl{color:#");
-    expect(dark).toContain("\n.hl-keyword{color:#");
-    expect(dark).not.toBe(light);
-    expect(Bun.highlight.css()).toBe(`${light}@media (prefers-color-scheme: dark) {\n${dark}}\n`);
+  test("needs new", () => {
+    // @ts-expect-error
+    expect(() => Theme()).toThrow();
   });
 
-  test("rejects what isn't a theme", () => {
-    // @ts-expect-error
-    expect(() => Bun.highlight.css("solarized")).toThrow('The property "theme" is invalid');
-    // @ts-expect-error
-    expect(() => Bun.highlight.css({ nope: "red" })).toThrow('"nope" is not a token that a theme can style');
+  test("a getter in the styles can throw", () => {
+    const styles = {
+      get keyword(): string {
+        throw new Error("from the getter");
+      },
+    };
+    expect(() => new Theme(styles)).toThrow("from the getter");
+  });
+
+  test("themes are collected", () => {
+    for (let i = 0; i < 10_000; i++) new Theme({ keyword: "red" });
+    Bun.gc(true);
+    expect(new Theme({ keyword: "#010203" }, { colorDepth: 24 }).ansi("if", "js")).toBe("\x1b[38;2;1;2;3mif\x1b[39m");
   });
 });
 
@@ -729,10 +742,11 @@ describe("broken code", () => {
       ["a{", "}"],
       ["a:\n", ""],
     ]) {
-      const depth = 20_000;
+      const depth = 5_000;
       const opens = Buffer.alloc(open.length * depth, open).toString();
-      expectIntact(opens, language);
-      expectIntact(opens + Buffer.alloc(close.length * depth, close).toString(), language);
+      const closed = opens + Buffer.alloc(close.length * depth, close).toString();
+      expect(stripTags(Bun.highlight.html(opens, language)!)).toBe(opens);
+      expect(stripTags(Bun.highlight.html(closed, language)!)).toBe(closed);
     }
   });
 

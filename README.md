@@ -209,6 +209,7 @@ bun upgrade --canary
   - [JSON5](https://bun.com/docs/runtime/json5)
   - [JSONL](https://bun.com/docs/runtime/jsonl)
   - [Markdown](https://bun.com/docs/runtime/markdown)
+  - [Syntax highlighting](https://bun.com/docs/runtime/highlight)
   - [Image processing](https://bun.com/docs/runtime/image)
   - [Utils](https://bun.com/docs/runtime/utils)
   - [Node-API](https://bun.com/docs/runtime/node-api)

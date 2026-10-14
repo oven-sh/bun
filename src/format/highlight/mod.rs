@@ -4,8 +4,8 @@
 //! code ─ <language>/highlight.rs ─→ Spans ─ finish ─→ [Span] ─ html.rs, ansi.rs ─→ text
 //! ```
 //!
-//! Each language has a `highlight.rs` next to the parser that the formatter uses, and reads the same tokens and the
-//! same tree. See "Highlighting" in `CLAUDE.md`.
+//! Each language has a `highlight.rs` next to the formatter's parser for it, and uses the same lexer and tree. See
+//! "Highlighting" in `CLAUDE.md`.
 
 mod ansi;
 mod html;
@@ -13,7 +13,7 @@ mod spans;
 mod theme;
 mod token;
 
-pub use ansi::write_ansi;
+pub use ansi::{AnsiStyles, write_ansi};
 pub use html::{write_css, write_html};
 pub use spans::{Span, Spans};
 pub use theme::{Color, Font, PartialStyle, Style, Theme};
@@ -46,8 +46,7 @@ pub enum Language {
 }
 
 impl Language {
-    /// The language with this name, which is also what a code block in Markdown says, or that files with this
-    /// extension are in. Case doesn't matter.
+    /// Looks up a language by name or file extension, like the info string of a Markdown code block. Ignores case.
     pub fn from_name(name: &[u8]) -> Option<Language> {
         let mut buffer = [0; 16];
         let lower = buffer.get_mut(..name.len())?;
@@ -77,15 +76,15 @@ impl Language {
     }
 }
 
-/// What is allocated to highlight one text, and used again for the next.
+/// Buffers that can be reused from one call to the next.
 #[derive(Default)]
 pub struct Scratch {
     spans: Spans,
 }
 
-/// The tokens of `code`, sorted, none overlapping another. What is between them is plain text.
+/// Returns the tokens of `code`, sorted and without overlaps. Whatever is between them is plain text.
 ///
-/// It never fails. Code with syntax errors gets what the parser could make of it.
+/// It never fails. Code with syntax errors is highlighted as far as the parser can make sense of it.
 pub fn highlight<'s>(code: &[u8], language: Language, scratch: &'s mut Scratch) -> &'s [Span] {
     let spans = &mut scratch.spans;
     let Ok(len) = u32::try_from(code.len()) else {
@@ -100,29 +99,34 @@ pub fn highlight<'s>(code: &[u8], language: Language, scratch: &'s mut Scratch) 
     spans.finish()
 }
 
-/// `bun_md::AnsiTheme::highlight`: highlights the code blocks of a Markdown document that is printed to a terminal.
+/// Returns a `bun_md::AnsiTheme::highlight` callback, which highlights the code blocks of Markdown shown in a terminal.
 pub fn for_markdown(is_light: bool) -> impl Fn(&[u8], &[u8], &mut Vec<u8>) -> bool {
     move |code, language, out| {
         let Some(language) = Language::from_name(language) else {
             return false;
         };
-        // The caller has decided that there are colors.
+        // The caller only asks when colors are on.
         let depth = match Source::color_depth() {
             ColorDepth::None => ColorDepth::C16,
             depth => depth,
         };
+        let theme = AnsiStyles::new(Theme::built_in(is_light, depth), depth);
         let mut scratch = Scratch::default();
-        let spans = highlight(code, language, &mut scratch);
-        write_ansi(code, spans, Theme::built_in(is_light, depth), depth, out);
+        write_ansi(code, highlight(code, language, &mut scratch), &theme, out);
         true
     }
 }
 
 impl Spans {
-    /// Highlights `code`, which is in `language` and starts at `at` in the code that is being highlighted.
+    /// Highlights `code`, which is in `language` and starts at offset `at` of the code around it.
     ///
-    /// `code` can be a copy in which something is blanked out, as long as every byte stays where it is.
+    /// `code` can be a copy with parts blanked out, as long as every byte keeps its position.
     pub(crate) fn embed(&mut self, language: Language, code: &[u8], at: u32) {
+        self.try_embed(language, code, at);
+    }
+
+    /// Returns false if `code` was left alone: see [`Spans::within`].
+    fn try_embed(&mut self, language: Language, code: &[u8], at: u32) -> bool {
         self.within(language, code, at, |spans| match language {
             Language::JavaScript
             | Language::Jsx
@@ -143,11 +147,11 @@ impl Spans {
             Language::Yaml => crate::yaml::highlight::highlight(code, spans),
             Language::Toml => crate::toml::highlight::highlight(code, spans),
             Language::GraphQl => crate::graphql::highlight::highlight(code, spans),
-        });
+        })
     }
 
-    /// [`Spans::embed`] for one TypeScript expression, like the value of `v-if` in Vue. As a program, `{ a: b }` would
-    /// be a block.
+    /// [`Spans::embed`] for a single TypeScript expression, like the value of `v-if` in Vue. Parsed as a program,
+    /// `{ a: b }` would be a block.
     pub(crate) fn embed_expression(&mut self, code: &[u8], at: u32) {
         self.within(Language::TypeScript, code, at, |spans| {
             crate::js::highlight::highlight_expression(code, spans);
@@ -161,40 +165,49 @@ impl Spans {
         });
     }
 
-    /// The tokens of `code`, which is made of pieces of the code that is being highlighted. Their offsets are relative to
-    /// `code`. `is_unclosed`: the last piece runs to the end of the code that is being highlighted.
-    pub(crate) fn tokens_of(&self, language: Language, code: &[u8], is_unclosed: bool) -> Vec<Span> {
+    /// Returns the tokens of `code`, which is stitched together from pieces of the code around it, so offsets are
+    /// relative to `code`. `is_unclosed`: the last piece runs to the end of the code around it. Returns `None` if `code`
+    /// was left alone: see [`Spans::within`].
+    pub(crate) fn tokens_of(
+        &self,
+        language: Language,
+        code: &[u8],
+        is_unclosed: bool,
+    ) -> Option<Vec<Span>> {
         let mut apart = Spans::default();
         apart.reset(code.len().min(u32::MAX as usize) as u32);
         if is_unclosed {
             apart.ending_at_limit = self.ending_at_limit;
         }
-        apart.embed(language, code, 0);
-        apart.finish().to_vec()
+        apart
+            .try_embed(language, code, 0)
+            .then(|| apart.finish().to_vec())
     }
 
-    /// Runs `highlight`, whose offsets are relative to `code`, which is in `language` and starts at `at`.
+    /// Runs `highlight` with offsets relative to `code`, which is in `language` and starts at `at`. Returns false if it
+    /// didn't, which leaves `code` plain.
     fn within(
         &mut self,
         language: Language,
         code: &[u8],
         at: u32,
         highlight: impl FnOnce(&mut Spans),
-    ) {
+    ) -> bool {
         let outer = (self.base, self.limit, self.ending_at_limit);
         let len = code.len().min(u32::MAX as usize) as u32;
         let base = outer.0.saturating_add(at);
         let limit = base.saturating_add(len).min(outer.1);
-        // What isn't closed runs to the end of the code around it: `<script>` without `</script>`, a template without its
-        // second backtick. If it could hold its own language again, `` <script>html` `` over and over would be read once for
-        // each repetition. So there it stays plain.
+        // Something unclosed, like `<script>` without `</script>`, runs to the end of the code around it. If it could hold
+        // its own language again, each repetition of `` <script>html` `` would re-read the rest of the text, which is
+        // quadratic. So a language isn't embedded in itself when both end at the same place.
         let around = if limit == outer.1 { outer.2 } else { 0 };
         let bit = 1 << language as u32;
         if around & bit != 0 || !bun_core::StackCheck::init().is_safe_to_recurse() {
-            return;
+            return false;
         }
         (self.base, self.limit, self.ending_at_limit) = (base, limit, around | bit);
         highlight(self);
         (self.base, self.limit, self.ending_at_limit) = outer;
+        true
     }
 }

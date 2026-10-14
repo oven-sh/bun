@@ -2059,9 +2059,9 @@ declare module "bun" {
   /**
    * Syntax highlighting.
    *
-   * - `html()` returns HTML with a `<span>` around each token
-   * - `ansi()` returns text with ANSI colors for a terminal
-   * - `css()` returns the style sheet for the HTML
+   * - `html()` returns HTML with a `<span>` and a class name around each token
+   * - `new Theme()` holds the colors. `theme.ansi()` returns text with ANSI colors for a
+   *   terminal, and `theme.css()` returns the style sheet for the HTML
    *
    * Bun highlights with the parsers behind `bun format`, `bun lint` and `bun check`, so it
    * knows a type from a function from a parameter. Code with syntax errors, or code that
@@ -2070,11 +2070,12 @@ declare module "bun" {
    * @example
    * ```ts
    * const code = `const greet = (name: string) => "Hello, " + name;`;
+   * const theme = new Bun.highlight.Theme();
    *
-   * process.stdout.write(Bun.highlight.ansi(code, "ts") + "\n");
+   * process.stdout.write(theme.ansi(code, "ts") + "\n");
    *
    * const page = `
-   *   <style>${Bun.highlight.css()}</style>
+   *   <style>${theme.css()}</style>
    *   <pre class="hl"><code>${Bun.highlight.html(code, "ts")}</code></pre>
    * `;
    * ```
@@ -2186,47 +2187,28 @@ declare module "bun" {
     }
 
     /**
-     * The colors to highlight with. Each key is a {@link Token} and each value is a CSS
+     * The styles of a {@link Theme}. Each key is a {@link Token} and each value is a CSS
      * color or a {@link Style}.
      *
-     * A token that the theme leaves out looks like its parent: without `keyword.control`,
-     * `if` gets the style of `keyword`. The same goes for each property that a
-     * {@link Style} leaves out. A token with no style at all is plain text.
-     *
-     * @example
-     * ```ts
-     * const theme: Bun.highlight.Theme = {
-     *   foreground: "#d4d4d4",
-     *   background: "#1e1e1e",
-     *   comment: { color: "#6a9955", italic: true },
-     *   keyword: "#569cd6",
-     *   "keyword.control": "#c586c0",
-     *   string: "#ce9178",
-     * };
-     * ```
+     * A token that is left out looks like its parent: without `keyword.control`, `if` gets
+     * the style of `keyword`. The same goes for each property that a {@link Style} leaves
+     * out. A token with no style at all is plain text.
      */
-    type Theme = {
+    type ThemeStyles = {
       /** The color of plain text. Only `css()` uses it. */
       foreground?: string | undefined;
       /** The color behind the code. Only `css()` uses it. */
       background?: string | undefined;
     } & { [K in Token]?: string | Style | undefined };
 
-    interface AnsiOptions<L extends string = Language> {
-      language: L;
-      /**
-       * `"dark"` and `"light"` are for a terminal with a dark or a light background.
-       *
-       * @default "light" if the `COLORFGBG` environment variable says the background is light, otherwise "dark"
-       */
-      theme?: "dark" | "light" | Theme | undefined;
+    interface ThemeOptions {
       /**
        * How many colors the terminal has, as `process.stdout.getColorDepth()` counts them:
        *
        * - `24`: 16 million colors
        * - `8`: 256 colors. Each color of the theme becomes the closest one.
        * - `4`: 16 colors. `"dark"` and `"light"` use the terminal's own palette.
-       * - `1`: no colors. The code comes back as it is.
+       * - `1`: no colors. `ansi()` returns the code as it is.
        *
        * @default What the environment says: `NO_COLOR`, `FORCE_COLOR`, `COLORTERM`, `TERM`
        */
@@ -2262,40 +2244,52 @@ declare module "bun" {
     export function html(code: Code, language: string): string | null;
 
     /**
-     * Highlight code with ANSI escape sequences, for a terminal.
+     * The colors to highlight with.
      *
-     * Every line resets the styles it sets, so you can split the result on `"\n"`.
-     *
-     * @param code The code, as a string or as UTF-8 bytes
-     * @returns `null` if Bun doesn't highlight that language
+     * Bun parses the styles once, in the constructor. Make a theme once and keep it.
      *
      * @example
      * ```ts
-     * console.log(Bun.highlight.ansi(await Bun.file("index.ts").text(), "ts"));
+     * const theme = new Bun.highlight.Theme({
+     *   foreground: "#d4d4d4",
+     *   background: "#1e1e1e",
+     *   comment: { color: "#6a9955", italic: true },
+     *   keyword: "#569cd6",
+     *   "keyword.control": "#c586c0",
+     *   string: "#ce9178",
+     * });
      *
-     * Bun.highlight.ansi(code, { language: "css", theme: "light", colorDepth: 8 });
+     * console.log(theme.ansi(await Bun.file("index.ts").text(), "ts"));
      * ```
      */
-    export function ansi(code: Code, language: Language | AnsiOptions): string;
-    export function ansi(code: Code, language: string | AnsiOptions<string>): string | null;
+    class Theme {
+      /**
+       * @param styles `"dark"`, `"light"`, or your own styles. Without any, the theme
+       * adapts. `ansi()` is light if the `COLORFGBG` environment variable says the
+       * terminal's background is light, and dark otherwise. `css()` is light, and dark with
+       * `prefers-color-scheme: dark`.
+       */
+      constructor(styles?: "dark" | "light" | ThemeStyles, options?: ThemeOptions);
 
-    /**
-     * The style sheet that colors what {@link html} returns.
-     *
-     * It styles `.hl`, which is the class to give the element around the code, and the
-     * `.hl-*` classes of the tokens.
-     *
-     * @param theme Without one, the style sheet is light and switches to dark with
-     * `prefers-color-scheme`.
-     *
-     * @example
-     * ```ts
-     * const styles = Bun.highlight.css();
-     * const dark = Bun.highlight.css("dark");
-     * const custom = Bun.highlight.css({ keyword: "#c678dd", string: "#98c379" });
-     * ```
-     */
-    export function css(theme?: "dark" | "light" | Theme): string;
+      /**
+       * Highlight code with ANSI escape sequences, for a terminal.
+       *
+       * Every line resets the styles it sets, so you can split the result on `"\n"`.
+       *
+       * @param code The code, as a string or as UTF-8 bytes
+       * @returns `null` if Bun doesn't highlight that language
+       */
+      ansi(code: Code, language: Language): string;
+      ansi(code: Code, language: string): string | null;
+
+      /**
+       * The style sheet that colors what {@link html} returns.
+       *
+       * It styles `.hl`, which is the class to give the element around the code, and the
+       * `.hl-*` classes of the tokens.
+       */
+      css(): string;
+    }
   }
 
   /**

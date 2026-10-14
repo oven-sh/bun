@@ -61,7 +61,7 @@ impl<'a> Formatter<'a> {
 
     /// Calls `write`, which writes the node at `span` and is not called [in a scope](Formatter::in_scope).
     #[inline]
-    fn around_cursor(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
+    pub(crate) fn around_cursor(&mut self, span: Span, write: impl FnOnce(&mut Formatter<'a>)) {
         let cursor = self.context().cursor;
         if !cursor.is_active() {
             return write(self);
@@ -214,6 +214,11 @@ pub(crate) fn format_name<'a>(
     write: impl FnOnce(&mut Formatter<'a>),
 ) {
     format_name_or_copy(false, span, f, write);
+}
+
+/// The name at `span` as it is written, for a caller that writes the comments of the name itself.
+pub(crate) fn name_without_comments<'a>(span: Span) -> impl Format<'a> {
+    format_with(move |f| f.around_cursor(span, |f| write!(f, source_text(span))))
 }
 
 /// [`format_name`] for what Prettier prints like any other node, so that a `prettier-ignore` comment applies to it:

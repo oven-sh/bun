@@ -5362,6 +5362,25 @@ try {
       [["--cursor-offset", "0"], js, printed, "0"],
       // The cursor is in a comment that moves. It stays after the name, which is the node before it.
       [["--cursor-offset", "20"], "function f // comment\n(a, b) {}\n", "function f(a, b) {} // comment\n", "10"],
+      // It is before the body, which is the node after it and has the comment in it.
+      [
+        ["--parser", "typescript", "--cursor-offset", "20"],
+        "x  ( );\nclass A  // c1\n{}\ny  ( );\n",
+        "x();\nclass A {\n  // c1\n}\ny();\n",
+        "13",
+      ],
+      [
+        ["--parser", "typescript", "--cursor-offset", "24"],
+        "x  ( );\ninterface A  // c1\n{}\ny  ( );\n",
+        "x();\ninterface A {\n  // c1\n}\ny();\n",
+        "17",
+      ],
+      [
+        ["--parser", "typescript", "--cursor-offset", "27"],
+        "x  ( );\ninterface A<T>  // c1\n{}\ny  ( );\n",
+        "x();\ninterface A<T> {\n  // c1\n}\ny();\n",
+        "20",
+      ],
       [
         ["--range-start", "10", "--range-end", "20"],
         "a  =  1;\nb  =  2;\nc  =  3;\n",

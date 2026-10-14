@@ -239,8 +239,10 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             memcpy(&bigEndian, data + static_cast<size_t>(i) * 8 + 4, sizeof(bigEndian));
             return __builtin_bswap32(bigEndian);
         };
+        // purifyNaN: a float NaN with payload bits widens to a NaN that is not
+        // the one JSValue boxes.
         auto readFloat = [&](uint32_t i) -> double {
-            return static_cast<double>(std::bit_cast<float>(readBits(i)));
+            return purifyNaN(static_cast<double>(std::bit_cast<float>(readBits(i))));
         };
 
         // A double array cannot hold NaN (the hole value).

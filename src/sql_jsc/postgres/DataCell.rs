@@ -128,6 +128,9 @@ fn try_slice(slice: &[u8], count: usize) -> &[u8] {
 }
 
 const MAX_ARRAY_NESTING_DEPTH: usize = 100;
+/// `MAXDIM` in the Postgres server. A nesting level costs no wire bytes, so
+/// this bounds how many arrays a binary value can make per element.
+const PG_MAX_ARRAY_DIMENSIONS: usize = 6;
 
 // PERF: `array_type` and `is_json_sub_array` are only used in value
 // position (branch selectors), never type position. Profile if it shows up on a hot path.
@@ -744,7 +747,7 @@ fn decode_binary_array_cells<Elem: BinaryArrayElem>(
 ) -> Result<SQLDataCell> {
     // Every count is server-controlled: bound it against `bytes` before it sizes anything.
     let ndim = ndim as usize;
-    if ndim > MAX_ARRAY_NESTING_DEPTH {
+    if ndim > PG_MAX_ARRAY_DIMENSIONS {
         return Err(AnyPostgresError::InvalidBinaryData);
     }
     if ndim == 0 {
@@ -810,6 +813,14 @@ fn from_bytes_binary_array<Elem: BinaryArrayElem>(bytes: &[u8]) -> Result<SQLDat
         let element_stride = size_of::<Elem>() * 2;
         if array_len > (bytes.len() - 20) / element_stride {
             return Err(AnyPostgresError::InvalidBinaryData);
+        }
+        let elem_size = size_of::<Elem>() as u32;
+        for prefix in bytes[20..20 + array_len * element_stride].chunks_exact(element_stride) {
+            if u32::from_be_bytes(prefix[..4].try_into().expect("infallible: size matches"))
+                != elem_size
+            {
+                return Err(AnyPostgresError::InvalidBinaryData);
+            }
         }
         (bytes[20..].as_ptr(), array_len)
     };

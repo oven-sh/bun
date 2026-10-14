@@ -171,13 +171,14 @@ const malformed: { name: string; oid: number; col: Buffer }[] = [
     col: multiDimArrayHeader({ flags: 0, elemtype: INT4, dims: [65536, 65536] }),
   },
   {
-    name: "int4[] with ndim exceeding the nesting limit",
+    // Postgres never sends more than 6 dimensions (MAXDIM).
+    name: "int4[] with ndim above MAXDIM",
     oid: INT4_ARRAY,
     col: Buffer.concat([
-      i32(101),
+      i32(7),
       i32(0),
       i32(INT4),
-      ...Array.from({ length: 101 }, () => Buffer.concat([i32(1), i32(1)])),
+      ...Array.from({ length: 7 }, () => Buffer.concat([i32(1), i32(1)])),
     ]),
   },
   {
@@ -190,6 +191,28 @@ const malformed: { name: string; oid: number; col: Buffer }[] = [
     name: "int4[] with a negative second dimension",
     oid: INT4_ARRAY,
     col: multiDimArrayHeader({ flags: 0, elemtype: INT4, dims: [1, -1] }),
+  },
+  {
+    // No has-nulls flag, but the second element is NULL (length -1).
+    name: "int4[] without the has-nulls flag and a NULL element",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 2, lbound: 1 }),
+      i32(4),
+      i32(1),
+      i32(-1),
+      i32(2),
+    ]),
+  },
+  {
+    name: "int4[] without the has-nulls flag and an element of the wrong size",
+    oid: INT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 1, lbound: 1 }),
+      i32(2),
+      i16(7),
+      i16(0),
+    ]),
   },
   {
     // Element length 2 in an int4[] that has the has-nulls flag set.
@@ -265,6 +288,32 @@ const plainArrays: { name: string; oid: number; col: Buffer; expected: unknown }
       float4Elems([1.5, NaN, -0, Infinity]),
     ]),
     expected: [1.5, NaN, -0, Infinity],
+  },
+  {
+    // The sign and payload bits of a float NaN survive the widening to double.
+    name: "float4[] with a NaN that has payload bits",
+    oid: FLOAT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: FLOAT4, len: 3, lbound: 1 }),
+      i32(4),
+      Buffer.from([0xff, 0xff, 0xff, 0xff]),
+      i32(4),
+      Buffer.from([0x7f, 0xc0, 0x00, 0x01]),
+      i32(4),
+      f32(2.5),
+    ]),
+    expected: [NaN, NaN, 2.5],
+  },
+  {
+    name: "float4[] with a NaN that has payload bits and a NULL",
+    oid: FLOAT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 1, elemtype: FLOAT4, len: 2, lbound: 1 }),
+      i32(4),
+      Buffer.from([0xff, 0xff, 0xff, 0xff]),
+      i32(-1),
+    ]),
+    expected: [NaN, null],
   },
   {
     name: "int4[] with ndim = 0",
@@ -350,14 +399,27 @@ test.each(plainArrays)("binary $name decodes to a plain array", async ({ oid, co
 // An indexed accessor on a prototype puts JSC in "having a bad time" mode: every
 // new array gets ArrayStorage, whatever indexing type was asked for. The packed
 // fill must follow the array's real storage. A subprocess, so this process stays sane.
-test("binary int4[] and float4[] decode while JSC is having a bad time", async () => {
-  current = {
+test.each([
+  {
+    name: "int4[]",
     oid: INT4_ARRAY,
     col: Buffer.concat([
       binaryArrayHeader({ ndim: 1, flags: 0, elemtype: INT4, len: 4, lbound: 1 }),
       int4Elems([1, 2, 3, 4]),
     ]),
-  };
+    expected: "[1,2,3,4] true 4\n",
+  },
+  {
+    name: "float4[]",
+    oid: FLOAT4_ARRAY,
+    col: Buffer.concat([
+      binaryArrayHeader({ ndim: 1, flags: 0, elemtype: FLOAT4, len: 4, lbound: 1 }),
+      float4Elems([1.5, 2.5, 3.5, 4.5]),
+    ]),
+    expected: "[1.5,2.5,3.5,4.5] true 4.5\n",
+  },
+])("binary $name decodes while JSC is having a bad time", async ({ oid, col, expected }) => {
+  current = { oid, col };
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -377,6 +439,6 @@ test("binary int4[] and float4[] decode while JSC is having a bad time", async (
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe("[1,2,3,4] true 4\n");
+  expect(stdout).toBe(expected);
   expect(exitCode).toBe(0);
 });

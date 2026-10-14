@@ -232,7 +232,7 @@ fn write_js_function(
             let hugged = first.filter(|_| should_hug_function_parameters(function, false, f));
             let is_behind_hugged = |it: &Comment| {
                 let is_in = |part: Span| part.start <= it.span.start && it.span.end <= part.end;
-                (it.is_line() || it.preceded_by_newline() || it.followed_by_newline())
+                (it.is_line() || it.preceded_by_newline())
                     && hugged.is_some_and(|hugged| {
                         !is_in(hugged.pat().span())
                             && !hugged.default().is_some_and(|it| is_in(it.span()))

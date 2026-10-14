@@ -254,6 +254,21 @@ note: Some Svelte files are not formatted (svelte = false in an override)
 `);
       expect(exitCode).toBe(0);
     });
+
+    test("says so with every --config-precedence, unless a config file counts for more", async () => {
+      const note = "note: Some Svelte files are not formatted (svelte = false in an override)\n";
+      const files = {
+        "a.svelte": "<p>a</p>\n",
+        "old/b.svelte": "<p>b</p>\n",
+        "bunfig.toml": '[[fmt.overrides]]\nfiles = "old/**"\noptions = { svelte = false }\n',
+      };
+      const inFile = { ...files, ".oxfmtrc.json": '{ "svelte": true }\n' };
+      const says = async (project: Record<string, string>, precedence: string) =>
+        (await doctor(project, [`--config-precedence=${precedence}`])).stdout.endsWith(note);
+      const precedences = ["cli-override", "file-override", "prefer-file"];
+      expect(await Promise.all(precedences.map(it => says(files, it)))).toEqual([true, true, true]);
+      expect(await Promise.all(precedences.map(it => says(inFile, it)))).toEqual([true, false, false]);
+    });
   });
 
   test("lists unsupported plugins and plugins that aren't installed", async () => {

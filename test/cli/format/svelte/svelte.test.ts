@@ -877,10 +877,37 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{#snippet row({ b } // c\n : D)}y{/snippet}\n`,
         `${typescript}{#snippet row({\n  b,\n}: D) // c\n}y{/snippet}\n`,
       ],
+      [
+        `${typescript}{#snippet row({ b }: D[E // c\n])}y{/snippet}\n`,
+        `${typescript}{#snippet row({ b }: D[E // c\n])}y{/snippet}\n`,
+        `${typescript}{#snippet row({\n  b,\n}: D[E]) // c\n}y{/snippet}\n`,
+      ],
       // With a second one there is a line for it.
       [
         "{#snippet row(\n  { b }   = {}, // c\n  d,\n)}y{/snippet}\n",
         "{#snippet row(\n  { b } = {}, // c\n  d,\n)}y{/snippet}\n",
+        null,
+      ],
+      // So there is behind the parameter, which is not hugged then, and between its brackets and braces.
+      ["{#snippet row({ b } // c\n)}y{/snippet}\n", "{#snippet row(\n  { b }, // c\n)}y{/snippet}\n", null],
+      [
+        "{#snippet row({\n  id,   // the id\n  name,\n})}\n<p>y</p>\n{/snippet}\n",
+        "{#snippet row({\n  id, // the id\n  name,\n})}\n  <p>y</p>\n{/snippet}\n",
+        null,
+      ],
+      [
+        "{#snippet row({\n  /** The id. */\n  id,\n    name,\n})}\n<p>y</p>\n{/snippet}\n",
+        "{#snippet row({\n  /** The id. */\n  id,\n  name,\n})}\n  <p>y</p>\n{/snippet}\n",
+        null,
+      ],
+      [
+        "{#snippet row([\n  id,   // the id\n  name,\n])}\n<p>y</p>\n{/snippet}\n",
+        "{#snippet row([\n  id, // the id\n  name,\n])}\n  <p>y</p>\n{/snippet}\n",
+        null,
+      ],
+      [
+        `${typescript}{#snippet row({ id, name }: {\n  id: string;   // the id\n  name: string;\n})}\n<p>y</p>\n{/snippet}\n`,
+        `${typescript}{#snippet row({\n  id,\n  name,\n}: {\n  id: string; // the id\n  name: string;\n})}\n  <p>y</p>\n{/snippet}\n`,
         null,
       ],
     ],
@@ -889,6 +916,35 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         `${typescript}{#snippet row(b = // c\n(d as E).f)}y{/snippet}\n`,
         `${typescript}{#snippet row(b = // c\n(d as E).f)}y{/snippet}\n`,
         null,
+      ],
+      [
+        `${typescript}{#snippet row({ b = // c\n(d as E)[0] })}y{/snippet}\n`,
+        `${typescript}{#snippet row({ b = // c\n(d as E)[0] })}y{/snippet}\n`,
+        null,
+      ],
+      // These it does not move.
+      ["{#snippet row(b = // c\n (1))}y{/snippet}\n", "{#snippet row(\n  b = 1, // c\n)}y{/snippet}\n", null],
+      [
+        "{#snippet row(b = c == // d\n (1))}y{/snippet}\n",
+        "{#snippet row(\n  b = c == // d\n    1,\n)}y{/snippet}\n",
+        null,
+      ],
+    ],
+    "a vertical tab next to a comment is white space": [
+      [
+        "{#snippet row(b\v/* c */)}y{/snippet}\n",
+        "{#snippet row(b /* c */)}y{/snippet}\n",
+        "{#snippet row(b)}y{/snippet}\n",
+      ],
+      [
+        "{#snippet row(/* c */\vb)}y{/snippet}\n",
+        "{#snippet row(/* c */ b)}y{/snippet}\n",
+        "{#snippet row /* c */(b)}y{/snippet}\n",
+      ],
+      [
+        "{#if b}{@const c = /* d */\ve}{/if}\n",
+        "{#if b}{@const c = /* d */ e}{/if}\n",
+        "{#if b}{@const c /* d */ = e}{/if}\n",
       ],
     ],
     "a `{:then}` with nothing in it stays if there is a comment in its head": [
@@ -1048,26 +1104,78 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<div>\n  <script type="text/x-template">\n  <b   >{{c}}</b>\n</script>\n</div>\n',
         null,
       ],
-      ['<script type="module">let  b=1</script>\n', '<script type="module">\n  let b = 1;\n</script>\n', null],
-      // A `type` that says nothing: it is code if it can be read as code.
+      // Whether it can be read as JavaScript or not.
       [
-        '<script type="text/partytown">let  b=1</script>\n',
-        '<script type="text/partytown">\n  let b = 1;\n</script>\n',
-        null,
+        '<script type="math/tex">x^2 + y^2</script>\n',
+        '<script type="math/tex">x^2 + y^2</script>\n',
+        '<script type="math/tex">\n  x ^ (2 + y) ^ 2;\n</script>\n',
+        false,
       ],
       [
-        '<script type="text/ecmascript">let  b=1</script>\n',
-        '<script type="text/ecmascript">\n  let b = 1;\n</script>\n',
-        null,
+        '<script type="text/yaml">a: 1\nb: 2</script>\n',
+        '<script type="text/yaml">a: 1\nb: 2</script>\n',
+        '<script type="text/yaml">\n  a: 1;\n  b: 2;\n</script>\n',
+        false,
       ],
       [
-        '<script type="application/ecmascript">let  b=1</script>\n',
-        '<script type="application/ecmascript">\n  let b = 1;\n</script>\n',
-        null,
+        '<script type="text/x-mustache">{{x}}</script>\n',
+        '<script type="text/x-mustache">{{x}}</script>\n',
+        '<script type="text/x-mustache">\n  {\n    {\n      x;\n    }\n  }\n</script>\n',
+        false,
+      ],
+      [
+        '<script type="text/plain">hello</script>\n',
+        '<script type="text/plain">hello</script>\n',
+        '<script type="text/plain">\n  hello;\n</script>\n',
+        false,
       ],
       [
         '<script type="x-shader/x-vertex">attribute vec4 b;</script>\n',
         '<script type="x-shader/x-vertex">attribute vec4 b;</script>\n',
+        null,
+      ],
+      [
+        '<script type="speculationrules">{"prerender":[]}</script>\n',
+        '<script type="speculationrules">{"prerender":[]}</script>\n',
+        null,
+      ],
+      // These are code.
+      ...[
+        "",
+        "module",
+        "text/javascript",
+        "TEXT/JavaScript",
+        "text/javascript; charset=utf-8",
+        " text/javascript1.5 ",
+        "text/babel",
+        "text/jsx",
+        "application/javascript",
+        "application/x-javascript",
+        "application/ecmascript",
+        "application/x-ecmascript",
+        "text/ecmascript",
+        "text/x-ecmascript",
+        "text/x-javascript",
+        "text/jscript",
+        "text/livescript",
+        "text/partytown",
+        "application/x-typescript",
+        "application/typescript",
+        "Text/TypeScript",
+      ].map((type): [string, string, null] => [
+        `<script type="${type}">let  b=1</script>\n`,
+        `<script type="${type}">\n  let b = 1;\n</script>\n`,
+        null,
+      ]),
+      // A `lang` counts for more.
+      [
+        '<script type="math/tex" lang="js">let  b=1</script>\n',
+        '<script type="math/tex" lang="js">\n  let b = 1;\n</script>\n',
+        null,
+      ],
+      [
+        '<script type="application/ld+json">{"a":1}</script>\n',
+        '<script type="application/ld+json">\n  { "a": 1 }\n</script>\n',
         null,
       ],
     ],
@@ -1528,6 +1636,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
       ["{#if q}{@const c = b + 1}{c}{/if}\n", "{#if q}{@const c = b /* + 1 */}{c}{/if}\n"],
       // A comment that is lost.
       ["{f(b /* c */)}\n", "{f(b)}\n"],
+      // A string between brackets is a value.
+      ['{{ ["b"]: 1 }}\n', "{{ [b]: 1 }}\n"],
       ["<Row item={/* c */ item} />\n", "<Row {item} />\n"],
       ["<input bind:value={/* c */ value} />\n", "<input bind:value />\n"],
       ["{#await b}wait{:then { c /* d */ }}{/await}\n", "{#await b}wait{/await}\n"],
@@ -1990,6 +2100,18 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         '<div   ><script type="application/json">{ "a": }</script></div>\n',
         '<div>\n  <script type="application/json">\n{ "a": }\n  </script>\n</div>\n',
         warning("Unexpected token", [1, 48, '<div   ><script type="application/json">{ "a": }</script></div>']),
+      ],
+      [
+        "a script whose type is another name of JavaScript",
+        '<script type="text/ecmascript">function (</script>\n',
+        '<script type="text/ecmascript">\nfunction (\n</script>\n',
+        warning("Identifier expected.", [1, 41, '<script type="text/ecmascript">function (</script>']),
+      ],
+      [
+        "a script for Partytown",
+        '<script type="text/partytown">let a = ;</script>\n',
+        '<script type="text/partytown">\nlet a = ;\n</script>\n',
+        warning("Expression expected.", [1, 39, '<script type="text/partytown">let a = ;</script>']),
       ],
       [
         "behind a byte order mark and letters of two bytes",

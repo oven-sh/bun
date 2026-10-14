@@ -6,6 +6,7 @@ import {
   compileFunction,
   constants,
   createContext,
+  isContext,
   runInContext,
   runInNewContext,
   runInThisContext,
@@ -1793,6 +1794,86 @@ describe("DONT_CONTEXTIFY", () => {
     ctx.fromOutside = 456;
     expect(runInContext("fromOutside", ctx)).toBe(456);
   });
+
+  const run = (code: string, ctx = createContext(constants.DONT_CONTEXTIFY)) => runInContext(code, ctx);
+
+  test("var and function declarations hold their values", () => {
+    expect(run("var w = 1 + 1; function f() {} [w, typeof f, globalThis.w].join()")).toBe("2,function,2");
+    expect(run("var x = 10; x = 20; x = 30; [x, globalThis.x].join()")).toBe("30,30");
+
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    run("var w = 2; undeclared = 1", ctx);
+    expect(run("w", ctx)).toBe(2);
+    expect(ctx.w).toBe(2);
+    expect(Object.keys(ctx)).toEqual(["w", "undeclared"]);
+    expect(Object.getOwnPropertyDescriptor(ctx, "w")).toEqual({
+      value: 2,
+      writable: true,
+      enumerable: true,
+      configurable: false,
+    });
+    ctx.w = 3;
+    expect(run("[w, globalThis.w].join()", ctx)).toBe("3,3");
+    expect(run("[delete globalThis.w, w].join()", ctx)).toBe("false,3");
+  });
+
+  test("a store to a name the global already holds replaces the value", () => {
+    expect(run("Array = 1; typeof Array")).toBe("number");
+    expect(run("'use strict'; Array = 1; typeof Array")).toBe("number");
+    expect(run("globalThis.Array = 1; typeof Array")).toBe("number");
+
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    ctx.Array = 1;
+    expect(run("typeof Array", ctx)).toBe("number");
+
+    expect(run("NaN = 1; NaN")).toBeNaN();
+    expect(() => run("'use strict'; NaN = 1")).toThrow(expect.objectContaining({ name: "TypeError" }));
+  });
+
+  test("delete removes a global", () => {
+    expect(run("[delete globalThis.Array, typeof Array].join()")).toBe("true,undefined");
+
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    expect(delete ctx.Array).toBe(true);
+    expect(run("typeof Array", ctx)).toBe("undefined");
+  });
+
+  test("hasOwn and in follow later declarations and deletions", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    expect([Object.hasOwn(ctx, "declared"), Object.hasOwn(ctx, "Array")]).toEqual([false, true]);
+    const has = (object: object) => "declared" in object;
+    for (let i = 0; i < 10_000; i++) has(ctx);
+    run("var declared; delete globalThis.Array", ctx);
+    expect([Object.hasOwn(ctx, "declared"), Object.hasOwn(ctx, "Array"), has(ctx)]).toEqual([true, false, true]);
+  });
+
+  test("a frozen global rejects stores, deletions and declarations", () => {
+    expect(run("var w = 2; Object.freeze(globalThis); w = 3; w")).toBe(2);
+
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    Object.freeze(ctx);
+    expect(Object.isFrozen(ctx)).toBe(true);
+    expect(run("Array = 1; typeof Array", ctx)).toBe("function");
+    expect(run("[delete globalThis.Array, typeof Array].join()", ctx)).toBe("false,function");
+    const typeError = expect.objectContaining({ name: "TypeError" });
+    expect(() => run("'use strict'; Array = 1", ctx)).toThrow(typeError);
+    expect(() => run("var fresh = 1", ctx)).toThrow(typeError);
+    expect(() => run("function fresh() {}", ctx)).toThrow(typeError);
+  });
+
+  test("preventExtensions leaves existing globals writable", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    Object.preventExtensions(ctx);
+    expect(run("Array = 1; typeof Array", ctx)).toBe("number");
+  });
+});
+
+test("the global object of a contextified context is not a context", () => {
+  const ctx = createContext({ a: 1 });
+  const global = runInContext("this", ctx);
+  expect(isContext(global)).toBe(false);
+  expect(() => runInContext("a", global)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  expect(runInContext("a", ctx)).toBe(1);
 });
 
 describe("defineProperty errors use vm-realm global", () => {

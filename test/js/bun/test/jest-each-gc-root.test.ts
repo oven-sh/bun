@@ -185,6 +185,7 @@ test("the rows of a test.each/describe.each template table are a GC root", async
   expect(stderr).toContain(" 4 pass");
   expect(stderr).toContain(" 0 fail");
   expect(exitCode).toBe(0);
+  // A debug ASAN build takes 4 s: the child collects all the time from its start.
 }, 60_000);
 
 // A collection runs while .each builds the rows, and while it makes the function that keeps
@@ -225,5 +226,6 @@ test.concurrent.each([3, 4])(
     expect(stderr).toContain(" 0 fail");
     expect(exitCode).toBe(0);
   },
+  // A debug ASAN build takes 7 s: the child collects this often from its start.
   60_000,
 );

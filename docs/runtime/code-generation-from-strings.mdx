@@ -86,6 +86,7 @@ These keep working at both levels:
 - WebAssembly.
 - Native addons and `bun:ffi`. See [What the flag does not cover](#what-the-flag-does-not-cover).
 - A plugin that returns an `exports` object.
+- `import()` of a `data:` or `blob:` URL that holds data, such as JSON, and of a `blob:` URL made from `Bun.file()`, which Bun reads from the file.
 - `vm.createContext()` and `new vm.SyntheticModule()`. Neither one compiles a string.
 
 A compiled executable with `=strict` loads modules, Workers and `require()`d files from the executable only. See [Files on disk are not part of the program](#files-on-disk-are-not-part-of-the-program).

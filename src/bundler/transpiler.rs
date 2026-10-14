@@ -613,7 +613,7 @@ impl<'a> Transpiler<'a> {
             // Most of the time, this will already be cached
             let top_level_dir = self.fs().top_level_dir;
             if let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) {
-                if let Some(tsconfig) = root_dir.tsconfig_json() {
+                if let Some(tsconfig) = self.resolver.tsconfig_json(&root_dir) {
                     // If we don't explicitly pass JSX, try to get it from the root tsconfig
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
@@ -674,8 +674,8 @@ impl<'a> Transpiler<'a> {
                     _ => return Ok(()),
                 };
 
-                if let Some(tsconfig) = dir_info.tsconfig_json() {
-                    merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
+                if let Some(tsconfig) = self.resolver.tsconfig_json(&dir_info) {
+                    merge_tsconfig_jsx_into(&tsconfig, &mut self.options.jsx);
                 }
 
                 // Copy the listing's basenames out under `entries_mutex`,
@@ -1053,6 +1053,7 @@ fn resolver_bundle_options_subset(
         preserve_symlinks: src.preserve_symlinks,
         rewrite_jest_for_tests: src.rewrite_jest_for_tests,
         tsconfig_override: src.tsconfig_override.clone(),
+        tsconfig_override_json: None,
         production: src.production,
         force_node_env: src.force_node_env,
         // FORWARD_DECL: bundler-only fields read via `c.resolver.opts` in

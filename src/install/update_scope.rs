@@ -199,7 +199,7 @@ fn is_pattern(arg: &[u8]) -> bool {
 struct Pattern {
     raw: &'static [u8],
     negated: bool,
-    glob: &'static [u8],
+    glob: bun_glob::Prepared<&'static [u8]>,
     hit: bool,
 }
 
@@ -214,7 +214,7 @@ impl Pattern {
         Pattern {
             raw,
             negated,
-            glob,
+            glob: bun_glob::Prepared::new(glob),
             hit: false,
         }
     }
@@ -240,13 +240,13 @@ fn name_of_plain_arg(arg: &[u8]) -> &[u8] {
     }
 }
 
-fn matches(glob: &[u8], name: &[u8]) -> bool {
-    if glob == b"*" {
+fn matches(glob: &bun_glob::Prepared<&[u8]>, name: &[u8]) -> bool {
+    if glob.pattern() == b"*" {
         true
-    } else if strings::contains_char(glob, b'*') {
-        bun_glob::r#match(glob, name).matches()
+    } else if strings::contains_char(glob.pattern(), b'*') {
+        glob.r#match(name).matches()
     } else {
-        glob == name
+        glob.pattern() == name
     }
 }
 
@@ -455,8 +455,8 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
                 let mut positive_hit = patterns.iter().all(|p| p.negated);
                 let mut excluded = false;
                 for pattern in patterns.iter_mut() {
-                    if !matches(pattern.glob, real)
-                        && !(alias != real && matches(pattern.glob, alias))
+                    if !matches(&pattern.glob, real)
+                        && !(alias != real && matches(&pattern.glob, alias))
                     {
                         continue;
                     }

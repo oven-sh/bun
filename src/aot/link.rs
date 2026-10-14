@@ -127,6 +127,7 @@ pub struct Explain {
 }
 
 impl Explain {
+    pub const REPORTS: [&'static str; 4] = ["throws", "throws-all", "throws-json", "throws-all-json"];
     pub const WORDS: [&'static str; 25] = ["alterations", "arguments", "boundary", "callees", "captures", "deferred", "disagreements", "fields", "firsts", "foreign", "given", "integers", "keys", "kinds", "literals", "members", "parsed", "predictions", "rows", "strangers", "throws", "throws-all", "throws-all-json", "throws-json", "uninitialized"];
 
     pub fn set(&mut self, word: &[u8]) -> bool {
@@ -589,20 +590,26 @@ impl Reach {
     }
 }
 
-fn classes_served_by_second_bodies(checked: &Checked<'_>, fragments: &[Fragment], index: &Index, reach: &Reach, types: &FxHashMap<Identity, TypeId>) -> Vec<LayoutKey> {
+fn classes_served_by_second_bodies(checked: &Checked<'_>, fragments: &[Fragment], index: &Index, reach: &Reach, types: &FxHashMap<Identity, TypeId>, in_parallel: InParallel<'_>) -> Vec<LayoutKey> {
     let mut evidence: Notes = Noted::default();
-    for (number, fragment) in fragments.iter().enumerate() {
+    let mut with_alterations: Vec<(usize, Vec<&Notes>)> = (0..fragments.len()).map(|number| (number, Vec::new())).collect();
+    for_each_mut(&mut with_alterations, in_parallel, &|(number, found)| {
+        let (number, fragment) = (*number, &fragments[*number]);
         if fragment.file != NO_FILE && checked.files.module(fragment.file).is_opaque() {
-            continue;
+            return;
         }
         for (i, function) in fragment.funcs.iter().enumerate() {
             if let Some(body) = &function.body
+                && body.notes.has_alterations()
                 && reach.bodies.contains(&function.key)
                 && index.funcs.get(&function.key).is_some_and(|found| found.at == At::new(number, i))
             {
-                evidence.absorb_evidence_of_strangers(&body.notes);
+                found.push(&body.notes);
             }
         }
+    });
+    for notes in with_alterations.into_iter().flat_map(|of_fragment| of_fragment.1) {
+        evidence.absorb_evidence_of_strangers(notes);
     }
     let (let_out, entered, entered_if_let_out) = evidence.evidence_of_strangers();
     if let_out.is_empty() && entered.is_empty() {
@@ -648,8 +655,10 @@ fn take_out(func: &mut Func, part: &ModulePart, anything: TyId) {
 }
 
 /// What is left of the body of a module is a function like any other.
-fn take_out_parts_that_do_not_run(fragments: &mut [Fragment], reach: &Reach) {
-    for (number, fragment) in fragments.iter_mut().enumerate() {
+fn take_out_parts_that_do_not_run(fragments: &mut [Fragment], reach: &Reach, in_parallel: InParallel<'_>) {
+    let mut numbered: Vec<(usize, &mut Fragment)> = fragments.iter_mut().enumerate().collect();
+    for_each_mut(&mut numbered, in_parallel, &|(number, fragment)| {
+        let number = *number;
         let (anything, mut mentioning) = (fragment.tys.anything, Mentioning::default());
         for (index, function) in fragment.funcs.iter_mut().enumerate() {
             let (Some(func), Some(body)) = (&mut function.func, &mut function.body) else { continue };
@@ -663,7 +672,7 @@ fn take_out_parts_that_do_not_run(fragments: &mut [Fragment], reach: &Reach) {
             }
             body.mentions = mentioning.of_func(func);
         }
-    }
+    });
 }
 
 // ───────────────────────────── numbers ─────────────────────────────
@@ -706,9 +715,10 @@ struct Numbering<'a> {
 }
 
 impl<'a> Numbering<'a> {
-    fn new(fragments: &'a [Fragment], index: &'a Index, func_ids: FxHashMap<FuncKey, FuncId>) -> Numbering<'a> {
-        let maps = (fragments.iter())
-            .map(|fragment| Maps {
+    fn new(fragments: &'a [Fragment], index: &'a Index, func_ids: FxHashMap<FuncKey, FuncId>, in_parallel: InParallel<'_>) -> Numbering<'a> {
+        let mut maps_of: Vec<(&Fragment, Option<Maps>)> = fragments.iter().map(|fragment| (fragment, None)).collect();
+        for_each_mut(&mut maps_of, in_parallel, &|(fragment, maps)| {
+            *maps = Some(Maps {
                 strs: vec![StrId::NONE; fragment.strs.len()],
                 tys: vec![TyId::NONE; fragment.tys.list.len()],
                 layouts: vec![LayoutId::NONE; fragment.layouts.len()],
@@ -716,8 +726,9 @@ impl<'a> Numbering<'a> {
                 modules: vec![ModuleId::NONE; fragment.modules.len()],
                 funcs: fragment.funcs.iter().map(|function| func_ids.get(&function.key).copied().unwrap_or(FuncId::NONE)).collect(),
                 uses_func: vec![false; fragment.funcs.len()],
-            })
-            .collect();
+            });
+        });
+        let maps = maps_of.into_iter().filter_map(|of_fragment| of_fragment.1).collect();
         Numbering {
             fragments,
             index,
@@ -1844,13 +1855,13 @@ pub fn link(
         for &(identity, at, by) in &named {
             match types.get(&identity) {
                 Some(&ty) => missing.push((identity, ty)),
-                None => problems.push(by.problem(&fragments, nowhere, format!("{}, which {} mentions, which no file defines and whose type no task has kept", name_of_layout(&fragments, at), by.name(&fragments)))),
+                None => problems.push(by.problem(&fragments, nowhere, format!("type {} (used by {}): internal error: no file defines it and its type was not kept; please report it", name_of_layout(&fragments, at), by.name(&fragments)))),
             }
         }
         times.add("reach", &mut since);
         if missing.is_empty() {
             let mut is_more_reached = false;
-            let served = classes_served_by_second_bodies(checked, &fragments, &index, &reach, &types);
+            let served = classes_served_by_second_bodies(checked, &fragments, &index, &reach, &types, in_parallel);
             let mut c = checked.checker();
             for &class in &served {
                 if let LayoutKey::Instance(file, of) = class
@@ -1883,7 +1894,7 @@ pub fn link(
         }
         if times.rounds == MOST_ROUNDS {
             let (_, at, by) = named[0];
-            problems.push(by.problem(&fragments, nowhere, format!("object types that lead to ever more object types, such as {}, which {} mentions", name_of_layout(&fragments, at), by.name(&fragments))));
+            problems.push(by.problem(&fragments, nowhere, format!("a type that expands without end, such as {} (used by {})", name_of_layout(&fragments, at), by.name(&fragments))));
             break;
         }
         let (described, has_run_out) = describe_in_tasks(checked, &missing, &index, in_parallel, describe, (&mut times, &mut since));
@@ -1896,7 +1907,7 @@ pub fn link(
         times.rounds += 1;
         times.layouts_described += fragments[fragments.len() - described_fragments..].iter().flat_map(|fragment| &fragment.layouts).filter(|shape| shape.definition.is_some()).count();
         for &(_, at, by) in named.iter().filter(|named| types.contains_key(&named.0) && !index.layouts.contains_key(&LayoutKey::Record(named.0))) {
-            problems.push(by.problem(&fragments, nowhere, format!("{}, which {} mentions and which cannot be laid out again", name_of_layout(&fragments, at), by.name(&fragments))));
+            problems.push(by.problem(&fragments, nowhere, format!("type {} (used by {}): internal error: its layout could not be rebuilt; please report it", name_of_layout(&fragments, at), by.name(&fragments))));
         }
         times.add("reach", &mut since);
         add_kept_types(checked, &mut seen, &mut types, in_parallel);
@@ -1905,15 +1916,15 @@ pub fn link(
         let defined = missing.iter().filter_map(|(identity, _)| index.layouts.get(&LayoutKey::Record(*identity)));
         reach.work.extend(defined.map(|found| Work::Layout(found.at)));
     }
-    take_out_parts_that_do_not_run(&mut fragments, &reach);
+    take_out_parts_that_do_not_run(&mut fragments, &reach, in_parallel);
     // `Explain::disagreements`: for each of the problems it is about, in their order.
     let mut why_they_disagree: Vec<Vec<String>> = Vec::new();
     for &(key, by) in &reach.undefined_funcs {
-        problems.push(by.problem(&fragments, nowhere, format!("the function {key:?}, which {} mentions and which no file defines", by.name(&fragments))));
+        problems.push(by.problem(&fragments, nowhere, format!("function {key:?} (used by {}): internal error: no file defines it; please report it", by.name(&fragments))));
         why_they_disagree.push(vec![format!("the function {key:?}, which no fragment defines")]);
     }
     for &(at, by) in &reach.undefined_layouts {
-        problems.push(by.problem(&fragments, nowhere, format!("{}, which {} mentions and which no file defines", name_of_layout(&fragments, at), by.name(&fragments))));
+        problems.push(by.problem(&fragments, nowhere, format!("type {} (used by {}): internal error: no file defines it; please report it", name_of_layout(&fragments, at), by.name(&fragments))));
         if explain.disagreements {
             why_they_disagree.push(disagreement::of_undefined_layout(checked, &fragments, &index, &reach, at, by));
         }
@@ -1963,20 +1974,24 @@ pub fn link(
     }
 
     // The functions of the program after the entry functions, and whether each has its body.
-    let mut included: Vec<(At, bool)> = Vec::new();
-    for (number, fragment) in fragments.iter().enumerate() {
-        for (i, function) in fragment.funcs.iter().enumerate() {
-            let at = At::new(number, i);
-            if reach.funcs.contains(&function.key) && index.funcs.get(&function.key).is_some_and(|found| found.at == at) {
-                included.push((at, reach.bodies.contains(&function.key)));
+    let mut included_of: Vec<(usize, Vec<(At, bool)>)> = (0..fragments.len()).map(|number| (number, Vec::new())).collect();
+    {
+        let (fragments, reach, index) = (&fragments, &reach, &index);
+        for_each_mut(&mut included_of, in_parallel, &|(number, included)| {
+            for (i, function) in fragments[*number].funcs.iter().enumerate() {
+                let at = At::new(*number, i);
+                if reach.funcs.contains(&function.key) && index.funcs.get(&function.key).is_some_and(|found| found.at == at) {
+                    included.push((at, reach.bodies.contains(&function.key)));
+                }
             }
-        }
+        });
     }
     // What runs when the program starts comes first, in the order it runs in: the image places code by these numbers, and whatever is numbered as it is first mentioned follows.
     let key_at = |at: At| fragments[at.fragment as usize].funcs[at.index as usize].key;
     let of_the_runtime: FxHashSet<FileId> = builtin_modules.iter().map(|module| module.1).collect();
     let evaluates_module = |key: FuncKey| matches!(key, FuncKey::Module(file) | FuncKey::ModuleBody(file) | FuncKey::ModuleSettling(file) if !of_the_runtime.contains(&file));
-    included.sort_by_key(|&(at, _)| !evaluates_module(key_at(at)));
+    let (first, others): (Vec<(At, bool)>, Vec<(At, bool)>) = included_of.into_iter().flat_map(|of_fragment| of_fragment.1).partition(|&(at, _)| evaluates_module(key_at(at)));
+    let included: Vec<(At, bool)> = first.into_iter().chain(others).collect();
     let func_ids: FxHashMap<FuncKey, FuncId> = included.iter().enumerate().map(|(i, &(at, _))| (key_at(at), FuncId::new(entry_points.len() + i))).collect();
     let evaluating: Vec<(FuncId, FuncKey)> = included
         .iter()
@@ -1986,7 +2001,7 @@ pub fn link(
         .filter(|found| matches!(found.1, FuncKey::Module(file) | FuncKey::ModuleBody(file) | FuncKey::ModuleSettling(file) | FuncKey::Initializer(file, _) if !of_the_runtime.contains(&file)))
         .collect();
 
-    let mut numbering = Numbering::new(&fragments, &index, func_ids);
+    let mut numbering = Numbering::new(&fragments, &index, func_ids, in_parallel);
     let name_of_entry = numbering.strs.intern(b"main");
     // A module for each file that has a function in the program, in the order of those.
     for &(at, _) in &included {
@@ -2384,7 +2399,7 @@ pub fn link(
     };
     say("the types of the fields");
     let field_types = crate::field_types::field_types(&program, &views, in_parallel);
-    let mut subtypes = c.begin_subtypes(noted, &asked, field_types, stored, explain.progress);
+    let mut subtypes = c.begin_subtypes(noted, &asked, field_types, stored, explain.progress, in_parallel);
     times.add("flows", &mut since);
     let mut has_run_out = false;
     let mut cut_short = Vec::new();

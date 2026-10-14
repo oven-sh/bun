@@ -1475,8 +1475,8 @@ for (const [key, blob] of build.outputs) {
     };
     const api = {
       root,
-      outfile: outfileOnDisk!,
-      outdir: outdir!,
+      outfile: outfileOnDisk ?? "",
+      outdir: outdir ?? "",
       join: (...paths: string[]) => path.join(root, ...paths),
       readFile,
       writeFile,

@@ -1,0 +1,9 @@
+by name: TypeError
+{"message":"m","error":"m","code":7} true m message,error,code 8
+by name, after an extra property: TypeError
+by name, nested: TypeError
+{"message":"n","code":8.5,"nested":{"message":"inner","keep":true,"error":"inner"},"error":"n"} 17 true
+by key: TypeError
+{"width":1,"height":2,"label":"b"} 2 2 true 1
+Reflect.deleteProperty: TypeError
+b width,height,label

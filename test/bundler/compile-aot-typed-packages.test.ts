@@ -113,15 +113,15 @@ describe("compile/aot/TypedPackages", () => {
   });
 
   const mismatches: [string, (folder: string) => void, string][] = [
-    ["an installed file has other bytes", folder => appendFileSync(join(folder, "node_modules", "shapes", "index.js"), "\n"), "the installed index.js is not the file that it was typed on"],
-    ["a file of the basis has other bytes", folder => typedVersion(join(folder, ".sound", "shapes"), { basis: { "index.d.ts": sha256("") } }), "the installed index.d.ts is not the file that it was typed on"],
-    ["another version is installed", folder => write(join(folder, "node_modules", "shapes"), { "package.json": installed["package.json"].replace("1.2.3", "1.2.4") }), "it is for version 1.2.3, and 1.2.4 is installed"],
+    ["an installed file has other bytes", folder => appendFileSync(join(folder, "node_modules", "shapes", "index.js"), "\n"), "the installed index.js differs from the published file that this typed version was made from (was the package patched?)"],
+    ["a file of the basis has other bytes", folder => typedVersion(join(folder, ".sound", "shapes"), { basis: { "index.d.ts": sha256("") } }), "the installed index.d.ts differs from the published file that this typed version was made from (was the package patched?)"],
+    ["another version is installed", folder => write(join(folder, "node_modules", "shapes"), { "package.json": installed["package.json"].replace("1.2.3", "1.2.4") }), "it is for version 1.2.3, and 1.2.4 is installed (install the typed version for 1.2.4, or remove this one)"],
     ["a new file is installed already", folder => write(join(folder, "node_modules", "shapes"), { "index.sound.ts": "" }), "index.sound.ts is installed, and it was not when the package was typed"],
     ["a path leaves the package", folder => typedVersion(join(folder, ".sound", "shapes"), { lay: { "../other/index.js": "new" } }), `"../other/index.js" in its sound.json is no path inside the package`],
     ["package.json cannot be replaced", folder => typedVersion(join(folder, ".sound", "shapes"), { lay: { "package.json": sha256(installed["package.json"]) } }), `"package.json" in its sound.json is no path inside the package`],
     ["a replacement is missing", folder => typedVersion(join(folder, ".sound", "shapes"), { lay: { ...manifest().lay, "more.ts": "new" } }), "it has no lay/more.ts"],
     ["nothing is replaced", folder => typedVersion(join(folder, ".sound", "shapes"), { lay: {} }), "its sound.json lays nothing"],
-    ["the build does not define what it is for", folder => typedVersion(join(folder, ".sound", "shapes"), { when: { "process.env.NODE_ENV": "production" } }), `it is for a build that defines process.env.NODE_ENV as "production"`],
+    ["the build does not define what it is for", folder => typedVersion(join(folder, ".sound", "shapes"), { when: { "process.env.NODE_ENV": "production" } }), `it is for a build that defines process.env.NODE_ENV as "production" (pass --define 'process.env.NODE_ENV="production"')`],
     ["a needed typed version is not in use", folder => typedVersion(join(folder, ".sound", "shapes"), { needs: ["other"] }), `it needs the typed version of "other", which is not used`],
     ["what it needs is no package", folder => typedVersion(join(folder, ".sound", "shapes"), { needs: ["../x"] }), `"needs" of its sound.json is not a list of packages' names`],
     ["an unknown format", folder => typedVersion(join(folder, ".sound", "shapes"), { sound: 2 }), "its sound.json is of a format that this Bun does not know"],
@@ -143,7 +143,7 @@ describe("compile/aot/TypedPackages", () => {
   test("control characters of the manifest do not reach the terminal", async () => {
     const folder = project("aot-typed-control");
     typedVersion(join(folder, ".sound", "shapes"), { version: "1.2\u001b[31m.3" });
-    expect((await built(folder)).said).toEqual(unused(".sound/shapes", "it is for version 1.2?[31m.3, and 1.2.3 is installed"));
+    expect((await built(folder)).said).toEqual(unused(".sound/shapes", "it is for version 1.2?[31m.3, and 1.2.3 is installed (install the typed version for 1.2.3, or remove this one)"));
   });
 
   test("a typed version that does not type check is compiled untyped", async () => {

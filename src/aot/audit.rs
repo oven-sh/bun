@@ -150,23 +150,42 @@ pub(crate) fn settle(func: &Func, noted: &FxHashMap<V, Noted>) -> Vec<Span> {
             spans.push(Span { value, start: span.start, end: span.end, step: span.step });
             continue;
         }
-        let mut at = here as usize;
-        let joined = loop {
-            match &func.blocks[at].term {
-                Some(Term::Invoke { normal, .. }) if !normal.args.contains(&value) => at = normal.block.idx(),
-                Some(Term::Jump(target) | Term::Invoke { normal: target, .. }) => break target.args.iter().position(|&arg| arg == value).map(|index| func.blocks[target.block.idx()].params[index]),
-                _ => break None,
-            }
-        };
-        if let Some(joined) = joined
-            && func.ty(joined) == to
-            && let Some(whole) = noted.get(&joined)
+        spans.extend(at_the_join(func, noted, value, to, here as usize));
+    }
+    let held_without_a_note = |value: V| match func.op(value) {
+        Some(&Op::Coerce { value: held, to, why }) if !matches!(why, Why::Upcast | Why::Forced) && !noted.contains_key(&value) => Some((held, to, why)),
+        _ => None,
+    };
+    let all = || func.blocks.iter().flat_map(|block| &block.ops).copied();
+    let held_again: FxHashMap<V, V> = all().filter_map(|value| Some((held_without_a_note(value)?.0, value))).collect();
+    for claim in all().filter(|&value| matches!(held_without_a_note(value), Some((_, _, Why::Claim)))) {
+        let mut chain = vec![claim];
+        while let Some(&next) = held_again.get(&chain[chain.len() - 1]) {
+            chain.push(next);
+        }
+        let last = chain[chain.len() - 1];
+        if let Some((_, to, _)) = held_without_a_note(last)
+            && let Some(span) = at_the_join(func, noted, last, to, made_in[last.idx()] as usize)
         {
-            spans.push(Span { value, start: whole.start, end: whole.end, step: whole.step });
+            spans.extend(chain.into_iter().filter(|&value| held_without_a_note(value).is_some_and(|held| held.1 == to)).map(|value| Span { value, ..span }));
         }
     }
     spans.sort_unstable_by_key(|span| span.value);
+    spans.dedup_by_key(|span| span.value);
     spans
+}
+
+fn at_the_join(func: &Func, noted: &FxHashMap<V, Noted>, value: V, to: TyId, mut at: usize) -> Option<Span> {
+    let joined = loop {
+        match &func.blocks[at].term {
+            Some(Term::Invoke { normal, .. }) if !normal.args.contains(&value) => at = normal.block.idx(),
+            Some(Term::Jump(target) | Term::Invoke { normal: target, .. }) => break target.args.iter().position(|&arg| arg == value).map(|index| func.blocks[target.block.idx()].params[index])?,
+            _ => return None,
+        }
+    };
+    let whole = noted.get(&joined).filter(|_| func.ty(joined) == to)?;
+    let step = if whole.step == READ_LATER { 0 } else { whole.step };
+    Some(Span { value, start: whole.start, end: whole.end, step })
 }
 
 fn quoted(out: &mut String, bytes: &[u8]) {
@@ -497,7 +516,7 @@ fn calls_entered(program: &Program, func: &Func) -> FxHashMap<V, (u32, usize)> {
     let mut entered: FxHashMap<V, (u32, usize)> = FxHashMap::default();
     for &v in func.blocks.iter().flat_map(|block| &block.ops) {
         if let Some(Op::CallDirect { func: callee, args }) = func.op(v) {
-            let callee = &program.funcs[callee.idx()];
+            let Some(callee) = program.funcs.get(callee.idx()).filter(|callee| callee.module.is_some()) else { continue };
             let first = callee.captures.len() + usize::from(callee.has(func_flags::HAS_THIS));
             for (index, &arg) in args.iter().enumerate().skip(first) {
                 entered.entry(arg).or_insert((func.values[v.idx()].pos, index - first));
@@ -906,13 +925,19 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
         .map(|module| Module { path: program.strs.get(module.display_path).to_vec(), length_of_text: text_of(program.strs.get(module.display_path)).map(<[u8]>::len), groups: Vec::new(), parameters: Vec::new(), without_span: Vec::new() })
         .collect();
     for func in &program.funcs {
-        if func.module.is_none() || !func.has(func_flags::IS_TYPED) || func.has(func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE) {
+        if func.module.is_none() || func.blocks.is_empty() || !func.has(func_flags::IS_TYPED) || func.has(func_flags::IS_BUILTIN | func_flags::IS_OF_BUILTIN_MODULE) {
             continue;
         }
         let module = func.module.idx();
         let entered = places_entered(program, func);
         let members = members_entered(program, func);
         let calls = calls_entered(program, func);
+        let held_again: FxHashMap<V, V> = (func.blocks.iter().flat_map(|block| &block.ops))
+            .filter_map(|&later| match func.op(later) {
+                Some(&Op::Coerce { value, .. }) => Some((value, later)),
+                _ => None,
+            })
+            .collect();
         let path = &modules[module].path;
         let mut step = |pos: u32, kind: Kind, what: &str, rest: &str, fixed: Option<u32>| {
             let name = program.strs.get(func.name);
@@ -979,11 +1004,17 @@ fn walk<'t>(program: &Program, is_linked: bool, text_of: &dyn Fn(&[u8]) -> Optio
                     line.push_str(",\"unsure\":1");
                 }
                 let kind = kind_of(program, func, v, &entered);
-                if let (Kind::EnterArgument, Some(&(call, index)), Some(lines)) = (kind, calls.get(&v), lines[module].as_ref())
+                let mut entering = v;
+                while !calls.contains_key(&entering)
+                    && let Some(&next) = held_again.get(&entering)
+                {
+                    entering = next;
+                }
+                if let (Some(&(call, index)), Some(lines)) = (calls.get(&entering), lines[module].as_ref())
                     && call != 0
                 {
                     let (line_of_call, column_of_call) = lines.line_and_column(call);
-                    let _ = write!(line, ",\"callId\":\"{}\"", id_of(path, line_of_call, column_of_call, kind.as_str(), index));
+                    let _ = write!(line, ",\"callId\":\"{}\"", id_of(path, line_of_call, column_of_call, Kind::EnterArgument.as_str(), index));
                 }
                 let line = step(pos, kind, &held.what, &line, None);
                 let Some(&span) = spans.get(&v) else {
@@ -1100,7 +1131,28 @@ pub fn program_of_fragment(fragment: crate::fragment::Fragment, shown_from: &[u8
             },
         })
         .collect();
-    program.funcs = funcs.into_iter().filter_map(|function| function.body.is_some().then_some(function.func).flatten()).collect();
+    program.funcs = (funcs.into_iter())
+        .map(|function| {
+            function.func.unwrap_or_else(|| Func {
+                name: StrId::NONE,
+                module: crate::id::ModuleId::NONE,
+                pos: 0,
+                place_of_text: 0,
+                end_of_text: 0,
+                kind: crate::ir::FuncKind::Plain,
+                flags: 0,
+                length: 0,
+                captures: Vec::new(),
+                this_declared: TyId::NONE,
+                params: Vec::new(),
+                annotated: Vec::new(),
+                result: TyId::NONE,
+                blocks: Vec::new(),
+                values: Vec::new(),
+                spans: Vec::new(),
+            })
+        })
+        .collect();
     program.modules = modules.iter().map(|_| crate::ir::Module { path, init: FuncId::NONE, display_path: path, line_table: line_table.clone(), printed: Vec::new() }).collect();
     program
 }

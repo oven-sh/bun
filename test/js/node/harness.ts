@@ -103,7 +103,7 @@ export function createTest(path: string) {
 
     // TODO: Implement this to be exact only
     function mustCall(fn?: (...args: any[]) => any, exact?: number) {
-      return mustCallAtLeast(fn!, exact!);
+      return mustCallAtLeast(fn, exact);
     }
 
     function closeTimers() {
@@ -130,7 +130,7 @@ export function createTest(path: string) {
       }, exact);
     }
 
-    function mustCallAtLeast(fn: unknown, minimum: number) {
+    function mustCallAtLeast(fn: unknown, minimum?: number) {
       return _mustCallInner(fn, minimum, "minimum");
     }
 

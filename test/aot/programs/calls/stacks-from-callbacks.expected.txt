@@ -1,0 +1,19 @@
+sort: note < comparator < sort < outer < show < module
+toSorted: note < comparator < toSorted < outer < show < module
+typed array sort: note < comparator < sort < outer < show < module
+typed array forEach: note < visitor < forEach < outer < show < module
+typed array map: note < map < outer < show < module
+replace: note < replacer < outer < show < module
+replace string: note < replacer < replace < outer < show < module
+getter: note < value < get < outer < show < module
+toString: note < toString < join < outer < show < module
+toJSON: note < toJSON < stringify < outer < show < module
+reviver: note < parse < outer < show < module
+proxy: note < comparator < outer < show < module
+bound: note < comparator < sort < outer < show < module
+set-like: note < has < isSubsetOf < outer < show < module
+iterator: note < next < Set < outer < show < module
+thrown from sort: thrown: thrower < sort < outer < show < module
+thrown from a typed array: thrown: thrower < sort < outer < show < module
+nested: note < comparator < sort < sort < outer < show < module
+reaction: note < reaction

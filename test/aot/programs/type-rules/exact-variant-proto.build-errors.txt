@@ -1,0 +1,2 @@
+error: TS100015: This always throws a TypeError under --aot: `Object.setPrototypeOf` on Opts: objects of a declared type keep their prototype.
+error: TS100015: This always throws a TypeError under --aot: `Object.setPrototypeOf` on Shape2: objects of a declared type keep their prototype.

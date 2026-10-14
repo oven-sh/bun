@@ -1,0 +1,6 @@
+{
+  "env": {
+    "JSC_useAOTOperationCounters": "1",
+    "JSC_watchdog": "250"
+  }
+}

@@ -1887,12 +1887,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     && let PatKind::Ident(name) = hir[hir[p].pat].kind
                 {
                     if self.c.assigns_fields(file, class) && self.class_info(file, class).facts.is_laid_out && self.inherits_accessor(file, class, name) {
-                        self.problem(file, pos, "a field that is assigned (\"useDefineForClassFields\": false) where a class it extends has an accessor by its name");
+                        self.problem(file, pos, "a class field that shadows an accessor of a base class while \"useDefineForClassFields\" is false");
                     }
                     let name = self.str(name);
                     let this = self.this(fx, pos);
                     let Some(&value) = fx.constructor_params.get(i) else {
-                        return self.problem(fx.file, pos, "`super()` among the parameters of a constructor with parameter properties");
+                        return self.problem(fx.file, pos, "`super()` in a parameter default of a constructor that has parameter properties");
                     };
                     self.emit_throwing(fx, Op::PropSet { obj: this, name, value });
                 }
@@ -1947,7 +1947,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let this = self.this(fx, pos);
                 if assigns && matches!(m.key, PropKey::Name(_)) {
                     if self.inherits_accessor(file, class, name) {
-                        self.problem(file, m.start, "a field that is assigned (\"useDefineForClassFields\": false) where a class it extends has an accessor by its name");
+                        self.problem(file, m.start, "a class field that shadows an accessor of a base class while \"useDefineForClassFields\" is false");
                     }
                     self.emit_throwing(fx, Op::PropSet { obj: this, name: field, value });
                 } else {
@@ -2242,7 +2242,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// `super.name`
     pub(crate) fn super_get(&mut self, fx: &mut Fx, name: StrId, pos: u32) -> V {
         if self.is_builtin_file(fx.file) && self.out.strs.get(name).starts_with(b"$") {
-            self.problem(fx.file, pos, "a `$` name behind `super`");
+            self.problem(fx.file, pos, "a `$` intrinsic after `super.`");
         }
         let key = self.emit(fx, Op::Str(name));
         self.super_get_by_key(fx, key, pos)
@@ -2258,7 +2258,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// `super.name = value`
     pub(crate) fn super_set(&mut self, fx: &mut Fx, name: StrId, value: V, pos: u32) {
         if self.is_builtin_file(fx.file) && self.out.strs.get(name).starts_with(b"$") {
-            self.problem(fx.file, pos, "a `$` name behind `super`");
+            self.problem(fx.file, pos, "a `$` intrinsic after `super.`");
         }
         let key = self.emit(fx, Op::Str(name));
         self.super_set_by_key(fx, key, value, pos);

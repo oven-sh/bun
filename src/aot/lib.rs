@@ -90,6 +90,7 @@ pub struct Constants {
     pub function_texts: Option<FunctionTexts>,
     pub logs_type_errors: bool,
     pub notes_spans: bool,
+    pub has_preloads: bool,
 }
 
 pub type FunctionTexts = rustc_hash::FxHashMap<Vec<u8>, (Vec<u8>, Vec<(u32, u32, u32)>)>;
@@ -135,7 +136,8 @@ impl<'a> Translation<'a> {
     /// `Request::loaded`. `entry_points`: for each, the files that are run when the program is started with it, in order. What can run then,
     /// whichever it is started with, is translated. A program that is loaded again is begun again.
     pub fn begin(&self, program: &Checked<'_>, entry_points: &[Vec<FileId>], in_parallel: InParallel<'_>) {
-        let without_whole_trees = program.files_without_whole_trees();
+        let mut without_whole_trees = program.files_without_whole_trees();
+        without_whole_trees.retain(|&file| program.files.hir(file).kind != FileKind::Declaration);
         let translating = without_whole_trees.is_empty().then(|| (build::Shared::new(program, entry_points, self.constants, in_parallel).counting_literals(self.explain.literals, self.explain.literal_at), Fragments::new(program.files.modules.len())));
         *self.begun.write().unwrap_or_else(PoisonError::into_inner) = Some(Begun { without_whole_trees, translating });
     }
@@ -147,8 +149,10 @@ impl<'a> Translation<'a> {
         if let Some((shared, _)) = &begun.as_ref().expect(IS_BEGUN).translating
             && shared.is_compiled(file)
         {
-            c.note_uses_of_functions_in(file);
-            c.note_evidence_of_strangers_in(file);
+            c.while_translating(|c| {
+                c.note_uses_of_functions_in(file);
+                c.note_evidence_of_strangers_in(file);
+            });
             c.forget_answers_by_expression();
         }
     }
@@ -172,10 +176,12 @@ impl<'a> Translation<'a> {
         if !shared.is_compiled(file) {
             return;
         }
-        if !c.knows_uses_of_functions() {
-            c.note_uses_of_functions_in(file);
-        }
-        let fragment = build::translate_file(c, shared, file);
+        let fragment = c.while_translating(|c| {
+            if !c.knows_uses_of_functions() {
+                c.note_uses_of_functions_in(file);
+            }
+            build::translate_file(c, shared, file)
+        });
         if !c.is_warming_up() {
             fragments.put(fragment);
         }
@@ -229,6 +235,16 @@ impl<'a> Translation<'a> {
         for (elsewhere, _) in linked.errors.iter_mut().zip(errors).filter(|(_, place)| program.files.hir(place.0).kind == FileKind::Declaration) {
             *elsewhere = None;
         }
+        if let Some((shared, _)) = &begun.translating
+            && let Some(&file) = shared.roots().first()
+            && let Some(layout) = linked.program.layouts.iter().find(|layout| layout.fields.len() > usize::from(u16::MAX))
+        {
+            let what = match layout.kind {
+                ir::LayoutKind::Environment => "a function with more than 65,535 variables that inner functions use",
+                _ => "an object with more than 65,535 properties",
+            };
+            linked.problems.push(Problem { file, pos: 0, what: what.into() });
+        }
         let line_of = |file: FileId, pos: u32| {
             let text = &program.files.hir(file).text;
             text[..(pos as usize).min(text.len())].iter().filter(|&&b| b == b'\n').count() + 1
@@ -249,7 +265,7 @@ impl<'a> Translation<'a> {
             .collect();
         let shown = |problem: &Problem| {
             let module = program.files.module(problem.file);
-            format!("{}:{}: not compiled yet: {}", String::from_utf8_lossy(module.file_name()), line_of(problem.file, problem.pos), problem.what)
+            format!("{}:{}: --aot does not support {}", String::from_utf8_lossy(module.file_name()), line_of(problem.file, problem.pos), problem.what)
         };
         let problems = linked.problems.iter().map(shown).collect();
         let builtin_modules_left_out = linked.builtin_modules_left_out.iter().map(|(id, problem)| (*id, shown(problem))).collect();

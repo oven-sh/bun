@@ -1,0 +1,1 @@
+It counts the cells of the heap by kind, and a whole Bun has others than the jsc shell. Expected: "start: Function +410, NativeExecutable +327, Structure +299, GetterSetter +26". --aot prints: "start: Function +520, NativeExecutable +351, Structure +395, GetterSetter +40".

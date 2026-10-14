@@ -1,0 +1,2 @@
+error: TS100015: This always throws a TypeError under --aot: `patched` is assigned on the prototype of the class `Base2`, which does not declare it: class prototypes take no new members.
+error: TS100015: This always throws a TypeError under --aot: `patched` is deleted on the prototype of the class `Base2`, which does not declare it: class prototypes take no new members.

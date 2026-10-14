@@ -2767,6 +2767,21 @@ pub fn libs_referenced_by(host: &dyn Host, path: &[u8]) -> Vec<Vec<u8>> {
         .collect()
 }
 
+const CORRECTIONS_OF_DECLARATION_FILES: [(&[u8], &[u8], &[u8]); 1] = [(b"/@types/node/tty.d.ts", b" isTTY: boolean;", b" isTTY?: true;  ")];
+
+fn corrected(path: &[u8], mut text: Cow<'static, [u8]>) -> Cow<'static, [u8]> {
+    for (file, written, right) in CORRECTIONS_OF_DECLARATION_FILES {
+        if !path.ends_with(file) || written.len() != right.len() {
+            continue;
+        }
+        let places: Vec<usize> = text.windows(written.len()).enumerate().filter(|(_, window)| *window == written).map(|(at, _)| at).collect();
+        for at in places {
+            text.to_mut()[at..at + right.len()].copy_from_slice(right);
+        }
+    }
+    text
+}
+
 /// `GetAutomaticTypeDirectiveNames`: the entries of `compilerOptions.types`. A `*` in it represents
 /// every package under the type roots.
 fn automatic_type_directives(
@@ -5891,6 +5906,7 @@ impl<'s> Files<'s> {
         specifies_esm: bool,
         text: Cow<'static, [u8]>,
     ) -> (hir::File<'s>, Bound<'s>) {
+        let text = if options.bind.one_name_is_one_binding { corrected(path, text) } else { text };
         let keeps_text = !is_lib || options.keeps_the_text_of_libraries;
         // The binder consults the text.
         let variant = variant_of_files(options) << 1 | u8::from(keeps_text);

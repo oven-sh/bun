@@ -363,6 +363,11 @@ impl SharedFlows {
 
     /// A node that is visited again while its type is computed has two entries. The search finds
     /// the first.
+    fn forget_what_is_incomplete(&mut self) {
+        self.few.retain(|known| !known.1.incomplete);
+        self.many.retain(|_, ty| !ty.incomplete);
+    }
+
     fn push(&mut self, flow: FlowId, ty: FlowType) {
         if self.get(flow).is_some() {
             return;
@@ -6871,6 +6876,9 @@ impl<'p, 's> Checker<'p, 's> {
                         walk.back_edges -= 1;
                         if let Some(cached) = restarted {
                             incomplete = false;
+                            if self.asks_out_of_order() {
+                                walk.shared_flows.forget_what_is_incomplete();
+                            }
                             break cached;
                         }
                     }
@@ -6888,6 +6896,9 @@ impl<'p, 's> Checker<'p, 's> {
                             .or_default()
                             .push((walk.reference.clone(), result.ty));
                         self.flow_memo.flow_loop_cached_at = self.work;
+                        if self.asks_out_of_order() {
+                            walk.shared_flows.forget_what_is_incomplete();
+                        }
                     }
                     break result.ty;
                 }
@@ -8354,7 +8365,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `isExhaustiveSwitchStatement`
-    fn is_exhaustive_switch(&mut self, file: FileId, stmt: StmtId) -> bool {
+    pub(super) fn is_exhaustive_switch(&mut self, file: FileId, stmt: StmtId) -> bool {
         let links = self.flow_memo.switch_statement_links.entry((file, stmt));
         let links = links.or_default();
         match links.exhaustive_state {

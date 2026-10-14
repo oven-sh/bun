@@ -58,9 +58,9 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
     clap::param!("--threads <n>      Number of threads <d>(default: one per CPU core)<r>"),
     clap::param!("--timing           Print load and check times"),
     clap::param!(
-        "--aot              Check the entry points as <b>bun build --compile --aot<r> does"
+        "--aot              Also report what <b>bun build --compile --aot<r> would reject in these entry points"
     ),
-    clap::param!("--aot-explain <word>...  With <b>--aot<r>: print what the compiler has decided, e.g. <b>throws<r>"),
+    clap::param!("--aot-explain <word>...  With <b>--aot<r>: print a report. <b>throws<r> lists every type check that can fail when the program runs"),
     clap::param!("--cwd <path>       Set the working directory"),
     clap::param!("-h, --help         Print this help menu"),
     // Nothing is ever emitted. `--noEmit` is a compiler option like any other, which the driver sets last.
@@ -130,7 +130,7 @@ fn parse(args: &[&ZStr]) -> Options {
         ..Default::default()
     };
     if let Some(word) = options.aot_explain.iter().find(|word| !bun_aot::Explain::default().set(word)) {
-        usage_error(format_args!("--aot-explain does not take \"{}\": it is one of {}", BStr::new(word), bun_aot::Explain::WORDS.join(", ")));
+        usage_error(format_args!("--aot-explain does not take \"{}\": it is one of {}", BStr::new(word), bun_aot::Explain::REPORTS.join(", ")));
     }
     if !options.aot && !options.aot_explain.is_empty() {
         usage_error(format_args!("--aot-explain requires --aot"));
@@ -790,6 +790,7 @@ fn analyze_on_this_thread(
     let mut constants = bun_aot::Constants {
         logs_type_errors,
         notes_spans: false,
+        has_preloads: false,
         own_paths: preserve_source_paths.then_some(file_url as fn(&[u8]) -> Vec<u8>),
         has_test_globals: rewrite_jest_for_tests,
         ignores_dce_annotations: ignore_dce_annotations,
@@ -1016,7 +1017,11 @@ fn explaining(words: &[Box<[u8]>]) -> bun_aot::Explain {
 
 fn print_explained(lines: &[String]) {
     for line in lines {
-        let (writer, prefix) = if line.starts_with('{') { (Output::writer(), "") } else { (Output::error_writer(), "aot: ") };
+        let (writer, prefix) = match line.as_bytes().first() {
+            Some(b'{') => (Output::writer(), ""),
+            Some(b'[') => (Output::error_writer(), ""),
+            _ => (Output::error_writer(), "aot: "),
+        };
         let _ = writer.write_all(prefix.as_bytes());
         let _ = writer.write_all(line.as_bytes());
         let _ = writer.write_all(b"\n");
@@ -1313,6 +1318,7 @@ pub(crate) fn audit_before(
         root: from_native(&cwd),
         has_test_globals: is_for_tests,
         notes_spans: true,
+        has_preloads: bun_options_types::context::try_get().is_some_and(|ctx| !ctx.preloads.is_empty()),
         ..Default::default()
     };
     let translation = bun_aot::Translation::new(&constants);
@@ -1414,8 +1420,8 @@ pub(crate) fn audit_before(
         };
         let mut out = Vec::new();
         format::write_diagnostics(&mut out, &report, &style);
-        if matches!(audited, Audited::Whole) && !report.is_ok() {
-            out.extend_from_slice(b"[aot] note: a build with --aot stops at these errors: nothing is checked until they are mended\n");
+        if matches!(audited, Audited::Whole) && !report.is_ok() && found.lock().modules.iter().all(|(module, _)| module.groups.is_empty() && module.parameters.is_empty()) {
+            out.extend_from_slice(b"[aot] note: fix these type errors first: bun build --compile --aot stops at them, and nothing is audited until they are fixed\n");
         }
         let _ = Output::error_writer().write_all(&out);
         Output::flush();

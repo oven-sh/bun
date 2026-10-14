@@ -127,13 +127,43 @@ impl<'p, 's> Checker<'p, 's> {
         if self.says_nothing_of_objects(target) || self.says_nothing_of_objects(source) || depth > MOST_NESTED_FLOWS {
             return;
         }
-        self.note_carried_flows(source, target, depth);
+        let carried = self.flows_carried_by(source, target);
+        for &(held, held_as) in carried.iter() {
+            self.note_flow_within(held, held_as, depth + 1);
+        }
+    }
+
+    fn flows_carried_by(&mut self, source: TypeId, target: TypeId) -> Rc<[(TypeId, TypeId)]> {
+        let may_be_kept = !self.answers_are_provisional();
+        if may_be_kept && let Some(known) = self.aot.flows.carried.get(&(source, target)) {
+            return Rc::clone(known);
+        }
+        let careful_before = (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
+        let mut carried = Vec::new();
+        self.add_carried_flows(source, target, &mut carried);
+        let carried: Rc<[(TypeId, TypeId)]> = carried.into();
+        if may_be_kept && careful_before == (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known) {
+            self.aot.flows.carried.insert((source, target), Rc::clone(&carried));
+        }
+        carried
     }
 
     /// `any`, `unknown`, `object`, `{}`, `Object`, `Function`, `void`: whoever has a value of it as that may do anything to it.
     pub(super) fn says_nothing_of_objects(&mut self, ty: TypeId) -> bool {
+        if self.says_nothing(ty) {
+            return true;
+        }
+        let may_be_kept = !self.answers_are_provisional();
+        if may_be_kept && let Some(&known) = self.aot.flows.saying_nothing_of_objects.get(&ty) {
+            return known;
+        }
+        let careful_before = (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known);
         let parts: Vec<TypeId> = self.parts(ty).to_vec();
-        self.says_nothing(ty) || parts.into_iter().any(|part| self.says_nothing(part) && !part.is_never() || part == TypeId::OBJECT || !self.is_instantiable(part) && self.admits_primitives(part) || self.is_nested_too_deeply(part) || self.is_the_function_type(part))
+        let found = parts.into_iter().any(|part| self.says_nothing(part) && !part.is_never() || part == TypeId::OBJECT || !self.is_instantiable(part) && self.admits_primitives(part) || self.is_nested_too_deeply(part) || self.is_the_function_type(part));
+        if may_be_kept && careful_before == (self.times_half_of_stack_was_in_use(), self.aot.flows.times_not_known) {
+            self.aot.flows.saying_nothing_of_objects.insert(ty, found);
+        }
+        found
     }
 
     fn is_the_function_type(&mut self, ty: TypeId) -> bool {
@@ -148,7 +178,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The flows that a flow between two types that both say something carries within it.
-    fn note_carried_flows(&mut self, source: TypeId, target: TypeId, depth: u32) {
+    fn add_carried_flows(&mut self, source: TypeId, target: TypeId, carried: &mut Vec<(TypeId, TypeId)>) {
         let to_parts: Vec<TypeId> = self.parts(target).iter().copied().filter(|&part| !self.has_primitive_flag(part)).collect();
         // A part that both have stays in a place of its own type: what is left of a union that has been narrowed.
         let in_target: FxHashSet<TypeId> = to_parts.iter().copied().collect();
@@ -156,7 +186,7 @@ impl<'p, 's> Checker<'p, 's> {
         if from_parts.len() * to_parts.len() <= MOST_PAIRS_OF_PARTS {
             for &from in &from_parts {
                 for &to in &to_parts {
-                    self.note_carried_between(from, to, depth);
+                    self.add_carried_between(from, to, carried);
                 }
             }
             return;
@@ -173,28 +203,28 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => Vec::new(),
             };
             for to in matching {
-                self.note_carried_between(from, to, depth);
+                self.add_carried_between(from, to, carried);
             }
         }
     }
 
     /// `from`, `to`: neither is a union.
-    fn note_carried_between(&mut self, from: TypeId, to: TypeId, depth: u32) {
+    fn add_carried_between(&mut self, from: TypeId, to: TypeId, carried: &mut Vec<(TypeId, TypeId)>) {
         if let (TypeData::Ref { target: declared, .. }, TypeData::Ref { target: as_declared, .. }) = (self.data(from), self.data(to))
             && declared == as_declared
         {
             let pairs: Vec<(TypeId, TypeId)> = self.type_arguments(from).iter().copied().zip(self.type_arguments(to).iter().copied()).collect();
             for (held, held_as) in pairs {
-                self.note_held_together(held, held_as, depth);
+                carried.extend([(held, held_as), (held_as, held)]);
             }
             return;
         }
         for key in [TypeId::NUMBER, TypeId::STRING] {
             if let (Some(held), Some(held_as)) = (self.index_type_of_type(from, key), self.index_type_of_type(to, key)) {
-                self.note_held_together(held, held_as, depth);
+                carried.extend([(held, held_as), (held_as, held)]);
             }
         }
-        self.note_flows_of_function_members(from, to, depth);
+        self.add_flows_of_function_members(from, to, carried);
         for constructs in [false, true] {
             let called_as_all: Vec<SigId> = self.signatures(to, constructs).iter().copied().collect();
             let declared_as_all: Vec<SigId> = self.signatures(from, constructs).iter().copied().collect();
@@ -204,11 +234,11 @@ impl<'p, 's> Checker<'p, 's> {
                     let parameters = self.sig_params(declared_as);
                     for index in 0..parameters.len() {
                         if let (Some(argument), Some(parameter)) = (self.param_type_at(&arguments, index), self.param_type_at(&parameters, index)) {
-                            self.note_flow_within(argument, parameter, depth + 1);
+                            carried.push((argument, parameter));
                         }
                     }
                     let (yielded, yielded_as) = (self.sig_return(declared_as), self.sig_return(called_as));
-                    self.note_flow_within(yielded, yielded_as, depth + 1);
+                    carried.push((yielded, yielded_as));
                 }
             }
         }
@@ -216,7 +246,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// An object of type `from` is looked at as `to` says. A function in a member of it is read as the one type and stored as the other. What
     /// else the members hold is seen to by the subtype sets.
-    fn note_flows_of_function_members(&mut self, from: TypeId, to: TypeId, depth: u32) {
+    fn add_flows_of_function_members(&mut self, from: TypeId, to: TypeId, carried: &mut Vec<(TypeId, TypeId)>) {
         if !self.says_properties(from) || !self.says_properties(to) {
             return;
         }
@@ -236,14 +266,9 @@ impl<'p, 's> Checker<'p, 's> {
             let (held, held_as) = (self.type_of_prop(prop, of_from.mapper), self.type_of_prop(as_prop, of_to.mapper));
             let may_be_function = |this: &mut Self, ty: TypeId| this.parts(ty).to_vec().into_iter().any(|part| !this.signatures(part, false).is_empty() || !this.signatures(part, true).is_empty());
             if held != held_as && may_be_function(self, held) && may_be_function(self, held_as) {
-                self.note_held_together(held, held_as, depth);
+                carried.extend([(held, held_as), (held_as, held)]);
             }
         }
-    }
-
-    fn note_held_together(&mut self, one: TypeId, other: TypeId, depth: u32) {
-        self.note_flow_within(one, other, depth + 1);
-        self.note_flow_within(other, one, depth + 1);
     }
 
     /// Whether a declaration file that is not of the language declares the type: a package, the host.

@@ -1,0 +1,6 @@
+the getter ran
+called with 1 the other, with 1
+the getter ran
+TypeError
+TypeError
+TypeError

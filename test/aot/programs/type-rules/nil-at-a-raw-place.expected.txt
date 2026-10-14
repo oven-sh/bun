@@ -1,0 +1,4 @@
+undefined! into a number: no error undefined
+an element out of bounds into a number: no error undefined
+(x?.y)! asserts: TypeError
+the value of a written `as`, converted: no error NaN

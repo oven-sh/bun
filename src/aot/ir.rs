@@ -529,7 +529,6 @@ pub enum Prediction {
     /// Of the type that the view it is read through gives the property. Only until the link: where the view takes no foreign object that is a
     /// fact, and becomes the type of the value. Where it does, it becomes a `Ty`.
     Field(TyId),
-    Stores,
 }
 
 #[derive(Clone, Debug)]

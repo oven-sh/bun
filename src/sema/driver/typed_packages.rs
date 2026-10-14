@@ -105,7 +105,7 @@ fn is_as_typed_on(directory: &[u8], path: &[u8], wanted: &[u8]) -> Result<(), St
     };
     match hex(&sha256(&installed)) == wanted {
         true => Ok(()),
-        false => Err(format!("the installed {} is not the file that it was typed on", BStr::new(path))),
+        false => Err(format!("the installed {} differs from the published file that this typed version was made from (was the package patched?)", BStr::new(path))),
     }
 }
 
@@ -120,12 +120,13 @@ fn files_of(root: &[u8], defines: &Defines, home: &[u8], directory: &[u8], name:
         return Err(format!("it is for \"{}\", and \"{}\" is installed", BStr::new(&text_of(&manifest, b"name")), BStr::new(&text_of(&installed, b"name"))));
     }
     if text_of(&manifest, b"version") != text_of(&installed, b"version") {
-        return Err(format!("it is for version {}, and {} is installed", BStr::new(&text_of(&manifest, b"version")), BStr::new(&text_of(&installed, b"version"))));
+        let found = text_of(&installed, b"version");
+        return Err(format!("it is for version {}, and {} is installed (install the typed version for {}, or remove this one)", BStr::new(&text_of(&manifest, b"version")), BStr::new(&found), BStr::new(&found)));
     }
     for (key, wanted) in entries(&manifest, "when")? {
         let defined = defines.iter().find(|define| &*define.0 == key).and_then(|define| parse(&define.1));
         if defined != Some(Json::String(wanted.to_vec())) {
-            return Err(format!("it is for a build that defines {} as \"{}\"", BStr::new(key), BStr::new(wanted)));
+            return Err(format!("it is for a build that defines {} as \"{}\" (pass --define '{}=\"{}\"')", BStr::new(key), BStr::new(wanted), BStr::new(key), BStr::new(wanted)));
         }
     }
     for (path, wanted) in entries(&manifest, "basis")? {

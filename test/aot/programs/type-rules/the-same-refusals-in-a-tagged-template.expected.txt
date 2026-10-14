@@ -1,0 +1,4 @@
+an object as an array: TypeError []
+own property named like a method: TypeError square3
+own property named like a method: TypeError circle3
+own property named like a method: TypeError square3

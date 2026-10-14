@@ -1335,6 +1335,34 @@ fn says_that_the_host_declares_no_such_name(code: u32) -> bool {
     matches!(code, 2304 | 2307 | 2503 | 2550 | 2552 | 2580..=2585 | 2591..=2593 | 2688 | 2732 | 2812 | 2833..=2835 | 2867 | 2868 | 2882 | 6142 | 7042 | 18004)
 }
 
+fn is_about_what_the_run_time_brings(reported: &Diagnostic) -> bool {
+    const OF_NODE: [&[u8]; 40] = [
+        b"assert", b"async_hooks", b"buffer", b"child_process", b"cluster", b"console", b"constants", b"crypto", b"dgram", b"diagnostics_channel",
+        b"dns", b"domain", b"events", b"fs", b"http", b"http2", b"https", b"inspector", b"module", b"net",
+        b"os", b"path", b"perf_hooks", b"process", b"punycode", b"querystring", b"readline", b"repl", b"stream", b"string_decoder",
+        b"timers", b"tls", b"tty", b"url", b"util", b"v8", b"vm", b"wasi", b"worker_threads", b"zlib",
+    ];
+    const GLOBALS: [&[u8]; 72] = [
+        b"AbortController", b"AbortSignal", b"Blob", b"BroadcastChannel", b"Buffer", b"Bun", b"ByteLengthQueuingStrategy", b"CloseEvent", b"CompressionStream", b"CountQueuingStrategy",
+        b"Crypto", b"CryptoKey", b"CustomEvent", b"DOMException", b"DecompressionStream", b"ErrorEvent", b"Event", b"EventSource", b"EventTarget", b"File",
+        b"FormData", b"HTMLRewriter", b"Headers", b"MessageChannel", b"MessageEvent", b"MessagePort", b"Performance", b"ReadableStream", b"Request", b"Response",
+        b"SubtleCrypto", b"TextDecoder", b"TextDecoderStream", b"TextEncoder", b"TextEncoderStream", b"TransformStream", b"URL", b"URLSearchParams", b"WebAssembly", b"WebSocket",
+        b"Worker", b"WritableStream", b"__dirname", b"__filename", b"addEventListener", b"alert", b"atob", b"btoa", b"clearImmediate", b"clearInterval",
+        b"clearTimeout", b"confirm", b"console", b"crypto", b"exports", b"fetch", b"global", b"module", b"navigator", b"performance",
+        b"postMessage", b"process", b"prompt", b"queueMicrotask", b"removeEventListener", b"reportError", b"require", b"self", b"setImmediate", b"setInterval",
+        b"setTimeout", b"structuredClone",
+    ];
+    match reported.code {
+        2580 | 2582 | 2584 | 2591 | 2593 | 2867 | 2868 => true,
+        2304 | 2552 => reported.text.strip_prefix(b"Cannot find name '").and_then(|rest| rest.split(|&byte| byte == b'\'').next()).is_some_and(|name| GLOBALS.contains(&name)),
+        2307 => match reported.text.strip_prefix(b"Cannot find module '").and_then(|rest| rest.split(|&byte| byte == b'\'').next()) {
+            Some(name) => name == b"bun" || name.starts_with(b"bun:") || name.starts_with(b"node:") || OF_NODE.contains(&name.split(|&byte| byte == b'/').next().unwrap_or(name)),
+            None => false,
+        },
+        _ => false,
+    }
+}
+
 fn global(code: u32, args: &[impl AsRef<[u8]>]) -> Diagnostic {
     new_compiler_diagnostic(code, args.iter().map(|arg| arg.as_ref().into()).collect())
 }
@@ -3817,7 +3845,7 @@ fn check_named_files(
     // when there is no configuration file. It is omitted from `default_compiler_options` because
     // requesting types that are not installed is an error (TS2688).
     if report.has_bun_types_installed
-        && project.config_path.is_empty()
+        && (project.config_path.is_empty() || request.is_one_program)
         && project.options.types.is_none()
     {
         project.options.types = Some(vec![b"bun".to_vec()]);
@@ -5099,6 +5127,16 @@ fn check_named_files(
     let cannot_read = (unreadable.iter()).map(|path| global(5083, &[displayed_path(path)]));
     report.diagnostics.extend(cannot_read);
     report.diagnostics.extend(compiled_untyped);
+    if request.is_one_program && !report.has_bun_types_installed {
+        let mut is_first = true;
+        report.diagnostics.retain_mut(|reported| {
+            if reported.category != Category::Error || !is_about_what_the_run_time_brings(reported) {
+                return true;
+            }
+            reported.category = Category::Warning;
+            std::mem::take(&mut is_first)
+        });
+    }
     report.unreadable.extend(unreadable);
     sort_and_deduplicate(&mut report.diagnostics);
     report.check_time = checking.elapsed();

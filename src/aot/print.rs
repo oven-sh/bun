@@ -66,7 +66,6 @@ impl Program {
         };
         let prediction = |o: &mut String, prediction: Prediction| match prediction {
             Prediction::None => {}
-            Prediction::Stores => o.push_str(" ~stores"),
             Prediction::Ty(ty) | Prediction::Field(ty) => {
                 let _ = write!(o, " ~#{}", ty.0);
             }

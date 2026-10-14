@@ -1,0 +1,142 @@
+const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
+//@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateAOTInferredTypes=1")
+function check(actual, expected, what) {
+    if (!Object.is(actual, expected))
+        throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
+}
+const isCompiled = !!(aotRemarks("check") || []).length;
+function remarksOf(name) {
+    let remarks = aotRemarks(name);
+    if (isCompiled && !(remarks && remarks.length))
+        throw new Error("no remarks for " + name);
+    return isCompiled ? remarks : null;
+}
+function matches(remark, pattern) { return remark === pattern || remark.startsWith(pattern + ":"); }
+function applies(name, ...patterns) {
+    let remarks = remarksOf(name);
+    for (let pattern of remarks ? patterns : []) {
+        if (!remarks.some(remark => matches(remark, pattern)))
+            throw new Error(pattern + " does not apply to " + name + ": " + remarks.join(" "));
+    }
+}
+function doesNotApply(name, ...patterns) {
+    let remarks = remarksOf(name);
+    for (let pattern of remarks ? patterns : []) {
+        if (remarks.some(remark => matches(remark, pattern)))
+            throw new Error(pattern + " applies to " + name + ": " + remarks.join(" "));
+    }
+}
+
+const bodiesAreTyped = isCompiled && remarksOf("mapped").includes("is-typed-body");
+function appliesIfBodiesAreTyped(name, ...patterns) {
+    if (bodiesAreTyped)
+        applies(name, ...patterns);
+}
+
+(function () {
+    function callsMappedWithIntegers(callee) {
+        let sum = 0;
+        try {
+            for (let i = 0; i < 100; i++)
+                sum += callee(i);
+        } catch { }
+        return sum;
+    }
+    function maps(array) {
+        const mapped = function (x) { try { return x + 1; } catch { return 0; } };
+        return callsMappedWithIntegers(mapped) + " " + array.map(mapped).join();
+    }
+    check(maps([1, 2, 3]), "5050 2,3,4", "integers are mapped");
+    check(maps([1.5, 2.5]), "5050 2.5,3.5", "doubles are mapped");
+    check(maps(["a", "b"]), "5050 a1,b1", "strings are mapped");
+    check(maps([{ }, undefined, null, true]), "5050 [object Object]1,NaN,1,2", "other values are mapped");
+    appliesIfBodiesAreTyped("mapped", "is-typed-body", "is-general-body");
+    appliesIfBodiesAreTyped("callsMappedWithIntegers", "calls-typed-body:mapped");
+    appliesIfBodiesAreTyped("maps", "cached-call");
+    doesNotApply("maps", "calls-typed-body");
+
+    function callsVisitorWithIntegers(callee) {
+        let sum = 0;
+        try {
+            for (let i = 0; i < 100; i++)
+                sum += callee(i);
+        } catch { }
+        return sum;
+    }
+    function visits(array) {
+        const visitor = function (x) { try { return x + 1; } catch { return 0; } };
+        array.forEach(visitor);
+        return [callsVisitorWithIntegers(visitor), array.filter(visitor).join(), array.some(visitor), array.every(visitor), array.find(visitor), array.findIndex(visitor), array.findLast(visitor), array.findLastIndex(visitor), array.reduce(visitor), array.reduceRight(visitor), array.flatMap(visitor).join()].join(" ");
+    }
+    check(visits([1, 2, 3]), "5050 1,2,3 true true 1 0 3 2 3 5 2,3,4", "integers are visited");
+    check(visits(["a", "b"]), "5050 a,b true true a 0 b 1 a1 b1 a1,b1", "strings are visited");
+    check(visits([{ }, undefined, null, true]), "5050 [object Object],,true true false [object Object] 0 true 3 [object Object]111 4 [object Object]1,NaN,1,2", "other values are visited");
+    appliesIfBodiesAreTyped("visitor", "is-typed-body", "is-general-body");
+    appliesIfBodiesAreTyped("callsVisitorWithIntegers", "calls-typed-body:visitor");
+    appliesIfBodiesAreTyped("visits", "cached-call");
+    doesNotApply("visits", "calls-typed-body");
+
+    function callsStoredWithIntegers(callee) {
+        let sum = 0;
+        try {
+            for (let i = 0; i < 100; i++)
+                sum += callee(i);
+        } catch { }
+        return sum;
+    }
+    function readsFromLiteral(value) {
+        const stored = function (x) { try { return x + 1; } catch { return 0; } };
+        return callsStoredWithIntegers(stored) + " " + ({ method: stored }).method(value);
+    }
+    check(readsFromLiteral(1), "5050 2", "an integer is passed to what a literal holds");
+    check(readsFromLiteral(1.5), "5050 2.5", "a double is passed to what a literal holds");
+    check(readsFromLiteral("a"), "5050 a1", "a string is passed to what a literal holds");
+    check(readsFromLiteral({ }), "5050 [object Object]1", "an object is passed to what a literal holds");
+    check(readsFromLiteral(undefined), "5050 NaN", "undefined is passed to what a literal holds");
+    check(readsFromLiteral(), "5050 NaN", "nothing is passed to what a literal holds");
+    appliesIfBodiesAreTyped("stored", "is-typed-body", "is-general-body");
+    appliesIfBodiesAreTyped("callsStoredWithIntegers", "calls-typed-body:stored");
+    appliesIfBodiesAreTyped("readsFromLiteral", "cached-call");
+    doesNotApply("readsFromLiteral", "calls-typed-body");
+
+    function callsKeptWithIntegers(callee) {
+        let sum = 0;
+        try {
+            for (let i = 0; i < 100; i++)
+                sum += callee(i);
+        } catch { }
+        return sum;
+    }
+    function callsMethodOf(object, value) { return object.method(value); }
+    function keepsInObjects(value) {
+        const kept = function (x) { try { return x + 1; } catch { return 0; } };
+        return callsKeptWithIntegers(kept) + " " + callsMethodOf({ method: kept }, value) + " " + [kept][0](value);
+    }
+    check(keepsInObjects(1), "5050 2 2", "an integer is passed to what objects hold");
+    check(keepsInObjects("a"), "5050 a1 a1", "a string is passed to what objects hold");
+    check(keepsInObjects({ }), "5050 [object Object]1 [object Object]1", "an object is passed to what objects hold");
+    check(keepsInObjects(undefined), "5050 NaN NaN", "undefined is passed to what objects hold");
+    appliesIfBodiesAreTyped("callsKeptWithIntegers", "calls-typed-body:kept");
+    doesNotApply("keepsInObjects", "calls-typed-body");
+    doesNotApply("callsMethodOf", "calls-typed-body");
+
+    function callsCountedWithIntegers(callee) {
+        let sum = 0;
+        try {
+            for (let i = 0; i < 100; i++)
+                sum += callee(i, i);
+        } catch { }
+        return sum;
+    }
+    function passesTooFew(array) {
+        const counted = function (x, y) { try { return x + y; } catch { return 0; } };
+        return callsCountedWithIntegers(counted) + " " + ({ method: counted }).method(1) + " " + array.map(counted).join();
+    }
+    check(passesTooFew([5, 6]), "9900 NaN 5,7", "a missing argument is undefined");
+    check(passesTooFew(["a"]), "9900 NaN a0", "a missing argument is undefined beside a string");
+    appliesIfBodiesAreTyped("callsCountedWithIntegers", "calls-typed-body:counted");
+    doesNotApply("passesTooFew", "calls-typed-body");
+})();
+console.log("passed");

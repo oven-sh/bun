@@ -1,0 +1,9 @@
+0
+a number under `members` of a Generic: TypeError
+a string under `count` of a Generic: TypeError
+a number under `members` of a Base: TypeError
+defineProperty: TypeError
+an array under `members`: no error {"id":1,"tags":[],"params":[],"members":["m"]}
+undefined under `count`: no error ["id","tags","params","count"]
+another name: no error {"id":1,"tags":[],"params":[],"extra":5}
+a stranger: no error {"id":3,"tags":[],"far":[],"members":5}

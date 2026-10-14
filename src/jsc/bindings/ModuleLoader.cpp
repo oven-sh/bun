@@ -668,6 +668,7 @@ static NEVER_INLINE JSValue askCompiledProgramForFile(Zig::GlobalObject* globalO
     RETURN_IF_EXCEPTION(scope, {});
     if (!number || !number.isInt32())
         return jsBoolean(false);
+    JSC::AOT::Typed::willAskProgramForFile(globalObject, path);
     JSValue evaluate = files->get(globalObject, vm.propertyNames->emptyIdentifier);
     RETURN_IF_EXCEPTION(scope, {});
     MarkedArgumentBuffer arguments;

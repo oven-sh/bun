@@ -828,7 +828,7 @@ impl Checker<'_, '_> {
             && file != NOWHERE.0
             && self.task.file != Some(file)
             && self.reports_semantic_errors(file)
-            && !self.is_asked_by_check_in_time(owner, &self.stack, file)
+            && (self.is_translating() || !self.is_asked_by_check_in_time(owner, &self.stack, file))
     }
 
     /// At the end of the task, on its own thread, for `Task::finish`. A query with a task-local key

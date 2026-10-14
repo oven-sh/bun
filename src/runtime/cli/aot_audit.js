@@ -5,7 +5,8 @@
   const { isArray } = Array;
   const { is, getPrototypeOf, getOwnPropertyDescriptor } = Object;
   const { isInteger } = Number;
-  const { parse } = JSON;
+  const { parse, stringify } = JSON;
+  const isJSON = describe("format") === "json";
   const { apply } = Reflect;
   const ObjectPrototype = Object.prototype;
   const objectToString = ObjectPrototype.toString;
@@ -30,8 +31,24 @@
   let depth = 0, generation;
   const counts = new Map();
   const converted = new Map();
+  const resultsOfCasts = new Map();
+  let numberOfResultsOfCasts = 0;
   const groups = [];
   let lastValue, lastType = "", lastPlace = "", hasLast = false, hasSaidThatSomeWait = false;
+
+  function cast(type, value) {
+    const kind = typeof value;
+    const hasNumber = (type.p & NUMBER) !== 0 || type.i !== undefined, hasString = (type.p & STRING) !== 0, hasBoolean = (type.p & (TRUE | FALSE)) !== 0;
+    if (kind === "object" || kind === "function" || !(hasString ? kind !== "symbol" : hasNumber ? kind !== "symbol" && kind !== "bigint" : hasBoolean)) return;
+    const result = hasString ? toString(value) : hasNumber ? toNumber(value) : toBoolean(value);
+    if (fits(type, result)) return result;
+  }
+
+  function whatACastMadeOf(type, value) {
+    if (numberOfResultsOfCasts > 4096) return value === undefined ? undefined : cast(type, value);
+    const results = apply(mapGet, resultsOfCasts, [value]);
+    if (results !== undefined) for (let i = 0; i < results.length; i++) if (fits(type, results[i])) return results[i];
+  }
 
   function fits(type, value) {
     switch (typeof value) {
@@ -85,7 +102,7 @@
     if (isProxy(value)) return "native ProxyObject";
     if (isArray(value)) return "Array";
     const prototype = getPrototypeOf(value);
-    if (prototype === null || prototype === ObjectPrototype) return "plain object";
+    if (prototype === null || prototype === ObjectPrototype) return "untyped object";
     if (hasProxyAbove(prototype)) return "object";
     const tag = apply(stringSlice, apply(objectToString, value, []), [8, -1]);
     if (tag !== "Object" && typeof getOwnPropertyDescriptor(global, tag)?.value === "function") return "native " + tag;
@@ -122,7 +139,22 @@
     while (power % 10 === 0) power /= 10;
     if (power !== 1) return;
     const from = callers();
-    write("[aot] type-error " + id + " " + kind + " " + file + ":" + step.line + ":" + step.col + " (" + step.fn + "): " + (step.on !== undefined ? "on " + step.on + "; " : "") + "expected " + type.t + ", got " + got + "; " + action + "; count " + count + (from ? "; from " + from : ""));
+    if (isJSON) return writeJSON(id, kind, file, step, step.on, type, got, action, count, from);
+    write("[aot] type-error " + id + " " + kind + " " + file + ":" + step.line + ":" + step.col + " (" + step.fn + "): " + (step.on !== undefined ? "on " + step.on + "; " : "") + "expected " + type.t + ", got " + got + "; " + action + "; count " + count + (step.callId !== undefined ? "; call " + step.callId : "") + (from ? "; from " + from : ""));
+  }
+
+  function writeJSON(id, kind, file, step, on, type, got, action, count, from) {
+    let line = '{"aot":"type-error","id":"' + id + '","kind":"' + kind + '","what":' + stringify(step.what) + ',"file":' + stringify(file) + ',"line":' + step.line + ',"col":' + step.col + ',"fn":' + stringify(step.fn);
+    if (on !== undefined) line += ',"on":' + stringify(on);
+    if (type !== undefined) line += ',"expected":' + stringify(type.t) + ',"got":' + stringify(got);
+    line += ',"action":"' + action + '","count":' + count;
+    if (step.callId !== undefined) line += ',"callId":"' + step.callId + '"';
+    if (from) {
+      const places = apply(stringSplit, from, [" < "]);
+      for (let i = 0; i < places.length; i++) line += (i === 0 ? ',"from":[' : ",") + stringify(places[i]);
+      line += "]";
+    }
+    write(line + "}");
   }
 
   function shapeBy(key) {
@@ -170,6 +202,7 @@
     while (power % 10 === 0) power /= 10;
     if (power !== 1) return;
     const from = callers();
+    if (isJSON) return writeJSON(id, kind, file, step, on, type, got, "would-throw", count, from);
     write("[aot] type-error " + id + " " + kind + " " + file + ":" + step.line + ":" + step.col + " (" + step.fn + "): on " + on + (type === undefined ? "" : "; expected " + type.t + ", got " + got) + "; would-throw; count " + count + (from ? "; from " + from : ""));
   }
 
@@ -230,7 +263,7 @@
     if (step.unsure !== 2 && (step.unsure !== 1 || (value !== null && value !== undefined))) return false;
     if (!hasSaidThatSomeWait) {
       hasSaidThatSomeWait = true;
-      write("[aot] note: some checks wait until the whole program has been looked at again");
+      write("[aot] note: a file changed: some of its checks are paused until the whole program has been analyzed again in the background");
     }
     return true;
   }
@@ -274,6 +307,7 @@
       const step = steps[0], type = step.to;
       if (fits(type, value)) return passed(group, value, id);
       if ((typeof value === "object" || typeof value === "function") && (type.o || type.fn || type.parts.length)) return;
+      if (whatACastMadeOf(type, value) !== undefined) return;
       if (waits(step, value)) return;
       if (hasLast && is(lastValue, value) && lastType === type.t) {
         hasLast = false;
@@ -305,6 +339,12 @@
         for (let j = 0; j < step.after.length; j++) if (apply(mapGet, converted, [file + ":" + step.after[j]])) return;
       }
       if (step.what !== "Coerce") {
+        const made = whatACastMadeOf(type, held);
+        if (made !== undefined) {
+          held = made;
+          hasFailed = true;
+          continue;
+        }
         report(file, step, step.kind, type, held, "would-throw");
         lastValue = held;
         lastType = type.t;
@@ -313,13 +353,18 @@
         return;
       }
       if (step.result !== undefined && fits(step.result, held)) continue;
-      const kind = typeof held;
-      const hasNumber = (type.p & NUMBER) !== 0 || type.i !== undefined, hasString = (type.p & STRING) !== 0, hasBoolean = (type.p & (TRUE | FALSE)) !== 0;
-      const isConvertible = kind !== "object" && kind !== "function" && (hasString ? kind !== "symbol" : hasNumber ? kind !== "symbol" && kind !== "bigint" : hasBoolean);
-      const result = !isConvertible ? held : hasString ? toString(held) : hasNumber ? toNumber(held) : toBoolean(held);
-      if (!isConvertible || !fits(type, result)) return report(file, step, "as-refuse", type, held, "would-throw");
+      const result = cast(type, held);
+      if (result === undefined) return report(file, step, "as-refuse", type, held, "would-throw");
       report(file, step, step.kind, type, held, "would-convert");
       apply(mapSet, converted, [file + ":" + step.line + ":" + step.col, true]);
+      const results = numberOfResultsOfCasts > 4096 ? null : apply(mapGet, resultsOfCasts, [held]);
+      if (results === undefined) {
+        apply(mapSet, resultsOfCasts, [held, [result]]);
+        if (++numberOfResultsOfCasts > 4096) {
+          apply(mapClear, resultsOfCasts, []);
+          write("[aot] note: `as` has converted more than 4096 different values: from here on, a string, number or boolean that fails a check is not reported if a conversion would make it pass");
+        }
+      } else if (results !== null && whatACastMadeOf(type, held) === undefined) results[results.length] = result;
       held = result;
       hasFailed = true;
     }

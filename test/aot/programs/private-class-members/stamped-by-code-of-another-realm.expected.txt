@@ -1,0 +1,42 @@
+function: field: ["again",true,7]
+function: method: ["method",true,7]
+function: accessor: ["got 1",7]
+function: public: [1,2,["0","plain"],7]
+function: all of them: ["method","stamp",1,"got 1",5,1,7]
+function: twice: throws TypeError: Cannot install same private methods on object more than once (evaluating 'super(...args)')
+function: 300 through one site: 300
+arrow: field: ["again",true,7]
+arrow: method: ["method",true,7]
+arrow: accessor: ["got 1",7]
+arrow: public: [1,2,["0","plain"],7]
+arrow: all of them: ["method","stamp",1,"got 1",5,1,7]
+arrow: twice: throws TypeError: Cannot install same private methods on object more than once (evaluating 'super(...args)')
+arrow: 300 through one site: 300
+one capture: field: ["again",true,7]
+one capture: method: ["method",true,7]
+one capture: accessor: ["got 1",7]
+one capture: public: [1,2,["0","plain"],7]
+one capture: all of them: ["method","stamp",1,"got 1",5,1,7]
+one capture: twice: throws TypeError: Cannot install same private methods on object more than once (evaluating 'super(...args)')
+one capture: 300 through one site: 300
+two captures: field: ["again",true,7]
+two captures: method: ["method",true,7]
+two captures: accessor: ["got 1",7]
+two captures: public: [1,2,["0","plain"],7]
+two captures: all of them: ["method","stamp",1,"got 1",5,1,7]
+two captures: twice: throws TypeError: Cannot install same private methods on object more than once (evaluating 'super(...args)')
+two captures: 300 through one site: 300
+async: field: ["again",true,"promise"]
+async: method: ["method",true,"promise"]
+async: accessor: ["got 1","promise"]
+async: public: [1,2,["0","plain"],"promise"]
+async: all of them: ["method","stamp",1,"got 1",5,1,"promise"]
+async: twice: throws TypeError: Cannot install same private methods on object more than once (evaluating 'super(...args)')
+async: 300 through one site: 300
+bound: field: ["again",true,7]
+bound: method: ["method",true,7]
+bound: accessor: ["got 1",7]
+bound: public: [1,2,["0","plain"],7]
+bound: all of them: ["method","stamp",1,"got 1",5,1,7]
+bound: twice: throws TypeError: Cannot install same private methods on object more than once (evaluating 'super(...args)')
+bound: 300 through one site: 300

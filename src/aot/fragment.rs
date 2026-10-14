@@ -522,7 +522,7 @@ fn for_each_id_of_value(value: &mut Value, ids: &mut impl Ids) {
     let Value { def, pos: _, ty, prediction, finds_initialized: _ } = value;
     pass!(ids.ty(ty));
     match prediction {
-        Prediction::None | Prediction::Stores => {}
+        Prediction::None => {}
         Prediction::Ty(expected) | Prediction::Field(expected) => pass!(ids.ty(expected)),
         Prediction::Closure(func) => pass!(ids.func(func, Used::Expected)),
         Prediction::ByKey(property) => pass!(ids.str(property)),

@@ -160,6 +160,21 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn is_warming_up(&self) -> bool {
         IS_WARMING_UP.get()
     }
+
+    pub fn while_translating<R>(&mut self, work: impl FnOnce(&mut Checker<'p, 's>) -> R) -> R {
+        let before = std::mem::replace(&mut self.aot.is_translating, true);
+        let result = work(self);
+        self.aot.is_translating = before;
+        result
+    }
+
+    pub(in crate::check) fn is_translating(&self) -> bool {
+        self.aot.is_translating
+    }
+
+    pub(in crate::check) fn asks_out_of_order(&self) -> bool {
+        self.aot.is_translating || self.is_searching_from_doors()
+    }
 }
 
 /// A table by file. Each entry is made once, by whoever asks for it first, and is only read from then on. What is in it follows from
@@ -215,6 +230,7 @@ pub(super) struct State {
     mapped_arguments: mapped_arguments::State,
     javascript: javascript::State,
     storage: storage::State,
+    is_translating: bool,
 }
 
 impl<'p, 's> Checker<'p, 's> {

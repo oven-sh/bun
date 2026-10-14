@@ -166,13 +166,11 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
         "--aot                             Compile the program to machine code ahead of time, then run it"
     ),
     parse_param!(
-        "--aot-type-errors <STR>           With --aot: what a value that contradicts its type does: \"throw\" (default), or \"log\": write a record of it to stderr, and go on as JavaScript where it can"
+        "--aot-type-errors <STR>           With --aot: what to do when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue"
     ),
+    parse_param!("--aot-graph-fd <STR>"),
     parse_param!(
-        "--aot-graph-fd <STR>              (internal) What --aot becomes once the program is compiled"
-    ),
-    parse_param!(
-        "--aot-audit                       Run as usual and log every place where a build with --aot would throw, convert a value or refuse a change. No tail calls are made meanwhile: stacks are deeper"
+        "--aot-audit                       Run normally and log the places where the program would behave differently under --aot"
     ),
     parse_param!(
         "--interactive                     Start a Node.js-compatible REPL, like node --interactive"
@@ -458,13 +456,13 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--aot                            Compile JavaScript to machine code ahead of time in standalone executable. Requires --compile. Implies --bytecode"
         ),
         parse_param!(
-            "--aot-explain <STR>...           With --aot: print what the compiler has decided, e.g. --aot-explain=throws lists every check that can fail when the program runs"
+            "--aot-explain <STR>...           With --aot: print a report. --aot-explain=throws lists every type check that can fail when the program runs"
         ),
         parse_param!(
             "--compile-aot                    (deprecated) The former name of --aot"
         ),
         parse_param!(
-            "--aot-type-errors <STR>          With --compile --aot: what the executable does with a value that contradicts its type: \"throw\" (default), or \"log\": write a record of it to stderr, and go on as JavaScript where it can"
+            "--aot-type-errors <STR>          With --aot: what the executable does when a value does not match its TypeScript type: \"throw\" (default), or \"log\" to write a line to stderr and continue"
         ),
         parse_param!(
             "--compile-run                    (internal) Run what was built in place of this process instead of writing an executable"
@@ -2165,7 +2163,7 @@ fn parse_build_command_options(
     ctx.bundler_options.aot = args.flag(b"--aot") || args.flag(b"--compile-aot");
     ctx.bundler_options.aot_explain = slice_to_owned(args.options(b"--aot-explain"));
     if let Some(word) = ctx.bundler_options.aot_explain.iter().find(|word| !bun_aot::Explain::default().set(word)) {
-        Output::err_generic("--aot-explain does not take \"{}\": it is one of {}", (BStr::new(word), bun_aot::Explain::WORDS.join(", ")));
+        Output::err_generic("--aot-explain does not take \"{}\": it is one of {}", (BStr::new(word), bun_aot::Explain::REPORTS.join(", ")));
         Global::exit(1);
     }
     ctx.bundler_options.compile_run = args.flag(b"--compile-run");
@@ -2589,8 +2587,11 @@ fn parse_build_command_options(
             ("--footer with code", args.option(b"--footer").is_some_and(|text| !crate::cli::aot::is_only_comments(text))),
         ];
         if let Some((option, _)) = not_honoured.iter().find(|option| option.1) {
-            Output::err_generic("--aot: not compiled yet: {}", format_args!("{}", option));
+            Output::err_generic("--aot does not support {}", format_args!("{}", option));
             Global::crash();
+        }
+        if args.option(b"--sourcemap").is_some_and(|setting| setting != b"none") && !args.flag(b"--compile-run") {
+            bun_core::note!("--sourcemap adds nothing to --aot: stack traces of compiled code already have the file, line and column of the sources, and any map that is written is empty");
         }
     }
 

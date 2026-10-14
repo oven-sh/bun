@@ -12,14 +12,13 @@ THE GATES, FOR EACH PACKAGE THAT <node_modules> HOLDS AT THAT VERSION:
   7. counts  variants, written unions of two or more shapes, `any`, casts, `!`: against the numbers below: a text that drifts says so
  10. lax     every laid file has 0 errors under `noImplicitAny: false`, `strictNullChecks: false` and `strict: false` too: a host's two options reach a package
   9. same    (in the repository's form only) lay/ is byte for byte what src/ gives today; sound.json's sha256 are the installed files'
-  8. options (a note, never a failure; --no-options leaves it out): which of a host's stricter compiler options would fell each laid text, and by how many errors
 WHAT IT LEAVES: <out>/laid/<package>/..: the files to lay, and <out>/node_modules: a tree that `bun build --compile --aot` can take. EXIT 1 IF ANY GATE FAILS.
 WHAT IT DOES NOT SAY: that the types are TRUE. That is what run.sh (the wide trees against plain Bun, with the audit build) walks, and it walks only what it walks."""
 import hashlib, os, re, shutil, subprocess, sys
 H = os.path.dirname(os.path.abspath(__file__)); T = H + '/tools'
 args = [a for a in sys.argv[1:] if not a.startswith('--')]; opts = dict((a[2:].split('=', 1) + [''])[:2] for a in sys.argv[1:] if a.startswith('--'))
 if not args: sys.exit(__doc__)
-N = os.path.abspath(args[0]); OUT = os.path.abspath(args[1]) if len(args) > 1 else os.path.abspath('ship.out'); ELEMENTS = opts.get('elements', 'shared')
+N = os.path.abspath(args[0]); OUT = os.path.abspath(args[1]) if len(args) > 1 else os.path.abspath('ship.out'); ELEMENTS = opts.get('elements', 'plain')  # plain is what is published: no package imports another's types
 SEMA = os.environ.get('SEMA') or sys.exit('check.py: SEMA=<the front end> is wanted'); BUN = os.environ.get('BUN', 'bun'); ENV = dict(os.environ, NO_COLOR='1')
 LIVE = 'FiberConstructor,FiberRootConstructor,ConcurrentUpdate,ConcurrentQueue,StoreInstance'
 SERVER = 'export { version, renderToReadableStream, renderToPipeableStream, resumeToPipeableStream, resume, renderToString, renderToStaticMarkup }; export default { version, renderToReadableStream, renderToPipeableStream, resumeToPipeableStream, resume, renderToString, renderToStaticMarkup };'
@@ -40,7 +39,8 @@ P = [  # folder · npm's file · its md5 · where the formed text is laid · the
     dict(name='seroval@1.6.9', npm='seroval/dist/index.js', md5='ccbd09502b548d78881f2353cf209c2b', lay='seroval/dist/index.sound.ts', space='SV', entries={'seroval/dist/index.js': 'export * from "./index.sound.ts";'}, form='esm', text='typed.mts', due=dict(variants=0)),
 ]
 # A PACKAGE OF MANY ES MODULES, OF WHICH THE HOT ONES ARE TYPED: each <file>.mjs has its text <file>.sound.mts (the package is "type": "commonjs": a .ts there would be CommonJS); <file>.mjs becomes `export * from "./<base>.sound.mts";`; an import of one typed file by another is pointed at the .sound.mts, so that the checker sees the types and not the authors' .d.mts
-MANY = [dict(name='@anthropic-ai/sdk', version='0.112.1', folder='@anthropic-ai__sdk@0.112.1', src='@anthropic-ai/sdk/0.112.1/src', lib='esnext,dom', files={'internal/utils/bytes': 'f3bbbc15d1132a24c7c8fc4b112e8742', 'internal/decoders/line': '53d0301e5b811061c98d9d5c091cb39c', 'core/streaming': 'c443e04b269bb5631095ca00166dfd6c'})]
+MANY = [dict(name='@anthropic-ai/sdk', version='0.112.1', folder='@anthropic-ai__sdk@0.112.1', src='@anthropic-ai/sdk/0.112.1/src', lib='esnext,dom', files={'internal/utils/bytes': 'f3bbbc15d1132a24c7c8fc4b112e8742', 'internal/decoders/line': '53d0301e5b811061c98d9d5c091cb39c', 'core/streaming': 'c443e04b269bb5631095ca00166dfd6c'}),
+        dict(name='@anthropic-ai/sdk', version='0.128.0', folder='@anthropic-ai__sdk@0.128.0', src='@anthropic-ai/sdk/0.128.0/src', lib='esnext,dom', files={'internal/utils/bytes': 'f3bbbc15d1132a24c7c8fc4b112e8742', 'internal/decoders/line': 'e483a999dd6a0136d95069e196e5ae1b', 'core/streaming': '952256aac92d3a6beebc6eaa7c2700f3'})]
 SRC = {'react-reconciler@0.33.0': 'react-reconciler/0.33.0/src', 'react-dom@19.3.0.server.bun': 'react-dom/19.3.0/src/server.bun', 'react-dom@19.3.0.server-legacy.browser': 'react-dom/19.3.0/src/server-legacy.browser', 'react-dom@19.2.8.server.bun': 'react-dom/19.2.8/src/server.bun', 'react-dom@19.2.8.server-legacy.browser': 'react-dom/19.2.8/src/server-legacy.browser', 'react-dom@19.1.0.server.bun': 'react-dom/19.1.0/src/server.bun', 'react-dom@19.1.0.server-legacy.browser': 'react-dom/19.1.0/src/server-legacy.browser', 'react-dom@19.0.0.server.bun': 'react-dom/19.0.0/src/server.bun', 'react-dom@19.0.0.server-legacy.browser': 'react-dom/19.0.0/src/server-legacy.browser', 'react@19.2.0': 'react/19.2.0/src', 'seroval@1.6.9': 'seroval/1.6.9/src', 'fuse.js@7.0.0': 'fuse.js/7.0.0/src'}  # where the sources lie in the repository's form (packages/bun-sound/<name>/<version>/src); in the unit's folder: packages/<name@version>
 SMALL = {  # the reconciler's two small neighbours in react: typed whole, a page each
     'react-jsx-runtime.ts': ('react/cjs/react-jsx-runtime.production.js', 'c172c62d2a67eb3c684b85f92e08631a', 'react/cjs/react-jsx-runtime.production.ts', 'react/jsx-runtime.js', 'export * from "./cjs/react-jsx-runtime.production.ts"; export { default } from "./cjs/react-jsx-runtime.production.ts";'),
@@ -148,13 +148,4 @@ for pkg in sorted({'/'.join(f.split('/')[:2 if f.startswith('@') else 1]) for _,
         wrong = [f for f in S['lay'] if not os.path.exists(OUT + '/node_modules/' + pkg + '/' + f) or (sha(OUT + '/node_modules/' + pkg + '/' + f) != sums.get(f) if sums is not None else open(D + '/lay/' + f, 'rb').read() != open(OUT + '/node_modules/' + pkg + '/' + f, 'rb').read())]
         wrong += [f for f, h in list(S['lay'].items()) + list(S['basis'].items()) if (h == 'new') == os.path.exists(N + '/' + pkg + '/' + f) or h != 'new' and sha(N + '/' + pkg + '/' + f) != h]
         say(not wrong, pkg + '@' + v, 'same', ('lay.sums' if sums is not None else 'lay/') + ' is what src/ gives (%d files); the sums are the installed files\' (%d)' % (len(S['lay']), len(S['lay']) + len(S['basis'])) if not wrong else 'DIFFERS: ' + ' '.join(wrong[:4]))
-# 8. options: NO FAILURE: WHAT A HOST's OWN COMPILER OPTIONS WOULD DO. A typed package under node_modules is TRIED UNDER THE HOST PROJECT's OPTIONS and ONE error fells it whole: `warn: TS100009: '<package>' has <n> type errors ..: it is compiled untyped`, behind a green build. THREE OF THESE OPTIONS JUDGE npm's CODE, NOT THE TYPES (a switch that falls through on purpose, an unused parameter, a function that returns on some paths): NO ANNOTATION CURES THEM.
-if '--no-options' not in sys.argv:
-    for n, f in laid:
-        path = OUT + '/node_modules/' + f; X = open(path, errors='replace').read().split('\n'); felled = []
-        for o in ('noFallthroughCasesInSwitch', 'noUnusedParameters', 'noImplicitReturns', 'noUncheckedIndexedAccess', 'noPropertyAccessFromIndexSignature', 'exactOptionalPropertyTypes', 'noUnusedLocals', 'noImplicitOverride'):
-            c, t = run([SEMA, 'cli', os.path.basename(f), '--noEmit', '--all', '--strict', '--' + o], os.path.dirname(path)); E = [(m.group(1), m.group(2), int(m.group(3))) for m in re.finditer(r'^error: (TS\d+):.*?\n\s+at (\S+?):(\d+)', t, re.S | re.M)]
-            k = len([e for e in E if not (e[1].endswith(os.path.basename(f)) and re.fullmatch(r'import \* as [\w$]+\$module from "[^"]+";', X[e[2] - 1].strip()))])
-            if k: felled.append('%s %d' % (o, k))
-        print('%-4s %-42s %-7s %s: %s' % ('note' if felled else 'ok', n, 'options', os.path.basename(f), 'A HOST WITH ONE OF THESE IN ITS tsconfig.json FELLS THE PACKAGE (errors): ' + ' · '.join(felled) if felled else 'clean under every stricter option tried'))
 print('check.py: %s · elements %s · the tree to build on: %s/node_modules' % ('EVERY GATE PASSES' if not bad else '%d GATES FAIL' % bad, ELEMENTS, OUT)); sys.exit(1 if bad else 0)

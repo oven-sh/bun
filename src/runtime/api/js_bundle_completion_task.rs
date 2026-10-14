@@ -1045,8 +1045,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.aot = config.compile.as_ref().is_some_and(|compile| compile.aot);
         transpiler.options.aot_explain = (config.compile.as_ref()).map_or_else(Vec::new, |compile| compile.aot_explain.clone());
         transpiler.options.aot_explains_into_log = true;
-        transpiler.options.aot_logs_type_errors =
-            (config.compile.as_ref()).is_some_and(|compile| compile.aot && compile.logs_type_errors);
+        transpiler.options.aot_logs_type_errors = (config.compile.as_ref()).is_some_and(|compile| compile.logs_type_errors);
         transpiler.options.compile_function_source =
             (config.compile.as_ref()).is_none_or(|compile| compile.function_source);
         transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
@@ -1166,6 +1165,22 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         transpiler.configure_linker();
         transpiler.configure_defines()?;
+
+        if let Some(compile) = config.compile.as_ref().filter(|_| transpiler.options.compiles_ahead_of_time()) {
+            if let Some(why) = crate::cli::aot::why_cannot_be_carried(
+                &compile.compile_target,
+                // SAFETY: `self.env` is the per-VM `DotEnv.Loader` stashed at construction; see `to_executable` below.
+                unsafe { &mut *self.env },
+                Some(&compile.executable_path.list[..]).filter(|p| !p.is_empty()),
+            ) {
+                self.log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("compile.aot: {}", bstr::BStr::new(&why)),
+                );
+                return Err(bun_bundler::Error::BuildFailed);
+            }
+        }
 
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         transpiler.options.compile_target_builtins = match &config.compile {

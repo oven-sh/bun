@@ -1,0 +1,1 @@
+It needs jscOptions(), which only the jsc shell has.

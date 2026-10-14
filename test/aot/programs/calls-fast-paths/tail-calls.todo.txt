@@ -1,0 +1,1 @@
+Plain Bun prints "1000000 true false s true 0 3 2000000 9 5 500000 28"; under --aot the program ends with: RangeError: Maximum call stack size exceeded.

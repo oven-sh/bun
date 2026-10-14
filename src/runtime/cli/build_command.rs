@@ -534,6 +534,18 @@ impl BuildCommand {
         this_transpiler.configure_defines()?;
         this_transpiler.configure_linker();
 
+        if ctx.bundler_options.compile && this_transpiler.options.compiles_ahead_of_time() {
+            if let Some(why) = crate::cli::aot::why_cannot_be_carried(
+                &ctx.bundler_options.compile_target,
+                // SAFETY: `env` is a process-lifetime singleton.
+                unsafe { &mut *this_transpiler.env },
+                ctx.bundler_options.compile_executable_path.as_deref(),
+            ) {
+                Output::err_generic("--aot: {}", format_args!("{}", bstr::BStr::new(&why)));
+                Global::exit(1);
+            }
+        }
+
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.
         this_transpiler.options.compile_target_builtins = if ctx.bundler_options.compile
             && ctx.bundler_options.bytecode

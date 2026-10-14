@@ -1126,7 +1126,12 @@ impl<'p, 's> Checker<'p, 's> {
             {
                 out.extend([name, self.atoms().intern(b"Error")]);
             }
-            for signature in self.signatures(extended, true).into_vec() {
+            let signatures = self.signatures(extended, true).into_vec();
+            if signatures.is_empty() {
+                let errors: [&[u8]; 8] = [b"Error", b"AggregateError", b"EvalError", b"RangeError", b"ReferenceError", b"SyntaxError", b"TypeError", b"URIError"];
+                out.extend(errors.map(|name| self.atoms().intern(name)));
+            }
+            for signature in signatures {
                 let made = self.sig_return(signature);
                 self.add_global_classes_of(made, &mut seen, out);
             }
@@ -1777,6 +1782,7 @@ impl<'p, 's> Checker<'p, 's> {
                     // Every class that has the method, by declaring or by inheriting it.
                     let mut having: Vec<(FileId, ClassId)> = declared_by.iter().filter(|declaration| !declaration.is_static).map(|declaration| declaration.class).collect();
                     let mut visited: FxHashSet<(FileId, ClassId)> = having.iter().copied().collect();
+                    let part = self.permissive_instantiation(part);
                     while let Some(class) = having.pop() {
                         let instances = self.type_of_instances(class.0, class.1);
                         if self.is_assignable(instances, part) {

@@ -220,6 +220,47 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("a method of a compiled class is not spied on in silence", async () => {
+    using dir = tempDir("test-aot", {
+      "methods.test.ts": `
+        import { expect, spyOn, test } from "bun:test";
+        class Client {
+          sent = 0;
+          request(path: string): string { this.sent++; return "GET " + path; }
+        }
+        interface Service { handle: (n: number) => number; calls: number }
+        test("through an instance", () => {
+          const client = new Client();
+          expect(() => spyOn(client, "request")).toThrow("Cannot replace method 'request' of Client");
+          expect(client.request("/")).toBe("GET /");
+          expect(client.sent).toBe(1);
+        });
+        test("through the prototype", () => {
+          expect(() => spyOn(Client.prototype, "request")).toThrow("the prototype objects of compiled classes");
+        });
+        test("a property that holds a function", () => {
+          const service: Service = { handle: n => n + 1, calls: 0 };
+          const spy = spyOn(service, "handle").mockImplementation((n: number) => n + 100);
+          expect(service.handle(1)).toBe(101);
+          expect(spy).toHaveBeenCalledTimes(1);
+          spy.mockRestore();
+          expect(service.handle(1)).toBe(2);
+          expect(Object.keys(service)).toEqual(["handle", "calls"]);
+        });
+        test("a property that holds no function", () => {
+          const service: Service = { handle: n => n + 1, calls: 0 };
+          expect(() => spyOn(service, "calls")).toThrow(TypeError);
+          expect(() => spyOn(new Client(), "sent")).toThrow(TypeError);
+          expect(service.calls).toBe(0);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), true);
+    expect(stderr).toContain(" 4 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("mock.module and spies", async () => {
     const { stderr } = await expectSameAsBunTest({
       "mock.test.ts": `

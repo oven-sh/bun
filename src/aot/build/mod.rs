@@ -21,6 +21,7 @@ mod imports;
 mod intrinsics;
 mod jsx;
 pub(crate) mod literals;
+mod mocks;
 mod parts;
 mod pattern;
 mod predict;
@@ -352,6 +353,7 @@ pub struct Shared<'a> {
     modules_put_off: FxHashSet<FileId>,
     modules_that_wait_for_their_place: FxHashSet<FileId>,
     behind_put_off: Vec<OnceLock<Vec<(FileId, Dependency)>>>,
+    pub(crate) exports_may_be_overridden: bool,
 }
 
 /// The functions of a file that refer to their `arguments` object, and the arrow functions that refer to that of a function around
@@ -412,6 +414,7 @@ impl<'a> Shared<'a> {
             modules_put_off: FxHashSet::default(),
             modules_that_wait_for_their_place: FxHashSet::default(),
             behind_put_off: (0..program.files.modules.len()).map(|_| OnceLock::new()).collect(),
+            exports_may_be_overridden: constants.has_test_globals,
         };
         let mut c = program.checker();
         c.set_logs_type_errors(constants.logs_type_errors);
@@ -422,31 +425,27 @@ impl<'a> Shared<'a> {
         }
         let (modules, async_modules) = FileBuild::new(&mut c, &shared, NO_FILE).tell_module_graph();
         (shared.modules, shared.async_modules) = (modules, async_modules);
+        shared.exports_may_be_overridden = constants.has_test_globals && (!constants.notes_spans || constants.has_preloads || mocks::may_override_exports(program.files));
         let fits = |file: FileId| constants.own_paths.is_none() && program.files.module(file).builtin.is_none() && !shared.roots.contains(&file) && !shared.prelude.contains(&file) && !shared.async_modules.contains(&file);
         let is_bundled = shared.bundle.is_some();
         let mut is_licensed = |file: FileId| if is_bundled { constants.without_side_effects.contains(program.files.module(file).file_name()) } else { c.is_in_package_without_side_effects(file) } && !c.is_wholly_inert(file);
         let licensed: Vec<FileId> = shared.modules.iter().copied().filter(|&file| fits(file) && is_licensed(file)).collect();
-        let would_wait: Vec<FileId> = licensed.iter().copied().filter(|&file| !c.runs_before_whoever_imports_it(file) && !program.files.module(file).is_commonjs()).collect();
+        let asks_in_its_body = |file: FileId| {
+            let hir = program.files.hir(file);
+            program.files.module(file).is_commonjs() || hir.ids(hir.body).any(|stmt| matches!(hir[stmt].kind, StmtKind::ImportEquals(import) if matches!(hir[import].target, hir::ImportEqualsTarget::Require(_))))
+        };
+        let would_wait: Vec<FileId> = licensed.iter().copied().filter(|&file| !c.runs_before_whoever_imports_it(file) && !asks_in_its_body(file)).collect();
         let waiting: FxHashSet<FileId> = would_wait.iter().copied().filter(|&file| !c.is_in_a_cycle_of_imports(file)).collect();
-        let in_cycles = would_wait.len() - waiting.len();
-        let put_off: FxHashSet<FileId> = licensed.iter().copied().filter(|&file| waiting.contains(&file) || c.runs_before_whoever_imports_it(file)).collect();
+        let put_off: FxHashSet<FileId> = licensed.iter().copied().filter(|&file| waiting.contains(&file) || c.runs_before_whoever_imports_it(file) && !asks_in_its_body(file)).collect();
         shared.modules_put_off = put_off;
         shared.modules_that_wait_for_their_place = waiting;
         c.set_modules_put_off(&shared.modules_put_off);
-        if std::env::var_os("BUN_AOT_COUNT_MODULES_PUT_OFF").is_some() {
-            eprintln!("aot: {} of {} modules are put off; {} more are licensed and may be touched ahead of their place", shared.modules_put_off.len(), shared.modules.len(), licensed.len() - shared.modules_put_off.len());
-            eprintln!("aot: {} of the modules that are put off wait for their place; {in_cycles} more would, and stand in a cycle of imports", shared.modules_that_wait_for_their_place.len());
-        }
         // It asks which declarations are ambient, which goes by the modules.
         let called = c.imports_that_are_called(in_parallel);
         let code = c.in_slices(called, IMPORTS_OF_A_CHECKER, Some(in_parallel), &|c, imports| FileBuild::new(c, &shared, NO_FILE).code_of_imports(imports));
         c.set_code_of_imports(code.into_iter().flatten());
         let resolved = c.in_slices(&shared.modules, FILES_OF_A_CHECKER, Some(in_parallel), &|c, files| FileBuild::new(c, &shared, NO_FILE).resolved_imports_of(files));
         FileBuild::new(&mut c, &shared, NO_FILE).tell_resolved_imports(resolved.into_iter(), in_parallel);
-        if std::env::var_os("BUN_AOT_COUNT_MODULES_PUT_OFF").is_some() {
-            let (marked, lazy) = shared.modules.iter().map(|&file| c.marked_initializers_of(file)).fold((0, 0), |sum, of_file| (sum.0 + of_file.0, sum.1 + of_file.1));
-            eprintln!("aot: {lazy} of {marked} constants whose initializer is marked pure are initialized when first read");
-        }
         shared
     }
 
@@ -1675,10 +1674,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     let pos = stmt.map_or(0, |stmt| hir[stmt].start);
                     if !is_the_importer {
                     } else if self.is_in_the_bundle_only(file, specifier) {
-                        self.problem(file, pos, "an import of a file that is neither code nor a constant");
+                        self.problem(file, pos, "an import of a file that is neither code nor data the bundler can inline");
                     } else if self.shared.bundle.is_some() && stmt.is_some_and(|stmt| self.is_import_of_asset(file, stmt)) {
                         // The host is asked by the specifier alone.
-                        self.problem(file, pos, "an import `with { type: .. }` of what the bundle has not");
+                        self.problem(file, pos, "an import `with { type: .. }` of a file that is not in the bundle");
                     }
                     // Once for the program: every module that imports it sees the same.
                     let global = self.external_module_global_kept_in(importer, file, specifier);

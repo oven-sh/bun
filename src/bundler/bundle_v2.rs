@@ -2614,7 +2614,7 @@ pub mod bv2_impl {
                 self.transpiler.log_mut().add_range_error_fmt(
                     Some(&sources[index]),
                     bun_ast::Range::NONE,
-                    format_args!("not compiled yet: \"{option}\" of another tsconfig.json than the entry point's"),
+                    format_args!("--aot uses the entry point's tsconfig.json only: the tsconfig.json of this file sets \"{option}\" differently"),
                 );
             }
             match refused.is_empty() {
@@ -2635,7 +2635,7 @@ pub mod bv2_impl {
             if analyze.is_some() {
                 for (source, records) in self.graph.input_files.items_source().iter().zip(self.graph.ast.items_import_records()) {
                     for record in records.as_slice().iter().filter(|record| record.path.namespace == bun_js_parser::Macro::NAMESPACE) {
-                        self.transpiler.log_mut().add_range_error_fmt(Some(source), record.range, format_args!("not compiled yet: a macro"));
+                        self.transpiler.log_mut().add_range_error_fmt(Some(source), record.range, format_args!("--aot does not support macros"));
                     }
                 }
                 let is_the_table_of_bun = (self.transpiler.options.loaders.iter())
@@ -2645,7 +2645,7 @@ pub mod bv2_impl {
                 for ((source, key), &loader) in self.graph.input_files.items_source().iter().zip(keys).zip(loaders) {
                     let is_such = matches!(loader, Loader::Napi | Loader::SqliteEmbedded) || source.path.text.ends_with(b".node");
                     if !is_the_table_of_bun && !key.is_empty() && is_such {
-                        self.transpiler.log_mut().add_range_error_fmt(Some(source), bun_ast::Range::NONE, format_args!("not compiled yet: --loader for native addons or embedded databases"));
+                        self.transpiler.log_mut().add_range_error_fmt(Some(source), bun_ast::Range::NONE, format_args!("--aot does not support --loader for native addons or embedded databases"));
                     }
                 }
                 if self.transpiler.log().has_errors() {
@@ -2833,7 +2833,7 @@ pub mod bv2_impl {
                         let Some(specifier) = specifier_of(source, record) else { continue };
                         let to = behind_redirects(record.source_index).get();
                         if *stands_for.entry(specifier).or_insert(to) != to {
-                            self.transpiler.log_mut().add_range_error_fmt(Some(source), record.range, format_args!("not compiled yet: one specifier that stands for two files in one file"));
+                            self.transpiler.log_mut().add_range_error_fmt(Some(source), record.range, format_args!("--aot does not support an import specifier that resolves to two different files within one module"));
                         }
                     }
                 }

@@ -1,0 +1,294 @@
+---
+title: "Adopting --aot"
+description: "Find what changes when your program is compiled ahead of time, fix it, and roll it out in four steps"
+---
+
+<Warning>Ahead-of-time compilation is experimental. It supports macOS on Apple silicon.</Warning>
+
+[`--aot`](/bundler/executables#ahead-of-time-compilation) does not erase your TypeScript types. It uses them to generate machine code, so it also holds your program to them:
+
+- A value that does not match its type throws a `TypeError` at the first parameter, variable, property or return type that it reaches.
+- `value as number` converts: if `value` is `"4"` when the program runs, the result is `4`. The same goes for `as string` and `as boolean`.
+- `x!` throws if `x` is `null` or `undefined`.
+- Built-in objects are immutable.
+
+Most programs have a few places where data from outside the type system, such as `JSON.parse`, `any` or an untyped package, is not what its type says. Four tools find them. Use them in this order:
+
+| Step | Command                                                    | Where                 | Your program                           |
+| ---- | ---------------------------------------------------------- | --------------------- | -------------------------------------- |
+| 1    | `bun --aot-audit`, `bun test --aot-audit`                  | development, CI       | runs as usual, and logs                |
+| 2    | `bun check --aot`, `bun check --aot --aot-explain=throws`  | CI, every build       | is not run                             |
+| 3    | `bun build --compile --aot --aot-type-errors=log`          | production            | is compiled, logs, and keeps going     |
+| 4    | `bun build --compile --aot`                                | production            | is compiled, and throws                |
+
+The examples use this program:
+
+```ts app.ts icon="/icons/typescript.svg"
+function double(n: number): number {
+  return n * 2;
+}
+
+const body: any = JSON.parse('{"visits":"3"}');
+console.log(double(body.visits));
+console.log((body.visits as number) + 1);
+```
+
+```bash terminal icon="terminal"
+bun app.ts
+```
+
+```txt
+6
+31
+```
+
+`bun run --aot` compiles the program the way `bun build --compile --aot` does, and runs it. It is the shortest way to see what changes:
+
+```bash terminal icon="terminal"
+bun run --aot app.ts
+```
+
+```txt
+6 | console.log(double(body.visits));
+                       ^
+TypeError: expected number | undefined, got string "3" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+      at /path/to/app.ts:6:20
+```
+
+`number | undefined` is what passes this check: `undefined` passes too, as a missing argument does in JavaScript.
+
+It stops at the first error. The tools below show all of them, without stopping your program.
+
+## 1. Audit while you develop
+
+`--aot-audit` runs your program the way Bun always does, and writes a line to stderr at the places where it would behave differently under `--aot`.
+
+```bash terminal icon="terminal"
+bun --aot-audit app.ts
+```
+
+```txt
+[aot] type-error 81eda900c1a1 read-property app.ts:6:20 (module): expected number | undefined, got string; would-throw; count 1; call 4d3156b73eaf
+6
+[aot] type-error 0d0dde539306 as-convert app.ts:7:14 (module): expected number, got string; would-convert; count 1
+31
+```
+
+The output of your program does not change. Run your tests the same way, and keep it on while you edit:
+
+```bash terminal icon="terminal"
+bun test --aot-audit
+bun --watch --aot-audit app.ts
+bun --hot --aot-audit server.ts
+```
+
+Each line ends with what an `--aot` build would do:
+
+| Action          | Under `--aot`                                                        |
+| --------------- | -------------------------------------------------------------------- |
+| `would-throw`   | a `TypeError` is thrown here                                         |
+| `would-convert` | `as` converts the value, so the program goes on with another value   |
+| `would-refuse`  | this write to a built-in object throws a `TypeError`                 |
+
+An `--aot` build stops at the first `TypeError` that your program does not catch. The audit goes on, so a later line tells you what happens once the earlier ones are fixed.
+
+Fix `would-convert` lines first. The audit does not convert, so the value travels on as it is. To avoid false lines, the audit does not report a value that `as` has converted when it fails a later check, nor an equal value from somewhere else.
+
+Bun type checks and analyzes the whole program before it starts, so the first start takes longer. After you save a file, Bun analyzes that file alone before it reloads, and the rest in the background.
+
+- Fix type errors first. `bun build --compile --aot` stops at a type error. The audit prints the errors and runs your program, but checks nothing until they are fixed.
+- JavaScript files, such as most packages in `node_modules`, have no types to enforce. What they return is checked where it reaches your TypeScript code, against the declared type.
+- There is no way to silence a line. If the value is right and the type is not, change the type.
+- A file that calls `eval()` directly is not audited. Bun says so.
+- Under `bun test`, when a test file or a preload can replace a module (`mock.module()`, `jest.mock()`, `vi.mock()`, `spyOn()` on a module namespace), arguments passed to imported functions are not checked in that run.
+- Functions do not make tail calls while the audit is on, so stacks are deeper and very deep recursion can overflow.
+- Code with many type checks in hot loops runs 5% to 20% slower.
+
+The exit code does not change either. To fail a CI job, write the lines to a file and test that it is empty. Bun appends to the file, so remove it first. The audit reads the [same two environment variables](#3-log-in-production) as the executable:
+
+```bash terminal icon="terminal"
+rm -f audit.jsonl
+BUN_AOT_TYPE_ERROR_LOG=audit.jsonl bun test --aot-audit && test ! -s audit.jsonl
+```
+
+## 2. Report when you build
+
+`bun check --aot` type checks your entry points and reports what can never work under `--aot`. `bun build --compile --aot` reports the same errors and stops.
+
+```ts wrong.ts icon="/icons/typescript.svg"
+function double(n: number): number {
+  return n * 2;
+}
+
+console.log(double("4" as any));
+```
+
+```bash terminal icon="terminal"
+bun check --aot wrong.ts
+```
+
+```txt
+wrong.ts(5,13): error TS100013: This always throws a TypeError under --aot: argument 1 of `double` expects 'number' and always gets "4".
+Found 1 error in 1 file, checked 1 file
+```
+
+| Code       | What always fails                                              |
+| ---------- | -------------------------------------------------------------- |
+| `TS100012` | `x!`, or `let x!: T`, on a value that is always `null` or `undefined` |
+| `TS100013` | a value of the wrong type for a parameter, variable, field or result |
+| `TS100014` | a write to a built-in object                                   |
+| `TS100015` | a new member on the prototype of a class, or a change to an object that its type does not allow |
+| `TS100017` | `as` on a value that is always of another primitive type       |
+
+Most checks depend on data that only exists when the program runs. `--aot-explain=throws` lists them, with where the value comes from and how to fix it:
+
+```bash terminal icon="terminal"
+bun check --aot --aot-explain=throws app.ts
+```
+
+```txt
+[aot] type-check 81eda900c1a1 read-property app.ts:6:20 (module): expected number | undefined, may get any; warning; call 4d3156b73eaf; value from JSON.parse(..) at app.ts:5:24; fix: validate the value where it comes in, once, and build a typed value from it
+[aot] type-check c2be03ebd76c as-late-use app.ts:7:13 (module): what the cast let through is used as the type it names: expected number, may get object | number; warning; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
+[aot] type-check 0d0dde539306 as-convert app.ts:7:14 (module): expected number, may get any; warning; value from JSON.parse(..) at app.ts:5:24; fix: narrow instead of casting (typeof, a type guard), or write the conversion out
+[aot] type-check summary: 3 checks can fail when the program runs, 0 always fail
+```
+
+| Report            | Lists                                                                                     |
+| ----------------- | ----------------------------------------------------------------------------------------- |
+| `throws`          | every check that can fail because of `any`, JavaScript code, data from outside, or `as`   |
+| `throws-all`      | also the checks that fail only if your TypeScript code itself produces a value of the wrong type |
+| `throws-json`     | the same as `throws`, one JSON object per line, on stdout                                 |
+| `throws-all-json` | the same as `throws-all`, one JSON object per line, on stdout                             |
+
+A line ends in `warning` if the check can fail, and in `error` if it always fails. `bun build --compile --aot` takes the same flag. `Bun.build` returns the lines in `logs`, at level `"verbose"`:
+
+```ts build.ts icon="/icons/typescript.svg"
+const result = await Bun.build({
+  entrypoints: ["./app.ts"],
+  compile: { outfile: "./app", aot: true, aotExplain: "throws-json" },
+});
+```
+
+## 3. Log in production
+
+Tests do not see all the data that production sees. Build with `--aot-type-errors=log`, and the executable writes a line where it would throw, then continues the way plain JavaScript does where it can.
+
+<Tabs>
+  <Tab title="CLI">
+    ```bash terminal icon="terminal"
+    bun build --compile --aot --aot-type-errors=log app.ts --outfile app
+    ./app
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```ts build.ts icon="/icons/typescript.svg"
+    await Bun.build({
+      entrypoints: ["./app.ts"],
+      compile: { outfile: "./app", aot: true, aotTypeErrors: "log" },
+    });
+    ```
+  </Tab>
+</Tabs>
+
+```txt
+[aot] type-error 4d3156b73eaf enter-argument app.ts:6:13 (module): expected number | undefined, got string; continued; count 1
+6
+[aot] type-error 0d0dde539306 as-convert app.ts:7:14 (module): expected number, got string; converted; count 1
+4
+```
+
+A line never contains a value from your program, only its kind, such as `string`, `untyped object` (an object literal or parsed JSON that has not been given a type) or `native Buffer` (an object that Bun or JavaScript provides). Each location writes a line for its 1st, 10th, 100th failure and so on, and a total when the process exits.
+
+| Environment variable             | Value                                                        |
+| -------------------------------- | ------------------------------------------------------------ |
+| `BUN_AOT_TYPE_ERROR_LOG`         | `stderr` (default), a file to append to, or `off`            |
+| `BUN_AOT_TYPE_ERROR_LOG_FORMAT`  | `text` or `json`. The default is `text` for stderr and `json` for a file |
+
+```json
+{"aot":"type-error","id":"4d3156b73eaf","kind":"enter-argument","what":"As","file":"app.ts","line":6,"col":13,"fn":"module","expected":"number | undefined","got":"string","action":"continued","count":1}
+```
+
+| Action      | What the executable did                                   |
+| ----------- | --------------------------------------------------------- |
+| `continued` | went on with the value, as plain JavaScript does          |
+| `converted` | `as` converted the value, so the program goes on with another value than in plain JavaScript |
+| `threw`     | threw the `TypeError`: it could not go on from there      |
+
+A write to a built-in object still throws.
+
+## 4. Throw
+
+When the log stays empty, drop `--aot-type-errors=log`. To go back, add it again, or drop `--aot`: your source does not change in any of the four steps.
+
+```bash terminal icon="terminal"
+bun build --compile --aot app.ts --outfile app
+./app
+```
+
+```txt
+6 | console.log(double(body.visits));
+                       ^
+TypeError: expected number | undefined, got string "3" (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)
+      at app.ts:6:20
+```
+
+Unlike a line of the log, the message of the `TypeError` contains the value. If you send error messages to a service, it receives that data.
+
+The default build writes no log. Set `BUN_AOT_TYPE_ERROR_LOG` to `stderr` or to a file, and it writes a line for each `TypeError` that `--aot` throws, also for one that your program catches. These lines have the kind `type-mismatch` and the action `threw`.
+
+## Common fixes
+
+**`x!` on a value that can be missing.** Say what should happen instead.
+
+```ts
+const name: string = names.get("bob")!; // [!code --]
+const name = names.get("bob") ?? "unknown"; // [!code ++]
+```
+
+**`as` on data.** If `query.page` is `"2"`, then `page` is `2` under `--aot` and `"2"` without it. Convert, and both agree.
+
+```ts
+const page = query.page as number; // [!code --]
+const page = Number(query.page); // [!code ++]
+```
+
+**A value of type `any` passed to a function.** Check it once, where it comes in. TypeScript does not narrow a property of `any`, so give the value a name of type `unknown` first. After the check it is a `number`, and the report has no line for it.
+
+```ts
+const body: any = JSON.parse(text);
+double(body.visits); // [!code --]
+const visits: unknown = body.visits; // [!code ++]
+if (typeof visits !== "number") throw new Error("visits must be a number"); // [!code ++]
+double(visits); // [!code ++]
+```
+
+**A `number` or `boolean` variable without a value.** `bun check --aot` reports `TS100001: Variable 'port' has no initializer and may be read before it is assigned` when another function reads it.
+
+```ts
+let port: number; // [!code --]
+let port: number | undefined; // [!code ++]
+```
+
+**A declaration that says too little.** `expected string, got native Buffer` means that the value is fine and the type is not. Widen the parameter, or convert at the call.
+
+```ts
+function shout(text: string) { // [!code --]
+function shout(text: string | Buffer) { // [!code ++]
+```
+
+## Reading a line
+
+```txt
+[aot] type-error 81eda900c1a1 read-property app.ts:6:20 (module): expected number | undefined, got string; would-throw; count 1; call 4d3156b73eaf; from server.ts:41 < router.ts:12
+```
+
+| Part                       | Meaning                                                                                                   |
+| -------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `81eda900c1a1`             | The id of this location. It is the same in the audit, in the report and in the executable, and from run to run, until the line moves. For an argument of a call, the executable uses the id after `call`. |
+| `read-property`            | What happens there: `enter-argument`, `enter-function`, `enter-variable`, `enter-field`, `enter-return`, `read-property`, `read-element`, `call-result`, `as-convert`, `non-null`, and others. `as-late-use` is the use of a value that `as` could not check, because it is an object. |
+| `app.ts:6:20 (module)`     | File, line, column, and the function. `module` is code outside of any function.                           |
+| `expected ..., got ...`    | What passes this check, and the kind of value that did not. A check can let more pass than the type says: here `undefined` passes too, as a missing argument does in JavaScript. |
+| `count 1`                  | How often this location has failed with this kind of value.                                               |
+| `reason ...`               | For an object: which property does not match, such as `property 'id' is missing in untyped object but required in User`. Only the executable writes it. |
+| `call 4d3156b73eaf`        | The value is an argument of a call. An executable built with `--aot-type-errors=log` reports it under this id, at the position of the call. |
+| `from ...`                 | The callers, nearest first.                                                                               |

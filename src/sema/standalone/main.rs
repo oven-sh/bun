@@ -461,6 +461,8 @@ fn run(args: &[String]) {
                 for line in &translated.explained {
                     if line.starts_with('{') {
                         output_line!("{line}");
+                    } else if line.starts_with('[') {
+                        error_line!("{line}");
                     } else {
                         error_line!("aot: {line}");
                     }

@@ -11,15 +11,20 @@ S = [  # name · the gate that must go red · gates that must NOT see it · old 
     ('a read in a loop ahead of the store in the text, written as the arriving value', 'splits', ['verify'], '      var context = currentDependencies$asDependency.context;', '      var context = (currentDependencies as any).context;'),
     ('the result read as the parameter, two roles of one kind of use', 'splits', ['verify'], '        (inst$asQueue.lastEffect = tag$asEffect));\n    return tag$asEffect;', '        (inst$asQueue.lastEffect = tag$asEffect));\n    return tag as never;'),
     ('a role of an outer variable', 'splits', ['verify', 'errors'], '    currentlyRenderingFiber$1 = workInProgress;', '    currentlyRenderingFiber$1$asMine = workInProgress;'),
+    ('a cast that only a host that is not strict needs is taken away', 'lax', ['verify', 'errors', 'splits'], '                destroy_ = destroy/*$*/ as RR.EffectDestroy/*$*/;', '                destroy_ = destroy;'),
     ('a role more than the committed count', 'counts', ['verify', 'errors', 'splits'], 'parent$asRoot: RR.FiberRoot, ', 'parent$asRoot: RR.FiberRoot, parent$asNothing: number, '),
 ]
 bad = 0
 for i, (name, due, blind, old, new) in enumerate(S, 1):
-    D = '%s/s%d' % (OUT, i); os.makedirs(D + '/packages'); shutil.copytree(H + '/packages/' + P, D + '/packages/' + P); f = D + '/packages/' + P + '/typed.cts'; t = open(f).read()
+    D = '%s/s%d' % (OUT, i); os.makedirs(D + '/packages'); f = D + '/packages/' + P + '/typed.cts'
+    if os.path.isdir(H + '/packages/' + P): shutil.copytree(H + '/packages/' + P, D + '/packages/' + P)
+    else: shutil.copytree(H + '/react-reconciler/0.33.0/src', D + '/packages/' + P); os.makedirs(D + '/packages/' + P + '/small'); shutil.copy(H + '/react/19.2.0/src/react-compiler-runtime.ts', D + '/packages/' + P + '/small/')  # in the repository the text lies under <name>/<version>/src
+    t = open(f).read()
     if t.count(old) != 1: print('FAIL s%d %s: THE SABOTAGE DID NOT APPLY: the pattern stands %d times' % (i, name, t.count(old))); bad += 1; continue
     open(f, 'w').write(t.replace(old, new))
     r = subprocess.run([sys.executable, H + '/check.py', N, D + '/out', '--only=' + P], env=dict(os.environ, SHIP_PACKAGES=D + '/packages'), capture_output=True, text=True)
-    G = {m.group(2): m.group(1) for m in re.finditer(r'^(ok|FAIL) +\S+ +(\w+) ', r.stdout, re.M) if m.group(2) in ('errors', 'verify', 'splits', 'counts')}
+    G = {}
+    for m in re.finditer(r'^(ok|FAIL) +\S+ +(\w+) ', r.stdout, re.M): G[m.group(2)] = 'FAIL' if 'FAIL' in (m.group(1), G.get(m.group(2))) else 'ok'  # a gate may speak once a file: one FAIL is a FAIL
     found = G.get(due) == 'FAIL'; seen = [g for g in blind if G.get(g) == 'FAIL']
     print('%s s%d %-82s %s: %s%s' % ('ok  ' if found else 'FAIL', i, name, due, 'RED, as due' if found else 'NOT FOUND: THE SAFEGUARD IS BLIND', ' · green beside it: ' + ' '.join(g for g in blind if g not in seen) + (' · ALSO RED: ' + ' '.join(seen) if seen else '')))
     if not found: bad += 1

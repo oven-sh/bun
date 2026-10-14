@@ -358,13 +358,17 @@ export function runSetupFunction(
 
   var setupResult = setup({
     config: config,
-    onDispose: notImplementedIssueFn(2771, "On-dispose callbacks"),
+    onDispose: () => {
+      throw new TypeError("On-dispose callbacks is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
+    },
     onEnd,
     onLoad,
     onResolve,
     onBeforeParse,
     onStart,
-    resolve: notImplementedIssueFn(2771, "build.resolve()"),
+    resolve: () => {
+      throw new TypeError("build.resolve() is not implemented yet. See https://github.com/oven-sh/bun/issues/2771");
+    },
     module: () => {
       throw new TypeError("module() is not supported in Bun.build() yet. Only via Bun.plugin() at runtime");
     },

@@ -1,0 +1,78 @@
+# <program> TAB <expectation line>: expectations that are known to fail today. See expectations.py.
+calls-fast-paths/by-key	// IR= 1 run CallDirect
+calls-fast-paths/constructor-at-any-depth	// IR= 0 top CallDirect
+calls-fast-paths/rest-callee-called-by-name	// IR+ CallDirect f[0-9]+ \(v[0-9]+, v[0-9]+, v[0-9]+\)
+calls-fast-paths/size-at-the-call	// IR= 0 knowsInTheLoop NewArray
+calls-fast-paths/size-at-the-call	// IR= 0 knowsInTheLoopBorrowing NewArray
+calls-fast-paths/size-at-the-call	// IR= 1 knowsInTheLoop CallDirect
+calls-fast-paths/size-at-the-call	// IR= 1 knowsInTheLoopBorrowing CallDirect
+strings/access	// CALLS- at_ CallHostFunction|CallValue
+strings/access	// CALLS- charAt_ CallHostFunction|CallValue
+strings/access	// CALLS- charCodeAt_ CallHostFunction|CallValue
+strings/access	// CALLS- codePointAt_ CallHostFunction|CallValue
+strings/access	// CALLS- element_ CallHostFunction|CallValue|GetByVal
+strings/buffer-byte-length	// CALLS+ ofTextWithHyphen StringUTF8Length8
+strings/characters-outside-loops	// CALLS- byIndex Flatten
+strings/characters-outside-loops	// CALLS- endsWithNewline StringIsText|StringHasAt|(^|[ f])TypedString(;|$)
+strings/comparisons-with-texts	// CALLS+ ofUnion StringIsText
+strings/entries-of-arrays	// CALLS+ elementOnly operationAOTTypedNewEntriesOfArray
+strings/entries-of-arrays	// CALLS+ indexOnly operationAOTTypedNewEntriesOfArray
+strings/entries-of-arrays	// CALLS+ nestedPattern operationAOTTypedNewEntriesOfArray
+strings/entries-of-arrays	// CALLS+ ofArraysOnly operationAOTTypedNewEntriesOfArray
+strings/entries-of-arrays	// CALLS+ typed operationAOTTypedNewEntriesOfArray
+strings/keys-in-one-piece	// CALLS+ cached operationAOTTypedConcatenateWithIntegers
+strings/keys-in-one-piece	// CALLS+ getPair operationAOTTypedConcatenateWithIntegers
+strings/keys-in-one-piece	// CALLS+ hasTemplate operationAOTTypedConcatenateWithIntegers
+strings/keys-in-one-piece	// CALLS+ property operationAOTTypedConcatenateWithIntegers
+strings/keys-in-one-piece	// CALLS+ throughJoin operationAOTTypedConcatenateWithIntegers
+strings/keys-in-one-piece	// CALLS+ twoStrings operationAOTTypedConcatenateWithIntegers
+strings/literals-nothing-keeps	// CALLS+ heldInConstant operationAOTTypedSharedRegExpLiteral
+strings/locale-compare	// CALLS+ sorted operationAOTTypedStringLocaleCompare
+strings/one-code-unit-compared	// CALLS+ wideCases equality with .*\b233\b
+strings/parts-outside-loops	// CALLS+ trimmed StringTrim(;|$)
+strings/parts-outside-loops	// CALLS+ trimmedInLoop StringTrim(;|$)
+strings/regexp	// CALLS+ constants operationAOTTypedNewRegExpLiteral
+strings/regexp	// CALLS+ fromSource operationAOTTypedNewRegExp
+strings/regexp	// CALLS+ literal operationAOTTypedNewRegExpLiteral
+strings/regexp	// CALLS+ vowels operationAOTTypedStringReplaceRegExpString
+strings/regular-expressions-built-from-written-texts	// UNKNOWN byfu+nctionX
+strings/regular-expressions-built-from-written-texts	// UNKNOWN fromca+ll
+strings/regular-expressions-built-from-written-texts	// UNKNOWN na+med
+strings/regular-expressions-built-from-written-texts	// UNKNOWN ti+me
+strings/regular-expressions-known-at-build-time	// UNKNOWN [ab]joi+ned
+strings/regular-expressions-known-at-build-time	// UNKNOWN assi+gned
+strings/regular-expressions-known-at-build-time	// UNKNOWN fromca+ll
+strings/regular-expressions-known-at-build-time	// UNKNOWN obje+ct7
+strings/repeat-and-pad	// CALLS+ filledAtEnd operationAOTTypedStringPad
+strings/repeat-and-pad	// CALLS+ filledAtStart operationAOTTypedStringPad
+strings/repeat-and-pad	// CALLS+ paddedAtEnd operationAOTTypedStringPad
+strings/repeat-and-pad	// CALLS+ paddedAtStart operationAOTTypedStringPad
+strings/repeat-and-pad	// CALLS+ repeated operationAOTTypedStringRepeat
+strings/searches-outside-loops	// CALLS+ ends5 StringEndsWithText
+strings/searches-outside-loops	// CALLS+ includesText operationAOTTypedStringIndexOfText
+strings/searches-outside-loops	// CALLS+ indexOfCharacter operationAOTTypedStringFindCharacter8
+strings/searches-outside-loops	// CALLS+ indexOfCharacter operationAOTTypedStringIndexOfText
+strings/searches-outside-loops	// CALLS+ indexOfText operationAOTTypedStringFindText8
+strings/searches-outside-loops	// CALLS+ lastIndexOfText operationAOTTypedStringLastIndexOfText
+strings/searches-outside-loops	// CALLS+ lastIndexOfText operationAOTTypedStringReverseFindText8
+strings/searches-outside-loops	// CALLS+ starts5 StringStartsWithText
+strings/searches-outside-loops	// CALLS- includesText (^|[ f])TypedString(;|$)
+strings/searches-outside-loops	// CALLS- starts5 (^|[ f])TypedString(;|$)
+strings/single-characters	// CALLS- kept StringHasAt|StringIsText
+strings/single-characters	// CALLS- slashAt StringHasAt|StringIsText
+strings/string-from-char-code-concat-normalize	// CALLS- fromCharCode1 CallHostFunction|CallValue
+strings/string-from-char-code-concat-normalize	// CALLS- fromCodePointByte CallHostFunction|CallValue|CharToString|FromC
+strings/string-from-char-code-concat-normalize	// CALLS- fromCodePointMasked CallHostFunction|CallValue|CharToString|FromC
+strings/strings-built-in-the-frame	// CALLS+ lookUp ConcatenateWithIntegers|StringBuilderFinish
+strings/strings-built-in-the-frame	// REMARK+ acrossBranches (Add|Strcat): stack
+strings/strings-built-in-the-frame	// REMARK+ nearTheLimit (Add|Strcat): stack
+strings/strings-built-in-the-frame	// REMARK+ notAKeyAcrossBranches rejected: not in a loop and not a map key
+strings/strings-built-in-the-frame	// REMARK+ startsFromString (Add|Strcat): stack
+strings/strings-built-in-the-frame	// REMARK+ withNilOperands (Add|Strcat): stack
+strings/strings-built-in-the-frame	// REMARK+ wordsAndNumbers (Add|Strcat): stack
+strings/strings-built-in-the-frame	// REMARK- nearTheLimit rejected
+strings/switch	// CALLS+ kind tables [2-9]
+strings/switch	// CALLS- kind tests for equality with .* (9|10|11|12|13|32)\b
+strings/switch	// CALLS- kindPlain tests for equality with .* (9|10|11|12|13|32)\b
+strings/texts-branched-on-for-any-value	// CALLS+ whichUnknown ^whichUnknown: ([0-9]{1,2}|1[0-9]{2}|2[0-4][0-9]) instructions
+strings/two-strings-compared	// CALLS+ sameOrNil StringsAreEqual

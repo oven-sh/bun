@@ -134,6 +134,21 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         {
             return self.expr_into(fx, e, want, Why::Cast);
         }
+        if fx.is_typed
+            && !fx.returns_this
+            && self.out.funcs[fx.id.idx()].flags & (func_flags::ASYNC | func_flags::GENERATOR) == func_flags::ASYNC
+            && fx.func.is_some()
+            && self.hir(fx.file)[fx.func].ret.is_some()
+            && self.c.is_predicted(fx.file, e)
+        {
+            let (own, declared) = (self.c.type_of_expr(fx.file, e), self.c.return_type_of_fn(fx.file, fx.func));
+            let (held, held_as) = (self.c.awaited(own), self.c.awaited(declared));
+            self.c.note_place(fx.file, self.hir(fx.file)[e].pos);
+            self.note_entry_of_type(held, held_as);
+            let described = self.ty_of(held_as);
+            let views = self.types_of_layouts_in(described);
+            self.c.admits_foreign(held, &views);
+        }
         match self.held_on_return(fx) {
             Some((want, why)) if !fx.returns_this => self.expr_into(fx, e, want, why),
             // Nothing is said of what the function returns, so whoever calls it goes by nothing.
@@ -450,7 +465,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let s = &hir[stmt];
         fx.b.pos = s.start;
         if self.c.is_stack_low() {
-            return self.problem(fx.file, s.start, "a statement that is nested this deeply");
+            return self.problem(fx.file, s.start, "statements nested this deeply (the compiler ran out of stack)");
         }
         match s.kind {
             StmtKind::Empty
@@ -481,7 +496,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                             self.problem(fx.file, s.start, "a `using` declaration that is not directly in a block");
                             continue;
                         }
-                        let value = self.expr(fx, decl.init);
+                        let value = self.initial_value(fx, decl);
                         self.add_disposable_resource(fx, value, decl.kind == VarKind::AwaitUsing);
                         self.bind_pat(fx, decl.pat, value);
                         continue;
@@ -745,8 +760,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     StmtKind::Expr(e) => target = e,
                     _ => {}
                 }
-                let said_by_the_stores = if fx.is_typed { self.c.what_the_stores_say_of_array(fx.file, expr) } else { 0 };
-                let before = self.c.know_by_the_stores(said_by_the_stores != 0);
                 let is_just_read = table.is_none() && {
                     let of_iterable = self.c.type_of_expr(fx.file, expr);
                     self.c.parts(of_iterable).iter().all(|&part| self.c.is_array_or_tuple(part))
@@ -756,10 +769,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 let closing = fx.b.new_block();
                 fx.handlers.push(closing);
                 let value = if !is_just_read && value.is_some() { self.claim_iteration_value(fx, value, expr, false) } else { value };
-                self.c.know_by_the_stores(before);
-                if said_by_the_stores != 0 && value.is_some() {
-                    self.mark_read_known_by_the_stores(fx, value);
-                }
                 let opened = self.open_activation(fx, Activation::Iteration(stmt));
                 self.declare(fx, &names);
                 let head_unwind_depth = fx.handlers.len() - 1;
@@ -782,9 +791,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     fx.b.seal(bound);
                     fx.b.switch_to(bound);
                 } else if pat.is_some() {
-                    let before = self.c.know_by_the_stores(said_by_the_stores == 3);
                     self.bind_pat(fx, pat, value);
-                    self.c.know_by_the_stores(before);
                 } else if target.is_some() {
                     // `for (list[0] of items)`: an element is no place of the translated program.
                     if fx.is_typed {

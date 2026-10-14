@@ -1,0 +1,18 @@
+through a type in which it is optional: no error
+through any, by key: TypeError
+a number: TypeError
+Reflect.deleteProperty: no error
+line 12: TypeError
+all keys: TypeError
+id,title,pages,draft,author,editor,refs
+setPrototypeOf: no error
+false
+9
+Object.create as Doc: no error
+own property by the name of a method: TypeError
+property added to the prototype of a class: TypeError
+required field of an instance: TypeError
+method deleted from the prototype: TypeError
+p1n num,note,next 0
+1
+new (F as any)(): no error

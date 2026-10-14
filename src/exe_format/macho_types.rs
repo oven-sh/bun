@@ -49,6 +49,7 @@ pub(crate) mod PROT {
     use super::vm_prot_t;
     pub(crate) const READ: vm_prot_t = 0x01;
     pub(crate) const WRITE: vm_prot_t = 0x02;
+    pub(crate) const EXECUTE: vm_prot_t = 0x04;
 }
 
 #[repr(C)]

@@ -314,7 +314,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
         // allow_user_segv_handler=1, so we don't force it off here.
 #if OS(DARWIN)
-        JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
+        if (useAOT)
+            JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
 #endif
         Bun__installCompilers();
         Bun__AOT__setImageCodec();
@@ -335,7 +336,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // and trip JSValue::synthesizePrototype's isSymbol() debug assert.
             JSC::Options::exposeInternalModuleLoader() = false;
             JSC::Options::useSharedArrayBuffer() = true;
-            JSC::Options::useMiniVMModeWithoutJIT() = false;
+            if (useAOT)
+                JSC::Options::useMiniVMModeWithoutJIT() = false;
             JSC::Options::useJITCage() = false;
             JSC::Options::useShadowRealm() = true;
             JSC::Options::useV8DateParser() = true;
@@ -349,15 +351,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::useImportDefer() = true;
             JSC::Options::useTemporal() = true;
             JSC::Options::useAOT() = useAOT;
-            if (const char* value = getenv("BUN_AOT_OPTIONS")) {
-                for (auto option : WTF::StringView::fromLatin1(value).split(',')) {
-                    auto text = option.utf8();
-                    if (!JSC::Options::setOption(byteCast<char>(text.data()))) {
-                        WTFLogAlways("BUN_AOT_OPTIONS: %s is not an option", byteCast<char>(text.data()));
-                        exit(1);
-                    }
-                }
-            }
             // Upstream enabled Wasm Memory64 by default (0d0080ea539d); keep
             // it off in Bun while upstream stabilises it.
             // BUN_JSC_useWasmMemory64=1 re-enables it for opt-in testing.

@@ -1,0 +1,24 @@
+start | base1 base1base1 10 | derived(base1) derived(base1)derived(base1) 10 | derived(base1) derived(base1)derived(base1) 10 | only1 | n n
+a method replaced: no error undefined
+a method replaced in the extending class: no error undefined
+a method deleted: no error true
+a method redefined: no error undefined
+a getter redefined: no error undefined
+an accessor made a value: no error undefined
+a property added: no error undefined
+a method of the base class given to the prototype of the extending class: no error undefined
+another prototype for the prototype: no error undefined
+by Reflect: true true true true
+line 38: TypeError
+an own property by the name of a method: TypeError
+the same for a method that is inherited: no error undefined
+the same by defineProperty: no error undefined
+an own property by the name of an accessor: no error undefined
+line 43: TypeError
+a static method replaced: no error undefined
+line 45: TypeError
+false false false false true true
+given to the prototype of the extending class: TypeError
+replaced replaced true false
+stored again after it was deleted: TypeError
+false false

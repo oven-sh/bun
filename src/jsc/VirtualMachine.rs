@@ -4832,6 +4832,7 @@ impl VirtualMachine {
         let vm_ref = unsafe { &mut *vm };
         vm_ref.transpiler.resolver.standalone_module_graph = Some(graph);
         vm_ref.let_heap_take_initial_module_graph(graph);
+        vm_ref.dns_result_order = opts.dns_result_order;
         // Avoid reading from tsconfig.json & package.json when in standalone mode
         vm_ref.transpiler.configure_linker_with_auto_jsx(false);
         IS_SMOL_MODE.store(opts.smol, core::sync::atomic::Ordering::Relaxed);

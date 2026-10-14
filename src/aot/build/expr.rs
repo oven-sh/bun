@@ -55,7 +55,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         fx.b.pos = pos;
         if self.shared.constants.notes_spans && value.is_some() && value.idx() < made_so_far {
             let node = &self.hir(fx.file)[e];
-            fx.first_spans.entry(value).or_insert(crate::audit::Noted { start: node.pos, end: node.end, step: crate::audit::READ_LATER, block: fx.b.block });
+            let noted = fx.first_spans.entry(value).or_insert(crate::audit::Noted { start: node.pos, end: node.end, step: 0, block: fx.b.block });
+            if (noted.start, noted.end, noted.step) == (node.pos, node.end, 0) {
+                noted.step = crate::audit::READ_LATER;
+            }
         }
         self.note_span(fx, value, e);
         let value = self.fit_to_expression(fx, value, e);
@@ -667,6 +670,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } if chain != Chain::No => self.optional_chain(fx, e),
             ExprKind::Dot { obj, name, .. } => self.dot(fx, e, obj, name, BlockId::NONE),
             ExprKind::Index { obj, index, .. } if matches!(hir[obj].kind, ExprKind::Super) => {
+                self.this(fx, node.pos);
                 let key = self.expr(fx, index);
                 self.super_get_by_key(fx, key, node.pos)
             }
@@ -1388,8 +1392,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let value = self.emit_throwing(fx, Op::PropGet { obj: step, name: value_name });
         self.emit_return(fx, value);
         fx.b.switch_to(not_yet);
-        self.write(fx, inner, step);
-        fx.b.jump(check);
+        let value = self.emit_throwing(fx, Op::PropGet { obj: step, name: value_name });
+        self.write(fx, yielded, value);
+        fx.b.jump(suspend);
 
         fx.b.seal(check);
         fx.b.switch_to(check);
@@ -1779,7 +1784,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let ExprKind::As { expr: operand, .. } = hir[e].kind else { return false };
         names_no_layout && is_of_the_engine && matches!(hir[operand].kind, ExprKind::As { .. }) && {
             let between = self.c.type_of_expr(fx.file, operand);
-            between.is_any() || between == TypeId::UNKNOWN
+            between.is_any() || between == TypeId::UNKNOWN || between.is_never()
         }
     }
 
@@ -1826,6 +1831,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 } else if !self.c.is_fresh_graph_by_text(fx.file, expr) {
                     // `required as Plugin`, of an `unknown`: the cast makes nothing of what somebody else holds, so what it hands on is as untyped as what it was handed, whatever the checker takes the cast for.
                     let written = self.c.type_of_expr(fx.file, expr);
+                    let written = if written.is_never() && matches!(self.hir(fx.file)[expr].kind, ExprKind::As { .. }) { TypeId::UNKNOWN } else { written };
                     let operand = self.ty_of(written);
                     let described = self.out.tys.get(operand);
                     let is_untyped = described.any_object && !described.parts.iter().any(|part| matches!(part, Part::Class(_)));
@@ -2045,6 +2051,22 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             && self.c.is_array_from(fx.file, parent)
         {
             return self.record_layout(own).filter(|&found| self.fits(found, names));
+        }
+        if let Parent::Expr(parent) = self.c.bound(fx.file).expr_parent[e.idx()]
+            && let hir = self.hir(fx.file)
+            && matches!(hir[parent].kind, ExprKind::Call(call) if hir.ids(hir[call].args).next() == Some(e))
+            && self.c.is_call_that_yields_its_argument_as_it_is(fx.file, parent)
+            && let Some(of_call) = self.c.contextual_type_of_literal(fx.file, parent)
+        {
+            for part in self.c.parts(of_call).to_vec() {
+                if self.is_object_type_of_program(part)
+                    && let Some(found) = self.record_layout(part)
+                    && self.fits(found, names)
+                    && self.c.is_provably_assignable(own, part)
+                {
+                    return Some(found);
+                }
+            }
         }
         let expected = self.c.contextual_type_of_literal(fx.file, e).filter(|&expected| self.ty_of(expected) != self.out.tys.anything);
         let Some(expected) = expected else { return self.record_layout(own).filter(|&found| self.fits(found, names)) };
@@ -2945,7 +2967,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             },
             _ => {
                 let pos = fx.b.pos;
-                self.unsupported(fx, pos, "a `$` name that stands where the table of them has none")
+                self.unsupported(fx, pos, "this use of a `$` intrinsic, which only Bun's built-in modules have")
             }
         })
     }
@@ -2979,7 +3001,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let is_known = matches!(resolve_intrinsic(rest, Position::Member), Some(Intrinsic::PrivateName));
         let private = [&[PRIVATE_NAME_PREFIX][..], rest].concat();
         if !is_known {
-            self.problem(fx.file, fx.b.pos, "a `$` name that stands where the table of them has none");
+            self.problem(fx.file, fx.b.pos, "this use of a `$` intrinsic, which only Bun's built-in modules have");
         }
         self.out.strs.intern(&private)
     }
@@ -3474,6 +3496,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         if let ExprKind::Index { obj, index, .. } = hir[c.callee].kind
             && matches!(hir[obj].kind, ExprKind::Super)
         {
+            self.this(fx, pos);
             let key = self.expr(fx, index);
             let callee = self.super_get_by_key(fx, key, pos);
             self.end_chain_if_nullish(fx, c.chain, callee, bail);
@@ -3568,6 +3591,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 Some((callee, self.this(fx, hir[e].pos)))
             }
             ExprKind::Index { obj, index, chain: Chain::No } if matches!(hir[obj].kind, ExprKind::Super) => {
+                self.this(fx, hir[e].pos);
                 let key = self.expr(fx, index);
                 let callee = self.super_get_by_key(fx, key, hir[e].pos);
                 Some((callee, self.this(fx, hir[e].pos)))
@@ -4473,7 +4497,10 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                     None => Reference::Prop { obj, name: self.str(name), e },
                 }
             }
-            ExprKind::Index { obj, index, .. } if matches!(hir[obj].kind, ExprKind::Super) => Reference::SuperElem(self.expr(fx, index)),
+            ExprKind::Index { obj, index, .. } if matches!(hir[obj].kind, ExprKind::Super) => {
+                self.this(fx, hir[obj].pos);
+                Reference::SuperElem(self.expr(fx, index))
+            }
             ExprKind::Index { obj, index, .. } => {
                 let obj = self.expr(fx, obj);
                 let key = self.expr(fx, index);

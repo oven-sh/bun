@@ -232,7 +232,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let says_no_more_than_the_type = match prediction {
             Prediction::None => true,
             Prediction::Ty(expected) | Prediction::Field(expected) => tys.get(ty).is_described_within(tys.get(expected)),
-            Prediction::Closure(_) | Prediction::ByKey(_) | Prediction::Stores => false,
+            Prediction::Closure(_) | Prediction::ByKey(_) => false,
         };
         if says_no_more_than_the_type || prediction == so_far {
             return value;

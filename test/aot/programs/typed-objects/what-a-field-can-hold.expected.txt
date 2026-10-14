@@ -1,0 +1,69 @@
+1 store taken
+1 looked at text
+1 held TypeError
+2 store taken
+2 looked at text
+2 held TypeError
+3 store taken
+3 looked at text
+3 held TypeError
+4 store TypeError
+4 looked at 1
+4 held 2
+5 store taken
+5 looked at text
+5 held TypeError
+6 the cast s
+6 store taken
+6 looked at undefined
+6 held TypeError
+7 store TypeError
+7 looked at 1
+7 held 2
+8 by key TypeError
+8 by key, looked at 1
+8 assign TypeError
+8 assign, looked at 1
+8 Reflect.set TypeError
+8 Reflect.set, looked at 1
+8 define TypeError
+8 define, looked at 1
+9 define TypeError
+9 looked at 1
+9 held 2
+10 delete TypeError
+10 looked at 1
+10 held 2
+11 looked at undefined
+11 held TypeError
+11 a reference undefined
+11 through it TypeError
+12 looked at undefined
+12 held NaN
+12 a reference undefined
+13 store ! TypeError
+13 store as taken
+13 looked at undefined
+13 a number as taken
+13 a number looked at NaN
+14 store taken
+14 looked at TypeError
+14 held TypeError
+15 a name of Object.prototype function
+15 given a prototype taken
+15 looked at inherited
+16 written text
+16 cast NaN
+16 held NaN
+16 within TypeError
+17 looked at text
+17 held TypeError
+18 store taken
+18 looked at text
+18 held TypeError
+18 past the end undefined
+18 past the end, held TypeError
+19 store TypeError
+19 looked at 1
+20 store TypeError
+20 looked at 0

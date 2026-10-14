@@ -1,0 +1,4 @@
+a field becomes an accessor: TypeError
+0 1 {"v":1,"w":0}
+another prototype: no error
+proto false

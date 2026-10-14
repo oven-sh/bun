@@ -303,7 +303,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 };
             let is_bound_anew = self.value_declaration(sym).is_some_and(|(of, decl)| !self.c.is_bound_once(of, decl));
             if sym.file == fx.file && is_bound_anew && !is_at_hand {
-                self.problem(fx.file, pos, "a factory of the classic JSX runtime that a function or a loop binds, reached from a closure that does not name it");
+                self.problem(fx.file, pos, "a locally bound JSX factory (jsxFactory) that is used from a nested function");
             }
         }
         let mut this = self.emit(fx, Op::Undefined);

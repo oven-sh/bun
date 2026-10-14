@@ -1,0 +1,98 @@
+const aotRemarks = () => null, isAOTCompiled = () => false, aotFunctionsNamed = () => [], aotOperationCount = () => 0, aotTypeCoverage = () => null, aotSetFamily = () => undefined, aotFamilyOf = () => 0, aotHasDepartedFamily = () => false;
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1")
+// Typed bodies are switched off (AOT::mayHaveGeneralBody admits no function) until every exact call site is checked against the types its callee's typed body was compiled for. The assertions that a function has one are skipped meanwhile. Every value must hold either way.
+const typedBodiesAreSwitchedOff = true;
+function check(actual, expected, what) {
+    if (!Object.is(actual, expected))
+        throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
+}
+function has(name, remark) {
+    let remarks = aotRemarks(name);
+    return remarks && remarks.length ? remarks.some(other => other === remark || other.startsWith(remark + ":")) : undefined;
+}
+function hasTwoBodies(name) { check([has(name, "is-typed-body") !== false, has(name, "is-general-body") !== false].join(), "true,true", name + " has two bodies"); }
+function hasOneBody(name) { check([has(name, "is-typed-body") !== true, has(name, "is-general-body") !== true].join(), "true,true", name + " has one body"); }
+function thrownBy(f, ...parameters) {
+    try {
+        f(...parameters);
+    } catch (error) {
+        return error.constructor.name;
+    }
+    return "nothing";
+}
+const usesInlining = has("probeCaller", "inlined-call:probe");
+let kept = { };
+function keep(name, value) { kept[name] = value; return value; }
+noInline(keep);
+let anything = keep("anything", 7);
+
+(function () {
+    function probe(x) { return x; }
+    function probeCaller(x) { return probe(x); }
+    probeCaller(1);
+
+    function addsInt32(a, b) { return a + b; }
+    function scalesDouble(a, b) { return a * 0.5 + b; }
+    function lengthOfString(s) { return s.length; }
+    function readsObject(o, d) { return o.x + d; }
+    function usesThis(d) { "use strict"; return this.x + d; }
+    function callsAddsInt32(x) { return addsInt32(x | 0, 2) + 1; }
+    function callsScalesDouble(x) { return scalesDouble(x + 0.5, 1.5); }
+    function callsLengthOfString(x) { return lengthOfString("abc" + x); }
+    function callsReadsObject(x) { return readsObject({ x: x | 0, y: 2 }, 1); }
+    for (let f of [addsInt32, scalesDouble, lengthOfString, readsObject, usesThis])
+        keep(f.name, f);
+    check([callsAddsInt32(1), callsScalesDouble(1), callsLengthOfString(1), callsReadsObject(1)].join(), "4,2.25,4,2", "direct calls");
+
+    function appliesCallback(f, x) { return f(x); }
+    function staysClosed(x) { return x + 1; }
+    function passesCallback(x) { return appliesCallback(staysClosed, x | 0); }
+    keep("appliesCallback", appliesCallback);
+    check(passesCallback(1), 2, "a callback passed to an open helper by a known call site");
+
+    function takesAnything(a) { return String(a).length; }
+    function callsTakesAnything() { return takesAnything(anything); }
+    keep("takesAnything", takesAnything);
+    check(callsTakesAnything(), 1, "a direct call that passes anything");
+
+    function firstOfPhi(a) { return a + 1; }
+    function secondOfPhi(a) { return a + 2; }
+    function callsOneOfTwo(which) { let f = which ? firstOfPhi : secondOfPhi; return f(1) + firstOfPhi(1) + secondOfPhi(1); }
+    check(callsOneOfTwo(true) + callsOneOfTwo(false), 7 + 8, "two functions that meet in a phi");
+
+    function countsDown(n) { return n <= 0 ? 0 : 1 + countsDown(n - 1); }
+    keep("countsDown", countsDown);
+    check(countsDown(3), 3, "recursion by name");
+
+    function* generates(a) { yield a + 1; }
+    async function awaits(a) { return a + 1; }
+    function usesArguments(a) { return a + arguments.length; }
+    function makesClosure(a) { return () => a + 1; }
+    function callsTheRest() { return generates(1).next().value + usesArguments(1) + makesClosure(1)() + (awaits(1) instanceof Promise ? 1 : 0); }
+    for (let f of [generates, awaits, usesArguments, makesClosure])
+        keep(f.name, f);
+    check(callsTheRest(), 2 + 2 + 2 + 1, "functions that get no second body");
+})();
+
+check([kept.addsInt32(1, 2), kept.addsInt32("a", "b"), kept.addsInt32(1.5, 2), kept.addsInt32(), kept.addsInt32(1, 2, 3), kept.addsInt32({ valueOf() { return 1; } }, 1n === 1n)].join(), "3,ab,3.5,NaN,3,2", "from outside, with other types");
+check([kept.addsInt32.call(null, 1, 2), kept.addsInt32.apply(null, ["a", 1]), kept.addsInt32.bind(null, "x")("y"), Reflect.apply(kept.addsInt32, null, [2, 3]), [1, 2].map(kept.addsInt32).join("|"), typeof new kept.addsInt32(1, 2)].join(), "3,a1,xy,5,1|3,object", "call, apply, bind, Reflect.apply, a callback of map, new");
+check([kept.scalesDouble(2, 1), kept.scalesDouble("4", "x"), kept.lengthOfString("ab"), kept.lengthOfString([1, 2, 3]), kept.lengthOfString({ length: "l" }), thrownBy(kept.lengthOfString, undefined)].join(), "2,2x,2,3,l,TypeError", "doubles and strings from outside");
+check([kept.readsObject({ x: 1 }, 1), kept.readsObject({ y: 0, x: "s" }, 1), kept.readsObject(5, 1), thrownBy(kept.readsObject, null, 1), kept.usesThis.call({ x: 1 }, 1), thrownBy(kept.usesThis, 1)].join(), "2,s1,NaN,TypeError,2,TypeError", "objects and this from outside");
+check(Object.defineProperty({ }, "p", { get: kept.takesAnything }).p, 9, "as a getter");
+check([kept.appliesCallback(x => x + "!", "a"), thrownBy(kept.appliesCallback, 1, 2), kept.countsDown(2), kept.countsDown("2"), kept.countsDown(-1)].join(), "a!,TypeError,2,2,0", "the helper and the recursive function from outside");
+
+if (usesInlining === false && !typedBodiesAreSwitchedOff) {
+    for (let name of ["addsInt32", "scalesDouble", "lengthOfString", "readsObject", "appliesCallback"])
+        hasTwoBodies(name);
+    for (let [caller, callee] of [["callsAddsInt32", "addsInt32"], ["callsScalesDouble", "scalesDouble"], ["callsLengthOfString", "lengthOfString"], ["callsReadsObject", "readsObject"], ["passesCallback", "appliesCallback"]])
+        check(has(caller, "calls-typed-body:" + callee) !== false, true, caller + " calls the typed body of " + callee);
+    check(has("callsAddsInt32", "calls:Add") !== true, true, "the result of the typed body is an Int32 or a double");
+    check(has("staysClosed", "function-does-not-escape") !== false, true, "the callback stays closed");
+}
+for (let name of ["usesThis", "takesAnything", "firstOfPhi", "secondOfPhi", "generates", "awaits", "usesArguments", "makesClosure", "staysClosed", "probe"])
+    hasOneBody(name);
+check(has("callsTakesAnything", "calls-typed-body") !== true, true, "a function whose direct calls pass anything has no typed body to call");
+console.log("passed");

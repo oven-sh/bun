@@ -169,10 +169,10 @@ impl Tier {
 
     fn text(self) -> &'static str {
         match self {
-            Tier::Outside => "outside",
-            Tier::Assertion => "assertion",
-            Tier::Typed => "typed",
-            Tier::Rule => "rule",
+            Tier::Outside => "untyped-input",
+            Tier::Assertion => "cast",
+            Tier::Typed => "typed-code",
+            Tier::Rule => "restriction",
         }
     }
 }
@@ -498,12 +498,13 @@ impl<'a> Flow<'a> {
             count += many as u32;
             first
         };
-        let first_value: Vec<u32> = program.funcs.iter().filter(|_| is_whole).map(|func| take(func.values.len())).collect();
+        let (funcs, layouts) = if is_whole { (&program.funcs[..], &program.layouts[..]) } else { (&[][..], &[][..]) };
+        let first_value: Vec<u32> = funcs.iter().map(|func| take(func.values.len())).collect();
         let results = take(if is_whole { program.funcs.len() } else { 0 });
         let globals = take(if frozen.is_some() { 0 } else { program.globals.len() });
-        let first_field: Vec<u32> = program.layouts.iter().filter(|_| is_whole).map(|layout| take(layout.fields.len())).collect();
+        let first_field: Vec<u32> = layouts.iter().map(|layout| take(layout.fields.len())).collect();
         let fields = count - first_field.first().copied().unwrap_or(count);
-        let mut is_closed: Vec<bool> = program.funcs.iter().filter(|_| is_whole).map(|func| !func.has(func_flags::IS_VALUE | func_flags::IS_GENERAL_ENTRY | func_flags::IS_BUILTIN | func_flags::ASYNC | func_flags::GENERATOR) && matches!(func.kind, FuncKind::Plain | FuncKind::Arrow)).collect();
+        let mut is_closed: Vec<bool> = funcs.iter().map(|func| !func.has(func_flags::IS_VALUE | func_flags::IS_GENERAL_ENTRY | func_flags::IS_BUILTIN | func_flags::ASYNC | func_flags::GENERATOR) && matches!(func.kind, FuncKind::Plain | FuncKind::Arrow)).collect();
         let mut is_called = vec![false; is_closed.len()];
         let mut is_open_field = vec![true; fields as usize];
         let base_of_fields = first_field.first().copied().unwrap_or(count);
@@ -516,7 +517,7 @@ impl<'a> Flow<'a> {
                 list.push(who as u32);
             }
         };
-        for (who, func) in program.funcs.iter().enumerate().filter(|_| is_whole) {
+        for (who, func) in funcs.iter().enumerate() {
             for (number, value) in func.values.iter().enumerate() {
                 match &value.def {
                     Def::Op(Op::CallDirect { func: called, .. }) => note(&mut callers[called.idx()], who),
@@ -542,7 +543,7 @@ impl<'a> Flow<'a> {
                 }
             }
         }
-        for layout in program.layouts.iter().filter(|_| is_whole) {
+        for layout in layouts {
             for method in layout.methods.iter().filter(|method| method.func.is_some()) {
                 is_closed[method.func.idx()] = false;
             }
@@ -1026,17 +1027,12 @@ impl<'a> Flow<'a> {
                 self.natural_of_member(index, func, v, obj, name, receiver, false)
             }
             &Op::ElemGet { obj, .. } => {
-                if func.prediction(v) == Prediction::Stores {
-                    return Natural::Vouched;
-                }
                 let receiver = self.val(index, func, facts, keys, obj, false);
                 let described = self.get(receiver);
                 let holds_numbers = !described.is_never() && !described.any_object && !described.any_function && described.parts.iter().all(|part| matches!(part, Part::Global(name, _) if self.program.strs.get(*name).ends_with(b"Array")));
                 if holds_numbers { Natural::Vouched } else { Natural::Unknown(Kind::Element) }
             }
-            Op::IterGet { .. } => {
-                if func.prediction(v) == Prediction::Stores { Natural::Vouched } else { Natural::Unknown(Kind::Element) }
-            }
+            Op::IterGet { .. } => Natural::Unknown(Kind::Element),
             Op::Call { callee, .. } => {
                 if let Some(found) = self.called_at(index, func, v) {
                     return Natural::Is(self.result_of_functions(func, v, &found));
@@ -2156,7 +2152,7 @@ impl<'a> Report<'a, '_> {
                         self.call = calls.get(&v).copied().filter(|call| call.0 != 0);
                         self.add(func, pos, kind, verdict, text_of(program, &wanted, 0), found, detail, origin);
                         if holds_a_copy {
-                            self.add(func, pos, Kind::Copy, Verdict::Unknown, text_of(program, &wanted, 0), "plain object".to_owned(), "an object that is not laid out may be copied here: writes go to the copy, and `===` with the original is false".to_owned(), origin);
+                            self.add(func, pos, Kind::Copy, Verdict::Unknown, text_of(program, &wanted, 0), "untyped object".to_owned(), "an object that is not laid out may be copied here: writes go to the copy, and `===` with the original is false".to_owned(), origin);
                         }
                     }
                     Op::PropGet { .. } | Op::ElemGet { .. } | Op::IterGet { .. } | Op::Call { .. } | Op::CallMethod { .. } | Op::Construct { .. } | Op::Await(_) | Op::Operation { .. } if self.flow.says_something(func.ty(v)) => {
@@ -2277,7 +2273,7 @@ impl<'a> Report<'a, '_> {
         {
             let owner = self.name_of_function(&program.funcs[owner.idx()]);
             self.name = Some("generator-prototype-write");
-            return self.add(func, pos, Kind::PrototypeWrite, Verdict::Wrong, String::new(), String::new(), format!("`prototype` of the generator function {owner} is {verb}: loops call the generator's body directly"), context);
+            return self.add(func, pos, Kind::PrototypeWrite, Verdict::Wrong, String::new(), String::new(), format!("`prototype` of the generator function {owner} is {verb}: it is fixed when the program is compiled"), context);
         }
         if let Some(owner) = self.owner_of_prototype(index, obj) {
             let (made, named) = (&program.funcs[owner.idx()], self.name_of_function(&program.funcs[owner.idx()]));
@@ -2457,7 +2453,7 @@ impl<'a> Report<'a, '_> {
         let called = program.strs.get(name);
         if called == b"construct" && args.len() > 2 {
             self.name = Some("construct-new-target");
-            return self.add(func, pos, Kind::Result, Verdict::Unknown, String::new(), String::new(), "`Reflect.construct` with a new.target of its own: a typed constructor function takes none whose `prototype` is not that of a typed function".to_owned(), 0);
+            return self.add(func, pos, Kind::Result, Verdict::Unknown, String::new(), String::new(), "`Reflect.construct` with a new.target of its own: a constructor function in TypeScript code of the program takes none whose `prototype` is not that of such a function".to_owned(), 0);
         }
         if !matches!(called, b"defineProperty" | b"defineProperties" | b"setPrototypeOf" | b"assign" | b"set" | b"deleteProperty") {
             return;
@@ -2508,7 +2504,7 @@ impl<'a> Report<'a, '_> {
             match called {
                 b"setPrototypeOf" => {
                     self.name = Some("object-set-prototype");
-                    self.add(func, pos, Kind::Mutation, if is_only { Verdict::Wrong } else { Verdict::Unknown }, String::new(), String::new(), format!("`{shown}` on {owner}: compiled objects have a fixed prototype"), context);
+                    self.add(func, pos, Kind::Mutation, if is_only { Verdict::Wrong } else { Verdict::Unknown }, String::new(), String::new(), format!("`{shown}` on {owner}: objects of a declared type keep their prototype"), context);
                 }
                 b"defineProperty" | b"deleteProperty" => {
                     let names_a_field = key.is_some_and(|key| made_as.field(key).is_some());
@@ -2746,7 +2742,15 @@ pub(super) fn explain(program: &Program, as_json: bool, lists_all: bool, line_an
     let mut listed = [0usize; 4];
     let many = |tier: Tier| sites.iter().filter(|site| site.tier == tier && site.verdict != Verdict::Wrong).count();
     let folds_the_outside = !as_json && !lists_all && many(Tier::Outside) > MOST_LISTED;
-    for site in sites.iter().filter(|site| lists_all || site.tier != Tier::Typed || site.verdict == Verdict::Wrong) {
+    for site in &sites {
+        let ordinal = {
+            let next = ordinals.entry((site.module, site.pos, site.name)).or_insert(0usize);
+            *next += 1;
+            *next - 1
+        };
+        if !lists_all && site.tier == Tier::Typed && site.verdict != Verdict::Wrong {
+            continue;
+        }
         if !as_json && !lists_all && site.verdict != Verdict::Wrong {
             let so_far = &mut listed[Tier::ALL.iter().position(|&tier| tier == site.tier).unwrap_or(0)];
             *so_far += 1;
@@ -2760,30 +2764,25 @@ pub(super) fn explain(program: &Program, as_json: bool, lists_all: bool, line_an
             let (line, column) = line_and_column(*module, *pos);
             (path_of(*module), line, column, what.clone())
         });
+        let shown_path = path_of(site.module);
+        let id_of = |line: u32, column: u32, name: &str, ordinal: usize| crate::audit::id_of(shown_path.as_bytes(), line as usize, column as usize, name, ordinal);
+        let id = id_of(line, column, site.name, ordinal);
+        let id_of_call = site.call.map(|(at, parameter)| {
+            let (line, column) = line_and_column(site.module, at);
+            id_of(line, column, "enter-argument", parameter as usize)
+        });
         if as_json {
-            let shown_path = path_of(site.module);
-            let ordinal = ordinals.entry((site.module, site.pos, site.name)).or_insert(0usize);
-            let id_of = |line: u32, column: u32, name: &str, ordinal: usize| {
-                let mut hash: u64 = 0xcbf29ce484222325;
-                for &byte in shown_path.as_bytes().iter().chain(format!(":{line}:{column}:{name}:{ordinal}").as_bytes()) {
-                    hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
-                }
-                (hash >> 48) ^ (hash & 0xffff_ffff_ffff)
-            };
-            let id = id_of(line, column, site.name, *ordinal);
-            *ordinal += 1;
-            let mut text = format!("{{\"aot\":\"type-check\",\"id\":\"{:012x}\",\"kind\":\"{}\",\"group\":\"{}\",\"what\":\"{}\",\"file\":\"{}\",\"line\":{line},\"col\":{column},\"fn\":\"{}\"", id, site.name, site.kind.text(), site.what, escaped(&shown_path), escaped(&site.function));
+            let mut text = format!("{{\"aot\":\"type-check\",\"id\":\"{}\",\"kind\":\"{}\",\"group\":\"{}\",\"what\":\"{}\",\"file\":\"{}\",\"line\":{line},\"col\":{column},\"fn\":\"{}\"", id, site.name, site.kind.text(), site.what, escaped(&shown_path), escaped(&site.function));
             for (key, value) in [("expected", &site.expected), ("got", &site.found), ("value", &site.value), ("detail", &site.detail)] {
                 if !value.is_empty() {
                     let _ = write!(text, ",\"{key}\":\"{}\"", escaped(value));
                 }
             }
-            if let Some((at, parameter)) = site.call {
-                let (line, column) = line_and_column(site.module, at);
-                let _ = write!(text, ",\"callId\":\"{:012x}\"", id_of(line, column, "enter-argument", parameter as usize));
+            if let Some(id_of_call) = &id_of_call {
+                let _ = write!(text, ",\"callId\":\"{id_of_call}\"");
             }
-            let _ = write!(text, ",\"action\":\"{verdict}\",\"tier\":\"{}\"", site.tier.text());
-            for (key, value) in [("risk", site.risk), ("door", &site.door[..])] {
+            let _ = write!(text, ",\"action\":\"{verdict}\",\"category\":\"{}\"", site.tier.text());
+            for (key, value) in [("risk", site.risk), ("source", &site.door[..])] {
                 if !value.is_empty() {
                     let _ = write!(text, ",\"{key}\":\"{}\"", escaped(value));
                 }
@@ -2795,15 +2794,19 @@ pub(super) fn explain(program: &Program, as_json: bool, lists_all: bool, line_an
             lines.push(text);
             continue;
         }
-        let mut text = format!("throws: {}:{line}:{column}: {verdict}: {} ({})", path_of(site.module), site.name, site.tier.text());
+        let mut text = format!("[aot] type-check {id} {} {shown_path}:{line}:{column} ({})", site.name, site.function);
         if !site.detail.is_empty() {
             let _ = write!(text, ": {}", site.detail);
         }
         if !site.expected.is_empty() {
             let _ = write!(text, ": expected {}, {} {}", site.expected, if site.verdict == Verdict::Wrong { "always gets" } else { "may get" }, site.shown());
         }
+        let _ = write!(text, "; {verdict}");
+        if let Some(id_of_call) = &id_of_call {
+            let _ = write!(text, "; call {id_of_call}");
+        }
         if let Some((path, line, column, what)) = &from {
-            let _ = write!(text, "; from {what} at {path}:{line}:{column}");
+            let _ = write!(text, "; value from {what} at {path}:{line}:{column}");
         }
         let _ = write!(text, "; fix: {}", site.kind.fix(site.verdict));
         lines.push(text);
@@ -2827,30 +2830,38 @@ pub(super) fn explain(program: &Program, as_json: bool, lists_all: bool, line_an
         let throwing: usize = doors.iter().map(|door| door.1.1 + door.1.2).sum();
         let mut so_far = 0;
         let half = doors.iter().take_while(|door| { let is_short = so_far * 2 < throwing; so_far += door.1.1 + door.1.2; is_short }).count();
-        lines.push(format!("throws: {} places check what comes from outside, through {} doors; {throwing} of the places throw on a wrong value (they expect a primitive, or a type that takes no foreign object), and {half} doors hold half of those; the doors, by how many such places they have:", many(Tier::Outside), doors.len()));
+        lines.push(format!("[aot] type-check summary: {} checks take values from untyped code, which come from {} sources; {throwing} of the checks throw on a wrong value, and {half} sources account for half of those. The sources, largest first:", many(Tier::Outside), doors.len()));
         for (door, (places, primitives, closed, first)) in doors.iter().take(MOST_DOORS) {
             let (line, column) = line_and_column(first.module, first.pos);
-            lines.push(format!("throws: door: {}: {places} places, {primitives} expect a primitive, {closed} a closed type; e.g. {}:{line}:{column}: {}: expected {}", if door.is_empty() { "(unknown)" } else { door }, path_of(first.module), first.name, first.expected));
+            lines.push(format!("[aot] type-check source: {}: {places} checks, {primitives} expect a primitive, {closed} a class or an exact object type; e.g. {}:{line}:{column}: {}: expected {}", if door.is_empty() { "(unknown)" } else { door }, path_of(first.module), first.name, first.expected));
         }
         if doors.len() > MOST_DOORS {
-            lines.push(format!("throws: {} more doors: --aot-explain=throws-json has a line a place, with its door and its risk", doors.len() - MOST_DOORS));
+            lines.push(format!("[aot] type-check summary: {} more sources: --aot-explain=throws-json prints one line per check, with its source", doors.len() - MOST_DOORS));
         }
     }
     for (tier, &count) in Tier::ALL.iter().zip(&listed) {
         if count > MOST_LISTED && !(folds_the_outside && *tier == Tier::Outside) {
-            lines.push(format!("throws: {} more of the tier {}: --aot-explain=throws-all lists them", count - MOST_LISTED, tier.text()));
+            lines.push(format!("[aot] type-check summary: {} more of the category {}: --aot-explain=throws-all lists them", count - MOST_LISTED, tier.text()));
         }
     }
-    for (kind, fine) in fine {
+    for (kind, fine) in fine.into_iter().filter(|_| lists_all) {
         let count = |verdict: Verdict| sites.iter().filter(|site| site.kind == kind && site.verdict == verdict).count();
         let by_tier: Vec<String> = Tier::ALL.iter().map(|&tier| (tier, sites.iter().filter(|site| site.kind == kind && site.verdict == Verdict::Unknown && site.tier == tier).count())).filter(|found| found.1 != 0).map(|(tier, count)| format!("{count} {}", tier.text())).collect();
-        lines.push(format!("throws: count: {}: {} provably fine, {} provably wrong, {} unknown{}{}", kind.text(), fine, count(Verdict::Wrong), count(Verdict::Unknown), if by_tier.is_empty() { "" } else { ": " }, by_tier.join(", ")));
+        lines.push(format!("[aot] type-check count: {}: {} never fail, {} always fail, {} can fail{}{}", kind.text(), fine, count(Verdict::Wrong), count(Verdict::Unknown), if by_tier.is_empty() { "" } else { ": " }, by_tier.join(", ")));
     }
-    lines.push(format!("throws: count: {throws_either_way} checks for undefined or null stand right ahead of an access that throws in plain JavaScript too: not announced"));
-    for tier in Tier::ALL {
-        lines.push(format!("throws: count: tier {}: {} unknown", tier.text(), sites.iter().filter(|site| site.verdict == Verdict::Unknown && site.tier == tier).count()));
+    if lists_all {
+        lines.push(format!("[aot] type-check count: {throws_either_way} checks for undefined or null are not listed: the next operation throws in plain JavaScript too"));
+        for tier in Tier::ALL {
+            lines.push(format!("[aot] type-check count: category {}: {} can fail", tier.text(), sites.iter().filter(|site| site.verdict == Verdict::Unknown && site.tier == tier).count()));
+        }
+        lines.push(format!("[aot] type-check count: {rounds} passes over functions; {prepared:.2} s, {settled:.2} s, {looked:.2} s"));
     }
     let counted = if lists_all { 0 } else { sites.iter().filter(|site| site.tier == Tier::Typed && site.verdict != Verdict::Wrong).count() };
-    lines.push(format!("throws: {} sites are listed, {} of them errors; {counted} more can fail only where a value contradicts a type that typed code gave it: --aot-explain=throws-all lists them; the flows settled in {rounds} runs of a function: {prepared:.2} s to prepare, {settled:.2} s to settle, {looked:.2} s to look at the sites", sites.len() - counted, sites.iter().filter(|site| site.verdict == Verdict::Wrong).count()));
+    let always = sites.iter().filter(|site| site.verdict == Verdict::Wrong).count();
+    let mut summary = format!("[aot] type-check summary: {} checks can fail when the program runs, {always} always fail", sites.len() - counted - always);
+    if counted != 0 {
+        let _ = write!(summary, "; {counted} more fail only if TypeScript code of the program itself produces a value of the wrong type (--aot-explain=throws-all lists them)");
+    }
+    lines.push(summary);
     lines
 }

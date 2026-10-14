@@ -829,36 +829,6 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
     /// value is what the place is declared to hold, and the use that needs more makes sure of it: see `as_narrowed`.
     pub(crate) fn fit_to_expression(&mut self, fx: &mut Fx, value: V, e: ExprId) -> V {
         self.note_span(fx, value, e);
-        if !fx.is_typed || !(self.c.is_read_out_of_array_by_what_the_stores_say(fx.file, e) || self.c.what_the_stores_say_of_array(fx.file, e) != 0) {
-            return self.fit_to_expression_by_its_type(fx, value, e);
-        }
-        let before = self.c.know_by_the_stores(true);
-        let held = self.fit_to_expression_by_its_type(fx, value, e);
-        self.c.know_by_the_stores(before);
-        if matches!(self.hir(fx.file)[e].kind, ExprKind::Index { .. }) {
-            self.mark_read_known_by_the_stores(fx, held);
-        }
-        held
-    }
-
-    pub(crate) fn mark_read_known_by_the_stores(&mut self, fx: &mut Fx, held: V) {
-        let anything = self.out.tys.anything;
-        if let Some(&Op::Coerce { value: read, to, why: Why::Claim }) = fx.b.func.op(held)
-            && matches!(fx.b.func.op(read), Some(Op::IterGet { .. }))
-            && fx.b.func.ty(read) == anything
-            && fx.b.func.ty(held) == to
-        {
-            fx.b.func.values[read.idx()].ty = to;
-            fx.b.func.values[held.idx()].def = crate::ir::Def::Op(Op::Coerce { value: read, to, why: Why::Upcast });
-            return self.mark_read_known_by_the_stores(fx, read);
-        }
-        let said = fx.b.func.ty(held);
-        if matches!(fx.b.func.op(held), Some(Op::ElemGet { .. } | Op::IterGet { .. })) && said.is_some() && said != anything && fx.b.func.prediction(held) == Prediction::None {
-            fx.b.func.values[held.idx()].prediction = Prediction::Stores;
-        }
-    }
-
-    fn fit_to_expression_by_its_type(&mut self, fx: &mut Fx, value: V, e: ExprId) -> V {
         // The expressions within it have been translated since `expr` said so.
         let pos = self.hir(fx.file)[e].pos;
         self.c.note_place(fx.file, pos);
@@ -969,6 +939,9 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.c.admits_foreign(predicted, &supertypes);
                 for (held, held_as) in self.c.types_held_entering(predicted, want.checked) {
                     self.note_entry_of_type(held, held_as);
+                    let described = self.ty_of(held_as);
+                    let views = self.types_of_layouts_in(described);
+                    self.c.admits_foreign(held, &views);
                 }
             }
             if !is_handed_back {
@@ -987,7 +960,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
                 self.leave_unheld(fx, value);
             }
             if fx.is_typed && !is_made_for_another && self.is_held_where_it_is_made(fx, value) {
-                self.problem(fx.file, pos, "a prediction that is held to a type");
+                self.problem(fx.file, pos, "this expression (internal error: a predicted type was checked as a declared type; please report it)");
             }
             let predicted = self.predict_expression(fx, value, e);
             if let Some(&own) = fx.stays_ordinary.get(&value) {
@@ -1009,6 +982,14 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
             // besides stays what it is: the type does not tell the accessor from a field.
             Some(Op::NewObject) if self.is_literal_left_ordinary(fx, e) || self.is_asked_to_be_dynamic(fx, e) || self.defines_accessor(fx, e) || self.is_assigned_onto(fx, e) || self.is_only_copied_from(fx, e) => return value,
             Some(Op::NewObject) if self.c.contextual_type_of_literal(fx.file, e).is_some_and(|expected| self.c.is_checked_against_what_is_inferred(fx.file, e, expected)) => return value,
+            Some(Op::NewObject)
+                if self.c.contextual_type_of_literal(fx.file, e).is_none_or(|expected| self.ty_of(expected) == self.out.tys.anything) && {
+                    let own = self.c.type_of_expr(fx.file, e);
+                    self.c.members(own).is_some_and(|members| !members.shape().index.is_empty())
+                } =>
+            {
+                return value;
+            }
             Some(Op::NewObject) => Why::Cast,
             // `{ ...x }`, which is one operation.
             Some(Op::Operation { .. }) if matches!(self.hir(fx.file)[e].kind, ExprKind::Object(_)) => {
@@ -1802,6 +1783,12 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         let source = self.c.type_of_expr(fx.file, e);
         if self.c.is_untyped(source) && !self.is_object_literal(fx, e) {
             self.note_untyped_inflow(want);
+        }
+        if self.c.may_yield_a_namespace(fx.file, e) {
+            self.c.note_place(fx.file, self.hir(fx.file)[e].pos);
+            for view in self.types_of_layouts_in(want.id) {
+                self.c.note_foreign(view, source);
+            }
         }
         if let Some(origin) = self.c.origin_of_data(fx.file, e) {
             self.c.note_place(fx.file, self.hir(fx.file)[e].pos);

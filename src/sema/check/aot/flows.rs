@@ -194,6 +194,10 @@ impl<T> Default for Noted<T> {
 }
 
 impl<T: Copy + Eq + Hash> Noted<T> {
+    pub fn has_alterations(&self) -> bool {
+        self.escapes.alterations.is_some()
+    }
+
     pub fn absorb_evidence_of_strangers(&mut self, other: &Noted<T>) {
         if let Some(noted) = &other.escapes.alterations {
             self.escapes.alterations.get_or_insert_with(Default::default).absorb_evidence_of_strangers(noted);
@@ -351,7 +355,6 @@ pub(super) struct State {
     place: Place,
     /// What `types_held_entering` has been asked.
     held_entering: FxHashSet<(TypeId, TypeId)>,
-    is_known_by_the_stores: bool,
     looked_into: Vec<((Applied, Applied), [u32; 2])>,
     not_looked_into: FxHashSet<(TypeId, bool)>,
     levels_looked_into: u32,
@@ -368,6 +371,8 @@ pub(super) struct State {
     seen_before: Option<Arc<FxHashSet<Identity>>>,
     finding_canonical: u32,
     pub(super) objects_of: FxHashMap<TypeId, std::rc::Rc<super::alterations::ObjectsOf>>,
+    pub(super) carried: FxHashMap<(TypeId, TypeId), std::rc::Rc<[(TypeId, TypeId)]>>,
+    pub(super) saying_nothing_of_objects: FxHashMap<TypeId, bool>,
     pub(super) takes_primitives_by_itself: FxHashMap<TypeId, bool>,
     pub(super) function_types: Option<[TypeId; 3]>,
     /// `is_tainted`, as far as it has been asked.
@@ -521,6 +526,7 @@ pub struct Membership {
     pub views: Vec<Reach>,
     pub(super) alteration_sites: [[u32; NUMBER_OF_OPERANDS]; 2],
     pub(super) altered_by: [[u32; 3]; 2],
+    pub(super) evidence_of_alterations: [u32; 5],
     pub(super) untyped_alterations: UntypedAlterations,
     pub(super) widest_alterations: WidestAlterations,
     pub(super) constructions_are_incomplete: bool,
@@ -765,6 +771,7 @@ impl<'s> Program<'s> {
             let mut searcher = self.checker();
             searcher.begin_stack_budget();
             searcher.begin_task(step, index as u32, true);
+            searcher.withhold_tables_of_expressions();
             for file in (0..self.files.modules.len() as u32).map(FileId) {
                 if searcher.is_untyped_file(file) {
                     searcher.task.begin_file(file, false);
@@ -773,7 +780,9 @@ impl<'s> Program<'s> {
             searcher.aot.flows.is_searching_from_doors = true;
             searcher.aot.flows.is_crossing_bounded = true;
             searcher.search_from_doors(&search, index, &Share::Rest { index, of: search.searchers, is_taken: &[] }, &FxHashMap::default());
-            *held(finished[index].lock()) = Some(searcher.end_task());
+            let mut found = searcher.end_task();
+            found.diagnostics.retain(|(owner, _)| owner.is_some_and(|owner| !matches!(owner, crate::check::Query::Expr(..) | crate::check::Query::Call(..))));
+            *held(finished[index].lock()) = Some(found);
         });
         if let Some(gave_up) = held(search.gave_up.lock()).take() {
             return Err(gave_up);
@@ -1785,6 +1794,25 @@ impl<'p, 's> Checker<'p, 's> {
         self.aot.flows.noted.add_foreign(view, (source != TypeId::UNRESOLVED).then_some(source), at);
     }
 
+    fn has_a_namespace_among_its_parts(&self, ty: TypeId) -> bool {
+        self.parts(ty).iter().any(|&part| matches!(self.data(part), TypeData::Anon { origin: Origin::Module(..), .. }))
+    }
+
+    pub fn may_yield_a_namespace(&mut self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::ImportCall { .. } => true,
+            ExprKind::Await(inner) | ExprKind::As { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::Satisfies { expr: inner, .. } => self.may_yield_a_namespace(file, inner),
+            ExprKind::Cond { yes, no, .. } => self.may_yield_a_namespace(file, yes) || self.may_yield_a_namespace(file, no),
+            ExprKind::Call(call) if matches!(hir[hir[call].callee].kind, ExprKind::Ident(name) if self.atoms().bytes(name) == b"require") => true,
+            _ => {
+                let own = self.type_of_expr(file, e);
+                let awaited = self.awaited(own);
+                self.has_a_namespace_among_its_parts(own) || self.has_a_namespace_among_its_parts(awaited)
+            }
+        }
+    }
+
     pub(super) fn noted_creations(&mut self) -> &mut Creations {
         &mut self.aot.flows.noted.creations
     }
@@ -1871,12 +1899,7 @@ impl<'p, 's> Checker<'p, 's> {
     ///
     /// A cast may make an object of `target`: of plain data a copy, of an object that was made as something `target` extends that
     /// object. Nothing becomes an object of a class but by its constructor. What it makes of which layout is found at the link.
-    pub fn know_by_the_stores(&mut self, is_known: bool) -> bool {
-        std::mem::replace(&mut self.aot.flows.is_known_by_the_stores, is_known)
-    }
-
     pub fn note_cast(&mut self, sources: &[TypeId], target: TypeId, may_be_plain: bool, is_vouched: bool, may_change: bool, is_guard: bool) {
-        let (may_be_plain, is_vouched) = if self.aot.flows.is_known_by_the_stores { (false, false) } else { (may_be_plain, is_vouched) };
         let at = self.aot.flows.place;
         if may_be_plain && !self.is_type_of_instances(target) {
             self.aot.flows.noted.copied_into.insert(target);
@@ -1970,6 +1993,9 @@ impl<'p, 's> Checker<'p, 's> {
     pub fn note_type_of_expression(&mut self, ty: TypeId) {
         for &part in self.parts(ty) {
             if matches!(self.data(part), TypeData::Intersection(_)) && (self.element_of_array_subtype(part).is_some() || self.built_in_extended_by(part).is_some()) {
+                self.aot.flows.noted.not_laid_out.insert(part);
+            }
+            if matches!(self.data(part), TypeData::Anon { origin: Origin::Module(..), .. }) {
                 self.aot.flows.noted.not_laid_out.insert(part);
             }
         }
@@ -2123,6 +2149,10 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The search is made once for the program: a task that finds it made reads it. Tasks that find it missing at the same time all make it, and come to the same.
+    pub(super) fn is_searching_from_doors(&self) -> bool {
+        self.aot.flows.is_searching_from_doors
+    }
+
     fn given(&mut self) -> &'p Given {
         let program = self.p;
         if let Some(given) = program.aot.storage.given.get() {
@@ -2132,6 +2162,7 @@ impl<'p, 's> Checker<'p, 's> {
         // nothing remembered from while no type was tainted.
         let search = Search { seen_by_other_declarations: self.importers_that_see_other_declarations(), ..Search::new(1) };
         let mut searcher = program.checker();
+        searcher.begin_task(0, 0, true);
         (searcher.stack_base, searcher.stack_limit) = (self.stack_base, self.stack_limit);
         searcher.aot.flows.is_searching_from_doors = true;
         searcher.search_from_doors(&search, 0, &Share::Rest { index: 0, of: 1, is_taken: &[] }, &FxHashMap::default());
@@ -2218,7 +2249,13 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(members) = self.members(ty) else { return false };
         if given.went_on_by_pairs
             && members.shape().props.len() <= MOST_PROPERTIES_OF_A_RECORD_THAT_IS_TURNED_WHERE_IT_LIES
-            && members.shape().props.iter().filter(|prop| !prop.flags.contains(PropFlags::OPTIONAL)).count() >= 2
+            && (members.shape().props.iter().filter(|prop| !prop.flags.contains(PropFlags::OPTIONAL)).count() >= 2
+                || (matches!(self.data(ty), TypeData::Ref { .. }) || self.alias_of_type(ty).is_some())
+                    && self.generic_form_of(ty).and_then(|form| self.members(form)).unwrap_or(members).shape().props.iter().any(|prop| {
+                        let held = self.type_of_prop(prop, MapperId::IDENTITY);
+                        let held = if self.is_instantiable(held) { self.base_constraint(held) } else { held };
+                        self.says_nothing(held) || self.may_hold_objects(held) || self.parts(held).iter().any(|&part| matches!(self.data(part), TypeData::Fns { .. }))
+                    }))
         {
             return false;
         }
@@ -3760,6 +3797,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// that the view admits them.
     pub fn admits_foreign(&mut self, source: TypeId, views: &[TypeId]) -> bool {
         let source = self.reduced(source);
+        if self.has_a_namespace_among_its_parts(source) {
+            let at = self.aot.flows.place;
+            for &view in views {
+                self.aot.flows.noted.add_foreign(view, Some(source), at);
+            }
+        }
         let mut admitting = Vec::new();
         let is_admitted = self.is_taken_by_views(source, views, &mut admitting) && !admitting.is_empty();
         if is_admitted {
@@ -4052,6 +4095,22 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// What the objects of the class or interface `sym` are, if what it extends says: an array, a function, an object of a class of the
     /// engine. No code of the program makes such an object by itself, so it is never laid out.
+    fn extends_untyped_code(&mut self, sym: Sym, depth: u32) -> bool {
+        let declared: Vec<(FileId, Decl)> = self.files().decls_of(sym).to_vec();
+        if declared.iter().any(|&(file, _)| self.is_untyped_file(file)) {
+            return true;
+        }
+        if depth > 32 || !declared.iter().any(|&(file, decl)| matches!(decl, Decl::Class(class) if self.hir(file)[class].extends.is_some())) {
+            return false;
+        }
+        let bases = self.base_types(sym).into_vec();
+        bases.is_empty()
+            || bases.into_iter().any(|base| match *self.data(base) {
+                TypeData::Ref { target, .. } => self.extends_untyped_code(target, depth + 1),
+                _ => true,
+            })
+    }
+
     fn root_of(&mut self, sym: Sym) -> Root {
         if self.aot.flows.roots.is_empty() {
             let others = [
@@ -4204,7 +4263,18 @@ impl<'p, 's> Checker<'p, 's> {
         for primitive in [TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN, TypeId::BIGINT, TypeId::SYMBOL] {
             let wrapper = self.apparent_type(primitive);
             let not_known_before = self.aot.flows.times_not_known;
-            if self.has_the_names_of(wrapper, ty) && (self.is_of_type(primitive, ty) || self.aot.flows.times_not_known != not_known_before) {
+            let lacks_all_it_names = match (self.members(ty), self.members(wrapper)) {
+                (Some(of_type), Some(of_wrapper)) => {
+                    let shape = of_type.shape();
+                    !shape.props.is_empty()
+                        && shape.index.is_empty()
+                        && shape.call.is_empty()
+                        && shape.construct.is_empty()
+                        && shape.props.iter().all(|prop| prop.flags.contains(PropFlags::OPTIONAL) && of_wrapper.resolved.prop(prop.name).is_none())
+                }
+                _ => false,
+            };
+            if lacks_all_it_names || self.has_the_names_of(wrapper, ty) && (self.is_of_type(primitive, ty) || self.aot.flows.times_not_known != not_known_before) {
                 primitives.push(primitive);
             }
         }
@@ -4230,82 +4300,115 @@ impl<'p, 's> Checker<'p, 's> {
         !is_weak || shape.props.iter().any(|prop| of_type.resolved.prop(prop.name).is_some())
     }
 
-    /// The type at `index` of the list has the properties of `ty`.
-    fn add_names_of(&mut self, having: &mut Having, index: u32, ty: TypeId) {
-        let Some(members) = self.members(ty) else { return };
-        if having.indexable.last() != Some(&index) && (!members.shape().index.is_empty() || self.is_object_type_with_inferable_index(ty)) {
-            having.indexable.push(index);
-        }
-        for prop in members.shape().props.iter() {
-            let indexes = having.by_name.entry(prop.name).or_default();
-            if indexes.last() != Some(&index) {
-                indexes.push(index);
-            }
-        }
+    /// Adds the names of the properties of `ty`. Whether a type with an index signature can take it.
+    fn add_names_of(&mut self, names: &mut Vec<Atom>, ty: TypeId) -> bool {
+        let Some(members) = self.members(ty) else { return false };
+        names.extend(members.shape().props.iter().map(|prop| prop.name));
+        !members.shape().index.is_empty() || self.is_object_type_with_inferable_index(ty)
     }
 
     /// The types of the objects that are not laid out and that the program need not have got from anyone: arrays, functions, the objects of
     /// the classes of the engine, and whatever the program or the library of the language declares that is one of them and more. A class
     /// as a value and a function that has been given properties are among them. With `any` for type parameters.
-    fn kinds_not_laid_out(&mut self, noted: &FxHashSet<TypeId>, given: &[TypeId]) -> (Vec<Kind>, Having) {
-        let (mut kinds, mut having) = (Vec::new(), Having::default());
-        let of_functions = [known::Function, known::CallableFunction, known::NewableFunction].map(|name| self.global_ref(name, &[]));
-        let mut add = |c: &mut Self, kind: Kind, is_function: bool| {
-            let ty = c.type_of_kind(kind);
-            let index = kinds.len() as u32;
-            kinds.push(kind);
-            having.all.push(index);
-            c.add_names_of(&mut having, index, ty);
-            if is_function {
-                for of_function in of_functions {
-                    c.add_names_of(&mut having, index, of_function);
-                }
-            }
-        };
-        add(self, Kind::Arrays, false);
-        add(self, Kind::Functions, true);
-        for class in self.classes_of_the_engine() {
-            add(self, Kind::InstancesOf(class), false);
-        }
+    fn kinds_not_laid_out(&mut self, noted: &FxHashSet<TypeId>, given: &[TypeId], in_parallel: crate::util::InParallel<'_>) -> (Vec<Kind>, Having) {
+        const FILES_OF_A_CHECKER: usize = 64;
+        const KINDS_OF_A_CHECKER: usize = 512;
+        let mut kinds: Vec<(Kind, bool)> = vec![(Kind::Arrays, false), (Kind::Functions, true)];
+        kinds.extend(self.classes_of_the_engine().into_iter().map(|class| (Kind::InstancesOf(class), false)));
         let mut noted: Vec<TypeId> = noted.iter().copied().collect();
         noted.sort_unstable_by_key(|ty| ty.0);
         for ty in noted {
             let is_function = matches!(self.built_in_that_is(ty), Some(BuiltIn::Function));
-            add(self, Kind::Of(ty), is_function);
+            kinds.push((Kind::Of(ty), is_function));
         }
-        for &ty in given {
-            add(self, Kind::Given(ty), false);
-        }
+        kinds.extend(given.iter().map(|&ty| (Kind::Given(ty), false)));
         let files = self.files();
-        let mut seen: FxHashSet<Sym> = FxHashSet::default();
-        for (file, module) in files.modules.iter().enumerate() {
-            // What a package declares is let in where it is seen to come in. Of JavaScript nothing is declared.
-            if module.is_untyped() || (self.only_declares(FileId(file as u32)) && !module.is_lib) {
+        let mut namespaces: Vec<Sym> = Vec::new();
+        for file in (0..files.modules.len() as u32).map(FileId) {
+            let hir = self.hir(file);
+            if matches!(hir.kind, FileKind::Declaration | FileKind::Json) {
                 continue;
             }
-            for (id, symbol) in module.bound.symbols.iter().enumerate() {
-                let is_type = symbol.flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
-                if !is_type && !(symbol.flags.intersects(SymFlags::FUNCTION | SymFlags::VARIABLE) && symbol.exports.is_some()) {
-                    continue;
-                }
-                let sym = files.sym(FileId(file as u32), SymbolId(id as u32));
-                if !seen.insert(sym) {
-                    continue;
-                }
-                let root = if is_type { self.root_of(sym) } else { Root::None };
-                if root != Root::None && root != Root::Class(sym) {
-                    add(self, Kind::InstancesOf(sym), root == Root::Function);
-                }
-                // The class as a value, with what is static in it, and a function that has properties.
-                if files.flags(sym).intersects(SymFlags::CLASS | SymFlags::FUNCTION | SymFlags::VARIABLE) && files.each_export(sym).len() != 0 {
-                    let value = self.type_of_symbol(sym);
-                    if self.has_properties(value) && !(self.signatures(value, false).is_empty() && self.signatures(value, true).is_empty()) {
-                        add(self, Kind::ValueOf(sym), true);
+            let named = hir.specifier_uses.iter().filter(|named| named.kind.is_dynamic() || named.kind == crate::hir::SpecifierKind::Require).map(|named| named.spec);
+            let whole = hir.imports.iter().filter(|import| import.namespace.is_some()).map(|import| import.spec);
+            let exported = hir.ids(hir.body).filter_map(|stmt| if let crate::hir::StmtKind::ExportStar { spec, alias, .. } = hir[stmt].kind { alias.is_some().then_some(spec) } else { None });
+            namespaces.extend(named.chain(whole).chain(exported).filter_map(|specifier| files.module_of_specifier(file, specifier)));
+        }
+        namespaces.sort_unstable();
+        namespaces.dedup();
+        for namespace in namespaces {
+            if files.flags(namespace).contains(SymFlags::VALUE_MODULE) {
+                kinds.push((Kind::ValueOf(namespace), false));
+            }
+        }
+        // What a package declares is let in where it is seen to come in. Of JavaScript nothing is declared.
+        let declaring: Vec<FileId> = (0..files.modules.len() as u32).map(FileId).filter(|&file| !(files.module(file).is_untyped() || (self.only_declares(file) && !files.module(file).is_lib))).collect();
+        let declared = self.in_slices(&declaring, FILES_OF_A_CHECKER, Some(in_parallel), &|c, slice| {
+            let mut found: Vec<(Sym, Option<bool>, bool)> = Vec::new();
+            for &file in slice {
+                for (id, symbol) in files.module(file).bound.symbols.iter().enumerate() {
+                    let is_type = symbol.flags.intersects(SymFlags::CLASS | SymFlags::INTERFACE);
+                    if !is_type && !(symbol.flags.intersects(SymFlags::FUNCTION | SymFlags::VARIABLE) && symbol.exports.is_some()) {
+                        continue;
                     }
+                    let sym = files.sym(file, SymbolId(id as u32));
+                    let root = if is_type { c.root_of(sym) } else { Root::None };
+                    let instances = if root != Root::None && root != Root::Class(sym) {
+                        Some(root == Root::Function)
+                    } else {
+                        (root == Root::None && symbol.flags.intersects(SymFlags::CLASS) && c.extends_untyped_code(sym, 0)).then_some(false)
+                    };
+                    // The class as a value, with what is static in it, and a function that has properties.
+                    let is_value = files.flags(sym).intersects(SymFlags::CLASS | SymFlags::FUNCTION | SymFlags::VARIABLE) && files.each_export(sym).len() != 0 && {
+                        let value = c.type_of_symbol(sym);
+                        c.has_properties(value) && !(c.signatures(value, false).is_empty() && c.signatures(value, true).is_empty())
+                    };
+                    found.push((sym, instances, is_value));
+                }
+            }
+            found
+        });
+        let mut seen: FxHashSet<Sym> = FxHashSet::default();
+        for (sym, instances, is_value) in declared.into_iter().flatten() {
+            if !seen.insert(sym) {
+                continue;
+            }
+            kinds.extend(instances.map(|are_functions| (Kind::InstancesOf(sym), are_functions)));
+            if is_value {
+                kinds.push((Kind::ValueOf(sym), true));
+            }
+        }
+        let names = self.in_slices(&kinds, KINDS_OF_A_CHECKER, Some(in_parallel), &|c, slice| {
+            let of_functions = [known::Function, known::CallableFunction, known::NewableFunction].map(|name| c.global_ref(name, &[]));
+            let mut of_slice: Vec<(bool, Vec<Atom>, Vec<Box<[u8]>>)> = Vec::with_capacity(slice.len());
+            for &(kind, is_function) in slice {
+                let mut names = Vec::new();
+                let ty = c.type_of_kind(kind);
+                let mut is_indexable = c.add_names_of(&mut names, ty);
+                for of_function in of_functions.into_iter().filter(|_| is_function) {
+                    is_indexable |= c.add_names_of(&mut names, of_function);
+                }
+                let own: Vec<Box<[u8]>> = names.iter().filter(|name| name.is_own()).map(|&name| c.atoms().bytes(name).into()).collect();
+                names.retain(|name| !name.is_own());
+                of_slice.push((is_indexable, names, own));
+            }
+            of_slice
+        });
+        let mut having = Having::default();
+        for (index, (is_indexable, names, own)) in names.into_iter().flatten().enumerate() {
+            let index = index as u32;
+            having.all.push(index);
+            if is_indexable {
+                having.indexable.push(index);
+            }
+            for name in names.into_iter().chain(own.iter().map(|text| self.atoms().intern(text))) {
+                let indexes = having.by_name.entry(name).or_default();
+                if indexes.last() != Some(&index) {
+                    indexes.push(index);
                 }
             }
         }
-        (kinds, having)
+        (kinds.into_iter().map(|kind| kind.0).collect(), having)
     }
 
     fn type_of_kind(&mut self, kind: Kind) -> TypeId {
@@ -4639,7 +4742,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// with any name that a layout has no field for, and so is what plain data brings along when it is copied into a layout.
     ///
     /// `says_progress`: `--aot-explain=progress`.
-    pub fn begin_subtypes(&mut self, noted: Noted, views: &[TypeId], fields: FieldTypes, stored: FxHashSet<Atom>, says_progress: bool) -> Subtypes {
+    pub fn begin_subtypes(&mut self, noted: Noted, views: &[TypeId], fields: FieldTypes, stored: FxHashSet<Atom>, says_progress: bool, in_parallel: crate::util::InParallel<'_>) -> Subtypes {
+        const VIEWS_OF_A_CHECKER: usize = 512;
         let mut clock = subtypes::Clock::new(says_progress);
         clock.say(format_args!(
             "gathering: {} views, {} types of fields with {} views in them, {} unions; noted: {} sites, {} upcasts, {} casts, {} tests, {} vouched for, {} untyped into, {} copied into, {} not laid out",
@@ -4707,26 +4811,44 @@ impl<'p, 's> Checker<'p, 's> {
         let object = self.global_ref(known::Object, &[]);
         let mut of_every_object: Vec<u32> = self.members(object).map_or_else(Vec::new, |members| members.shape().props.iter().map(|prop| prop.name.0).collect());
         of_every_object.sort_unstable();
+        let numbered: Vec<(usize, TypeId)> = types.iter().copied().enumerate().collect();
+        let gather = |c: &mut Checker<'p, 's>, slice: &[(usize, TypeId)]| {
+            c.go_by_names_stored(&stored);
+            let (mut facts, mut declared): (Vec<Facts>, Vec<(u32, u32)>) = Default::default();
+            let (mut passed, mut found): (FxHashSet<TypeId>, Vec<u32>) = Default::default();
+            for &(index, ty) in slice {
+                let mut of_type = c.facts_of(ty, &of_every_object);
+                c.add_undeclared_fields_to(&mut of_type, ty, &stored);
+                if noted.allocated_at_site.contains(&ty) {
+                    of_type.flags |= subtypes::HAS_SITE;
+                }
+                if copied_into.contains_key(&ty) && of_type.flags & subtypes::IS_INSTANCE == 0 {
+                    of_type.flags |= subtypes::IS_COPIED;
+                }
+                facts.push(of_type);
+                passed.clear();
+                found.clear();
+                c.add_declared_supertypes(ty, &index_of, &mut passed, &mut found);
+                found.sort_unstable();
+                found.dedup();
+                declared.extend(found.iter().filter(|&&supertype| supertype as usize != index).map(|&supertype| (index as u32, supertype)));
+            }
+            (facts, declared)
+        };
+        let has_own_atoms = |facts: &Facts| {
+            let is_own = |name: u32| Atom(name).is_own();
+            [&facts.declared, &facts.live, &facts.required, &facts.open].into_iter().any(|names| names.iter().any(|&name| is_own(name)))
+                || facts.constants.iter().any(|&(name, constant)| is_own(name) || constant >> 32 == 0x7FF8_0001 && is_own(constant as u32))
+        };
+        let of_slices = self.in_slices(&numbered, VIEWS_OF_A_CHECKER, Some(in_parallel), &|c, slice| Some(gather(c, slice)).filter(|gathered| !gathered.0.iter().any(has_own_atoms)));
         let mut facts: Vec<Facts> = Vec::with_capacity(types.len());
         let mut declared: Vec<(u32, u32)> = Vec::new();
-        let (mut passed, mut found): (FxHashSet<TypeId>, Vec<u32>) = Default::default();
-        for (index, &ty) in types.iter().enumerate() {
-            let mut of_type = self.facts_of(ty, &of_every_object);
-            self.add_undeclared_fields_to(&mut of_type, ty, &stored);
-            if noted.allocated_at_site.contains(&ty) {
-                of_type.flags |= subtypes::HAS_SITE;
-            }
-            if copied_into.contains_key(&ty) && of_type.flags & subtypes::IS_INSTANCE == 0 {
-                of_type.flags |= subtypes::IS_COPIED;
-            }
-            facts.push(of_type);
-            passed.clear();
-            found.clear();
-            self.add_declared_supertypes(ty, &index_of, &mut passed, &mut found);
-            found.sort_unstable();
-            found.dedup();
-            declared.extend(found.iter().filter(|&&supertype| supertype as usize != index).map(|&supertype| (index as u32, supertype)));
+        for (slice, gathered) in numbered.chunks(VIEWS_OF_A_CHECKER).zip(of_slices) {
+            let (of_facts, of_declared) = gathered.unwrap_or_else(|| gather(self, slice));
+            facts.extend(of_facts);
+            declared.extend(of_declared);
         }
+        let has_own_names: Vec<bool> = facts.iter().map(has_own_atoms).collect();
         clock.say(format_args!("the facts: {} types, {} declared supertypes", types.len(), declared.len()));
         let asked_as: Vec<TypeId> = types.iter().map(|&ty| self.type_coerced_to(ty)).collect();
         clock.say(format_args!("what the relation is asked about"));
@@ -4758,9 +4880,14 @@ impl<'p, 's> Checker<'p, 's> {
             noted.not_laid_out.remove(ty);
         }
         given.sort_unstable_by_key(|ty| ty.0);
-        let (others, having) = if untyped_into.is_empty() && given.is_empty() { Default::default() } else { self.kinds_not_laid_out(&noted.not_laid_out, &given) };
+        let (others, having) = self.kinds_not_laid_out(&noted.not_laid_out, &given, in_parallel);
         clock.say(format_args!("{} vouched for, {} kinds that are not laid out", vouched.len(), others.len()));
-        let mut candidates: Vec<u32> = Vec::new();
+        let is_namespace_kind = |c: &Self, kind: Kind| match kind {
+            Kind::Of(ty) => matches!(c.data(ty), TypeData::Anon { origin: Origin::Module(..), .. }),
+            Kind::ValueOf(sym) => c.files().flags(sym).contains(SymFlags::VALUE_MODULE),
+            _ => false,
+        };
+        let has_namespaces = others.iter().any(|&kind| is_namespace_kind(self, kind));
         let mut having_of_nobody = Having::default();
         for (index, names) in std::mem::take(&mut self.aot.flows.given_and_kept_by_nobody).into_iter().enumerate() {
             having_of_nobody.all.push(index as u32);
@@ -4769,52 +4896,68 @@ impl<'p, 's> Checker<'p, 's> {
                 having_of_nobody.by_name.entry(name).or_default().push(index as u32);
             }
         }
-        let mut of_nobody: Vec<u32> = Vec::new();
         let (let_out, entered, entered_if_let_out) = noted.evidence_of_strangers();
         let opened = self.classes_opened_for_strangers(&let_out, &entered, &entered_if_let_out);
-        for (index, &view) in views.iter().enumerate() {
-            let seen_at = noted.foreign.get(&view).map(|seen| seen.1);
-            if let Some(&(source, at)) = noted.foreign.get(&view) {
-                // What a coercion lets through is whatever it was, laid out or not. It passes no cast for being that.
-                let passing = source.filter(|_| !self.is_view_made_by_coercion(view));
-                foreign.push((index as u32, passing, WhyForeign::Seen { source, at }));
-            } else if self.is_declared_only_record(view) {
-                foreign.push((index as u32, None, WhyForeign::DeclaredOnly));
-                continue;
-            } else if self.is_type_of_instances(view) && self.extends_one_of(view, &opened) {
-                foreign.push((index as u32, None, WhyForeign::Instance));
-                continue;
-            }
-            let untyped_at = untyped_into.get(&view).copied().filter(|_| seen_at.is_none());
-            let vouched_at = vouched.binary_search_by_key(&(index as u32), |target| target.0).ok().map(|found| vouched[found].1);
-            let Some(at) = seen_at.or(untyped_at).or(vouched_at) else { continue };
-            candidates.clear();
-            self.add_candidates(&having, view, &mut candidates);
-            candidates.sort_unstable();
-            candidates.dedup();
-            let is_given = |candidate: &u32| matches!(others[*candidate as usize], Kind::Given(_));
-            let is_made_by_coercion = self.is_view_made_by_coercion(view);
-            if !is_made_by_coercion {
-                of_nobody.clear();
-                self.add_candidates(&having_of_nobody, view, &mut of_nobody);
-                if !of_nobody.is_empty() {
-                    foreign.push((index as u32, None, WhyForeign::GivenAndKeptByNobody { at }));
+        let numbered: Vec<(usize, TypeId)> = views.iter().copied().enumerate().collect();
+        let ask = |c: &mut Checker<'p, 's>, slice: &[(usize, TypeId)]| {
+            c.go_by_names_stored(&stored);
+            let mut foreign: Vec<(u32, Option<TypeId>, WhyForeign)> = Vec::new();
+            let mut about_kinds: Vec<(Question, u32, WhyForeign)> = Vec::new();
+            let (mut candidates, mut of_nobody): (Vec<u32>, Vec<u32>) = Default::default();
+            for &(index, view) in slice {
+                let seen_at = noted.foreign.get(&view).map(|seen| seen.1);
+                if let Some(&(source, at)) = noted.foreign.get(&view) {
+                    // What a coercion lets through is whatever it was, laid out or not. It passes no cast for being that.
+                    let passing = source.filter(|_| !c.is_view_made_by_coercion(view));
+                    foreign.push((index as u32, passing, WhyForeign::Seen { source, at }));
+                } else if c.is_declared_only_record(view) {
+                    foreign.push((index as u32, None, WhyForeign::DeclaredOnly));
+                    continue;
+                } else if c.is_type_of_instances(view) && c.extends_one_of(view, &opened) {
+                    foreign.push((index as u32, None, WhyForeign::Instance));
                     continue;
                 }
+                let untyped_at = untyped_into.get(&view).copied().filter(|_| seen_at.is_none());
+                let vouched_at = vouched.binary_search_by_key(&(index as u32), |target| target.0).ok().map(|found| vouched[found].1);
+                let flows_in = seen_at.or(untyped_at).or(vouched_at);
+                let Some(at) = flows_in.or(has_namespaces.then_some(Place::NOWHERE)) else { continue };
+                candidates.clear();
+                c.add_candidates(&having, view, &mut candidates);
+                candidates.sort_unstable();
+                candidates.dedup();
+                let is_given = |candidate: &u32| matches!(others[*candidate as usize], Kind::Given(_));
+                let is_made_by_coercion = c.is_view_made_by_coercion(view) || flows_in.is_none();
+                if !is_made_by_coercion {
+                    of_nobody.clear();
+                    c.add_candidates(&having_of_nobody, view, &mut of_nobody);
+                    if !of_nobody.is_empty() {
+                        foreign.push((index as u32, None, WhyForeign::GivenAndKeptByNobody { at }));
+                        continue;
+                    }
+                }
+                let of_given: Vec<u32> = candidates.iter().copied().filter(|candidate| !is_made_by_coercion && is_given(candidate)).collect();
+                if of_given.len() > MOST_GIVEN_KINDS_ASKED_ABOUT {
+                    foreign.push((index as u32, None, WhyForeign::Given { at, candidate: Candidate(others[of_given[0] as usize]) }));
+                    continue;
+                }
+                about_kinds.extend(of_given.iter().map(|&candidate| {
+                    let kind = others[candidate as usize];
+                    (Question { kind, view }, index as u32, WhyForeign::Given { at, candidate: Candidate(kind) })
+                }));
+                let is_namespace: Vec<bool> = candidates.iter().map(|&candidate| is_namespace_kind(c, others[candidate as usize])).collect();
+                let mut is_namespace = is_namespace.into_iter();
+                about_kinds.extend(candidates.iter().filter(|candidate| (is_namespace.next() == Some(true) || untyped_at.is_some()) && !is_given(candidate)).map(|&candidate| {
+                    let kind = others[candidate as usize];
+                    (Question { kind, view }, index as u32, WhyForeign::Untyped { at, candidate: Candidate(kind) })
+                }));
             }
-            let of_given: Vec<u32> = candidates.iter().copied().filter(|candidate| !is_made_by_coercion && is_given(candidate)).collect();
-            if of_given.len() > MOST_GIVEN_KINDS_ASKED_ABOUT {
-                foreign.push((index as u32, None, WhyForeign::Given { at, candidate: Candidate(others[of_given[0] as usize]) }));
-                continue;
-            }
-            about_kinds.extend(of_given.iter().map(|&candidate| {
-                let kind = others[candidate as usize];
-                (Question { kind, view }, index as u32, WhyForeign::Given { at, candidate: Candidate(kind) })
-            }));
-            about_kinds.extend(candidates.iter().filter(|candidate| untyped_at.is_some() && !is_given(candidate)).map(|&candidate| {
-                let kind = others[candidate as usize];
-                (Question { kind, view }, index as u32, WhyForeign::Untyped { at, candidate: Candidate(kind) })
-            }));
+            (foreign, about_kinds)
+        };
+        let of_slices = self.in_slices(&numbered, VIEWS_OF_A_CHECKER, Some(in_parallel), &|c, slice| (!slice.iter().any(|view| has_own_names[view.0])).then(|| ask(c, slice)));
+        for (slice, asked) in numbered.chunks(VIEWS_OF_A_CHECKER).zip(of_slices) {
+            let (of_foreign, of_kinds) = asked.unwrap_or_else(|| ask(self, slice));
+            foreign.extend(of_foreign);
+            about_kinds.extend(of_kinds);
         }
 
         let mut upcasts: Vec<(u32, u32, Place)> = noted.upcasts.iter().filter_map(|(&(from, to), &at)| Some((*index_of.get(&from)?, *index_of.get(&to)?, at))).collect();

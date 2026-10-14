@@ -106,7 +106,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnLoadPluginBody(JSC::JSGlobalObject*
             auto matchResult = filter->regExp()->match(globalObject, path, 0);
             RETURN_IF_EXCEPTION(scope, {});
             if (matchResult) {
-                throwException(globalObject, scope, createError(globalObject, makeString("--aot: not compiled yet: a plugin that loads \""_s, path, "\", which was compiled without it"_s)));
+                throwException(globalObject, scope, createError(globalObject, makeString("--aot does not support a plugin that loads \""_s, path, "\", which was compiled without it"_s)));
                 return {};
             }
         }
@@ -250,7 +250,7 @@ static JSC::EncodedJSValue jsFunctionAppendOnResolvePluginBody(JSC::JSGlobalObje
             auto matchResult = filter->regExp()->match(globalObject, path, 0);
             RETURN_IF_EXCEPTION(scope, {});
             if (matchResult) {
-                throwException(globalObject, scope, createError(globalObject, makeString("--aot: not compiled yet: a plugin that resolves the entry point \""_s, path, "\", which was compiled without it"_s)));
+                throwException(globalObject, scope, createError(globalObject, makeString("--aot does not support a plugin that resolves the entry point \""_s, path, "\", which was compiled without it"_s)));
                 return {};
             }
         }

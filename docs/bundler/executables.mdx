@@ -422,11 +422,14 @@ Bun.unsafe.setJITPolicy(1); // back to the normal JIT policy
 
 The compiler sees your whole program at once, and the executable differs from one built without `--aot` in these ways:
 
+- **Types are enforced.** The compiler relies on your TypeScript types, so a value that does not match its type throws a `TypeError`, and `as` between primitive types converts. [Adopting `--aot`](/bundler/aot-adoption) shows how to find the places this affects before you ship.
 - **The JIT is off.** Bun interprets code that the build cannot see: `eval`, `new Function`, files that your program loads from disk when it runs, and Workers created from a blob URL.
 - **Built-in objects are immutable.** Assigning to an existing property of a built-in object, such as `Array.prototype.push` or `Math.random`, throws a `TypeError` in strict mode and does nothing in sloppy mode. So does adding a property to `Object.prototype`. Objects that Bun or your program defines, such as `console` and `process`, stay mutable.
-- **`bun:ffi` is unavailable.** `bun:ffi` needs the JIT, and throws a `TypeError` that says so.
-- **The debugger is unavailable.**
-- **The executable has neither your source text nor bytecode.** `Function.prototype.toString()` returns `function name() { [native code] }` for your functions. Stack traces have the files, lines and columns of your sources.
+- **`bun:ffi` callbacks are unavailable.** `dlopen` and calls into native code work. `JSCallback` needs the JIT, and throws a `TypeError` that says so.
+- **Breakpoints are unavailable.** The inspector connects, and its console, heap snapshots and CPU profiles work. Breakpoints, stepping and `debugger` statements do not.
+- **[Macros](/bundler/macros) are unavailable**, and so are `bun --aot -e` and `bun --aot -p`.
+- **The executable has no bytecode.** It keeps the text of your functions for `Function.prototype.toString()`. With `--no-compile-function-source` it does not, and `toString()` returns `function name() { [native code] }`. Stack traces have the files, lines and columns of your sources either way.
+- **Some error messages differ.** `null is not an object (evaluating 'o.a.c')` becomes `Cannot read properties of null (reading 'c')`, and `o.b is not a function` becomes `b is not a function, it is undefined`. A service that groups errors by message sees new groups.
 
 The build target must be the platform and the version of Bun that runs the build. `bun build` reports an error for any other `--target`.
 
@@ -440,6 +443,8 @@ bun test --aot
 ```
 
 Your program sees the paths of its source files, as it does with `bun run`. In `bun test --aot`, `spyOn` throws a `TypeError` for a property of a built-in object, such as `spyOn(Math, "random")`.
+
+`bun test --aot` compiles each test file, with what it imports, before it runs it. Expect seconds per file. It does not support `--isolate` and `--parallel`. To find what your tests would hit under `--aot` without that cost, use [`bun test --aot-audit`](/bundler/aot-adoption).
 
 #### Typed versions of packages
 
@@ -490,7 +495,7 @@ note: "react-reconciler" 0.33.0 is compiled from its typed version in node_modul
 Otherwise it compiles the package as installed and prints a warning that names the first mismatch, such as after you upgrade the package:
 
 ```txt
-warn: the typed version of "react-reconciler" in node_modules/@sound/react-reconciler is not used: it is for version 0.33.0, and 0.33.1 is installed: the package is compiled untyped
+warn: the typed version of "react-reconciler" in node_modules/@sound/react-reconciler is not used: it is for version 0.33.0, and 0.33.1 is installed (install the typed version for 0.33.1, or remove this one): the package is compiled untyped
 ```
 
 `Bun.build` returns both in `logs`. `bun run --aot` and `bun test --aot` print neither.

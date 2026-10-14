@@ -1693,6 +1693,22 @@ impl Subtypes {
             altered_by[alteration][1] = reached.iter().filter(|reach| is_marked(reach, alteration)).count() as u32;
             altered_by[alteration][2] = u32::from(altered.is_anything);
         }
+        let number_of: FxHashMap<TypeId, u32> = self.gathered.types.iter().enumerate().map(|(view, &ty)| (ty, view as u32)).collect();
+        let mut is_seen_let_out = vec![false; views];
+        for view in self.gathered.escapes.with_alterations(|noted| noted.let_out()).iter().filter_map(|ty| number_of.get(ty)) {
+            for &member in self.sets[*view as usize].iter().filter(|&&member| (member as usize) < views) {
+                is_seen_let_out[member as usize] = true;
+            }
+        }
+        let mut gives_up: Vec<bool> = (0..views).map(|view| reached[view].is_allocated && reached[view].admits_foreign && self.gathered.facts[view].flags & IS_INSTANCE == 0).collect();
+        for reach in reached.iter().filter(|reach| !reach.admits_foreign) {
+            for &member in &reach.members {
+                gives_up[member as usize] = false;
+            }
+        }
+        let count = |holds: &dyn Fn(usize) -> bool| (0..views).filter(|&view| reached[view].is_allocated && holds(view)).count() as u32;
+        let is_record = |view: usize| self.gathered.facts[view].flags & IS_INSTANCE == 0;
+        let evidence_of_alterations = [count(&|view| is_record(view)), count(&|view| gives_up[view]), count(&|view| is_seen_let_out[view]), count(&|view| is_record(view) && !gives_up[view] && !is_seen_let_out[view]), count(&|view| !is_record(view) && !is_seen_let_out[view])];
         let (alteration_sites, untyped_alterations) = self.gathered.escapes.with_alterations(|noted| (noted.sites(), noted.untyped_places()));
         let (widest_alterations, doors) = self.gathered.escapes.with_alterations(|noted| (noted.widest(), noted.doors()));
         // Then by supertype: a read through it finds an object of any subtype.
@@ -1722,6 +1738,7 @@ impl Subtypes {
             views: reached,
             alteration_sites,
             altered_by,
+            evidence_of_alterations,
             untyped_alterations,
             widest_alterations,
             doors,

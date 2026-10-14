@@ -85,6 +85,42 @@ fn note(text: &str) {
     unsafe { libc::write(2, line.as_ptr().cast(), line.len()) };
 }
 
+fn log() -> (i32, bool) {
+    static LOG: std::sync::OnceLock<(i32, bool)> = std::sync::OnceLock::new();
+    *LOG.get_or_init(|| {
+        let said = |name: &core::ffi::CStr| {
+            let value = unsafe { libc::getenv(name.as_ptr()) };
+            (!value.is_null()).then(|| unsafe { core::ffi::CStr::from_ptr(value) }).filter(|value| !value.is_empty())
+        };
+        let (descriptor, is_file) = match said(c"BUN_AOT_TYPE_ERROR_LOG") {
+            None => (2, false),
+            Some(to) if to == c"stderr" => (2, false),
+            Some(to) if to == c"off" => (-1, false),
+            #[cfg(unix)]
+            Some(path) => match unsafe { libc::open(path.as_ptr(), libc::O_WRONLY | libc::O_APPEND | libc::O_CREAT | libc::O_CLOEXEC, 0o644) } {
+                -1 => (2, false),
+                opened => (opened, true),
+            },
+            #[cfg(not(unix))]
+            Some(_) => (2, false),
+        };
+        (descriptor, said(c"BUN_AOT_TYPE_ERROR_LOG_FORMAT").map_or(is_file, |format| format == c"json"))
+    })
+}
+
+fn write_record(line: &[u8]) {
+    let descriptor = if line.starts_with(b"[aot] note") { 2 } else { log().0 };
+    if descriptor >= 0 {
+        bun_core::Output::flush();
+        unsafe { libc::write(descriptor, line.as_ptr().cast(), line.len() as _) };
+    }
+}
+
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__AOTAudit__write(line: *const u8, length: usize) {
+    write_record(unsafe { core::slice::from_raw_parts(line, length) });
+}
+
 fn start_of_next_token(text: &[u8], mut at: usize) -> usize {
     loop {
         match text.get(at..) {
@@ -460,7 +496,7 @@ fn look_at_this_alone(path: &[u8], text: &[u8], hash: u64) {
                 let trust = if is_known_to_the_whole || !is_of_a_package { Trust::Unsure } else { Trust::Silent };
                 is_added = state.add(&cwd, module, text, trust).hash_of_text == hash;
                 if !is_added {
-                    note(&format!("{}: nothing is checked in this file: the compiler reads another text of it, as it does where eval is called directly", bstr::BStr::new(&module.path)));
+                    note(&format!("{} is not audited: the analysis read a different text of this file than the one that runs (a direct eval(), a loader plugin, or an edit while it loaded)", bstr::BStr::new(&module.path)));
                 }
             }
             if !is_added {
@@ -834,15 +870,20 @@ pub(crate) extern "C" fn Bun__AOTAudit__writeRefusedChange(
     let function_name = function_name.to_owned_slice();
     let function_name: &[u8] = if function_name.is_empty() { b"<anonymous>" } else { &function_name };
     let (line, column) = (line.max(0) as usize, column.max(0) as usize);
-    let record = format!(
-        "[aot] type-error {} {kind} {}:{line}:{column} ({}): {}; would-refuse; count 1\n",
-        bun_aot::audit::id_of(shown, line, column, kind, 0),
-        bstr::BStr::new(shown),
-        bstr::BStr::new(function_name),
-        bstr::BStr::new(&message.to_owned_slice()),
-    );
-    bun_core::Output::flush();
-    unsafe { libc::write(2, record.as_ptr().cast(), record.len()) };
+    let id = bun_aot::audit::id_of(shown, line, column, kind, 0);
+    let message = message.to_owned_slice();
+    let record = if log().1 {
+        let quoted = |text: &[u8]| bun_aot::audit::quoted_text(text);
+        format!(
+            "{{\"aot\":\"type-error\",\"id\":\"{id}\",\"kind\":\"{kind}\",\"file\":{},\"line\":{line},\"col\":{column},\"fn\":{},\"reason\":{},\"action\":\"would-refuse\",\"count\":1}}\n",
+            quoted(shown),
+            quoted(function_name),
+            quoted(&message),
+        )
+    } else {
+        format!("[aot] type-error {id} {kind} {}:{line}:{column} ({}): {}; would-refuse; count 1\n", bstr::BStr::new(shown), bstr::BStr::new(function_name), bstr::BStr::new(&message))
+    };
+    write_record(record.as_bytes());
 }
 
 #[unsafe(no_mangle)]
@@ -851,6 +892,7 @@ pub(crate) extern "C" fn Bun__AOTAudit__describeShape(key: &bun_core::String, ou
     let state = STATE.lock().unwrap_or_else(PoisonError::into_inner);
     let text = match (state.as_ref(), core::str::from_utf8(&key)) {
         (Some(state), Ok("")) => state.generation.to_string(),
+        (_, Ok("format")) => String::from(if log().1 { "json" } else { "text" }),
         (Some(state), Ok(key)) => state.shapes.get(key).map_or_else(|| String::from("null"), |text| text.to_string()),
         _ => String::from("null"),
     };

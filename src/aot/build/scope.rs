@@ -677,7 +677,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
 
     pub(crate) fn override_of(&mut self, sym: Sym) -> Option<GlobalId> {
         let file = sym.file;
-        if !self.shared.constants.has_test_globals || self.is_builtin_file(file) || self.shared.is_prelude(file) || self.is_commonjs(file) || !self.files.module(file).is_module() {
+        if !self.shared.exports_may_be_overridden || self.is_builtin_file(file) || self.shared.is_prelude(file) || self.is_commonjs(file) || !self.files.module(file).is_module() {
             return None;
         }
         if !self.exported_bindings.contains_key(&file) {
@@ -1096,7 +1096,7 @@ impl<'c, 'p, 's> FileBuild<'c, 'p, 's> {
         for member in hir[declaration].members.iter() {
             let m = &hir[member];
             let Some(value) = self.c.enum_member_value(file, member) else {
-                self.problem(file, m.pos, "an enum member whose value is computed when the program runs");
+                self.problem(file, m.pos, "an enum member whose value is computed at run time");
                 continue;
             };
             let member_name = self.str(m.name);

@@ -1,0 +1,1 @@
+Plain Bun prints "4 store TypeError"; --aot prints "4 store taken".

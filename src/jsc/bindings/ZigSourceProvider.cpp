@@ -19,6 +19,11 @@
 #include <JavaScriptCore/InitializeThreading.h>
 #include <JavaScriptCore/AOTProgramData.h>
 #include <JavaScriptCore/AOTFunction.h>
+#if ENABLE(AOT)
+namespace JSC::AOT {
+JS_EXPORT_PRIVATE uint64_t imageStamp();
+}
+#endif
 #include <JavaScriptCore/AuditSites.h>
 #include <JavaScriptCore/PrivateName.h>
 #include <JavaScriptCore/ProxyObject.h>
@@ -30,6 +35,8 @@
 #include <execinfo.h>
 #include <mach-o/dyld.h>
 #include <mach-o/loader.h>
+#include <mach/mach.h>
+#include <mach/mach_vm.h>
 #endif
 #if OS(LINUX) || OS(FREEBSD)
 #include <link.h>
@@ -577,6 +584,15 @@ extern "C" size_t Bun__AOT__imageAlignment()
     return JSC::aotImageAlignment();
 }
 
+extern "C" uint64_t Bun__AOT__stamp()
+{
+#if ENABLE(AOT)
+    return JSC::AOT::imageStamp();
+#else
+    return 0;
+#endif
+}
+
 extern "C" bool Bun__AOT__imageStringTable(const uint8_t* bytes, size_t length, size_t* result)
 {
     auto codeImageSize = JSC::aotImageSize({ bytes, length });
@@ -590,6 +606,32 @@ extern "C" bool Bun__AOT__imageStringTable(const uint8_t* bytes, size_t length, 
     return true;
 }
 
+#if OS(DARWIN)
+static bool keepsOnlyCodeExecutable(const uint8_t* bytes, size_t length)
+{
+    mach_vm_address_t image = reinterpret_cast<mach_vm_address_t>(bytes);
+    mach_vm_address_t start = image;
+    mach_vm_size_t size = 0;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object = MACH_PORT_NULL;
+    if (mach_vm_region(mach_task_self(), &start, &size, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object) != KERN_SUCCESS)
+        return false;
+    auto range = JSC::aotImageCodeRange({ bytes, length });
+    if (start > image || !(info.protection & VM_PROT_EXECUTE) || !range)
+        return false;
+    mach_vm_address_t code = image + range->first;
+    mach_vm_address_t endOfCode = mach_vm_round_page(code + range->second);
+    if (code != mach_vm_trunc_page(code) || endOfCode > start + size)
+        return false;
+    if (code > start)
+        mach_vm_protect(mach_task_self(), start, code - start, true, VM_PROT_READ);
+    if (endOfCode < start + size)
+        mach_vm_protect(mach_task_self(), endOfCode, start + size - endOfCode, true, VM_PROT_READ);
+    return true;
+}
+#endif
+
 extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int fileDescriptor, int64_t offsetInFile)
 {
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD) || OS(WINDOWS)
@@ -600,13 +642,23 @@ extern "C" void Bun__AOT__useImage(const uint8_t* bytes, size_t length, int file
     JSC::AOTFileUse use = fileDescriptor < 0 ? JSC::useAOTFileInLoadedSection({ bytes, length }) : JSC::AOTFileUse { isNotInExecutable, isNotInExecutable };
 #else
     bool isInExecutable = fileDescriptor < 0;
-    if (isInExecutable) {
+    JSC::AOTFileUse use;
+#if OS(DARWIN)
+    if (isInExecutable && keepsOnlyCodeExecutable(bytes, length))
+        use = JSC::useAOTFileInLoadedSection({ bytes, length });
+#else
+    if (isInExecutable)
+        use = JSC::useAOTFileInLoadedSection({ bytes, length });
+#endif
+    bool isUsedWhereItLies = !!use.code;
+    if (isInExecutable && !isUsedWhereItLies) {
         auto offset = offsetInExecutableFile(bytes);
         fileDescriptor = offset ? openExecutable() : -1;
         offsetInFile = offset.value_or(0);
     }
     const char* cannotOpen = "cannot find it in the executable's file";
-    JSC::AOTFileUse use = fileDescriptor >= 0 ? JSC::useAOTFile({ bytes, length }, fileDescriptor, offsetInFile) : JSC::AOTFileUse { cannotOpen, cannotOpen };
+    if (!isUsedWhereItLies)
+        use = fileDescriptor >= 0 ? JSC::useAOTFile({ bytes, length }, fileDescriptor, offsetInFile) : JSC::AOTFileUse { cannotOpen, cannotOpen };
     if (isInExecutable && fileDescriptor >= 0)
         close(fileDescriptor);
 #endif
@@ -730,6 +782,7 @@ extern "C" uint32_t Bun__WTFStringHashUTF16(const char16_t* characters, size_t l
 
 extern "C" void Bun__AOTAudit__describe(uint32_t id, BunString* out);
 extern "C" void Bun__AOTAudit__describeShape(const BunString* key, BunString* out);
+extern "C" void Bun__AOTAudit__write(const uint8_t* line, size_t length);
 
 extern "C" void Bun__AOTAudit__setPendingSites(size_t lengthOfSource, const uint32_t* expressions, size_t numberOfExpressions, const uint32_t* parameters, size_t numberOfParameters)
 {
@@ -765,7 +818,7 @@ JSC_DEFINE_HOST_FUNCTION(jsAOTAuditDescribe, (JSC::JSGlobalObject * globalObject
 JSC_DEFINE_HOST_FUNCTION(jsAOTAuditWrite, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto line = makeString(callFrame->argument(0).getString(globalObject), '\n').utf8();
-    fwrite(line.data(), 1, line.length(), stderr);
+    Bun__AOTAudit__write(byteCast<uint8_t>(line.data()), line.length());
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

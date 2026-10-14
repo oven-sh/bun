@@ -685,6 +685,7 @@ struct Search {
     /// label whose antecedents are those that lead to leaving it that way, and the number of the block around it, as in `seen`.
     reduced: Vec<(FlowId, FlowId, u32)>,
     pending: Vec<(FlowId, u32)>,
+    exhaustive: FxHashSet<StmtId>,
 }
 
 /// Where the code that constructs an object uses `this`.
@@ -1012,7 +1013,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut is_double = false;
         while let ExprKind::As { expr, .. } = self.hir(file)[operand].kind {
             let between = self.type_of_expr(file, operand);
-            if !between.is_any() && between != TypeId::UNKNOWN {
+            if !between.is_any() && between != TypeId::UNKNOWN && !between.is_never() {
                 break;
             }
             (operand, is_double) = (expr, true);
@@ -1220,11 +1221,14 @@ impl<'p, 's> Checker<'p, 's> {
             _ if !self.is_untyped_file(file) && !self.has_declared_type(file, e) => return TypeId::UNKNOWN,
             // `as` coerces and does not assert: an object that cannot be made one of the type stays what it was.
             ExprKind::As { expr, .. } => {
+                let target = self.type_of_expr(file, e);
+                if target.is_never() {
+                    return TypeId::UNKNOWN;
+                }
                 let source = match self.source_of_double_cast(file, e) {
                     Some(source) => source,
                     None => self.type_handed_on(file, expr),
                 };
-                let target = self.type_of_expr(file, e);
                 // What the program is given stays what it is, and the type is what it is expected to be. What the program has made is known for what it is.
                 if (self.has_tainted_part(target) || self.is_given(file, expr)) && (self.says_nothing(source) || self.is_untyped(source)) {
                     return TypeId::UNKNOWN;
@@ -1701,7 +1705,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     fn is_called_with_what_says_nothing(&mut self, file: FileId, func: FnId) -> bool {
         let program = self.p;
-        program.aot.storage.called_with_what_says_nothing.get_or_init(|| self.find_called_with_what_says_nothing());
+        program.aot.storage.called_with_what_says_nothing.get_or_init(|| {
+            let mut asking = program.checker();
+            asking.begin_task(0, 0, false);
+            (asking.stack_base, asking.stack_limit) = (self.stack_base, self.stack_limit);
+            asking.while_translating(|asking| asking.find_called_with_what_says_nothing())
+        });
         let (hir, bound) = (self.hir(file), self.bound(file));
         let symbol = match bound.fns[func.idx()].owner {
             FnOwner::Stmt(_) => bound.symbol_of_declaration(Decl::Fn(func)),
@@ -1752,6 +1761,7 @@ impl<'p, 's> Checker<'p, 's> {
                     || call.is_some_and(|call| {
                         let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
                         arguments.into_iter().any(|argument| {
+                            self.prepare_enclosing(other, argument);
                             let given = self.type_of_expr(other, argument);
                             given.is_any()
                         })
@@ -2063,11 +2073,14 @@ impl<'p, 's> Checker<'p, 's> {
             }
             let site = self.dead_zone_of(file, Decl::Var(pat)).map(|found| found.0);
             let reads = || index.of(ExprTag::Ident).iter().copied().filter(|&e| bound.expr_symbol[e.idx()] == local && !bound.is_in_type_query(e) && bound.access_kind(hir, e) != AccessKind::Write);
-            let mut search = Search::default();
+            let without_clause: Vec<StmtId> = bound.flow.iter().filter_map(|flow| if let Flow::Switch { stmt, from, to, .. } = *flow { (from == to).then_some(stmt) } else { None }).collect();
+            let exhaustive: FxHashSet<StmtId> = without_clause.into_iter().filter(|&stmt| self.is_exhaustive_switch(file, stmt)).collect();
+            let mut search = Search { exhaustive, ..Search::default() };
             let read = match reads().find(|&e| self.site_of(file, bound.expr_parent[e.idx()]) != site) {
                 Some(e) => EarlyRead::ByOtherCode(e),
                 None => match reads().find(|&e| self.is_reached_without(file, bound.expr_flow[e.idx()], Store::Variable(local), &mut search)) {
                     Some(e) => EarlyRead::OnSomePath(e),
+                    None if !search.exhaustive.is_empty() && reads().any(|e| self.is_reached_without(file, bound.expr_flow[e.idx()], Store::Variable(local), &mut Search::default())) => continue,
                     None => EarlyRead::ByOtherFiles,
                 },
             };
@@ -2465,6 +2478,10 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The same for `Array.from`.
+    pub fn is_call_that_yields_its_argument_as_it_is(&mut self, file: FileId, e: ExprId) -> bool {
+        self.is_call_of_library(file, e, b"ObjectConstructor", &[b"freeze", b"seal", b"preventExtensions"])
+    }
+
     pub fn is_array_from(&mut self, file: FileId, e: ExprId) -> bool {
         self.is_call_of_library(file, e, b"ArrayConstructor", &[b"from"])
     }
@@ -3891,26 +3908,6 @@ impl<'p, 's> Checker<'p, 's> {
             e = expr;
         }
         self.p.aot.storage.marked_pure.get().and_then(|marked| marked.get(&file)).is_some_and(|calls| calls.binary_search(&e.0).is_ok())
-    }
-
-    pub fn marked_initializers_of(&mut self, file: FileId) -> (u32, u32) {
-        let hir = self.hir(file);
-        let Some(calls) = self.p.aot.storage.marked_pure.get().and_then(|marked| marked.get(&file)) else { return (0, 0) };
-        let (mut marked, mut lazy) = (0, 0);
-        for stmt in hir.ids(hir.body) {
-            let StmtKind::Var(decls) = hir[stmt].kind else { continue };
-            for d in decls.iter().filter(|&d| hir[d].init.is_some()) {
-                let mut e = hir[d].init;
-                while let ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr) | ExprKind::As { expr, .. } | ExprKind::NonNull(expr) = hir[e].kind {
-                    e = expr;
-                }
-                if calls.binary_search(&e.0).is_ok() {
-                    marked += 1;
-                    lazy += u32::from(self.declares_lazy_variable(file, d));
-                }
-            }
-        }
-        (marked, lazy)
     }
 
     pub fn runs_code_when_initialized(&mut self, sym: Sym) -> bool {
@@ -5820,6 +5817,7 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                         before
                     }
+                    Flow::Switch { stmt, from, to, .. } if from == to && search.exhaustive.contains(&stmt) => break,
                     Flow::Cond { before, .. } | Flow::Switch { before, .. } | Flow::ArrayMutation { before, .. } => before,
                     Flow::Reduce { before, label, instead } => {
                         search.reduced.push((label, instead, block));

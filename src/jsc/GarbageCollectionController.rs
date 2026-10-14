@@ -24,7 +24,6 @@ pub struct GarbageCollectionController {
     /// nominal time (from tick intervals) since the JS heap last grew.
     idle_gc_at_ms: Cell<[u32; 3]>,
     idle_quiet_ms: Cell<u32>,
-    first_collection_done: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(
@@ -43,7 +42,6 @@ impl Default for GarbageCollectionController {
             disabled: Cell::new(false),
             idle_gc_at_ms: Cell::new([0; 3]),
             idle_quiet_ms: Cell::new(0),
-            first_collection_done: Cell::new(false),
         }
     }
 }
@@ -164,17 +162,7 @@ impl GarbageCollectionController {
     /// Arms the idle timer on first call; kept at the event-loop call sites so the first deadline is in the poll that follows.
     #[inline]
     pub(crate) fn process_gc_timer(&self) {
-        if self.disabled.get() {
-            return;
-        }
-        if !self.first_collection_done.get() {
-            let vm = VirtualMachine::get().jsc_vm();
-            if vm.is_past_usual_first_collection() {
-                self.first_collection_done.set(true);
-                self.perform_gc(false);
-            }
-        }
-        if self.gc_repeating_timer.get().state != TimerState::PENDING {
+        if self.disabled.get() || self.gc_repeating_timer.get().state != TimerState::PENDING {
             return;
         }
         let interval = self.repeat_interval();
@@ -192,7 +180,6 @@ impl GarbageCollectionController {
         if self.disabled.get() {
             return;
         }
-        self.first_collection_done.set(true);
         let vm = VirtualMachine::get().jsc_vm();
         if idle_full {
             vm.collect_async_idle();

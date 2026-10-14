@@ -1,0 +1,12 @@
+heir of an object of the type: TypeError
+accessor and read-only properties: TypeError
+heir of a frozen literal: TypeError
+false 2 1 true false {"host":"h","port":2,"nested":{"depth":0}}
+true 2 2 true
+setter of a literal with an heir for this: TypeError
+getter of a literal with an heir for this: TypeError
+10 0
+heir of an instance as the class: TypeError
+method of the class with an heir for this: TypeError
+field of an instance made an accessor: TypeError
+svc:443 svc 8443

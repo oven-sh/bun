@@ -1,0 +1,1 @@
+It reads error.stack in the form the jsc shell gives it. Expected: "outer 3: Error fail 3 | fail:5:45 small:6:52 middle:7:73 outer:8:103 :46:62 attempt:45:105 module:46". --aot prints: "outer 3: Error fail 3 | Error: fail 3 fail:4:45 small:5:52 middle:6:73 outer:7:103 <anonymous>:45:62".

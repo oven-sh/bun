@@ -1268,6 +1268,7 @@ pub(crate) mod command {
                     match argv.get(1).map(bun_core::ZStr::as_bytes) {
                         Some(b"-v" | b"--version") => print_version_and_exit(),
                         Some(b"--revision") => print_revision_and_exit(),
+                        Some(b"--aot-stamp") => crate::cli::aot::print_stamp_and_exit(),
                         _ => {}
                     }
                 }
@@ -2208,6 +2209,12 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 
   <d>Type check the test files and what they import, then run them<r>
   <b><green>bun test<r> <cyan>--check<r>
+
+  <d>Run the tests and log the places where the code would behave differently under --aot<r>
+  <b><green>bun test<r> <cyan>--aot-audit<r>
+
+  <d>Compile the tests and what they import to machine code ahead of time, then run them<r>
+  <b><green>bun test<r> <cyan>--aot<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "

@@ -401,6 +401,9 @@ public:
             // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
             target->putDirectIndex(globalObject, *index, implValue, attributes, PutDirectIndexLikePutDirect);
             RETURN_IF_EXCEPTION(scope, );
+        } else if (target->structure()->hasImmutableShape()) {
+            target->methodTable()->defineOwnProperty(target, globalObject, identifier, PropertyDescriptor(implValue, attributes), true);
+            RETURN_IF_EXCEPTION(scope, );
         } else {
             target->putDirect(this->vm(), identifier, implValue, attributes);
         }
@@ -1548,7 +1551,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     RETURN_IF_EXCEPTION(scope, {});
 
     if (hasValue && slot.slotBase() == object && object->structure()->inheritorsMayOverrideReadOnlyProperties() && (slot.attributes() & PropertyAttribute::ReadOnly) && (slot.attributes() & PropertyAttribute::DontDelete)) {
-        throwTypeError(globalObject, scope, makeString("Cannot spy on `"_s, String(propertyKey.uid()), "`: built-in objects are immutable in ahead-of-time compiled programs"_s));
+        throwTypeError(globalObject, scope, makeString("Cannot spy on `"_s, String(propertyKey.uid()), "`: built-in objects are immutable in ahead-of-time compiled programs, and so are the prototype objects of compiled classes"_s));
         return {};
     }
 
@@ -1597,6 +1600,8 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
             } else if (auto index = parseIndex(propertyKey)) {
                 // Use putDirectIndex for numeric property keys (e.g., spyOn(arr, 0))
                 object->putDirectIndex(globalObject, *index, mock, attributes, PutDirectIndexLikePutDirect);
+            } else if (object->structure()->hasImmutableShape()) {
+                object->methodTable()->defineOwnProperty(object, globalObject, propertyKey, PropertyDescriptor(mock, slot.slotBase() == object ? attributes : 0), true);
             } else {
                 object->putDirect(vm, propertyKey, mock, attributes);
             }

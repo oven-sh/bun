@@ -1,0 +1,1 @@
+Plain Bun prints "1,2,5,3,true,xy 3,4,-1,100,false,xylen2plussum 1,2,5,0,false,xylen2plussum"; under --aot the program ends with: TypeError: expected Vec, got plain object

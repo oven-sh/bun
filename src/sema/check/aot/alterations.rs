@@ -11,7 +11,7 @@
 //! - A type that says nothing, `any`, `unknown`, `object`: every layout that has escaped, see `escape_closure`. An object gets to such a place
 //!   in no other way.
 //! - `Readonly<T>`, `Partial<T>`, `T & {}`: as `T`.
-//! - Any other type that depends on a type parameter, `T[K]`: every layout.
+//! - Any other type that depends on a type parameter: as what it is bounded by, `Events[E]` as `Events[keyof Events]`. Bounded by nothing, `T[K]`: every layout.
 //!
 //! A call is known by where its signature is declared, whatever the callee is called. So where the built-in goes somewhere as a value:
 //! - A place of its own type, `const ObjectFreeze = Object.freeze`: nothing. What is in such a place is known when it is called.
@@ -380,7 +380,16 @@ impl<'p, 's> Checker<'p, 's> {
                     Some(variable) => self.add_objects_of(variable, found),
                     None => found.depends_on_type_parameter = true,
                 },
-                _ if self.is_instantiable(part) || self.is_generic(part) => found.depends_on_type_parameter = true,
+                _ if self.is_array_or_tuple(part) => {}
+                _ if self.is_instantiable(part) => {
+                    let bound = self.base_constraint(part);
+                    if bound == part || self.says_nothing_of_objects(bound) {
+                        found.depends_on_type_parameter = true;
+                    } else {
+                        self.add_objects_of(bound, found);
+                    }
+                }
+                _ if self.is_generic(part) => found.depends_on_type_parameter = true,
                 // An array, a function and the like have no layout.
                 _ if self.says_properties(part) && !self.is_array_or_tuple(part) && self.element_of_array_subtype(part).is_none() => found.types.push(self.laid_out_as(part)),
                 _ => {}
@@ -515,10 +524,46 @@ impl<'p, 's> Checker<'p, 's> {
         self.alterations_noted().untyped_places[alteration as usize][language][form][around] += 1;
     }
 
+    fn made_where_it_stands(&self, file: FileId, mut operand: ExprId) -> Option<ExprId> {
+        let hir = self.hir(file);
+        while let ExprKind::As { expr: inner, .. } | ExprKind::Satisfies { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::AsConst(inner) = hir[operand].kind {
+            operand = inner;
+        }
+        matches!(hir[operand].kind, ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Fn(_) | ExprKind::Class(_)).then_some(operand)
+    }
+
+    fn is_this_in_the_constructor_of_a_class(&self, file: FileId, operand: ExprId) -> bool {
+        let hir = self.hir(file);
+        if !matches!(hir[operand].kind, ExprKind::This) {
+            return false;
+        }
+        let mut function = self.enclosing_fn_of_expr(file, operand);
+        while let Some(arrow) = function.filter(|&function| hir[function].kind == FnKind::Arrow) {
+            function = Some(self.bound(file).fns[arrow.idx()].enclosing).filter(|enclosing| enclosing.is_some());
+        }
+        function.is_some_and(|function| hir[function].kind == FnKind::Constructor)
+    }
+
     fn note_altered(&mut self, alteration: Alteration, types: &[TypeId], file: FileId, of_operand: ExprId) {
         let mut operand = ObjectsOf::default();
         for &ty in types {
             self.add_objects_of(ty, &mut operand);
+        }
+        if let Some(made) = self.made_where_it_stands(file, of_operand) {
+            let hir = self.hir(file);
+            let mut layer = of_operand;
+            while layer != made {
+                let (ExprKind::As { expr: inner, .. } | ExprKind::Satisfies { expr: inner, .. } | ExprKind::NonNull(inner) | ExprKind::AsConst(inner)) = hir[layer].kind else { break };
+                layer = inner;
+                let of_layer = self.type_of_expr(file, layer);
+                self.add_objects_of(of_layer, &mut operand);
+            }
+            if matches!(hir[made].kind, ExprKind::Object(_))
+                && let Some(expected) = self.contextual_type_of_literal(file, made)
+            {
+                self.add_objects_of(expected, &mut operand);
+            }
+            operand.is_untyped = false;
         }
         let types = operand.types;
         let kind = if operand.depends_on_type_parameter {
@@ -807,7 +852,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// In JavaScript nothing is known of an operand, nor of what a name stands for.
     pub(super) fn note_alterations_by_javascript(&mut self, file: FileId) {
         let hir = self.hir(file);
-        let mut called: FxHashSet<ExprId> = FxHashSet::default();
+        let (mut called, mut without_layout): (FxHashSet<ExprId>, FxHashSet<ExprId>) = Default::default();
         let calls: Vec<ExprId> = self.exprs_by_kind_of(file).of(ExprTag::Call).to_vec();
         let unary: Vec<ExprId> = self.exprs_by_kind_of(file).of(ExprTag::Unary).to_vec();
         for e in unary {
@@ -818,13 +863,19 @@ impl<'p, 's> Checker<'p, 's> {
             let ExprKind::Call(call) = hir[e].kind else { continue };
             if let Some(alteration) = self.alteration_named_by(file, hir[call].callee) {
                 called.insert(hir[call].callee);
-                self.note_untyped_place(alteration, file, hir.ids(hir[call].args).next(), e);
+                let operand = hir.ids(hir[call].args).next();
+                if operand.is_some_and(|operand| self.made_where_it_stands(file, operand).is_some() || alteration == Alteration::Prototype && self.is_this_in_the_constructor_of_a_class(file, operand)) {
+                    without_layout.insert(hir[call].callee);
+                    self.alterations_noted().sites[alteration as usize][Operand::NoLayout as usize] += 1;
+                    continue;
+                }
+                self.note_untyped_place(alteration, file, operand, e);
             }
         }
         for tag in [ExprTag::Dot, ExprTag::Ident] {
             let named: Vec<ExprId> = self.exprs_by_kind_of(file).of(tag).to_vec();
             for e in named {
-                if let Some(alteration) = self.alteration_named_by(file, e) {
+                if let Some(alteration) = self.alteration_named_by(file, e).filter(|_| !without_layout.contains(&e)) {
                     if !called.contains(&e) {
                         self.note_untyped_place(alteration, file, None, e);
                     }
@@ -871,6 +922,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
+        let [records, giving_up, let_out, records_kept_in, instances_kept_in] = membership.evidence_of_alterations;
+        lines.push(format!("alterations: of the allocated layouts: {records} are records; {giving_up} records may give up their layout when they are altered; {let_out} layouts are seen to be let out to a place that says nothing; neither: {records_kept_in} records, {instances_kept_in} classes"));
         let (every, since, mutable, all) = self.explain_mutable_prototypes();
         lines.push(format!("alterations: constructor functions: what is done to a function that is not known goes for every one: {every}"));
         lines.push(format!("alterations: constructor functions: {mutable} of {all} have a prototype object that may be replaced or got hold of"));

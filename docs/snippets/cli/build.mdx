@@ -202,6 +202,15 @@ bun build <entry points>
   <code>--format=esm</code>
 </ParamField>
 
+<ParamField path="--aot-type-errors" type="string" default="throw">
+  With <code>--aot</code>: what the executable does when a value does not match its TypeScript type: <code>throw</code>, or{" "}
+  <code>log</code> to write a line to stderr and continue
+</ParamField>
+
+<ParamField path="--aot-explain" type="string">
+  With <code>--aot</code>: print a report. <code>throws</code> lists every type check that can fail when the program runs
+</ParamField>
+
 <ParamField path="--compile-jit-policy" type="number" default="1">
   JIT tier-up threshold scale the executable starts with; <code>1</code> is the normal JIT policy. See
   <code>Bun.unsafe.setJITPolicy</code>

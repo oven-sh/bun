@@ -1,0 +1,6 @@
+3500 3500 3500 3500 3500
+a base class, 400,000: 1400000; the run time was entered under 100 times
+a plain function, 400,000: 1400000; the run time was entered under 100 times
+D extends B, 400,000: 1400000; the run time was entered under 100 times
+E extends D, 400,000: 1400000; the run time was entered under 100 times
+a class without a constructor of its own, 400,000: 1400000; the run time was entered under 100 times

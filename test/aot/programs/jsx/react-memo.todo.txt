@@ -1,0 +1,1 @@
+Expected: "a#1,b#2,c#3 7 a3 function 5". --aot prints: "TypeError". (It needs Bun as its host, so it was never run before.)

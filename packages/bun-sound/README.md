@@ -44,7 +44,7 @@ A typed version is used **all or nothing**. If anything does not fit, the packag
 installed and you get one warning naming the first mismatch:
 
 ```
-warn: the typed version of "react-dom" in .sound/react-dom is not used: it is for version 19.3.0, and 19.2.8 is installed: the package is compiled untyped
+warn: the typed version of "react-dom" in .sound/react-dom is not used: it is for version 19.3.0, and 19.2.8 is installed (install the typed version for 19.2.8, or remove this one): the package is compiled untyped
 ```
 
 ### When the warning comes
@@ -54,7 +54,7 @@ The build goes on and the program is right; it is only not faster. What to do, b
 | the warning says | do this |
 |---|---|
 | it is for version X, and Y is installed | install the typed version for Y: `bun add -d @sound/<name>@Y` (the two numbers are always the same). The versions that exist are the folders here. If there is none for Y: pin the package to X, or remove the typed version, or [carry](#carrying-a-typed-version-to-another-version) it to Y |
-| the installed F is not the file that it was typed on | something changed `node_modules/<name>/F`: `patch-package`, `bun patch`, a postinstall script. A typed version fits npm's bytes only. Keep your own under `.sound/<name>/`, made from the patched file |
+| the installed F differs from the published file that this typed version was made from | something changed `node_modules/<name>/F`: `patch-package`, `bun patch`, a postinstall script. A typed version fits npm's bytes only. Keep your own under `.sound/<name>/`, made from the patched file |
 | it is for a build that defines process.env.NODE_ENV as "production" | pass `--define 'process.env.NODE_ENV="production"'`. In other builds the package's entry loads its development files, which are not typed |
 | F is installed, and it was not when the package was typed | the package now ships a file at a path that the typed version adds. Treat it as another version |
 | its sound.json is of a format that this Bun does not know | the typed version is newer than your Bun. Update Bun |
@@ -114,6 +114,12 @@ export BUN=/path/to/bun                  # any Bun; used only to print files in 
 export BUN_SEMA_TS_LIB=/path/to/typescript/lib
 ```
 
+The gates work on packages as npm installs them. `trees/installs/<set>/package.json` pins what each tree was last run with:
+
+```sh
+cd trees/installs/client && bun install      # client, server-19.3.0 .. server-19.0.0, seroval, fuse, sdk-0.112.1, sdk-0.128.0
+```
+
 ```sh
 python3 check.py  path/to/node_modules out/                     # static; a few seconds
 python3 run.py build   path/to/aot-bun path/to/node_modules out/   # compiles the trees
@@ -148,13 +154,24 @@ is to its importers: `require()`, `import d`, `import * as ns`, named imports in
 `run.py build` has one more gate, **facts**. A typed version can compile, give every right answer, and still have lost what it
 is for: the compiler may decide that the package's records could come from outside and give them no layout. That has happened:
 one change in the compiler, together with an ES-module entry, made the typed reconciler slower than the untyped one with every
-other gate green. So the typed build of each tree is made with `--aot-explain=given`, which prints at how many of the program's
-property reads the compiler knows the receiver's layout, and `FACTS` in `run.py` pins that share. A fall of more than two points fails.
+other gate green; another made every `Fiber` admit foreign objects, through the small records that hold one, for 16% more
+instructions. Both were found by an application's benchmark. So `run.py build` takes four measures of each tree's typed program,
+all of them the compiler's own, and `FACTS` in `run.py` pins them:
+
+| measure | from | fails when |
+|---|---|---|
+| receiver | `--aot-explain=given`: at how many property reads the receiver's layout is known | two points down |
+| read | the same: at how many the type of what is read is known | two points down |
+| bytes | the image's map: the package's compiled bodies, typed over untyped | a tenth up |
+| strangers | `--aot-explain=foreign`: the named records whose layout admits foreign objects | a new name |
 
 ```
-ok   client: facts: the receiver is known at 2609 of 4215 (61.9%) property reads of the program (due 61.9%)
-FAIL fuse.born: facts: the receiver is known at 604 of 1707 (35.4%) property reads of the program · DUE 42.6%: THE TYPED VERSION HAS LOST ITS FACTS ON THIS COMPILER
+ok   client: facts: react-reconciler: the receiver is known at 61.4% of the program's property reads (due 61.4) · what is read at 44.3% (due 44.3) · its compiled bodies: typed / untyped bytes 0.725 (due 0.725)
+FAIL client: facts: react-reconciler: the receiver is known at 59.9% ... (due 61.4) · what is read at 40.1% (due 44.3) · ... bytes 0.982 (due 0.725) · WORSE: read bytes: THE TYPED VERSION HAS LOST FACTS ON THIS COMPILER
 ```
+
+A tree must give the compiler the chance to go wrong: scenario 29 of the client tree reads JSON into small records under the names
+that the reconciler's own small records have (`{ current }`, `{ pending }`, `{ then }`). Without it the second loss does not show.
 
 To see which records lost their layout, print the compiler's intermediate form and count by package:
 

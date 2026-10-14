@@ -15,7 +15,6 @@ pub const NONE: u32 = u32::MAX;
 pub const PREDICTION_IS_CLOSURE: u32 = 1 << 31;
 pub const PREDICTION_IS_BY_KEY: u32 = 1 << 30;
 pub const RECEIVER_IS_OF_ONE_ROW: u32 = 1 << 29;
-pub const ELEMENT_IS_KNOWN_BY_THE_STORES: u32 = 3;
 pub const VARIABLE_IS_INITIALIZED: u32 = 1;
 /// In the type of a parameter of a function: it is written down. The other bits number the type. Not in `NONE`.
 pub const PARAMETER_IS_ANNOTATED: u32 = 1 << 31;
@@ -382,9 +381,6 @@ impl Writer {
             let (blocks, values) = (self.blocks.len() as u32 / SIZES[9], self.values.len() as u32 / SIZES[10]);
             for (number, value) in func.values.iter().enumerate() {
                 let mut r = record(&value.def);
-                if value.prediction == Prediction::Stores && matches!(r.opcode, Opcode::GetByVal | Opcode::IteratorValue) {
-                    r.immediates[0] = ELEMENT_IS_KNOWN_BY_THE_STORES;
-                }
                 if value.finds_initialized && matches!(r.opcode, Opcode::GetModuleVariable) {
                     r.immediates[1] = VARIABLE_IS_INITIALIZED;
                 }
@@ -398,7 +394,7 @@ impl Writer {
                 assert!(!is_labelled || matches!(r.opcode, Opcode::GetById | Opcode::PutById), "a label stands on what is no access by name");
                 let arguments = self.list(r.args.iter().map(|v| v.0));
                 let prediction = match value.prediction {
-                    Prediction::None | Prediction::Stores => NONE,
+                    Prediction::None => NONE,
                     Prediction::Ty(ty) | Prediction::Field(ty) => ty.0,
                     Prediction::Closure(func) => PREDICTION_IS_CLOSURE | func.0,
                     Prediction::ByKey(property) => PREDICTION_IS_BY_KEY | property.0,

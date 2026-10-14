@@ -332,6 +332,15 @@ scenario("28 elements of both makers, held across renders: bail-outs by identity
   say(held.map(e => [Object.keys(e).sort().join(), typeof e.type, String(e.key), Object.keys(e.props as object).sort().join()].join("|")).join(" ; "));
 });
 
+// EVERY REAL PROGRAM READS JSON, and types it with small records under everyday names: { current }, { pending }, { then }, { value } .. The reconciler's own small records have the same names. A compiler that takes a record for outside data "by its looks" takes theirs too, and through `cursor.current` a Fiber then admits strangers: every read of a Fiber's field is dearer. No answer changes: run.py's `facts` gate is what sees it; this scenario is what gives it something to see.
+interface Everyday { a: { current: unknown }; b: { mode: unknown; children: unknown }; c: { cause: unknown }; d: { then: unknown }; e: { pending: unknown }; f: { element: unknown }; g: { destroy: unknown }; h: { cache: unknown }; i: { value: unknown }; j: { set: unknown }; k: { error: unknown }; l: { aborted: unknown; addEventListener: unknown }; m: { pending: unknown; value: unknown; getSnapshot: unknown } }
+scenario("29 data from outside under the reconciler's own everyday names, rendered", (tag, say) => {
+  const text = '{"a":{"current":1},"b":{"mode":"x","children":[2]},"c":{"cause":3},"d":{"then":4},"e":{"pending":5},"f":{"element":6},"g":{"destroy":7},"h":{"cache":8},"i":{"value":9},"j":{"set":10},"k":{"error":11},"l":{"aborted":false,"addEventListener":12},"m":{"pending":13,"value":14,"getSnapshot":15}}';
+  const data = JSON.parse(text) as Everyday;
+  const seen = [data.a.current, data.b.mode, data.b.children, data.c.cause, data.d.then, data.e.pending, data.f.element, data.g.destroy, data.h.cache, data.i.value, data.j.set, data.k.error, data.l.aborted, data.l.addEventListener, data.m.pending, data.m.value, data.m.getSnapshot];
+  const ui = mount2(<ink-box>{seen.map((x, i) => <T key={i}>{JSON.stringify(x)}</T>)}</ink-box>, tag, say); say(ui.show());
+});
+
 for (const [name, body] of scenarios) {
   if (only && !name.startsWith(only)) continue;
   for (const tag of [0, 1] as const) {

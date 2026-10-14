@@ -135,7 +135,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
             auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
             RETURN_IF_EXCEPTION(scope, {});
             if (pathsObject) {
-                if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
+                if (dynamicDowncast<JSC::JSArray>(pathsObject)) {
                     auto pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
                     if (pathsArray->length() > 0) {
                         fromValue = pathsArray->getIndex(globalObject, 0);
@@ -363,7 +363,7 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
             auto pathsObject = fromValue.getObject()->getIfPropertyExists(globalObject, builtinNames(vm).pathsPublicName());
             RETURN_IF_EXCEPTION(scope, {});
             if (pathsObject) {
-                if (pathsObject.isCell() && pathsObject.asCell()->type() == JSC::JSType::ArrayType) {
+                if (dynamicDowncast<JSC::JSArray>(pathsObject)) {
                     auto* pathsArray = uncheckedDowncast<JSC::JSArray>(pathsObject);
                     if (pathsArray->length() > 0) {
                         fromValue = pathsArray->getIndex(globalObject, 0);

@@ -14,10 +14,96 @@ pub(crate) fn why_unsupported(target: &CompileTarget) -> Option<&'static str> {
     if !Bun__AOT__hasCompiler() {
         return Some("this build of Bun does not include the ahead-of-time compiler");
     }
-    if !target.is_default() {
-        return Some("ahead-of-time compilation cannot target another platform or version of Bun");
+    let is_tried = cfg!(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64", target_env = "gnu"),
+    ));
+    if !is_tried && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_AOT_ON_UNTRIED_PLATFORMS.get() != Some(true) {
+        return Some("ahead-of-time compilation is not available on this platform yet. It works on macOS arm64 and on Linux x64 with glibc");
+    }
+    if !target.is_host_platform() {
+        return Some("ahead-of-time compilation makes machine code for the platform it runs on and cannot target another. Run this build on the target platform, with that platform's Bun");
     }
     None
+}
+
+#[cold]
+pub(crate) fn print_stamp_and_exit() -> ! {
+    unsafe extern "C" {
+        safe fn Bun__AOT__stamp() -> u64;
+    }
+    bun_jsc::initialize(bun_jsc::InitializeOptions { use_aot: true, ..Default::default() });
+    let w = bun_core::Output::writer();
+    let _ = w.write_all(format!("{:016x}\n", Bun__AOT__stamp()).as_bytes());
+    bun_core::Output::flush();
+    Global::exit(0);
+}
+
+fn stamp_of(executable: &[u8]) -> Result<Vec<u8>, &'static [u8]> {
+    use crate::api::bun::process::sync as spawn_sync;
+    let mut envp: Vec<*const core::ffi::c_char> = bun_sys::environ().to_vec();
+    envp.push(c"BUN_BE_BUN=1".as_ptr());
+    envp.push(core::ptr::null());
+    let spawned = spawn_sync::spawn(&spawn_sync::Options {
+        argv: vec![Box::<[u8]>::from(executable), Box::<[u8]>::from(&b"--aot-stamp"[..])],
+        envp: Some(envp.as_ptr()),
+        stdout: spawn_sync::SyncStdio::Buffer,
+        stderr: spawn_sync::SyncStdio::Ignore,
+        stdin: spawn_sync::SyncStdio::Ignore,
+        #[cfg(windows)]
+        windows: crate::api::bun::process::WindowsOptions {
+            loop_: bun_event_loop::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(None, None)),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let result = match spawned {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => return Err(error.name()),
+        Err(error) => return Err(error.name().as_bytes()),
+    };
+    let answer = result.stdout.as_slice().trim_ascii();
+    if !result.status.is_ok() || answer.len() != 16 || !answer.iter().all(u8::is_ascii_hexdigit) || answer.iter().all(|&digit| digit == b'0') {
+        return Err(b"it does not answer --aot-stamp");
+    }
+    Ok(answer.to_vec())
+}
+
+pub(crate) fn why_cannot_be_carried(target: &CompileTarget, env: &mut bun_dotenv::Loader, executable_path: Option<&[u8]>) -> Option<Vec<u8>> {
+    use bun_standalone_graph::StandaloneModuleGraph::{target_builtins, target_executable};
+    if let Some(why) = why_unsupported(target) {
+        return Some(why.as_bytes().to_vec());
+    }
+    if executable_path.is_none() && target.is_default() {
+        return None;
+    }
+    let carrier = match target_executable(target, env, executable_path) {
+        Ok(path) => path,
+        Err(error) => return Some(error.slice().to_vec()),
+    };
+    let Ok(this_bun) = bun_core::self_exe_path() else {
+        return Some(b"failed to get self executable path".to_vec());
+    };
+    let theirs = match target_builtins(target, env, executable_path) {
+        Ok(Some(_)) => stamp_of(carrier.as_bytes()),
+        Ok(None) => Err(&b"it is not a Bun, or it is an older one"[..]),
+        Err(error) => return Some(error.slice().to_vec()),
+    };
+    let shown = bstr::BStr::new(carrier.as_bytes());
+    let message = match (stamp_of(this_bun.as_bytes()), theirs) {
+        (Ok(ours), Ok(theirs)) if ours == theirs => return None,
+        (Ok(ours), Ok(theirs)) => format!(
+            "{shown} has another build of the JavaScript engine (for instance another version of Bun: {}) than the Bun that runs this build ({}). It would refuse the compiled code when the program starts. Use the same version of Bun for both",
+            bstr::BStr::new(&theirs),
+            bstr::BStr::new(&ours),
+        ),
+        (Ok(_), Err(why)) => format!(
+            "{shown} cannot carry code compiled by this Bun: {}. The executable has to be a Bun for this platform, of the same version",
+            bstr::BStr::new(why),
+        ),
+        (Err(why), _) => format!("this Bun could not be run with --aot-stamp: {}", bstr::BStr::new(why)),
+    };
+    Some(message.into_bytes())
 }
 
 #[cfg(unix)]
@@ -85,9 +171,16 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
         );
         Global::exit(1);
     }
+    if for_tests && (ctx.test_options.parallel > 0 || ctx.test_options.isolate) {
+        pretty_errorln!(
+            "<r><red>error<r>: <b>--aot<r> does not support <b>{}<r>: a program that is compiled ahead of time is loaded once, into one global object. Run without one of the two.",
+            if ctx.test_options.parallel > 0 { "--parallel" } else { "--isolate" }
+        );
+        Global::exit(1);
+    }
     if !ctx.runtime_options.eval.script.is_empty() {
         pretty_errorln!(
-            "<r><red>error<r>: <b>--aot<r>: not compiled yet: a program that is in no file: <b>-e<r> | <b>-p<r> | <b>-<r>"
+            "<r><red>error<r>: <b>--aot<r> cannot be combined with <b>-e<r>, <b>-p<r> or a script from stdin"
         );
         Global::exit(1);
     }

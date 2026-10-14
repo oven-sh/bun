@@ -476,7 +476,7 @@ pub(crate) mod js_bundler {
                 && !explain.is_undefined_or_null()
             {
                 let mut push = |word: JSValue| -> JsResult<()> {
-                    let refused = || global_this.throw_invalid_property_type_value(b"compile.aotExplain", bun_aot::Explain::WORDS.join(" | ").as_bytes(), word);
+                    let refused = || global_this.throw_invalid_property_type_value(b"compile.aotExplain", bun_aot::Explain::REPORTS.map(|report| format!("\"{report}\"")).join(" | ").as_bytes(), word);
                     if !word.is_string() {
                         return Err(refused());
                     }
@@ -512,6 +512,13 @@ pub(crate) mod js_bundler {
                         ));
                     }
                 };
+            }
+
+            if !this.aot && bun_core::env_var::BUN_AOT.get() != Some(true) {
+                let needs_aot = if this.logs_type_errors { Some("aotTypeErrors") } else { (!this.aot_explain.is_empty()).then_some("aotExplain") };
+                if let Some(option) = needs_aot {
+                    return Err(global_this.throw_invalid_arguments(format_args!("compile.{option} requires compile.aot: true")));
+                }
             }
 
             // `false` is "no order file", as in `compile: { bytecodeOrder: haveProfile && path }`.
@@ -1461,7 +1468,7 @@ pub(crate) mod js_bundler {
                     ("footer with code", !crate::cli::aot::is_only_comments(&this.footer.list)),
                 ];
                 if let Some((option, _)) = not_honoured.iter().find(|option| option.1) {
-                    return Err(global_this.throw_invalid_arguments(format_args!("compile.aot: not compiled yet: {option}")));
+                    return Err(global_this.throw_invalid_arguments(format_args!("compile.aot does not support {option}")));
                 }
                 this.bytecode = true;
             }

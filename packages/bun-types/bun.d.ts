@@ -3737,6 +3737,8 @@ declare module "bun" {
     compile?: boolean | Bun.Build.CompileTarget | CompileBuildOptions;
   }
 
+  type AotReport = "throws" | "throws-all" | "throws-json" | "throws-all-json";
+
   interface CompileBuildOptions {
     target?: Bun.Build.CompileTarget;
     execArgv?: string[];
@@ -3812,6 +3814,31 @@ declare module "bun" {
      * @default false
      */
     aot?: boolean;
+    /**
+     * With `aot`: what the executable does when a value does not match its TypeScript type.
+     *
+     * - `"throw"`: throw a `TypeError`
+     * - `"log"`: write one line that names the place, the expected type and the kind of value it got,
+     *   never the value itself, and continue as JavaScript where it can. Lines go to stderr, or to the
+     *   file named by the environment variable `BUN_AOT_TYPE_ERROR_LOG` when the executable runs.
+     *
+     * Use `"log"` to run a new `aot` build in production before you switch to `"throw"`.
+     *
+     * Equivalent CLI flag: `--aot-type-errors`
+     *
+     * @default "throw"
+     */
+    aotTypeErrors?: "throw" | "log";
+    /**
+     * With `aot`: reports to add to the `logs` of the build, at level `"verbose"`.
+     *
+     * - `"throws"`: every type check that can fail when the program runs, where the value comes from and how to fix it
+     * - `"throws-all"`: also the checks that can only fail if typed code produced a value of the wrong type
+     * - `"throws-json"`, `"throws-all-json"`: the same, one JSON object per line
+     *
+     * Equivalent CLI flag: `--aot-explain`
+     */
+    aotExplain?: AotReport | AotReport[];
     /**
      * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
      *

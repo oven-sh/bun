@@ -673,6 +673,15 @@ if (typeof Bun !== "undefined") {
       });
     });
 
+    // Node leaves the abort listener on the signal when addAbortSignal() rejects the stream.
+    test("addAbortSignal() leaves no abort listener for a pair or a TransformStream", () => {
+      for (const stream of [pairs[0][1](upper), new TransformStream()]) {
+        const { signal } = new AbortController();
+        assert.throws(() => addAbortSignal(signal, stream), { code: "ERR_INVALID_ARG_TYPE" });
+        assert.strictEqual(getEventListeners(signal, "abort").length, 0);
+      }
+    });
+
     // An object whose `writable` is not a WritableStream only looks like a pair. Node takes it for
     // one, calls getWriter() on the `writable`, and the TypeError is an unhandled rejection of a
     // pipeline that never settles. Bun does not take it for a pair.

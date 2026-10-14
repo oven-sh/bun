@@ -47,7 +47,13 @@ function addAbortSignalNoValidate(signal, stream) {
   } else {
     addAbortListener ??= require("internal/abort_listener").addAbortListener;
     const disposable = addAbortListener(signal, onAbort);
-    eos(stream, disposable[SymbolDispose]);
+    try {
+      eos(stream, disposable[SymbolDispose]);
+    } catch (err) {
+      // eos() does not take a TransformStream. Node leaves the abort listener on the signal.
+      disposable[SymbolDispose]();
+      throw err;
+    }
   }
   return stream;
 }

@@ -31,11 +31,14 @@ const SELF_CLOSING_TAGS: [&[u8]; 14] = [
 
 /// What else than the types of `infer_parser_by_type_attribute` says that a script is code: the other names of JavaScript and
 /// TypeScript, and Partytown's, which runs it in a worker.
-const TYPES_OF_CODE: [&[u8]; 20] = [
+const TYPES_OF_CODE: [&[u8]; 23] = [
     b"application/ecmascript",
     b"application/typescript",
     b"application/x-ecmascript",
     b"application/x-javascript",
+    b"javascript",
+    b"js",
+    b"jsx",
     b"text/ecmascript",
     b"text/javascript1.0",
     b"text/javascript1.1",

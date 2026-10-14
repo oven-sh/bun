@@ -699,8 +699,7 @@ static void setModuleWrapper(Zig::GlobalObject* global, JSC::ThrowScope& scope, 
 {
     bool isOverride = start != commonJSDefaultWrapperStart || end != commonJSDefaultWrapperEnd;
     if (isOverride) [[unlikely]] {
-        Bun::throwIfMayNotMakeScriptFromStrings(global, scope);
-        RETURN_IF_EXCEPTION(scope, );
+        RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(global, scope);
     }
     global->hasOverriddenModuleWrapper = isOverride;
     global->m_moduleWrapperStart = WTF::move(start);

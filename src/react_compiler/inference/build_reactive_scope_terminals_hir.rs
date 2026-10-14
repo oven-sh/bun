@@ -11,41 +11,44 @@
 //!
 //! Ported from TypeScript `src/HIR/BuildReactiveScopeTerminalsHIR.ts`.
 
-use std::collections::HashSet;
-
+use crate::collections::IdBitSet;
 use crate::collections::IdMap;
 use crate::collections::IndexMap;
+use crate::collections::IndexSet;
+use crate::collections::sort_slice_by;
 use crate::hir::AstAlloc;
 use crate::hir::BasicBlock;
 use crate::hir::BlockId;
 use crate::hir::EvaluationOrder;
 use crate::hir::GotoVariant;
 use crate::hir::HirFunction;
-use crate::hir::IdentifierId;
+use crate::hir::Place;
 use crate::hir::ScopeId;
 use crate::hir::Terminal;
-use crate::hir::cfg_utils::get_reverse_postordered_blocks;
 use crate::hir::cfg_utils::mark_instruction_ids;
 use crate::hir::cfg_utils::mark_predecessors;
+use crate::hir::cfg_utils::reverse_postorder_blocks;
 use crate::hir::environment::Environment;
-use crate::hir::visitors::each_instruction_lvalue_ids;
-use crate::hir::visitors::each_instruction_operand_ids;
-use crate::hir::visitors::each_terminal_operand_ids;
+use crate::hir::visitors::lvalues;
+use crate::hir::visitors::operands;
+use crate::hir::visitors::terminal_operands;
 
 // =============================================================================
 // getScopes
 // =============================================================================
 
-/// Collect all unique scopes from places in the function that have non-empty ranges.
+/// Collect all unique scopes from places in the function that have non-empty ranges,
+/// each where it is met first: the order of the TS `Set`.
 /// Corresponds to TS `getScopes(fn)`.
 fn get_scopes(func: &HirFunction, env: &Environment) -> Vec<ScopeId> {
-    let mut scope_ids: HashSet<ScopeId> = HashSet::new();
+    let mut scope_ids: Vec<ScopeId> = Vec::new();
+    let mut seen: IdBitSet<ScopeId> = IdBitSet::new();
 
-    let mut visit_place = |identifier_id: IdentifierId| {
-        if let Some(scope_id) = env.identifiers[identifier_id.0 as usize].scope {
+    let mut visit_place = |place: &Place| {
+        if let Some(scope_id) = env.identifiers[place.identifier.0 as usize].scope {
             let range = &env.scopes[scope_id.0 as usize].range;
-            if range.start != range.end {
-                scope_ids.insert(scope_id);
+            if range.start != range.end && seen.insert(scope_id) {
+                scope_ids.push(scope_id);
             }
         }
     };
@@ -53,22 +56,13 @@ fn get_scopes(func: &HirFunction, env: &Environment) -> Vec<ScopeId> {
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
-            // lvalues
-            for id in each_instruction_lvalue_ids(instr) {
-                visit_place(id);
-            }
-            // operands
-            for id in each_instruction_operand_ids(instr, env) {
-                visit_place(id);
-            }
+            lvalues(instr).for_each(&mut visit_place);
+            operands(&instr.value, &env.functions).for_each(&mut visit_place);
         }
-        // terminal operands
-        for id in each_terminal_operand_ids(&block.terminal) {
-            visit_place(id);
-        }
+        terminal_operands(&block.terminal).for_each(&mut visit_place);
     }
 
-    scope_ids.into_iter().collect()
+    scope_ids
 }
 
 // =============================================================================
@@ -102,12 +96,16 @@ impl TerminalRewriteInfo {
 // =============================================================================
 
 /// Collect all scope rewrites by traversing scopes in pre-order.
-fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<TerminalRewriteInfo> {
+fn collect_scope_rewrites(
+    func: &HirFunction,
+    env: &mut Environment,
+) -> Result<Vec<TerminalRewriteInfo>, crate::diagnostics::CompilerDiagnostic> {
     let scope_ids = get_scopes(func, env);
 
-    // Sort: ascending by start, descending by end for ties
+    // Sort: ascending by start, descending by end for ties. Scopes with one range stay as
+    // they were met, as `Array.prototype.sort` leaves them.
     let mut items: Vec<ScopeId> = scope_ids;
-    items.sort_unstable_by(|a, b| {
+    sort_slice_by(&mut items, |a, b| {
         let a_range = &env.scopes[a.0 as usize].range;
         let b_range = &env.scopes[b.0 as usize].range;
         let start_diff = a_range.start.0.cmp(&b_range.start.0);
@@ -134,15 +132,15 @@ fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<Term
             let parent_end = env.scopes[maybe_parent.0 as usize].range.end;
             let disjoint = curr_start >= parent_end;
             let nested = curr_end <= parent_end;
-            assert!(
+            crate::diagnostics::invariant(
                 disjoint || nested,
-                "Invalid nesting in program blocks or scopes"
-            );
+                "Invalid nesting in program blocks or scopes",
+            )?;
             if disjoint {
                 // Exit this scope
-                let fallthrough_id = *fallthroughs
-                    .get(maybe_parent)
-                    .expect("Expected scope to exist");
+                let fallthrough_id = *fallthroughs.get(maybe_parent).ok_or_else(|| {
+                    crate::diagnostics::cold_invariant("Expected scope to exist", None, None)
+                })?;
                 let end_instr_id = env.scopes[maybe_parent.0 as usize].range.end;
                 rewrites.push(TerminalRewriteInfo::EndScope {
                     instr_id: end_instr_id,
@@ -170,7 +168,9 @@ fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<Term
 
     // Exit remaining active items
     while let Some(curr) = active_items.pop() {
-        let fallthrough_id = *fallthroughs.get(curr).expect("Expected scope to exist");
+        let fallthrough_id = *fallthroughs.get(curr).ok_or_else(|| {
+            crate::diagnostics::cold_invariant("Expected scope to exist", None, None)
+        })?;
         let end_instr_id = env.scopes[curr.0 as usize].range.end;
         rewrites.push(TerminalRewriteInfo::EndScope {
             instr_id: end_instr_id,
@@ -178,7 +178,7 @@ fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<Term
         });
     }
 
-    rewrites
+    Ok(rewrites)
 }
 
 // =============================================================================
@@ -187,7 +187,8 @@ fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<Term
 
 struct RewriteContext {
     next_block_id: BlockId,
-    next_preds: Vec<BlockId>,
+    /// `None`: those of the source block.
+    next_pred: Option<BlockId>,
     instr_slice_idx: usize,
     rewrites: Vec<BasicBlock>,
 }
@@ -195,7 +196,7 @@ struct RewriteContext {
 fn handle_rewrite(
     terminal_info: &TerminalRewriteInfo,
     idx: usize,
-    source_block: &BasicBlock,
+    source_block: &mut BasicBlock,
     context: &mut RewriteContext,
 ) {
     let terminal: Terminal = match terminal_info {
@@ -223,10 +224,10 @@ fn handle_rewrite(
     };
 
     let curr_block_id = context.next_block_id;
-    let mut preds = crate::collections::IndexSet::new();
-    for &p in &context.next_preds {
-        preds.insert(p);
-    }
+    let preds = match context.next_pred {
+        Some(pred) => IndexSet::from([pred]),
+        None => std::mem::take(&mut source_block.preds),
+    };
 
     context.rewrites.push(BasicBlock {
         kind: source_block.kind,
@@ -236,15 +237,11 @@ fn handle_rewrite(
         ),
         preds,
         // Only the first rewrite should reuse source block phis
-        phis: if context.rewrites.is_empty() {
-            source_block.phis.clone()
-        } else {
-            AstAlloc::vec()
-        },
+        phis: AstAlloc::take(&mut source_block.phis),
         terminal,
     });
 
-    context.next_preds = vec![curr_block_id];
+    context.next_pred = Some(curr_block_id);
     context.next_block_id = match terminal_info {
         TerminalRewriteInfo::StartScope { block_id, .. } => *block_id,
         TerminalRewriteInfo::EndScope { fallthrough_id, .. } => *fallthrough_id,
@@ -262,9 +259,12 @@ fn handle_rewrite(
 /// to fallthroughs. Given a function whose reactive scope ranges have been
 /// correctly aligned and merged, this pass rewrites blocks to introduce
 /// ReactiveScopeTerminals and their fallthrough blocks.
-pub(crate) fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &mut Environment) {
+pub(crate) fn build_reactive_scope_terminals_hir(
+    func: &mut HirFunction,
+    env: &mut Environment,
+) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
     // Step 1: Collect rewrites
-    let mut queued_rewrites = collect_scope_rewrites(func, env);
+    let mut queued_rewrites = collect_scope_rewrites(func, env)?;
 
     // Step 2: Apply rewrites by splitting blocks
     let mut rewritten_final_blocks: IdMap<BlockId, BlockId> = IdMap::new();
@@ -273,12 +273,11 @@ pub(crate) fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &m
     // Reverse so we can pop from the end while traversing in ascending order
     queued_rewrites.reverse();
 
-    for (_block_id, block) in &func.body.blocks {
-        let preds_vec: Vec<BlockId> = block.preds.iter().copied().collect();
+    for (_block_id, mut block) in std::mem::take(&mut func.body.blocks) {
         let mut context = RewriteContext {
             next_block_id: block.id,
             rewrites: Vec::new(),
-            next_preds: preds_vec,
+            next_pred: None,
             instr_slice_idx: 0,
         };
 
@@ -295,23 +294,19 @@ pub(crate) fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &m
                 if rewrite.instr_id() <= instr_id {
                     // Need to pop before calling handle_rewrite
                     let rewrite = queued_rewrites.pop().unwrap();
-                    handle_rewrite(&rewrite, i, block, &mut context);
+                    handle_rewrite(&rewrite, i, &mut block, &mut context);
                 } else {
                     break;
                 }
             }
         }
 
-        if !context.rewrites.is_empty() {
-            let mut final_preds = crate::collections::IndexSet::new();
-            for &p in &context.next_preds {
-                final_preds.insert(p);
-            }
+        if let Some(final_pred) = context.next_pred {
             let final_block = BasicBlock {
                 id: context.next_block_id,
                 kind: block.kind,
-                preds: final_preds,
-                terminal: block.terminal.clone(),
+                preds: IndexSet::from([final_pred]),
+                terminal: block.terminal,
                 instructions: AstAlloc::vec_from_slice(
                     &block.instructions[context.instr_slice_idx..],
                 ),
@@ -324,7 +319,7 @@ pub(crate) fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &m
             }
             rewritten_final_blocks.insert(block.id, final_block_id);
         } else {
-            next_blocks.insert(block.id, block.clone());
+            next_blocks.insert(block.id, block);
         }
     }
 
@@ -351,12 +346,13 @@ pub(crate) fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &m
     }
 
     // Step 4: Fixup HIR to restore RPO, correct predecessors, renumber instructions
-    func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
+    reverse_postorder_blocks(&mut func.body)?;
     mark_predecessors(&mut func.body);
     mark_instruction_ids(&mut func.body, &mut func.instructions);
 
     // Step 5: Fix scope and identifier ranges to account for renumbered instructions
     fix_scope_and_identifier_ranges(func, env);
+    Ok(())
 }
 
 /// Fix scope ranges after instruction renumbering.
@@ -373,15 +369,6 @@ pub(crate) fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &m
 ///
 /// Corresponds to TS `fixScopeAndIdentifierRanges`.
 fn fix_scope_and_identifier_ranges(func: &HirFunction, env: &mut Environment) {
-    // Save original scope ranges before updating them. In TS,
-    // identifier.mutableRange and scope.range may or may not be the same
-    // JS object. Only identifiers whose mutableRange shares the same object
-    // reference as scope.range see the update automatically. We simulate
-    // this by only syncing identifiers whose mutableRange matches the
-    // scope's pre-update range.
-    let original_scope_ranges: Vec<crate::hir::MutableRange> =
-        env.scopes.iter().map(|s| s.range.clone()).collect();
-
     for (_block_id, block) in &func.body.blocks {
         match &block.terminal {
             Terminal::Scope {
@@ -411,7 +398,7 @@ fn fix_scope_and_identifier_ranges(func: &HirFunction, env: &mut Environment) {
 
     // Sync identifier mutable ranges with their scope ranges, but ONLY
     // for identifiers whose mutableRange has the same identity as their
-    // scope's ORIGINAL range (before the updates above). In TS,
+    // scope's range, which the updates above have not changed. In TS,
     // identifier.mutableRange and scope.range are only the same JS object
     // for identifiers that were the canonical representative when the scope
     // was created. After MergeOverlappingReactiveScopesHIR, repointed
@@ -419,9 +406,8 @@ fn fix_scope_and_identifier_ranges(func: &HirFunction, env: &mut Environment) {
     // not the root scope's range — so they should NOT be synced here.
     for ident in &mut env.identifiers {
         if let Some(scope_id) = ident.scope {
-            let original = &original_scope_ranges[scope_id.0 as usize];
-            if ident.mutable_range.same_range(original) {
-                let scope_range = &env.scopes[scope_id.0 as usize].range;
+            let scope_range = &env.scopes[scope_id.0 as usize].range;
+            if ident.mutable_range.same_range(scope_range) {
                 ident.mutable_range.start = scope_range.start;
                 ident.mutable_range.end = scope_range.end;
             }

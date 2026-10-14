@@ -1,15 +1,18 @@
 import type { ServerWebSocket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { createHash, createPrivateKey, randomBytes } from "crypto";
+import { createHash, createPrivateKey, randomBytes, X509Certificate } from "crypto";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
-import { connect, QuicEndpoint } from "node:quic";
+import { once } from "node:events";
+import type { SocketAddress } from "node:net";
+import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
+import { connect as connectTLS } from "node:tls";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
 // `protocol: "http3"` so a regression that silently falls back to TCP
 // surfaces as a connect failure (the fixtures bind UDP via `http3: true`).
-const fetchH3 = (port: number, path: string, init: RequestInit & { signal?: AbortSignal } = {}) =>
+const fetchH3 = (port: number, path: string, init: RequestInit = {}) =>
   fetch(`https://127.0.0.1:${port}${path}`, {
     ...init,
     protocol: "http3",
@@ -519,7 +522,10 @@ describe("Bun.serve HTTP/3", () => {
 // Cases ported from h2o t/40http3 and aioquic interop. Each test gets its own
 // server (withServer) so they can run concurrently.
 describe("Bun.serve HTTP/3 adversarial", () => {
-  const md5 = (b: Uint8Array | ArrayBuffer) => createHash("md5").update(Buffer.from(b)).digest("hex");
+  const md5 = (b: Uint8Array | ArrayBuffer) =>
+    createHash("md5")
+      .update(Buffer.from(b as Uint8Array))
+      .digest("hex");
 
   test("64 concurrent streams on one connection", async () => {
     // h2o uses 1000; 64 stays inside lsquic's default initial-max-streams
@@ -1016,7 +1022,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     `;
     await withCustomServer(script, async (port, send, waitForStderr) => {
       expect(await fetchH3(port, "/").then(r => r.text())).toBe("ok");
-      const inflight = fetchH3(port, "/stop", {
+      // Handled from the start: the close can reach the client before "STOPPED" is read from the pipe.
+      const outcome = fetchH3(port, "/stop", {
         method: "POST",
         body: new ReadableStream({
           start(c) {
@@ -1024,10 +1031,12 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
             c.close();
           },
         }),
-      });
+      }).then(
+        r => r.text(),
+        e => e.code,
+      );
       await waitForStderr(/STOPPED/);
-      const outcome = await inflight.then(r => r.text()).catch(e => e.code);
-      expect(outcome).toBe("HTTP3StreamReset");
+      expect(await outcome).toBe("HTTP3StreamReset");
     });
   });
 
@@ -1227,7 +1236,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       transportParams: { maxIdleTimeout: 5 },
       onerror() {},
       ongoaway: () => goaway.resolve(),
-    });
+    } as SessionOptions);
     const closed = client.closed.then(
       () => "closed",
       (err: Error) => `closed: ${err.message}`,
@@ -1237,8 +1246,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       let status = "";
       const stream = await client.createBidirectionalStream({
         headers: requestHeaders("/after-stop"),
-        onheaders(received: Record<string, string>) {
-          status = received[":status"];
+        onheaders(received) {
+          status = received[":status"] as string;
         },
       });
       stream.closed.catch(() => {});
@@ -1249,8 +1258,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 
     let status = "";
     const stream = await client.createBidirectionalStream({
-      onheaders(received: Record<string, string>) {
-        status = received[":status"];
+      onheaders(received) {
+        status = received[":status"] as string;
       },
     });
     stream.closed.catch(() => {});
@@ -1534,7 +1543,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
           fetch: () => new Response(bodies[kind]()),
         });
 
-        const text = await fetchH3(server.port, "/", requests[request]).then(res => res.text());
+        const text = await fetchH3(server.port!, "/", requests[request]).then(res => res.text());
         expect({ text, pendingRequests: server.pendingRequests }).toEqual({ text: "streamed", pendingRequests: 0 });
         // A request that never ends keeps a graceful stop pending.
         await server.stop();
@@ -1565,7 +1574,7 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
           ),
       });
 
-      const text = await fetchH3(server.port, "/").then(res => res.text());
+      const text = await fetchH3(server.port!, "/").then(res => res.text());
       expect({ text, pendingRequests: server.pendingRequests }).toEqual({ text: "streamed", pendingRequests: 0 });
       await server.stop();
     });
@@ -1710,7 +1719,7 @@ async function h3Exchange(
     transportParams: { maxIdleTimeout: 5 },
     onerror() {},
     ...options,
-  });
+  } as SessionOptions);
   const outcome = Promise.withResolvers<string>();
   client.closed.then(
     () => outcome.resolve("closed"),
@@ -1722,8 +1731,8 @@ async function h3Exchange(
       let status = "";
       const stream = await client.createBidirectionalStream({
         headers,
-        onheaders(received: Record<string, string>) {
-          status = received[":status"];
+        onheaders(received) {
+          status = received[":status"] as string;
         },
       });
       stream.closed.catch(() => {});
@@ -1762,10 +1771,10 @@ describe("Bun.serve HTTP/3 request validation", () => {
 
     const results: Record<string, string> = {};
     for (const value of ["a\r\nb: c", "a\nb", "a\rb"]) {
-      results[JSON.stringify(value)] = await h3Exchange(server.port, requestHeaders("/", { "x-probe": value }));
+      results[JSON.stringify(value)] = await h3Exchange(server.port!, requestHeaders("/", { "x-probe": value }));
     }
-    results.wellFormed = await h3Exchange(server.port, requestHeaders("/", { "x-probe": "plain" }));
-    results.after = await h3Exchange(server.port, requestHeaders("/"));
+    results.wellFormed = await h3Exchange(server.port!, requestHeaders("/", { "x-probe": "plain" }));
+    results.after = await h3Exchange(server.port!, requestHeaders("/"));
 
     expect(results).toEqual({
       [JSON.stringify("a\r\nb: c")]: "closed ERR_QUIC_APPLICATION_ERROR 270",
@@ -1808,8 +1817,8 @@ describe("Bun.serve HTTP/3 request validation", () => {
       url: "https://localhost/",
     };
     const results = {
-      authority: await h3Exchange(server.port, { ...requestHeaders("/", fields), ":authority": " \tlocalhost \t" }),
-      literalHost: await h3Exchange(server.port, {
+      authority: await h3Exchange(server.port!, { ...requestHeaders("/", fields), ":authority": " \tlocalhost \t" }),
+      literalHost: await h3Exchange(server.port!, {
         ":method": "GET",
         ":path": "/",
         ":scheme": "https",
@@ -1843,9 +1852,9 @@ describe("Bun.serve HTTP/3 request validation", () => {
     ];
     const results: Record<string, string> = {};
     for (const authority of authorities) {
-      results[authority] = await h3Exchange(server.port, { ...requestHeaders("/index"), ":authority": authority });
+      results[authority] = await h3Exchange(server.port!, { ...requestHeaders("/index"), ":authority": authority });
     }
-    results["example.com:8443"] = await h3Exchange(server.port, {
+    results["example.com:8443"] = await h3Exchange(server.port!, {
       ...requestHeaders("/index"),
       ":authority": "example.com:8443",
     });
@@ -1884,10 +1893,47 @@ describe("Bun.serve HTTP/3 request validation", () => {
       keys: [createPrivateKey(pem(`${name}-key.pem`))],
       certs: [readFileSync(join(keysDir, `${name}-cert.pem`))],
     });
-    const selfSigned = await h3Exchange(server.port, requestHeaders("/"), clientIdentity("agent2"));
-    const chained = await h3Exchange(server.port, requestHeaders("/"), clientIdentity("agent1"));
+    const selfSigned = await h3Exchange(server.port!, requestHeaders("/"), clientIdentity("agent2"));
+    const chained = await h3Exchange(server.port!, requestHeaders("/"), clientIdentity("agent1"));
 
     expect({ selfSigned, chained }).toEqual({ selfSigned: "closed", chained: "200 1" });
+  });
+
+  test("a `ca` without requestCert serves cert-less QUIC clients, and a per-serverName rejectUnauthorized: false tolerates an unverifiable certificate", async () => {
+    const keysDir = join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
+    const pem = (name: string) => readFileSync(join(keysDir, name), "utf8");
+    const credentials = { key: pem("agent1-key.pem"), cert: pem("agent1-cert.pem"), ca: pem("ca1-cert.pem") };
+    await using server = Bun.serve({
+      port: 0,
+      tls: [
+        // No requestCert: the `ca` must not make the server ask for a certificate.
+        credentials,
+        // Asks, but accepts whatever comes back. agent2 is self-signed, so ca1 cannot verify it.
+        { ...credentials, serverName: "lenient.example.com", requestCert: true, rejectUnauthorized: false },
+      ],
+      http3: true,
+      fetch: () => new Response("served"),
+    });
+
+    const agent2 = {
+      keys: [createPrivateKey(pem("agent2-key.pem"))],
+      certs: [readFileSync(join(keysDir, "agent2-cert.pem"))],
+    };
+    const lenient = { servername: "lenient.example.com" };
+    const results = {
+      defaultNoCert: await h3Exchange(server.port!, requestHeaders("/")),
+      lenientNoCert: await h3Exchange(server.port!, requestHeaders("/", { ":authority": lenient.servername }), lenient),
+      lenientUnverifiable: await h3Exchange(server.port!, requestHeaders("/", { ":authority": lenient.servername }), {
+        ...lenient,
+        ...agent2,
+      }),
+    };
+
+    expect(results).toEqual({
+      defaultNoCert: "200 served",
+      lenientNoCert: "200 served",
+      lenientUnverifiable: "200 served",
+    });
   });
 });
 
@@ -1897,7 +1943,7 @@ describe("Bun.serve HTTP/3 request validation", () => {
 // on its own. The client waits for the event, with no timer: a server that
 // keeps the 100 until the final response makes the test time out.
 describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of the final response", () => {
-  async function exchange(server: { port: number }, { handshakeFirst }: { handshakeFirst: boolean }) {
+  async function exchange(server: Bun.Server<undefined>, { handshakeFirst }: { handshakeFirst: boolean }) {
     // A session or a stream that ends before a response fails the test with
     // its reason. Once a response is in, these rejections do nothing.
     const firstResponse = Promise.withResolvers<void>();
@@ -1909,17 +1955,17 @@ describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of 
       verifyPeer: "manual",
       transportParams: { maxIdleTimeout: 5 },
       onerror: firstResponse.reject,
-    });
+    } as SessionOptions);
     client.closed.then(endedEarly("the session"), firstResponse.reject);
     if (handshakeFirst) await client.opened;
 
     const seen: string[] = [];
     const stream = await client.createBidirectionalStream({
-      oninfo(received: Record<string, string>) {
+      oninfo(received) {
         seen.push("info " + received[":status"]);
         firstResponse.resolve();
       },
-      onheaders(received: Record<string, string>) {
+      onheaders(received) {
         seen.push("headers " + received[":status"]);
         firstResponse.resolve();
       },
@@ -2015,8 +2061,8 @@ describe("Bun.serve HTTP/3 request handlers run to completion before the callbac
     });
 
     const responses = {
-      fetch: await h3Exchange(server.port, requestHeaders("/")),
-      route: await h3Exchange(server.port, requestHeaders("/route")),
+      fetch: await h3Exchange(server.port!, requestHeaders("/")),
+      route: await h3Exchange(server.port!, requestHeaders("/route")),
     };
     await Promise.all([viaFetch.closed, viaRoute.closed]);
 
@@ -2026,5 +2072,130 @@ describe("Bun.serve HTTP/3 request handlers run to completion before the callbac
       fetch: expectedOrder,
       route: expectedOrder,
     });
+  });
+});
+
+describe("Bun.serve HTTP/3 SNI", () => {
+  const tlsFixtures = join(import.meta.dir, "..", "..", "node", "tls", "fixtures");
+  const pem = (name: string) => readFileSync(join(tlsFixtures, name), "utf8");
+  // Each agent certificate has its own CN, which tells the entries apart.
+  const identity = (agent: string) => ({ key: pem(`${agent}-key.pem`), cert: pem(`${agent}-cert.pem`) });
+
+  // fetch() lowercases the URL host. node:quic sends `servername` as written
+  // and exposes the certificate the server picked.
+  async function servedCN(port: number, servername: string): Promise<string> {
+    const session = await connect(
+      { address: "127.0.0.1", port } as SocketAddress,
+      { alpn: "h3", servername, verifyPeer: "manual" } as SessionOptions,
+    );
+    try {
+      await session.opened;
+      const cert = session.peerCertificate;
+      const x509 = cert instanceof X509Certificate ? cert : new X509Certificate(Buffer.from(cert as any));
+      return x509.subject.match(/CN=([^\s,]+)/)![1];
+    } finally {
+      await session.close();
+    }
+  }
+
+  test("a later entry with the same serverName replaces the earlier one", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        identity("agent1"),
+        { serverName: "admin.example.com", ...identity("agent2") },
+        { serverName: "admin.example.com.", ...identity("agent3") },
+      ],
+      http3: true,
+      fetch: () => new Response("ok"),
+    });
+    const served = {
+      admin: await servedCN(server.port!, "admin.example.com"),
+      dottedAdmin: await servedCN(server.port!, "admin.example.com."),
+      other: await servedCN(server.port!, "other.example.com"),
+    };
+    // The TCP listener selects the same entry for these names.
+    expect(served).toEqual({ admin: "agent3", dottedAdmin: "agent3", other: "agent1" });
+  });
+
+  test("serverName entries match regardless of case and a wildcard covers one label", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        identity("agent1"),
+        { serverName: "Agent2.Example", ...identity("agent2") },
+        { serverName: "*.wild.example", ...identity("agent3") },
+      ],
+      http3: true,
+      fetch: () => new Response("ok"),
+    });
+    const served: Record<string, string> = {};
+    const overTCP: Record<string, string> = {};
+    for (const servername of [
+      "Agent2.Example",
+      "agent2.example",
+      "AGENT2.EXAMPLE",
+      "a.wild.example",
+      "A.WILD.EXAMPLE",
+      "a.b.wild.example",
+      "wild.example",
+      "other.example",
+    ]) {
+      served[servername] = await servedCN(server.port!, servername);
+      const socket = connectTLS({ host: "127.0.0.1", port: server.port, servername, rejectUnauthorized: false });
+      await once(socket, "secureConnect");
+      overTCP[servername] = socket.getPeerCertificate().subject.CN as string;
+      socket.destroy();
+    }
+    expect(overTCP).toEqual(served);
+    expect(served).toEqual({
+      "Agent2.Example": "agent2",
+      "agent2.example": "agent2",
+      "AGENT2.EXAMPLE": "agent2",
+      "a.wild.example": "agent3",
+      "A.WILD.EXAMPLE": "agent3",
+      "a.b.wild.example": "agent1",
+      "wild.example": "agent1",
+      "other.example": "agent1",
+    });
+  });
+
+  // The client picks the SNI, so a spelling that misses the entry would skip its policy.
+  test("a strict entry is enforced for every spelling of its name", async () => {
+    const strict = { ...identity("agent3"), ca: pem("ca1-cert.pem"), requestCert: true, rejectUnauthorized: true };
+    using server = Bun.serve({
+      port: 0,
+      tls: [
+        identity("agent2"),
+        { serverName: "Admin.Example.com", ...strict },
+        { serverName: "*.gated.example", ...strict },
+      ],
+      http3: true,
+      fetch: () => new Response("served"),
+    });
+    const client = (agent: string) => ({
+      keys: [createPrivateKey(pem(`${agent}-key.pem`))],
+      certs: [readFileSync(join(tlsFixtures, `${agent}-cert.pem`))],
+    });
+    const spellings = [
+      "admin.example.com",
+      "ADMIN.EXAMPLE.COM",
+      "aDmIn.eXaMpLe.CoM.",
+      "a.gated.example",
+      "A.GATED.EXAMPLE",
+      "a.Gated.Example.",
+    ];
+    const exchange = (servername: string, options = {}) =>
+      h3Exchange(server.port!, requestHeaders("/"), { servername, ...options });
+    const outcomes = await Promise.all(
+      spellings.map(async name => [
+        name,
+        await exchange(name),
+        await exchange(name, client("agent3")), // issued by ca2
+        await exchange(name, client("agent1")), // issued by ca1
+      ]),
+    );
+    expect(outcomes).toEqual(spellings.map(name => [name, "closed", "closed", "200 served"]));
+    expect(await exchange("other.example")).toBe("200 served");
   });
 });

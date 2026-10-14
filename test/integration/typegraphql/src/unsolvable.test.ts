@@ -8,9 +8,9 @@ type Sample2<A, B, C> = A extends "1" ? B : C;
 type Demo = Sample2<"2", string, number>;
 class M {
   @Abc()
-  myval: number;
+  myval!: number;
   @Abc()
-  myval2: Demo;
+  myval2!: Demo;
 }
 test("basic metadata works", () => {
   expect(Reflect.getMetadata("design:type", M.prototype, "myval")).toBe(Number);

@@ -1,12 +1,13 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, tempDir } from "harness";
+import { bunExe, bunEnv as env, isIPv6, tempDir } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
 
-var registry = new VerdaccioRegistry();
+var registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();
@@ -177,7 +178,7 @@ registry = http://localhost:${registry.port}/
     // bunEnv spreads process.env and CI runners commonly export XDG_CONFIG_HOME, so it
     // is removed here and each case passes back exactly the value it is testing.
     async function publishDryRun(dir: string, envOverride: Record<string, string>) {
-      const spawnEnv = { ...env, HOME: join(dir, "home"), USERPROFILE: join(dir, "home") };
+      const spawnEnv: typeof env = { ...env, HOME: join(dir, "home"), USERPROFILE: join(dir, "home") };
       delete spawnEnv.XDG_CONFIG_HOME;
 
       await using proc = Bun.spawn({

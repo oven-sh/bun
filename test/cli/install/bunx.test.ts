@@ -10,7 +10,7 @@ import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort,
 setDefaultTimeout(1000 * 60 * 5);
 
 let x_dir: string;
-let env: Record<string, string> = { ...bunEnv };
+let env = { ...bunEnv } as Record<string, string>;
 
 // Each test that hits the network gets its own isolated tmpdir + install cache
 // so the network-heavy tests can run concurrently without sharing bunx cache state.

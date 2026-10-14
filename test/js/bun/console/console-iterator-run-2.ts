@@ -1,5 +1,5 @@
 async function readInput() {
-  let items = [];
+  let items: string[] = [];
   for await (const line of console) {
     if (line == "break") {
       break;

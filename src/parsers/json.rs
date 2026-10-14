@@ -361,7 +361,7 @@ impl ParsedJson {
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
     ) -> crate::Result<ParsedJson> {
-        parse_to_rows(source, log, JSON_OPTS)
+        parse_to_rows(source, log, JSON_OPTS, false)
     }
 
     /// JSONC (comments and trailing commas).
@@ -369,7 +369,15 @@ impl ParsedJson {
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
     ) -> crate::Result<ParsedJson> {
-        parse_to_rows(source, log, TSCONFIG_OPTS)
+        parse_to_rows(source, log, TSCONFIG_OPTS, false)
+    }
+
+    /// JSONC, with nothing but whitespace and comments after the value.
+    pub fn parse_jsonc_document(
+        source: &bun_ast::Source,
+        log: &mut bun_ast::Log,
+    ) -> crate::Result<ParsedJson> {
+        parse_to_rows(source, log, TSCONFIG_OPTS, true)
     }
 
     /// package.json (comments & trailing commas allowed).
@@ -377,7 +385,7 @@ impl ParsedJson {
         source: &bun_ast::Source,
         log: &mut bun_ast::Log,
     ) -> crate::Result<ParsedJson> {
-        parse_to_rows(source, log, PACKAGE_JSON_OPTS)
+        parse_to_rows(source, log, PACKAGE_JSON_OPTS, false)
     }
 
     /// A document fetched from an npm registry: strict JSON with no duplicate-key warnings.
@@ -389,7 +397,7 @@ impl ParsedJson {
             json_warn_duplicate_keys: false,
             ..JSONOptions::DEFAULT
         };
-        parse_to_rows(source, log, MANIFEST_OPTS)
+        parse_to_rows(source, log, MANIFEST_OPTS, false)
     }
 }
 
@@ -415,6 +423,7 @@ fn parse_to_rows(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
     opts: JSONOptions,
+    check_len: bool,
 ) -> crate::Result<ParsedJson> {
     if source.contents.is_empty() {
         let mut tape = Box::new(E::JsonTape::empty());
@@ -429,7 +438,7 @@ fn parse_to_rows(
             tape: Some(tape),
         });
     }
-    let out = parse_impl(source, log, opts, false)?;
+    let out = parse_impl(source, log, opts, check_len)?;
     Ok(ParsedJson {
         root: out.root,
         tape: out.tape,
@@ -681,7 +690,7 @@ impl<'a> PackageJSONVersionChecker<'a> {
 
     /// Parse the document and record its first top-level string-valued `name` and `version`.
     pub fn parse(&mut self) -> crate::Result<()> {
-        let parsed = parse_to_rows(self.source, self.log, PKG_JSON_CHECKER_OPTS)?;
+        let parsed = parse_to_rows(self.source, self.log, PKG_JSON_CHECKER_OPTS, false)?;
         let js_ast::expr::Data::EObjectJSON(obj) = &parsed.root.data else {
             return Ok(());
         };
@@ -1082,8 +1091,12 @@ mod tests {
                 tape = p.tape;
                 p.root
             }),
+            Which::JsoncDocument => ParsedJson::parse_jsonc_document(&source, &mut log).map(|p| {
+                tape = p.tape;
+                p.root
+            }),
             Which::Immutable => {
-                parse_to_rows(&source, &mut log, JSONOptions::DEFAULT).map(|mut p| {
+                parse_to_rows(&source, &mut log, JSONOptions::DEFAULT, false).map(|mut p| {
                     tape = p.tape.take();
                     p.root
                 })
@@ -1112,6 +1125,7 @@ mod tests {
         Env,
         PackageJson,
         Jsonc,
+        JsoncDocument,
         Immutable,
     }
 
@@ -1310,6 +1324,44 @@ mod tests {
             "{\n  \"p\": {\n    \"m\": \"l\"\n  }\n}",
             "{\"p\":{\"m\":\"l\"}}",
         );
+    }
+
+    #[test]
+    fn jsonc_document_is_one_value() {
+        for src in [
+            "{} // c",
+            "{} /* c */ \n",
+            "\u{FEFF}{}\u{FEFF}",
+            "// c\n[1,]\n\t",
+            "\"semi\"",
+            "1 ",
+            "null\u{2028}",
+        ] {
+            let p = run(src.as_bytes(), Which::JsoncDocument);
+            assert!(
+                p.root.is_some() && p.errors == 0,
+                "{src:?}: {}",
+                p.first_msg
+            );
+        }
+        for src in [
+            "{} x",
+            "{} {}",
+            "{},",
+            "[] 1",
+            "\"semi\": false",
+            "1 2",
+            "true false",
+            "{}\0",
+            "{} /* c",
+            "{} /",
+        ] {
+            let p = run(src.as_bytes(), Which::JsoncDocument);
+            assert!(p.root.is_none() && p.errors > 0, "{src:?} is accepted");
+        }
+        for src in ["{} x", "\"semi\": false", "{}\0"] {
+            assert!(run(src.as_bytes(), Which::Jsonc).root.is_some(), "{src:?}");
+        }
     }
 
     #[test]

@@ -44,7 +44,7 @@ describe("fs.read()/fs.readSync() check the buffer type before the offset", () =
 
   test("readSync(fd, buffer, offset, length)", () => {
     for (const [buffer, offset, received] of cases) {
-      assert.throws(() => fs.readSync(fd, buffer as any, offset as any, 5), invalidBuffer(received));
+      assert.throws(() => (fs as any).readSync(fd, buffer as any, offset as any, 5), invalidBuffer(received));
     }
   });
 
@@ -63,12 +63,12 @@ describe("fs.read()/fs.readSync() check the buffer type before the offset", () =
 
   test("a valid buffer still gets the offset error", () => {
     const buffer = Buffer.alloc(4);
-    assert.throws(() => fs.readSync(fd, buffer, -1, 4), {
+    assert.throws(() => (fs as any).readSync(fd, buffer, -1, 4), {
       name: "RangeError",
       code: "ERR_OUT_OF_RANGE",
       message: 'The value of "offset" is out of range. It must be >= 0 && <= 9007199254740991. Received -1',
     });
-    assert.throws(() => fs.readSync(fd, buffer, "bad" as any, 4), {
+    assert.throws(() => (fs as any).readSync(fd, buffer, "bad" as any, 4), {
       name: "TypeError",
       code: "ERR_INVALID_ARG_TYPE",
       message: `The "offset" argument must be of type number. Received type string ('bad')`,

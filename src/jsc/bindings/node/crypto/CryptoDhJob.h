@@ -23,6 +23,7 @@ public:
         : m_privateKey(WTF::move(other.m_privateKey))
         , m_publicKey(WTF::move(other.m_publicKey))
         , m_result(WTF::move(other.m_result))
+        , m_opensslError(other.m_opensslError)
     {
     }
 
@@ -32,12 +33,14 @@ public:
 
     void runTask(JSC::JSGlobalObject*);
     JSCallbackArgs runFromJS(JSC::JSGlobalObject*);
+    JSC::JSValue deriveError(JSC::JSGlobalObject*, JSC::ThrowScope&);
     void deinit();
 
     RefPtr<KeyObjectData> m_privateKey;
     RefPtr<KeyObjectData> m_publicKey;
 
     ByteSource m_result;
+    uint32_t m_opensslError { 0 };
 };
 
 struct DhJob {

@@ -1788,9 +1788,13 @@ KeyObject KeyObject::getPublicOrPrivateKey(
     return {};
 }
 
-KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode)
+KeyObject::PreparedAsymmetricKey KeyObject::prepareAsymmetricKey(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue keyValue, PrepareAsymmetricKeyMode mode, ASCIILiteral name)
 {
     VM& vm = globalObject->vm();
+
+    auto propertyName = [name](ASCIILiteral property) -> WTF::String {
+        return makeString(name, '.', property);
+    };
 
     auto checkKeyObject = [globalObject, &scope, mode](const KeyObject& keyObject, JSValue keyValue) -> void {
         if (mode == PrepareAsymmetricKeyMode::CreatePrivate) {
@@ -1865,33 +1869,33 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
 
             auto* decodedBuf = dynamicDowncast<JSArrayBufferView>(decoded);
             if (!decodedBuf) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, "string"_s, decoded);
+                ERR::INVALID_ARG_TYPE(scope, globalObject, name, "string"_s, decoded);
                 return {};
             }
 
             return {
-                .keyDataView = { decodedBuf, decodedBuf->span() },
+                .keyDataOwner = decodedBuf,
                 .formatType = EVPKeyPointer::PKFormatType::PEM,
             };
         }
 
         if (auto* view = dynamicDowncast<JSArrayBufferView>(keyValue)) {
             return {
-                .keyDataView = { view, view->span() },
+                .keyDataOwner = view,
                 .formatType = EVPKeyPointer::PKFormatType::PEM,
             };
         }
 
         if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(keyValue)) {
-            auto* buffer = arrayBuffer->impl();
             return {
-                .keyDataView = { arrayBuffer, buffer->span() },
+                .keyDataOwner = arrayBuffer,
                 .formatType = EVPKeyPointer::PKFormatType::PEM,
             };
         }
     }
 
-    if (JSObject* keyObj = dynamicDowncast<JSObject>(keyValue)) {
+    // typeof key === 'object': a function is not key data, whatever properties it has.
+    if (JSObject* keyObj = dynamicDowncast<JSObject>(keyValue); keyObj && !keyValue.isCallable()) {
         JSValue dataValue = keyObj->get(globalObject, Identifier::fromString(vm, "key"_s));
         RETURN_IF_EXCEPTION(scope, {});
         JSValue encodingValue = keyObj->get(globalObject, Identifier::fromString(vm, "encoding"_s));
@@ -1923,35 +1927,44 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             return { .keyData = handle.data() };
         }
 
-        auto* formatString = formatValue.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto formatView = formatString->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
+        // format === 'jwk': a format that is not a string is never converted to one.
+        GCOwnedDataScope<WTF::StringView> formatView { nullptr, WTF::nullStringView() };
+        if (formatValue.isString()) {
+            formatView = asString(formatValue)->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 
         if (formatView == "jwk"_s) {
-            V::validateObject(scope, globalObject, dataValue, "key.key"_s);
+            // V::validateObject, with the property name built only when the check fails.
+            bool isArray = JSC::isArray(globalObject, dataValue);
             RETURN_IF_EXCEPTION(scope, {});
-            JSObject* jwk = dataValue.getObject();
-            KeyObject handle = getKeyObjectHandleFromJwk(globalObject, scope, jwk, mode);
-            RETURN_IF_EXCEPTION(scope, {});
-            return { .keyData = handle.data() };
+            if (!dataValue.isObject() || isArray || dataValue.isCallable()) {
+                ERR::INVALID_ARG_TYPE(scope, globalObject, propertyName("key"_s), "object"_s, dataValue);
+                return {};
+            }
+            return {
+                .keyDataOwner = dataValue,
+                .formatType = EVPKeyPointer::PKFormatType::JWK,
+            };
         }
 
         if (formatView == "raw-public"_s || formatView == "raw-private"_s || formatView == "raw-seed"_s) {
             if ((mode == PrepareAsymmetricKeyMode::ConsumePrivate || mode == PrepareAsymmetricKeyMode::CreatePrivate) && formatView == "raw-public"_s) {
-                ERR::INVALID_ARG_VALUE(scope, globalObject, "key.format"_s, formatValue);
+                ERR::INVALID_ARG_VALUE(scope, globalObject, propertyName("format"_s), formatValue);
                 return {};
             }
 
             if (!dynamicDowncast<JSArrayBufferView>(dataValue) && !dynamicDowncast<JSArrayBuffer>(dataValue)) {
-                ERR::INVALID_ARG_TYPE(scope, globalObject, "key.key"_s, "ArrayBuffer, Buffer, TypedArray, or DataView"_s, dataValue);
+                ERR::INVALID_ARG_TYPE(scope, globalObject, propertyName("key"_s), "ArrayBuffer, Buffer, TypedArray, or DataView"_s, dataValue);
                 return {};
             }
 
             JSValue typeValue = keyObj->get(globalObject, Identifier::fromString(vm, "asymmetricKeyType"_s));
             RETURN_IF_EXCEPTION(scope, {});
-            V::validateString(scope, globalObject, typeValue, "key.asymmetricKeyType"_s);
-            RETURN_IF_EXCEPTION(scope, {});
+            if (!typeValue.isString()) {
+                ERR::INVALID_ARG_TYPE(scope, globalObject, propertyName("asymmetricKeyType"_s), "string"_s, typeValue);
+                return {};
+            }
             auto typeStr = typeValue.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
 
@@ -1959,18 +1972,10 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             if (typeStr == "ec"_s) {
                 namedCurveValue = keyObj->get(globalObject, Identifier::fromString(vm, "namedCurve"_s));
                 RETURN_IF_EXCEPTION(scope, {});
-                V::validateString(scope, globalObject, namedCurveValue, "key.namedCurve"_s);
-                RETURN_IF_EXCEPTION(scope, {});
-            }
-
-            // Capture the key span only after the last property getter has run, so a user
-            // getter that detaches the buffer cannot leave us with a stale pointer.
-            std::span<const uint8_t> keySpan;
-            if (auto* view = dynamicDowncast<JSArrayBufferView>(dataValue)) {
-                keySpan = view->span();
-            } else {
-                auto* arrayBuffer = uncheckedDowncast<JSArrayBuffer>(dataValue);
-                keySpan = arrayBuffer->impl()->span();
+                if (!namedCurveValue.isString()) {
+                    ERR::INVALID_ARG_TYPE(scope, globalObject, propertyName("namedCurve"_s), "string"_s, namedCurveValue);
+                    return {};
+                }
             }
 
             ncrypto::EVPKeyPointer::PKFormatType rawFormat = formatView == "raw-public"_s
@@ -1979,9 +1984,12 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
                           ? ncrypto::EVPKeyPointer::PKFormatType::RawPrivate
                           : ncrypto::EVPKeyPointer::PKFormatType::RawSeed);
 
-            KeyObject handle = getKeyObjectHandleFromRaw(globalObject, scope, keySpan, rawFormat, typeStr, namedCurveValue);
-            RETURN_IF_EXCEPTION(scope, {});
-            return { .keyData = handle.data() };
+            return {
+                .keyDataOwner = dataValue,
+                .formatType = rawFormat,
+                .asymmetricKeyType = WTF::move(typeStr),
+                .namedCurve = namedCurveValue,
+            };
         }
 
         std::optional<bool> isPublic = mode == PrepareAsymmetricKeyMode::ConsumePrivate || mode == PrepareAsymmetricKeyMode::CreatePrivate
@@ -2010,73 +2018,107 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             RETURN_IF_EXCEPTION(scope, {});
             if (auto* decodedView = dynamicDowncast<JSArrayBufferView>(decoded)) {
                 EVPKeyPointer::PrivateKeyEncodingConfig config;
-                parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, WTF::nullStringView(), config);
+                JSArrayBufferView* passphraseOwner = nullptr;
+                parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, name, config, &passphraseOwner);
                 RETURN_IF_EXCEPTION(scope, {});
 
                 return {
-                    .keyDataView = { decodedView, decodedView->span() },
+                    .keyDataOwner = decodedView,
                     .formatType = config.format,
                     .encodingType = config.type,
                     .cipher = config.cipher,
-                    .passphrase = WTF::move(config.passphrase),
+                    .passphraseOwner = passphraseOwner,
                 };
             }
         }
 
         if (auto* view = dynamicDowncast<JSArrayBufferView>(dataValue)) {
             EVPKeyPointer::PrivateKeyEncodingConfig config;
-            parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, WTF::nullStringView(), config);
+            JSArrayBufferView* passphraseOwner = nullptr;
+            parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, name, config, &passphraseOwner);
             RETURN_IF_EXCEPTION(scope, {});
 
             return {
-                .keyDataView = { view, view->span() },
+                .keyDataOwner = view,
                 .formatType = config.format,
                 .encodingType = config.type,
                 .cipher = config.cipher,
-                .passphrase = WTF::move(config.passphrase),
+                .passphraseOwner = passphraseOwner,
             };
         }
 
         if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(dataValue)) {
             EVPKeyPointer::PrivateKeyEncodingConfig config;
-            parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, WTF::nullStringView(), config);
+            JSArrayBufferView* passphraseOwner = nullptr;
+            parseKeyEncoding(globalObject, scope, keyObj, jsUndefined(), isPublic, name, config, &passphraseOwner);
             RETURN_IF_EXCEPTION(scope, {});
 
-            auto* buffer = arrayBuffer->impl();
             return {
-                .keyDataView = { arrayBuffer, buffer->span() },
+                .keyDataOwner = arrayBuffer,
                 .formatType = config.format,
                 .encodingType = config.type,
                 .cipher = config.cipher,
-                .passphrase = WTF::move(config.passphrase),
+                .passphraseOwner = passphraseOwner,
             };
         }
 
         if (mode != PrepareAsymmetricKeyMode::CreatePrivate) {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, "key.key"_s, "string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey"_s, dataValue);
+            ERR::INVALID_ARG_TYPE(scope, globalObject, propertyName("key"_s), "string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey"_s, dataValue);
         } else {
-            ERR::INVALID_ARG_TYPE(scope, globalObject, "key.key"_s, "string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView"_s, dataValue);
+            ERR::INVALID_ARG_TYPE(scope, globalObject, propertyName("key"_s), "string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView"_s, dataValue);
         }
         return {};
     }
 
     if (mode != PrepareAsymmetricKeyMode::CreatePrivate) {
-        ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, "string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey"_s, keyValue);
+        ERR::INVALID_ARG_TYPE(scope, globalObject, name, "string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey"_s, keyValue);
     } else {
-        ERR::INVALID_ARG_TYPE(scope, globalObject, "key"_s, "string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView"_s, keyValue);
+        ERR::INVALID_ARG_TYPE(scope, globalObject, name, "string or an instance of ArrayBuffer, Buffer, TypedArray, or DataView"_s, keyValue);
     }
 
     return {};
 }
 
-KeyObject::PrepareAsymmetricKeyResult KeyObject::preparePrivateKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue)
+// The only reader of key material: node's KeyObjectData::GetPrivateKeyFromJs / GetPublicOrPrivateKeyFromJs.
+KeyObject KeyObject::importPreparedKey(JSGlobalObject* globalObject, ThrowScope& scope, PreparedAsymmetricKey&& prepared, PrepareAsymmetricKeyMode mode)
 {
-    return prepareAsymmetricKey(globalObject, scope, keyValue, PrepareAsymmetricKeyMode::ConsumePrivate);
-}
+    CryptoKeyType keyType = keyTypeForMode(mode);
 
-KeyObject::PrepareAsymmetricKeyResult KeyObject::preparePublicOrPrivateKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue)
-{
-    return prepareAsymmetricKey(globalObject, scope, keyValue, PrepareAsymmetricKeyMode::ConsumePublic);
+    if (prepared.keyData) {
+        return create(keyType, WTF::move(*prepared.keyData));
+    }
+
+    EnsureStillAliveScope keyDataOwner { prepared.keyDataOwner };
+
+    if (prepared.formatType == EVPKeyPointer::PKFormatType::JWK) {
+        return getKeyObjectHandleFromJwk(globalObject, scope, asObject(prepared.keyDataOwner), mode);
+    }
+
+    // Read the bytes now, after the last getter of every key the caller prepared: a buffer that
+    // one of them detached is empty here, not a stale pointer.
+    std::span<const uint8_t> keyData;
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(prepared.keyDataOwner)) {
+        keyData = view->span();
+    } else {
+        keyData = uncheckedDowncast<JSArrayBuffer>(prepared.keyDataOwner)->impl()->span();
+    }
+
+    switch (prepared.formatType) {
+    case EVPKeyPointer::PKFormatType::RawPublic:
+    case EVPKeyPointer::PKFormatType::RawPrivate:
+    case EVPKeyPointer::PKFormatType::RawSeed: {
+        KeyObject handle = getKeyObjectHandleFromRaw(globalObject, scope, keyData, prepared.formatType, prepared.asymmetricKeyType, prepared.namedCurve);
+        RETURN_IF_EXCEPTION(scope, {});
+        return create(keyType, handle.data());
+    }
+    default: {
+        std::optional<DataPointer> passphrase;
+        if (prepared.passphraseOwner) {
+            passphrase = DataPointer::FromSpan(prepared.passphraseOwner->span());
+        }
+        return getPublicOrPrivateKey(globalObject, scope, keyData, keyType, prepared.formatType, prepared.encodingType, prepared.cipher, WTF::move(passphrase));
+    }
+    }
 }
 
 KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& scope, JSValue keyValue, JSValue encodingValue, bool bufferOnly)

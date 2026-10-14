@@ -27,6 +27,7 @@ import {
 } from "crypto";
 import fs from "fs";
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import tls from "node:tls";
 import { createContext, runInContext, runInThisContext, Script } from "node:vm";
 import path from "path";
 
@@ -404,6 +405,131 @@ describe("crypto.KeyObjects", () => {
     expect(passphraseReads).toBe(1);
     expect(detachable.byteLength).toBe(0);
     expect(transferred.byteLength).toBe(der.byteLength);
+  });
+
+  test("crypto.sign and crypto.verify read the key bytes after the option getters have run", () => {
+    const data = Buffer.from("hello");
+    const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+    const other = generateKeyPairSync("ed25519");
+    const signature = sign(null, data, privateKey);
+    // The buffer holds `before` when `key` is read. The `format` getter then changes it.
+    const keyChangedInGetter = (before: Buffer, type: string, change: (key: Buffer) => void) => {
+      const key = Buffer.from(before);
+      return {
+        key,
+        type,
+        get format() {
+          change(key);
+          return "der";
+        },
+      } as any;
+    };
+    const privateDer = privateKey.export({ format: "der", type: "pkcs8" });
+    const publicDer = publicKey.export({ format: "der", type: "spki" });
+    const otherPrivateDer = other.privateKey.export({ format: "der", type: "pkcs8" });
+    const otherPublicDer = other.publicKey.export({ format: "der", type: "spki" });
+
+    // Ed25519 signatures are deterministic: this is the signature of `privateKey`, not of `other`.
+    expect(
+      sign(
+        null,
+        data,
+        keyChangedInGetter(otherPrivateDer, "pkcs8", key => key.set(privateDer)),
+      ),
+    ).toEqual(signature);
+    expect(
+      verify(
+        null,
+        data,
+        keyChangedInGetter(otherPublicDer, "spki", key => key.set(publicDer)),
+        signature,
+      ),
+    ).toBe(true);
+
+    const detach = (key: Buffer) => void key.buffer.transfer();
+    expect(() => sign(null, data, keyChangedInGetter(privateDer, "pkcs8", detach))).toThrow();
+    expect(() => verify(null, data, keyChangedInGetter(publicDer, "spki", detach), signature)).toThrow();
+  });
+
+  // Node names each error path after the argument that holds the key (nodejs/node#62527).
+  describe("key argument names in errors", () => {
+    const data = Buffer.from("hello");
+    const thrown = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch (err: any) {
+        return `${err.code}: ${err.message}`;
+      }
+    };
+
+    test.each([
+      ["createPrivateKey", "key", (key: any) => createPrivateKey(key)],
+      ["createPublicKey", "key", (key: any) => createPublicKey(key)],
+      ["sign", "key", (key: any) => sign("sha256", data, key)],
+      ["verify", "key", (key: any) => verify("sha256", data, key, data)],
+      ["Sign#sign", "privateKey", (key: any) => createSign("sha256").update(data).sign(key)],
+      ["Verify#verify", "key", (key: any) => createVerify("sha256").update(data).verify(key, data)],
+      ["publicEncrypt", "key", (key: any) => publicEncrypt(key, data)],
+      ["publicDecrypt", "key", (key: any) => publicDecrypt(key, data)],
+      ["privateEncrypt", "privateKey", (key: any) => privateEncrypt(key, data)],
+      ["privateDecrypt", "privateKey", (key: any) => privateDecrypt(key, data)],
+    ])("%s names its key argument %s", (_, name, call) => {
+      const error = (key: unknown) => thrown(() => call(key));
+      const key = Buffer.alloc(0);
+      const notKeyData = new RegExp(`^ERR_INVALID_ARG_TYPE: The "${name}" argument must be of type .*Received `);
+      const keyTypes = `ERR_INVALID_ARG_TYPE: The "${name}.key" property must be of type string or an instance of `;
+      expect({
+        number: error(1),
+        // Node tests typeof key === "object": a function is not an options object.
+        function: error(Object.assign(function notAKey() {}, { key: "" })),
+        key: error({ key: 1 }),
+        format: error({ key, format: "bogus" }),
+        // Node compares the format with ===. It does not convert it to a string.
+        formatSymbol: error({ key, format: Symbol("jwk") }),
+        formatObject: error({ key: {}, format: { toString: () => "jwk" } }),
+        type: error({ key, format: "der" }),
+        passphrase: error({ key, passphrase: 1 }),
+        jwk: error({ key: "str", format: "jwk" }),
+        asymmetricKeyType: error({ key, format: "raw-private" }),
+        namedCurve: error({ key, format: "raw-private", asymmetricKeyType: "ec" }),
+      }).toEqual({
+        number: expect.stringMatching(notKeyData),
+        function: expect.stringMatching(new RegExp(notKeyData.source + "function notAKey$")),
+        key: expect.stringContaining(keyTypes),
+        format: `ERR_INVALID_ARG_VALUE: The property '${name}.format' is invalid. Received 'bogus'`,
+        formatSymbol: `ERR_INVALID_ARG_VALUE: The property '${name}.format' is invalid. Received Symbol(jwk)`,
+        formatObject: expect.stringContaining(keyTypes),
+        type: `ERR_INVALID_ARG_VALUE: The property '${name}.type' is invalid. Received undefined`,
+        passphrase: `ERR_INVALID_ARG_VALUE: The property '${name}.passphrase' is invalid. Received 1`,
+        jwk: `ERR_INVALID_ARG_TYPE: The "${name}.key" property must be of type object. Received type string ('str')`,
+        asymmetricKeyType: `ERR_INVALID_ARG_TYPE: The "${name}.asymmetricKeyType" property must be of type string. Received undefined`,
+        namedCurve: `ERR_INVALID_ARG_TYPE: The "${name}.namedCurve" property must be of type string. Received undefined`,
+      });
+    });
+
+    test("KeyObject#export and generateKeyPair keep their option names", () => {
+      const privateKey = createPrivateKey(privatePem);
+      expect(thrown(() => privateKey.export({ format: "bogus" } as any))).toBe(
+        "ERR_INVALID_ARG_VALUE: The property 'options.format' is invalid. Received 'bogus'",
+      );
+      expect(thrown(() => privateKey.export({ format: "der", type: "bogus" } as any))).toBe(
+        "ERR_INVALID_ARG_VALUE: The property 'options.type' is invalid. Received 'bogus'",
+      );
+      expect(
+        thrown(() => generateKeyPairSync("ed25519", { publicKeyEncoding: { format: "pem", type: "bogus" } } as any)),
+      ).toBe("ERR_INVALID_ARG_VALUE: The property 'options.publicKeyEncoding.type' is invalid. Received 'bogus'");
+      expect(
+        thrown(() => generateKeyPairSync("ed25519", { privateKeyEncoding: { format: "bogus", type: "pkcs8" } } as any)),
+      ).toBe("ERR_INVALID_ARG_VALUE: The property 'options.privateKeyEncoding.format' is invalid. Received 'bogus'");
+    });
+
+    // tls hands a { pem, passphrase } key to createPrivateKey({ key, passphrase }).
+    test("tls.createSecureContext decrypts a { pem, passphrase } key", () => {
+      const context = (passphrase: string) =>
+        tls.createSecureContext({ key: [{ pem: privateEncryptedPem, passphrase }] });
+      expect(context("password")).toBeInstanceOf(tls.SecureContext);
+      expect(() => context("not the password")).toThrow(expect.objectContaining({ code: "ERR_OSSL_BAD_DECRYPT" }));
+    });
   });
 
   [

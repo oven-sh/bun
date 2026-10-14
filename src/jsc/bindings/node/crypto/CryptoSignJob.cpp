@@ -324,33 +324,12 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         signatureData.append(std::span { signatureView->data(), signatureView->size() });
     }
 
-    auto prepareResult = mode == Mode::Verify
-        ? KeyObject::preparePublicOrPrivateKey(globalObject, scope, keyValue)
-        : KeyObject::preparePrivateKey(globalObject, scope, keyValue);
+    KeyObject keyObject = mode == Mode::Verify
+        ? KeyObject::getPublicOrPrivateKeyFromJS(globalObject, scope, keyValue)
+        : KeyObject::getPrivateKeyFromJS(globalObject, scope, keyValue);
     RETURN_IF_EXCEPTION(scope, {});
 
     ClearErrorOnReturn clearError;
-    auto keyType = mode == Mode::Verify
-        ? CryptoKeyType::Public
-        : CryptoKeyType::Private;
-
-    KeyObject keyObject;
-
-    if (prepareResult.keyData) {
-        keyObject = KeyObject::create(keyType, WTF::move(*prepareResult.keyData));
-    } else {
-
-        keyObject = KeyObject::getPublicOrPrivateKey(
-            globalObject,
-            scope,
-            prepareResult.keyDataView,
-            keyType,
-            prepareResult.formatType,
-            prepareResult.encodingType,
-            prepareResult.cipher,
-            WTF::move(prepareResult.passphrase));
-        RETURN_IF_EXCEPTION(scope, {});
-    }
 
     Digest digest = {};
 

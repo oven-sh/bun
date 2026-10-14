@@ -120,49 +120,12 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     }
 
     KeyObject keyObject;
-    switch (keyType) {
-    case KeyType::Public: {
+    {
         ncrypto::MarkPopErrorOnReturn popErrorScope;
-        auto prepareResult = KeyObject::preparePublicOrPrivateKey(globalObject, scope, optionsValue);
+        keyObject = keyType == KeyType::Private
+            ? KeyObject::getPrivateKeyFromJS(globalObject, scope, optionsValue, "privateKey"_s)
+            : KeyObject::getPublicOrPrivateKeyFromJS(globalObject, scope, optionsValue);
         RETURN_IF_EXCEPTION(scope, {});
-        if (prepareResult.keyData) {
-            RefPtr<KeyObjectData> data = *prepareResult.keyData;
-            keyObject = KeyObject::create(CryptoKeyType::Public, WTF::move(data));
-        } else {
-            keyObject = KeyObject::getPublicOrPrivateKey(
-                globalObject,
-                scope,
-                prepareResult.keyDataView,
-                CryptoKeyType::Public,
-                prepareResult.formatType,
-                prepareResult.encodingType,
-                prepareResult.cipher,
-                WTF::move(prepareResult.passphrase));
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        break;
-    }
-    case KeyType::Private: {
-        ncrypto::MarkPopErrorOnReturn popErrorScope;
-        auto prepareResult = KeyObject::preparePrivateKey(globalObject, scope, optionsValue);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (prepareResult.keyData) {
-            RefPtr<KeyObjectData> data = *prepareResult.keyData;
-            keyObject = KeyObject::create(CryptoKeyType::Private, WTF::move(data));
-        } else {
-            keyObject = KeyObject::getPublicOrPrivateKey(
-                globalObject,
-                scope,
-                prepareResult.keyDataView,
-                CryptoKeyType::Private,
-                prepareResult.formatType,
-                prepareResult.encodingType,
-                prepareResult.cipher,
-                WTF::move(prepareResult.passphrase));
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        break;
-    }
     }
 
     auto& pkey = keyObject.asymmetricKey();

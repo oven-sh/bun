@@ -795,7 +795,7 @@ impl CssColor {
         }
 
         // https://drafts.csswg.org/css-color-5/#color-mix-result
-        // An operand written in `T` is not converted (`From<T> for T`), so it is mixed as written.
+        // An operand stored as `T` is not converted (`From<T> for T`), so it is mixed as written.
         let mut first_color = T::try_from_css_color(self)?;
         let mut second_color = T::try_from_css_color(other)?;
 

@@ -604,13 +604,15 @@ impl<'a> JSON5Parser<'a> {
                 Ok(Expr::init(E::String::init(s), loc))
             }
             TokenData::Number(_) => Err(ParseError::InvalidIdentifier),
+            // JSON5 member names are IdentifierNames: `true`, `false` and `null` are string keys.
             TokenData::Boolean(b) => {
                 self.scan()?;
-                Ok(Expr::init(E::Boolean { value: b }, loc))
+                let name: &'static [u8] = if b { b"true" } else { b"false" };
+                Ok(Expr::init(E::String::from_static(name), loc))
             }
             TokenData::Null => {
                 self.scan()?;
-                Ok(Expr::init(E::Null {}, loc))
+                Ok(Expr::init(E::String::from_static(b"null"), loc))
             }
             TokenData::Eof => Err(ParseError::UnexpectedEof),
             _ => Err(ParseError::InvalidIdentifier),

@@ -4752,6 +4752,336 @@ describe("bundler", () => {
     });
   }
 
+  // ── A read the linker does not bind is a property read ────────────────
+  // `ns.a` off a `require()` / `import()` local prints as written when the
+  // importee is CommonJS, external or its own chunk, or when `ns` escapes or
+  // is assigned. It then reads a property of an object: a call through it
+  // passes `ns` as `this`, and a getter can run.
+
+  const lazyExports = /* js */ `
+    let count = 0;
+    const log = [];
+    Object.defineProperty(exports, "boot", { enumerable: true, get() { return ++count; } });
+    Object.defineProperty(exports, "count", { enumerable: true, get() { return count; } });
+    Object.defineProperty(exports, "first", { enumerable: true, get() { log.push("first"); return 1; } });
+    Object.defineProperty(exports, "second", { enumerable: true, get() { log.push("second"); return 2; } });
+    Object.defineProperty(exports, "bump", { enumerable: true, get() { globalThis.bumpLocal(); return 100; } });
+    exports.log = log;
+  `;
+
+  // `who()` returns `receiver` when called on the object it was read off.
+  const who = (receiver: string) => `function who() { return this?.who === who ? "${receiver}" : "none"; }`;
+
+  for (const minifySyntax of [false, true]) {
+    const suffix = minifySyntax ? "MinifySyntax" : "";
+
+    // TypeScript's CommonJS output calls an import as `(0, util_1.who)()`.
+    itBundled(`dynamic_import_dce/UnboundItemCallWithoutThis${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const util_1 = require("./util.cjs");
+          console.log(util_1.who(), (0, util_1.who)(), (0, util_1.who)?.(), (0, util_1["who"])());
+          console.log((true ? util_1.who : 0)(), (1 && util_1.who)(), (0 || util_1.who)(), (null ?? util_1.who)());
+          console.log((false ? 0 : util_1.who)(), [util_1.who][0]());
+          function viaLocal() {
+            const who = util_1.who;
+            return who();
+          }
+          console.log(viaLocal());
+          const ns = await import("./util.cjs");
+          console.log(ns.who(), (0, ns.who)());
+          await import("./util.cjs").then(m => console.log(m.who(), (0, m.who)()));
+          const escaped = require("./esm.js");
+          globalThis.escaped = escaped;
+          console.log(escaped.who(), (0, escaped.who)());
+        `,
+        "/util.cjs": /* js */ `
+          "use strict";
+          exports.tag = "exports";
+          exports.who = function () { return this === undefined ? "undefined" : this.tag; };
+        `,
+        "/esm.js": /* js */ `
+          export const tag = "namespace";
+          export function who() { return this === undefined ? "undefined" : this.tag; }
+        `,
+      },
+      minifySyntax,
+      run: {
+        stdout: [
+          "exports undefined undefined undefined",
+          "undefined undefined undefined undefined",
+          "undefined undefined",
+          "undefined",
+          "exports undefined",
+          "exports undefined",
+          "namespace undefined",
+        ].join("\n"),
+      },
+    });
+
+    // An unused read stays, and nothing moves past a read.
+    itBundled(`dynamic_import_dce/UnboundItemReadRunsGetter${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const ns = require("./lazy.cjs");
+          ns.boot;
+          void ns.boot;
+          const unused = ns.boot;
+          if (ns.boot) {}
+          class Unused { [ns.boot]() {} }
+          console.log(ns.count);
+          function order() {
+            const first = ns.first;
+            return ns.second + first;
+          }
+          order();
+          console.log(ns.log.join());
+          let local = 0;
+          globalThis.bumpLocal = () => { local++; };
+          function pastRead() {
+            local = 0;
+            const copy = local;
+            return ns.bump + copy;
+          }
+          console.log(pastRead());
+          const ext = require("ext");
+          ext.boot;
+          void ext.boot;
+          console.log(ext.count);
+          const awaited = await import("./lazy.cjs");
+          awaited.boot;
+          void awaited.boot;
+          console.log(ns.count);
+          await import("./lazy.cjs").then(m => {
+            m.boot;
+            void m.boot;
+            const unused = m.boot;
+          });
+          console.log(ns.count);
+        `,
+        "/lazy.cjs": lazyExports,
+      },
+      runtimeFiles: { "/node_modules/ext/index.js": lazyExports },
+      external: ["ext"],
+      target: "bun",
+      minifySyntax,
+      run: { stdout: "5\nfirst,second\n100\n2\n7\n10" },
+    });
+
+    // The importee is a bundled ES module, but the local is read above its
+    // declaration, escapes, or is assigned.
+    itBundled(`dynamic_import_dce/UnboundItemLocalEscapesOrIsAssigned${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          function early() {
+            return [lib.who(), (0, lib.who)(), (true ? lib.who : 0)()].join(" ");
+          }
+          const lib = await import("./esm.js");
+          console.log("read above declaration:", early());
+          const escaped = await import("./esm.js");
+          globalThis.sink = escaped;
+          console.log("escaped:", escaped.who(), (0, escaped.who)(), (true ? escaped.who : 0)());
+          let assigned = await import("./esm.js");
+          const before = [assigned.who(), (0, assigned.who)(), (true ? assigned.who : 0)()];
+          assigned = { who: () => "replaced" };
+          console.log("assigned:", ...before, assigned.who());
+        `,
+        "/esm.js": `export ${who("namespace")}`,
+      },
+      minifySyntax,
+      run: {
+        stdout: [
+          "read above declaration: namespace none none",
+          "escaped: namespace none none",
+          "assigned: namespace none none replaced",
+        ].join("\n"),
+      },
+    });
+
+    // With splitting, `import()` loads another chunk: nothing binds across it.
+    itBundled(`dynamic_import_dce/UnboundItemSplitChunk${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const ns = await import("./esm.js");
+          console.log(ns.who(), (0, ns.who)(), (true ? ns.who : 0)(), [ns.who][0]());
+          await import("./esm.js").then(m => console.log(m.who(), (0, m.who)(), (true ? m.who : 0)()));
+        `,
+        "/esm.js": `export ${who("namespace")}`,
+      },
+      splitting: true,
+      outdir: "/out",
+      minifySyntax,
+      run: { file: "/out/entry.js", stdout: "namespace none none none\nnamespace none none" },
+    });
+
+    // A gettext style JSON file keeps its header under the key "".
+    itBundled(`dynamic_import_dce/UnboundItemEmptyKey${suffix}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const messages = require("./fr.json");
+          const lib = require("./lib.cjs");
+          function header() { return messages[""].lang; }
+          const key = ["", "x"][0];
+          console.log(JSON.stringify(messages[""]), messages["hello"], header(), messages[key].plural);
+          console.log(typeof lib[""], lib[""](), new lib[""]() instanceof lib[""]);
+          const ns = await import("./esm.js");
+          console.log(ns[""], ns.hello);
+        `,
+        "/fr.json": `{ "": { "lang": "fr", "plural": "n > 1" }, "hello": "bonjour" }`,
+        "/lib.cjs": `exports[""] = function () { return this === exports ? "exports" : typeof this; };`,
+        "/esm.js": `const empty = "empty"; export { empty as "" }; export const hello = "hello";`,
+      },
+      minifySyntax,
+      run: { stdout: '{"lang":"fr","plural":"n > 1"} bonjour fr n > 1\nfunction exports true\nempty hello' },
+    });
+  }
+
+  // Every kind of local that holds the result. Only the first call of a row
+  // is a method call on it.
+  const valueCalls = (ns: string) =>
+    [
+      `${ns}.who()`,
+      `(0, ${ns}.who)()`,
+      `(0, ${ns}["who"])()`,
+      `(true ? ${ns}.who : 0)()`,
+      `[${ns}.who][0]()`,
+      `(c ? ${ns}.who : 0)()`,
+      `(() => { const f = ${ns}.who; return f(); })()`,
+    ].join(", ");
+
+  for (const [variant, options] of Object.entries({
+    ...elisionVariants,
+    cli: { backend: "cli", minifySyntax: true },
+  } as const)) {
+    itBundled(`dynamic_import_dce/UnboundItemLocalForms_${variant}`, {
+      files: {
+        "/entry.js": /* js */ `
+          const c = process.argv.length > 0;
+          async function main() {
+            const a = require("./lib.cjs");
+            console.log("require:", ${valueCalls("a")});
+            const b = await import("./lib.cjs");
+            console.log("await import:", ${valueCalls("b")});
+            await import("./lib.cjs").then(m => console.log("then:", ${valueCalls("m")}));
+            const [d] = await Promise.all([import("./lib.cjs")]);
+            console.log("Promise.all:", ${valueCalls("d")});
+            await Promise.all([import("./lib.cjs")]).then(([e]) => console.log("Promise.all then:", ${valueCalls("e")}));
+            const x = require("ext");
+            console.log("external:", ${valueCalls("x")});
+          }
+          main();
+        `,
+        "/lib.cjs": `exports.who = ${who("exports")};`,
+      },
+      runtimeFiles: { "/node_modules/ext/index.js": `exports.who = ${who("exports")};` },
+      external: ["ext"],
+      target: "bun",
+      ...options,
+      run: {
+        stdout: ["require", "await import", "then", "Promise.all", "Promise.all then", "external"]
+          .map(form => `${form}: exports none none none none none none`)
+          .join("\n"),
+      },
+    });
+  }
+
+  // ── A read the linker binds prints the export ─────────────────────────
+
+  itElides("NamespaceLocalReads", {
+    files: {
+      "/entry.js": /* js */ `
+        async function main() {
+          const ns = await import("./x.js");
+          console.log(ns.f(), ns["f"](), ns.inner.g(), ns.inner["g"](), ns.missing);
+          const first = ns.f, second = ns.k;
+          console.log(first(), second);
+          const r = require("./x.js");
+          console.log(r.f(), r.inner.g(), r.missing);
+          await import("./x.js").then(m => console.log(m.f(), m.inner.g(), m.missing));
+          console.log(single(), await singleAwaited());
+        }
+        function single() {
+          const only = require("./x.js");
+          return only.k;
+        }
+        async function singleAwaited() {
+          const only = await import("./x.js");
+          return only.k;
+        }
+        main();
+      `,
+      "/x.js": /* js */ `
+        export function f() { return "f"; }
+        export const k = "k";
+        export * as inner from "./inner.js";
+        export const d = "DROPPED";
+      `,
+      "/inner.js": `export function g() { return "inner.g"; } export const d = "DROPPED";`,
+    },
+    stdout: "f f inner.g inner.g undefined\nf k\nf inner.g undefined\nf inner.g undefined\nk k",
+    output(out) {
+      expect(out).toContain("console.log(f(), f(), g(), g(), undefined);");
+    },
+  });
+
+  // An enum member read through the namespace is inlined, so the enum is
+  // not in the bundle.
+  itElides("NamespaceLocalEnumReads", {
+    files: {
+      "/entry.ts": /* ts */ `
+        async function main() {
+          const m = await import("./enums");
+          console.log(m.Color.Red, m.Color["Green"], m.Size.Small, m["Size"].Big);
+          const r = require("./enums");
+          console.log(r.Color.Green, r.Size.Small);
+        }
+        main();
+      `,
+      "/enums.ts": /* ts */ `
+        export enum Color { Red = 1, Green = "g" }
+        export const enum Size { Small = 3, Big = "big" }
+        export const d = "DROPPED";
+      `,
+    },
+    stdout: "1 g 3 big\ng 3",
+    output(out) {
+      expect(out).toContain('console.log(1 /* Red */, "g" /* Green */, 3 /* Small */, "big" /* Big */);');
+      expect(out).not.toContain("Color");
+    },
+  });
+
+  // A read the linker binds has no side effect, so tree shaking drops an
+  // unused top-level statement that holds one, and the export it names.
+  itElides("UnusedTopLevelNamespaceLocalReads", {
+    files: {
+      "/entry.js": /* js */ `
+        import { kept } from "./barrel.js";
+        console.log(kept);
+      `,
+      "/barrel.js": /* js */ `
+        const ns = require("./x.js");
+        ns.read;
+        void ns.voided;
+        ns["indexed"];
+        const unused = ns.local;
+        class Unused extends ns.Base {}
+        export const kept = ns.kept;
+        export const other = [ns.a, { b: ns.b }];
+      `,
+      "/x.js": /* js */ `
+        export const kept = "kept";
+        export const read = "DROPPED";
+        export const voided = "DROPPED";
+        export const indexed = "DROPPED";
+        export const local = "DROPPED";
+        export class Base { name = "DROPPED"; }
+        export const a = "DROPPED";
+        export const b = "DROPPED";
+      `,
+    },
+    stdout: "kept",
+  });
+
   // ── Cases that keep the namespace object ──────────────────────────────
 
   function itKeepsNamespace(

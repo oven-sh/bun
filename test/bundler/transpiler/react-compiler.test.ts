@@ -2675,6 +2675,40 @@ describe("bundler", () => {
     }
   }
 
+  // A read off a namespace local is a property read in a compiled function
+  // too: a call through a local has no `this`, and the getters run in source
+  // order.
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`react-compiler/NamespaceLocalReadIsAPropertyRead-${target}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { useEffect } from "react";
+          const ns = require("./lib.cjs");
+          function Form() {
+            useEffect(() => {});
+            const first = ns.first;
+            const sum = ns.second + first;
+            const who = ns.who;
+            return [sum, who(), ns.log.join()].join(" ");
+          }
+          console.log(Form());
+        `,
+        "/lib.cjs": /* js */ `
+          const log = [];
+          Object.defineProperty(exports, "first", { enumerable: true, get() { log.push("first"); return 1; } });
+          Object.defineProperty(exports, "second", { enumerable: true, get() { log.push("second"); return 2; } });
+          exports.who = function () { return this === exports ? "exports" : "none"; };
+          exports.log = log;
+        `,
+        ...stubReactWithEffect,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target,
+      run: { stdout: "3 none first,second" },
+    });
+  }
+
   // The bundler prints an import under the name of the export it links to:
   // `defaultTheme` below prints as `theme`. A compiled function gets new
   // symbols for its parameters, its locals and its temporaries (`t0`, `$`).

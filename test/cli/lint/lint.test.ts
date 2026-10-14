@@ -4363,7 +4363,7 @@ maybe(() => { return f; });
         expect(lines).toEqual([4, 5, 6, 7]);
       });
 
-      // Recorded from oxlint 1.87.0 with tsgolint, which also reports `eslint(require-await)` at the same place in the last two.
+      // Recorded from oxlint 1.87.0 with tsgolint.
       test("a type-aware rule reports with the severity of the ESLint rule of the same name, if that one is on", async () => {
         const texts = {
           "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }),
@@ -4382,11 +4382,11 @@ maybe(() => { return f; });
           ],
           [
             { rules: { "eslint/require-await": "warn", "typescript/require-await": "error" } },
-            ["a.ts:2 typescript(require-await) warning"],
+            ["a.ts:2 eslint(require-await) warning", "a.ts:2 typescript(require-await) warning"],
           ],
           [
             { rules: { "typescript/require-await": "warn", "eslint/require-await": "error" } },
-            ["a.ts:2 typescript(require-await) error"],
+            ["a.ts:2 eslint(require-await) error", "a.ts:2 typescript(require-await) error"],
           ],
         ];
         const results = await Promise.all(
@@ -5008,80 +5008,6 @@ maybe(() => { return f; });
         const result = await lint(files, ["--fix-dangerously", "--type-aware"], { reads });
         expect(result.files).toEqual(
           Object.fromEntries(shapes.map(([, file, text, fixed], index) => [`${index}/${file}`, fixed ?? text])),
-        );
-      });
-
-      // oxlint reports each of these twice, once for each of the two rules, where both report it: 11 problems.
-      test("what a rule and the rule that does the same with types both report is reported once", async () => {
-        const files = {
-          ".oxlintrc.json": JSON.stringify({
-            plugins: ["typescript", "unicorn"],
-            categories: { correctness: "off" },
-            rules: {
-              "unicorn/prefer-string-starts-ends-with": "error",
-              "typescript/prefer-string-starts-ends-with": "warn",
-              "unicorn/prefer-includes": "error",
-              "typescript/prefer-includes": "warn",
-              "no-throw-literal": "error",
-              "typescript/only-throw-error": "error",
-              "require-await": "error",
-              "typescript/require-await": "error",
-            },
-          }),
-          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } }),
-          "a.ts": [
-            "declare const s: string;",
-            "export const a = /^abc/.test(s);",
-            // The rules with types say nothing about an `any`.
-            "declare const t: any;",
-            "export const b = t.indexOf(1) !== -1;",
-            "declare const list: string[];",
-            // unicorn's marks `indexOf`, the other the comparison.
-            'export const c = list.indexOf("x") !== -1;',
-            "export function f(): never {",
-            '  throw "x" as any;',
-            "}",
-            "export function g(): never {",
-            '  throw "y";',
-            "}",
-            "// oxlint-disable-next-line require-await",
-            "export const d = 1;",
-            "export async function h() {",
-            "  return 1;",
-            "}",
-            "",
-          ].join("\n"),
-        };
-        const places = (raw: string) =>
-          JSON.parse(raw)
-            .diagnostics.map(
-              (it: any) => `${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code} ${it.severity}`,
-            )
-            .sort();
-        const withTypes = await lint(files, ["--type-aware", "--report-unused-disable-directives", "-f", "json"]);
-        expect(places(withTypes.raw)).toEqual(
-          [
-            // As severe as the more severe of the two.
-            "2:18 typescript(prefer-string-starts-ends-with) error",
-            "4:20 unicorn(prefer-includes) error",
-            "6:18 typescript(prefer-includes) error",
-            "8:9 eslint(no-throw-literal) error",
-            "11:9 typescript(only-throw-error) error",
-            "13:1 undefined warning",
-            "15:1 typescript(require-await) error",
-          ].sort(),
-        );
-        expect(withTypes.exitCode).toBe(1);
-        const withoutTypes = await lint(files, ["-f", "json"]);
-        expect(places(withoutTypes.raw)).toEqual(
-          [
-            "2:18 unicorn(prefer-string-starts-ends-with) error",
-            "4:20 unicorn(prefer-includes) error",
-            "6:23 unicorn(prefer-includes) error",
-            "8:9 eslint(no-throw-literal) error",
-            "11:9 eslint(no-throw-literal) error",
-            "15:23 eslint(require-await) error",
-          ].sort(),
         );
       });
 

@@ -28,19 +28,6 @@ impl RuleBits {
         self.0[rule as usize / 64] & (1 << (rule % 64)) != 0
     }
 
-    /// Whether a rule is in both.
-    #[inline]
-    pub const fn intersects(&self, other: &RuleBits) -> bool {
-        let mut word = 0;
-        while word < RuleBits::WORDS {
-            if self.0[word] & other.0[word] != 0 {
-                return true;
-            }
-            word += 1;
-        }
-        false
-    }
-
     #[inline]
     pub const fn or(mut self, other: &RuleBits) -> RuleBits {
         let mut word = 0;

@@ -196,47 +196,6 @@ pub struct Linter<S: RuleSet> {
     numbers: Vec<u16>,
     /// What the configurations name by numbers.
     instances: Instances<Arc<S>>,
-    twins: Twins,
-}
-
-/// The rules without types that make a check that a rule of typescript-eslint makes with types: the core rule that it
-/// extends, or unicorn's rule of the same name. oxlint reports what both find twice. Here, with a configuration of oxlint, it
-/// is reported once, by the rule with types, as the more severe of the two. Both run: the rule with types is silent in
-/// places where the other is not, as for a value of type `any`.
-struct Twins {
-    without_types: RuleBits,
-    /// For each of them, by its number: the number of the rule with types.
-    typed: Vec<u16>,
-}
-
-impl Twins {
-    /// `number_of`: the number of a rule, if it has one.
-    fn new(
-        registry: &Registry,
-        numbers: usize,
-        number_of: &dyn Fn(&RuleEntry) -> Option<u16>,
-    ) -> Twins {
-        let mut without_types = RuleBits::EMPTY;
-        let mut typed = vec![u16::MAX; numbers];
-        for entry in registry.all().iter().filter(|it| !it.meta.requires_types) {
-            let twin = match entry.meta.plugin {
-                crate::rule::Plugin::Eslint => registry.pair_of(entry.meta).map(|it| it.1),
-                crate::rule::Plugin::Unicorn => {
-                    registry.get(crate::rule::Plugin::TypeScript, entry.meta.name.as_bytes())
-                }
-                _ => None,
-            };
-            let twin = twin.filter(|it| it.meta.requires_types).and_then(number_of);
-            if let (Some(number), Some(twin)) = (number_of(entry), twin) {
-                without_types.insert(number);
-                typed[number as usize] = twin;
-            }
-        }
-        Twins {
-            without_types,
-            typed,
-        }
-    }
 }
 
 /// A rule as it runs on the file: as it is configured, or as a comment changes that.
@@ -402,16 +361,10 @@ impl<S: RuleSet> Linter<S> {
                 numbers[index] = number as u16;
             }
         }
-        let number_of = |entry: &RuleEntry| {
-            let number = *numbers.get(registry.index_of(entry)?)?;
-            (number != u16::MAX).then_some(number)
-        };
-        let twins = Twins::new(&registry, S::METAS.len(), &number_of);
         Linter {
             registry,
             numbers,
             instances: Instances::new(),
-            twins,
         }
     }
 
@@ -828,7 +781,6 @@ impl<S: RuleSet> Linter<S> {
             file.set_package_module(Arc::clone(module));
         }
         // A rule for which the file has nothing is not started.
-        let mut on = prepared.on;
         if !is_plain {
             enabled.extend(running.iter().zip(0..).map(|(it, place)| Enabled {
                 rule: match &it.rule {
@@ -838,7 +790,7 @@ impl<S: RuleSet> Linter<S> {
                 severity: it.severity,
                 place,
             }));
-            on = RuleBits::EMPTY;
+            let mut on = RuleBits::EMPTY;
             for it in enabled.iter().filter(|it| it.severity != Severity::Off) {
                 let number = it.rule.number();
                 on.insert(number);
@@ -847,19 +799,6 @@ impl<S: RuleSet> Linter<S> {
             for it in &mut enabled {
                 if !listening.has(it.rule.number()) {
                     it.severity = Severity::Off;
-                }
-            }
-        }
-        // See `Twins`: those of them that run beside their rule with types.
-        let twins = &self.twins;
-        let mut beside_typed = RuleBits::EMPTY;
-        if on.intersects(&twins.without_types) && file.types.is_some() && file.language().is_oxlint
-        {
-            for it in enabled.iter().filter(|it| it.severity != Severity::Off) {
-                let number = it.rule.number();
-                let typed = twins.typed.get(number as usize).copied();
-                if typed.is_some_and(|typed| typed != u16::MAX && on.has(typed)) {
-                    beside_typed.insert(number);
                 }
             }
         }
@@ -884,30 +823,6 @@ impl<S: RuleSet> Linter<S> {
             })
         };
         let mut diagnostics = crate::runner::run(file, &enabled, wants_fixes);
-        if beside_typed != RuleBits::EMPTY {
-            let number = |it: &Diagnostic| enabled.get(it.rule as usize).map(|it| it.rule.number());
-            // For what a rule without types reports: where its rule with types reports something that holds it.
-            let same_by_typed = |it: &Diagnostic| {
-                let own = number(it).filter(|it| beside_typed.has(*it))?;
-                let typed = *twins.typed.get(own as usize)?;
-                diagnostics.iter().position(|other| {
-                    number(other) == Some(typed)
-                        && other.span.start <= it.span.start
-                        && it.span.end <= other.span.end
-                })
-            };
-            let twice: Vec<(usize, usize, Severity)> = (diagnostics.iter().enumerate())
-                .filter_map(|(at, it)| Some((at, same_by_typed(it)?, it.severity)))
-                .collect();
-            for &(_, kept, severity) in &twice {
-                diagnostics[kept].severity = diagnostics[kept].severity.max(severity);
-            }
-            let mut at = 0;
-            diagnostics.retain(|_| {
-                at += 1;
-                !twice.iter().any(|it| it.0 == at - 1)
-            });
-        }
         if let Some(thrown) = file.sink.thrown.take() {
             // "error:" stands for the plain `Error:` where the run ends.
             let said = match (thrown.name, file.language().is_oxlint) {

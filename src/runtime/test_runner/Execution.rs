@@ -93,10 +93,8 @@ pub(crate) struct Execution {
     /// the entries themselves are owned by BunTest, which owns Execution.
     pub(crate) sequences: Box<[ExecutionSequence]>,
     pub(crate) group_index: usize,
-    /// The entry whose callback is synchronously on the stack right now, which
-    /// `get_current_state_data()` can't name inside a concurrent group. Not set
-    /// while the microtasks that follow the call run: those also continue the
-    /// other tests of the group.
+    /// The entry whose callback is on the stack, which `get_current_state_data()` can't name in a concurrent group.
+    /// Cleared before the call's microtasks drain, because those can resume other tests in the group.
     pub(crate) on_stack: core::cell::Cell<Option<EntryData>>,
 }
 
@@ -109,7 +107,7 @@ pub(crate) struct ConcurrentGroup {
     pub(crate) remaining_incomplete_entries: usize,
     /// used by beforeAll to skip directly to afterAll if it fails
     pub(crate) failure_skip_to: usize,
-    /// As `ExecutionSequence::pending_matchers`, when it is not known which of the sequences called the matcher.
+    /// Like `ExecutionSequence::pending_matchers`, for matchers whose calling sequence isn't known.
     pub(crate) pending_matchers: u32,
 }
 
@@ -160,7 +158,6 @@ pub(crate) struct ExecutionSequence {
     pub(crate) test_entry: Option<NonNull<ExecutionEntry>>,
     pub(crate) remaining_repeat_count: u32,
     pub(crate) remaining_retry_count: u32,
-    /// How many retries and repeats came before this run of the entries.
     pub(crate) attempt: u32,
     pub(crate) result: Result,
     pub(crate) executing: bool,
@@ -170,13 +167,12 @@ pub(crate) struct ExecutionSequence {
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
     pub(crate) maybe_skip: bool,
-    /// The `TestContext` of a test that has a vitest callback, until the test is reported.
     pub(crate) context: Option<Strong>,
-    /// Matchers that the active entry called and that wait for a promise. The entry does not end before they have run.
+    /// Matchers the active entry called that still wait on a promise. The entry can't end until they've run.
     pub(crate) pending_matchers: u32,
-    /// The active entry waits for `pending_matchers` only.
+    /// The active entry's callback is done, and only `pending_matchers` keeps the entry open.
     pub(crate) callback_done: bool,
-    /// The names that `Snapshots::add_count` has counted for this run of the entries, if another one may follow.
+    /// Names `Snapshots::add_count` counted during this attempt, for `reset_sequence` to undo.
     pub(crate) counted_snapshots: Vec<Box<[u8]>>,
 }
 
@@ -208,7 +204,7 @@ impl ExecutionSequence {
         }
     }
 
-    /// Whether the active entry, whose callback is done, has to wait for matchers. One that an error has ended does not.
+    /// Call once the active entry's callback is done. An entry that already errored doesn't wait.
     fn waits_for_matchers(&mut self) -> bool {
         self.callback_done = self.pending_matchers > 0 && !self.maybe_skip;
         self.callback_done
@@ -254,7 +250,6 @@ impl ExecutionSequence {
         false
     }
 
-    /// Whether the test's own callback comes after `entry`.
     pub(crate) fn test_follows(&self, entry: NonNull<ExecutionEntry>) -> bool {
         // SAFETY: arena-owned entries
         let mut next = nn(unsafe { entry.as_ref() }.next);
@@ -268,7 +263,7 @@ impl ExecutionSequence {
         false
     }
 
-    /// `test.failing` reports the opposite of what happened.
+    /// For `test.failing`, `Result::Pass` means the callback threw, which is a failed attempt here.
     fn attempt_failed(&self) -> bool {
         match self.entry_mode() {
             ScopeMode::Failing => self.result == Result::Pass,
@@ -276,7 +271,7 @@ impl ExecutionSequence {
         }
     }
 
-    /// vitest's `task.result.state`
+    /// Vitest's `task.result.state`
     pub(crate) fn state(&self) -> &'static str {
         if self.result == Result::Skip {
             "skip"
@@ -295,7 +290,7 @@ impl ExecutionSequence {
         unsafe { &*context }.take_deferred(self.attempt_failed())
     }
 
-    /// vitest's `test.fails`: an attempt that has ended passes if anything in it failed, be it a hook, a fixture, the number of assertions or the time limit.
+    /// Vitest's `test.fails` passes if anything in the attempt failed, hooks, fixtures and timeouts included.
     fn flip_fails(&mut self) {
         if self.entry_mode() != ScopeMode::Fails || self.result == Result::Skip {
             return;
@@ -305,7 +300,6 @@ impl ExecutionSequence {
         self.result = if self.result.is_fail() { Result::Pass } else { Result::FailBecauseFailsTestPassed };
     }
 
-    /// Fails a test that made another number of `expect()` calls than it announced.
     fn check_expect_assertions(&mut self) {
         let failure = match self.expect_assertions {
             ExpectAssertions::NotSet => return,
@@ -928,7 +922,7 @@ impl Execution {
 
         sequence.maybe_skip = true;
         if sequence.result == Result::Skip && sequence.context.is_some() {
-            // vitest reports a test that called `skip()` as skipped, whatever it throws.
+            // Vitest reports a test that called `skip()` as skipped, whatever it throws.
             return HandleUncaughtExceptionResult::HideError;
         }
         if sequence.entry_mode() == ScopeMode::Fails {
@@ -967,7 +961,6 @@ impl Execution {
         }
     }
 
-    /// For `task.result` of the vitest context.
     pub(crate) fn record_error(
         &mut self,
         global: &JSGlobalObject,
@@ -1028,7 +1021,7 @@ fn step_group(
         // SAFETY: re-deref after step_group_one; disjoint from this.sequences read below.
         let group = unsafe { &mut *group_ptr.as_ptr() };
         if group.pending_matchers > 0 {
-            // The last timeout of the tests, one of which called them, ends the wait.
+            // Any test in the group may have called them, so wait until the latest test deadline.
             let timeout = this.sequences[group.sequence_start..group.sequence_end]
                 .iter()
                 .filter_map(|sequence| sequence.test_entry)
@@ -1198,7 +1191,7 @@ fn step_sequence_one(
     // SAFETY: arena-owned entry
     let next_item = unsafe { &mut *next_item_ptr.as_ptr() };
     sequence.executing = true;
-    // The first entry comes up again after the fixtures it asks for.
+    // The first entry becomes active again after its fixture setup entries, so `started_at` guards against a second start.
     if Some(next_item_ptr) == sequence.first_entry && sequence.started_at.eql(&Timespec::EPOCH) {
         Execution::on_sequence_started(global_this, sequence);
     }
@@ -1334,7 +1327,7 @@ fn step_sequence_one(
                         .active_entry
                         .map_or(0, |p| p.as_ptr() as usize)
                 ));
-                // `DescribeScope::teardown_slot` of a hook that returned no function.
+                // A `DescribeScope::teardown_slot` whose hook returned no function, or `BunTest::file_end`.
                 debug_assert!(sequence.test_entry.is_none());
             }
         }

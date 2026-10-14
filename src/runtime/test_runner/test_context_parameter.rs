@@ -1,4 +1,4 @@
-//! What a callback asks of the test context: the properties its parameter destructures.
+//! Parses a callback's parameter list to find which test context properties it destructures.
 
 use bun_ast::b::B;
 use bun_ast::expr::Data;
@@ -6,17 +6,16 @@ use bun_ast::stmt::Data as StmtData;
 use bun_ast::{G, Stmt};
 use bun_jsc::JSValue;
 
-/// Of the callback of an entry, read when it is first asked for. The rows of a table share one.
+/// Parsed at most once. The rows of an `.each()` / `.for()` table share one.
 pub(crate) type SharedContextParameter = std::rc::Rc<core::cell::OnceCell<ContextParameter>>;
 
 pub(crate) enum ContextParameter {
-    /// The function has no such parameter, or is not written in JavaScript.
+    /// No parameter at that index, or a native function.
     Absent,
-    /// `({ a, b: c, d = 1 }) => {}` is `a`, `b`, `d`.
+    /// `({ a, b: c, d = 1 }) => {}` gives `a`, `b`, `d`.
     Properties(Vec<Box<[u8]>>),
-    /// `({ a, ...rest }) => {}`
     RestProperty,
-    /// Not an object pattern: its name, if it is a plain parameter.
+    /// Not an object pattern. Holds the name if it's a plain identifier.
     Other(Option<Box<[u8]>>),
 }
 
@@ -28,7 +27,6 @@ unsafe extern "C" {
 }
 
 impl ContextParameter {
-    /// The parameter at `index` of `function`.
     pub(crate) fn of(function: JSValue, index: usize) -> ContextParameter {
         let mut is_arrow_function = false;
         let from_parameters = Bun__JSFunction__sourceFromParameters(function, &mut is_arrow_function);
@@ -36,7 +34,8 @@ impl ContextParameter {
             return ContextParameter::Absent;
         }
         let from_parameters = from_parameters.to_utf8();
-        // Any body parses as that of an async generator or arrow; `super.x` and `this.#x` only in a class, which is strict mode code.
+        // An async generator or async arrow accepts any body, except that `super.x` and `this.#x` need a class.
+        // The class wrapper is tried second because class code is strict mode.
         let around: [(&[u8], &[u8]); 2] = if is_arrow_function {
             [(b"(async ", b")"), (b"(class{m(){(async ", b")}})")]
         } else {
@@ -50,7 +49,6 @@ impl ContextParameter {
             .unwrap_or(ContextParameter::Other(None))
     }
 
-    /// `None`: `text` does not parse.
     fn parse(text: &[u8], is_arrow_function: bool, index: usize) -> Option<ContextParameter> {
         let arena = bun_alloc::Arena::new();
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);

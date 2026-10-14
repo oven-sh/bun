@@ -18,7 +18,7 @@ unsafe extern "C" {
 
 type Reset = extern "C" fn(&JSGlobalObject);
 
-/// As `RESETS_BEFORE_EACH_TEST`.
+/// Same order as `RESETS_BEFORE_EACH_TEST`.
 const RESETS: [Reset; RESETS_BEFORE_EACH_TEST.len()] = [
     JSMock__restoreAllMocks,
     JSMock__resetAllMocks,
@@ -28,10 +28,9 @@ const RESETS: [Reset; RESETS_BEFORE_EACH_TEST.len()] = [
 ];
 const CLEAR_MOCKS: usize = 2;
 
-/// What `vi.setConfig()` has set.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct Config {
-    /// In ms, 0 for none, for the tests and the hooks that are registered from now on.
+    /// In ms, 0 for no timeout. Only applies to tests and hooks registered afterwards.
     pub(crate) test_timeout: Option<u32>,
     pub(crate) hook_timeout: Option<u32>,
     /// 0 for no limit.
@@ -39,34 +38,33 @@ pub(crate) struct Config {
     resets: [Option<bool>; RESETS.len()],
 }
 
-/// No script is on the stack.
+/// Reports a thrown error as uncaught, so only call this with no JS on the stack.
 fn run(global: &JSGlobalObject, reset: Reset) {
     crate::dispatch::fold(bun_jsc::from_js_host_call_generic(global, || {
         reset(global)
     }));
 }
 
-/// Before the `beforeEach` hooks of a test, each time it is tried.
 pub(crate) fn before_each_attempt(global: &JSGlobalObject, is_vitest: bool) {
     JSMock__willRunTest(global);
     let Some(runner) = Jest::runner() else { return };
     let set = runner.vi_config.resets;
     let configured = runner.test_options.resets_before_each_test;
     for (index, &reset) in RESETS.iter().enumerate() {
-        // vitest 5 clears the mocks unless it is told not to.
+        // Vitest 5 clears mocks by default.
         if set[index].or(configured[index]).unwrap_or(is_vitest && index == CLEAR_MOCKS) {
             run(global, reset);
         }
     }
 }
 
-/// Not so in a hook that a preload has registered: what that undoes, it undoes for a test file.
+/// False inside a hook that a preload registered, because that hook runs on behalf of a test file.
 #[unsafe(no_mangle)]
 extern "C" fn ViUtils__isLoadingPreload(global: &JSGlobalObject) -> bool {
     global.bun_vm().is_in_preload
 }
 
-/// `next_load_shares_global`: else `global` goes with all it holds, and the preload scripts run again.
+/// If `next_load_shares_global` is false, `global` is thrown away and the preloads run again, so there's nothing to undo.
 pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global: bool) {
     if let Some(runner) = Jest::runner() {
         if !next_load_shares_global {
@@ -84,7 +82,7 @@ pub(crate) fn on_test_file_end(global: &JSGlobalObject, next_load_shares_global:
     ViUtils__forgetDynamicImports(global);
 }
 
-/// 0, which is "none", for what is not a positive finite number: so vitest treats a timeout.
+/// Like Vitest's timeouts, anything that isn't a positive finite number becomes 0, which means none.
 fn number_option(
     global: &JSGlobalObject,
     config: JSValue,
@@ -108,7 +106,7 @@ fn number_option(
     }))
 }
 
-/// What a preload script sets holds for every test file, as that of a setup file of vitest does.
+/// Config set by a preload applies to every test file, like config set by a Vitest setup file.
 fn commit(global: &JSGlobalObject, config: Config) {
     if let Some(runner) = Jest::runner() {
         runner.vi_config = config;

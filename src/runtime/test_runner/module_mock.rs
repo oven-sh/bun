@@ -1,7 +1,7 @@
 use super::bun_test::{self, AddedInPhase};
 use bun_jsc::JSGlobalObject;
 
-/// Whether a preload is running, or a hook that a preload registered: its `beforeAll` runs once for all the test files.
+/// Also true inside a hook that a preload registered, because a preload's `beforeAll` runs once for all test files.
 #[unsafe(no_mangle)]
 extern "C" fn JSMock__isInPreload(global: &JSGlobalObject) -> bool {
     let vm = global.bun_vm();

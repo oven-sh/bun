@@ -250,7 +250,7 @@ impl Collection {
     ) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
 
-        // Not of the describe() callback that happens to be running, or no such callback is running.
+        // The error didn't come from a describe() callback, so don't fail whichever scope happens to be active.
         if !matches!(data, RefDataValue::Collection { .. })
             || core::ptr::eq(self.active_scope.as_ptr(), &raw const *self.root_scope)
         {

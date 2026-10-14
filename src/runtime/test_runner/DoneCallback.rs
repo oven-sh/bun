@@ -9,7 +9,6 @@ pub(crate) struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
     pub(crate) r#ref: Option<RefPtr<RefData>>,
     pub(crate) called: bool, // = false
-    /// The entry whose callback it is an argument of.
     pub(crate) entry: RefDataValue,
 }
 

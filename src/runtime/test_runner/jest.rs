@@ -135,7 +135,6 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) default_timeout_override: u32,
 
     pub(crate) vi_config: vi_utils::Config,
-    /// What `vi_config` goes back to at the end of a test file.
     pub(crate) vi_config_of_preload: vi_utils::Config,
 
     pub(crate) test_options: &'a TestOptions,
@@ -271,7 +270,7 @@ pub(crate) struct Summary {
     pub(crate) fail: u32,
     pub(crate) files: u32,
     pub(crate) skipped_because_label: u32,
-    /// Files in which a `describe.shuffle` decided an order, so that the seed is worth printing.
+    /// Files reordered by `describe.shuffle`. The seed is printed if there are any.
     pub(crate) shuffled: u32,
 }
 
@@ -312,9 +311,9 @@ pub(crate) mod Jest {
     pub(crate) static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
         bun_core::RacyCell::new(None);
 
-    /// `None` outside of `bun test`, and in a Worker: the runner belongs to the thread that runs the test files.
+    /// `None` outside `bun test` and in a Worker, because the runner belongs to the thread that runs the test files.
     pub(crate) fn runner() -> Option<&'static mut TestRunner<'static>> {
-        // SAFETY: `runner_ptr` hands it to one thread only.
+        // SAFETY: `runner_ptr` only returns it on one thread.
         runner_ptr().map(|p| unsafe { &mut *p.as_ptr() })
     }
 
@@ -323,15 +322,15 @@ pub(crate) mod Jest {
     /// `&BunTestRoot`, `&mut BunTest`) is already live — see
     /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
     pub(crate) fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
-        // SAFETY: a thread's VM outlives the script that runs on it.
+        // SAFETY: a thread's VM outlives the code running on it.
         if VirtualMachine::get_or_null().is_some_and(|vm| unsafe { (*vm).worker_ref().is_some() }) {
             return None;
         }
-        // SAFETY: written and read on the thread that runs the test files only.
+        // SAFETY: only written and read on the thread that runs the test files.
         unsafe { RUNNER.read() }
     }
 
-    /// `RuntimeFeatures::own_test_globals`, before a test file is loaded.
+    /// Computes `RuntimeFeatures::own_test_globals`. Call before the test file is loaded.
     pub(crate) fn own_globals(global: &JSGlobalObject) -> JsResult<u32> {
         let mut found = 0;
         for (index, &name) in bun_js_parser::Jest::GLOBALS.iter().enumerate() {
@@ -343,7 +342,6 @@ pub(crate) mod Jest {
         Ok(found)
     }
 
-    /// `BunTestRoot::file_generation`. 0 outside of `bun test`, and in a worker thread: the runner belongs to the main thread.
     pub(crate) fn file_generation(global: &JSGlobalObject) -> u32 {
         if global.bun_vm().worker_ref().is_some() {
             return 0;
@@ -375,7 +373,7 @@ pub(crate) mod Jest {
     fn create_test_module(global_object: &JSGlobalObject, flavor: Flavor) -> JsResult<JSValue> {
         let module = JSValue::create_empty_object(global_object, 32);
 
-        // What does not differ is what "bun:test" exports, by identity.
+        // Start from "bun:test"'s exports, so whatever isn't overridden below is the same object in both modules.
         if flavor == Flavor::Vitest {
             let shared = jsc::from_js_host_call(global_object, || Bun__Jest__testModuleObject(global_object))?;
             let exports = jsc::JSPropertyIterator::init(
@@ -461,7 +459,7 @@ pub(crate) mod Jest {
         Ok(module)
     }
 
-    /// Checked by the type checker only.
+    /// Only the type checker looks at `assertType`, so it's a no-op at runtime.
     #[bun_jsc::host_fn]
     fn js_assert_type(_global_object: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
@@ -660,11 +658,11 @@ pub(crate) mod on_unhandled_rejection {
                 .entry(buntest)
                 .map(std::ptr::from_mut::<bun_test::ExecutionEntry>);
             if let Some(entry) = entry_ptr {
-                // SAFETY: an entry of the file that is running.
+                // SAFETY: `entry` belongs to the running file.
                 let mode = unsafe { (*entry).base.mode };
                 if let Some(sequence) = current_state_data.sequence(buntest) {
                     if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry)
-                        // The failure it expects is one of its own function, not whatever goes wrong meanwhile.
+                        // An expected failure has to come from the test's own callback, not from a stray rejection.
                         || matches!(mode, ScopeMode::Failing | ScopeMode::Fails)
                     {
                         // mark errors in hooks as 'unhandled error between tests'
@@ -679,7 +677,7 @@ pub(crate) mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.add_result(current_state_data);
-            // Script that reported the error may be on the stack: the next test does not start beneath it.
+            // The JS that reported the error may still be on the stack, so don't start the next test under it.
             bun_test::BunTest::run_next_tick(
                 &std::rc::Rc::downgrade(&buntest_strong),
                 global_object,
@@ -715,7 +713,7 @@ fn write_inspected(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>)
     formatter.format_value::<false>(value, title)
 }
 
-/// vitest's `truncateString(value, taskTitleValueFormatTruncate)`
+/// Vitest's `truncateString(value, taskTitleValueFormatTruncate)`
 fn write_truncated(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> JsResult<()> {
     const MAX_UTF16_LENGTH: usize = JestPrettyFormat::TRUNCATE;
     let string = value.to_bun_string(global)?;
@@ -730,14 +728,14 @@ fn write_truncated(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>)
     Ok(())
 }
 
-/// Node's `hasBuiltInToString`: `util.format("%s")` inspects such an object instead of calling its `toString`.
+/// Node's `hasBuiltInToString`. `util.format("%s")` inspects such an object instead of calling its `toString`.
 fn has_builtin_to_string(global: &JSGlobalObject, object: JSValue) -> JsResult<bool> {
     const BUILTINS: [&[u8]; 9] = [
         b"Object", b"Array", b"Date", b"RegExp", b"Boolean", b"Number", b"String", b"Symbol", b"BigInt",
     ];
-    // What a trap of a Proxy answers need not lead anywhere.
+    // A Proxy's `getPrototypeOf` trap can make the chain endless.
     const MAX_PROTOTYPES: usize = 1000;
-    // As in Node, it is the target of a Proxy that counts.
+    // Node checks a Proxy's target.
     let object = match object.get_proxy_target() {
         target if target.is_empty() => object,
         target => target,
@@ -795,7 +793,6 @@ fn write_json(global: &JSGlobalObject, value: JSValue, title: &mut Vec<u8>) -> J
     Err(global.throw_value(thrown))
 }
 
-/// What Jest prints for `%<specifier>`: `util.format`, and pretty-format for `%p`.
 fn write_placeholder(
     global: &JSGlobalObject,
     specifier: u8,
@@ -822,7 +819,7 @@ fn write_placeholder(
     write_inspected(global, JSValue::js_number(number), title)
 }
 
-/// Length of the `a.b.c`, or of the array index, at the start of `text`.
+/// Length of the `a.b.c` path or array index at the start of `text`.
 fn property_path_len(text: &[u8]) -> usize {
     use bun_js_parser::js_lexer::{is_identifier_continue, is_identifier_start};
     if !is_identifier_start(bun_core::lexer::char_and_size(text, 0).0) {
@@ -841,7 +838,6 @@ fn property_path_len(text: &[u8]) -> usize {
     end
 }
 
-/// `None` when `path` is empty or one of its steps does not exist.
 fn get_property_path(global: &JSGlobalObject, object: JSValue, path: &[u8]) -> JsResult<Option<JSValue>> {
     let mut value = object;
     for key in bun_core::strings::split(path, b".") {
@@ -856,7 +852,6 @@ fn get_property_path(global: &JSGlobalObject, object: JSValue, path: &[u8]) -> J
     Ok(Some(value))
 }
 
-/// The title of one `.each()` row: `%` placeholders take `function_args` in order, `$a.b` reads the first one.
 pub(crate) fn format_label(
     global_this: &JSGlobalObject,
     label: &[u8],
@@ -926,7 +921,7 @@ fn write_vitest_placeholder(global: &JSGlobalObject, specifier: u8, value: JSVal
         Ok(text)
     };
     let number = match specifier {
-        // It takes a value too, which is then left over.
+        // `formatTitle` passes an item for `%%` too, and `format` appends the unused argument.
         b'%' => {
             title.extend_from_slice(b"% ");
             return if is_object { JestPrettyFormat::inspect(global, value, title) } else { write_as_string(global, value, title) };
@@ -1006,7 +1001,7 @@ fn get_vitest_attribute(global: &JSGlobalObject, source: JSValue, path: &[u8], d
     Ok(result)
 }
 
-/// Vitest's `formatAttribute(text)`: `$a.b` reads the first item, `$1` the items.
+/// Vitest's `formatAttribute(text)`
 fn write_vitest_attributes(
     global: &JSGlobalObject,
     text: &[u8],
@@ -1029,7 +1024,7 @@ fn write_vitest_attributes(
         title.extend_from_slice(&rest[..dollar]);
         rest = &rest[end..];
 
-        // `items["01"]` is no item.
+        // `items["01"]` isn't an array index in JS.
         let is_index = is_array_key && (key.len() == 1 || key[0] != b'0');
         let array_element = match bun_core::fmt::parse_decimal::<usize>(key) {
             Some(index) if is_index => items.get(index).copied().unwrap_or(JSValue::UNDEFINED),
@@ -1046,7 +1041,6 @@ fn write_vitest_attributes(
     Ok(())
 }
 
-/// Vitest's `formatName(name)`
 pub(crate) fn format_vitest_name(global: &JSGlobalObject, name: JSValue) -> JsResult<Vec<u8>> {
     let mut text = Vec::new();
     if !name.is_callable() {
@@ -1060,7 +1054,6 @@ pub(crate) fn format_vitest_name(global: &JSGlobalObject, name: JSValue) -> JsRe
     Ok(text)
 }
 
-/// Vitest's `formatTitle(template, items, index)`
 #[cold]
 #[inline(never)]
 pub(crate) fn format_vitest_title(global: &JSGlobalObject, template: &[u8], items: &[JSValue], index: usize) -> JsResult<Vec<u8>> {
@@ -1075,7 +1068,7 @@ pub(crate) fn format_vitest_title(global: &JSGlobalObject, template: &[u8], item
     }
     let count = strings::count_char(&template, b'%');
 
-    // The sign of the n-th `%f` is that of the n-th item, whichever placeholder takes that one.
+    // As in Vitest, the n-th `%f` gets the n-th item's `-0` sign, even if another placeholder consumes that item.
     let is_negative_zero = |item: &JSValue| item.is_number() && item.as_number() == 0.0 && item.as_number().is_sign_negative();
     if items.iter().any(is_negative_zero) && strings::contains(&template, b"%f") {
         let mut signed = Vec::with_capacity(template.len() + items.len());

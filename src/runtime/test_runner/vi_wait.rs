@@ -18,7 +18,7 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 enum Kind {
     For,
     Until,
-    /// `expect.poll()`: as `For`, with the last error blamed on the time.
+    /// `expect.poll()`. Like `For`, but on timeout the last error gets the timeout error as its `cause`.
     Poll,
 }
 
@@ -32,22 +32,20 @@ impl Kind {
     }
 }
 
-/// A `vi.waitFor()` / `vi.waitUntil()` / `expect.poll()` whose promise has not settled.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct ViWait {
     kind: Kind,
     interval_ms: u32,
     deadline: Cell<Timespec>,
-    /// The callback returned a thenable that has not settled.
     callback_pending: Cell<bool>,
-    /// The wait ends with the test file that started it.
+    /// The wait is dropped once the test file that started it ends.
     test_file: Option<u32>,
-    /// `Kind::Poll`: and with the test, if it is known.
+    /// For `Kind::Poll`, the wait is also dropped once this test ends.
     test: Option<RunningEntry>,
     pub(crate) timer: JsCell<EventLoopTimer>,
     abort_handle: AbortHandle,
     keep_alive: JsCell<KeepAlive>,
-    /// The wrapper, until the wait settles or is cancelled.
+    /// Roots the wrapper until the wait settles or is cancelled.
     root: JsCell<Option<Strong>>,
 }
 
@@ -64,7 +62,6 @@ unsafe extern "C" {
     safe fn ExpectDeferred__setCauseIfNone(global: &JSGlobalObject, error: JSValue, cause: JSValue);
 }
 
-/// The generation of the test file that is running. `None` in a worker: the runner belongs to the main thread.
 fn running_test_file(vm: &VirtualMachine) -> Option<u32> {
     if vm.worker_ref().is_some() {
         return None;
@@ -80,7 +77,7 @@ fn running_test_file(vm: &VirtualMachine) -> Option<u32> {
     }
 }
 
-/// As `setTimeout`: a delay outside `1..=i32::MAX` is 1 ms.
+/// Like `setTimeout`, a delay outside `1..=i32::MAX` becomes 1 ms.
 pub(crate) fn delay_ms(
     global: &JSGlobalObject,
     value: Option<JSValue>,
@@ -97,7 +94,6 @@ pub(crate) fn delay_ms(
     })
 }
 
-/// What was thrown. `Err`: the VM is terminating.
 fn thrown_value(global: &JSGlobalObject, err: JsError) -> JsResult<JSValue> {
     if matches!(err, JsError::Terminated) || global.has_pending_termination_exception() {
         return Err(err);
@@ -133,7 +129,6 @@ impl ViWait {
         Self::begin(global, frame, kind, callback, interval_ms, timeout_ms, None)
     }
 
-    /// The promise of `expect.poll()`'s matcher, which `attempt` calls.
     pub(crate) fn poll_matcher(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -195,7 +190,7 @@ impl ViWait {
         this.root.set(Some(Strong::create(this_value, global)));
         this.keep_alive
             .with_mut(|keep_alive| keep_alive.ref_(bun_io::js_vm_ctx()));
-        // SAFETY: heap-allocated by `to_js`; `finish` leaves the context before `root` lets the wrapper go.
+        // SAFETY: heap-allocated by `to_js`; `finish` leaves the context before `root` releases the wrapper.
         unsafe { AbortHandle::arm_owner(this_ptr, cx.context()) };
 
         if let Err(err) = this.poll(global, this_value) {
@@ -289,7 +284,6 @@ impl ViWait {
         }
     }
 
-    /// `None`: the callback returned a thenable, which reports to `on_fulfilled` / `on_rejected`.
     fn run_callback(
         &self,
         global: &JSGlobalObject,
@@ -329,13 +323,12 @@ impl ViWait {
         Ok(None)
     }
 
-    /// `Err`: a fake timer threw while the fake clock advanced, or the VM is terminating.
     fn poll(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<()> {
         match fake_timers::advance_by_ms(global, f64::from(self.interval_ms)) {
             Ok(thrown) if thrown.is_empty() => {}
             Ok(thrown) => return Err(global.throw_value(thrown)),
             Err(Stop::Vm(err)) => return Err(err),
-            // The next advance would stop at the same ticks.
+            // Polling again wouldn't help, since at the loop limit the next advance stops on the same queued ticks.
             Err(Stop::Ticks(thrown)) => return self.settle(global, this_value, Err(thrown)),
         }
         if self.callback_pending.get() || !self.is_pending() {

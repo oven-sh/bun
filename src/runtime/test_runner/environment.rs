@@ -1,4 +1,4 @@
-//! `// @vitest-environment jsdom`, `[test] environment`, `--environment`; src/js/internal/test/environment.ts makes the window.
+//! Picks each test file's environment. src/js/internal/test/environment.ts creates the window.
 
 use super::jest::Jest;
 use bun_core::lexer::end_of_run;
@@ -18,7 +18,7 @@ struct Pragmas<'a> {
     options: Option<&'a [u8]>,
 }
 
-/// Where the comment that Jest reads ends: jest-docblock's `/^\s*(\/\*\*?(.|\r?\n)*?\*\/)/`.
+/// End of the file's leading comment, matched like jest-docblock's `/^\s*(\/\*\*?(.|\r?\n)*?\*\/)/`.
 fn end_of_leading_docblock(source: &[u8]) -> usize {
     let start = end_of_run(source, 0, |c| strings::is_js_whitespace(c as u32));
     if !source[start..].starts_with(b"/*") {
@@ -28,8 +28,8 @@ fn end_of_leading_docblock(source: &[u8]) -> usize {
 }
 
 impl<'a> Pragmas<'a> {
-    /// `@vitest-` as vitest: the text's first `/@vitest-environment\s+([\w-]+)\b/` and `/@vitest-environment-options\s+(.+)/`.
-    /// `@jest-` the same, but as Jest only in a comment that the file starts with.
+    /// Like Vitest, takes the text's first `/@vitest-environment\s+([\w-]+)\b/` and `/@vitest-environment-options\s+(.+)/`.
+    /// `@jest-` pragmas match the same way but, like Jest, only count inside the file's leading comment.
     fn find(source: &'a [u8]) -> Self {
         const ENVIRONMENT: &[u8] = b"-environment";
         const OPTIONS: &[u8] = b"-options";
@@ -83,9 +83,8 @@ impl<'a> Pragmas<'a> {
 }
 
 pub(crate) struct Environment {
-    /// What a comment in the file names. `Err` is a name `bun test` has no environment for.
+    /// The environment a pragma names. `Err` holds a name `bun test` doesn't support.
     comment: Option<Result<TestEnvironment, Box<[u8]>>>,
-    /// JSON, as written in the file.
     options: Option<Box<[u8]>>,
     project: TestEnvironment,
     is_entered: bool,
@@ -95,14 +94,14 @@ pub(crate) struct Environment {
 impl Environment {
     pub(crate) fn of_file(path: &[u8], project: Option<TestEnvironment>) -> Self {
         let project = project.unwrap_or(TestEnvironment::Node);
-        // A file that cannot be read is the module loader's to report.
+        // Read errors are ignored here because the module loader reports them.
         let source = bun_sys::File::read_from(bun_sys::Fd::cwd(), path).unwrap_or_default();
         let pragmas = Pragmas::find(&source);
         Self {
             comment: pragmas
                 .environment
                 .map(|name| TestEnvironment::from_name(name).ok_or_else(|| name.into())),
-            // vitest: `JSON.parse(text || "null")`.
+            // Vitest does `JSON.parse(text || "null")`.
             options: pragmas
                 .options
                 .filter(|text| !text.is_empty())
@@ -113,7 +112,6 @@ impl Environment {
         }
     }
 
-    /// The environment stays until `teardown`. If the project's cannot be set up the file fails to load: a rejected promise.
     pub(crate) fn load_entry_point(
         &mut self,
         vm: &mut VirtualMachine,
@@ -124,7 +122,7 @@ impl Environment {
                 return Ok(rejected);
             }
         } else if let Some(function) = &self.teardown {
-            // --rerun-each
+            // --rerun-each loads the file again. It only needs a new environment if the window was closed.
             let is_closed = match function
                 .get()
                 .call(vm.global(), JSValue::UNDEFINED, &[JSValue::TRUE])
@@ -142,7 +140,7 @@ impl Environment {
         Ok(vm.load_entry_point_for_test_runner(path)?)
     }
 
-    /// `bun test` used to ignore the comments: one it cannot follow is a warning, and the file runs as it did.
+    /// An unsupported pragma only warns, so files with pragmas that older `bun test` versions ignored keep running.
     fn enter(
         &mut self,
         vm: &mut VirtualMachine,
@@ -166,7 +164,7 @@ impl Environment {
             }
         };
 
-        // Without --isolate preloads run once, for every file: in the project's environment, whichever file is first.
+        // Without --isolate preloads run only once, so run them in the project's environment, not the first file's.
         if !vm.test_isolation_enabled
             && !vm.preload.is_empty()
             && (kind != self.project || self.options.is_some())
@@ -203,7 +201,6 @@ impl Environment {
     }
 }
 
-/// What a preload registers is for every file, what a file registers ends with it.
 pub(crate) fn js_is_in_preload(global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::from(global.bun_vm().is_in_preload))
 }
@@ -214,14 +211,13 @@ fn rejected(vm: &VirtualMachine, err: JsError) -> crate::Result<*mut JSInternalP
     Ok(std::ptr::from_mut(promise))
 }
 
-/// The reporter prints it lazily, before what it has to say about a file.
+/// The reporter prints the file name lazily, so force it out before printing a warning about the file.
 fn print_file_name() {
     if let Some(runner) = Jest::runner() {
         runner.bun_test_root.on_before_print();
     }
 }
 
-/// Returns the function that undoes it.
 fn setup(
     vm: &VirtualMachine,
     kind: TestEnvironment,
@@ -270,7 +266,7 @@ fn teardown(vm: &mut VirtualMachine, function: &Strong) {
             };
             let _protected = result.protected();
             promise.set_handled(global.vm());
-            // As long as a hook has. Looked at whenever the loop wakes up: nothing is armed for it.
+            // Same time limit as a hook. No timer is armed for it, so it's only checked when the event loop wakes up.
             let timeout = Jest::runner().map_or(0, |runner| runner.default_timeout_ms);
             let deadline = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, timeout.into());
             let waited = vm.event_loop_ref().wait_at_top_level(|| {

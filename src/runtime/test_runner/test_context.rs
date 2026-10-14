@@ -1,5 +1,4 @@
-//! vitest's test context: what a test, its `beforeEach` / `afterEach` hooks and its `onTestFinished` /
-//! `onTestFailed` callbacks are called with. One per test, for all of its retries and repeats.
+//! Vitest's test context. A test shares one with its hooks, and keeps it across retries and repeats.
 
 use core::ptr::NonNull;
 use std::rc::Rc;
@@ -24,12 +23,11 @@ use super::jest::FileColumns as _;
 use super::scope_functions::{CallbackMode, FunctionKind, ParseArgumentsCfg, parse_arguments};
 use super::test_context_parameter::ContextParameter;
 
-/// What runs once the hooks of an attempt have, in this order, the last registered of a kind first.
+/// Runs after an attempt's hooks, in variant order. Within a kind, the last registered runs first.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Deferred {
     /// A function `beforeEach` returned.
     Teardown,
-    /// `test_context_fixtures::tear_down`
     Fixture,
     OnTestFinished,
     OnTestFailed,
@@ -40,9 +38,8 @@ pub(crate) struct TestContext {
     buntest: BunTestPtrWeak,
     group_index: usize,
     sequence_index: usize,
-    /// The entries are owned by `BunTest::extra_execution_entries`.
+    /// `BunTest::extra_execution_entries` owns the entries.
     deferred: JsCell<Vec<(Deferred, NonNull<ExecutionEntry>)>>,
-    /// The definitions of `js::fixtures` that are set up.
     fixtures: JsCell<Vec<usize>>,
 }
 
@@ -66,7 +63,7 @@ fn bound(
     )
 }
 
-/// A test written for a `done` callback calls its context.
+/// Vitest passes the context where Jest passes `done`, so a Jest-style `done()` call lands here.
 #[bun_jsc::host_fn(export = "TestContext__callInstance")]
 fn call_instance(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     Err(global.throw(format_args!("done() callback is deprecated, use promise instead")))
@@ -105,7 +102,6 @@ impl TestContext {
         self.fixtures.with_mut(|fixtures| fixtures.retain(|&fixture| fixture != definition));
     }
 
-    /// The context a function made by `bound` is called on.
     fn of_call<'a>(global: &JSGlobalObject, frame: &'a CallFrame) -> JsResult<&'a TestContext> {
         match TestContext::from_js(frame.this()) {
             // SAFETY: the wrapper owns the payload, and the frame keeps the wrapper alive.
@@ -114,7 +110,6 @@ impl TestContext {
         }
     }
 
-    /// `None` once the test file has finished.
     fn sequence(&self) -> Option<(BunTestPtr, NonNull<ExecutionSequence>)> {
         let buntest = self.buntest.upgrade()?;
         let execution = &mut buntest.get().execution;
@@ -123,7 +118,6 @@ impl TestContext {
         Some((buntest, sequence))
     }
 
-    /// `None` once the test has finished.
     fn running(&self, this_value: JSValue) -> Option<(BunTestPtr, NonNull<ExecutionSequence>)> {
         let (buntest, sequence) = self.sequence()?;
         // SAFETY: points into `buntest.execution.sequences`, which `buntest` keeps alive.
@@ -135,7 +129,7 @@ impl TestContext {
         global.throw(format_args!("Cannot call {name}() after its test has finished"))
     }
 
-    /// Names the test to `expect()`, whichever tests run beside it.
+    /// Lets `expect()` attribute a call to this test even when other tests run concurrently.
     fn state_data(&self, this_value: JSValue) -> Option<RefDataValue> {
         let (_buntest, sequence) = self.running(this_value)?;
         // SAFETY: as in `running`.
@@ -150,7 +144,6 @@ impl TestContext {
         })
     }
 
-    /// `state_data()` of the context that `function`, one made by `bound`, is bound to.
     pub(crate) fn state_of_bound(function: JSValue) -> Option<RefDataValue> {
         let this_value = jsc::cpp::Bun__JSBoundFunction__boundThis(function);
         // SAFETY: the wrapper owns the payload, and `function` keeps the wrapper alive.
@@ -163,7 +156,6 @@ impl TestContext {
         self.deferred.with_mut(|deferred| deferred.push((when, entry)));
     }
 
-    /// `false`, and `callback` never runs, once the test has finished.
     pub(crate) fn defer_while_running(&self, this_value: JSValue, when: Deferred, callback: JSValue, timeout: u32) -> bool {
         let Some((buntest, _)) = self.running(this_value) else {
             return false;
@@ -194,7 +186,6 @@ impl TestContext {
         })
     }
 
-    /// Brings `task.result` up to date, if there is one to see.
     pub(crate) fn sync_result(
         this_value: JSValue,
         global: &JSGlobalObject,
@@ -309,12 +300,11 @@ impl TestContext {
         Ok(signal)
     }
 
-    /// `expect`, whose assertion counts and snapshots belong to this test.
     pub(crate) fn get_expect(_this: &Self, this_value: JSValue, global: &JSGlobalObject) -> JsResult<JSValue> {
         let expect = bound(global, this_value, "expect", 1, __jsc_host_expect)?;
         let constructor = jsc::codegen::js::get_constructor::<Expect>(global);
         jsc::cpp::Bun__JSValue__setPrototypeDirect(expect, constructor, global)?;
-        // Their getters only answer the constructor itself.
+        // Copied because these getters only work when `this` is the constructor itself, not an object inheriting from it.
         for name in ["not", "resolvesTo", "rejectsTo"] {
             if let Some(value) = constructor.get(global, name)? {
                 expect.put(global, name.as_bytes(), value);
@@ -401,7 +391,7 @@ fn set_state(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Expect::set_state_in(global, frame, state)
 }
 
-/// `skip(note?)`, `skip(condition, note?)`: only `false` is a condition that does not skip.
+/// `skip(note?)` or `skip(condition, note?)`. As in Vitest, only a literal `false` condition doesn't skip.
 #[bun_jsc::host_fn]
 fn skip(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [condition, note] = frame.arguments_as_array::<2>();
@@ -435,7 +425,6 @@ fn on_test_failed(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     TestContext::defer_call(global, frame, Deferred::OnTestFailed, "onTestFailed", b"onTestFailed()")
 }
 
-/// `annotate(message, type?, attachment?)`, `annotate(message, attachment?)`: kept in `task.annotations`.
 #[bun_jsc::host_fn]
 fn annotate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let [message, kind, attachment] = frame.arguments_as_array::<3>();
@@ -471,14 +460,12 @@ fn file_path(buntest: &BunTest) -> &'static [u8] {
     unsafe { reporter.as_ref() }.jest.files.items_source()[buntest.file_id as usize].path.text
 }
 
-/// As in vitest, with `/` on every platform.
 fn file_name(buntest: &BunTest) -> Vec<u8> {
     let mut name = resolve_path::relative(FileSystem::instance().top_level_dir, file_path(buntest)).to_vec();
     resolve_path::platform_to_posix_in_place::<u8>(&mut name);
     name
 }
 
-/// `fullTestName`: the names of the describe blocks around `base` and its own; `fullName`: the file's before them.
 fn put_full_names(
     global: &JSGlobalObject,
     task: JSValue,
@@ -500,14 +487,14 @@ fn put_full_names(
     Ok(())
 }
 
-/// vitest's `Suite` for a describe block, its `File` for the scope of the file. One object per scope.
+/// Vitest's `Suite` for a describe block, or its `File` for the root scope. Cached in `DescribeScope::task`.
 pub(crate) fn suite_task(
     global: &JSGlobalObject,
     buntest: &mut BunTest,
     scope: *mut DescribeScope,
 ) -> JsResult<JSValue> {
     let root: *mut DescribeScope = &raw mut *buntest.collection.root_scope;
-    // SAFETY: `scope` is in the describe tree of `buntest`, or the scope of the preload hooks above it.
+    // SAFETY: `scope` is in `buntest`'s describe tree, or is the preload hook scope above it.
     let scope = if unsafe { (*scope).base.parent.is_none() } { root } else { scope };
     // SAFETY: as above; the borrow ends before the recursive calls.
     if let Some(task) = unsafe { &(*scope).task } {
@@ -538,15 +525,13 @@ pub(crate) fn suite_task(
     Ok(task)
 }
 
-/// A rejection is reported with the stack of the error, an exception with that of the `throw`.
+/// Rejects rather than throws, so the report shows the error's own stack and not the `throw` site's.
 #[bun_jsc::host_fn]
 fn reject_with_this(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSPromise::rejected_promise(global, frame.this()).to_js())
 }
 
-/// The first parameter of a vitest `beforeAll` / `afterAll` callback destructures fixtures, of which only
-/// `test.beforeAll` / `test.afterAll` of an extended `test` have any. A callback that asks for something else fails
-/// when the hook runs, with an error from where it was registered.
+/// Only an extended `test`'s hooks have fixtures. Any other callback that destructures one fails when the hook runs.
 pub(crate) fn suite_hook(
     global: &JSGlobalObject,
     name: &str,
@@ -578,14 +563,13 @@ pub(crate) fn suite_hook(
     rejecting(global, error)
 }
 
-/// A callback that fails with `error`, which has the stack of here and now.
 pub(crate) fn rejecting(global: &JSGlobalObject, error: JSValue) -> JsResult<JSValue> {
     JSFunction::create(global, "", __jsc_host_reject_with_this, 0, Default::default()).bind(
         global,
         error,
         &BunString::static_(""),
         0.0,
-        // Not read: with it, `error` still has its stack frames when it is reported.
+        // Never read. Holding the call site keeps GC from flattening `error`'s stack frames before it's reported.
         &[ExpectDeferred::capture_call_site(global)],
     )
 }

@@ -1,7 +1,4 @@
-//! vitest's fixtures: `test.extend({ name: async ({ dependency }, use) => { ...; await use(value); ... } })`.
-//!
-//! A fixture is set up before the first callback of a test that destructures it from the context, by an entry put
-//! in front of that callback's (`next`), and torn down by an entry that runs after the hooks of the test.
+//! Vitest's `test.extend()` fixtures. Each is set up by its own entry, before the first callback that destructures it.
 
 use core::cell::Cell;
 
@@ -17,12 +14,12 @@ use super::jest::Jest;
 use super::test_context::{Deferred, TestContext};
 use super::test_context_parameter::ContextParameter;
 
-/// A fixture cannot depend on one that lives shorter than itself.
+/// Ordered by lifetime, so `>` catches a fixture that depends on a shorter-lived one.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Scope {
     Test,
     File,
-    /// A file has the process to itself as far as fixtures can tell, so this is torn down with the file's.
+    /// Torn down at the end of the file, same as `File`.
     Worker,
 }
 
@@ -52,7 +49,7 @@ struct Definition {
     auto: bool,
     scope: Scope,
     dependencies: Vec<Box<[u8]>>,
-    /// The definition of the same name that this one replaced, which is what it gets under that name.
+    /// The same-named definition this one replaced. A dependency on its own name resolves to it.
     parent: Option<usize>,
 }
 
@@ -61,20 +58,16 @@ struct Override {
     registrations: Vec<usize>,
 }
 
-/// What `test.extend()` was given, and all that the function it was called on had.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct TestFixtures {
-    /// Replaced ones too. The value or the function of each is in `js::values`.
+    /// Includes replaced definitions. Each one's value or function is at the same index in `js::values`.
     definitions: JsCell<Vec<Definition>>,
-    /// How many of them outlive the file: the others are of its `test.override()` calls.
+    /// `definitions[lasting..]` came from this file's `test.override()` calls, and `enter_file` drops them.
     lasting: Cell<usize>,
-    /// What each name stands for, in the order the names were first defined.
     registrations: JsCell<Vec<usize>>,
-    /// `test.override()`, in a describe block or at the top level of the file.
     overrides: JsCell<Vec<Override>>,
-    /// The file- and worker-scoped fixtures that were started. The `ActiveFixture` of each is in `js::scoped`.
+    /// Started file- and worker-scoped fixtures. Each one's `ActiveFixture` is at the same index in `js::scoped`.
     scoped: JsCell<Vec<usize>>,
-    /// `BunTestRoot::file_generation` of the file that `overrides` and `scoped` are about.
     generation: Cell<u32>,
 }
 
@@ -85,21 +78,16 @@ pub(crate) mod js {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum State {
     NotStarted,
-    /// `ready` is pending, and only now.
     SettingUp,
     Ready,
-    /// `value` is what it failed with.
     Failed,
     TornDown,
 }
 
-/// One run of a fixture function.
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub(crate) struct ActiveFixture {
     definition: usize,
-    /// Of the entry that tears it down.
     timeout: u32,
-    /// `BunTestRoot::file_generation` of the file that asked for it.
     generation: u32,
     state: Cell<State>,
 }
@@ -109,9 +97,8 @@ mod active {
 }
 
 pub(crate) enum Next {
-    /// Everything the callback asks for is there.
     Ready,
-    /// Run this first, then ask again: the answer is another one, or the entry that ran this has failed.
+    /// Run this function in its own entry, then call `next` again.
     SetUp(JSValue),
 }
 
@@ -141,11 +128,11 @@ fn settle(global: &JSGlobalObject, promise: Option<JSValue>, value: Result<JSVal
 
 impl TestFixtures {
     fn of<'a>(value: JSValue) -> Option<&'a TestFixtures> {
-        // SAFETY: the wrapper owns the payload; every caller holds `value` on the stack or in a slot for as long as it uses the borrow.
+        // SAFETY: the wrapper owns the payload, and every caller keeps `value` alive while it uses the borrow.
         TestFixtures::from_js(value).map(|this| unsafe { &*this })
     }
 
-    /// Forgets what is about an earlier file: a helper module can be shared by several.
+    /// Drops state left by an earlier file, since several files can share a helper module's fixtures.
     fn enter_file(&self, this_value: JSValue, global: &JSGlobalObject) -> JsResult<()> {
         let generation = Jest::file_generation(global);
         if self.generation.replace(generation) == generation {
@@ -173,14 +160,13 @@ impl TestFixtures {
         }
     }
 
-    /// The closest `test.override()` around `scope`, else what `test.extend()` defined.
     fn registrations_in(&self, mut scope: Option<*mut DescribeScope>) -> Vec<usize> {
         let overrides = self.overrides.get();
         while let Some(current) = scope.filter(|_| !overrides.is_empty()) {
             if let Some(found) = overrides.iter().find(|candidate| core::ptr::eq(candidate.scope, current)) {
                 return found.registrations.clone();
             }
-            // SAFETY: a scope of the file that is running, whose describe tree is alive.
+            // SAFETY: `current` is a scope of the running file, whose describe tree is alive.
             scope = unsafe { (*current).base.parent };
         }
         self.registrations.get().clone()
@@ -194,8 +180,7 @@ impl TestFixtures {
         Self::of(value).is_some_and(|this| this.definitions.get().iter().any(|definition| definition.scope != Scope::Test))
     }
 
-    /// `test.extend(fixtures)`, `test.extend(name, value)`, `test.extend(name, options, value)`: a new set.
-    /// `test.override(...)`: changes `parent` for `active_scope`; for good in a preload script, and where there is no scope.
+    /// `test.override()` mutates `parent` for `active_scope` only, or for every file in a preload or without a scope.
     pub(crate) fn define(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -404,7 +389,7 @@ impl TestFixtures {
         Ok(fixtures)
     }
 
-    /// `[value, options]` is a fixture with options only if `options` has one of them.
+    /// As in Vitest, `[value, options]` is a tuple only if `options` has a known key. Otherwise the array is the value.
     fn is_options(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
         if !value.is_object() || value.is_array() || value.is_callable() {
             return Ok(false);
@@ -417,7 +402,7 @@ impl TestFixtures {
         Ok(false)
     }
 
-    /// The fixtures to set up for a callback that destructures `names`, each after what it depends on.
+    /// Topologically sorts the fixtures that a callback destructuring `names` needs.
     fn order(
         global: &JSGlobalObject,
         definitions: &[Definition],
@@ -426,7 +411,6 @@ impl TestFixtures {
         in_suite_hook: bool,
     ) -> JsResult<Vec<usize>> {
         let mut order: Vec<usize> = Vec::new();
-        // (definition, how many of its dependencies were visited)
         let mut stack: Vec<(usize, usize)> = Vec::new();
         for &wanted in registrations {
             let fixture = &definitions[wanted];
@@ -470,8 +454,6 @@ impl TestFixtures {
         Ok(order)
     }
 
-    /// What is left to do before a callback that destructures `parameter` from `context` can run.
-    /// `context`: the `TestContext`, or for `beforeAll` / `afterAll` the object they get.
     pub(crate) fn next(
         this_value: JSValue,
         global: &JSGlobalObject,
@@ -586,7 +568,6 @@ impl TestFixtures {
         Ok(active_fixture)
     }
 
-    /// An object with the fixtures of `scope` and beyond that are set up.
     fn scoped_context(&self, this_value: JSValue, global: &JSGlobalObject, scope: Scope) -> JsResult<JSValue> {
         let context = JSValue::create_empty_object(global, 0);
         let Some(cells) = js::scoped_get_cached(this_value).filter(|cells| cells.is_array()) else {
@@ -608,7 +589,6 @@ impl TestFixtures {
         Ok(context)
     }
 
-    /// What `test.beforeAll()` / `test.afterAll()` callbacks destructure fixtures from.
     pub(crate) fn suite_hook_context(this_value: JSValue, global: &JSGlobalObject) -> JsResult<JSValue> {
         match Self::of(this_value) {
             Some(this) => {
@@ -634,7 +614,6 @@ impl ActiveFixture {
         ActiveFixture::from_js(value).map(|this| unsafe { &*this })
     }
 
-    /// The fixture a function made by `bound` is called on, and its definition.
     fn of_call<'a>(global: &JSGlobalObject, frame: &'a CallFrame) -> JsResult<(&'a ActiveFixture, &'a Definition)> {
         match Self::of(frame.this()) {
             Some(this) => Ok((this, Self::definition_of(frame.this(), global, this)?)),
@@ -642,7 +621,7 @@ impl ActiveFixture {
         }
     }
 
-    /// Not to be held while script runs: `test.override()` replaces the definitions.
+    /// Don't hold the result across a call into JS, since `test.override()` replaces `definitions`.
     fn definition_of<'a>(this_value: JSValue, global: &JSGlobalObject, this: &ActiveFixture) -> JsResult<&'a Definition> {
         active::fixtures_get_cached(this_value)
             .and_then(TestFixtures::of)
@@ -650,7 +629,6 @@ impl ActiveFixture {
             .ok_or_else(|| global.throw_type_error(format_args!("Expected this to be a fixture")))
     }
 
-    /// The fixture has its value: what waits for it goes on, and it is torn down after that, or at once if that has ended.
     fn provide(&self, this_value: JSValue, global: &JSGlobalObject, definition: &Definition, value: JSValue) -> JsResult<()> {
         let tear_down = bound(global, this_value, "tearDown", __jsc_host_tear_down)?;
         let context = active::context_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
@@ -679,7 +657,6 @@ impl ActiveFixture {
         Ok(())
     }
 
-    /// `error`: what the fixture function threw or rejected with.
     fn fail(&self, this_value: JSValue, global: &JSGlobalObject, error: JSValue) -> JsResult<()> {
         let had_no_value = self.state.replace(State::Failed) == State::SettingUp;
         active::value_set_cached(this_value, global, error);
@@ -689,7 +666,6 @@ impl ActiveFixture {
         Err(global.throw_value(error))
     }
 
-    /// A promise for when it has torn itself down, if that takes time.
     fn tear_down(&self, this_value: JSValue, global: &JSGlobalObject, kind: Kind) -> JsResult<JSValue> {
         self.state.set(State::TornDown);
         if let Some(test_context) = active::context_get_cached(this_value).and_then(TestContext::from_js) {
@@ -706,7 +682,6 @@ impl ActiveFixture {
         Ok(active::returned_get_cached(this_value).unwrap_or(JSValue::UNDEFINED))
     }
 
-    /// Calls the fixture function.
     fn start(&self, this_value: JSValue, global: &JSGlobalObject, kind: Kind) -> JsResult<()> {
         let fixtures = active::fixtures_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
         let function = TestFixtures::value_of(fixtures, global, self.definition)?;
@@ -734,7 +709,6 @@ impl ActiveFixture {
         }
     }
 
-    /// The fixture function returned `returned`, or a promise of it.
     fn on_returned(&self, this_value: JSValue, global: &JSGlobalObject, returned: JSValue) -> JsResult<()> {
         if self.state.get() != State::SettingUp {
             return Ok(());
@@ -748,12 +722,11 @@ impl ActiveFixture {
     }
 }
 
-/// The callback of the entry that sets the fixture up: a promise for when it has its value.
 #[bun_jsc::host_fn]
 fn set_up(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let this_value = frame.this();
     let (this, definition) = ActiveFixture::of_call(global, frame)?;
-    // Else a concurrent test started it.
+    // A concurrent test may have started it already.
     if this.state.get() == State::NotStarted {
         this.state.set(State::SettingUp);
         active::ready_set_cached(this_value, global, JSPromise::create(global).to_js());
@@ -771,7 +744,7 @@ fn on_fulfilled(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>
     Ok(JSValue::UNDEFINED)
 }
 
-/// After `use()`, the entry that tears the fixture down reports it: it waits for the same promise.
+/// The teardown entry awaits the same promise, so it reports a rejection that comes after `use()`.
 #[bun_jsc::host_fn]
 fn on_rejected(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let (this, _) = ActiveFixture::of_call(global, frame)?;
@@ -781,7 +754,6 @@ fn on_rejected(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> 
     Ok(JSValue::UNDEFINED)
 }
 
-/// `use(value)`: a promise for when the fixture is to tear itself down.
 #[bun_jsc::host_fn]
 fn use_fixture(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let this_value = frame.this();
@@ -810,7 +782,6 @@ fn on_cleanup(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     Ok(JSValue::UNDEFINED)
 }
 
-/// The callback of the entry that tears the fixture down: a promise for when it has.
 #[bun_jsc::host_fn]
 fn tear_down(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let (this, definition) = ActiveFixture::of_call(global, frame)?;

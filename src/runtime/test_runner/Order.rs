@@ -15,7 +15,7 @@ pub(crate) struct Order {
     // `cloned_hook_entries` after `generate_order_describe` and reclaims the Box
     // headers (without running `Drop`) in `Drop for BunTest`.
     pub(crate) previous_group_was_concurrent: bool,
-    /// A `describe.shuffle` decided an order.
+    /// Set by `describe.shuffle` only, not by `--randomize`.
     pub(crate) shuffled: bool,
     pub(crate) cfg: Config,
 }
@@ -42,7 +42,7 @@ impl Order {
         Ok(())
     }
 
-    /// `runs_a_test`: vitest leaves out the hooks of a scope in which every test is skipped.
+    /// Vitest doesn't run the hooks of a scope where every test is skipped, so `!runs_a_test` drops Vitest hooks.
     pub(crate) fn generate_all_order(
         &mut self,
         entries: &[Box<ExecutionEntry>],
@@ -106,7 +106,7 @@ impl Order {
         match (current.inherited.shuffle, self.cfg.randomize.as_mut()) {
             (Some(false), _) | (None, None) => {}
             (None, Some(random)) => shuffle_with_index(random, &mut current.entries),
-            // A generator of its own: `--seed`, which shuffles everything else as well, gives this order again.
+            // Uses its own PRNG, so `--seed` reproduces this order even though it also shuffles everything else.
             (Some(true), _) => {
                 let name = bun_wyhash::hash(current.base.name.as_deref().unwrap_or_default());
                 let mut random = bun_core::rand::DefaultPrng::init(self.cfg.seed.wrapping_add(name));
@@ -285,7 +285,6 @@ pub(crate) struct Config {
     // The only call site seeds a concrete `DefaultPrng` (xoshiro256++), so
     // no type-erased Random vtable is needed.
     pub(crate) randomize: Option<bun_core::rand::DefaultPrng>,
-    /// What `randomize` is seeded with.
     pub(crate) seed: u64,
 }
 

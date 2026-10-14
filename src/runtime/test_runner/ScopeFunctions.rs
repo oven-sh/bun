@@ -67,16 +67,14 @@ pub(crate) struct ScopeFunctions {
     /// field is kept in sync with that slot via `js::each_set_cached` in `create_unbound`.
     pub(crate) each: JSValue,
     pub(crate) rows: Rows,
-    /// The `TestFixtures` of `test.extend()`, else `.zero`. Kept alive like `each`.
+    /// The `TestFixtures` from `test.extend()`, else `.zero`. Kept alive the same way as `each`.
     pub(crate) fixtures: JSValue,
 }
 
-/// How the callback gets a row of `each`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Rows {
-    /// `.each()`: an array is spread over the parameters.
     Each,
-    /// `.for()`: as the first argument, before the test context.
+    /// `.for()` passes the row as the first argument, before the test context.
     For,
 }
 
@@ -101,7 +99,6 @@ impl ScopeFunctions {
     pub(crate) fn get_fails(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Fails, ..Default::default() }, b"get .fails", "fails")
     }
-    /// vitest's, whichever module `this` is from.
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_shuffle(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         if this.mode == Mode::Test {
@@ -157,13 +154,12 @@ impl ScopeFunctions {
     pub(crate) fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.with_rows(global, frame, Rows::Each, this.cfg.flavor, "each")
     }
-    /// vitest's, whichever module `this` is from.
+    /// `.for()` and `.extend()` use Vitest semantics even when `this` came from "bun:test".
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_for(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.with_rows(global, frame, Rows::For, Flavor::Vitest, "for")
     }
 
-    /// vitest's, whichever module `this` is from.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_extend(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let fixtures = this.define_fixtures(global, frame, "test.extend()", false)?;
@@ -268,13 +264,7 @@ impl ScopeFunctions {
     }
 }
 
-/// The rows of a table written as a tagged template: an object for each, keyed by the headings of the first line.
-/// ```js
-/// test.each`
-///   a    | b
-///   ${1} | ${2}
-/// `
-/// ```
+/// Turns a tagged-template `.each` table into one object per row, keyed by the headings on the first line.
 fn template_rows(global: &JSGlobalObject, arguments: &[JSValue], flavor: Flavor) -> JsResult<Option<JSValue>> {
     let Some((&strings, values)) = arguments.split_first() else {
         return Ok(None);
@@ -313,8 +303,7 @@ fn table_rows(global: &JSGlobalObject, headings: &[&[u8]], values: &[JSValue]) -
     Ok(rows)
 }
 
-/// Vitest's `formatTemplateString(cases, args)`, which any array with arguments after it is given. A last row that is
-/// not complete is left out.
+/// Vitest's `formatTemplateString(cases, args)`. It takes any array followed by arguments and drops an incomplete last row.
 fn vitest_template_rows(global: &JSGlobalObject, strings: JSValue, values: &[JSValue]) -> JsResult<Option<JSValue>> {
     if values.is_empty() {
         return Ok(None);
@@ -355,7 +344,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     let is_vitest = this.cfg.flavor == Flavor::Vitest;
     let callback_mode: CallbackMode = match this.cfg.self_mode {
         SelfMode::Skip | SelfMode::Todo => CallbackMode::Allow,
-        // vitest: a test or a describe block without a callback is a todo.
+        // In Vitest, a test or describe block without a callback is a todo.
         _ if is_vitest => CallbackMode::Allow,
         _ => CallbackMode::Require,
     };
@@ -371,12 +360,11 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         },
     )?;
 
-    // Jest: a parameter that no value of the row fills is a `done` callback.
+    // In Jest, a parameter past the row's values is a `done` callback.
     let callback_length: usize = match args.callback {
         Some(callback) if !is_vitest => callback.get_length(global)? as usize,
         _ => 0,
     };
-    // The fixtures the callback asks for.
     let parameter: Option<SharedContextParameter> = match args.callback {
         Some(callback) if !this.fixtures.is_empty() && this.mode == Mode::Test => Some(Rc::new(core::cell::OnceCell::from(if this.each.is_empty() {
             ContextParameter::of(callback, 0)
@@ -393,7 +381,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global).with_quote_strings(false);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
-        // vitest spreads the rows only if each of them is an array.
+        // Vitest only spreads the rows if every row is an array.
         let mut spread_rows = this.rows == Rows::Each;
         if spread_rows && is_vitest {
             let mut rows = this.each.array_iterator(global)?;
@@ -429,7 +417,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                 }
 
                 let formatted_label: Option<Vec<u8>> = match args.description.as_deref() {
-                    // `toArray(item)` makes no items of these.
+                    // Vitest's `toArray(item)` turns null and undefined into an empty array.
                     Some(desc) if is_vitest && this.rows == Rows::For && item.is_undefined_or_null() => {
                         Some(jest::format_vitest_title(global, desc, &[], test_idx)?)
                     }
@@ -754,7 +742,7 @@ impl ScopeFunctions {
         if cfg.self_only {
             error_in_ci(global, b".only")?;
         }
-        // Modifiers are a set, as in Jest and vitest: repeating one changes nothing and skip > todo > failing.
+        // As in Jest and Vitest, modifiers form a set. Repeating one is a no-op, and skip beats todo beats failing.
         let (mut base, mut added) = (self.cfg, cfg);
         base.self_only &= !added.self_only;
         if base.self_concurrent == added.self_concurrent {
@@ -802,12 +790,10 @@ pub(crate) struct ParseArgumentsOptions {
     pub(crate) timeout: u32,
     pub(crate) retry: Option<u32>,
     pub(crate) repeats: u32,
-    /// What was given, else what `ParseArgumentsCfg::inherited` has.
     pub(crate) inherited: InheritedOptions,
     pub(crate) modifiers: ModifierOptions,
 }
 
-/// The options of a vitest `describe()` that are the defaults of what is inside it.
 #[derive(Default, Clone, Copy)]
 pub(crate) struct InheritedOptions {
     pub(crate) timeout: Option<u32>,
@@ -817,7 +803,7 @@ pub(crate) struct InheritedOptions {
     pub(crate) shuffle: Option<bool>,
 }
 
-/// vitest: `test(name, { skip: true }, fn)` is `test.skip(name, fn)`, and `{ skip: false }` undoes `test.skip`.
+/// In Vitest, `test(name, { skip: true }, fn)` means `test.skip(name, fn)`, and `{ skip: false }` undoes `test.skip`.
 #[derive(Default, Clone, Copy)]
 pub(crate) struct ModifierOptions {
     only: Option<bool>,
@@ -1102,7 +1088,7 @@ pub(crate) fn parse_arguments(
 
     let default_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| match (runner.default_timeout_ms, cfg.kind) {
         (0, _) => None,
-        // vitest's default `hookTimeout`
+        // Vitest's default `hookTimeout`
         (ms, FunctionKind::VitestHook) => Some(ms.max(10_000)),
         (ms, _) => Some(ms),
     });

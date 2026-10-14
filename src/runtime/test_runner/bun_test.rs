@@ -207,7 +207,7 @@ pub(crate) mod js_fns {
                 (Flavor::Jest, Some(callback)) => Calling::Jest { done: callback.get_length(global_this)? > 0 },
                 (Flavor::Jest, None) => Calling::default(),
             };
-            // `test.beforeAll` / `test.afterAll` of an extended `test` are bound to its fixtures.
+            // An extended `test` binds its `beforeAll` / `afterAll` with its `TestFixtures` as `this`.
             let mut fixtures = None;
             if let (Flavor::Vitest, GenericHookTag::BeforeAll | GenericHookTag::AfterAll, Some(callback)) =
                 (flavor, tag, args.callback)
@@ -711,9 +711,9 @@ pub(crate) struct BunTest {
     /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
     pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
     pub(crate) wants_wakeup: bool,
-    /// Until `TestCommand::run` starts the runner: the module of the file may still register tests.
+    /// True until `TestCommand::run` starts the runner, because the file's module may still be registering tests.
     pub(crate) is_loading: bool,
-    /// Has no callback, and runs after everything of the file: see `defer_to_file_end`.
+    /// Callback-less entry that runs last in the file. `defer_to_file_end` links its entries after it.
     file_end: Option<Box<ExecutionEntry>>,
     pub(crate) unclaimed: super::expect::expect_deferred::Unclaimed,
 
@@ -759,7 +759,7 @@ impl BunTest {
         }
     }
 
-    /// For a test or a hook whose fixtures may outlive it.
+    /// Must be called before the order is generated, or `file_end` never runs.
     pub(crate) fn expect_file_scoped_fixtures(&mut self) {
         self.file_end.get_or_insert_with(|| {
             ExecutionEntry::create(
@@ -773,9 +773,8 @@ impl BunTest {
         });
     }
 
-    /// `callback` runs after the `afterAll` hooks of the file, before what was deferred earlier. `false`: it is too late for that.
     pub(crate) fn defer_to_file_end(&mut self, callback: JSValue, timeout: u32) -> bool {
-        // The group of `file_end` is the last one.
+        // `file_end`'s group is always the last one.
         if self.file_end.is_none() || self.phase != Phase::Execution || self.execution.group_index + 1 >= self.execution.groups.len() {
             return false;
         }
@@ -791,7 +790,6 @@ impl BunTest {
         true
     }
 
-    /// An entry made while the tests run, for the caller to link into a sequence. It is freed with the file.
     pub(crate) fn create_vitest_entry(&mut self, callback: JSValue, timeout: u32, context: bool) -> NonNull<ExecutionEntry> {
         let entry = bun_core::heap::into_raw_nn(ExecutionEntry::create(
             None,
@@ -812,7 +810,7 @@ impl BunTest {
             },
             Phase::Execution => 'blk: {
                 let Some(active_group) = self.execution.active_group_ref() else {
-                    // `ExpectDeferred::step_file_end`
+                    // No group is active while `ExpectDeferred::step_file_end` waits after the last one.
                     break 'blk RefDataValue::Done;
                 };
                 let sequences = active_group.sequences(&self.execution);
@@ -921,12 +919,11 @@ impl BunTest {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// `done(error)` of a test is a failure of that test. Of a hook, it is reported as an error that nothing caught is.
     fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
         if let Some(strong) = clone_active_strong() {
             let this = strong.get();
             let is_running_test = this.execution.get_current_and_valid_execution_sequence(entry).is_some_and(|(sequence, _)| {
-                // SAFETY: it points into `this.execution.sequences`, which nothing else borrows here.
+                // SAFETY: points into `this.execution.sequences`, which nothing else borrows here.
                 let sequence = unsafe { sequence.as_ref() };
                 sequence.active_entry == sequence.test_entry
             });
@@ -1018,7 +1015,7 @@ impl BunTest {
                 Phase::Done => {}
             }
         }
-        // `Bun.spawnSync()` calls this with the test that timed out on the stack.
+        // Not run inline, because `Bun.spawnSync()` can fire this timer with the timed-out test still on the stack.
         Self::run_next_tick(&Rc::downgrade(this_strong), global, RefDataValue::Done);
     }
 
@@ -1275,7 +1272,7 @@ impl BunTest {
             };
         }
 
-        // Left pending by what ran before: not of this callback, which cannot be called while it is.
+        // An exception left pending by earlier code would make this call fail, so report it first.
         if global_this.has_exception() {
             global_this.clear_termination_exception();
             // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point.
@@ -1285,7 +1282,7 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
-        // SAFETY: `this_strong` keeps the cell alive, and in place, for the whole call.
+        // SAFETY: `this_strong` keeps the cell alive and in place for the whole call.
         let on_stack = unsafe { OnStack::enter(&raw const (*this).execution.on_stack, &cfg_data) };
         let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE,
             cfg_callback,
@@ -1425,7 +1422,7 @@ impl BunTest {
         Some(cfg_data)
     }
 
-    /// vitest: a function that `beforeEach` / `beforeAll` returns runs after the matching after-hooks.
+    /// Vitest runs a function returned by `beforeEach` / `beforeAll` after the matching after-hooks.
     fn adopt_teardown(&mut self, data: &RefDataValue, returned: JSValue) {
         if !returned.is_callable() {
             return;
@@ -1476,7 +1473,7 @@ impl BunTest {
 
         bun_core::scoped_log!(bun_test_group, "onUncaughtException -> {}", <&'static str>::from(handle_status));
 
-        // It has unwound the function of a test that has ended. In one that is running it is an error like any other.
+        // The ended error just unwinds a test that's already over. Inside a running test it's still a normal failure.
         if handle_status == HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
             && exception.is_some_and(|exception| self.unclaimed.is_ended_error(exception))
         {
@@ -1555,7 +1552,6 @@ impl BunTest {
     }
 }
 
-/// Until it is dropped, `Execution::on_stack` names the entry whose callback is being called.
 struct OnStack {
     cell: *const core::cell::Cell<Option<EntryData>>,
     outer: Option<EntryData>,
@@ -1563,20 +1559,20 @@ struct OnStack {
 
 impl OnStack {
     /// # Safety
-    /// `cell` outlives what is returned.
+    /// `cell` must outlive the returned guard.
     unsafe fn enter(cell: *const core::cell::Cell<Option<EntryData>>, data: &RefDataValue) -> OnStack {
         let entry = match *data {
             RefDataValue::Execution { entry_data, .. } => entry_data,
             _ => None,
         };
-        // SAFETY: fn contract.
+        // SAFETY: per fn contract.
         OnStack { cell, outer: unsafe { (*cell).replace(entry) } }
     }
 }
 
 impl Drop for OnStack {
     fn drop(&mut self) {
-        // SAFETY: the contract of `enter`.
+        // SAFETY: per `enter`'s contract.
         unsafe { (*self.cell).set(self.outer) };
     }
 }
@@ -1638,7 +1634,6 @@ bun_jsc::jsc_host_abi! {
 pub(crate) struct EntryData {
     pub(crate) sequence_index: usize,
     pub(crate) entry: *const (),
-    /// `ExecutionSequence::attempt` when `entry` was the active one.
     pub(crate) attempt: u32,
 }
 
@@ -1753,7 +1748,7 @@ impl RunTestsTask {
         let this = self;
         // Box drops at end of scope; the Weak drops with it.
         let Some(strong) = this.weak.upgrade() else { return Ok(()) };
-        // Ticked beneath script, as by `Bun.build()` for a plugin's `setup()`, or while the file loads: the results stay queued for `TestCommand::run`.
+        // Never run tests under JS or while the file loads. `TestCommand::run` drains the queue later.
         if this.global_this.vm().is_entered() || strong.get().is_loading {
             return Ok(());
         }
@@ -1829,22 +1824,17 @@ pub(crate) enum ConcurrentMode {
     Yes,
 }
 
-/// Whose semantics a function of the test module has: those of the module it was imported from.
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub(crate) enum Flavor {
     /// "bun:test", "@jest/globals"
     #[default]
     Jest,
-    /// "vitest"
     Vitest,
 }
 
-/// How the callback of an entry is called.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Calling {
-    /// `done`: it declares a parameter, so it gets a callback, which the entry waits for.
     Jest { done: bool },
-    /// `context`: it gets the test context, or `({}, suite)` in `beforeAll` / `afterAll`.
     Vitest { context: bool },
 }
 impl Default for Calling {
@@ -1864,7 +1854,6 @@ pub(crate) struct BaseScopeCfg {
     pub(crate) self_concurrent: ConcurrentMode,
     pub(crate) self_mode: ScopeMode,
     pub(crate) self_only: bool,
-    /// `describe.shuffle`
     pub(crate) self_shuffle: bool,
     pub(crate) test_id_for_debugger: i32,
     pub(crate) line_no: u32,
@@ -1902,9 +1891,9 @@ pub(crate) enum ScopeMode {
     Normal,
     Skip,
     Todo,
-    /// Jest's `test.failing`: the callback of the test has to throw.
+    /// Jest's `test.failing`, which passes only if the test callback itself throws.
     Failing,
-    /// vitest's `test.fails`: something has to fail, see `ExecutionSequence::flip_fails`.
+    /// Vitest's `test.fails`. See `ExecutionSequence::flip_fails`.
     Fails,
     FilteredOut,
 }
@@ -2019,7 +2008,6 @@ pub(crate) struct DescribeScope {
     /// if true, the describe callback threw an error. do not run any tests declared in this scope.
     pub(crate) failed: bool,
 
-    /// What vitest callbacks see of this scope: `test_context::suite_task`.
     pub(crate) task: Option<Strong>,
     pub(crate) inherited: ScopeFunctions::InheritedOptions,
 }
@@ -2121,7 +2109,7 @@ impl DescribeScope {
         phase: AddedInPhase,
     ) {
         let entry = ExecutionEntry::create(None, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
-        // Nothing in a skipped scope runs, and an entry without a callback is reported as a test.
+        // `create` drops the callback in a skipped scope, and a hook entry without one would be reported as a test.
         if entry.callback.is_none() {
             return;
         }
@@ -2138,7 +2126,7 @@ impl DescribeScope {
                 self.after_all.insert(first_teardown_slot, slot);
                 self.before_all.push(entry);
             }
-            // vitest runs the after-hooks of a scope last registered first.
+            // Vitest runs a scope's after-hooks in reverse registration order.
             HookTag::AfterEach | HookTag::AfterAll if is_vitest => self.get_hook_entries(tag).insert(0, entry),
             HookTag::AfterAll => self.after_all.insert(first_teardown_slot, entry),
             _ => self.get_hook_entries(tag).push(entry),
@@ -2149,7 +2137,7 @@ impl DescribeScope {
         self.before_all.iter().map(|hook| &**hook).filter(|hook| hook.calling.is_vitest())
     }
 
-    /// `after_all` ends with an entry for each vitest `beforeAll` hook, the last hook's first: it runs what the hook returns.
+    /// `after_all` ends with one slot per Vitest `beforeAll`, in reverse order, to run the function that hook returns.
     fn teardown_slot(&mut self, hook: *const ExecutionEntry) -> Option<&mut ExecutionEntry> {
         let nth = self.vitest_before_all().position(|candidate| core::ptr::eq(candidate, hook))?;
         self.after_all.iter_mut().nth_back(nth).map(|slot| &mut **slot)
@@ -2169,7 +2157,6 @@ pub(crate) struct ExecutionEntryCfg {
     /// 0 = unlimited timeout
     pub(crate) timeout: u32,
     pub(crate) calling: Calling,
-    /// The `TestFixtures` of the `test.extend()` the entry was made with.
     pub(crate) fixtures: Option<JSValue>,
     /// Number of times to retry a failed test (0 = no retries)
     pub(crate) retry_count: u32,
@@ -2191,7 +2178,6 @@ pub(crate) struct ExecutionEntry {
     pub(crate) timeout: u32,
     pub(crate) calling: Calling,
     pub(crate) fixtures: Option<Strong>,
-    /// What a vitest callback that may be given fixtures destructures them from.
     pub(crate) parameter: Option<SharedContextParameter>,
     /// '.epoch' = not set
     /// when this entry begins executing, the timespec will be set to the current time plus the timeout(ms).

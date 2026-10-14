@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { gc as gcTrace, withoutAggressiveGC } from "harness";
+import { isStringOneByteRepresentation } from "node:v8";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -533,7 +534,9 @@ describe("TextEncoder", () => {
 
       const encoder = new TextEncoder();
       expect(Array.from(encoder.encode(part))).toEqual(expected);
+      expect(isStringOneByteRepresentation(base)).toBe(makeBase === narrow);
       expect(table[base]).toBe(1);
+      expect(isStringOneByteRepresentation(base)).toBe(makeBase !== narrow);
       expect(Array.from(encoder.encode(part))).toEqual(expected);
     });
   });

@@ -3802,7 +3802,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3817,13 +3817,13 @@ bun install --frozen-lockfile exit code: 0
   "packages": {
     "j": ["j@file:../i/j", { "dependencies": { "k": "" } }],
 
-    "k": ["k@1.0.0", "http://localhost:1/k/-/k-1.0.0.tgz", {}, ""],
+    "k": ["k@1.0.0", "", {}, ""],
 
     "o": ["o@file:../m/node_modules/n/o", {}],
 
     "o2": ["o2@file:../m/node_modules/n/o2", {}],
 
-    "x": ["x@1.0.0", "http://localhost:1/x/-/x-1.0.0.tgz", {}, ""],
+    "x": ["x@1.0.0", "", {}, ""],
   }
 }
 "
@@ -4170,7 +4170,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4181,7 +4181,7 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "once": ["once@1.4.0", "http://localhost:1/once/-/once-1.4.0.tgz", {}, ""],
+    "once": ["once@1.4.0", "", {}, ""],
   }
 }
 "
@@ -4193,7 +4193,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4204,9 +4204,9 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "babel-plugin-macros": ["babel-plugin-macros@3.1.0", "http://localhost:1/babel-plugin-macros/-/babel-plugin-macros-3.1.0.tgz", {}, ""],
+    "babel-plugin-macros": ["babel-plugin-macros@3.1.0", "", {}, ""],
 
-    "dedent": ["dedent@1.6.0", "http://localhost:1/dedent/-/dedent-1.6.0.tgz", { "peerDependencies": { "babel-plugin-macros": "^3.1.0" }, "optionalPeers": ["babel-plugin-macros"] }, ""],
+    "dedent": ["dedent@1.6.0", "", { "peerDependencies": { "babel-plugin-macros": "^3.1.0" }, "optionalPeers": ["babel-plugin-macros"] }, ""],
   }
 }
 "
@@ -4234,7 +4234,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4245,9 +4245,9 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "a": ["a@1.2.3", "http://localhost:1/a/-/a-1.2.3.tgz", {}, ""],
+    "a": ["a@1.2.3", "", {}, ""],
 
-    "b": ["b@1.2.3", "http://localhost:1/b/-/b-1.2.3.tgz", {}, ""],
+    "b": ["b@1.2.3", "", {}, ""],
   }
 }
 "
@@ -4382,7 +4382,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4397,7 +4397,7 @@ bun install --frozen-lockfile exit code: 0
 
     "@isaacs/testing-rebuild-bundle-parent": ["@isaacs/testing-rebuild-bundle-parent@1.0.0", "", { "dependencies": { "@isaacs/testing-rebuild-bundle-a": "" } }, "sha512-fa+mV2K+BDLzuxfI1LUWNmii92sylksrtaUITSO74ylcdWslvTFyr+REJfwdH5fDOxGqBH6kbVcDvWY8WqhgXg=="],
 
-    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true }, ""],
+    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "", { "bundled": true }, ""],
   }
 }
 "
@@ -4432,7 +4432,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4447,7 +4447,7 @@ bun install --frozen-lockfile exit code: 0
 
     "@isaacs/testing-rebuild-bundle-parent": ["@isaacs/testing-rebuild-bundle-parent@1.0.1", "", { "dependencies": { "@isaacs/testing-rebuild-bundle-a": "" } }, "sha512-PM20bXdRox3OOUEC7m0oYrpW3qZIYN+fh+/9TazZrWkfIggkHNnB91mROyPwlc/HvfPYoYHp1CMGPlgUSl3FDQ=="],
 
-    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true }, ""],
+    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "", { "bundled": true }, ""],
   }
 }
 "
@@ -4459,7 +4459,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4472,7 +4472,7 @@ bun install --frozen-lockfile exit code: 0
   "packages": {
     "@isaacs/testing-rebuild-bundle-a": ["@isaacs/testing-rebuild-bundle-a@1.0.2", "", { "dependencies": { "@isaacs/testing-rebuild-bundle-b": "" } }, "sha512-iMx/CGv5Z5dHRdeuYDoaCy0Nfgg0ih9G23C4bwoYPbkdXemc8ahbE9AFJ7jCP0u0hm5ZoZiP11FLN1i7ADhRbA=="],
 
-    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "http://localhost:1/@isaacs/testing-rebuild-bundle-b/-/testing-rebuild-bundle-b-1.0.1.tgz", { "bundled": true }, ""],
+    "@isaacs/testing-rebuild-bundle-a/@isaacs/testing-rebuild-bundle-b": ["@isaacs/testing-rebuild-bundle-b@1.0.1", "", { "bundled": true }, ""],
   }
 }
 "
@@ -4484,7 +4484,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 0
 
 {
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4497,13 +4497,13 @@ bun install --frozen-lockfile exit code: 0
     },
   },
   "packages": {
-    "devdep": ["devdep@1.0.0", "http://localhost:1/devdep/-/devdep-1.0.0.tgz", { "dependencies": { "devopt": "" }, "optionalDependencies": { "opt-and-dev": "" } }, ""],
+    "devdep": ["devdep@1.0.0", "", { "dependencies": { "devopt": "" }, "optionalDependencies": { "opt-and-dev": "" } }, ""],
 
-    "devopt": ["devopt@1.0.0", "http://localhost:1/devopt/-/devopt-1.0.0.tgz", {}, ""],
+    "devopt": ["devopt@1.0.0", "", {}, ""],
 
-    "opt-and-dev": ["opt-and-dev@1.0.0", "http://localhost:1/opt-and-dev/-/opt-and-dev-1.0.0.tgz", {}, ""],
+    "opt-and-dev": ["opt-and-dev@1.0.0", "", {}, ""],
 
-    "optdep": ["optdep@1.0.0", "http://localhost:1/optdep/-/optdep-1.0.0.tgz", { "dependencies": { "devopt": "" } }, ""],
+    "optdep": ["optdep@1.0.0", "", { "dependencies": { "devopt": "" } }, ""],
   }
 }
 "
@@ -4516,7 +4516,7 @@ bun pm migrate exit code: 0
 bun install --frozen-lockfile exit code: 1
 
 {
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -4538,7 +4538,7 @@ bun install --frozen-lockfile exit code: 1
 
     "abbrev": ["abbrev@1.1.1", "", {}, "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q=="],
 
-    "@isaacs/testing-bundledeps/@isaacs/testing-bundledeps-a": ["@isaacs/testing-bundledeps-a@1.0.0", "http://localhost:1/@isaacs/testing-bundledeps-a/-/testing-bundledeps-a-1.0.0.tgz", { "dependencies": { "@isaacs/testing-bundledeps-b": "*" }, "bundled": true }, ""],
+    "@isaacs/testing-bundledeps/@isaacs/testing-bundledeps-a": ["@isaacs/testing-bundledeps-a@1.0.0", "", { "dependencies": { "@isaacs/testing-bundledeps-b": "*" }, "bundled": true }, ""],
 
     "@isaacs/testing-bundledeps/@isaacs/testing-bundledeps-b": ["@isaacs/testing-bundledeps-b@1.0.0", "", {}, "sha512-UDbCq7GHRDb743m4VBpnsui6hNeB3o08qe/FRnX9JFo0VHnLoXkdtvm/WurwABLxL/xw5wP/tfN2jF90EjQehQ=="],
   }

@@ -877,7 +877,7 @@ exports[`dependency on workspace without version in package.json: version: 1 1`]
       "resolution": {
         "tag": "npm",
         "value": "1.1.0",
-        "resolved": "http://localhost:1234/no-deps/-/no-deps-1.1.0.tgz"
+        "resolved": "https://registry.npmjs.org/no-deps/-/no-deps-1.1.0.tgz"
       },
       "dependencies": [],
       "integrity": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
@@ -1033,7 +1033,7 @@ exports[`dependency on workspace without version in package.json: version: 1.* 1
       "resolution": {
         "tag": "npm",
         "value": "1.1.0",
-        "resolved": "http://localhost:1234/no-deps/-/no-deps-1.1.0.tgz"
+        "resolved": "https://registry.npmjs.org/no-deps/-/no-deps-1.1.0.tgz"
       },
       "dependencies": [],
       "integrity": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
@@ -1189,7 +1189,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.*
       "resolution": {
         "tag": "npm",
         "value": "1.1.0",
-        "resolved": "http://localhost:1234/no-deps/-/no-deps-1.1.0.tgz"
+        "resolved": "https://registry.npmjs.org/no-deps/-/no-deps-1.1.0.tgz"
       },
       "dependencies": [],
       "integrity": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
@@ -1345,7 +1345,7 @@ exports[`dependency on workspace without version in package.json: version: 1.1.0
       "resolution": {
         "tag": "npm",
         "value": "1.1.0",
-        "resolved": "http://localhost:1234/no-deps/-/no-deps-1.1.0.tgz"
+        "resolved": "https://registry.npmjs.org/no-deps/-/no-deps-1.1.0.tgz"
       },
       "dependencies": [],
       "integrity": "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==",
@@ -1501,7 +1501,7 @@ exports[`dependency on workspace without version in package.json: version: *-pre
       "resolution": {
         "tag": "npm",
         "value": "2.0.0",
-        "resolved": "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz"
+        "resolved": "https://registry.npmjs.org/no-deps/-/no-deps-2.0.0.tgz"
       },
       "dependencies": [],
       "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
@@ -1657,7 +1657,7 @@ exports[`dependency on workspace without version in package.json: version: *+bui
       "resolution": {
         "tag": "npm",
         "value": "2.0.0",
-        "resolved": "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz"
+        "resolved": "https://registry.npmjs.org/no-deps/-/no-deps-2.0.0.tgz"
       },
       "dependencies": [],
       "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
@@ -1813,7 +1813,7 @@ exports[`dependency on workspace without version in package.json: version: lates
       "resolution": {
         "tag": "npm",
         "value": "2.0.0",
-        "resolved": "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz"
+        "resolved": "https://registry.npmjs.org/no-deps/-/no-deps-2.0.0.tgz"
       },
       "dependencies": [],
       "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
@@ -1969,7 +1969,7 @@ exports[`dependency on workspace without version in package.json: version:  1`] 
       "resolution": {
         "tag": "npm",
         "value": "2.0.0",
-        "resolved": "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz"
+        "resolved": "https://registry.npmjs.org/no-deps/-/no-deps-2.0.0.tgz"
       },
       "dependencies": [],
       "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
@@ -2125,7 +2125,7 @@ exports[`dependency on same name as workspace and dist-tag: with version 1`] = `
       "resolution": {
         "tag": "npm",
         "value": "2.0.0",
-        "resolved": "http://localhost:1234/no-deps/-/no-deps-2.0.0.tgz"
+        "resolved": "https://registry.npmjs.org/no-deps/-/no-deps-2.0.0.tgz"
       },
       "dependencies": [],
       "integrity": "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",

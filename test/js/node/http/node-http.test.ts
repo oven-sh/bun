@@ -7493,6 +7493,27 @@ describe("req.headers and req.rawHeaders", () => {
     }
   });
 
+  it("headers folds what an accessor of the request's own returns for rawHeaders", async () => {
+    const seen = await seenByServer([["Host: a", "X-Secret: s3cret", "Accept: */*"]], req => {
+      Object.defineProperty(req, "rawHeaders", {
+        configurable: true,
+        get(this: IncomingMessage) {
+          const raw: string[] = Reflect.get(IncomingMessage.prototype, "rawHeaders", this) ?? [];
+          return raw.map((entry, i) => (i % 2 === 1 && raw[i - 1] === "X-Secret" ? "redacted" : entry));
+        },
+      });
+      return Object.entries(req.headers);
+    });
+    // Node has read headers before the listener runs.
+    expect(seen).toEqual([
+      [
+        ["host", "a"],
+        ["x-secret", "bun" in process.versions ? "redacted" : "s3cret"],
+        ["accept", "*/*"],
+      ],
+    ]);
+  });
+
   it("hold the names of each request, whatever the one before it named", async () => {
     const long = (length: number) => `X-${Buffer.alloc(length - 2, "n")}`;
     const shapes = [

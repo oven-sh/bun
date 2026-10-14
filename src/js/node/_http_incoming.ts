@@ -21,9 +21,7 @@ const {
 } = require("internal/http");
 
 const ObjectDefineProperty = Object.defineProperty;
-const ObjectPrototypeLookupGetter: (this: unknown, name: PropertyKey) => Function | undefined = (
-  Object.prototype as any
-).__lookupGetter__;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
 const kHeaders = Symbol("kHeaders");
 // Cache slot for the server dispatcher's keep-alive decision (stamped once
@@ -132,6 +130,7 @@ function IncomingMessage(socket) {
   this._readableState.readingMore = true;
 }
 $toClass(IncomingMessage, "IncomingMessage", Readable);
+const IncomingMessagePrototype = IncomingMessage.prototype;
 
 // Defaults observed before the parser (or the native server) fills these in.
 IncomingMessage.prototype.httpVersion = "1.1";
@@ -191,6 +190,14 @@ ObjectDefineProperty(IncomingMessage.prototype, "rawHeaders", {
   },
 });
 
+// Whether `message.rawHeaders` reaches the accessor above, which is not configurable: only a property below its prototype hides it.
+function readsBuiltinRawHeaders(message) {
+  for (let object = message; object !== IncomingMessagePrototype; object = $getPrototypeOf(object)) {
+    if (object === null || ObjectPrototypeHasOwnProperty.$call(object, "rawHeaders")) return false;
+  }
+  return true;
+}
+
 ObjectDefineProperty(IncomingMessage.prototype, "headers", {
   __proto__: null,
   get: function () {
@@ -200,11 +207,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "headers", {
       // The native handle builds what the fold below makes of its captured bytes, when that is the fold in use,
       // rawHeaders has not been read (which takes the bytes) or assigned, and reading it would reach the accessor
       // above: a subclass, a swapped prototype or the instance can define its own, which the fold then reads.
-      if (
-        this[kRawHeaders] === null &&
-        addHeaderLine === _addHeaderLine &&
-        ObjectPrototypeLookupGetter.$call(this, "rawHeaders") === getRawHeaders
-      ) {
+      if (this[kRawHeaders] === null && addHeaderLine === _addHeaderLine && readsBuiltinRawHeaders(this)) {
         const built = this[kHeaderSource]?.headersObject();
         if (built !== undefined) return (this[kHeaders] = built);
       }

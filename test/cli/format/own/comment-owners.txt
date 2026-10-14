@@ -564,6 +564,16 @@ comments/in-an-import-call-with-a-phase.js
 134 138 L StringLiteral 140 143 -
 157 161 L StringLiteral 169 172 -
 193 197 L StringLiteral 200 203 -
+comments/in-import-attributes-without-attributes.js
+23 33 T StringLiteral 14 17 -
+36 46 T StringLiteral 14 17 -
+76 86 T StringLiteral 65 68 -
+114 124 T StringLiteral 105 108 -
+127 137 T StringLiteral 105 108 -
+165 178 T StringLiteral 156 159 -
+181 191 T StringLiteral 156 159 -
+214 224 T StringLiteral 210 213 -
+232 242 T StringLiteral 210 213 -
 comments/in-the-empty-parentheses-of-a-call-that-something-follows.ts
 26 33 D NewExpression 10 34 -
 69 76 D NewExpression 53 77 -

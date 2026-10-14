@@ -636,10 +636,19 @@ impl Parents {
     fn of_import_attribute<'a>(&self, file: &'a File<'a>, prop: hir::PropId) -> Node<'a> {
         // By its `{ .. }`, not by its position: an entry can follow a clause that is nested in the entry before it.
         let object = file.bound.prop_owner.get(prop.idx());
-        let owner = object
-            .and_then(|&it| file.index_of_import_attributes(it))
-            .and_then(|it| self.import_attributes.get(it));
-        owner.map_or(Node::File(file), |it| it.unpack(file))
+        object
+            .and_then(|&it| self.of_import_attributes(file, it))
+            .unwrap_or(Node::File(file))
+    }
+
+    /// The import, the export or the import type whose attributes are in the `{ .. }` that is `object`.
+    pub(super) fn of_import_attributes<'a>(
+        &self,
+        file: &'a File<'a>,
+        object: hir::ExprId,
+    ) -> Option<Node<'a>> {
+        let owner = (self.import_attributes).get(file.index_of_import_attributes(object)?)?;
+        Some(owner.unpack(file))
     }
 
     /// The owner of each entry of `Hir::import_attributes`. Clauses nest, so an owner takes only its own, which is the

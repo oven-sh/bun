@@ -2419,6 +2419,7 @@ describe("client limits", () => {
       { maxPayload: NaN },
       { maxPayload: null },
       { maxPayload: Infinity },
+      { maxPayload: 2 ** 31 },
     ])("without a number above 0 the limit stays 128 MiB, options: %p", async options => {
       expect(await receiveHeaderThenEnd(options)).toEqual([
         "open",
@@ -2437,6 +2438,7 @@ describe("client limits", () => {
     it.each([
       [1.5, 1],
       ["2048", 2048],
+      [2 ** 32 + 2048, 2048],
     ] as const)("%p is a limit of %p bytes", async (maxPayload, limit) => {
       const frames = [serverFrame(0x1, bytes(limit)), serverFrame(0x1, bytes(limit + 1))];
       const events = await receive(frames, { maxPayload } as unknown as ClientOptions);

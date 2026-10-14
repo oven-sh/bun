@@ -4877,8 +4877,9 @@ describe.concurrent("bun lint", () => {
         );
       });
 
-      // oxlint writes what its own rules fix, and tsgolint then lints every file as it is written. What oxlint's own rules
-      // do not fix is reported where it was before.
+      // oxlint writes what its own rules fix, and tsgolint then lints every file as it is written. What is left is reported
+      // where it is in the written text, which is the text that is shown with it. oxlint reports what its own rules leave
+      // where it was before: `1:15` here.
       test("the rules that need types lint what the fixes of the others wrote", async () => {
         const tsconfig = JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext" } });
         const config = (rules: object) =>
@@ -4897,7 +4898,7 @@ describe.concurrent("bun lint", () => {
               "typescript/await-thenable": "error",
             }),
             "tsconfig.json": tsconfig,
-            // `var` becomes `const`, two columns more: the `debugger` is still reported at 15.
+            // `var` becomes `const`, two columns more.
             "a.ts": "var a = 1; a; debugger;\nexport async function f() { await 1; }\n",
           },
           ["--fix", "--type-aware", "-f", "json"],
@@ -4907,7 +4908,7 @@ describe.concurrent("bun lint", () => {
           "a.ts": "const a = 1; a; debugger;\nexport async function f() { await 1; }\n",
         });
         expect(places(inOneFile.raw)).toEqual([
-          "a.ts:1:15 eslint(no-debugger)",
+          "a.ts:1:17 eslint(no-debugger)",
           "a.ts:2:35 typescript(await-thenable)",
         ]);
         const inAnImport = await lint(

@@ -994,6 +994,11 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
     "a NaN among doubles": [1.5, NaN],
     // A hole stays a hole, in an array of any shape.
     "holes": { ints: [1, , 3], doubles: [1.5, , 2.5], objects: [{ a: 1 }, , "x"], nothing: new Array(3), tail: [1, 2, ,] }, // prettier-ignore
+    // A concatenation is not one string until it is read, and is read to be cloned.
+    "concatenations that were not read": (() => {
+      const now = String(Date.now());
+      return { a: "a" + now, list: ["b" + now, `c${now}`, { d: now + now }] };
+    })(),
     // A frozen object is copied as well, with the structure it had before it was frozen.
     "frozen objects": { frozen: Object.freeze({ a: { b: 1 }, list: [1, 2] }), large: Object.freeze({ ...outOfLine }) },
     // Each of these has something that is not plain. An object that had a property deleted counts: its structure is not shared.
@@ -1021,7 +1026,13 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
       const source = Buffer.alloc(4096, "abc").toString();
       const read = source.slice(100, 300);
       read.charCodeAt(0);
-      return { unread: source.slice(10, 200), read, list: [source.slice(7, 90)], whole: source };
+      return {
+        unread: source.slice(10, 200),
+        read,
+        list: [source.slice(7, 90)],
+        whole: source,
+        joined: source.slice(3, 50) + "!",
+      };
     })(),
     "a read-only property": [
       Object.defineProperty({ a: 1 }, "fixed", {
@@ -1165,7 +1176,7 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
 
   // Serialization allocates its buffer and the value that owns it; the copy allocates only the clones, which
   // are not the allocator's. An ASAN build does not allocate through mimalloc.
-  test.skipIf(isASAN)("a plain tree is cloned without what serialization allocates", async () => {
+  test.skipIf(isASAN).concurrent("a plain tree is cloned without what serialization allocates", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -1194,24 +1205,28 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
     });
   });
 
-  // A slice keeps the string it was taken from alive. Serialization copies a string, so a clone never did.
-  test("a clone of a slice of a string does not keep the string alive", async () => {
+  // A slice keeps the string it was taken from alive, and so does a concatenation that holds one until it is read.
+  // Serialization copies a string, so a clone never did.
+  test.concurrent.each([
+    ["a slice that was not read", "source.slice(10, 4000)", 3990],
+    ["a slice that was read", "(part => (part.charCodeAt(0), part))(source.slice(100, 4000))", 3900],
+    ["a slice in an array", "[source.slice(5, 4000)]", 3995],
+    ["a concatenation that holds a slice", 'source.slice(20, 4000) + "!"', 3981],
+  ])("a clone of %s does not keep the string it was taken from alive", async (_, expression, length) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `const { heapStats } = require("bun:jsc");
-         function clones() {
+         function cloned() {
            const source = Buffer.alloc(32 << 20, "x").toString("latin1");
-           const read = source.slice(100, 4000);
-           read.charCodeAt(0);
-           return structuredClone({ unread: source.slice(10, 4000), read, list: [source.slice(5, 4000)] });
+           return structuredClone({ value: ${expression} });
          }
-         const clone = clones();
+         const clone = cloned();
          await new Promise(resolve => setImmediate(resolve));
          Bun.gc(true);
          console.log(JSON.stringify({
-           lengths: [clone.unread.length, clone.read.length, clone.list[0].length],
+           length: [clone.value].flat()[0].length,
            keepsTheSource: heapStats().extraMemorySize > 16 << 20,
          }));`,
       ],
@@ -1221,7 +1236,7 @@ describe("structuredClone of a tree of plain objects and arrays", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ lengths: [3990, 3900, 3995], keepsTheSource: false }),
+      stdout: JSON.stringify({ length, keepsTheSource: false }),
       stderr: "",
       exitCode: 0,
     });

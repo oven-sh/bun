@@ -41,12 +41,13 @@
 namespace WebCore {
 using namespace JSC;
 
-// Copies a tree of plain objects, arrays and primitives without running script or throwing; anything else in it ends the attempt, and the caller serializes.
+// Copies a tree of plain objects, arrays and primitives without running script; anything else in it ends the attempt, and the caller serializes. Running out of memory is all it throws.
 class PlainTreeCloner {
 public:
-    PlainTreeCloner(VM& vm, JSGlobalObject* globalObject)
+    PlainTreeCloner(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope)
         : m_vm(vm)
         , m_globalObject(globalObject)
+        , m_scope(scope)
     {
     }
 
@@ -83,20 +84,26 @@ private:
         Object,
     };
 
-    // A slice of another string would keep that string alive through the clone, where the serializer makes a copy of it.
-    ALWAYS_INLINE static Kind kindOf(JSValue value)
+    // The serializer reads a concatenation, as this does, and copies a slice, which shared with the clone would keep the string it was taken from alive.
+    ALWAYS_INLINE Kind kindOf(JSValue value)
     {
         if (!value || !value.isCell())
             return Kind::Leaf;
         JSCell* cell = value.asCell();
         if (cell->isString()) {
             JSString* string = asString(cell);
-            if (string->isSubstring())
+            if (string->isRope() && (string->isSubstring() || !resolve(string)))
                 return Kind::NotPlain;
             StringImpl* impl = string->tryGetValueImpl();
             return impl && impl->isSubString() ? Kind::NotPlain : Kind::Leaf;
         }
         return cell->type() == FinalObjectType || cell->type() == ArrayType ? Kind::Object : Kind::NotPlain;
+    }
+
+    NEVER_INLINE bool resolve(JSString* string)
+    {
+        (void)string->value(m_globalObject);
+        return !m_scope.exception();
     }
 
     JSValue cloneObject(JSObject* object)
@@ -245,6 +252,7 @@ private:
 
     VM& m_vm;
     JSGlobalObject* m_globalObject;
+    ThrowScope& m_scope;
     unsigned m_depth { 0 };
     Vector<JSObject*, linearSearchLimit + 1> m_sources;
     MarkedArgumentBuffer m_clones;
@@ -271,8 +279,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStructuredClone, (JSC::JSGlobalObject * globa
     RETURN_IF_EXCEPTION(throwScope, {});
 
     if (value.isObject() && serializeOptions.transfer.isEmpty()) {
-        PlainTreeCloner cloner(vm, globalObject);
-        if (JSValue clone = cloner.clone(value))
+        PlainTreeCloner cloner(vm, globalObject, throwScope);
+        JSValue clone = cloner.clone(value);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (clone)
             return JSValue::encode(clone);
     }
 

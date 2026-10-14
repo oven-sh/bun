@@ -44,7 +44,8 @@ mod syntax;
 
 pub use config::{
     Config, ConfigError, FileConfig, InJavaScript, LegacyFailure, LegacyFile, LegacyKind,
-    LegacyOptions, LoadLegacy, LoadLocatedPlugin, LoadPlugin, oxlint_category,
+    LegacyOptions, LoadLegacy, LoadLocatedPlugin, LoadPlugin, NamedPlugin, is_plugin_of_oxlint,
+    oxlint_category,
 };
 pub use fixer::{
     FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, is_parse_error, is_redeclaration,
@@ -500,12 +501,12 @@ impl<S: RuleSet> Linter<S> {
             true => file.config_comments(),
             false => &[],
         };
-        // ESLint takes `oxlint-disable` and the like for ordinary comments.
+        // ESLint takes `oxlint-disable` and the like for ordinary comments. Without a configuration of either, those of both count.
         let is_understood = |it: &&ConfigComment| {
             let is_called_oxlint = file.slice(it.label_span).starts_with(b"oxlint");
             match config.understands_oxlint_comments {
                 true => is_called_oxlint || options.respects_eslint_comments,
-                false => !is_called_oxlint && !it.is_only_of_oxlint,
+                false => config.has_every_rule || (!is_called_oxlint && !it.is_only_of_oxlint),
             }
         };
         let prepared = config.prepared.get_or_init(|| self.prepare(config));
@@ -602,6 +603,10 @@ impl<S: RuleSet> Linter<S> {
         let mut off: Vec<RuleId> = Vec::new();
         if config.has_every_rule {
             let is_on = |id: &RuleId| match is_plain {
+                _ if matches!(id, RuleId::Js(_)) => (running_js.iter()).any(|it| {
+                    it.severity != Severity::Off
+                        && RuleId::Js(Arc::clone(&it.configured.rule)) == *id
+                }),
                 true => (config
                     .rules
                     .iter()
@@ -1839,6 +1844,10 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             names,
             justification: self.file.slice(comment.justification),
             start,
+            tool: match self.file.slice(comment.label_span).starts_with(b"oxlint") {
+                true => "oxlint",
+                false => "eslint",
+            },
         });
     }
 }

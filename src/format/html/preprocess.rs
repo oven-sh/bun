@@ -31,7 +31,7 @@ pub(crate) fn preprocess<'a>(tree: &mut Tree<'a>, options: &Options<'_>) -> bool
 }
 
 /// The part of `value` from `start` to `end`.
-fn slice<'a>(value: &Cow<'a, [u8]>, start: usize, end: usize) -> Cow<'a, [u8]> {
+pub(crate) fn slice<'a>(value: &Cow<'a, [u8]>, start: usize, end: usize) -> Cow<'a, [u8]> {
     match value {
         Cow::Borrowed(value) => Cow::Borrowed(&value[start..end]),
         Cow::Owned(value) => Cow::Owned(value[start..end].to_vec()),

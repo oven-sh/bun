@@ -647,8 +647,8 @@ impl NoMisusedPromises {
                 parameter_type: None,
             })
             .collect();
-        // tsgolint has no exception for `finally`.
-        if arguments.is_empty() || (!cx.language().is_oxlint && is_promise_finally_method(node)) {
+        // tsgolint reports it.
+        if arguments.is_empty() || !cx.language().is_oxlint && is_promise_finally_method(node) {
             return;
         }
         void_function_arguments(node, call, &mut arguments);
@@ -859,7 +859,14 @@ impl NoMisusedPromises {
                 .is_some_and(|contextual_type| is_void_returning_function_type(expression, contextual_type))
         {
             cx.report(place(argument), VOID_RETURN_RETURN_VALUE).labels_with(|labels| {
-                let at = function_node.return_type().map(|it| it.outer_span());
+                // Or that of the signature which a callback has its types from.
+                let of_context = || {
+                    let signatures = function_node.ts_node().get_contextual_type()?.get_call_signatures();
+                    let mut declarations = signatures.into_iter().filter_map(|it| it.declaration());
+                    let declaration = declarations.find(|it| it.is_in_linted_file())?;
+                    Some(declaration.type_node()?.span())
+                };
+                let at = function_node.return_type().map(|it| it.outer_span()).or_else(of_context);
                 tsgolint_labels_of_value(labels, argument, at.zip(expression.get_contextual_type()));
             });
         }

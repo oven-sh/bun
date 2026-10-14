@@ -1,4 +1,4 @@
-//! `codeFrameColumns` of @babel/code-frame, without colors: the lines around a range, each after its number, and a row of `^`
+//! `codeFrameColumns` of @babel/code-frame 7, without colors: the lines around a range, each after its number, and a row of `^`
 //! under each line of the range.
 //!
 //! ```text
@@ -17,22 +17,14 @@
 //! - Where there would be no `^`, there is one.
 //! - The message is after the `^` of the last line of the range. Without a column it is a row of its own, above the frame.
 //! - Lines of any length are printed whole.
+//! - Columns are counted from 1, and 0 is as good as none. In a range of several lines, the last has as many `^` as its column
+//!   says, which is one more than the characters before it, and all between the first and the last have as many as the second
+//!   is long.
 
 use crate::ast::File;
 use bun_core::strings::utf8_decoded_len_utf16;
 use std::io::Write;
 use std::ops::Range;
-
-/// The major version of @babel/code-frame.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Version {
-    /// Columns are counted from 1, and 0 is as good as none. In a range of several lines, the last has as many `^` as its column
-    /// says, which is one more than the characters before it, and all between the first and the last have as many as the second
-    /// is long.
-    Seven,
-    /// Columns are counted from 0.
-    Eight,
-}
 
 /// `{ line, column }`: a line counted from 1, and a column in UTF-16 code units.
 #[derive(Copy, Clone, Debug)]
@@ -43,7 +35,6 @@ pub struct Place {
 
 /// The arguments of `codeFrameColumns` but for the text.
 pub struct Frame<'m> {
-    pub version: Version,
     pub start: Place,
     /// Without one, or without a column, it has that of `start`.
     pub end: Option<Place>,
@@ -73,18 +64,6 @@ impl<'a> Lines<'a> for File<'a> {
     }
 }
 
-/// What [`lines`](bun_core::strings::js_lines) gives.
-impl<'a> Lines<'a> for [&'a [u8]] {
-    fn count(&self) -> u32 {
-        self.len() as u32
-    }
-
-    fn line(&self, number: u32) -> &'a [u8] {
-        let line = (number as usize).checked_sub(1).and_then(|at| self.get(at));
-        line.copied().unwrap_or_default()
-    }
-}
-
 /// V8 has no longer string: `"^".repeat(..)` throws.
 const LONGEST_STRING: u64 = 0x1FFF_FFE8;
 
@@ -106,21 +85,13 @@ pub fn write_rows_of<'a>(
     let count = u64::from(lines.count());
     let exists = |line: u64| (1..=count).contains(&line);
     let length = |line: u64| u64::from(utf8_decoded_len_utf16(lines.line(line as u32)));
-    let is_seven = frame.version == Version::Seven;
     let end = frame.end.unwrap_or(frame.start);
     let (first, last) = (u64::from(frame.start.line), u64::from(end.line));
     let (start_column, end_column) = (frame.start.column, end.column.or(frame.start.column));
     let from = u64::from(start_column.unwrap_or(0));
     let to = end_column.map_or(from, u64::from);
-    let has_column = match frame.version {
-        Version::Seven => from != 0 || (first == last && to != 0),
-        Version::Eight => start_column.is_some() || (first == last && end_column.is_some()),
-    };
-    let before = if is_seven {
-        from.saturating_sub(1)
-    } else {
-        from
-    };
+    let has_column = from != 0 || (first == last && to != 0);
+    let before = from.saturating_sub(1);
     // How many `^` the first line has, and each between the first and the last if that is the same for all.
     let (mut on_first, mut between) = (0, None);
     if has_column && first == last {
@@ -130,8 +101,7 @@ pub fn write_rows_of<'a>(
         on_first = to.saturating_sub(from);
     } else if has_column && first < last {
         let has_middle = last - first >= 2;
-        let looked_at = if is_seven { first + 1 } else { last - 1 };
-        if !exists(first) || (has_middle && !exists(looked_at)) {
+        if !exists(first) || (has_middle && !exists(first + 1)) {
             return false;
         }
         let Some(rest) = length(first).checked_sub(before) else {
@@ -141,7 +111,7 @@ pub fn write_rows_of<'a>(
             return false;
         }
         on_first = rest;
-        between = (is_seven && has_middle).then(|| length(first + 1));
+        between = has_middle.then(|| length(first + 1));
     }
 
     let top = first.saturating_sub(u64::from(frame.lines_above) + 1) + 1;

@@ -170,6 +170,8 @@ impl CapitalizedComments {
         }
         let is_directive = match cx.language().is_oxlint {
             true => oxlint_is_directive(comment, value),
+            // Both tools' comments count there.
+            false if cx.language().stands_alone && oxlint_is_directive(comment, value) => true,
             false => ast_utils::matches_comments_ignore_pattern(value) || is_maybe_url(value),
         };
         if is_directive

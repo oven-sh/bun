@@ -1393,8 +1393,21 @@ impl<'a> Checks<'a, '_> {
         ];
         for (tag, of_acorn, word) in words {
             for it in self.exprs_of(tag) {
-                let first = (self.tops.outward(Node::Expr(it)))
-                    .find(|it| matches!(it, Node::Param(_) | Node::Func(_)));
+                // For oxc neither `this` nor the key of an index signature is a formal parameter, and a signature in a type does
+                // not end the parameter that the type is of.
+                let first = self.tops.outward(Node::Expr(it)).find(|&it| match it {
+                    Node::Param(param) => {
+                        let function = param.func();
+                        !(of_oxc
+                            && function.is_some_and(|it| {
+                                it.kind() == FnKind::IndexSignature
+                                    || it.this_param() == Some(param)
+                            }))
+                    }
+                    // Within a type nothing else is without a body.
+                    Node::Func(function) => !of_oxc || function.has_body(),
+                    _ => false,
+                });
                 if !matches!(first, Some(Node::Param(_))) {
                     continue;
                 }
@@ -1418,8 +1431,29 @@ impl<'a> Checks<'a, '_> {
         if self.lacks(rare::SUSPENDS_IN_STATIC_BLOCK) {
             return;
         }
+        // A signature in a type starts nothing.
+        let is_signature = |it: &Func| match it.kind() {
+            FnKind::CallSignature
+            | FnKind::ConstructSignature
+            | FnKind::FunctionType
+            | FnKind::ConstructorType
+            | FnKind::IndexSignature => true,
+            // Of an interface or a type literal. A class has them without a body too.
+            FnKind::Method | FnKind::Getter | FnKind::Setter => {
+                let mut around = Node::Func(*it).ancestors();
+                !it.has_body()
+                    && !matches!(
+                        around.find(|it| !matches!(it, Node::Member(_))),
+                        Some(Node::Class(_))
+                    )
+            }
+            _ => false,
+        };
         let is_in_block = |node: Node<'a>| {
-            let function = node.enclosing_function();
+            let mut function = node.enclosing_function();
+            while let Some(signature) = function.filter(is_signature) {
+                function = Node::Func(signature).enclosing_function();
+            }
             function.is_some_and(|it| it.kind() == FnKind::StaticBlock)
         };
         for it in self.exprs_of(ExprTag::Await) {

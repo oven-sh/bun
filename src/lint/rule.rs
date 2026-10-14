@@ -258,6 +258,11 @@ impl Plugin {
         })
     }
 
+    /// Whether, with a configuration of ESLint, the rules here answer for the plugin that is usually called `prefix`.
+    pub fn is_native_under_eslint(prefix: &[u8]) -> bool {
+        Plugin::answers_in_place_of(prefix, None)
+    }
+
     /// The version of the package that the rules here do the same as, if they answer in place of one.
     pub fn follows(self) -> Option<&'static str> {
         match self.names().under_eslint {
@@ -549,7 +554,9 @@ pub trait Rule: Send + Sync + Sized + 'static {
     /// [`Rule::start`] for a rule that keeps nothing.
     type State<'a>;
 
-    /// `options`: what follows the severity in the configuration.
+    /// `options`: what follows the severity in the configuration. They have passed the schema and not yet [`Rule::validate`],
+    /// which is asked afterwards: this takes whatever the schema lets through, without a panic. What it makes of options that
+    /// `validate` refuses lints nothing.
     fn new(options: &Options) -> Self;
 
     /// What is wrong with `options` that the schema of the rule cannot tell, where ESLint's rule throws: the message.

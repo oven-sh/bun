@@ -68,7 +68,8 @@ impl<'a> SourceText<'a> {
         bun_core::strings::contains_char(self.text_for(&span), byte)
     }
 
-    /// White space that is not ASCII counts as a space, U+2028 and U+2029 as `\n`.
+    /// White space that is not ASCII counts as a space, and so does the vertical tab, which `u8::is_ascii_whitespace` does not
+    /// know. U+2028 and U+2029 count as `\n`.
     pub(crate) fn all_bytes(self, span: Span, predicate: impl Fn(u8) -> bool) -> bool {
         let mut rest = self.text_for(&span);
         while let Some(at) = rest.iter().position(|&b| !predicate(b)) {
@@ -78,7 +79,7 @@ impl<'a> SourceText<'a> {
                 _ => b'\n',
             };
             let len = js_whitespace_len(rest);
-            if len < 2 || !predicate(stands_for) {
+            if (len < 2 && rest[0] != 0x0B) || !predicate(stands_for) {
                 return false;
             }
             rest = &rest[len..];

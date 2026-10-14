@@ -371,6 +371,15 @@ impl<'a> File<'a> {
         self.has_parse_errors
     }
 
+    /// In a JavaScript file: where the first thing is that only TypeScript has, which is parsed all the same. `a: T`, `a as T`,
+    /// `class A<T> {}`, `enum A {}`.
+    pub fn first_of_typescript_in_javascript(&self) -> Option<u32> {
+        (self.hir.diagnostics.iter())
+            .filter(|it| it.kind == hir::DiagnosticKind::Js)
+            .map(|it| it.start)
+            .min()
+    }
+
     /// The statements at the top level.
     #[inline]
     pub fn body(&'a self) -> List<'a, Stmt<'a>> {
@@ -474,7 +483,7 @@ impl<'a> File<'a> {
         loop {
             match text[..end].last() {
                 None => return 0,
-                Some(b' ' | b'\t') => end -= 1,
+                Some(b' ' | b'\t' | 0x0B | 0x0C) => end -= 1,
                 Some(b'\n' | b'\r') => {
                     end -= 1;
                     // The line before can end in a comment only if it has a `//`.

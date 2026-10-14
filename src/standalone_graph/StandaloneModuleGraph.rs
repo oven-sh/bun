@@ -2700,7 +2700,7 @@ pub(crate) fn download_to_path(
                     bun_libarchive::ExtractOptions {
                         // "package/bin"
                         depth_to_skip: 2,
-                        ..Default::default()
+                        ..bun_libarchive::ExtractOptions::new(bun_libarchive::DamagedBlock::Skip)
                     },
                 );
                 if extract_res.is_err() {

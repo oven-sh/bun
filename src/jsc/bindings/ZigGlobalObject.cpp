@@ -298,7 +298,6 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         JSC::Config::enableRestrictedOptions();
         // JSC options come from BUN_JSC_* (applied in the callback below), not JSC_*.
         JSC::Config::disableEnvironmentOptions();
-        JSC::Config::setIsEmbeddedCodeCallback(Bun::isEmbeddedCode);
 
         std::set_terminate([]() { Zig__GlobalObject__onCrash(); });
         WTF::initializeMainThread();
@@ -395,6 +394,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // that are not Bun's, where eval is on. After the loop: BUN_JSC_useDollarVM does not bring it back.
             if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
                 JSC::Options::useDollarVM() = false;
+            // The boundary of "=strict": see JSC::SourceProvenance.
+            if (Bun::mayNotMakeScriptFromStrings()) [[unlikely]]
+                JSC::Options::disallowNonStaticCode() = true;
 #if defined(BUN_DISABLE_WEBASSEMBLY)
             // After the loop: BUN_JSC_useWasm=1 does not bring it back, and BUN_JSC_useWasm=0 stays a valid name.
             JSC::Options::useWasm() = false;
@@ -427,19 +429,6 @@ extern "C" void JSC__useOptionsForVMPerThread(const char* envp[], size_t envc)
         if (WTF::StringView::fromLatin1(envp[i]).startsWithIgnoringASCIICase("BUN_JSC_useConcurrentJIT="_s))
             JSC::Options::setOption(envp[i] + 8, false);
     }
-}
-
-// After JSCInitialize and before the first VM, as above.
-extern "C" void JSC__disallowNonEmbeddedCode()
-{
-    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
-    JSC::Options::disallowNonEmbeddedCode() = true;
-}
-
-// Not through the accessor, which asserts that the options are final: `bun build` asks for a macro before JSC is initialized.
-extern "C" bool JSC__isNonEmbeddedCodeDisallowed()
-{
-    return g_jscConfig.options.disallowNonEmbeddedCode;
 }
 
 extern "C" void* Bun__getVM();

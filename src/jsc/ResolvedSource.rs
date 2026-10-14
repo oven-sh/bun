@@ -36,6 +36,9 @@ pub struct ResolvedSource {
     /// An ES module of the executable's pre-resolved module graph: it carries no `module_info`; the loader builds its
     /// record from the graph.
     pub is_prelinked_module: bool,
+    /// `JSC::SourceProvenance::Static`: `source_code` comes from where the program is stored or from Bun itself, not from
+    /// a JavaScript value. `--disallow-code-generation-from-strings=strict` runs nothing else.
+    pub is_static: bool,
 
     pub bytecode_cache: Bytecode,
     /// `Zig::SourceProvider` takes it (nulling the field).

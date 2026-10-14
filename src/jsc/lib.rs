@@ -512,16 +512,6 @@ pub fn initialize(options: InitializeOptions) {
     };
 }
 
-/// Sets JSC's `disallowNonEmbeddedCode`. After [`initialize`], and before the first VM, which freezes JSC's options.
-pub fn disallow_non_embedded_code() {
-    JSC__disallowNonEmbeddedCode();
-}
-
-/// Reads JSC's `disallowNonEmbeddedCode`. Any thread, at any time.
-pub fn is_non_embedded_code_disallowed() -> bool {
-    JSC__isNonEmbeddedCodeDisallowed()
-}
-
 /// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
 /// first VM, which freezes JSC's options.
 pub fn expect_vm_per_thread() {
@@ -1582,8 +1572,6 @@ unsafe extern "C" {
         short_lived_globals: bool,
     );
     fn JSC__useOptionsForVMPerThread(env: *const *const c_char, count: usize);
-    safe fn JSC__disallowNonEmbeddedCode();
-    safe fn JSC__isNonEmbeddedCodeDisallowed() -> bool;
 }
 
 // Hand-stubbed in `generated.rs` until `src/codegen/generate-classes.ts`

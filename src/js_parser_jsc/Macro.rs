@@ -110,12 +110,15 @@ impl MacroContext {
         caller: Expr,
         function_name: &[u8],
     ) -> crate::Result<Expr> {
-        // The engine would refuse the macro's entry point, but nothing catches that rejection.
-        if jsc::is_non_embedded_code_disallowed() {
+        // A macro's entry point is text made here, with names in it from the source that imports the macro, which may be a
+        // string. The engine would refuse it, but nothing catches that rejection.
+        if bun_core::code_generation_from_strings()
+            == bun_core::CodeGenerationFromStrings::Disallowed
+        {
             log.add_range_error(
                 Some(source),
                 import_range,
-                b"Macros cannot be used with --disallow-code-generation-from-strings=strict in a compiled executable: a macro is not embedded in the executable",
+                b"Macros cannot be used with --disallow-code-generation-from-strings=strict",
             );
             return Err(crate::Error::MacroFailed);
         }

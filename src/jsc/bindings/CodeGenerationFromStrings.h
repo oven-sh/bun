@@ -4,7 +4,6 @@
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ThrowScope.h>
-#include <span>
 #include <wtf/text/WTFString.h>
 
 #if !defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
@@ -62,9 +61,6 @@ inline JSC::JSObject* createCodeGenerationFromStringsError(JSC::JSGlobalObject* 
             return __VA_ARGS__;                                                                                \
         }                                                                                                      \
     } while (false)
-
-// The JSC::Config::isEmbeddedCode callback. Answers by address: a copy of embedded code is not embedded.
-bool isEmbeddedCode(std::span<const uint8_t> source);
 
 inline bool isDataOrBlobURL(const WTF::String& specifier)
 {

@@ -45,7 +45,6 @@ use bun_resolver::node_fallbacks;
 use bun_resolver::{GlobalCache, ResultUnion as ResolveResultUnion};
 
 use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
-use crate::embedded_code::static_source_code;
 use crate::timer;
 use crate::webcore::blob::BlobExt as _;
 
@@ -79,8 +78,6 @@ pub(crate) struct RuntimeState {
     pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
     /// Synthetic `bun:main` wrapper source.
     pub(crate) entry_point: ServerEntryPoint,
-    /// The string of it that the engine was given. Kept, so that nothing else gets its address: `Bun__isEmbeddedModule`.
-    pub(crate) entry_point_source_code: bun_core::String,
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
     /// the Rust `Transpiler<'a>` threads `&'a Arena`). Owned here so
     /// `deinit_runtime_state` reclaims it on Worker teardown — previously
@@ -350,7 +347,6 @@ unsafe fn init_runtime_state(
         ssl_ctx_cache: Default::default(),
         global_dns_data: core::cell::OnceCell::new(),
         entry_point: ServerEntryPoint::default(),
-        entry_point_source_code: bun_core::String::EMPTY,
         // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
@@ -2166,6 +2162,26 @@ fn transpile_source_code_inner(
     jsc_vm: *mut VirtualMachine,
     args: &TranspileArgs<'_>,
 ) -> crate::Result<ResolvedSource> {
+    let mut resolved_source = transpile_source_code_of_any_provenance(jsc_vm, args)?;
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM and `extra` is live for the call.
+    let (vm, path) = unsafe { (&*jsc_vm, &(*args.extra).path) };
+    resolved_source.is_static |= match args.virtual_source {
+        // The program itself, from `-e` or stdin. Any other is a plugin's text or a blob.
+        Some(source) => vm
+            .module_loader
+            .eval_source
+            .as_deref()
+            .is_some_and(|eval_source| core::ptr::eq(eval_source, source)),
+        None => vm.is_file_on_disk_static(path.text),
+    };
+    Ok(resolved_source)
+}
+
+/// The body of [`transpile_source_code_inner`], which says whether the result is static code.
+fn transpile_source_code_of_any_provenance(
+    jsc_vm: *mut VirtualMachine,
+    args: &TranspileArgs<'_>,
+) -> crate::Result<ResolvedSource> {
     use Loader as L;
     let extra = args.extra;
 
@@ -3282,9 +3298,12 @@ fn transpile_source_code_inner(
                 {
                     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
                     return Ok(ResolvedSource {
-                        source_code: static_source_code(WASI_RUNNER_SOURCE),
+                        source_code: bun_core::String::static_(include_bytes!(
+                            "../js/wasi-runner.js"
+                        )),
                         source_url: input_specifier.create_if_different(path.text),
                         tag: ResolvedSourceTag::Esm,
+                        is_static: true,
                         ..Default::default()
                     });
                 }
@@ -3311,9 +3330,10 @@ fn transpile_source_code_inner(
             };
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
             Ok(ResolvedSource {
-                source_code: static_source_code(sqlite_module_source_code_string),
+                source_code: bun_core::String::clone_utf8(sqlite_module_source_code_string),
                 source_url: input_specifier.create_if_different(path.text),
                 tag: ResolvedSourceTag::Esm,
+                is_static: true,
                 ..Default::default()
             })
         }
@@ -3495,21 +3515,8 @@ fn maybe_watch_file(
     }
 }
 
-pub(crate) static WASI_RUNNER_SOURCE: &[u8] = include_bytes!("../js/wasi-runner.js");
-
 // Generated `bun:sqlite` import shims.
-/// For a database embedded in a standalone executable: `import.meta.path` is under the `/$bunfs/` virtual root.
-pub(crate) static SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
-/* Generated code */
-import {Database} from 'bun:sqlite';
-import {readFileSync} from 'node:fs';
-export const db = new Database(readFileSync(import.meta.path));
-
-export const __esModule = true;
-export default db;
-";
-
-pub(crate) static SQLITE_MODULE_SOURCE_HOT: &[u8] = b"\
+const SQLITE_MODULE_SOURCE_HOT: &[u8] = b"\
 // Generated code
 import {Database} from 'bun:sqlite';
 const {path} = import.meta;
@@ -3528,7 +3535,7 @@ if (!db) {
 export default db;
 ";
 
-pub(crate) static SQLITE_MODULE_SOURCE: &[u8] = b"\
+const SQLITE_MODULE_SOURCE: &[u8] = b"\
 // Generated code
 import {Database} from 'bun:sqlite';
 export const db = new Database(import.meta.path);
@@ -3583,14 +3590,12 @@ fn get_hardcoded_module(
             if !ep.generated {
                 return None;
             }
-            let source_code = bun_core::String::clone_utf8(&ep.contents);
-            // SAFETY: as above, and `ep` borrows another field.
-            unsafe { (*state).entry_point_source_code = source_code.clone() };
             use bun_jsc::resolved_source::Tag;
             Some(ResolvedSource {
-                source_code,
+                source_code: bun_core::String::clone_utf8(&ep.contents),
                 source_url: specifier.clone(),
                 tag: Tag::Esm,
+                is_static: true,
                 ..ResolvedSource::default()
             })
         }
@@ -3641,6 +3646,7 @@ fn get_hardcoded_module(
             return Some(ResolvedSource {
                 source_code: bun_core::String::from_bytes(bun_ast::runtime::Runtime::source_code()),
                 source_url: specifier.clone(),
+                is_static: true,
                 ..ResolvedSource::default()
             });
         }
@@ -3709,9 +3715,23 @@ fn __bun_fetch_builtin_module(
         use bun_standalone_graph::StandaloneModuleGraph::ModuleFormat;
 
         if matches!(file.loader, Loader::Sqlite | Loader::SqliteEmbedded) {
+            // Distinct from
+            // [`SQLITE_MODULE_SOURCE`]: the standalone-binary path reads
+            // the embedded blob via `readFileSync(import.meta.path)`
+            // (resolved through the `/$bunfs/` virtual root).
+            const SQLITE_MODULE_SOURCE_STANDALONE: &[u8] = b"\
+/* Generated code */
+import {Database} from 'bun:sqlite';
+import {readFileSync} from 'node:fs';
+export const db = new Database(readFileSync(import.meta.path));
+
+export const __esModule = true;
+export default db;
+";
             return Some(ResolvedSource {
-                source_code: static_source_code(SQLITE_MODULE_SOURCE_STANDALONE),
+                source_code: bun_core::String::static_(SQLITE_MODULE_SOURCE_STANDALONE),
                 source_url: specifier.clone(),
+                is_static: true,
                 ..ResolvedSource::default()
             });
         }
@@ -3738,6 +3758,7 @@ fn __bun_fetch_builtin_module(
         return Some(ResolvedSource {
             source_code: file.to_wtf_string(),
             source_url: specifier.clone(),
+            is_static: true,
             // An embedded file is served through the builtin-module path but is a file: its origin is its own path
             // (or, with --bytecode, the path the cache was generated under, which must match exactly).
             origin_path: if file.bytecode_origin_path.is_empty() {

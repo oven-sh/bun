@@ -63,8 +63,6 @@ pub struct StandaloneModuleGraph {
     /// point's static import closure, i.e. what loads before the first `import()`.
     pub startup_module_count: u32,
     pub runtime_options: RuntimeOptions,
-    /// Indices into `files`, by the address of their `contents`.
-    files_by_address: std::sync::OnceLock<Vec<u32>>,
 }
 
 /// Runtime defaults chosen at build time (`Flags::HAS_RUNTIME_OPTIONS` record: `u32 flags`, `u32 value`).
@@ -980,7 +978,6 @@ impl StandaloneModuleGraph {
                 prelinked_module_files: Vec::new(),
                 startup_module_count: 0,
                 runtime_options: RuntimeOptions::default(),
-                files_by_address: std::sync::OnceLock::new(),
             });
         }
 
@@ -1332,24 +1329,7 @@ impl StandaloneModuleGraph {
             prelinked_module_files,
             startup_module_count: startup_module_count.min(module_count as u32),
             runtime_options,
-            files_by_address: std::sync::OnceLock::new(),
         })
-    }
-
-    /// The file whose `contents` are these very bytes, not a copy of them or a part of them.
-    pub fn find_by_address(&self, contents: *const [u8]) -> Option<&File> {
-        let files = self.files.values();
-        let address_of = |&index: &u32| files[index as usize].contents.as_bytes().as_ptr().addr();
-        let by_address = self.files_by_address.get_or_init(|| {
-            let mut indices: Vec<u32> = (0..files.len() as u32).collect();
-            indices.sort_unstable_by_key(address_of);
-            indices
-        });
-        let found = by_address
-            .binary_search_by_key(&contents.cast::<u8>().addr(), address_of)
-            .ok()?;
-        let file = &files[by_address[found] as usize];
-        (file.contents.len() == contents.len()).then_some(file)
     }
 
     /// Ahead-of-time bytecode for internal module `id`, if the executable carries it.

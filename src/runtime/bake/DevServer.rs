@@ -1210,8 +1210,13 @@ impl DevServer {
                 .unwrap_or(false),
         ) {
             Ok(v) => v,
-            // Neither the server runtime nor the routes it loads are embedded code.
-            Err(err) if jsc::is_non_embedded_code_disallowed() => return Err(err),
+            // Nothing says that what the dev server bundles is static code.
+            Err(err)
+                if bun_core::code_generation_from_strings()
+                    == bun_core::CodeGenerationFromStrings::Disallowed =>
+            {
+                return Err(err);
+            }
             Err(err) => {
                 // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
                 // `print_error_like_object_to_console` needs `&mut VM`, so cast

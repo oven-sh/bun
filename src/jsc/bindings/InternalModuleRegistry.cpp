@@ -10,7 +10,6 @@
 #include <atomic>
 #include <utility>
 
-#include "CodeGenerationFromStrings.h"
 #include "InternalModuleRegistryConstants.h"
 #include "ModuleGraph.h"
 #include "ZigSourceProvider.h"
@@ -28,11 +27,6 @@
 // A `bun build --compile` executable may carry ahead-of-time bytecode for the internal modules the app uses
 // (StandaloneModuleGraph, Flags::HAS_BUILTIN_BYTECODE); those bytes live in the executable for the life of the process.
 extern "C" bool Bun__standaloneInternalModuleBytecode(void* bunVM, uint32_t id, const uint8_t** bytes, size_t* size, uint32_t* entryOffset);
-extern "C" bool Bun__isEmbeddedModule(const uint8_t* source, size_t sourceLength);
-
-namespace WebCore {
-std::span<const Latin1Character> builtinsSource();
-}
 
 namespace Bun {
 
@@ -67,7 +61,7 @@ JSC_DEFINE_HOST_FUNCTION(jsInternalModulesLoadedFromBytecode, (JSC::JSGlobalObje
 
 static SourceCode makeInternalModuleSource(const String& text, const String& moduleName, const String& urlString)
 {
-    return JSC::makeSource(text, SourceOrigin(WTF::URL(urlString)), JSC::SourceTaintedOrigin::Untainted, moduleName);
+    return JSC::makeSource(text, SourceOrigin(WTF::URL(urlString)), JSC::SourceTaintedOrigin::Untainted, moduleName, TextPosition(), JSC::SourceProviderSourceType::Program, JSC::SourceProvenance::Static);
 }
 
 static UnlinkedFunctionExecutable* createInternalModuleExecutable(JSC::VM& vm, const SourceCode& source, const String& moduleName)
@@ -91,9 +85,6 @@ static String internalModuleString(uint32_t offset, uint32_t length)
 static String internalModuleSource(uint32_t id)
 {
     const auto& m = internalModuleRecord(id);
-    // The copy on disk is not embedded code.
-    if (JSC::Options::disallowNonEmbeddedCode())
-        return internalModuleString(m.codeOffset, m.codeLength);
     String moduleName = internalModuleString(m.nameOffset, m.nameLength);
     WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, ASCIILiteral::fromLiteralUnsafe(InternalModuleRegistryConstants::fileNames[id]));
     auto contents = WTF::FileSystemImpl::readEntireFile(file);
@@ -112,28 +103,6 @@ static String internalModuleSource(uint32_t id)
     return internalModuleString(m.codeOffset, m.codeLength);
 }
 #endif
-
-static bool hasSameAddress(std::span<const uint8_t> a, std::span<const uint8_t> b)
-{
-    return a.data() == b.data() && a.size() == b.size();
-}
-
-bool isEmbeddedCode(std::span<const uint8_t> source)
-{
-    if (hasSameAddress(source, asByteSpan(WebCore::builtinsSource())))
-        return true;
-
-    std::span internalModulesData { reinterpret_cast<const uint8_t*>(bun_internal_modules_data), bun_internal_modules_header.dataLength };
-    if (source.data() < internalModulesData.data() || source.data() >= internalModulesData.data() + internalModulesData.size())
-        return Bun__isEmbeddedModule(source.data(), source.size());
-
-    for (uint32_t id = 0; id < bun_internal_modules_header.moduleCount; id++) {
-        const auto& m = internalModuleRecord(id);
-        if (hasSameAddress(source, internalModulesData.subspan(m.codeOffset, m.codeLength)))
-            return true;
-    }
-    return false;
-}
 
 JSC::JSValue generateInternalModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, uint32_t id)
 {

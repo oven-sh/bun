@@ -555,13 +555,10 @@ describe.concurrent.skipIf(!builtStrict)("a build with =strict as a constant", (
   });
 });
 
-// In a `bun build --compile` executable, =strict allows embedded code only: Bun's builtins and the JavaScript modules in
-// the executable. The engine refuses everything else where code is made ready to run, whichever way it came in.
-describe.concurrent("=strict in a compiled executable", () => {
-  const refusedNotEmbedded = (url?: string) =>
-    url
-      ? `EvalError: Refused to run "${url}" because it is not embedded in the executable`
-      : "EvalError: Refused to run code that is not embedded in the executable";
+// With =strict the engine runs static code only: builtins, and what the loader read from where the program is stored. It
+// refuses everything else where code is made ready to run, whichever way it came in. A `bun build --compile` executable is
+// stored in itself, so to it a file on disk is not static.
+describe.concurrent("=strict runs static code only", () => {
   // It is inside #if ASSERT_ENABLED.
   const hasEvaluateForTesting = evaluateForTesting !== undefined;
   const exe = isWindows ? "app.exe" : "app";
@@ -579,7 +576,7 @@ describe.concurrent("=strict in a compiled executable", () => {
         process.exit(0);
       })();
   `;
-  const compiledFiles = {
+  const files = {
     // Every source that must not run records itself in globalThis.ran if it does.
     "refused-routes.ts": `
       import fs from "node:fs";
@@ -606,13 +603,6 @@ describe.concurrent("=strict in a compiled executable", () => {
           const entry = write("uses-macro.ts", 'import { macro } from "./macro.ts" with { type: "macro" }; export default macro();');
           return (await Bun.build({ entrypoints: [entry], throw: false })).logs.map(log => log.message);
         },
-        importWritten: () => import(write("imported.mjs")),
-        requireWritten: () => require(write("required.cjs")),
-        importEmpty: () => import(write("empty.mjs", "")),
-        importText: () => import(write("text.txt")),
-        importMarkdown: () => import(write("markdown.md")),
-        importWithTypeText: () => import(write("typed-text.bin"), { with: { type: "text" } }),
-        workerFromWrittenFile: () => workerOutcome(write("worker.mjs", 'postMessage("worker.mjs")')),
         devServer: () => Bun.serve({ port: 0, app: { root: dir, framework: {
           fileSystemRouterTypes: [{ root: "pages", style: "nextjs-pages", serverEntryPoint: dir + "/framework-server.ts", clientEntryPoint: dir + "/framework-client.ts" }],
           reactFastRefresh: false,
@@ -623,6 +613,17 @@ describe.concurrent("=strict in a compiled executable", () => {
         routes.evaluate = () => evaluate(recordRun("evaluate"));
         routes.evaluateJSONPAssignment = () => evaluate('ran = {"a":1}');
         routes.evaluateJSONPCall = () => evaluate('process.exit({"a":1})');
+      }
+      if (process.argv[3] === "compiled") {
+        Object.assign(routes, {
+          importWritten: () => import(write("imported.mjs")),
+          requireWritten: () => require(write("required.cjs")),
+          importEmpty: () => import(write("empty.mjs", "")),
+          importText: () => import(write("text.txt")),
+          importMarkdown: () => import(write("markdown.md")),
+          importWithTypeText: () => import(write("typed-text.bin"), { with: { type: "text" } }),
+          workerFromWrittenFile: () => workerOutcome(write("worker.mjs", 'postMessage("worker.mjs")')),
+        });
       }
       ${runRoutes}
     `,
@@ -718,40 +719,52 @@ describe.concurrent("=strict in a compiled executable", () => {
   const runCompiled = (cwd: string, args: string[], env?: Record<string, string>) =>
     spawn([join(cwd, exe), ...args], cwd, env);
 
-  test("refuses code that is not embedded", async () => {
-    using dir = tempDir("disallow-code-generation-compiled-refuses", compiledFiles);
+  const refusedMacro = `Macros cannot be used with ${strict}`;
+  const refusedWhereverTheProgramIsStored = {
+    pluginOnLoadJSON: refused,
+    macroExportName: "BuildMessage: " + refusedMacro,
+    macroInBuild: [refusedMacro],
+    devServer: refused,
+    ...(hasEvaluateForTesting && {
+      evaluate: refused,
+      evaluateJSONPAssignment: refused,
+      evaluateJSONPCall: refused,
+    }),
+  };
+  const bake = { BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1" };
+
+  test("refuses what is made at run time", async () => {
+    using dir = tempDir("disallow-code-generation-refuses", files);
+    const cwd = String(dir);
+    const cmd = [bunExe(), strict, "--expose-internals", "./refused-routes.ts", cwd];
+    const { stdout, exitCode } = await spawn(cmd, cwd, bake);
+    expect(JSON.parse(stdout)).toEqual({ results: refusedWhereverTheProgramIsStored, unhandled: [] });
+    expect(exitCode).toBe(0);
+  });
+
+  test("a compiled executable refuses files on disk too", async () => {
+    using dir = tempDir("disallow-code-generation-compiled-refuses", files);
     const cwd = String(dir);
     await compile(cwd, ["./refused-routes.ts"], [], strict + " --expose-internals");
 
-    const refusedFile = (name: string) => refusedNotEmbedded(join(cwd, name));
-    const refusedMacro = `Macros cannot be used with ${strict} in a compiled executable: a macro is not embedded in the executable`;
-    const expected = {
+    const { stdout, exitCode } = await runCompiled(cwd, [cwd, "compiled"], bake);
+    expect(JSON.parse(stdout)).toEqual({
       results: {
-        pluginOnLoadJSON: refusedFile("x.plugin-json"),
-        macroExportName: "BuildMessage: " + refusedMacro,
-        macroInBuild: [refusedMacro],
-        importWritten: refusedFile("imported.mjs"),
-        requireWritten: refusedFile("required.cjs"),
-        importEmpty: refusedFile("empty.mjs"),
-        importText: refusedFile("text.txt"),
-        importMarkdown: refusedFile("markdown.md"),
-        importWithTypeText: refusedFile("typed-text.bin"),
-        workerFromWrittenFile: refusedFile("worker.mjs"),
-        devServer: refusedNotEmbedded("bake://server-runtime.js"),
-        ...(hasEvaluateForTesting && {
-          evaluate: refusedNotEmbedded(),
-          evaluateJSONPAssignment: refusedNotEmbedded(),
-          evaluateJSONPCall: refusedNotEmbedded(),
-        }),
+        ...refusedWhereverTheProgramIsStored,
+        importWritten: refused,
+        requireWritten: refused,
+        importEmpty: refused,
+        importText: refused,
+        importMarkdown: refused,
+        importWithTypeText: refused,
+        workerFromWrittenFile: refused,
       },
       unhandled: [],
-    };
-    const { stdout, exitCode } = await runCompiled(cwd, [cwd], { BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE: "1" });
-    expect(JSON.parse(stdout)).toEqual(expected);
+    });
     expect(exitCode).toBe(0);
     expect(await runCompiled(cwd, [cwd], { BUN_OPTIONS: "--preload=" + join(cwd, "imported.mjs") })).toEqual({
       stdout: "",
-      stderr: expect.stringContaining(refusedFile("imported.mjs")),
+      stderr: expect.stringContaining(refused),
       exitCode: 1,
     });
   });
@@ -761,8 +774,8 @@ describe.concurrent("=strict in a compiled executable", () => {
     { modules: "ES modules with bytecode", buildArgs: ["--bytecode"] },
     { modules: "CommonJS", buildArgs: ["--format=cjs"] },
     { modules: "CommonJS with bytecode", buildArgs: ["--format=cjs", "--bytecode"] },
-  ])("runs embedded code: $modules", async ({ buildArgs }) => {
-    using dir = tempDir("disallow-code-generation-compiled-runs", compiledFiles);
+  ])("a compiled executable runs what is in it: $modules", async ({ buildArgs }) => {
+    using dir = tempDir("disallow-code-generation-compiled-runs", files);
     const cwd = String(dir);
     await compile(cwd, ["./allowed-routes.ts", "./worker.ts", "./utf16.ts"], buildArgs, strict);
     const { stdout, stderr, exitCode } = await runCompiled(cwd, [cwd]);

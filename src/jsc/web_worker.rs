@@ -304,51 +304,18 @@ impl WebWorker {
         log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
-        // SAFETY: `parent` is the calling thread's live VM (BACKREF); borrows
-        // are scoped to each statement.
-        let prev_log = unsafe { (*parent).transpiler.log };
-        // RAII: log pointer restored and temp log dropped on every return path.
-        let mut restore = scopeguard::guard(bun_ast::Log::default(), move |log| {
-            // SAFETY: `parent` outlives the guard (this call's frame).
-            unsafe { (*parent).transpiler.set_log(prev_log) };
-            drop(log);
-        });
-        let temp_log = &mut *restore;
-        // SAFETY: as above; the guard restores `prev_log` before `temp_log` drops.
-        unsafe { (*parent).transpiler.set_log(&raw mut *temp_log) };
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
         let preload_modules: &[BunString] =
             unsafe { bun_core::ffi::slice(preload_modules_ptr, preload_modules_len) };
-
-        let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);
-        for module in preload_modules {
-            let utf8_slice = module.to_utf8();
-            // node: builtin specifiers skip the file resolver — the worker-side
-            // module loader resolves them.
-            if utf8_slice.slice().starts_with(b"node:") {
-                preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
-                continue;
-            }
-            // SAFETY: `parent` is the live VM on the calling (parent) thread;
-            // `resolve_entry_point_specifier` takes the raw pointer.
-            if let Some(preload) = unsafe {
-                resolve_entry_point_specifier(
-                    parent,
-                    utf8_slice.slice(),
-                    SpecifierRole::Preload,
-                    error_message,
-                    temp_log,
-                )
-            } {
-                preloads.push(preload.to_vec().into_boxed_slice());
-            }
-
-            if !error_message.is_empty() {
-                // preloads dropped by RAII.
+        // SAFETY: `parent` is the calling thread's live VM (BACKREF).
+        let preloads = match unsafe { resolve_preloads(parent, preload_modules) } {
+            Ok(preloads) => preloads,
+            Err(message) => {
+                *error_message = message;
                 return core::ptr::null_mut();
             }
-        }
+        };
 
         // Everything the worker thread needs from this VM is copied here, on
         // its own thread; the worker never dereferences `parent`.
@@ -816,27 +783,36 @@ impl WebWorker {
         // the raw specifier). The returned slice is BORROWED — every exit from
         // spin() goes through shutdown() which is noreturn, so a `defer free`
         // here would never run anyway.
-        let mut resolve_error = BunString::EMPTY;
-        let vm_log = vm.log_mut().unwrap();
-        // SAFETY: `vm_ptr` is the live worker-thread VM.
+        // SAFETY: `vm_ptr` is the live worker-thread VM, and no reference to its log is live here.
         let path = match unsafe {
-            resolve_entry_point_specifier(
-                vm_ptr,
-                &self.unresolved_specifier,
-                SpecifierRole::EntryPoint,
-                &mut resolve_error,
-                vm_log,
-            )
+            resolve_entry_point_specifier(vm_ptr, &self.unresolved_specifier)
         } {
-            Some(p) => p,
-            None => {
+            Ok(p) => p,
+            Err(err) => {
                 vm.as_mut().exit_handler.exit_code = 1;
-                if vm_log.errors == 0 && !resolve_error.is_empty() {
-                    let err = resolve_error.to_utf8();
-                    // `Log::add_error` takes `impl IntoText`; pass an owned
-                    // `Vec<u8>` so the `Msg` owns its bytes (no lifetime tie
-                    // to `err`, which is dropped immediately after).
-                    vm_log.add_error(None, bun_ast::Loc::EMPTY, err.slice().to_vec());
+                let vm_log = vm.log_mut().unwrap();
+                // The resolver already logged why it failed. Add a message only if it did not.
+                if vm_log.errors == 0 {
+                    match err {
+                        SpecifierError::BlobUrlMissing => {
+                            vm_log.add_error(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                b"Blob URL is missing" as &'static [u8],
+                            );
+                        }
+                        SpecifierError::Unresolved(err) => {
+                            vm_log.add_error_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "{} resolving {} (entry point)",
+                                    err,
+                                    bun_core::fmt::quote(&self.unresolved_specifier)
+                                ),
+                            );
+                        }
+                    }
                 }
                 self.flush_logs(vm);
                 return self.shutdown();
@@ -1241,29 +1217,27 @@ fn on_unhandled_rejection(
     vm.handle_ref().request_termination();
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum SpecifierRole {
-    EntryPoint,
-    Preload,
+/// Why `resolve_entry_point_specifier` has no path to return.
+enum SpecifierError {
+    BlobUrlMissing,
+    /// The resolver failed. It also appended the reason to the `Log` that
+    /// `parent`'s transpiler points at.
+    Unresolved(bun_bundler::Error),
 }
 
-/// Resolve a worker entry-point specifier to a path the module loader can
-/// consume. The returned slice is BORROWED — it aliases `str`, the
+/// Resolve a worker entry-point or preload specifier to a path the module
+/// loader can consume. The returned slice is BORROWED — it aliases `str`, the
 /// standalone module graph, or the resolver's arena; the caller must NOT
 /// free it.
 ///
 /// # Safety
-/// `parent` must point at this thread's live `VirtualMachine`. Passed as a raw
-/// pointer (not `&mut`) because callers hold other borrows into the VM (its
-/// log) across the call; per-use `(*parent)` derefs keep any autoref scoped to
-/// the single expression.
+/// `parent` must point at this thread's live `VirtualMachine`. The caller must
+/// hold no reference to the `Log` that `parent`'s transpiler points at: the
+/// resolver writes to it through that raw pointer.
 unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
     str: &'s [u8],
-    role: SpecifierRole,
-    error_message: &mut BunString,
-    log: &mut bun_ast::Log,
-) -> Option<&'s [u8]> {
+) -> Result<&'s [u8], SpecifierError> {
     // In a `bun build --compile` executable, a relative specifier names an embedded entry point (relative to the
     // embedded root) before it names a file on disk, and an absolute one may be an embedded path in either syntax
     // (`new URL("./w.ts", import.meta.url)`).
@@ -1271,14 +1245,14 @@ unsafe fn resolve_entry_point_specifier<'s>(
     if let Some(graph) = unsafe { (*parent).standalone_module_graph }
         && let Some(name) = graph.resolve(graph.base_public_path_with_default_suffix(), str)
     {
-        return Some(name);
+        return Ok(name);
     }
 
     // A `data:` URL is the module itself (the loader decodes it); it never names
     // a path, so it must not go through path resolution (long ones would fail
     // with ENAMETOOLONG there).
     if str.starts_with(b"data:") {
-        return Some(str);
+        return Ok(str);
     }
 
     // Spec `bun.webcore.ObjectURLRegistry.isBlobURL(str)` — prefix `"blob:"`
@@ -1288,58 +1262,96 @@ unsafe fn resolve_entry_point_specifier<'s>(
     const BLOB_SPECIFIER_LEN: usize = b"blob:".len() + crate::uuid::UUID::STRING_LENGTH;
     if str.len() >= BLOB_SPECIFIER_LEN && str.starts_with(b"blob:") {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
-        if (hooks.has_blob_url)(&str[b"blob:".len()..]) {
-            return Some(str);
+        return if (hooks.has_blob_url)(&str[b"blob:".len()..]) {
+            Ok(str)
         } else {
-            *error_message = BunString::static_("Blob URL is missing");
-            return None;
-        }
+            Err(SpecifierError::BlobUrlMissing)
+        };
     }
 
-    // SAFETY: per fn contract; `global` is a read-only field, and the resolver
-    // (`transpiler`) is mutated only on `parent`'s owning thread — both call
-    // sites (`create()` on the parent thread, `spin()` on the worker thread)
-    // satisfy that.
-    let global = unsafe { (*parent).global };
-    // SAFETY: same as above — `parent`'s `transpiler` is mutated only on its
-    // owning thread (the caller's thread per fn contract).
-    let resolved_entry_point = match unsafe { (*parent).transpiler.resolve_entry_point(str) } {
-        Ok(r) => r,
-        Err(err) if role == SpecifierRole::Preload => {
-            // The same wording as `--preload` on the CLI (`jsc_hooks.rs`).
-            *error_message = BunString::clone_utf8(
-                format!("{} resolving preload {}", err, bun_core::fmt::quote(str)).as_bytes(),
-            );
-            return None;
-        }
-        Err(_) => {
-            // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
-            let global = JSGlobalObject::opaque_ref(global);
-            let out: jsc::JsResult<BunString> = (|| {
-                let out = log.to_js(global, format_args!("Error resolving Worker entry point"))?;
-                out.to_bun_string(global)
-            })();
-            match out {
-                Ok(out) => {
-                    *error_message = out;
-                    return None;
-                }
-                Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(JsError::Thrown | JsError::Terminated) => {
-                    *error_message = BunString::static_("unexpected exception");
-                    return None;
-                }
-            }
-        }
-    };
+    // SAFETY: per fn contract; the resolver (`transpiler`) is mutated only on
+    // `parent`'s owning thread — both call sites (`resolve_preloads()` on the
+    // parent thread, `spin()` on the worker thread) satisfy that.
+    let resolved_entry_point = unsafe { (*parent).transpiler.resolve_entry_point(str) }
+        .map_err(SpecifierError::Unresolved)?;
 
     // `Path::text` borrows the resolver's process-lifetime `dirname_store` /
     // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —
     // copy the slice out and let `resolved_entry_point` drop on the stack.
-    Some(
-        resolved_entry_point
-            .path_const()
-            .expect("resolve_entry_point rejects disabled results")
-            .text,
-    )
+    Ok(resolved_entry_point
+        .path_const()
+        .expect("resolve_entry_point rejects disabled results")
+        .text)
+}
+
+/// Resolve the `preload` option of a `Worker` on the thread that constructs
+/// it. An `Err` is the message of the `TypeError` the constructor throws.
+///
+/// # Safety
+/// `parent` must point at this thread's live `VirtualMachine`.
+unsafe fn resolve_preloads(
+    parent: *mut VirtualMachine,
+    modules: &[BunString],
+) -> Result<Vec<Box<[u8]>>, BunString> {
+    if modules.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // The resolver reports to the `Log` its transpiler points at; a scratch one keeps
+    // the parent's log clean. The transpiler holds its address, so `temp_log` never
+    // moves, and the guard after it restores the pointer before `temp_log` drops.
+    let mut temp_log = bun_ast::Log::default();
+    // SAFETY: per fn contract; borrows are scoped to each statement.
+    let prev_log = unsafe {
+        let prev = (*parent).transpiler.log;
+        (*parent).transpiler.set_log(&raw mut temp_log);
+        prev
+    };
+    let _restore = scopeguard::guard((), move |()| {
+        // SAFETY: `parent` outlives this call's frame.
+        unsafe { (*parent).transpiler.set_log(prev_log) };
+    });
+
+    let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(modules.len());
+    for module in modules {
+        let utf8_slice = module.to_utf8();
+        let specifier = utf8_slice.slice();
+        // node: builtin specifiers skip the file resolver — the worker-side
+        // module loader resolves them.
+        if specifier.starts_with(b"node:") {
+            preloads.push(specifier.to_vec().into_boxed_slice());
+            continue;
+        }
+        // SAFETY: per fn contract; no reference to `temp_log` is live across the call.
+        match unsafe { resolve_entry_point_specifier(parent, specifier) } {
+            Ok(path) => preloads.push(path.to_vec().into_boxed_slice()),
+            Err(SpecifierError::BlobUrlMissing) => {
+                return Err(BunString::static_("Blob URL is missing"));
+            }
+            Err(SpecifierError::Unresolved(err)) => {
+                // The text a `BuildMessage` of the resolver's error gives as a
+                // string, without a JS object.
+                let mut message = b"BuildMessage: ".to_vec();
+                match temp_log
+                    .msgs
+                    .iter()
+                    .rfind(|msg| msg.kind == bun_ast::Kind::Err)
+                {
+                    Some(msg) => message.extend_from_slice(&msg.data.text),
+                    None => {
+                        use std::io::Write as _;
+                        write!(
+                            &mut message,
+                            "{} resolving {} (entry point)",
+                            err,
+                            bun_core::fmt::quote(specifier)
+                        )
+                        .expect("infallible: in-memory write");
+                    }
+                }
+                return Err(BunString::clone_utf8(&message));
+            }
+        }
+    }
+    Ok(preloads)
 }

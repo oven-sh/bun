@@ -673,12 +673,14 @@ if (typeof Bun !== "undefined") {
       });
     });
 
-    // Node leaves the abort listener on the signal when addAbortSignal() rejects the stream.
-    test("addAbortSignal() leaves no abort listener for a pair or a TransformStream", () => {
+    // Node adds its abort listener first, and then eos() rejects the stream. A later abort runs the
+    // listener, which throws. With a signal that has aborted, Node throws a TypeError.
+    test("addAbortSignal() rejects a pair and a TransformStream before it uses the signal", () => {
       for (const stream of [pairs[0][1](upper), new TransformStream()]) {
         const { signal } = new AbortController();
         assert.throws(() => addAbortSignal(signal, stream), { code: "ERR_INVALID_ARG_TYPE" });
         assert.strictEqual(getEventListeners(signal, "abort").length, 0);
+        assert.throws(() => addAbortSignal(AbortSignal.abort(), stream), { code: "ERR_INVALID_ARG_TYPE" });
       }
     });
 

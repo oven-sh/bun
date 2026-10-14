@@ -1,11 +1,23 @@
 // `bun build --compile --compile-exclude-features=<name>` leaves parts of the runtime out of the executable.
 //
-// A feature is crates that the rest of Bun does not depend on (src/bun_core/feature.rs). Every build of Bun has its doors. Its
-// code is in sections of its own, which can leave the file, where Bun's build could load its compiler pass
-// (scripts/build/rust/features.ts).
+// A feature is crates that the rest of Bun does not depend on (src/bun_core/feature.rs). Bun says where what was compiled for
+// them is if its build could load a compiler pass (scripts/build/rust/features.ts), which it can on Linux, where CI builds
+// for every target. A bun that does not has to say so.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isWindows, readElf64ProgramHeaders, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isArm64,
+  isASAN,
+  isCI,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isWindows,
+  readElf64ProgramHeaders,
+  tempDir,
+} from "harness";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -107,7 +119,42 @@ function expectWellFormedPe(path: string) {
   expect(gaps.filter(s => s.rawSize || s.raw)).toEqual([]);
 }
 
-const alreadyExcluded = "does not say what can be excluded";
+const cannotExclude = "does not say what can be excluded";
+const canExclude = (() => {
+  using dir = tempDir("exclude-features-probe", { "app.ts": "" });
+  const { stdout, stderr } = Bun.spawnSync({
+    cmd: [bunExe(), "build", "--compile", "app.ts", "--outfile", "app", "--compile-exclude-features=?"],
+    cwd: String(dir),
+    env: bunEnv,
+  });
+  return (stdout.toString() + stderr.toString()).includes("These can be excluded:");
+})();
+
+// Else every test below could be skipped without anyone noticing.
+test.skipIf(!isCI)("what CI builds can exclude features", () => {
+  expect(canExclude).toBe(true);
+});
+
+test.skipIf(canExclude)("a bun that cannot exclude features says so", async () => {
+  using dir = tempDir("exclude-features", { "app.ts": app });
+  const { stdout, stderr, exitCode } = await compile(String(dir), "app", "--compile-exclude-features=lint");
+  expect(stdout + stderr).toContain(cannotExclude);
+  expect(existsSync(join(String(dir), exe("app")))).toBe(false);
+  expect(exitCode).not.toBe(0);
+});
+
+// Such an executable is ten times the size, so there is one.
+test.skipIf(!canExclude || !(isDebug || isASAN))("a debug build", async () => {
+  using dir = tempDir("exclude-features", { "app.ts": app, "one.ts": "export const one = 1;\n" });
+  const compiled = await compile(String(dir), "app", "--compile-exclude-features=check,lint,fmt,semver,csrf");
+  expect(compiled.stderr).not.toContain("error");
+  const ran = await run([join(String(dir), exe("app"))], String(dir));
+  expect(JSON.parse(ran.stdout)).toEqual(working);
+  expect((await asBun(String(dir), "app", "lint", "one.ts")).stderr).toContain("built without this command");
+  expect((await asBun(String(dir), "app", "-p", "typeof Bun.semver + typeof Bun.CSRF")).stdout).toBe(
+    "undefinedundefined\n",
+  );
+});
 
 test("requires --compile", async () => {
   using dir = tempDir("exclude-features", { "app.ts": app });
@@ -119,11 +166,15 @@ test("requires --compile", async () => {
   expect(exitCode).not.toBe(0);
 });
 
-describe("--compile-exclude-features", () => {
+describe.skipIf(!canExclude || isDebug || isASAN)("--compile-exclude-features", () => {
   const commands = { check: ["check"], lint: ["lint", "one.ts"], fmt: ["fmt", "--check", "one.ts"] };
   const features = Object.keys(commands) as (keyof typeof commands)[];
   // What two features share goes only once both are excluded, so each set of them is an executable of its own.
-  const sets = Array.from({ length: 1 << features.length }, (_, bits) => features.filter((_, i) => bits & (1 << i)));
+  const sets: string[][] = Array.from({ length: 1 << features.length }, (_, bits) =>
+    features.filter((_, i) => bits & (1 << i)),
+  );
+  const apis = { semver: "Bun.semver", csrf: "Bun.CSRF" };
+  const executables = [...sets, ...Object.keys(apis).map(api => [api])];
   const without = (...set: string[]) => "without-" + (set.join("-") || "nothing");
   const expectToWork = async (name: string) => {
     const ran = await run([join(cwd, exe(name))], cwd);
@@ -146,10 +197,12 @@ describe("--compile-exclude-features", () => {
     // Given several times, or separated by commas.
     const flags = (set: string[]) => (set.length === 2 ? set : set.length ? [set.join(",")] : []);
     const compiled = await Promise.all(
-      sets.map(set => compile(cwd, without(...set), ...flags(set).map(names => `--compile-exclude-features=${names}`))),
+      executables.map(set =>
+        compile(cwd, without(...set), ...flags(set).map(names => `--compile-exclude-features=${names}`)),
+      ),
     );
     expect(compiled.map(c => c.stderr).join("")).not.toContain("error");
-    expect(compiled.map(c => c.exitCode)).toEqual(sets.map(() => 0));
+    expect(compiled.map(c => c.exitCode)).toEqual(executables.map(() => 0));
   });
   afterAll(async () => {
     // Windows goes on with a report of its own about a crash, and has the executable open for that long.
@@ -197,11 +250,28 @@ describe("--compile-exclude-features", () => {
     },
   );
 
-  test("what is excluded is not in the file", () => {
+  test("the file is smaller", () => {
     const size = (...set: string[]) => statSync(join(cwd, exe(without(...set)))).size;
     const MB = 1024 * 1024;
     expect(size("lint", "fmt")).toBeLessThan(size() - 5 * MB);
     expect(size(...features)).toBeLessThan(size("lint", "fmt") - 5 * MB);
+  });
+
+  test.concurrent.each(Object.entries(apis))("without %s", async (excluded, api) => {
+    await expectToWork(without(excluded));
+    const types = `JSON.stringify({ ${Object.values(apis).map(api => `"${api}": typeof ${api}`)} })`;
+    const { stdout, exitCode } = await asBun(cwd, without(excluded), "-p", types);
+    const expected = Object.fromEntries(Object.values(apis).map(it => [it, it === api ? "undefined" : "object"]));
+    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(exitCode).toBe(0);
+  });
+
+  // Too small to make the file much smaller, and gone all the same.
+  test("what is excluded is not in the file", () => {
+    const text = "Missing required token parameter";
+    expect(readFileSync(join(cwd, exe(without()))).includes(text)).toBe(true);
+    expect(readFileSync(join(cwd, exe(without("semver")))).includes(text)).toBe(true);
+    expect(readFileSync(join(cwd, exe(without("csrf")))).includes(text)).toBe(false);
   });
 
   // Nothing moves, so it reads against the symbols of the release like any other.
@@ -250,7 +320,7 @@ describe("--compile-exclude-features", () => {
   test.concurrent("a name that does not exist", async () => {
     const { stdout, stderr, exitCode } = await compile(cwd, "nope", "--compile-exclude-features=lint,nope");
     expect(stdout + stderr).toContain(
-      'there is no feature called "nope". These can be excluded:\n  check\n  lint\n  fmt\n',
+      'there is no feature called "nope". These can be excluded:\n  check\n  lint\n  fmt\n  semver\n  csrf\n',
     );
     expect(existsSync(join(cwd, exe("nope")))).toBe(false);
     expect(exitCode).not.toBe(0);
@@ -263,11 +333,11 @@ describe("--compile-exclude-features", () => {
     expect(rejected.errors[0].message).toContain('there is no feature called "nope"');
   });
 
-  // The table is about the executable as it was.
+  // What it said was about the executable as it was.
   test.concurrent("features cannot be excluded a second time", async () => {
     const from = `--compile-executable-path=${join(cwd, exe(without("lint")))}`;
     const again = await compile(cwd, "a-second-time", from, "--compile-exclude-features=fmt");
-    expect(again.stdout + again.stderr).toContain(alreadyExcluded);
+    expect(again.stdout + again.stderr).toContain(cannotExclude);
     expect(again.exitCode).not.toBe(0);
   });
 

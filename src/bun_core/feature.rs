@@ -129,7 +129,7 @@ static NAMES_IN_THE_EXECUTABLE: [u8; NAMES_LENGTH] = {
 
 /// Room for program headers. An ELF file with pages left out has one more for each gap, the table of them cannot grow where
 /// the linker put it, and it has to be near the start of the file, where notes are.
-#[cfg(target_os = "linux")]
+#[cfg(not(any(target_os = "macos", windows)))]
 #[used(linker)]
 #[unsafe(link_section = ".note.bun")]
 static PROGRAM_HEADERS: Note = Note {
@@ -140,7 +140,7 @@ static PROGRAM_HEADERS: Note = Note {
     room: [0; 7 * 64],
 };
 
-#[cfg(target_os = "linux")]
+#[cfg(not(any(target_os = "macos", windows)))]
 #[repr(C)]
 struct Note {
     name_size: u32,

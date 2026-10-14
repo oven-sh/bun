@@ -33,8 +33,8 @@ pub enum Error {
     UnrecognizedExecutable,
     /// A header of the executable points outside the file, or it is not laid out as bun is.
     InvalidExecutable,
-    /// The executable does not say what can be left out: a bun for a platform without gates, one older than this, or one that
-    /// features were left out of already.
+    /// The executable does not say what can be left out: a bun that was built without scripts/build/feature-pass.cpp, one older
+    /// than this, or one that features were left out of already.
     NoFeatures,
     /// [`without`] was given a name that is not among [`names`].
     NoSuchFeature,
@@ -147,7 +147,13 @@ fn names_in<'a>(file: &'a [u8], sections: &[Section<'_>], called: &[u8]) -> Resu
 /// The features that can be left out of `file`, an executable.
 pub fn names(file: &[u8]) -> Result<Vec<&[u8]>> {
     let container = Container::of(file)?;
-    names_in(file, &container.sections(file)?, container.names()[0])
+    let [called_names, _, called_parts] = container.names();
+    let sections = container.sections(file)?;
+    // Only the doors could be shut, and all of the features would still be there.
+    if !sections.iter().any(|s| s.name == called_parts) {
+        return Err(Error::NoFeatures);
+    }
+    names_in(file, &sections, called_names)
 }
 
 /// Makes `no_op`, which a door starts with, at `at`, a jump to `to`.

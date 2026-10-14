@@ -11,13 +11,19 @@ const {
   checkShouldUseProxy,
   kWaitForProxyTunnel,
   kPerRequestCheckServerIdentity,
+  isTlsSymbol,
 } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
+const { isAnyArrayBuffer, isDataView } = require("node:util/types");
 
 const ArrayPrototypeShift = Array.prototype.shift;
+const ArrayPrototypeJoin = Array.prototype.join;
+const ArrayPrototypeMap = Array.prototype.map;
 const ObjectAssign = Object.assign;
 const ArrayPrototypeUnshift = Array.prototype.unshift;
 const JSONStringify = JSON.stringify;
+const WeakMapPrototypeGet = WeakMap.prototype.get;
+const WeakMapPrototypeSet = WeakMap.prototype.set;
 
 type HttpsRequestOptions = import("node:https").RequestOptions & { _defaultAgent?: import("node:https").Agent };
 
@@ -197,7 +203,15 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
         $debug("Propagate free event from tunneled socket to tunnel socket");
         socket.emit("free");
       }
-      tunneledSocket = require("node:tls").connect(requestOptions, onTLSHandshakeSuccess);
+      // https://github.com/nodejs/node/blob/ada8c5c9f82f620885820a2268e19dbf8a2228d5/lib/https.js#L295-L308
+      try {
+        tunneledSocket = require("node:tls").connect(requestOptions, onTLSHandshakeSuccess);
+      } catch (err) {
+        $debug("tls.connect() over tunnel threw", err);
+        socket.destroy();
+        afterSocket(err, socket);
+        return headerEndIndex;
+      }
       tunneledSocket.on("free", onTunneledSocketFree);
       tunneledSocket.on("error", onTLSHandshakeError);
       const agentKey = requestOptions._agentKey;
@@ -382,6 +396,45 @@ function Agent(options): void {
 $toClass(Agent, "Agent", http.Agent);
 Agent.prototype.createConnection = createConnection;
 
+// `"" + value` is "[object ...]" for every value but a string, a Buffer, a TypedArray or an array of those.
+const poolKeyObjectIds = new WeakMap<object, number>();
+let poolKeyObjectCount = 0;
+function poolKeyPart(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || $isTypedArrayView(value)) return value;
+  if ($isArray(value)) return ArrayPrototypeJoin.$call(ArrayPrototypeMap.$call(value, poolKeyPart), ",");
+  if (isAnyArrayBuffer(value)) return Buffer.from(value as ArrayBufferLike);
+  if (isDataView(value)) {
+    const { buffer, byteOffset, byteLength } = value as DataView;
+    return Buffer.from(buffer, byteOffset, byteLength);
+  }
+  // A key entry. Its passphrase only decrypts the pem, so it stays out of the name.
+  const { pem } = value as { pem?: unknown };
+  if (pem != null) return poolKeyPart(pem);
+  // Any other object (a Blob, a BunFile) has no contents to read here: key it by identity.
+  let id = WeakMapPrototypeGet.$call(poolKeyObjectIds, value);
+  if (id === undefined) WeakMapPrototypeSet.$call(poolKeyObjectIds, value, (id = ++poolKeyObjectCount));
+  return `[object #${id}]`;
+}
+
+// getPfxAgentKey() of https://github.com/nodejs/node/commit/9f03017f38 (CVE-2026-56850)
+type PfxEntry = { buf?: unknown; passphrase?: unknown } | null | undefined;
+function pfxPoolKey(pfx: unknown, passphrase: unknown) {
+  let entries: unknown[];
+  if ($isArray(pfx)) entries = pfx;
+  // Bun also takes one { buf, passphrase } entry outside an array.
+  else if ($isObject(pfx) && !$isTypedArrayView(pfx) && (pfx as PfxEntry)!.buf !== undefined) entries = [pfx];
+  else return poolKeyPart(pfx);
+
+  let key = "";
+  for (let i = 0; i < entries.length; i++) {
+    const value = entries[i] as PfxEntry;
+    const raw = value?.buf || value;
+    const pass = value?.passphrase || passphrase;
+    key += `:${poolKeyPart(raw)}:${pass}`;
+  }
+  return key;
+}
+
 /**
  * Gets a unique name for a set of options.
  */
@@ -395,6 +448,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
     ciphers,
     key,
     pfx,
+    passphrase,
     rejectUnauthorized,
     servername,
     host,
@@ -410,13 +464,18 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
     sigalgs,
     privateKeyIdentifier,
     privateKeyEngine,
+    certFile,
+    keyFile,
+    caFile,
+    allowPartialTrustChain,
+    secureContext,
   } = options;
 
   name += ":";
-  if (ca) name += ca;
+  if (ca) name += poolKeyPart(ca);
 
   name += ":";
-  if (cert) name += cert;
+  if (cert) name += poolKeyPart(cert);
 
   name += ":";
   if (clientCertEngine) name += clientCertEngine;
@@ -425,10 +484,10 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (ciphers) name += ciphers;
 
   name += ":";
-  if (key) name += key;
+  if (key) name += poolKeyPart(key);
 
   name += ":";
-  if (pfx) name += pfx;
+  if (pfx) name += pfxPoolKey(pfx, passphrase);
 
   name += ":";
   if (rejectUnauthorized !== undefined) name += rejectUnauthorized;
@@ -446,7 +505,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (secureProtocol) name += secureProtocol;
 
   name += ":";
-  if (crl) name += crl;
+  if (crl) name += poolKeyPart(crl);
 
   name += ":";
   if (honorCipherOrder !== undefined) name += honorCipherOrder;
@@ -455,7 +514,7 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
   if (ecdhCurve) name += ecdhCurve;
 
   name += ":";
-  if (dhparam) name += dhparam;
+  if (dhparam) name += poolKeyPart(dhparam);
 
   name += ":";
   if (secureOptions !== undefined) name += secureOptions;
@@ -471,6 +530,13 @@ Agent.prototype.getName = function getName(options = kEmptyObject) {
 
   name += ":";
   if (privateKeyEngine) name += privateKeyEngine;
+
+  // Node's name has no part for these, so a name without them stays Node's name.
+  if (certFile) name += `:certFile=${JSONStringify(certFile)}`;
+  if (keyFile) name += `:keyFile=${JSONStringify(keyFile)}`;
+  if (caFile) name += `:caFile=${JSONStringify(caFile)}`;
+  if (allowPartialTrustChain) name += ":allowPartialTrustChain";
+  if (secureContext) name += `:secureContext=${poolKeyPart(secureContext)}`;
 
   const perRequestCheckServerIdentity = options[kPerRequestCheckServerIdentity];
   if (perRequestCheckServerIdentity) name += `:${perRequestCheckServerIdentity}`;
@@ -514,12 +580,9 @@ Agent.prototype._evictSession = function _evictSession(key) {
 
 const { shouldUseEnvProxy } = require("node:_http_agent");
 
-// Like Node's https.Server constructor: default ALPNProtocols to ['http/1.1']
-// when neither ALPNProtocols nor ALPNCallback was given, and store the
-// normalized protocol list / callback on the server instance the way
-// tls.Server does (test-https-argument-of-creating.js).
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L82-L97
-function createServer(options, requestListener) {
+function Server(options, requestListener): void {
+  if (!(this instanceof Server)) return new Server(options, requestListener);
   if (typeof options === "function") {
     requestListener = options;
     options = {};
@@ -534,13 +597,27 @@ function createServer(options, requestListener) {
     // ALPN requests are always answered with http/1.1.
     options.ALPNProtocols = ["http/1.1"];
   }
-  const server = http.createServer(options, requestListener);
+  http.Server.$call(this, options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
-    require("node:tls").convertALPNProtocols(optionsALPNProtocols, server);
+    require("node:tls").convertALPNProtocols(optionsALPNProtocols, this);
   }
-  server.ALPNCallback = options.ALPNCallback;
-  return server;
+  this.ALPNCallback = options.ALPNCallback;
+  const blockList = options.blockList;
+  if (blockList) {
+    if (!$rust("node_net_binding.rs", "BlockList").isBlockList(blockList)) {
+      throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", blockList);
+    }
+    this.blockList = blockList;
+  }
+  return this;
+}
+$toClass(Server, "Server", http.Server);
+// A listener of this class speaks TLS whatever its options hold.
+Server.prototype[isTlsSymbol] = true;
+
+function createServer(options, requestListener) {
+  return new Server(options, requestListener);
 }
 
 var https = {
@@ -551,7 +628,7 @@ var https = {
     timeout: 5000,
     proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
   }),
-  Server: http.Server,
+  Server,
   createServer,
   get,
   request,

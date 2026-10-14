@@ -39,6 +39,11 @@
       "SourceLocation"
     ]
   },
+  "src/jsc/VirtualMachine.rs": {
+    "unsafe impl Send": [
+      "Shared"
+    ]
+  },
   "src/jsc/hot_reloader.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
@@ -91,6 +96,13 @@
   },
   "src/runtime/cli/create_command.rs": {
     "thread spawn": 1
+  },
+  "src/runtime/cli/lint_js.rs": {
+    "thread spawn": 1,
+    "unsafe impl Send": [
+      "Posted",
+      "Shared"
+    ]
   },
   "src/runtime/cli/open.rs": {
     "thread spawn": 1

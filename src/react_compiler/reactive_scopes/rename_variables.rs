@@ -8,8 +8,8 @@
 //!
 //! Corresponds to `src/ReactiveScopes/RenameVariables.ts`.
 
-use std::collections::HashMap;
-use std::collections::HashSet;
+use crate::collections::FxHashMap as HashMap;
+use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::hir::DeclarationId;
@@ -24,7 +24,7 @@ use crate::hir::ReactiveFunction;
 use crate::hir::ReactiveScopeBlock;
 use crate::hir::ReactiveValue;
 use crate::hir::StoreStr;
-use crate::hir::environment::Environment;
+use crate::hir::environment::{Environment, OutputMode};
 
 use crate::reactive_scopes::visitors::ReactiveFunctionVisitor;
 use crate::reactive_scopes::visitors::{self};
@@ -36,6 +36,8 @@ use crate::reactive_scopes::visitors::{self};
 struct Scopes {
     seen: IdMap<DeclarationId, IdentifierName>,
     stack: Vec<HashMap<StoreStr, DeclarationId>>,
+    /// For each of `stack`: all `t0`, `t1`, .. below the first number and all `T0`, `T1`, .. below the second are taken.
+    taken: Vec<[u32; 2]>,
     globals: HashSet<StoreStr>,
     names: HashSet<StoreStr>,
 }
@@ -44,9 +46,10 @@ impl Scopes {
     fn new(globals: HashSet<StoreStr>) -> Self {
         Self {
             seen: IdMap::new(),
-            stack: vec![HashMap::new()],
+            stack: vec![HashMap::default()],
+            taken: vec![[0; 2]],
             globals,
-            names: HashSet::new(),
+            names: HashSet::default(),
         }
     }
 
@@ -69,7 +72,10 @@ impl Scopes {
 
         let mut name: Vec<u8> = Vec::with_capacity(original_value.len() + 4);
         let mut itoa = bun_core::fmt::ItoaBuf::new();
-        let mut id: u32 = 0;
+        let mut id: u32 = match is_promoted_temp || is_promoted_jsx {
+            true => self.taken.last().unwrap()[usize::from(is_promoted_jsx)],
+            false => 0,
+        };
         let mut regen = |buf: &mut Vec<u8>, n: u32| {
             buf.clear();
             if is_promoted_temp {
@@ -93,6 +99,9 @@ impl Scopes {
             regen(&mut name, id);
             id += 1;
         }
+        if is_promoted_temp || is_promoted_jsx {
+            self.taken.last_mut().unwrap()[usize::from(is_promoted_jsx)] = id;
+        }
 
         let stored = StoreStr::new(bun_ast::data_store_dupe_str(&name));
         self.seen
@@ -114,11 +123,13 @@ impl Scopes {
     }
 
     fn enter(&mut self) {
-        self.stack.push(HashMap::new());
+        self.stack.push(HashMap::default());
+        self.taken.push(*self.taken.last().unwrap());
     }
 
     fn leave(&mut self) {
         self.stack.pop();
+        self.taken.pop();
     }
 }
 
@@ -128,6 +139,43 @@ impl Scopes {
 
 struct Visitor<'a> {
     env: &'a Environment,
+}
+
+impl Visitor<'_> {
+    /// Walk an inner HIR function, visiting params, instructions (with lvalues,
+    /// value-lvalues and operands), and terminal operands, as if each instruction
+    /// were one of the reactive function.
+    /// TS: `visitHirFunction`
+    /// Upstream recurses into a nested function twice, which walks depth `d` 2^d times.
+    fn visit_hir_function(&self, func_id: FunctionId, state: &mut Scopes) {
+        let env = self.env;
+        if !env.has_stack() {
+            return;
+        }
+        let inner_func = &env.functions[func_id.0 as usize];
+        for param in &inner_func.params {
+            state.visit_identifier(param.place().identifier, env);
+        }
+        for block in inner_func.body.blocks.values() {
+            for instr_id in &block.instructions {
+                let instr = &inner_func.instructions[instr_id.0 as usize];
+                for lvalue in crate::hir::visitors::lvalues(instr) {
+                    state.visit_identifier(lvalue.identifier, env);
+                }
+                for place in crate::hir::visitors::operands(&instr.value, &env.functions) {
+                    state.visit_identifier(place.identifier, env);
+                }
+                if let InstructionValue::FunctionExpression { lowered_func, .. }
+                | InstructionValue::ObjectMethod { lowered_func, .. } = &instr.value
+                {
+                    self.visit_hir_function(lowered_func.func, state);
+                }
+            }
+            for operand in crate::hir::visitors::terminal_operands(&block.terminal) {
+                state.visit_identifier(operand.identifier, env);
+            }
+        }
+    }
 }
 
 impl ReactiveFunctionVisitor for Visitor<'_> {
@@ -169,13 +217,8 @@ impl ReactiveFunctionVisitor for Visitor<'_> {
     /// TS: `visitScope(scope, state) { for (const [_, decl] of scope.scope.declarations) state.visit(decl.identifier); this.traverseScope(scope, state) }`
     fn visit_scope(&self, scope: &ReactiveScopeBlock, state: &mut Scopes) {
         let scope_data = &self.env.scopes[scope.scope.0 as usize];
-        let decl_ids: Vec<crate::hir::IdentifierId> = scope_data
-            .declarations
-            .iter()
-            .map(|(_, d)| d.identifier)
-            .collect();
-        for id in decl_ids {
-            state.visit_identifier(id, self.env);
+        for (_, declaration) in &scope_data.declarations {
+            state.visit_identifier(declaration.identifier, self.env);
         }
         self.traverse_scope(scope, state);
     }
@@ -245,7 +288,13 @@ fn rename_variables_with_parent(
         }
     }
 
-    let mut result: HashSet<String> = HashSet::with_capacity(scopes.names.len() + globals.len());
+    // The names are for what is generated.
+    if env.output_mode == OutputMode::Lint {
+        return HashSet::default();
+    }
+
+    let mut result: HashSet<String> =
+        HashSet::with_capacity_and_hasher(scopes.names.len() + globals.len(), Default::default());
     for n in scopes.names.iter().chain(globals.iter()) {
         result.insert(bun_core::BStr::new(n.slice()).to_string());
     }
@@ -270,7 +319,7 @@ fn rename_variables_impl(func: &ReactiveFunction, visitor: &Visitor, scopes: &mu
 /// Collects all globally referenced names from the reactive function.
 /// TS: `collectReferencedGlobals`
 fn collect_referenced_globals(block: &ReactiveBlock, env: &Environment) -> HashSet<StoreStr> {
-    let mut globals = HashSet::new();
+    let mut globals = HashSet::default();
     collect_globals_block(block, &mut globals, env);
     globals
 }
@@ -280,6 +329,10 @@ fn collect_globals_block(
     globals: &mut HashSet<StoreStr>,
     env: &Environment,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     for stmt in block {
         match stmt {
             crate::hir::ReactiveStatement::Instruction(instr) => {
@@ -303,6 +356,10 @@ fn collect_globals_value(
     globals: &mut HashSet<StoreStr>,
     env: &Environment,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     match value {
         ReactiveValue::Instruction(iv) => {
             if let InstructionValue::LoadGlobal { binding, .. } = iv {
@@ -353,11 +410,12 @@ fn collect_globals_hir_function(
     globals: &mut HashSet<StoreStr>,
     env: &Environment,
 ) {
+    if !env.has_stack() {
+        return;
+    }
+
     let inner_func = &env.functions[func_id.0 as usize];
-    let block_ids: Vec<_> = inner_func.body.blocks.keys().copied().collect();
-    for block_id in block_ids {
-        let inner_func = &env.functions[func_id.0 as usize];
-        let block = &inner_func.body.blocks[&block_id];
+    for block in inner_func.body.blocks.values() {
         for instr_id in &block.instructions {
             let instr = &inner_func.instructions[instr_id.0 as usize];
             if let InstructionValue::LoadGlobal { binding, .. } = &instr.value {

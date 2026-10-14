@@ -9,7 +9,7 @@ describe("AbortSignal", () => {
     const fileName = `/abort.test.ts`;
     const testFileContents = await Bun.file(join(import.meta.dir, "abort.ts")).arrayBuffer();
 
-    writeFileSync(join(tmpdirSync(), fileName), testFileContents, "utf8");
+    writeFileSync(join(tmpdirSync(), fileName), testFileContents as any, "utf8");
     const { stderr } = Bun.spawnSync({
       cmd: [bunExe(), "test", fileName],
       env: bunEnv,

@@ -23,7 +23,7 @@ pub(crate) struct Scanner<'a> {
     pub(crate) filter_names: &'a [&'a [u8]],
     /// Glob patterns for paths to ignore. Matched against the path relative to the
     /// project root (top_level_dir). When a file matches any pattern, it is excluded.
-    pub(crate) path_ignore_patterns: &'a [&'a [u8]],
+    pub(crate) path_ignore_patterns: &'a [bun_glob::Prepared<&'a [u8]>],
     pub(crate) dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub(crate) test_files: Vec<Interned>,
@@ -305,15 +305,15 @@ impl<'a> Scanner<'a> {
         };
 
         for pattern in self.path_ignore_patterns {
-            if bun_glob::r#match(pattern, rel_path).matches() {
+            if pattern.r#match(rel_path).matches() {
                 return true;
             }
             // Only try trailing separator for ** patterns (e.g. "vendor/**").
             // Single-star patterns like "vendor/*" must not prune entire
             // directories because * doesn't cross directory boundaries.
             if let Some(p) = rel_with_slash {
-                if strings::index_of(pattern, b"**").is_some() {
-                    if bun_glob::r#match(pattern, p).matches() {
+                if strings::index_of(pattern.pattern(), b"**").is_some() {
+                    if pattern.r#match(p).matches() {
                         return true;
                     }
                 }

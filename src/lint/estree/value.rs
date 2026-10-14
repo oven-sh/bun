@@ -169,7 +169,7 @@ impl<'a, T: Into<Value<'a>>> From<Option<T>> for Value<'a> {
 /// A list of nodes, in which a hole is `None`. It is the iterator over itself, and starts over
 /// from every copy.
 #[derive(Copy, Clone)]
-pub struct Nodes<'a>(Inner<'a>);
+pub(crate) struct Nodes<'a>(Inner<'a>);
 
 #[derive(Copy, Clone)]
 enum Inner<'a> {
@@ -296,23 +296,6 @@ impl<'a> Nodes<'a> {
 
     pub(super) fn jsx_children(element: Expr<'a>, children: JsxChildren<'a>) -> Nodes<'a> {
         Nodes(Inner::JsxChildren(element, children))
-    }
-
-    /// [`ListIter::narrow_to`], for the lists that can be long. Any other stays whole.
-    pub fn narrow_to(&mut self, offset: u32, margin: u32) -> (bool, bool) {
-        match &mut self.0 {
-            Inner::Exprs(list) => list.narrow_to(offset, margin),
-            Inner::Stmts(list) => list.narrow_to(offset, margin),
-            Inner::Types(list) | Inner::Heritage(list) => list.narrow_to(offset, margin),
-            Inner::Props(list) => list.narrow_to(offset, margin),
-            Inner::Members(list) => list.narrow_to(offset, margin),
-            Inner::VarDecls(list) => list.narrow_to(offset, margin),
-            Inner::Cases(list) => list.narrow_to(offset, margin),
-            Inner::EnumMembers(list) => list.narrow_to(offset, margin),
-            Inner::ExportSpecs(list) => list.narrow_to(offset, margin),
-            Inner::PatProps(list) => list.narrow_to(offset, margin),
-            _ => (false, false),
-        }
     }
 
     /// `length`

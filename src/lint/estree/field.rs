@@ -5,7 +5,7 @@ macro_rules! fields {
         /// A field of an ESTree node.
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
         #[repr(u8)]
-        pub enum Field { $($variant),* }
+        pub(crate) enum Field { $($variant),* }
 
         impl Field {
             /// Sorted by name.

@@ -262,23 +262,6 @@ impl<'a, T: Handle<'a>> DoubleEndedIterator for Iter<'a, T> {
     }
 }
 
-impl<'a, T: Handle<'a> + Spanned> Iter<'a, T> {
-    /// Keeps the `margin` elements that start at or before `offset` and are the closest to it, and as many of those that
-    /// start behind it. For a list whose elements are in the order of the source. Returns whether elements have been left
-    /// out at the front, and at the back.
-    pub(crate) fn narrow_to(&mut self, offset: u32, margin: u32) -> (bool, bool) {
-        if self.hides || (self.back - self.front) / 2 <= margin {
-            return (false, false);
-        }
-        let at = self.list.count_until(offset).clamp(self.front, self.back);
-        let front = at.saturating_sub(margin).max(self.front);
-        let back = at.saturating_add(margin).min(self.back);
-        let is_cut = (front > self.front, back < self.back);
-        (self.front, self.back) = (front, back);
-        is_cut
-    }
-}
-
 /// In a file that has nodes which are synthesized from JSDoc comments.
 impl<'a, T: Handle<'a>> Iter<'a, T> {
     #[inline(never)]

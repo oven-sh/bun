@@ -70,12 +70,12 @@ macro_rules! estree_schema {
         /// The `type` of a node: typescript-eslint's `AST_NODE_TYPES`.
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
         #[repr(u8)]
-        pub enum NodeType { $($name),* }
+        pub(crate) enum NodeType { $($name),* }
 
         impl NodeType {
             pub(crate) const ALL: &[NodeType] = &[$(NodeType::$name),*];
 
-            pub const fn name(self) -> &'static str {
+            pub(crate) const fn name(self) -> &'static str {
                 match self { $(NodeType::$name => stringify!($name)),* }
             }
 

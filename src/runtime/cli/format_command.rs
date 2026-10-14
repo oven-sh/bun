@@ -49,22 +49,6 @@ impl FormatCommand {
             }
             Global::exit(0);
         }
-        // `--debug-comments <directory> <file> ..`, for the tests: writes what each comment of a file is
-        // attached to into `<directory>/<file>.txt`.
-        if HAS_TEST_RUNNER
-            && let [flag, directory, files @ ..] = args
-            && flag.as_bytes() == b"--debug-comments"
-        {
-            for file in files {
-                let path = file.as_bytes();
-                let listed = bun_format_conformance::read_file(path)
-                    .and_then(|text| bun_lint_driver::fmt::comments_for_tests(path, &text));
-                let listed = listed.unwrap_or_else(|| b"REFUSED\n".to_vec());
-                let out = [directory.as_bytes(), b"/", path, b".txt"].concat();
-                bun_format_conformance::write_file(&out, &listed);
-            }
-            Global::exit(0);
-        }
         if HAS_TEST_RUNNER
             && let [first, rest @ ..] = args
             && let Some(run) = test_runner(first.as_bytes())

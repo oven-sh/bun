@@ -93,7 +93,7 @@ test("partialDeepStrictEqual with Map - nested Map values", () => {
 test("partialDeepStrictEqual with Map - non-string keys", () => {
   const objKey = { id: 1 };
   assert.partialDeepStrictEqual(
-    new Map([
+    new Map<unknown, string>([
       [1, "one"],
       [objKey, "object"],
       [true, "boolean"],

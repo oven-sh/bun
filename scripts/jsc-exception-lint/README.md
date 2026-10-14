@@ -14,8 +14,8 @@ bun scripts/jsc-exception-lint/rust-externs.ts        # Rust externs vs C++ summ
 ```
 
 It needs a configured debug build (`build/debug/compile_commands.json` and
-the generated headers) and the LLVM 21 development package (`libclang-cpp`,
-`clang/` headers). Set `LLVM_DIR` if it is not under `/usr/lib/llvm-21`.
+the generated headers) and the LLVM 23 development package (`libclang-cpp`,
+`clang/` headers). Set `LLVM_DIR` if it is not under `/usr/lib/llvm-23`.
 
 The first run also parses the JavaScriptCore sources under `vendor/WebKit`
 to learn which JSC functions can throw. That takes about ten minutes and is

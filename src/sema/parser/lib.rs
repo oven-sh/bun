@@ -149,7 +149,8 @@ pub struct Options {
     pub dialect: bun_sema::resolve::Dialect,
     /// Not the whole text is parsed.
     pub part: Option<Part>,
-    /// Records the nodes around each comment: `enclosing_node`, `preceding_node` and `following_node` of `hir::Comment`.
+    /// Records what a formatter needs to attach comments to nodes: `enclosing_node`, `preceding_node` and `following_node` of
+    /// `hir::Comment`, and the HTML-like comments of a script.
     pub attach_comments: bool,
 }
 

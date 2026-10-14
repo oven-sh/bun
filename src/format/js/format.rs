@@ -1,18 +1,15 @@
 //! [`Format`] for the handles of `bun_lint::ast`.
 //!
-//! `write!(f, [expr])` does what is the same for every node, and then calls the function in
-//! `print/` that writes this kind of node:
-//! 1. If a `// prettier-ignore` comment leads or trails the node, its source text is written.
+//! `write!(f, expr)` does the steps that are the same for every node, and calls the function in `print/` for this kind of node:
+//! 1. If the node is ignored (`// prettier-ignore`), its source text is copied instead of steps 4 to 6.
 //! 2. `/** @type {T} */ (e)` keeps its parentheses.
-//! 3. The comments before the node.
-//! 4. `(`, if the node needs parentheses where it is: `parentheses/`.
+//! 3. The leading comments of the node.
+//! 4. `(`, if the node needs parentheses in this position: `parentheses/`.
 //! 5. The node.
 //! 6. `)`
-//! 7. The comments after the node.
+//! 7. The trailing comments of the node.
 //!
-//! Most nodes have no comment anywhere near them. [`Formatter::is_quiet`] says so, and then only
-//! 4 to 6 are done. It is set for the time that a node is written which has no comment in it and
-//! none behind it on the same line.
+//! Most nodes have no comment anywhere near them. While [`Formatter::is_quiet`] is true, only steps 4 to 6 are done.
 
 use super::ast_nodes::{AsAstNodes, AstNodes, ChainElement, inner_of_stmt};
 use super::parentheses;
@@ -24,7 +21,8 @@ use crate::prelude::*;
 use crate::write;
 
 impl<'a> Formatter<'a> {
-    /// No comment is left to print in what is being formatted, or behind it on the same line.
+    /// True while a node is written that has no comment inside its span, and no node inside it that owns a comment from
+    /// elsewhere.
     #[inline]
     pub(crate) fn is_quiet(&self) -> bool {
         self.context().is_quiet

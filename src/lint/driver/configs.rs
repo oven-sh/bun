@@ -2677,7 +2677,12 @@ impl<'l> Loader<'l> {
             return false;
         }
         let is_in_file = self.ignore_file_name(loaded).is_some_and(|file| {
-            gitignore::has_argument(self.cwd(), &paths::from_native(file), argument)
+            let (start, file) = (self.start_of_ignore_path(), paths::from_native(file));
+            // How it is spelled counts for oxlint. From below bunfig.toml it is spelled as from there.
+            match start == self.cwd() {
+                true => gitignore::has_argument(&start, &file, argument),
+                false => gitignore::has_argument(&start, &file, &paths::relative(&start, path)),
+            }
         });
         is_in_file || self.is_ignored_by_the_run(path, loaded)
     }

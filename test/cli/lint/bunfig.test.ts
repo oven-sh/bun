@@ -1317,6 +1317,53 @@ rules = { "import/no-unassigned-import" = ["error", { allow = ["src/client/*.css
   });
 });
 
+// At the root every row was run on oxlint 1.87, with --ignore-path.
+describe.concurrent("a file that is named, and `ignorePath` beside an .oxlintrc.json", () => {
+  test.each([
+    ["b.js", "a.js"],
+    ["packages/app/src/gen/b.js", "a.js"],
+    ["/packages/app/src/gen/b.js", "a.js"],
+    ["**/gen/*.js", "a.js"],
+    ["packages/**", ""],
+    // These are no paths from where the file is.
+    ["gen/b.js", "a.js gen/b.js"],
+    ["src/gen/b.js", "a.js gen/b.js"],
+    // A directory is not asked about a file that is named.
+    ["packages/app/src/gen/", "a.js gen/b.js"],
+  ])("%j", async (pattern, linted) => {
+    using dir = tempDir("bun-lint", {
+      ".oxlintrc.json": `{ "rules": { "no-debugger": "error" } }`,
+      "bunfig.toml": `[lint]\nignorePath = ".lintignore"\n`,
+      ".lintignore": `${pattern}\n`,
+      "packages/app/src/a.js": "debugger;\n",
+      "packages/app/src/gen/b.js": "debugger;\n",
+    });
+    for (const [cwd, prefix] of [
+      [".", "packages/app/src/"],
+      ["packages", "app/src/"],
+      ["packages/app", "src/"],
+      ["packages/app/src", ""],
+    ]) {
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", "-f", "unix", `${prefix}a.js`, `${prefix}gen/b.js`],
+        env,
+        cwd: join(String(dir), cwd),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const found = [...stdout.replaceAll("\\", "/").matchAll(/^(\S+?):1:1: /gm)].map(it => it[1].slice(prefix.length));
+      expect({ cwd, linted: found.sort().join(" "), stderr, exitCode }).toEqual({
+        cwd,
+        linted,
+        stderr: "",
+        exitCode: 1,
+      });
+    }
+  });
+});
+
 describe.concurrent("what is read from standard input beside an .oxlintrc.json", () => {
   test.each([
     ["ignorePatterns", `[lint]\nignorePatterns = ["generated/**"]\n`, [], "."],

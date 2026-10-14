@@ -972,8 +972,27 @@ impl<'a> Expr<'a> {
     /// `AssignmentPattern` or `RestElement`. Parentheses make what is in them an ordinary
     /// expression.
     pub fn is_assignment_target(self) -> bool {
+        let mut is_nested = false;
+        let answer = self.is_assignment_target_or_in_one(&mut is_nested);
+        // What is nested is asked about from the outside to the inside, so this does not go up to the root each time.
+        if is_nested {
+            let last = &self.file.lazy.last_assignment_target;
+            last.set(Some((self.id, answer)));
+        }
+        answer
+    }
+
+    /// `is_nested`: it is in an array or an object.
+    #[inline(always)]
+    fn is_assignment_target_or_in_one(self, is_nested: &mut bool) -> bool {
         let mut at = self;
         loop {
+            if *is_nested
+                && let Some((last, answer)) = self.file.lazy.last_assignment_target.get()
+                && last == at.id
+            {
+                return answer;
+            }
             if at.is_parenthesized() {
                 return false;
             }
@@ -999,6 +1018,7 @@ impl<'a> Expr<'a> {
                 }
                 _ => return false,
             };
+            *is_nested = true;
         }
     }
 

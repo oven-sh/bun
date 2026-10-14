@@ -33,8 +33,11 @@ fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, f: &mut For
     let start = f.elements().len();
     write!(f, [object, boundary_behind_object(f)]);
 
-    let lookup = format_with(|f| write_lookup(e, f));
     let comments = comments_on_lines_before_property(e, f);
+    let lookup = format_with(|f| match comments.is_empty() {
+        true => write_lookup(e, f),
+        false => write_lookup_after_its_comments(e, f),
+    });
     if comments.is_empty() && should_inline(e, object, start, f) {
         return write!(f, lookup);
     }
@@ -83,6 +86,17 @@ pub(crate) fn write_lookup<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
     };
     let operator = if member.is_optional() { "?." } else { "." };
     write!(f, [operator, identifier(property)]);
+}
+
+/// [`write_lookup`] after the leading comments of the name have been written before the `.`, as oxfmt does. There a
+/// `prettier-ignore` comment among them is not about the name any more.
+pub(crate) fn write_lookup_after_its_comments<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
+    write_lookup_without_comments(member, f);
+    if !f.is_quiet()
+        && let Some(start) = member.member_name_start()
+    {
+        FormatTrailingComments::Comments(f.comments().of_name(start).trailing).fmt(f);
+    }
 }
 
 /// The `.b` or `?.b` of `member`, where there are no comments.

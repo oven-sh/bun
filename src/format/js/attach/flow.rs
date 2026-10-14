@@ -4,12 +4,14 @@
 
 use crate::js::ast_nodes::{AsAstNodes, AstNodes as N};
 use crate::js::print::flow::{
-    as_match_expression, head_of_match_statement, is_inexact_mark, is_return_type_of_function_type,
-    is_unknown_members_mark, is_variance, keyword_of_function_type,
+    as_match_expression, head_of_match_statement, is_directly_in_function_type,
+    is_function_type_param, is_inexact_mark, is_unknown_members_mark, is_variance,
+    keyword_of_function_type,
 };
 use bun_lint::ast::comments::NodeOrName;
 use bun_lint::ast::{
-    BinOp, EnumMember, Expr, ExprKind, Func, Handle, List, Node, StmtKind, TypeKind, TypeNode,
+    BinOp, EnumMember, Expr, ExprKind, Func, Handle, List, Node, Param, Pat, StmtKind, TypeKind,
+    TypeNode,
 };
 
 fn second_to_last<'a, T: Handle<'a>>(list: List<'a, T>) -> Option<T> {
@@ -246,7 +248,7 @@ pub(super) fn is_no_node(node: N<'_>) -> bool {
         N::LogicalExpression(e) => as_pattern_with_guard(e).is_some(),
         N::BinaryExpression(e) => last_of_inner_or_pattern(e).is_some(),
         N::TSTypeAnnotation(ty) => {
-            is_return_type_of_function_type(ty)
+            is_directly_in_function_type(ty)
                 // `component A() renders T {}`
                 || ty.flow_type_operator_operand().is_some()
                 // The `T` of `: T %checks`
@@ -255,6 +257,20 @@ pub(super) fn is_no_node(node: N<'_>) -> bool {
         }
         _ => false,
     }
+}
+
+/// The `a` of `(a: A) => B`. A `FunctionTypeParam` has an `Identifier` for its name. A parameter of a function is that `Identifier`.
+pub(super) fn is_name_of_function_type_param(name: Pat<'_>) -> bool {
+    matches!(name.parent(), Node::Param(param)
+        if is_function_type_param(param) && !is_this_of_function_type(param))
+}
+
+/// `(this: A) => B`: the `FunctionTypeParam` has no name.
+fn is_this_of_function_type(param: Param<'_>) -> bool {
+    is_function_type_param(param)
+        && param
+            .func()
+            .is_some_and(|it| it.this_param() == Some(param))
 }
 
 /// The parent of the type `node`, where `AstNodes::parent` gives that of TypeScript's tree:
@@ -314,6 +330,11 @@ pub(super) fn preceding_node<'a>(
     if let Some(sibling) = sibling_before_dots(node) {
         return sibling.map(NodeOrName::Node);
     }
+    if matches!(node, Node::Pat(name) if matches!(name.parent(), Node::Param(param)
+        if is_this_of_function_type(param)))
+    {
+        return None;
+    }
     let Node::Expr(mut e) = node else {
         return Some(NodeOrName::Node(node));
     };
@@ -360,8 +381,12 @@ fn is_in_function_type(enclosing_node: Option<Node<'_>>, offset: u32) -> bool {
         },
         _ => None,
     };
+    // A `DeclareComponent` has its name and its parameters itself.
     func.is_some_and(|func| {
-        function_type(func).is_some() && func.open_paren().is_some_and(|open| open < offset)
+        matches!(
+            function_type(func),
+            Some(FunctionType::FunctionTypeAnnotation | FunctionType::HookTypeAnnotation)
+        ) && func.open_paren().is_some_and(|open| open < offset)
     })
 }
 
@@ -383,7 +408,14 @@ pub(super) fn unrecorded_preceding_node(
             return (outer_name.end <= offset).then_some(NodeOrName::Name(outer_name.start));
         }
         Node::Member(member) => member.modifiers(),
-        Node::TypeParam(param) => param.modifiers(),
+        // `<const /* comment */ T>`, which Prettier does not parse: the name is no node, so that nothing else is next to the comment.
+        Node::TypeParam(param) => {
+            let modifier = (param.modifiers().iter())
+                .map(|it| it.token_span())
+                .filter(|it| it.end <= offset)
+                .last()?;
+            return Some(NodeOrName::Name(modifier.start));
+        }
         // `+[K in T]: V` is a member whose type is a mapped type with the same span.
         Node::Type(ty) => match (ty.kind(), ty.parent()) {
             (TypeKind::Mapped(_), Node::Member(member)) => member.modifiers(),
@@ -402,6 +434,14 @@ pub(super) fn following_node<'a>(
 ) -> Option<NodeOrName<'a>> {
     let node = match node {
         NodeOrName::Name(start) if is_name_of_type_parameter(enclosing_node, start) => return None,
+        // `infer /* comment */ A`
+        NodeOrName::Name(start)
+            if let Some(Node::Type(ty)) = enclosing_node
+                && let TypeKind::Infer(param) = ty.kind()
+                && param.name().span().start == start =>
+        {
+            return Some(NodeOrName::Node(Node::TypeParam(param)));
+        }
         NodeOrName::Name(start) => {
             return match members_of_enum_with_explicit_type(enclosing_node, start) {
                 Some(members) => (members.first())
@@ -414,6 +454,14 @@ pub(super) fn following_node<'a>(
     };
     if sibling_before_dots(node).is_some() {
         return None;
+    }
+    // `: /* comment */ T %checks(e)` is a type query with `T` as its type argument in the tree.
+    if let Node::Type(ty) = node
+        && let TypeKind::Typeof { args, .. } = ty.kind()
+        && ty.first_token() != b"typeof"
+        && let Some(return_type) = args.first()
+    {
+        return Some(NodeOrName::Node(Node::Type(return_type)));
     }
     let Node::Expr(e) = node else {
         return Some(NodeOrName::Node(node));

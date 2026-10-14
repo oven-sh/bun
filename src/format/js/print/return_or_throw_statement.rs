@@ -35,11 +35,17 @@ fn write_return_or_throw<'a>(
     write!(f, OptionalSemicolon);
     let comments = comments_that_count_for_the_width(statement, f);
     if !comments.is_empty() {
-        let comments = FormatDanglingComments::Comments {
+        let dangling = FormatDanglingComments::Comments {
             comments,
             indent: DanglingIndentMode::None,
         };
-        write!(f, [space(), comments]);
+        // `throw a // comment⏎;/* comment */`: the second one starts a line, because it follows a line comment.
+        let trailing = f.comments().of_node(statement.as_ast_nodes()).trailing;
+        let others = trailing.slice(comments.len(), trailing.len());
+        write!(
+            f,
+            [space(), dangling, FormatTrailingComments::Comments(others)]
+        );
     }
 }
 

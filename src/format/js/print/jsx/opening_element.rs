@@ -31,7 +31,25 @@ fn has_comments(comments: &OwnedComments<'_>) -> bool {
     !comments.leading.is_empty() || !comments.trailing.is_empty() || !comments.dangling.is_empty()
 }
 
+/// ```jsx
+/// <// comment       <// comment
+/// a                 a />
+/// />
+/// ```
+///
+/// Prettier on the left: any comment of the name or the type arguments counts. oxfmt on the right.
+fn only_comment_after_name_counts(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 impl<'a> FormatOpeningElement<'a> {
+    /// `<a b /⏎// comment⏎>`. Only for oxfmt: see `handle_comment_after_slash_of_jsx_tag_for_oxfmt`.
+    fn comments_after_slash(&self, f: &Formatter<'a>) -> CommentList<'a> {
+        (f.comments())
+            .of_node(AstNodes::JSXOpeningElement(self.expr))
+            .dangling
+    }
+
     fn compute_layout(&self, f: &Formatter<'a>) -> OpeningElementLayout {
         let attributes = self.jsx.attrs();
         let comments = f.comments();
@@ -39,13 +57,23 @@ impl<'a> FormatOpeningElement<'a> {
         let mut only_attribute_has_comments = false;
         if !f.is_quiet() {
             let type_arguments = AstNodes::TSTypeParameterInstantiation(Node::Expr(self.expr));
-            name_has_comments = (self.jsx.tag())
-                .is_some_and(|name| has_comments(&comments.of_node(name.as_ast_nodes())))
-                || has_comments(&comments.of_node(type_arguments));
+            let name = self.jsx.tag().map(|name| name.as_ast_nodes());
+            name_has_comments = match only_comment_after_name_counts(f) {
+                true => (!self.jsx.type_args().is_empty())
+                    .then_some(type_arguments)
+                    .or(name)
+                    .is_some_and(|last| !comments.of_node(last).trailing.is_empty()),
+                false => {
+                    name.is_some_and(|name| has_comments(&comments.of_node(name)))
+                        || has_comments(&comments.of_node(type_arguments))
+                }
+            };
             if let Some(last) = attributes.last() {
                 let comments = comments.of_node(last.as_ast_nodes());
-                last_attribute_has_trailing_comments = !comments.trailing.is_empty();
-                only_attribute_has_comments = has_comments(&comments);
+                let has_comments_after_slash = !self.comments_after_slash(f).is_empty();
+                last_attribute_has_trailing_comments =
+                    !comments.trailing.is_empty() || has_comments_after_slash;
+                only_attribute_has_comments = has_comments(&comments) || has_comments_after_slash;
             }
         }
 
@@ -129,6 +157,10 @@ impl<'a> Format<'a> for FormatOpeningElement<'a> {
                     if !attributes.is_empty() {
                         write!(f, soft_line_indent_or_space(&format_attributes));
                     }
+                    write!(
+                        f,
+                        FormatTrailingComments::Comments(self.comments_after_slash(f))
+                    );
                     // Prettier's `shouldPrintBracketSameLine`
                     let bracket_same_line = match attributes.is_empty() {
                         true => !name_has_comments,

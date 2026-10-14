@@ -11,9 +11,11 @@ use rustc_hash::FxHashMap;
 use std::cell::Cell;
 
 /// Whether Prettier reads the code with a parser that has no `ChainExpression` around an optional chain: Babel, which reads
-/// JavaScript and every expression in HTML, in TypeScript too, or `angular-estree-parser`.
+/// JavaScript and every expression in HTML, in TypeScript too, or `angular-estree-parser`. Its parser `flow` has the tree of ESTree.
 pub(crate) fn has_tree_of_babel(file: &File<'_>, options: &FormatOptions) -> bool {
-    file.is_javascript()
+    let is_read_by_flow_parser =
+        file.is_flow() && !super::print::flow::goes_to_babel(options, file.path());
+    (file.is_javascript() && !is_read_by_flow_parser)
         || options.in_html.has_tree_of_babel
         || !matches!(options.in_html.root, HtmlRoot::None | HtmlRoot::Program)
 }
@@ -43,6 +45,9 @@ pub(crate) struct JsFormatContext<'a> {
     stack_check: bun_core::StackCheck,
     /// Something has not been written because it is nested too deeply.
     pub(crate) ran_out_of_stack: bool,
+    /// The ids of the comments that no printer wrote when the file was formatted the first time. See
+    /// [`crate::ir::run::format_with_marks`].
+    pub(crate) comments_without_printer: Vec<u32>,
     /// The last member access with many member accesses around it, and whether it stays on the line
     /// of its object. The one around it has the same answer.
     pub(crate) long_member_chain: Cell<Option<(Expr<'a>, bool)>>,
@@ -85,6 +90,7 @@ impl<'a> JsFormatContext<'a> {
             cursor: CursorRegion::NONE,
             stack_check: bun_core::StackCheck::init(),
             ran_out_of_stack: false,
+            comments_without_printer: Vec::new(),
             line_start: Cell::new((0, 0)),
             long_member_chain: Cell::new(None),
             is_vue_filter_sequence: Cell::new(false),

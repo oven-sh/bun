@@ -533,7 +533,9 @@ impl<Content: ?Sized> IfGroupBreaks<'_, Content> {
 }
 
 impl<'a, Content: Format<'a> + ?Sized> Format<'a> for IfGroupBreaks<'_, Content> {
-    #[inline]
+    /// A trailing comma is written for every call, array and object. Where this is inlined, all that is left for it is to
+    /// write one element that is known at compile time.
+    #[inline(always)]
     fn fmt(&self, f: &mut Formatter<'a>) {
         if let (Some(text), None, PrintMode::Expanded) =
             (self.content.as_token(), self.group_id, self.mode)
@@ -541,6 +543,16 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for IfGroupBreaks<'_, Content>
         {
             return f.write_element(FormatElement::TokenIfBreaks(token));
         }
+        self.write_conditional_content(f);
+    }
+}
+
+impl<Content: ?Sized> IfGroupBreaks<'_, Content> {
+    #[inline(never)]
+    fn write_conditional_content<'a>(&self, f: &mut Formatter<'a>)
+    where
+        Content: Format<'a>,
+    {
         let condition = Condition::new(self.mode).with_group_id(self.group_id);
         f.write_element(FormatElement::Tag(Tag::StartConditionalContent(condition)));
         self.content.fmt(f);

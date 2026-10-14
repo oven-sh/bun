@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = B /* c */[];
+type C = [...D /* c */[]];
+type E = (F | G /* c */)[];
+let h: A /* c */[] | null, i: A<B> /* c */[], j: A /* c */[];
+type K = L extends (infer M) /* c */[] ? M : 1;
+function n(...o: P /* c */[]) {}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = B /* c */[];
+type C = [...D /* c */[]];
+type E = (F | G /* c */)[];
+let h: A /* c */[] | null, i: A<B> /* c */[], j: A /* c */[];
+type K = L extends (infer M) /* c */[] ? M : 1;
+function n(...o: P /* c */[]) {}
+
+===================== End =====================

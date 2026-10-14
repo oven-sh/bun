@@ -551,7 +551,10 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(never)]
     fn jsx_name(&mut self) -> (Atom, u32, bool) {
         let name = self.jsx_name_without_comments();
-        self.finish_name(name.1, self.prev_end());
+        // The two names of `a:b` are finished one by one, so that a comment next to the `:` is between two names and not in one.
+        if !self.has_finished_name_that_ends_at(self.prev_end()) {
+            self.finish_name(name.1, self.prev_end());
+        }
         name
     }
 
@@ -590,13 +593,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     #[inline(always)]
     fn rest_of_jsx_name(&mut self, mut name: Atom, start: u32) -> (Atom, u32, bool) {
         if self.token() == T::Colon {
+            self.finish_name(start, self.prev_end());
             self.next();
             self.scan_jsx_identifier();
             if self.token() != T::Identifier {
                 return self.jsx_name_without_local_name(name, start);
             }
             name = self.jsx_namespaced_name(name, self.lx.atom);
+            let local_start = self.pos();
             self.next();
+            self.finish_name(local_start, self.prev_end());
         }
         let is_plain = bun_core::strings::index_of_any(self.lx.text_of(name), b"-:").is_none();
         (name, start, !is_plain)

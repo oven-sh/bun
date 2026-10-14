@@ -129,12 +129,10 @@ pub(crate) fn expression_statement_needs_semicolon<'a>(
     })
 }
 
-/// Whether the last comment before the token at `position` is a type cast comment.
+/// Whether the last comment before the token at `position` looks like a type cast, with or without a `(` after it.
 pub(crate) fn follows_type_cast_comment(position: u32, f: &Formatter<'_>) -> bool {
-    let comments = f.comments();
-    comments.has_type_cast_comments()
-        && (comments.comments_directly_before(position).last())
-            .is_some_and(|comment| comments.is_type_cast_comment(comment))
+    (f.comments().comments_directly_before(position).last())
+        .is_some_and(|comment| comment.looks_like_type_cast())
 }
 
 /// Prettier's `isSingleJsxExpressionStatementInMarkdown`: all of the code in a block in Markdown is JSX.
@@ -415,40 +413,55 @@ fn write_for_head_with_comments_in_place<'a>(
     let is_empty = init.is_none() && test.is_none() && update.is_none();
     let separator = (!is_empty).then_some(soft_line_break_or_space());
 
-    match init.map(FormatForHead) {
-        Some(init) => {
-            write!(f, FormatNodeWithoutTrailingComments(&init));
-            write_comments_before_token(init.comments(f).trailing, f);
-        }
-        None => {
-            write_comments_before_token(in_init, f);
-        }
+    // `a; /* comment */ // comment⏎b`: comments that end the line of the `;` trail `a`.
+    let split_at_semicolon = |trailing: CommentList<'a>| {
+        let follows_semicolon = |comment: Comment<'a>| {
+            source.byte_at(comment.prev_token_end().saturating_sub(1)) == Some(b';')
+        };
+        let count = trailing.iter().position(follows_semicolon);
+        trailing.split_at(count.unwrap_or(trailing.len()))
+    };
+
+    let init = init.map(FormatForHead);
+    if let Some(init) = &init {
+        write!(f, FormatNodeWithoutTrailingComments(init));
     }
-    let after_semicolon = test.map_or(in_test, |test| comments_of_expression(test, f).leading);
-    let after_semicolon = comments_ending_line_of_semicolon(after_semicolon, f);
+    let (before_semicolon, after_semicolon) = match init {
+        Some(init) => split_at_semicolon(init.comments(f).trailing),
+        None => (in_init, CommentList::empty()),
+    };
+    write_comments_before_token(before_semicolon, f);
+    let before_test = test.map_or(in_test, |test| comments_of_expression(test, f).leading);
     write!(
         f,
         [
             ";",
             FormatTrailingComments::Comments(after_semicolon),
+            FormatTrailingComments::Comments(comments_ending_line_of_semicolon(before_test, f)),
             separator
         ]
     );
 
-    match test {
-        Some(test) => {
-            write!(f, FormatNodeWithoutTrailingComments(&test));
-            write_comments_before_token(comments_of_expression(test, f).trailing, f);
-        }
-        None => {
-            write_comments_before_token(in_test, f);
-        }
+    if let Some(test) = &test {
+        write!(f, FormatNodeWithoutTrailingComments(test));
     }
-    let after_semicolon = update.map_or(in_update, |update| {
+    let (before_semicolon, after_semicolon) = match test {
+        Some(test) => split_at_semicolon(comments_of_expression(test, f).trailing),
+        None => (in_test, CommentList::empty()),
+    };
+
+    write_comments_before_token(before_semicolon, f);
+    let before_update = update.map_or(in_update, |update| {
         comments_of_expression(update, f).leading
     });
-    let after_semicolon = comments_ending_line_of_semicolon(after_semicolon, f);
-    write!(f, [";", FormatTrailingComments::Comments(after_semicolon)]);
+    write!(
+        f,
+        [
+            ";",
+            FormatTrailingComments::Comments(after_semicolon),
+            FormatTrailingComments::Comments(comments_ending_line_of_semicolon(before_update, f))
+        ]
+    );
 
     match update {
         Some(update) => write!(f, [separator, update]),

@@ -6,6 +6,7 @@ use crate::js::utils::call_expression::{
     is_angular_test_wrapper, is_test_call_expression_in_flavor,
 };
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -31,14 +32,25 @@ fn has_modifier(param: Param<'_>) -> bool {
 
 /// Prettier's `printFunctionParameters`.
 fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
-    // Only oxfmt attaches comments to the parentheses: `class A { b ⏎// comment⏎ () {} }` is `b () {}⏎// comment`.
+    // Only oxfmt attaches comments to the parentheses: `class A { b ⏎// comment⏎ () {} }` is `b () {}⏎// comment`, and
+    // `b /* prettier-ignore */ ( c ) {}` is `b/* prettier-ignore */ ( c ) {}`.
     if !f.is_quiet() {
-        let comments = f
-            .comments()
-            .of_node(AstNodes::FormalParameters(func))
-            .leading;
-        if !comments.is_empty() {
-            write!(f, [space(), FormatTrailingComments::Comments(comments)]);
+        let node = AstNodes::FormalParameters(func);
+        let owned = f.comments().of_node(node);
+        if owned.is_ignored {
+            return write!(
+                f,
+                [
+                    FormatLeadingComments::Comments(owned.leading),
+                    FormatSuppressedNode(node.span())
+                ]
+            );
+        }
+        if !owned.leading.is_empty() {
+            write!(
+                f,
+                [space(), FormatTrailingComments::Comments(owned.leading)]
+            );
         }
     }
     if func.params().is_empty() && func.this_param().is_none() {

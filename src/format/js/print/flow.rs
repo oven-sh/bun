@@ -141,16 +141,21 @@ fn is_optional_indexed_access(mut ty: TypeNode<'_>) -> bool {
 
 /// A parameter of a function type, of a signature or of a function that is declared: Flow's
 /// `FunctionTypeParam`, as opposed to a pattern with a type annotation.
-fn is_function_type_param(param: Param<'_>) -> bool {
+pub(crate) fn is_function_type_param(param: Param<'_>) -> bool {
     param
         .func()
         .is_some_and(|func| !func.has_body() && !func.is_arrow())
 }
 
-/// Whether `ty` is the return type of a function type, of a signature or of a function that is declared. In Flow's tree it is
-/// directly in the function type: no `TypeAnnotation` starts at the `=>` or the `:`.
-pub(crate) fn is_return_type_of_function_type(ty: TypeNode<'_>) -> bool {
-    matches!(ty.parent(), Node::Func(func) if !func.has_body() && !func.is_arrow())
+/// Whether `ty` is the return type or the type of a parameter of a function type, of a signature or of a function that is
+/// declared. In Flow's tree it is directly in the function type or the `FunctionTypeParam`: no `TypeAnnotation` starts at the
+/// `=>` or the `:`.
+pub(crate) fn is_directly_in_function_type(ty: TypeNode<'_>) -> bool {
+    match ty.parent() {
+        Node::Func(func) => !func.has_body() && !func.is_arrow(),
+        Node::Param(param) => is_function_type_param(param),
+        _ => false,
+    }
 }
 
 /// Prettier's `includesFunctionTypeInObjectType`. `is_in_object_type`: `node` is.
@@ -352,8 +357,20 @@ pub(crate) fn write_indexed_access_type<'a>(
 /// `: T %checks` as a return type. Returns whether the predicate `ty` is that.
 pub(crate) fn write_checks_predicate<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) -> bool {
     match ty.kind() {
-        TypeKind::Predicate { param, ty, .. } if param.is("%checks") => {
-            write!(f, [ty, ty.map(|_| space()), "%checks"]);
+        TypeKind::Predicate {
+            param, ty: checked, ..
+        } if param.is("%checks") => {
+            // `% /* comment */ checks`, which Prettier does not parse.
+            let comments = f.comments().of_node(ty.as_ast_nodes()).dangling;
+            write!(
+                f,
+                [
+                    checked,
+                    checked.map(|_| space()),
+                    "%checks",
+                    FormatTrailingComments::Comments(comments)
+                ]
+            );
             true
         }
         _ => false,
@@ -731,7 +748,11 @@ pub(crate) fn write_object_type_member<'a>(member: Member<'a>, f: &mut Formatter
                 ]
             );
         }
-        (MemberKind::CallSignature, Some(func)) => write_ts_call_signature_declaration(func, f),
+        (MemberKind::CallSignature, Some(func)) => {
+            // `static /* comment */ (): void`
+            write!(f, leading_comments(AstNodes::FormalParameters(func)));
+            write_ts_call_signature_declaration(func, f);
+        }
         (_, Some(func)) => match (
             member.flow_internal_slot(),
             member.key().map(|it| it.kind()),
@@ -926,15 +947,21 @@ fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut
         };
 
     let format_extends = format_with(|f| {
-        let mut names: SmallVec<[Ident<'a>; 4]> = SmallVec::new();
+        // `A.B.C`, from the outside in: each `A.B` and its `B`.
+        let mut qualified_names: SmallVec<[(AstNodes<'a>, Ident<'a>); 4]> = SmallVec::new();
         let mut leftmost = class.extends();
-        while let Some(ExprKind::Dot { obj, name, .. }) = leftmost.map(|it| it.kind()) {
-            names.push(name);
+        while let Some(e) = leftmost
+            && let ExprKind::Dot { obj, name, .. } = e.kind()
+        {
+            qualified_names.push((e.as_chain_element(), name));
             leftmost = Some(obj);
         }
+        for &(node, _) in qualified_names.iter() {
+            write!(f, leading_comments(node));
+        }
         write!(f, leftmost);
-        for &name in names.iter().rev() {
-            write!(f, [".", identifier(name)]);
+        for &(node, name) in qualified_names.iter().rev() {
+            write!(f, [".", identifier(name), trailing_comments(node)]);
         }
         write!(f, type_arguments(class.extends_args(), Node::Class(class)));
     });
@@ -1088,7 +1115,9 @@ pub(crate) fn write_component_or_keyword<'a>(
                 is_declared(modifiers).then_some("declare "),
                 keyword,
                 space(),
-                name
+                name,
+                // `f/* comment */ (): void`
+                leading_comments(AstNodes::FormalParameters(func))
             ]
         );
         write_ts_call_signature_declaration(func, f);
@@ -1096,7 +1125,17 @@ pub(crate) fn write_component_or_keyword<'a>(
             && let TypeKind::Typeof { expr, .. } = ty.kind()
             && ty.first_token() != b"typeof"
         {
-            write!(f, [" %checks(", expr, ")"]);
+            // `%checks(a) /* comment */`
+            let comments = f.comments().of_node(AstNodes::Function(func)).dangling;
+            write!(
+                f,
+                [
+                    " %checks(",
+                    expr,
+                    ")",
+                    FormatTrailingComments::Comments(comments)
+                ]
+            );
         }
         write!(f, OptionalSemicolon);
         return None;

@@ -12,7 +12,7 @@ use crate::js::utils::array::write_array_node;
 use crate::js::utils::assignment_like::AssignmentLike;
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::object::{format_computed_or_property_key, should_preserve_quote};
-use crate::js::utils::typecast::has_comments;
+use crate::js::utils::typecast::{comments_of_expression, has_comments};
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
 
@@ -213,10 +213,19 @@ pub(crate) fn write_update_expression<'a>(op: UnOp, operand: Expr<'a>, f: &mut F
     }
 }
 
+/// Prettier's `hasComment(node.argument)`. For oxfmt a comment inside the operand does not count: `!a(/* comment */)`.
+fn operand_has_comments<'a>(operand: Expr<'a>, f: &Formatter<'a>) -> bool {
+    if !f.options().flavor.is_oxfmt() {
+        return has_comments(operand, f);
+    }
+    let comments = comments_of_expression(operand, f);
+    !comments.leading.is_empty() || !comments.trailing.is_empty()
+}
+
 /// `!a`, `typeof a`
 pub(crate) fn write_unary_expression<'a>(op: UnOp, operand: Expr<'a>, f: &mut Formatter<'a>) {
     write!(f, [op.as_str(), op.is_keyword().then_some(space())]);
-    if !f.is_quiet() && has_comments(operand, f) {
+    if !f.is_quiet() && operand_has_comments(operand, f) {
         write!(
             f,
             group(&format_args!("(", soft_block_indent(&operand), ")"))

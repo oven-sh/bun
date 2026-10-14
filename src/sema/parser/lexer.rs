@@ -2240,6 +2240,7 @@ impl Lexer<'_> {
         let before = self.end as usize;
         // A string with a line break in it is refused as a string of JavaScript.
         let had_refused = self.refusal;
+        let first_comment = self.comments.len();
         self.next();
         let src = self.src;
         let start = match self.refusal == had_refused {
@@ -2279,6 +2280,10 @@ impl Lexer<'_> {
                 // There it is a string of JavaScript, and refused as one.
                 if pos > before && self.scans_jsx_strings_as_typescript_5() {
                     return self.refuse(Refusal::Unterminated);
+                }
+                // What was refused was no token.
+                for comment in self.comments.iter_mut().skip(first_comment) {
+                    comment.next_token_start = pos as u32;
                 }
                 pos
             }

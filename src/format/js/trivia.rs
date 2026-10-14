@@ -344,6 +344,15 @@ impl<'a> Format<'a> for Comment<'a> {
                 && !is_printed_by_prettier_for_oxfmt(f);
             let mut lines = bun_core::strings::split_crlf_lines(content).peekable();
             let first = lines.next().unwrap_or_default();
+            // A comment that waits for the end of the line would be written at the first line break in this one. Prettier
+            // prints `a; /**⏎// b⏎ * c⏎ */` for `a // b⏎; /**⏎ * c⏎ */`. Nothing waits before a comment that leads a node from a
+            // line of its own, as nearly all of these do.
+            let leads_from_own_line = self.has_newline_before()
+                && (f.comments().attachment(*self))
+                    .is_some_and(|it| it.placement == super::attach::Placement::Leading);
+            if !leads_from_own_line {
+                write!(f, line_suffix_boundary());
+            }
             write!(f, text(bun_core::strings::trim_js_whitespace_end(first)));
             while let Some(line) = lines.next() {
                 let trimmed = bun_core::strings::trim_js_whitespace(line);

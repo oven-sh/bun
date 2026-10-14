@@ -145,7 +145,7 @@ fn printed_key<'a>(
             let printed = format_trimmed_number(source);
             // Prettier's `isKeySafeToQuote`: not in TypeScript, where it changes the type, and only
             // if the number is written the way it is converted to a string.
-            let is_safe_to_quote = f.context().has_tree_of_babel()
+            let is_safe_to_quote = (f.context().has_tree_of_babel() || f.file().is_flow())
                 && is_simple_number(&printed)
                 && name.bytes() == &*printed;
             match is_safe_to_quote && should_quote_keys(parent, f) {

@@ -171,8 +171,8 @@ pub(crate) fn write_ts_union_type_in<'a>(
 }
 
 /// For oxfmt a `prettier-ignore` comment before a union applies to the whole union, as before any other node, and so does
-/// one after its last type. For Prettier one on its own line before the union applies to the first type only, and one
-/// after the last type to that type.
+/// one after its last type that ends the line. For Prettier one on its own line before the union applies to the first type
+/// only, and one after the last type to that type.
 fn is_ignored_by_comment_of_first_or_last_type<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
     if !f.options().flavor.is_oxfmt() || f.is_quiet() || !f.comments().has_suppression_comments() {
         return false;
@@ -188,11 +188,8 @@ fn is_ignored_by_comment_of_first_or_last_type<'a>(ty: TypeNode<'a>, f: &Formatt
     .any(is_ignore_comment)
         || types.last().is_some_and(|last| {
             let last = without_lone_operator(last).as_ast_nodes();
-            f.comments()
-                .of_node(last)
-                .trailing
-                .iter()
-                .any(is_ignore_comment)
+            (f.comments().of_node(last).trailing.iter())
+                .any(|comment| is_ignore_comment(comment) && comment.has_newline_after())
         })
 }
 
@@ -251,9 +248,15 @@ fn write_union_one_per_line<'a>(
     own_trailing_comments: Option<FormatTrailingComments<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    let comments = match prints_own_comments {
-        true => comments_before_first_type(ty, parent, f),
-        false => [CommentList::empty(); 3],
+    let needs_parentheses = needs_parentheses(ty, f);
+    let comments = match (prints_own_comments, needs_parentheses) {
+        (true, _) => comments_before_first_type(ty, parent, f),
+        // `( // comment ⏎ A | B)[]`. The comments of the union are outside of the parentheses.
+        (false, true) => {
+            let [_, _, of_first_type] = comments_before_first_type(ty, parent, f);
+            [CommentList::empty(), CommentList::empty(), of_first_type]
+        }
+        (false, false) => [CommentList::empty(); 3],
     };
     let [_, of_union, _] = comments;
     let leading_comments = || comments.into_iter().flatten();
@@ -292,7 +295,6 @@ fn write_union_one_per_line<'a>(
         }
         _ => true,
     };
-    let needs_parentheses = needs_parentheses(ty, f);
     let starts_with_line_break = should_indent && !has_comments_before_operator;
     let members = UnionMembers {
         types,
@@ -344,12 +346,13 @@ fn write_union_one_per_line<'a>(
                 write!(f, FormatLeadingComments::Comments(comments));
             }
         }
-        write!(f, [group(&content), own_trailing_comments]);
+        write!(f, group(&content));
     });
     match should_indent && !needs_parentheses {
         true => write!(f, group(&indent(&inner))),
         false => write!(f, group(&inner)),
     }
+    write!(f, own_trailing_comments);
 }
 
 fn is_jsdoc(comment: Comment<'_>) -> bool {

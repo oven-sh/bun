@@ -292,7 +292,13 @@ pub(crate) fn identifier(ident: Ident<'_>) -> FormatIdentifier {
 impl<'a> Format<'a> for FormatIdentifier {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        format_name(self.span, f, |f| write!(f, source_text(self.span)));
+        format_name(self.span, f, |f| {
+            // `/* prettier-ignore */ \u{61}` stays as it is written.
+            match !f.is_quiet() && f.comments().of_name(self.span.start).is_ignored {
+                true => FormatSuppressedNode(self.span).fmt(f),
+                false => write!(f, source_text(self.span)),
+            }
+        });
     }
 }
 
@@ -390,8 +396,11 @@ impl<'a> FormatExpr<'a> {
         } {
             return self.write_in_parentheses(is_chain_expression, f);
         }
-        // A JSX element prints its comments together with its parentheses.
-        if matches!(node, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_)) {
+        // A JSX element prints its comments together with its parentheses. For Prettier not one that is ignored:
+        // `((<a   />) /* prettier-ignore */, b)`
+        if matches!(node, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_))
+            && !(print::jsx::ignored_jsx_gets_no_parentheses(f) && f.comments().is_ignored(node))
+        {
             return f.around_cursor(span, |f| self.write_in_parentheses(false, f));
         }
         if print::function::write_called_function_with_comments(expr, self.options, f) {
@@ -404,12 +413,39 @@ impl<'a> FormatExpr<'a> {
                 write_suppressed_expression(expr, is_chain_expression, f)
             });
         }
-        FormatLeadingComments::Comments(owned.leading).fmt(f);
-        f.in_scope(span, |f| self.write_in_parentheses(is_chain_expression, f));
+        if type_cast_comment_goes_into_added_parentheses(expr, owned.leading, f) {
+            let (outside, inside) = owned.leading.split_at(owned.leading.len() - 1);
+            FormatLeadingComments::Comments(outside).fmt(f);
+            "(".fmt(f);
+            FormatLeadingComments::Comments(inside).fmt(f);
+            f.in_scope(span, |f| {
+                write_expression_that_has_asked(expr, self.options, f);
+            });
+            ")".fmt(f);
+        } else {
+            FormatLeadingComments::Comments(owned.leading).fmt(f);
+            f.in_scope(span, |f| self.write_in_parentheses(is_chain_expression, f));
+        }
         if !skip_trailing {
             FormatTrailingComments::Comments(owned.trailing).fmt(f);
         }
     }
+}
+
+/// `(/** @type {T} */ () => {})();`: for oxfmt a comment that looks like a type cast stays directly before its `(`, which is
+/// that of the parameters here. Prettier writes it before the parentheses around the function.
+fn type_cast_comment_goes_into_added_parentheses<'a>(
+    expr: Expr<'a>,
+    leading_comments: CommentList<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    f.options().flavor.is_oxfmt()
+        && leading_comments.last().is_some_and(|comment| {
+            comment.looks_like_type_cast() && comment.next_token_start() == expr.span().start
+        })
+        && expr.arrow_function().is_some()
+        && f.source_text().byte_at(expr.span().start) == Some(b'(')
+        && parentheses::expression::needs_parentheses(expr, f)
 }
 
 /// `a as B // prettier-ignore ⏎ && c`: both tools write `(a as B)`, as they do where they format.
@@ -534,13 +570,25 @@ fn format_expression_in_general<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     FormatExpr::with_options(e, ExprOptions::None).fmt(f);
 }
 
-/// Every `!` of `x!!`, which is one expression.
+/// Every `!` of `x!!`, which is one expression, with the comments between them, which dangle from it.
 pub(crate) struct FormatNonNullMarks<'a>(pub(crate) Expr<'a>);
 
 impl<'a> Format<'a> for FormatNonNullMarks<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        for _ in self.0.inner_non_null_spans() {
-            write!(f, "!");
+        let mut inner = self.0.inner_non_null_spans().peekable();
+        if inner.peek().is_some() {
+            let mut comments = f.comments().of_node(self.0.as_chain_element()).dangling;
+            while inner.next().is_some() {
+                let next_end = inner
+                    .peek()
+                    .map_or_else(|| self.0.span().end, |next| next.end);
+                let count = (comments.iter())
+                    .take_while(|comment| comment.span().start < next_end)
+                    .count();
+                let (before_next_mark, rest) = comments.split_at(count);
+                write!(f, ["!", FormatTrailingComments::Comments(before_next_mark)]);
+                comments = rest;
+            }
         }
         write!(f, "!");
     }
@@ -763,11 +811,30 @@ fn format_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     let is_made_of_statement = !matches!(statement.tag(), StmtTag::Fn | StmtTag::Class);
     if is_made_of_statement && !f.comments().is_owner(Node::Stmt(statement)) {
         f.context_mut().take_skip_trailing_comments();
-        return f.in_scope(statement.span(), |f| write_statement(statement, f));
+        f.in_scope(statement.span(), |f| write_statement(statement, f));
+    } else {
+        format_node_with_comments(statement.as_ast_nodes(), f, |f| {
+            write_statement(statement, f)
+        });
     }
-    format_node_with_comments(statement.as_ast_nodes(), f, |f| {
-        write_statement(statement, f)
-    });
+    if !f.context().comments_without_printer.is_empty() {
+        write_comments_without_printer(statement.span(), f);
+    }
+}
+
+/// Writes the comments in `span`, which is a statement or a class member, that have no printer. See
+/// [`crate::ir::run::format_with_marks`].
+#[cold]
+#[inline(never)]
+fn write_comments_without_printer<'a>(span: Span, f: &mut Formatter<'a>) {
+    let ids = std::mem::take(&mut f.context_mut().comments_without_printer);
+    for &id in &ids {
+        let comment = f.comments().all().slice(id as usize, id as usize + 1);
+        if comment.first().is_some_and(|it| span.contains(it.span())) {
+            FormatTrailingComments::Comments(comment).fmt(f);
+        }
+    }
+    f.context_mut().comments_without_printer = ids;
 }
 
 /// Whether `statement` is in the head of a `for`, and not its body.
@@ -1177,20 +1244,26 @@ fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &
             _ => write(f),
         };
     }
-    if f.file().is_flow() && print::flow::is_return_type_of_function_type(ty) {
+    if f.file().is_flow() && print::flow::is_directly_in_function_type(ty) {
         return write(f);
     }
     let node = AstNodes::TSTypeAnnotation(ty);
     if !f.comments().of_node(node).leading.is_empty()
         && !(comment_sticks_to_name_of_variable(f)
-            && matches!(node.parent(), AstNodes::VariableDeclarator(_)))
+            && matches!(
+                node.parent(),
+                AstNodes::VariableDeclarator(_)
+                    | AstNodes::TSThisParameter(_)
+                    | AstNodes::FormalParameterRest(_)
+            ))
     {
         write!(f, space());
     }
     format_node(node, f, write);
 }
 
-/// `const a /* comment */ : T = 1` is `const a/* comment */ : T = 1` for oxfmt.
+/// `const a /* comment */ : T = 1` is `const a/* comment */ : T = 1` for oxfmt. The same after `this` and after `...a` in
+/// the parameters of a function.
 fn comment_sticks_to_name_of_variable(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -1240,8 +1313,20 @@ macro_rules! format_with_comments {
     };
 }
 
+impl<'a> Format<'a> for Member<'a> {
+    #[inline]
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let member = *self;
+        format_node(member.as_ast_nodes(), f, |f| {
+            print::class::write_member(member, f)
+        });
+        if !f.context().comments_without_printer.is_empty() {
+            write_comments_without_printer(member.span(), f);
+        }
+    }
+}
+
 format_with_comments! {
-    Member => print::class::write_member,
     Prop => print::expressions::write_property,
     VarDecl => print::variable_declaration::write_variable_declarator,
     Param => print::parameters::write_formal_parameter,

@@ -1,7 +1,9 @@
 use crate::js::comments::OwnedComments;
 use crate::js::format::FormatNonNullMarks;
 use crate::js::print::call_like_expression::arguments::FormatArguments;
-use crate::js::print::member_expression::{comments_in_member_access_stay, write_lookup};
+use crate::js::print::member_expression::{
+    comments_in_member_access_stay, write_lookup, write_lookup_after_its_comments,
+};
 use crate::js::print::type_parameters::type_arguments;
 use crate::js::utils::call_expression::{
     FormatCallee, comments_of_expression, comments_stay_behind_callee, has_comment,
@@ -138,7 +140,10 @@ impl<'a> ChainMember<'a> {
     /// What the link adds to its object or its callee.
     fn write_link(&self, f: &mut Formatter<'a>) {
         match *self {
-            Self::StaticMember(member) => write_lookup(member, f),
+            Self::StaticMember(member) => match comments_in_member_access_stay(f) {
+                true => write_lookup_after_its_comments(member, f),
+                false => write_lookup(member, f),
+            },
             Self::TSNonNullExpression(e) => write!(f, FormatNonNullMarks(e)),
             Self::CallExpression { expression, .. } => write_call_without_callee(expression, f),
             Self::ComputedMember(member) => {

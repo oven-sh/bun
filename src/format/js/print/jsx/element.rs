@@ -76,7 +76,8 @@ impl<'a> AnyJsxTagWithChildren<'a> {
     fn fmt_opening(&self, f: &mut Formatter<'a>) {
         match self.jsx.is_fragment() {
             true => {
-                write_jsx_fragment_tag(self.comments_in_fragment_tag(Marker::None, f), false, f)
+                let comments = self.comments_in_fragment_tag(Marker::None, f);
+                write_jsx_fragment_tag(self.jsx.opening_span(), comments, false, f);
             }
             false => FormatOpeningElement {
                 expr: self.expr,
@@ -87,13 +88,13 @@ impl<'a> AnyJsxTagWithChildren<'a> {
     }
 
     fn fmt_closing(&self, f: &mut Formatter<'a>) {
-        match self.jsx.close_tag() {
-            Some(name) => write_jsx_closing_element(name, f),
-            None if self.jsx.is_fragment() => {
+        match (self.jsx.close_tag(), self.jsx.closing_span()) {
+            (Some(name), _) => write_jsx_closing_element(name, f),
+            (None, Some(tag)) if self.jsx.is_fragment() => {
                 let comments = self.comments_in_fragment_tag(Marker::ClosingFragment, f);
-                write_jsx_fragment_tag(comments, true, f);
+                write_jsx_fragment_tag(tag, comments, true, f);
             }
-            None => {}
+            _ => {}
         }
     }
 

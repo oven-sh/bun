@@ -850,6 +850,26 @@ describe.concurrent("bun fmt", () => {
     expect(checked.exitCode).toBe(0);
   });
 
+  test("two comments before the `=>` of an arrow function are on its line", async () => {
+    // Prettier 3.9.9 prints `(a) /* b */\n/* c */ => d`, and no line break is allowed before `=>`.
+    const files = {
+      "a.js": "const f = a /* b */ /* c */ => d;\nuseEffect(() /* b */ /* c */ => { a(); }, [d]);\n",
+      "b.vue": '<template>\n  <div :x="a /* b */ /* c */ => a"></div>\n</template>\n',
+      "c.svelte": "<div x={a /* b */ /* c */ => d}></div>\n",
+    };
+    const result = await format(files, [], { reads: Object.keys(files) });
+    expect(result.files).toEqual({
+      "a.js":
+        "const f = (a) /* b */ /* c */ => d;\nuseEffect(\n  () /* b */ /* c */ => {\n    a();\n  },\n  [d],\n);\n",
+      "b.vue": '<template>\n  <div :x="(a) /* b */ /* c */ => a"></div>\n</template>\n',
+      "c.svelte": "<div x={(a) /* b */ /* c */ => d}></div>\n",
+    });
+    expect(result.exitCode).toBe(0);
+    const checked = await format(files, ["--debug-check"]);
+    expect(checked.stderr).toBe("");
+    expect(checked.exitCode).toBe(0);
+  });
+
   test("a vertical tab next to a comment is white space", async () => {
     const text = "function a(b\v/* c */) {}\nfunction d(/* e */\vf) {}\nconst g = /* h */\vi;\n";
     const result = await format({ "a.js": text }, [], { reads: ["a.js"] });
@@ -864,7 +884,7 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  // Where a `prettier-ignore` comment makes the tool print another program, or none. The extension, the text, what is printed,
+  // Where a comment makes the tool print another program, or none. The extension, the text, what is printed,
   // and what the tool prints.
   describe.each([
     [
@@ -1040,6 +1060,49 @@ describe.concurrent("bun fmt", () => {
           "try {\n} catch // prettier-ignore\n{ a,   b } {}\n",
         ],
       ],
+    ],
+    [
+      "Prettier 3.9.9 moves a comment of several lines before the `[]` of an array type, where a line break ends the type",
+      {},
+      [
+        ["ts", "type A = B[ /* a\n b */ ];\n", "type A = B[] /* a\n b */;\n", "type A = B /* a\n b */[];\n"],
+        [
+          "ts",
+          "let a: B[ /* a\n b */ ] | null;\n",
+          "let a:\n  | B[] /* a\n b */\n  | null;\n",
+          "let a:\n  | B /* a\n b */[]\n  | null;\n",
+        ],
+      ],
+    ],
+    [
+      "oxfmt 0.72 moves a comment of several lines before the `[]` of an array type, where a line break ends the type",
+      { ".oxfmtrc.json": "{}" },
+      [
+        [
+          "ts",
+          "let a: B[ /* a\n b */ ] | null;\n",
+          "let a:\n  | B[] /* a\n b */\n  | null;\n",
+          "let a:\n  | B /* a\n b */[]\n  | null;\n",
+        ],
+      ],
+    ],
+    [
+      "oxfmt 0.72 writes the `]` of an array after a line comment that follows a hole",
+      { ".oxfmtrc.json": "{}" },
+      [
+        ["js", "x = [a,\n// c\n,];\n", "x = [\n  a,\n  ,// c\n];\n", "x = [a, ,// c];\n"],
+        [
+          "js",
+          "const z = [a, , b, \n// c\n,];\n",
+          "const z = [\n  a,\n  ,\n  b,\n  ,// c\n];\n",
+          "const z = [a, , b, ,// c];\n",
+        ],
+      ],
+    ],
+    [
+      "Prettier 3.9.9 writes the `}` of a substitution in a template type after a line comment",
+      {},
+      [["ts", "type A = `${B}-${ // c\nC}`;\n", "type A = `${\n  B // c\n}-${C}`;\n", "type A = `${B // c}-${C}`;\n"]],
     ],
   ])("%s", (_, config, rows) => {
     test("and `bun fmt` does not", async () => {
@@ -3833,6 +3896,103 @@ try {
     const [odd, plain] = [await run(index => texts[index]), await run(() => ordinary.repeat(length / ordinary.length))];
     // 3 when all is well.
     expect(slowdown(odd, plain)).toBeLessThan(6);
+  }, 120_000);
+
+  // A comment in each repetition: what attaching or printing comments once walked again for each of them, and what is like it.
+  test("JavaScript with many comments takes time in proportion to its size", async () => {
+    const count = isDebug || isASAN ? 2_000 : 40_000;
+    // The ending of the name, what is before, what is repeated, what is after.
+    const shapes: [string, string, string, string][] = [
+      ["js", "", "a; // c\n", ""],
+      ["js", "", "// c\na;\n", ""],
+      ["js", "", "// c\n", ""],
+      ["js", "a; // c\n", ";", ""],
+      ["js", "a(", "/* c */ ", "b);"],
+      ["js", "a;\n", "/* c */ ", "\n"],
+      ["js", "x = ", "/* c */ ", "a;"],
+      ["js", "x ", "/* c */ ", "= a;"],
+      ["js", "x =\n", "// c\n", "a;"],
+      ["js", "x\n", "// c\n", "= a;"],
+      ["js", "", "// c\n", "a;"],
+      ["js", "a;\n", "// c\n", "b;"],
+      ["js", "x = a ", "/* c */ ", "+ b;"],
+      ["js", "x = a + ", "/* c */ ", "b;"],
+      ["js", "x = a\n", "// c\n", "+ b;"],
+      ["js", "x = a +\n", "// c\n", "b;"],
+      ["js", "x = { a: ", "/* c */ ", "b };"],
+      ["js", "x = a ? ", "/* c */ ", "b : c;"],
+      ["js", "x = a.", "/* c */ ", "b;"],
+      ["js", "function f() ", "/* c */ ", "{}"],
+      ["js", "if (a) ", "/* c */ ", "b;"],
+      ["js", "if (a) {}\n", "// c\n", "else {}"],
+      ["js", "return_: ", "/* c */ ", "a;"],
+      ["ts", "type A = (", "/* c */ ", "B | C)[];"],
+      ["ts", "type A = ", "/* c */ ", "B;"],
+      ["ts", "let a: ", "/* c */ ", "B = c;"],
+      ["ts", "let a ", "/* c */ ", ": B = c;"],
+      ["ts", "class A {\n", "// c\n", "a = 1;\n}"],
+      ["jsx", "x = <a ", "/* c */ ", "b />;"],
+      ["js", "x = `", "${/* c */ a}", "`;"],
+      ["js", "x = `", "${a /* c */}", "`;"],
+      ["js", "x = [\n", "a, // c\n", "];"],
+      ["js", "x = [\n", "// c\na,\n", "];"],
+      ["js", "x = [\n", "/* c */ a,\n", "];"],
+      ["js", "x = [\n", ", // c\n", "];"],
+      ["js", "// prettier-ignore\nx = [\n", "a, // c\n", "];"],
+      ["js", "x = {\n", "a: 1, // c\n", "};"],
+      ["js", "x = {\n", "// c\na: 1,\n", "};"],
+      ["js", "x = {\n", "a: /* c */ 1,\n", "};"],
+      ["js", "x = {\n", "a: /* c */ 1, // d\n", "};"],
+      ["js", "x = {\n", "// c\na: /* d */ 1,\n", "};"],
+      ["js", "function f(\n", "a = /* c */ 1, // d\n", ") {}"],
+      ["js", "let\n", "a = /* c */ 1, // d\n", "b;"],
+      ["js", "switch (a) {\n", "case /* c */ 1: // d\n", "}"],
+      ["js", "export {\n", "a as /* c */ b, // d\n", "};"],
+      ["ts", "class A {\n", "a = /* c */ 1; // d\n", "}"],
+      ["ts", "interface I {\n", "a: /* c */ 1; // d\n", "}"],
+      ["ts", "enum E {\n", "A = /* c */ 1, // d\n", "}"],
+      ["ts", "type T = [\n", "a: /* c */ A, // d\n", "];"],
+      ["ts", "type T<\n", "A = /* c */ B, // d\n", "> = 1;"],
+      ["jsx", "x = <a\n", 'b=/* c */ "d" // e\n', "/>;"],
+      ["js", "f(\n", "a, // c\n", ");"],
+      ["js", "function f(\n", "a, // c\n", ") {}"],
+      ["js", "switch (a) {\n", "// c\ncase 1:\n", "}"],
+      ["js", "x = a\n", ".b() // c\n", ";"],
+      ["js", "x = a\n", "+ b // c\n", ";"],
+      ["js", "export {\n", "a, // c\n", "};"],
+      ["js", "x = ", "! /* c */ ", "a;"],
+      ["js", "x = ", "new /* c */ ", "a;"],
+      ["js", "x = ", "() => /* c */ ", "a;"],
+      ["js", "", "{ // c\n", ""],
+      ["js", "x = ", "[ // c\n", ""],
+      ["js", "x = ", "/** @type {T} */ (", "a"],
+      ["jsx", "x = <a>\n", "{/* c */}\n", "</a>;"],
+      ["jsx", "x = <a\n", "b // c\n", "/>;"],
+      ["ts", "type T =\n", "| A // c\n", ";"],
+      ["ts", "type T =\n", "& A // c\n", ";"],
+      ["ts", "type T = [\n", "A, // c\n", "];"],
+      ["ts", "class A {\n", "// c\na = 1;\n", "}"],
+      ["ts", "class A {\n", "a = 1; // c\n", "}"],
+      ["ts", "interface I {\n", "a: 1; // c\n", "}"],
+      ["ts", "enum E {\n", "A, // c\n", "}"],
+    ];
+    const texts = shapes.map(([, before, unit, after]) => before + unit.repeat(count) + after);
+    const ordinary =
+      "// Returns the sum.\nfunction add(first, second) {\n  const sum = first + second; // a number\n  return [sum, { first, second }];\n}\n\n";
+    const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
+    for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }]) {
+      const run = (text: (index: number) => string) =>
+        format(
+          {
+            ...configuration,
+            ...Object.fromEntries(shapes.map(([ending], index) => [`${index}.${ending}`, text(index)])),
+          },
+          ["--check", "--log-level", "silent"],
+        );
+      const odd = await run(index => texts[index]);
+      const plain = await run(() => ordinary.repeat(length / ordinary.length));
+      expect(slowdown(odd, plain)).toBeLessThan(4);
+    }
   }, 120_000);
 
   // The same for what is repeated in something. Prettier takes the square of the number of parameters.

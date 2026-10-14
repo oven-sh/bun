@@ -17,10 +17,32 @@ impl<'a> Formatter<'a> {
     #[inline]
     pub(crate) fn lines_before(&self, span: Span) -> usize {
         let looks_past_comma = !comma_ends_the_search_for_line_breaks(self);
+        if self.is_quiet() {
+            return (self.source_text()).get_lines_before(span, None, looks_past_comma);
+        }
+        self.lines_before_node_or_its_comments(span, looks_past_comma)
+    }
+
+    fn lines_before_node_or_its_comments(&self, span: Span, looks_past_comma: bool) -> usize {
+        let directly_before = self.comments().first_leading_comment_before(span.start);
+        // `a\n\n// comment\n, b`: the comment leads `b` too.
+        let end_of_token_before = match directly_before {
+            Some(comment) => comment.prev_token_end() as usize,
+            None => {
+                let before = self.source_text().as_bytes().get(..span.start as usize);
+                before.unwrap_or_default().trim_ascii_end().len()
+            }
+        };
+        let before_comma = (self.source_text().as_bytes().get(..end_of_token_before))
+            .and_then(|before| before.strip_suffix(b","))
+            .and_then(|before| {
+                self.comments()
+                    .first_leading_comment_before(before.len() as u32)
+            });
+        let first_leading_comment = before_comma.or(directly_before);
         self.source_text().get_lines_before(
             span,
-            (self.comments().first_leading_comment_before(span.start))
-                .map(|comment| comment.span()),
+            first_leading_comment.map(|comment| comment.span()),
             looks_past_comma,
         )
     }
@@ -118,6 +140,15 @@ impl<'fmt, 'a, Separator: Format<'a>> JoinNodesBuilder<'fmt, 'a, Separator> {
         content.fmt(self.fmt);
     }
 
+    /// [`JoinNodesBuilder::entry`], with an empty line before it.
+    pub(crate) fn entry_after_empty_line(&mut self, content: &(impl Format<'a> + ?Sized)) {
+        if self.has_elements {
+            write!(self.fmt, empty_line());
+        }
+        self.has_elements = true;
+        content.fmt(self.fmt);
+    }
+
     /// [`JoinNodesBuilder::entry`], before which an empty line is not kept.
     pub(crate) fn entry_without_empty_line(&mut self, content: &(impl Format<'a> + ?Sized)) {
         if self.has_elements {
@@ -125,10 +156,6 @@ impl<'fmt, 'a, Separator: Format<'a>> JoinNodesBuilder<'fmt, 'a, Separator> {
         }
         self.has_elements = true;
         content.fmt(self.fmt);
-    }
-
-    pub(crate) fn has_comment_before(&self, start: u32) -> bool {
-        self.fmt.comments().has_comment_before(start)
     }
 
     pub(crate) fn separator_no_entry(&mut self, span: Span) {

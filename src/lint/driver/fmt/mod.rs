@@ -923,11 +923,20 @@ fn print<'a>(
         && out != file.text()
     {
         let is_same = with_tree(how, &out, |after, atoms, _| {
-            let after = match &after {
-                Summary::InPlace(hir) => Program::new(&**hir, &out, atoms),
-                Summary::InArena(hir) => Program::new(&**hir, &out, atoms),
+            // The parser goes on after an error, and the tree can be the same: `a\n=> b`.
+            let (has_parse_errors, after) = match &after {
+                Summary::InPlace(hir) => (
+                    hir.has_errors || hir.has_parse_diagnostics,
+                    Program::new(&**hir, &out, atoms),
+                ),
+                Summary::InArena(hir) => (
+                    hir.has_errors || hir.has_parse_diagnostics,
+                    Program::new(&**hir, &out, atoms),
+                ),
             };
-            bun_format::verify::compare(file, program, &after, options, &mut scratch.verify).is_ok()
+            (!has_parse_errors || file.has_parse_errors())
+                && bun_format::verify::compare(file, program, &after, options, &mut scratch.verify)
+                    .is_ok()
         });
         if !is_same {
             return Err(Failure::Changed(

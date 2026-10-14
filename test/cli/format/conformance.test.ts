@@ -127,6 +127,35 @@ const knownDifferences = [
   "comments/before-the-parentheses-of-a-nested-chain.js:139 Prettier: T Identifier 137, bun: T LogicalExpression 132",
   // The `1` of the type `-1` is no node here.
   "comments/behind-a-negative-number-that-is-a-type.ts:71 Prettier: L Literal 79, bun: D TSLiteralType 69",
+  // `a!!` is one node here. It prints the comment after the `!` that it comes after.
+  "comments/between-two-non-null-marks.ts:7 Prettier: T TSNonNullExpression 4, bun: D TSNonNullExpression 4",
+  "comments/between-two-non-null-marks.ts:25 Prettier: T TSNonNullExpression 22, bun: D TSNonNullExpression 22",
+  "comments/between-two-non-null-marks.ts:33 Prettier: T TSNonNullExpression 22, bun: D TSNonNullExpression 22",
+  "comments/between-two-non-null-marks.ts:51 Prettier: T TSNonNullExpression 48, bun: D TSNonNullExpression 48",
+  "comments/between-two-non-null-marks.ts:71 Prettier: T TSNonNullExpression 68, bun: D TSNonNullExpression 68",
+  "comments/between-two-non-null-marks.ts:109 Prettier: T TSNonNullExpression 98, bun: D TSNonNullExpression 98",
   // An `Identifier` includes its type annotation in ESTree.
-  "ignore/comment-that-trails-on-its-own-line.ts:432 Prettier: T Identifier 418, bun: T TSTypeAnnotation 419",
+  "ignore/comment-that-trails-on-its-own-line.ts:432 Prettier: T Identifier 418, bun: T BindingIdentifier 418",
+  // The `<>` and the `</>` of a fragment are no nodes here. The fragment owns their comments.
+  "ignore/ignore-comment-in-the-tag-of-a-fragment.jsx:12 Prettier: D JSXOpeningFragment 10, bun: D JSXFragment 10",
+  "ignore/ignore-comment-in-the-tag-of-a-fragment.jsx:70 Prettier: D JSXClosingFragment 67, bun: D JSXFragment 58",
+  "ignore/ignore-comment-in-the-tag-of-a-fragment.jsx:108 Prettier: D JSXOpeningFragment 106, bun: D JSXFragment 106",
+  // The `a:b` of an attribute is no node here. What trails it trails the `b`.
+  "jsx/comments-next-to-the-colon-of-a-namespaced-name.jsx:249 Prettier: T JSXNamespacedName 245, bun: T Name 247",
+  // The `{ with: { .. } }` of an import type, its property and the `with` are no nodes here. The module specifier and the inner
+  // object own their comments.
+  "types/comments-in-the-options-of-an-import-type.ts:63 Prettier: T ObjectExpression 21, bun: T ObjectExpression 29",
+  "types/comments-in-the-options-of-an-import-type.ts:137 Prettier: T Property 99, bun: T ObjectExpression 105",
+  "types/comments-in-the-options-of-an-import-type.ts:432 Prettier: T Property 394, bun: T ObjectExpression 400",
+  "types/comments-in-the-options-of-an-import-type.ts:544 Prettier: T Identifier 539, bun: T Name 532",
+  "types/comments-in-the-options-of-an-import-type.ts:620 Prettier: L Property 615, bun: T Name 608",
+  "types/comments-in-the-options-of-an-import-type.ts:767 Prettier: L Property 761, bun: T Name 754",
+  "types/comments-in-the-options-of-an-import-type.ts:775 Prettier: L Property 761, bun: T Name 754",
+  "types/line-comment-after-the-comma-of-an-import-type.ts:93 Prettier: L ObjectExpression 101, bun: L ObjectExpression 109",
+  // The `1` of the type `-1` is no node here.
+  "types/prettier-ignore-after-the-minus-of-a-number.ts:15 Prettier: L Literal 37, bun: D TSLiteralType 13",
+  "types/prettier-ignore-after-the-minus-of-a-number.ts:55 Prettier: L Literal 74, bun: D TSLiteralType 53",
+  // Nor is the `symbol` of `unique symbol`.
+  "types/prettier-ignore-after-unique.ts:17 Prettier: L TSSymbolKeyword 39, bun: D TSTypeOperator 9",
+  "types/prettier-ignore-after-unique.ts:63 Prettier: L TSSymbolKeyword 82, bun: D TSTypeOperator 56",
 ];

@@ -1834,7 +1834,7 @@ pub(crate) fn format_with<'a>(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
     is_aligned: bool,
-    write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
+    write: impl Fn(&'a File<'a>, &mut Formatter<'a>),
 ) -> Result<Option<u32>, FormatError> {
     let source = file.text();
     let offset =

@@ -55,11 +55,26 @@ fn write_class_body<'a>(class: Class<'a>, f: &mut Formatter<'a>) {
             // the same line.
             let follows_semicolon =
                 span.start != 0 && f.source_text().byte_at(span.start - 1) == Some(b';');
+            // `a() {}⏎// comment⏎;⏎⏎b() {}`: the comment leads `b`, and the empty line is after the comment.
+            let has_comments = !f.is_quiet() && f.comments().is_owner(Node::Member(element));
+            let comment_before_stray_semicolon = match has_comments {
+                true => (f.comments().of_node(element.as_ast_nodes()).leading.first())
+                    .filter(|comment| comment.next_token_start() != span.start),
+                false => None,
+            };
+            let has_empty_line_before = match comment_before_stray_semicolon {
+                Some(comment) => crate::text::is_previous_line_empty(
+                    f.source_text().as_bytes(),
+                    comment.span().start as usize,
+                ),
+                None => !follows_semicolon && f.lines_before(span) > 1,
+            };
             match is_first {
                 true => is_first = false,
-                false if !follows_semicolon && f.lines_before(span) > 1 => write!(f, empty_line()),
+                false if has_empty_line_before => write!(f, empty_line()),
                 false => write!(f, hard_line_break()),
             }
+
             let next_element = iter.peek().copied();
             write!(
                 f,
@@ -430,8 +445,16 @@ impl<'a> Format<'a> for FormatClass<'a> {
                         f,
                         [
                             soft_line_break_or_space(),
-                            format_comments,
-                            (!comments.is_empty()).then_some(hard_line_break()),
+                            format_with(|f| match keeps_empty_lines_before_implements(f) {
+                                true => write_comments_with_empty_lines(comments, f),
+                                false => write!(
+                                    f,
+                                    [
+                                        format_comments,
+                                        (!comments.is_empty()).then_some(hard_line_break())
+                                    ]
+                                ),
+                            }),
                             "implements",
                             group(&soft_line_indent_or_space(&implements))
                         ]
@@ -563,6 +586,26 @@ fn super_class_has_comments<'a>(super_class: Expr<'a>, f: &Formatter<'a>) -> boo
 /// Prettier's `hasMultipleHeritage`.
 fn has_multiple_heritage(class: Class<'_>) -> bool {
     usize::from(class.extends().is_some()) + class.implements().len() > 1
+}
+
+/// `class A extends B⏎// comment⏎⏎implements C {}`: oxfmt keeps the empty line after the comment.
+fn keeps_empty_lines_before_implements(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// Each of `comments` on its own line, and the empty lines after them.
+fn write_comments_with_empty_lines<'a>(comments: CommentList<'a>, f: &mut Formatter<'a>) {
+    for index in 0..comments.len() {
+        let comments = comments.slice(index, index + 1);
+        let is_next_line_empty = (comments.first())
+            .is_some_and(|comment| f.source_text().lines_after(comment.span().end) > 1);
+        let indent = DanglingIndentMode::None;
+        write!(f, FormatDanglingComments::Comments { comments, indent });
+        match is_next_line_empty {
+            true => write!(f, empty_line()),
+            false => write!(f, hard_line_break()),
+        }
+    }
 }
 
 /// Prettier's `shouldPrintClassInGroupMode`: whether the head of the class is a group that can break
@@ -712,10 +755,15 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
                 Semicolons::Always => !is_ignored,
                 Semicolons::AsNeeded => self.needs_semicolon(),
             };
-        if !needs_semi || f.is_quiet() {
+        // Without semicolons, Prettier's `printClassBody` adds the `;` that is needed after the member and its comments:
+        // `static /* comment */;`
+        let is_added_after_comments =
+            f.options().semicolons.is_as_needed() && !f.options().flavor.is_oxfmt();
+        if !needs_semi || f.is_quiet() || is_added_after_comments {
             return write!(f, [self.element, needs_semi.then_some(";")]);
         }
         // The `;` is part of the member, so the comments that trail the member are behind it.
+
         write!(
             f,
             [

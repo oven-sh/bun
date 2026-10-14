@@ -398,22 +398,30 @@ fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Format
         return false;
     }
 
-    if has_comment(first, f) || has_comment_before_comma_for_oxfmt(first, second, f) {
+    if match f.options().flavor.is_oxfmt() {
+        true => has_comment_around_first_argument_for_oxfmt(first, second, f),
+        false => has_comment(first, f),
+    } {
         return false;
     }
     is_hopefully_short_call_argument(second, f)
 }
 
-/// `a(function () {}⏎/* comment */, b)`: the comment leads `b`. For oxfmt the function is not hugged all the same.
-fn has_comment_before_comma_for_oxfmt<'a>(
-    argument: Expr<'a>,
-    next: Expr<'a>,
+/// oxfmt goes by where the comments are: before `first`, between it and the comma, or between it and `second` at the end of a
+/// line. A comment in `first` does not count: `a(function (/* comment */) {}, b)`.
+fn has_comment_around_first_argument_for_oxfmt<'a>(
+    first: Expr<'a>,
+    second: Expr<'a>,
     f: &Formatter<'a>,
 ) -> bool {
-    !f.is_quiet()
-        && f.options().flavor.is_oxfmt()
-        && (comments_of_expression(next, f).leading.iter())
-            .any(|comment| comment.prev_token_end() <= argument.outer_span().end)
+    if f.is_quiet() {
+        return false;
+    }
+    let between = Span::new(first.span().end, second.span().start);
+    !comments_around_expression(first, f).leading.is_empty()
+        || (f.comments().comments_in_span(between).iter()).any(|comment| {
+            comment.has_newline_after() || comment.prev_token_end() <= first.outer_span().end
+        })
 }
 
 fn should_group_last_argument_impl<'a>(

@@ -48,12 +48,23 @@ pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'
     if (e.parens()).all(|paren| f.comments().is_cast_parenthesis(paren.start)) {
         return false;
     }
-    match e.kind() {
-        // `(a<T>) + b`
-        ExprKind::Instantiation { .. } => return true,
-        // Something follows that would be taken for a part of what is made.
-        ExprKind::New(call) if call.close_paren().is_none() => return true,
-        _ => {}
+    // What follows would be taken for a part of it: `(a<T>) + b`, `(a<T>).b`, `(new A).b`, `(new A)()`.
+    let is_instantiation = matches!(e.kind(), ExprKind::Instantiation { .. });
+    if (is_instantiation || matches!(e.kind(), ExprKind::New(call) if call.close_paren().is_none()))
+        && let Node::Expr(parent) = e.parent()
+        && match parent.kind() {
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj == e,
+            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
+                call.callee() == e
+            }
+            ExprKind::Binary { op, left, .. } => {
+                is_instantiation && left == e && op != BinOp::Comma
+            }
+            ExprKind::NonNull(_) | ExprKind::Unary { .. } => is_instantiation,
+            _ => false,
+        }
+    {
+        return true;
     }
     // What it starts with: `{`, `function`, `class` and `let[` start a statement.
     let mut first = e;

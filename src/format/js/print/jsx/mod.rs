@@ -6,7 +6,7 @@ mod opening_element;
 
 use self::element::AnyJsxTagWithChildren;
 pub(crate) use self::element::ignored_jsx_gets_no_parentheses;
-use crate::js::format::{format_name, format_node, identifier};
+use crate::js::format::{ExprOptions, format_name, format_node, identifier, write_expression};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::tailwindcss::{InTailwindContext, context_of_attribute};
 use crate::js::utils::typecast::{
@@ -39,21 +39,22 @@ impl<'a> Format<'a> for FormatJsxName<'a> {
     }
 }
 
-/// `a`, `a-b`, `a:b`
+/// `a`, `a-b`, `a:b`, with the comments of the names.
 fn write_jsx_identifier<'a>(span: Span, f: &mut Formatter<'a>) {
     let text = f.source_text().text_for(&span);
     let is_part =
         |b: &&u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'-') || **b >= 0x80;
     let namespace_len = text.iter().take_while(is_part).count() as u32;
     if namespace_len == span.len() {
-        return write!(f, text_without_whitespace(text));
+        return format_name(span, f, |f| write!(f, text_without_whitespace(text)));
     }
     let namespace = Span::new(span.start, span.start + namespace_len);
     let name = Span::new(
         span.end - text.iter().rev().take_while(is_part).count() as u32,
         span.end,
     );
-    write!(f, [source_text(namespace), ":"]);
+    format_name(namespace, f, |f| write!(f, source_text(namespace)));
+    write!(f, ":");
     format_name(name, f, |f| write!(f, source_text(name)));
 }
 
@@ -79,11 +80,26 @@ fn write_jsx_closing_element<'a>(name: Expr<'a>, f: &mut Formatter<'a>) {
     write!(f, ">");
 }
 
-/// `<>` and `</>`, with the `comments` inside the tag. Prettier's `printJsxOpeningClosingFragment`.
-fn write_jsx_fragment_tag<'a>(comments: CommentList<'a>, is_closing: bool, f: &mut Formatter<'a>) {
+/// `< /* prettier-ignore */ >` stays as it is for Prettier. oxfmt prints `</* prettier-ignore */>`.
+fn ignore_comment_applies_to_fragment_tag(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
+}
+
+/// `<>` and `</>`, which is at `tag`, with the `comments` inside the tag. Prettier's `printJsxOpeningClosingFragment`.
+fn write_jsx_fragment_tag<'a>(
+    tag: Span,
+    comments: CommentList<'a>,
+    is_closing: bool,
+    f: &mut Formatter<'a>,
+) {
     let open = if is_closing { "</" } else { "<" };
     if comments.is_empty() {
         return write!(f, [open, ">"]);
+    }
+    if ignore_comment_applies_to_fragment_tag(f)
+        && (comments.iter()).any(|comment| f.comments().is_suppression_comment(comment))
+    {
+        return write!(f, FormatSuppressedNode(tag));
     }
     let has_line_comment = comments.iter().any(|comment| comment.is_line());
     let format_comments = format_with(|f| {
@@ -281,13 +297,46 @@ pub(crate) fn write_jsx_attribute<'a>(attribute: Prop<'a>, f: &mut Formatter<'a>
     }
     if let Some(key) = attribute.key() {
         let span = key.span(f.file());
-        format_name(span, f, |f| write_jsx_identifier(span, f));
+        write_jsx_identifier(span, f);
     }
     if let Some(value) = attribute.value() {
         let context = attribute
             .key()
             .and_then(|key| context_of_attribute(f.source_text().text_for(&key.span(f.file())), f));
-        write!(f, ["=", InTailwindContext(context, FormatJsxChild(value))]);
+        write!(
+            f,
+            [
+                "=",
+                InTailwindContext(context, FormatJsxAttributeValue(value))
+            ]
+        );
+    }
+}
+
+/// `a=/* prettier-ignore */ 'b'` is `a=/* prettier-ignore */ "b"` for Prettier: `printJsxAttribute` writes a string itself, ignored or
+/// not. oxfmt copies it.
+fn ignored_string_of_attribute_is_formatted(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
+}
+
+/// `"b"`, `{b}` or `<b />` after the `=` of an attribute.
+struct FormatJsxAttributeValue<'a>(Expr<'a>);
+
+impl<'a> Format<'a> for FormatJsxAttributeValue<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let value = self.0;
+        let node = value.as_ast_nodes();
+        if f.is_quiet()
+            || value.jsx_container_span().is_some()
+            || !matches!(node, AstNodes::StringLiteral(_))
+            || !f.comments().is_ignored(node)
+            || !ignored_string_of_attribute_is_formatted(f)
+        {
+            return FormatJsxChild(value).fmt(f);
+        }
+        write!(f, leading_comments(node));
+        write_expression(value, ExprOptions::None, f);
+        write!(f, trailing_comments(node));
     }
 }
 

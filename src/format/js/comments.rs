@@ -564,11 +564,6 @@ impl<'a> Comments<'a> {
         !self.file_comments.cast_parens.is_empty()
     }
 
-    /// A type cast comment, in a file in which the parentheses after it are kept.
-    pub(crate) fn is_type_cast_comment(&self, comment: Comment<'_>) -> bool {
-        self.has_type_cast_comments() && comment.looks_like_type_cast()
-    }
-
     /// Whether the `(` at `open_paren` directly follows a type cast comment.
     pub(crate) fn is_cast_parenthesis(&self, open_paren: u32) -> bool {
         self.file_comments

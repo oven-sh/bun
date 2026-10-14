@@ -148,34 +148,65 @@ fn are_on_same_line(first: Comment<'_>, second: Comment<'_>) -> bool {
 
 /// Prettier's `isOwnLineComment` and `isEndOfLineComment`. A run of comments on one line that share the same preceding (or
 /// following) node is classified as a whole.
-fn text_position<'a>(
-    file: &'a File<'a>,
-    nodes: &[SurroundingNodes<'a>],
-    id: usize,
-) -> TextPosition {
-    let comment = |id: usize| file.comment(id as u32);
-    let mut first = id;
-    while nodes[id].preceding_node.is_some()
-        && first > 0
-        && nodes[first - 1].preceding_node == nodes[id].preceding_node
-        && are_on_same_line(comment(first - 1), comment(first))
-    {
-        first -= 1;
-    }
-    if comment(first).has_newline_before() {
-        return TextPosition::OwnLine;
-    }
-    let mut last = id;
-    while nodes[id].following_node.is_some()
-        && last + 1 < nodes.len()
-        && nodes[last + 1].following_node == nodes[id].following_node
-        && are_on_same_line(comment(last), comment(last + 1))
-    {
-        last += 1;
-    }
-    match comment(last).has_newline_after() {
-        true => TextPosition::EndOfLine,
-        false => TextPosition::Remaining,
+///
+/// Remembers the run of the comment that was asked about last, so that a long run is walked once and not once for each of its
+/// comments.
+struct TextPositions {
+    /// The comments from `.0` to `.1` are a run with the same preceding node.
+    with_same_preceding_node: (usize, usize),
+    /// The same for the following node.
+    with_same_following_node: (usize, usize),
+}
+
+impl TextPositions {
+    const NONE_ASKED_YET: TextPositions = TextPositions {
+        with_same_preceding_node: (1, 0),
+        with_same_following_node: (1, 0),
+    };
+
+    fn of<'a>(
+        &mut self,
+        file: &'a File<'a>,
+        nodes: &[SurroundingNodes<'a>],
+        id: usize,
+    ) -> TextPosition {
+        let comment = |id: usize| file.comment(id as u32);
+        let (first, last) = self.with_same_preceding_node;
+        if !(first <= id && id <= last) || nodes[id].preceding_node.is_none() {
+            let is_in_run = |id: usize| {
+                are_on_same_line(comment(id - 1), comment(id))
+                    && nodes[id - 1].preceding_node == nodes[id].preceding_node
+            };
+            let (mut first, mut last) = (id, id);
+            if nodes[id].preceding_node.is_some() {
+                while first > 0 && is_in_run(first) {
+                    first -= 1;
+                }
+                while last + 1 < nodes.len() && is_in_run(last + 1) {
+                    last += 1;
+                }
+            }
+            self.with_same_preceding_node = (first, last);
+        }
+        if comment(self.with_same_preceding_node.0).has_newline_before() {
+            return TextPosition::OwnLine;
+        }
+        let (first, last) = self.with_same_following_node;
+        if !(first <= id && id <= last) || nodes[id].following_node.is_none() {
+            let mut last = id;
+            while nodes[id].following_node.is_some()
+                && last + 1 < nodes.len()
+                && are_on_same_line(comment(last), comment(last + 1))
+                && nodes[last + 1].following_node == nodes[id].following_node
+            {
+                last += 1;
+            }
+            self.with_same_following_node = (id, last);
+        }
+        match comment(self.with_same_following_node.1).has_newline_after() {
+            true => TextPosition::EndOfLine,
+            false => TextPosition::Remaining,
+        }
     }
 }
 
@@ -275,6 +306,7 @@ pub(crate) fn attach<'a>(
         ..Attached::default()
     };
     let mut ties: Vec<usize> = Vec::new();
+    let mut text_positions = TextPositions::NONE_ASKED_YET;
     for (id, comment) in file.comments_by_id().enumerate() {
         // The usual case. See `AttachContext::list_elements_around`.
         if nodes[id].is_before_list_element
@@ -292,7 +324,7 @@ pub(crate) fn attach<'a>(
         let context = CommentContext {
             comment,
             is_ignore_comment: comment.is_ignore_comment(options.flavor),
-            text_position: text_position(file, &nodes, id),
+            text_position: text_positions.of(file, &nodes, id),
             nodes: nodes[id],
             is_last_comment: id + 1 == nodes.len(),
         };
@@ -358,7 +390,7 @@ pub(crate) fn attach<'a>(
                     &cx,
                     comment,
                     attachment.owner,
-                    text_position(file, &nodes, id),
+                    text_positions.of(file, &nodes, id),
                 )
             {
                 attachment.ignores_owner = false;

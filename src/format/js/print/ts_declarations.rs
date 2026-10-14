@@ -1,7 +1,8 @@
 //! The declarations of TypeScript.
 
 use super::block_statement::is_empty_block;
-use super::import_declaration::FormatStringLiteral;
+use super::import_declaration::{FormatStringLiteral, format_ignorable_name};
+
 use super::intersection_type::lone_type_of_intersection_is_a_group;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
@@ -58,6 +59,18 @@ fn only_comments_at_end_or_start_of_line_are_indented(f: &Formatter<'_>) -> bool
     f.options().flavor.is_oxfmt()
 }
 
+/// ```ts
+/// interface A< // comment      interface A< // comment
+///   T,                           T,
+/// > extends B {}               >
+///                                extends B {}
+/// ```
+///
+/// oxfmt on the left, Prettier on the right. The comment trails the name.
+fn only_comments_before_extends_break_the_head(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `interface A<T> extends B { .. }`. Prettier's `printClass`.
 pub(crate) fn write_ts_interface_declaration<'a>(
     statement: Stmt<'a>,
@@ -76,7 +89,9 @@ pub(crate) fn write_ts_interface_declaration<'a>(
 
     // Prettier's `shouldPrintClassInGroupMode`: the head can break before `extends`.
     let group_mode = extends.len() > 1
-        || !name_comments.trailing.is_empty()
+        || (!name_comments.trailing.is_empty()
+            && !(only_comments_before_extends_break_the_head(f)
+                && type_params.angle_brackets_span().is_some()))
         || !type_parameters_comments.trailing.is_empty()
         || extends.first().is_some_and(|first| match first.kind() {
             TypeKind::Ref { name, args } => name.len() > 1 && args.is_empty(),
@@ -208,11 +223,7 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
             && (comments_trailing_type_alias_left_side(statement, f).last())
                 .is_some_and(|comment| comment.is_line()));
     let layout = match type_alias_layout(statement, alias, ty, f) {
-        AssignmentLikeLayout::Fluid | AssignmentLikeLayout::NeverBreakAfterOperator
-            if has_line_comment_on_operator_line =>
-        {
-            AssignmentLikeLayout::BreakAfterOperator
-        }
+        _ if has_line_comment_on_operator_line => AssignmentLikeLayout::BreakAfterOperator,
         layout => layout,
     };
 
@@ -592,7 +603,7 @@ pub(crate) fn write_ts_import_equals_declaration<'a>(
     ) {
         (ImportEqualsTarget::Entity(name), ..) => write!(f, entity_name(name)),
         (ImportEqualsTarget::Require(_), Some(require_span), Some(span)) => {
-            format_name(require_span, f, |f| {
+            format_ignorable_name(require_span, f, |f| {
                 let expression = FormatStringLiteral { span };
                 match f.comments().has_comment_in_span(require_span) {
                     true if require_with_comment_breaks(f) => {

@@ -238,19 +238,25 @@ fn write_signatures<'a>(members: List<'a, Member<'a>>, is_interface: bool, f: &m
         f.context_mut().push_quote_needed(quote_needed);
     }
 
+    let (is_flow, text) = (f.file().is_flow(), f.source_text().as_bytes());
     let mut joiner = f.join_nodes_with_soft_line();
     let mut iter = members.iter().peekable();
+    let mut previous: Option<Member<'a>> = None;
     while let Some(signature) = iter.next() {
         let content = FormatTSSignature {
             signature,
             next_signature: iter.peek().copied(),
             is_interface,
         };
-        // Prettier has no node for the `...`.
-        match super::flow::is_inexact_mark(signature)
-            && !joiner.has_comment_before(signature.span().start)
-        {
+        // `a: 1⏎⏎// comment⏎; b: 2`: a member of Flow's ends before its separator, and Prettier's `isNextLineEmpty` starts there.
+        let is_after_empty_line = is_flow
+            && previous.replace(signature).is_some_and(|previous| {
+                crate::text::is_next_line_empty(text, previous.span().end as usize)
+            });
+        // Prettier has no node for the `...`. A comment before it trails the member before it.
+        match super::flow::is_inexact_mark(signature) {
             true => joiner.entry_without_empty_line(&content),
+            false if is_after_empty_line => joiner.entry_after_empty_line(&content),
             false => joiner.entry(signature.span(), &content),
         }
     }
@@ -279,8 +285,9 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
         if !f.is_quiet() {
             if f.comments().is_ignored(node) {
                 write!(f, signature);
-                // It is not part of a member of Flow's.
-                if f.file().is_flow() {
+                // It is not part of a member of Flow's. In an interface or a declared class Prettier writes none after an ignored
+                // member, which is a syntax error before another member.
+                if f.file().is_flow() && !(self.is_interface && self.next_signature.is_none()) {
                     self.write_separator(f);
                 }
                 return;
@@ -486,12 +493,16 @@ struct ImportTypeComments<'a> {
     leading_import: CommentList<'a>,
     leading_source: CommentList<'a>,
     trailing_source: CommentList<'a>,
-    /// Before the `{` of `{ with: { .. } }`.
-    leading_options: CommentList<'a>,
-    /// Before `with`.
-    leading_property: CommentList<'a>,
-    /// Before the `{` of `{ .. }`: those that the module specifier owns, then those that the object owns.
-    leading_attributes: [CommentList<'a>; 2],
+    /// Before the `{` of `{ with: { .. } }`. Here and in the next two: the comments that the module specifier owns, then those that
+    /// the inner object owns.
+    leading_options: [CommentList<'a>; 2],
+    /// Before `with`. Then those that end a line between `with` and the `{` of `{ .. }`, before the `:` and after it: Prettier's
+    /// `handlePropertyComments`.
+    leading_property: [CommentList<'a>; 4],
+    /// `with /* comment */: { .. }`
+    trailing_keyword: CommentList<'a>,
+    /// Before the `{` of `{ .. }`.
+    leading_attributes: CommentList<'a>,
     /// Before the `}` of `{ with: { .. } }`.
     trailing_property: CommentList<'a>,
     trailing_options: CommentList<'a>,
@@ -509,6 +520,17 @@ impl<'a> ImportTypeComments<'a> {
             let count = (comments.iter())
                 .take_while(|comment| comment.next_token_start() <= token_start)
                 .count();
+            let (taken, rest) = comments.split_at(count);
+            *comments = rest;
+            taken
+        }
+        /// Splits off the comments at the start of `comments` that are on the line of the token before them, if the last of
+        /// them ends the line.
+        fn take_up_to_end_of_line<'a>(comments: &mut CommentList<'a>) -> CommentList<'a> {
+            let count = (comments.iter())
+                .take_while(|comment| !comment.has_newline_before())
+                .position(|comment| comment.has_newline_after())
+                .map_or(0, |index| index + 1);
             let (taken, rest) = comments.split_at(count);
             *comments = rest;
             taken
@@ -536,17 +558,37 @@ impl<'a> ImportTypeComments<'a> {
         };
         let outer = options.options_span();
         let of_attributes = f.comments().of_node(options.object().as_ast_nodes());
-        let (mut behind_source, mut behind_attributes) =
-            (of_source.trailing, of_attributes.trailing);
+        let (mut after_source, mut before_attributes, mut after_attributes) = (
+            of_source.trailing,
+            of_attributes.leading,
+            of_attributes.trailing,
+        );
+        // `"a" /* 1 */, // 2 ⏎ { .. }`: before the `,`, or after it up to the end of its line.
+        let before_comma = take_up_to(&mut after_source, outer.start.saturating_sub(1)).len();
+        let mut after_comma = take_up_to(&mut after_source, outer.start);
+        let on_line_of_comma = take_up_to_end_of_line(&mut after_comma).len();
+        let (keyword, attributes) = (options.keyword_span().start, options.braces_span().start);
+        let leading_options = [after_comma, take_up_to(&mut before_attributes, outer.start)];
+        let before_keyword = [
+            take_up_to(&mut after_source, keyword),
+            take_up_to(&mut before_attributes, keyword),
+        ];
+        let mut before_colon = take_up_to(&mut after_source, attributes.saturating_sub(1));
         ImportTypeComments {
             leading_import,
             leading_source,
-            trailing_source: take_up_to(&mut behind_source, outer.start.saturating_sub(1)),
-            leading_options: take_up_to(&mut behind_source, outer.start),
-            leading_property: take_up_to(&mut behind_source, options.keyword_span().start),
-            leading_attributes: [behind_source, of_attributes.leading],
-            trailing_property: take_up_to(&mut behind_attributes, outer.end.saturating_sub(1)),
-            trailing_options: behind_attributes,
+            trailing_source: of_source.trailing.slice(0, before_comma + on_line_of_comma),
+            leading_options,
+            leading_property: [
+                before_keyword[0],
+                before_keyword[1],
+                take_up_to_end_of_line(&mut before_colon),
+                after_source,
+            ],
+            trailing_keyword: before_colon,
+            leading_attributes: before_attributes,
+            trailing_property: take_up_to(&mut after_attributes, outer.end.saturating_sub(1)),
+            trailing_options: after_attributes,
         }
     }
 
@@ -593,10 +635,12 @@ fn write_import_type_arguments<'a>(
     let format_source = comments.format_source(source).memoized();
     let does_source_break = format_source.inspect(f).will_break();
 
-    let has_comments =
-        !(comments.leading_options.is_empty() && comments.trailing_options.is_empty());
+    let has_comments = !(comments.leading_options.iter().all(|it| it.is_empty())
+        && comments.trailing_options.is_empty());
     let format_options = format_with(|f| {
-        write!(f, FormatLeadingComments::Comments(comments.leading_options));
+        for comments in comments.leading_options {
+            write!(f, FormatLeadingComments::Comments(comments));
+        }
         write_import_type_options(options, comments, f);
         write!(
             f,
@@ -606,7 +650,16 @@ fn write_import_type_arguments<'a>(
     .memoized();
     let do_options_break = format_options.inspect(f).will_break();
 
-    let head = format_with(|f| write!(f, [format_source, ",", soft_line_break_or_space()]));
+    let first_comment = comments.leading_options.into_iter().flatten().next();
+    let has_empty_line = f.source_text().get_lines_before(
+        options.options_span(),
+        first_comment.map(|comment| comment.span()),
+        true,
+    ) > 1;
+    let head = format_with(|f| match has_empty_line {
+        true => write!(f, [format_source, ",", empty_line()]),
+        false => write!(f, [format_source, ",", soft_line_break_or_space()]),
+    });
     let (head, format_options) = (&head, &format_options);
     let all_broken_out = |should_expand: bool| {
         format_with(move |f: &mut Formatter<'a>| {
@@ -621,7 +674,7 @@ fn write_import_type_arguments<'a>(
     if has_comments {
         return write!(f, all_broken_out(does_source_break || do_options_break));
     }
-    if does_source_break {
+    if does_source_break || has_empty_line {
         return write!(f, all_broken_out(true));
     }
     if !do_options_break && options_of_import_type_are_on_a_line_of_their_own(f) {
@@ -658,6 +711,18 @@ fn write_import_type_arguments<'a>(
     }
 }
 
+/// ```ts
+/// type A = import("a", {          type A = import("a", {
+///   with: // comment                // comment
+///     { type: "json" },             with: { type: "json" },
+/// });                             });
+/// ```
+///
+/// oxfmt on the left, Prettier on the right.
+fn comments_at_end_of_line_stay_after_colon(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
 /// `{ with: { type: "json" } }`. It is an object literal, of which the HIR has only the properties
 /// of the inner one.
 fn write_import_type_options<'a>(
@@ -676,12 +741,16 @@ fn write_import_type_options<'a>(
     };
     let has_space = f.options().bracket_spacing.value();
 
+    let attributes = options.object().as_ast_nodes();
     let format_inner = format_with(|f| {
-        for comments in comments.leading_attributes {
-            write!(f, FormatLeadingComments::Comments(comments));
+        write!(
+            f,
+            FormatLeadingComments::Comments(comments.leading_attributes)
+        );
+        if f.comments().is_ignored(attributes) {
+            return write!(f, FormatSuppressedNode(inner));
         }
         let Some(first) = entries.first() else {
-            let attributes = options.object().as_ast_nodes();
             return write!(
                 f,
                 [
@@ -707,14 +776,44 @@ fn write_import_type_options<'a>(
         );
     });
     let format_property = format_with(|f| {
+        let [before_keyword @ .., before_colon, after_colon] = comments.leading_property;
+        let at_end_of_line = [before_colon, after_colon];
+        for comments in before_keyword {
+            write!(f, FormatLeadingComments::Comments(comments));
+        }
+        let stay_after_colon = comments_at_end_of_line_stay_after_colon(f);
+        for comments in at_end_of_line.into_iter().filter(|_| !stay_after_colon) {
+            write!(f, FormatLeadingComments::Comments(comments));
+        }
         write!(
             f,
             [
-                FormatLeadingComments::Comments(comments.leading_property),
                 source_text(keyword),
-                ":",
-                space(),
-                format_inner,
+                FormatTrailingComments::Comments(comments.trailing_keyword),
+                ":"
+            ]
+        );
+        for comments in at_end_of_line.into_iter().filter(|_| stay_after_colon) {
+            write!(f, FormatTrailingComments::Comments(comments));
+        }
+        // The layout `break-after-operator` of Prettier's `printAssignment`.
+        let breaks_after_colon = (comments.leading_attributes.iter())
+            .any(|comment| comment.has_newline_after() || comment.is_indentable_block())
+            || (stay_after_colon && at_end_of_line.iter().any(|it| !it.is_empty()));
+        match breaks_after_colon {
+            true => write!(
+                f,
+                group(&indent(&format_args!(
+                    soft_line_break_or_space(),
+                    format_inner
+                )))
+                .should_expand(stay_after_colon)
+            ),
+            false => write!(f, [space(), format_inner]),
+        }
+        write!(
+            f,
+            [
                 FormatTrailingComments::Comments(comments.trailing_property),
                 FormatTrailingCommas::ES5
             ]

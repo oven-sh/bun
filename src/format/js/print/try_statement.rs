@@ -35,11 +35,15 @@ pub(crate) fn write_try_statement<'a>(
 ) {
     write!(f, "try");
     write_space_before_body(block.as_ast_nodes(), f);
+    // oxfmt writes the comments of an ignored clause like any other leading comments: `} // prettier-ignore⏎catch ( e ) {}`
     let before_catch = |f: &Formatter<'a>| {
-        f.comments()
-            .of_node(AstNodes::CatchClause(statement))
-            .leading
+        let owned = f.comments().of_node(AstNodes::CatchClause(statement));
+        match owned.is_ignored {
+            true => CommentList::empty(),
+            false => owned.leading,
+        }
     };
+
     let before_finally = |f: &Formatter<'a>| {
         f.comments()
             .of_node(AstNodes::TryStatement(statement))

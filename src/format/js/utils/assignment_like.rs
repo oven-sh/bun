@@ -459,7 +459,8 @@ impl<'a> AssignmentLike<'a> {
                             && right.tag() == ExprTag::Cond
                             && layout != AssignmentLikeLayout::BreakAfterOperator
                             && !matches!(self, Self::AccessorProperty(_))
-                            && !is_cast_target(right, f) =>
+                            && !is_cast_target(right, f)
+                            && (f.is_quiet() || !f.comments().is_ignored(right.as_ast_nodes())) =>
                     {
                         // The conditional writes the indentation itself, so its comments are outside of it.
                         if !f.is_quiet() {

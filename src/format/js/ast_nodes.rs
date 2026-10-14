@@ -25,7 +25,6 @@ use bun_lint::ast::{
     PropKind, Stmt, StmtKind, StmtTag, TupleElem, TypeKind, TypeNode, TypeParam, UnOp, VarDecl,
 };
 use bun_lint::span::{Span, Spanned};
-use bun_lint::tokens::skip_trivia_back;
 use bun_sema::hir::ExprTag;
 
 /// An expression statement, or the body of an arrow function that is an expression, which oxc has
@@ -1135,9 +1134,15 @@ impl<'a> AstNodes<'a> {
                 _ => e.span(),
             },
             N::Decorator(e) => {
-                let outer = e.outer_span();
-                let at = skip_trivia_back(e.file().text(), outer.start).saturating_sub(1);
-                Span::new(at, outer.end)
+                let modifiers = match e.parent() {
+                    Node::Class(class) => class.modifiers(),
+                    Node::Member(member) => member.modifiers(),
+                    Node::Param(param) => param.modifiers(),
+                    _ => return e.outer_span(),
+                };
+                (modifiers.iter())
+                    .find(|modifier| modifier.decorator() == Some(e))
+                    .map_or_else(|| e.outer_span(), |modifier| modifier.span())
             }
             N::AssignmentTargetRest(e) => match (e.kind(), e.parent()) {
                 (ExprKind::Spread(_), _) => e.span(),

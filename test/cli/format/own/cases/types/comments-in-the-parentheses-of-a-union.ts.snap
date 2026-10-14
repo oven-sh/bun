@@ -1,0 +1,53 @@
+------------------
+{ printWidth: 80 }
+------------------
+type A = (// c
+B | C)[];
+type D = (/* a */ // b
+B | C)[];
+type E = (
+// a
+// b
+B | C)["d"];
+type F = keyof (// c
+B | C);
+type G = (
+  | B
+  | C /* a */ // b
+)[];
+type H =
+  // prettier-ignore
+  // c
+  | I | J;
+type K =
+  // a
+  // b
+  L | M;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type A = (// c
+B | C)[];
+type D = (/* a */ // b
+B | C)[];
+type E = (
+// a
+// b
+B | C)["d"];
+type F = keyof (// c
+B | C);
+type G = (
+  | B
+  | C /* a */ // b
+)[];
+type H =
+  // prettier-ignore
+  // c
+  | I | J;
+type K =
+  // a
+  // b
+  L | M;
+
+===================== End =====================

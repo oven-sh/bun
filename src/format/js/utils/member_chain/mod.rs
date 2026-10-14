@@ -344,8 +344,14 @@ fn has_leading_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool 
     !f.is_quiet() && !member.comments(f).leading.is_empty()
 }
 
+/// `a! /* comment */ !`: the comment dangles from `a!!`. For Prettier it trails the `a!` in it, which is a link too.
 fn has_trailing_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
-    !f.is_quiet() && !member.comments(f).trailing.is_empty()
+    if f.is_quiet() {
+        return false;
+    }
+    let comments = member.comments(f);
+    !comments.trailing.is_empty()
+        || (matches!(member, ChainMember::TSNonNullExpression(_)) && !comments.dangling.is_empty())
 }
 
 /// oxfmt does not go by the owners of the comments to lay out a chain. It goes by where they are.

@@ -399,6 +399,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     can_parse_as = false;
                     if self.can_parse_module_export_name() {
                         // "{ type as as something }"
+                        self.unfinish_name(second_as.pos);
                         is_type_only = true;
                         property_name = Some(first_as);
                         name = self.module_export_name();
@@ -409,6 +410,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     }
                 } else if self.can_parse_module_export_name() {
                     // "{ type as something }"
+                    self.unfinish_name(first_as.pos);
                     property_name = Some(name);
                     can_parse_as = false;
                     name = self.module_export_name();

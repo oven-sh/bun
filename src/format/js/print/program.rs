@@ -200,10 +200,7 @@ fn is_directive_before_empty_line<'a>(last: Stmt<'a>, f: &Formatter<'a>) -> bool
 /// statement has to start with goes before a type cast comment, which has to stay next to its `(`.
 #[inline]
 fn write_semicolon_before_type_cast_comment<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
-    if !f.is_quiet()
-        && f.comments().has_type_cast_comments()
-        && f.options().semicolons.is_as_needed()
-    {
+    if !f.is_quiet() && f.options().semicolons.is_as_needed() {
         write_semicolon_before_type_cast_comment_of(statement, f);
     }
 }

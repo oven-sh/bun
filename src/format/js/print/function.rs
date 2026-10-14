@@ -11,7 +11,7 @@ use crate::js::utils::statement_body::write_space_before_body;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
-use crate::write;
+use crate::{format_args, write};
 
 #[derive(Copy, Clone, Debug, Default)]
 pub(crate) struct FormatFunctionOptions {
@@ -198,12 +198,36 @@ impl<'a> Format<'a> for FormatFunctionBody<'a> {
             };
         }
         let node = AstNodes::FunctionBody(func);
-        write_space_before_body(node, f);
+        let owned = f.comments().of_node(node);
+        if !(owned.is_ignored && space_is_part_of_the_body(f)) {
+            write_space_before_body(node, f);
+        }
         format_node(node, f, |f| match is_empty_block(statements) {
             true => write!(f, ["{", dangling_comments(node).with_block_indent(), "}"]),
-            false => write!(f, ["{", block_indent(&FormatStatements(statements)), "}"]),
+            false if owned.dangling.is_empty() => {
+                write!(f, ["{", block_indent(&FormatStatements(statements)), "}"])
+            }
+            // `function a() // comment⏎{ "use strict" }`: Babel has no statement in the body that the comment could lead.
+            // Prettier's `printBlockBody` writes it after the directives.
+            false => {
+                let is_next_line_empty = (statements.last())
+                    .is_some_and(|last| f.source_text().lines_after(last.span().end) > 1);
+                let content = format_args!(
+                    FormatStatements(statements),
+                    is_next_line_empty.then_some(empty_line()),
+                    (!is_next_line_empty).then_some(hard_line_break()),
+                    dangling_comments(node)
+                );
+                write!(f, ["{", block_indent(&content), "}"]);
+            }
         });
     }
+}
+
+/// `class A { b() /* prettier-ignore */ { } }` is `b()/* prettier-ignore */ { }` for oxfmt: what is copied is written
+/// without the space before it. A function and a method of an object have a space of their own there.
+fn space_is_part_of_the_body(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 impl Spanned for FormatFunctionBody<'_> {

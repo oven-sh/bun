@@ -11,7 +11,7 @@ use crate::js::ast_nodes::{
 };
 use crate::js::format::is_in_head_of_for;
 use crate::js::print::expressions::start_of_meta_property_name;
-use crate::js::print::flow::is_flow_opaque_type;
+use crate::js::print::flow::{is_flow_opaque_type, is_interface_type};
 use crate::js::source_text::SourceText;
 use bun_lint::ast::comments::{self, NodeOrName};
 use bun_lint::ast::{
@@ -19,6 +19,8 @@ use bun_lint::ast::{
     TypeKind, TypeNode,
 };
 use bun_lint::span::Span;
+use std::cell::Cell;
+use std::ops::Range;
 
 /// Prettier's `enclosingNode`, `precedingNode` and `followingNode`.
 #[derive(Copy, Clone, Default, PartialEq, Eq)]
@@ -36,11 +38,37 @@ pub(super) struct AttachContext<'a, 'c> {
     pub(super) options: Options,
     /// See [`crate::js::comments::cast_parens`].
     cast_parens: &'c [u32],
+    /// The last two answers of [`AttachContext::comments_between_same_tokens`].
+    last_comments_between_tokens: Cell<[CommentsBetweenTokens; 2]>,
+}
+
+/// What the rules ask about all the comments between two tokens. There can be thousands of them, so this is found once for all
+/// of them and not once for each.
+#[derive(Copy, Clone, Default)]
+pub(super) struct CommentsBetweenTokens {
+    pub(super) first_id: u32,
+    /// The id after the last one.
+    pub(super) end_id: u32,
+    /// The first comment that has a line break before it.
+    pub(super) first_on_new_line: Option<u32>,
+    /// The first and the last comment that have no line break before them.
+    pub(super) first_on_same_line: Option<u32>,
+    pub(super) last_on_same_line: Option<u32>,
+    /// The first comment that is the last thing on its line, if it is on the line of the token before the comments.
+    pub(super) first_that_ends_line_of_prev_token: Option<u32>,
+}
+
+impl CommentsBetweenTokens {
+    pub(super) fn ids(self) -> Range<u32> {
+        self.first_id..self.end_id
+    }
 }
 
 /// The member types of a union or an intersection type.
 pub(super) fn union_members(ty: TypeNode<'_>) -> Option<List<'_, TypeNode<'_>>> {
     match ty.kind() {
+        // Flow's `interface { .. }` as a type is an intersection in the tree.
+        TypeKind::Intersection(_) if is_interface_type(ty) => None,
         TypeKind::Union(types) | TypeKind::Intersection(types) => Some(types),
         _ => None,
     }
@@ -169,18 +197,71 @@ fn recorded_nodes_without_import_attribute_braces<'a>(
     (enclosing_node, preceding_node, following_node)
 }
 
-/// The import attribute whose value is `node`. In the HIR the parent of the value is the import or the export.
+/// `import { type as /* comment */ as as } from "a"`: the parser takes a `type` or an `as` for a name until it has seen what
+/// follows, so it can have recorded a keyword. This replaces it with the name before or after the comment.
+fn without_keywords_of_specifier<'a>(
+    enclosing_node: Option<Node<'a>>,
+    preceding_node: &mut Option<NodeOrName<'a>>,
+    following_node: &mut Option<NodeOrName<'a>>,
+    comment: Span,
+) {
+    let names = match enclosing_node {
+        Some(Node::ImportSpec(specifier)) => [specifier.imported(), specifier.local()],
+        Some(Node::ExportSpec(specifier)) => [specifier.local(), specifier.exported()],
+        _ => return,
+    };
+    let starts = names.map(|name| name.span().start);
+    let is_keyword = |node: Option<NodeOrName<'a>>| matches!(node, Some(NodeOrName::Name(start)) if !starts.contains(&start));
+    if is_keyword(*preceding_node) {
+        let name = starts.into_iter().rfind(|start| *start < comment.start);
+        *preceding_node = name.map(NodeOrName::Name);
+    }
+    if is_keyword(*following_node) {
+        let name = starts.into_iter().find(|start| *start >= comment.end);
+        *following_node = name.map(NodeOrName::Name);
+    }
+}
+
+/// The import attribute whose value is `node`. In the HIR the parent of the value is the import, the export or the import type.
 fn import_attribute_of_value(node: N<'_>) -> Option<N<'_>> {
     let N::StringLiteral(value) = node else {
         return None;
     };
-    let Node::Stmt(statement) = value.parent() else {
-        return None;
+    let attributes = match value.parent() {
+        Node::Stmt(statement) => statement.import_attributes(),
+        Node::Type(import_type) => import_type.import_attributes(),
+        _ => None,
     };
-    let mut attributes = statement.import_attributes()?.entries().iter();
+    let mut attributes = attributes?.entries().iter();
     attributes
         .find(|attribute| attribute.value() == Some(value))
         .map(N::ObjectProperty)
+}
+
+/// The import type whose attributes are the object `node`: the `import("a", { with: { b: "c" } })` around `{ b: "c" }`.
+fn import_type_of_attributes(node: N<'_>) -> Option<N<'_>> {
+    let N::ObjectExpression(attributes) = node else {
+        return None;
+    };
+    match attributes.as_object()?.first()?.parent() {
+        Node::Type(import_type) => Some(import_type.as_ast_nodes()),
+        _ => None,
+    }
+}
+
+/// The `this` of `this is A` and of `asserts this` is a `TSThisType` in ESTree. The parser does not record it.
+fn account_for_this_of_predicate(nodes: &mut SurroundingNodes<'_>, comment: Span) {
+    let Some(Owner::Node(N::TSTypePredicate(predicate))) = nodes.enclosing_node else {
+        return;
+    };
+    let Some(parameter) = predicate.predicate_param().map(|it| it.span()) else {
+        return;
+    };
+    if comment.end <= parameter.start {
+        nodes.following_node = Some(Owner::Name(parameter.start));
+    } else if nodes.preceding_node.is_none() {
+        nodes.preceding_node = Some(Owner::Name(parameter.start));
+    }
 }
 
 /// The opening tag whose name is `node`: the `<a b="c">` around `a`. `AstNodes::parent` gives the element.
@@ -238,6 +319,14 @@ fn account_for_type_annotation_of_identifier(nodes: &mut SurroundingNodes<'_>) {
             .and_then(|param| param.decorators().last())
             .map(|decorator| Owner::Node(N::Decorator(decorator)));
     }
+    // `let a: T /* comment */ = b`: the preceding node is `a: T`.
+    if let (
+        Some(Owner::Node(N::VariableDeclarator(declarator))),
+        Some(Owner::Node(N::TSTypeAnnotation(_))),
+    ) = (nodes.enclosing_node, nodes.preceding_node)
+    {
+        nodes.preceding_node = Some(Owner::Node(declarator.pat().as_ast_nodes()));
+    }
 }
 
 /// The parameter that `name` is, if it is an `Identifier` with decorators in ESTree: `(@a b: T) => {}`.
@@ -281,6 +370,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             source: SourceText::new(file.text()),
             options,
             cast_parens,
+            last_comments_between_tokens: Cell::default(),
         }
     }
 
@@ -396,6 +486,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                     return Some(Owner::CastParens(e, paren.start));
                 }
                 import_attribute_of_value(node)
+                    .or_else(|| import_type_of_attributes(node))
                     .or_else(|| opening_element_of_name(node))
                     .or_else(|| type_annotation_of_predicate(node))
                     .or_else(|| (self.file.is_flow()).then(|| flow::parent_of_type(node))?)
@@ -456,6 +547,11 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                 _ => true,
             },
             // A plain parameter like `a` is a single `Identifier` in ESTree, but a parameter wrapping an identifier here.
+            N::BindingIdentifier(pat)
+                if self.file.is_flow() && flow::is_name_of_function_type_param(pat) =>
+            {
+                true
+            }
             N::BindingIdentifier(pat) => match pat.parent() {
                 Node::Param(param) => param.default().is_some() || param.is_parameter_property(),
                 _ => true,
@@ -486,6 +582,14 @@ impl<'a, 'c> AttachContext<'a, 'c> {
     ) -> (Owner<'a>, Option<Owner<'a>>) {
         loop {
             match self.parent(owner, name_parent) {
+                // Many pairs of type cast parentheses can be around one expression. If a pair is accepted, so are those in it.
+                Some(Owner::CastParens(e, open))
+                    if keep_climbing(self.span_of(Owner::CastParens(e, open))) =>
+                {
+                    let outermost = (e.parens().rev())
+                        .find(|paren| self.is_cast_paren(paren.start) && keep_climbing(*paren));
+                    owner = Owner::CastParens(e, outermost.map_or(open, |paren| paren.start));
+                }
                 Some(parent) if keep_climbing(self.span_of(parent)) => owner = parent,
                 parent => return (owner, parent),
             }
@@ -495,6 +599,47 @@ impl<'a, 'c> AttachContext<'a, 'c> {
     /// Most comments are before a statement of a body or a member of a class, an interface or an enum, and after the one before
     /// it or after the `{`. The parser has recorded the nodes that Prettier finds, and the enclosing node is a `Program`, a
     /// `BlockStatement`, a `ClassBody`, a `TSInterfaceBody`, a `TSTypeLiteral` or a `TSEnumBody`, for which Prettier has no rule.
+    pub(super) fn comments_between_same_tokens(
+        &self,
+        comment: comments::Comment<'a>,
+    ) -> CommentsBetweenTokens {
+        let [last, second_last] = self.last_comments_between_tokens.get();
+        for known in [last, second_last] {
+            if known.ids().contains(&comment.id()) {
+                return known;
+            }
+        }
+        let id = comment.id();
+        let is_between_same_tokens =
+            |id: &u32| self.file.comment(*id).next_token_start() == comment.next_token_start();
+        let before = (0..id).rev().take_while(is_between_same_tokens);
+        let after = (id..self.file.comment_count() as u32).take_while(is_between_same_tokens);
+        let first_id = before.last().unwrap_or(id);
+        let mut all = CommentsBetweenTokens {
+            first_id,
+            end_id: after.last().map_or(id, |last| last + 1),
+            ..CommentsBetweenTokens::default()
+        };
+        for id in all.ids() {
+            let it = self.file.comment(id);
+            match it.has_newline_before() {
+                true => all.first_on_new_line = all.first_on_new_line.or(Some(id)),
+                false => {
+                    all.first_on_same_line = all.first_on_same_line.or(Some(id));
+                    all.last_on_same_line = Some(id);
+                }
+            }
+            if all.first_on_new_line.is_none()
+                && all.first_that_ends_line_of_prev_token.is_none()
+                && (it.is_line() || it.has_newline_after())
+            {
+                all.first_that_ends_line_of_prev_token = Some(id);
+            }
+        }
+        self.last_comments_between_tokens.set([all, last]);
+        all
+    }
+
     fn list_elements_around(&self, comment: comments::Comment<'a>) -> Option<SurroundingNodes<'a>> {
         if self.file.is_flow() {
             return None;
@@ -504,10 +649,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         };
         // The rules of oxfmt are about comments that stay on the line of what is before or after them.
         if self.options.flavor.is_oxfmt()
-            && !(comment.id()..self.file.comment_count() as u32)
-                .map(|id| self.file.comment(id))
-                .take_while(|it| it.next_token_start() == comment.next_token_start())
-                .all(|it| it.has_newline_before())
+            && (self.comments_between_same_tokens(comment).last_on_same_line)
+                .is_some_and(|id| id >= comment.id())
         {
             return None;
         }
@@ -515,7 +658,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         let enclosing_node = comment.enclosing_node();
         // The body is no node in the HIR, so the enclosing node is what has the body.
         let is_list_of_following_node = match (enclosing_node, following_node) {
-            (None | Some(Node::Func(_) | Node::Member(_)), Node::Stmt(_)) => true,
+            (None | Some(Node::Member(_)), Node::Stmt(_)) => true,
             (Some(Node::Stmt(statement)), Node::Stmt(_)) => match statement.tag() {
                 StmtTag::Fn => true,
                 // `with (a) b` is a block of `a` and `b` in the HIR.
@@ -523,7 +666,6 @@ impl<'a, 'c> AttachContext<'a, 'c> {
                 _ => false,
             },
             (Some(Node::Expr(e)), Node::Stmt(_)) => matches!(e.kind(), ExprKind::Fn(_)),
-            (Some(Node::Class(_)), Node::Member(_)) => true,
             (Some(Node::Stmt(statement)), Node::Member(_)) => {
                 matches!(statement.tag(), StmtTag::Class | StmtTag::Interface)
             }
@@ -563,6 +705,22 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         let comment = parsed_comment.span();
         let (enclosing_node, mut preceding_node, mut following_node) =
             recorded_nodes_without_import_attribute_braces(parsed_comment);
+        without_keywords_of_specifier(
+            enclosing_node,
+            &mut preceding_node,
+            &mut following_node,
+            comment,
+        );
+
+        // The `source` of `import.source("a")` is a name for the parser. ESTree has no node for it.
+        if let Some(Node::Expr(import)) = enclosing_node
+            && let ExprKind::ImportCall { args } = import.kind()
+        {
+            preceding_node = preceding_node.filter(|it| !matches!(it, NodeOrName::Name(_)));
+            if let Some(NodeOrName::Name(_)) = following_node {
+                following_node = args.first().map(|it| NodeOrName::Node(Node::Expr(it)));
+            }
+        }
         if self.file.is_flow() {
             preceding_node = match preceding_node {
                 Some(node) => flow::preceding_node(node, enclosing_node, comment.start),
@@ -634,6 +792,7 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             }
         };
         account_for_exported_declaration_without_children(&mut nodes, comment);
+        self.account_for_expression_statement_in_head_of_for(&mut nodes, enclosing_node);
         self.account_for_object_method_of_babel(&mut nodes, comment);
         self.account_for_empty_body(&mut nodes, comment);
         self.account_for_rebalanced_logical_expression(&mut nodes);
@@ -642,7 +801,8 @@ impl<'a, 'c> AttachContext<'a, 'c> {
             account_for_decorators_of_identifier(&mut nodes);
         }
         account_for_names_of_meta_property(&mut nodes);
-        self.stay_in_template_substitution(&mut nodes, comment);
+        account_for_this_of_predicate(&mut nodes, comment);
+        self.stay_in_template_substitution(&mut nodes, parsed_comment);
         self.stay_in_jsx_tag(&mut nodes, comment);
         if self.file.is_flow() {
             self.account_for_children_of_match(&mut nodes, comment);
@@ -654,7 +814,41 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         nodes
     }
 
+    /// `for ((a /* comment */) of b);`: in the HIR `(a /* comment */)` is an expression statement, and the parser has recorded
+    /// nothing after the comment in it. In ESTree `a` and `b` are children of the `for`.
+    fn account_for_expression_statement_in_head_of_for(
+        &self,
+        nodes: &mut SurroundingNodes<'a>,
+        recorded_enclosing_node: Option<Node<'a>>,
+    ) {
+        let Some(Node::Stmt(statement)) = recorded_enclosing_node else {
+            return;
+        };
+        if nodes.following_node.is_some()
+            || statement.tag() != StmtTag::Expr
+            || !is_in_head_of_for(statement)
+        {
+            return;
+        }
+        let Node::Stmt(parent) = statement.parent() else {
+            return;
+        };
+        nodes.following_node = match parent.kind() {
+            StmtKind::ForIn { expr, .. } | StmtKind::ForOf { expr, .. } => {
+                Some(self.owner_of_expr(expr))
+            }
+            StmtKind::For {
+                test, update, body, ..
+            } => Some(match test.or(update) {
+                Some(e) => self.owner_of_expr(e),
+                None => self.owner_of_stmt(body),
+            }),
+            _ => None,
+        };
+    }
+
     /// The children of Babel's `ObjectMethod` are the key, the parameters and the body. Here the parameters and the body are in
+
     /// a function expression, which Babel does not have.
     fn account_for_object_method_of_babel(&self, nodes: &mut SurroundingNodes<'a>, comment: Span) {
         let Some(Owner::Node(N::ObjectProperty(prop))) = nodes.enclosing_node else {
@@ -721,24 +915,23 @@ impl<'a, 'c> AttachContext<'a, 'c> {
         }
     }
 
-    /// Prettier does not let a comment move from one `${}` of a template literal to another.
-    fn stay_in_template_substitution(&self, nodes: &mut SurroundingNodes<'a>, comment: Span) {
-        let Some(Owner::Node(N::TemplateLiteral(e))) = nodes.enclosing_node else {
+    /// Prettier does not let a comment move from one `${}` of a template literal to another. The comment is before the
+    /// expression, directly after the `${`, or after it, directly before the `}`.
+    fn stay_in_template_substitution(
+        &self,
+        nodes: &mut SurroundingNodes<'a>,
+        comment: comments::Comment<'a>,
+    ) {
+        let Some(Owner::Node(N::TemplateLiteral(_))) = nodes.enclosing_node else {
             return;
         };
-        let ExprKind::Template(template) = e.kind() else {
-            return;
-        };
-        let substitution_index = |offset: u32| {
-            (1..template.quasi_count())
-                .position(|index| offset <= template.quasi_span(index).start + 1)
-                .unwrap_or(0)
-        };
-        let is_in_same_substitution = |node: &Owner<'a>| {
-            substitution_index(self.start_of(*node)) == substitution_index(comment.start)
-        };
-        nodes.preceding_node = nodes.preceding_node.filter(is_in_same_substitution);
-        nodes.following_node = nodes.following_node.filter(is_in_same_substitution);
+        let text = self.file.text();
+        if text.get((comment.prev_token_end() as usize).wrapping_sub(1)) == Some(&b'{') {
+            nodes.preceding_node = None;
+        }
+        if text.get(comment.next_token_start() as usize) == Some(&b'}') {
+            nodes.following_node = None;
+        }
     }
 
     /// ESTree has a node for the closing tag of an element, and for the `<>` and `</>` of a fragment. `AstNodes` does not. A

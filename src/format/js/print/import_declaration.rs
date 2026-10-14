@@ -5,8 +5,25 @@ use crate::js::utils::object::FormatKey;
 use crate::js::utils::string::{
     FormatLiteralStringToken, StringLiteralParentKind, is_name_without_quotes,
 };
+use crate::js::utils::suppressed::FormatSuppressedNode;
+
 use crate::prelude::*;
 use crate::{format_args, write};
+
+/// [`format_name`] for what is at `span` and is a node that Prettier prints like any other, so that a `prettier-ignore` comment
+/// applies to it: `import /* prettier-ignore */ *  as a from /* prettier-ignore */ 'b'`. Not the key of a property.
+pub(crate) fn format_ignorable_name<'a>(
+    span: Span,
+    f: &mut Formatter<'a>,
+    write: impl FnOnce(&mut Formatter<'a>),
+) {
+    format_name(span, f, |f| {
+        match !f.is_quiet() && f.comments().of_name(span.start).is_ignored {
+            true => FormatSuppressedNode(span).fmt(f),
+            false => write(f),
+        }
+    });
+}
 
 /// A string literal that is not an expression here: a module specifier.
 pub(crate) struct FormatStringLiteral {
@@ -15,12 +32,8 @@ pub(crate) struct FormatStringLiteral {
 
 impl<'a> Format<'a> for FormatStringLiteral {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        format_name(self.span, f, |f| {
+        format_ignorable_name(self.span, f, |f| {
             let string = f.source_text().text_for(&self.span);
-            // `import /* prettier-ignore */ 'a'`
-            if !f.is_quiet() && f.comments().of_name(self.span.start).is_ignored {
-                return write!(f, text(string));
-            }
             write!(
                 f,
                 FormatLiteralStringToken::new(string, false, StringLiteralParentKind::Expression)
@@ -92,7 +105,7 @@ fn write_import_specifiers<'a>(import: Import<'a>, f: &mut Formatter<'a>) {
         write!(f, [",", space()]);
     }
     if let (Some(namespace), Some(span)) = (import.namespace(), import.namespace_span()) {
-        format_name(span, f, |f| {
+        format_ignorable_name(span, f, |f| {
             write!(f, ["*", space(), "as", space(), identifier(namespace)])
         });
         if !has_braces {
@@ -350,11 +363,6 @@ fn write_import_attribute<'a>(attribute: Prop<'a>, f: &mut Formatter<'a>) {
         None => {}
     }
     write!(f, ":");
-    // `type: // comment⏎"json"`: for oxfmt the attribute owns the comment. It is `type: "json", // comment`.
-    if !f.is_quiet() {
-        let comments = f.comments().of_node(AstNodes::ObjectProperty(attribute));
-        write!(f, FormatTrailingComments::Comments(comments.dangling));
-    }
 
     let Some(value) = attribute.value() else {
         return;

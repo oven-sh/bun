@@ -1,9 +1,13 @@
 use super::decorators::FormatDecorators;
 use super::import_declaration::{
-    FormatSpecifiers, format_import_and_export_source_with_clause, has_comments, module_export_name,
+    FormatSpecifiers, format_ignorable_name, format_import_and_export_source_with_clause,
+    has_comments, module_export_name,
 };
+
 use super::semicolon::OptionalSemicolon;
-use crate::js::format::{FormatDeclaration, format_name, format_node, write_declaration};
+use crate::js::ast_nodes::inner_of_stmt;
+use crate::js::format::{FormatDeclaration, format_node, write_declaration};
+
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::write;
@@ -12,6 +16,19 @@ use crate::write;
 /// as it always does before decorators.
 fn comments_of_decorated_class_start_a_line(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
+}
+
+/// `export /* prettier-ignore */ type A = 1 ;`: the `;` is part of a type alias, an `import a = b`, a function without a body
+/// and a module without a body, so it is copied with them, whatever the options say. For oxfmt also that of `const a = 1 ;`.
+fn is_ignored_with_its_semicolon<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
+    let ends_with_its_semicolon = match statement.kind() {
+        StmtKind::TypeAlias(_) | StmtKind::ImportEquals(_) => true,
+        StmtKind::Fn(func) => !func.has_body(),
+        StmtKind::Module(module) => !module.innermost().has_body(),
+        StmtKind::Var(_) => f.options().flavor.is_oxfmt(),
+        _ => false,
+    };
+    ends_with_its_semicolon && !f.is_quiet() && f.comments().is_ignored(inner_of_stmt(statement))
 }
 
 /// `export` or `export default` and the declaration `statement`.
@@ -47,6 +64,18 @@ pub(crate) fn write_exported_declaration<'a>(statement: Stmt<'a>, f: &mut Format
         _ => None,
     };
     match decorated_class {
+        None if is_ignored_with_its_semicolon(statement, f) => {
+            let declaration = inner_of_stmt(statement);
+            write!(
+                f,
+                [
+                    keyword_and_space,
+                    leading_comments(declaration),
+                    FormatSuppressedNode(statement.span_without_export()),
+                    trailing_comments(declaration)
+                ]
+            );
+        }
         None => write!(f, [keyword_and_space, FormatDeclaration(statement)]),
         // Prettier's `printDecoratorsBeforeExport`
         Some((class, first_decorator)) if first_decorator.span().end < node.span().start => {
@@ -153,7 +182,7 @@ pub(crate) fn write_export_all_declaration<'a>(statement: Stmt<'a>, f: &mut Form
     };
     // For Babel `* as a` is an `ExportNamespaceSpecifier`, which can own comments.
     let star = statement.export_star_offset().unwrap_or_default();
-    format_name(Span::new(star, name.span().end), f, |f| {
+    format_ignorable_name(Span::new(star, name.span().end), f, |f| {
         write!(f, ["*", space(), "as", space(), module_export_name(name)]);
     });
     write!(f, [space(), "from", space()]);

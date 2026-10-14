@@ -8,6 +8,11 @@
 //! is a candidate for the preceding node, and every finished node that starts after it is a candidate for the following
 //! node. The closest candidate wins, and the larger one if two are equally close.
 //!
+//! A finished node is only held against the closest pending comment before it. Say comment 1 is before comment 2, which is
+//! before the node. Either the enclosing node of 2 starts after 1, and then that node is closer to 1. Or it is the enclosing
+//! node of 1 too, and then 1 takes the following node of 2 if nothing starts between them. So nested code with a comment at
+//! each level takes linear time.
+//!
 //! This only compares offsets. It knows nothing about the grammar.
 //!
 //! All of it is behind the parameter `COMMENTS` of the [`Parser`], so who does not ask for the nodes runs code without it.
@@ -111,6 +116,8 @@ impl LastMatch {
 pub(crate) struct CommentTracker {
     /// Sorted by id, which is source order.
     pending: Vec<PendingComments>,
+    /// See `finish_list!`. The last pending comments, in reverse order. Empty at any other time.
+    set_aside: Vec<PendingComments>,
     /// How many comments of the lexer have been added to `pending` so far.
     tracked_count: u32,
     /// The previous value of every pending comment that was changed or removed, so that a rollback can restore it.
@@ -141,19 +148,20 @@ impl CommentTracker {
         self.last_finished = (NodeOrName::None, 0);
     }
 
-    /// Most finished nodes that matter are after the last pending comments or before them, and make no difference to the
-    /// comments before those. Then all that can change is one node of the last ones. Returns false for any other node.
+    /// Most finished nodes that matter are after the last pending comments, or before them and no closer to the comments
+    /// before those. Then all that can change is one node of the last ones. Returns false for any other node.
     #[inline(always)]
     fn update_only_last_pending_comments(&mut self, finished: Candidate) -> bool {
         let Some((last, earlier)) = self.pending.split_last_mut() else {
             return false;
         };
-        // The comments before have a following node that starts earlier, so they are before `finished`, which is not closer.
-        let is_after_earlier_comments = (earlier.last()).is_none_or(|comments| {
-            !comments.following.is_none() && comments.following.start < finished.start
-        });
         let is_after_last = finished.start > last.start;
-        if !is_after_earlier_comments || !(is_after_last || finished.end <= last.start) {
+        // The comments before have a following node that starts earlier, so they are before `finished`, which is not closer.
+        let is_only_before_last = finished.end <= last.start
+            && (earlier.last()).is_none_or(|comments| {
+                !comments.following.is_none() && comments.following.start < finished.start
+            });
+        if !is_after_last && !is_only_before_last {
             return false;
         }
         self.last_finished = (finished.node, self.undo_log.len());
@@ -241,6 +249,11 @@ list_elements! {
 
 /// Calls [`Parser::finish_node`] for the `len` elements that `take_span!` just moved into the list `$field`, starting at index
 /// `start`. The elements are in source order, so if the first one starts too late to matter, they all do.
+///
+/// By now the comments of the whole list are pending. An element takes the comments inside it out of `pending`, which moves
+/// everything after them. So the elements are finished from the last to the first, and the comments after an element that is
+/// done are set aside: no earlier element is closer to them. Then what is taken out is always at the end, and a list of
+/// thousands of elements with comments takes linear time.
 macro_rules! finish_list {
     ($p:expr, $field:ident, $start:expr, $len:expr) => {{
         use $crate::parser::comments::ListElement;
@@ -248,13 +261,18 @@ macro_rules! finish_list {
         if COMMENTS {
             let first = ($p.f.$field.get(start as usize)).and_then(|it| it.as_node(start, &$p.f));
             if first.is_some_and(|(_, node_start, _)| node_start <= $p.lx.max_relevant_node_start) {
-                for index in start..start + len {
+                for index in (start..start + len).rev() {
                     let node =
                         ($p.f.$field.get(index as usize)).and_then(|it| it.as_node(index, &$p.f));
                     if let Some((node, node_start, node_end)) = node {
                         $p.finish_node(node, node_start, node_end);
+                        // A hole in an array has no width and is next to no comment: `[a, , /* comment */ b]`.
+                        if node_start < node_end {
+                            $p.set_aside_pending_comments_after(node_start);
+                        }
                     }
                 }
+                $p.put_back_pending_comments();
             }
         }
     }};
@@ -288,6 +306,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             self.update_pending_comments(NodeOrName::Name(start), start, end);
         }
         self.comments.last_name = (start, end);
+    }
+
+    /// Whether the last call of [`Parser::finish_name`] was for a name that ends at `end`.
+    #[inline(always)]
+    pub(crate) fn has_finished_name_that_ends_at(&self, end: u32) -> bool {
+        COMMENTS && self.comments.last_name.1 == end
     }
 
     /// Takes back [`Parser::finish_node`] for the node that was finished last.
@@ -405,6 +429,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// Prettier treats the `;` that terminates a JavaScript statement as outside the statement, so a comment right before the
     /// `;` comes after the statement. Such a comment has recorded where the statement's last real token ends.
     fn end_without_semicolon(&self, mut kind: StmtKind, end: u32) -> u32 {
+        if self.lx.src.get((end as usize).wrapping_sub(1)) != Some(&b';') {
+            return end;
+        }
         // Statements like `if (a) b;` end where their last child statement ends.
         loop {
             let last_child = match kind {
@@ -631,27 +658,49 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     true => candidate.node,
                     false => NodeOrName::None,
                 };
+                let mut following = Candidate::default();
                 for comment in pending.drain(index..after_node).rev() {
                     undo_log.push(comment);
+                    if !comment.following.is_none() {
+                        following = comment.following;
+                    }
                     let ids =
                         comment.first_id as usize..(comment.first_id + comment.count) as usize;
                     for resolved in self.lx.comments.get_mut(ids).unwrap_or_default() {
                         resolved.enclosing_node = node;
                         resolved.preceding_node = child_or_none(comment.preceding);
-                        resolved.following_node = child_or_none(comment.following);
+                        resolved.following_node = child_or_none(following);
                     }
                 }
             }
 
-            // Earlier comments already have a following node that starts before this one.
-            while let Some(comment) = index.checked_sub(1).and_then(|last| pending.get_mut(last))
+            if let Some(comment) = index.checked_sub(1).and_then(|last| pending.get_mut(last))
                 && finished.is_better_following_node_than(comment.following)
             {
                 undo_log.push(*comment);
                 comment.following = finished;
-                index -= 1;
             }
         }
+        self.update_max_relevant_node_start();
+    }
+
+    /// See `finish_list!`.
+    pub(crate) fn set_aside_pending_comments_after(&mut self, start: u32) {
+        let CommentTracker {
+            pending, set_aside, ..
+        } = &mut self.comments;
+        while let Some(comments) = pending.pop_if(|comments| comments.start >= start) {
+            set_aside.push(comments);
+        }
+        self.update_max_relevant_node_start();
+    }
+
+    /// See `finish_list!`.
+    pub(crate) fn put_back_pending_comments(&mut self) {
+        let CommentTracker {
+            pending, set_aside, ..
+        } = &mut self.comments;
+        pending.extend(set_aside.drain(..).rev());
         self.update_max_relevant_node_start();
     }
 
@@ -671,12 +720,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             return;
         }
         self.add_new_pending_comments(Candidate::default());
-        for comment in self.comments.pending.drain(..) {
+        let mut following = NodeOrName::None;
+        for comment in self.comments.pending.drain(..).rev() {
+            if !comment.following.is_none() {
+                following = comment.following.node;
+            }
             let ids = comment.first_id as usize..(comment.first_id + comment.count) as usize;
             for resolved in self.lx.comments.get_mut(ids).unwrap_or_default() {
                 resolved.enclosing_node = NodeOrName::None;
                 resolved.preceding_node = comment.preceding.node;
-                resolved.following_node = comment.following.node;
+                resolved.following_node = following;
             }
         }
         self.comments.undo_log.clear();

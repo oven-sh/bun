@@ -1663,6 +1663,50 @@ describe("backpressure", () => {
           sock.destroy();
         }
       });
+
+      // The keep-alive timeout covers the idle time between two requests. It must be gone
+      // when the next request is dispatched, or a slow handler would lose its connection.
+      it("ends the keep-alive timeout when the next request on the connection arrives", async () => {
+        const timeouts: Record<string, number[]> = {};
+        const second = Promise.withResolvers<void>();
+        await using server = transport.createServer((req, res) => {
+          const socket = req.socket as net.Socket & { calls?: number[] };
+          if (!socket.calls) {
+            const calls: number[] = (socket.calls = []);
+            const setTimeout = socket.setTimeout;
+            socket.setTimeout = function (ms: number, ...rest: any[]) {
+              calls.push(ms);
+              return setTimeout.call(this, ms, ...rest);
+            } as typeof socket.setTimeout;
+          }
+          timeouts[`at request ${req.url}`] = [...socket.calls];
+          res.on("finish", () => {
+            timeouts[`after ${req.url} finished`] = [...socket.calls!];
+            if (req.url === "/second") second.resolve();
+          });
+          res.end("ok");
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+
+        const sock = await transport.connect((server.address() as AddressInfo).port);
+        try {
+          let responses = 0;
+          sock.on("data", chunk => {
+            responses += chunk.toString("latin1").split("HTTP/1.1 200").length - 1;
+            // The second request leaves only when the first response has arrived: it is not pipelined.
+            if (responses === 1) sock.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          });
+          sock.write("GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          await second.promise;
+          // The keep-alive timeout is keepAliveTimeout + keepAliveTimeoutBuffer: 5000 + 1000 ms.
+          expect({
+            armedWhileSecondIsDispatched: timeouts["at request /second"].at(-1) === 6000,
+            armedOnceIdleAgain: timeouts["after /second finished"].at(-1) === 6000,
+          }).toEqual({ armedWhileSecondIsDispatched: false, armedOnceIdleAgain: true });
+        } finally {
+          sock.destroy();
+        }
+      });
     });
 
     // The handler restarts the stopped socket from inside its own AsyncLocalStorage store when it

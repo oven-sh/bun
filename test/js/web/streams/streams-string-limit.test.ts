@@ -256,17 +256,37 @@ describe("Body.textStream() fails its own stream when it cannot decode a chunk",
       return source;
     };
   `;
-  const runInSubprocess = async (source: string) => {
-    const { stdout, stderr, exitCode } = await run(`${prelude}\n${source}`);
+
+  // One child runs every scenario, one after the other, because a debug build is slow to start.
+  // A scenario is the body of an async function that returns what it saw.
+  const scenarios: Record<string, string> = {};
+  let child: Promise<{ stdout: Record<string, unknown> | null; stderr: string; exitCode: number }> | undefined;
+  const runScenarios = async () => {
+    const calls = Object.entries(scenarios).map(
+      ([name, body]) =>
+        `saw[${JSON.stringify(name)}] = await (async () => {${body}})().catch(e => "threw " + describeError(e));`,
+    );
+    const { stdout, stderr, exitCode } = await run(
+      `${prelude}\nconst saw = {};\n${calls.join("\n")}\nconsole.log(JSON.stringify(saw));`,
+    );
     return { stdout: JSON.parse(stdout || "null"), stderr, exitCode };
   };
+  const scenario = (name: string, body: string, expected: unknown) => {
+    scenarios[name] = body;
+    test(name, async () => {
+      const { stdout, stderr, exitCode } = await (child ??= runScenarios());
+      expect({ saw: stdout?.[name], stderr, exitCode }).toEqual({ saw: expected, stderr: "", exitCode: 0 });
+    });
+  };
 
-  test.concurrent.each([
+  for (const [name, body, type] of [
     ["a Response", "new Response(source.body)", "undefined"],
     ["a Response with a byte stream", "new Response(source.body)", `"bytes"`],
     ["a Request", `new Request("http://example.com/", { method: "POST", body: source.body })`, "undefined"],
-  ])("the chunk arrives while a read waits: %s", async (_name, body, type) => {
-    const result = await runInSubprocess(`
+  ]) {
+    scenario(
+      `the chunk arrives while a read waits: ${name}`,
+      `
       const source = pushBody(${type});
       const reader = ${body}.textStream().getReader();
       const read = follow(reader.read());
@@ -274,28 +294,55 @@ describe("Body.textStream() fails its own stream when it cannot decode a chunk",
       await turn();
       const enqueue = attempt(() => source.controller.enqueue(tooLong()));
       await turn();
-      console.log(JSON.stringify({
+      return {
         enqueue,
         read: read.outcome,
         closed: closed.outcome,
         locked: source.body.locked,
         cancelled: source.cancelled,
-      }));
-    `);
-    expect(result).toEqual({
-      stdout: { enqueue: "returned", read: outOfMemory, closed: outOfMemory, locked: false, cancelled: outOfMemory },
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+      };
+      `,
+      { enqueue: "returned", read: outOfMemory, closed: outOfMemory, locked: false, cancelled: outOfMemory },
+    );
+  }
+
+  // A direct body hands over its chunk from flush() or close(), under the read of the body that
+  // the text stream's pull makes. A body that closed itself has nothing left to cancel.
+  for (const [name, deliver, cancelled] of [
+    ["flushes the chunk and stays open", "await controller.flush();", outOfMemory],
+    ["closes in the same pull()", "controller.close();", null],
+  ]) {
+    scenario(
+      `a direct body that ${name}`,
+      `
+      const source = { cancelled: null };
+      source.body = new ReadableStream({
+        type: "direct",
+        async pull(controller) {
+          source.write = attempt(() => controller.write(tooLong()));
+          ${deliver}
+        },
+        cancel(reason) {
+          source.cancelled = describeError(reason);
+        },
+      });
+      const read = follow(new Response(source.body).textStream().getReader().read());
+      await turn();
+      return { write: source.write, read: read.outcome, locked: source.body.locked, cancelled: source.cancelled };
+      `,
+      { write: "returned", read: outOfMemory, locked: false, cancelled },
+    );
+  }
 
   // The producer enqueues twice in one tick. The body is not cancelled under the first call,
   // so the second call does not find a closed controller.
-  test.concurrent.each([
+  for (const [name, chunk, error] of [
     ["too long for a string", "tooLong()", outOfMemory],
     ["not bytes", `"not bytes"`, notBytes],
-  ])("the body is cancelled after the producer's tick: a chunk that is %s", async (_name, chunk, error) => {
-    const result = await runInSubprocess(`
+  ]) {
+    scenario(
+      `the body is cancelled after the producer's tick: a chunk that is ${name}`,
+      `
       const source = pushBody();
       const read = follow(new Response(source.body).textStream().getReader().read());
       await turn();
@@ -303,17 +350,16 @@ describe("Body.textStream() fails its own stream when it cannot decode a chunk",
       const cancelledUnderFirst = source.cancelled;
       const second = attempt(() => source.controller.enqueue(new Uint8Array(1)));
       await turn();
-      console.log(JSON.stringify({
+      return {
         first,
         cancelledUnderFirst,
         second,
         read: read.outcome,
         locked: source.body.locked,
         cancelled: source.cancelled,
-      }));
-    `);
-    expect(result).toEqual({
-      stdout: {
+      };
+      `,
+      {
         first: "returned",
         cancelledUnderFirst: null,
         second: "returned",
@@ -321,95 +367,66 @@ describe("Body.textStream() fails its own stream when it cannot decode a chunk",
         locked: false,
         cancelled: error,
       },
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+    );
+  }
 
-  test.concurrent("for await over the text stream rejects", async () => {
-    const result = await runInSubprocess(`
-      const source = pushBody();
-      const text = new Response(source.body).textStream();
-      const loop = follow((async () => {
-        for await (const chunk of text) console.log("unexpected chunk", chunk.length);
-      })());
-      await turn();
-      const enqueue = attempt(() => source.controller.enqueue(tooLong()));
-      await turn();
-      console.log(JSON.stringify({
-        enqueue,
-        loop: loop.outcome,
-        locked: source.body.locked,
-        cancelled: source.cancelled,
-      }));
-    `);
-    expect(result).toEqual({
-      stdout: { enqueue: "returned", loop: outOfMemory, locked: false, cancelled: outOfMemory },
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+  scenario(
+    "for await over the text stream rejects",
+    `
+    const source = pushBody();
+    const text = new Response(source.body).textStream();
+    const loop = follow((async () => {
+      for await (const chunk of text) void chunk;
+    })());
+    await turn();
+    const enqueue = attempt(() => source.controller.enqueue(tooLong()));
+    await turn();
+    return { enqueue, loop: loop.outcome, locked: source.body.locked, cancelled: source.cancelled };
+    `,
+    { enqueue: "returned", loop: outOfMemory, locked: false, cancelled: outOfMemory },
+  );
 
-  test.concurrent("the chunk is in the body's queue before the text stream reads", async () => {
-    const result = await runInSubprocess(`
-      const source = pushBody();
-      source.controller.enqueue(tooLong());
-      const read = follow(new Response(source.body).textStream().getReader().read());
-      await turn();
-      console.log(JSON.stringify({ read: read.outcome, locked: source.body.locked, cancelled: source.cancelled }));
-    `);
-    expect(result).toEqual({
-      stdout: { read: outOfMemory, locked: false, cancelled: outOfMemory },
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+  scenario(
+    "the chunk is in the body's queue before the text stream reads",
+    `
+    const source = pushBody();
+    source.controller.enqueue(tooLong());
+    const read = follow(new Response(source.body).textStream().getReader().read());
+    await turn();
+    return { read: read.outcome, locked: source.body.locked, cancelled: source.cancelled };
+    `,
+    { read: outOfMemory, locked: false, cancelled: outOfMemory },
+  );
 
   // clone() tees the body. The clone is another reader of the same chunk.
-  test.concurrent("a clone of the Response still reads the chunk", async () => {
-    const result = await runInSubprocess(`
-      const source = pushBody();
-      const response = new Response(source.body);
-      const clone = response.clone();
-      const read = follow(response.textStream().getReader().read());
-      const cloneRead = follow(clone.body.getReader().read());
-      await turn();
-      const enqueue = attempt(() => source.controller.enqueue(tooLong()));
-      await turn();
-      console.log(JSON.stringify({
-        enqueue,
-        read: read.outcome,
-        cloneRead: cloneRead.outcome,
-        cancelled: source.cancelled,
-      }));
-    `);
-    expect(result).toEqual({
-      stdout: { enqueue: "returned", read: outOfMemory, cloneRead: LIMIT + 1, cancelled: null },
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+  scenario(
+    "a clone of the Response still reads the chunk",
+    `
+    const source = pushBody();
+    const response = new Response(source.body);
+    const clone = response.clone();
+    const read = follow(response.textStream().getReader().read());
+    const cloneRead = follow(clone.body.getReader().read());
+    await turn();
+    const enqueue = attempt(() => source.controller.enqueue(tooLong()));
+    await turn();
+    return { enqueue, read: read.outcome, cloneRead: cloneRead.outcome, cancelled: source.cancelled };
+    `,
+    { enqueue: "returned", read: outOfMemory, cloneRead: LIMIT + 1, cancelled: null },
+  );
 
   // The body is the readable side of a TransformStream. The writer delivers the chunk.
-  test.concurrent("a TransformStream writer that delivers the chunk sees a cancel, not a failed write", async () => {
-    const result = await runInSubprocess(`
-      const { readable, writable } = new TransformStream();
-      const writer = writable.getWriter();
-      const read = follow(new Response(readable).textStream().getReader().read());
-      const write = follow(writer.write(tooLong()));
-      const writerClosed = follow(writer.closed);
-      await turn();
-      console.log(JSON.stringify({
-        write: write.outcome,
-        read: read.outcome,
-        writerClosed: writerClosed.outcome,
-        locked: readable.locked,
-      }));
-    `);
-    expect(result).toEqual({
-      stdout: { write: "fulfilled", read: outOfMemory, writerClosed: outOfMemory, locked: false },
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+  scenario(
+    "a TransformStream writer that delivers the chunk sees a cancel, not a failed write",
+    `
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+    const read = follow(new Response(readable).textStream().getReader().read());
+    const write = follow(writer.write(tooLong()));
+    const writerClosed = follow(writer.closed);
+    await turn();
+    return { write: write.outcome, read: read.outcome, writerClosed: writerClosed.outcome, locked: readable.locked };
+    `,
+    { write: "fulfilled", read: outOfMemory, writerClosed: outOfMemory, locked: false },
+  );
 });

@@ -350,6 +350,7 @@ pub(crate) fn list_objects(
             http_proxy,
             verbose: Some(vm.get_verbose_fetch()),
             reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
+            tls_props: crate::socket::http_client_defaults(vm),
             signals: Some(task.signal_store.to()),
             ..Default::default()
         },
@@ -418,10 +419,11 @@ pub(crate) fn writable_stream(
     storage_class: Option<StorageClass>,
     request_payer: bool,
 ) -> JsResult<JSValue> {
-    // Local callback wrapper. `uploaded` is read off the upload (see `MultiPartUpload::callback`).
+    // Local callback wrapper. `uploaded` and `path` are read off the upload (see `MultiPartUpload::callback`).
     fn wrapper_callback(
         result: S3UploadResult,
         uploaded: u64,
+        path: &[u8],
         sink: &mut NetworkSink,
     ) -> JsResult<()> {
         // `global_this` is a `BackRef` set at construction; copy it so the
@@ -448,7 +450,7 @@ pub(crate) fn writable_stream(
                     }
                 }
                 S3UploadResult::Failure(err) => {
-                    let js_err = s3_error_to_js(&err, global, sink.path());
+                    let js_err = s3_error_to_js(&err, global, Some(path));
                     if sink.flush_promise.has_value() {
                         sink.flush_promise.reject(global, Ok(js_err))?;
                     }
@@ -475,7 +477,9 @@ pub(crate) fn writable_stream(
         let sink = ctx.cast::<NetworkSink>();
         // SAFETY: ctx was set to `response_stream: *mut NetworkSink` below; the box is live
         // while the upload holds it.
-        let r = wrapper_callback(result, task.uploaded_bytes.get(), unsafe { &mut *sink });
+        let r = wrapper_callback(result, task.uploaded_bytes.get(), &task.path, unsafe {
+            &mut *sink
+        });
         // SAFETY: the upload's hold on the box ends here; `sink` is not used afterwards.
         unsafe { NetworkSink::release_writer_holder(sink) };
         r
@@ -1282,6 +1286,7 @@ fn download_stream(
             verbose: Some(verbose),
             signals: Some(task.signals),
             reject_unauthorized: Some(reject_unauthorized),
+            tls_props: crate::socket::http_client_defaults(vm),
             ..Default::default()
         },
     ));

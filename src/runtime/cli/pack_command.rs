@@ -17,18 +17,18 @@ use bun_parsers::json as JSON;
 // `bun_ast::Expr`. All JSON inspection in this file uses the T2 type;
 // the two T4 sinks (`js_printer::print_json`, `Publish::normalized_package`)
 // lift via `bun_ast::Expr::from(t2_expr)` at the call site.
+use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
 use bun_ast::{E, Expr, ExprData};
+use bun_core::ZBox;
+use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
 use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
+use bun_paths::resolve_path;
 use bun_paths::{self as path, SEP_STR};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
 // borrow_subslice/length live on `cow_slice::CowSliceZ`).
 use bun_ptr::cow_slice::CowSlice;
 type CowString = CowSlice<u8>;
-use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
-use bun_core::ZBox;
-use bun_core::{ZStr, strings};
-use bun_paths::resolve_path;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
 use bun_sys::{
@@ -451,7 +451,7 @@ fn iterate_included_project_tree(
             debug_assert!(
                 exclude.flags.contains(PatternFlags::NEGATED),
                 "Illegal exclusion pattern '{}'. Exclusion patterns are always negated.",
-                bstr::BStr::new(exclude.glob.slice()),
+                bstr::BStr::new(exclude.glob.pattern()),
             );
         }
     }
@@ -543,7 +543,7 @@ fn iterate_included_project_tree(
                     } else {
                         entry_subpath.as_bytes()
                     };
-                    if glob::r#match(include.glob.slice(), match_path).matches() {
+                    if include.glob.r#match(match_path).matches() {
                         included = true;
                     }
                 }
@@ -567,7 +567,7 @@ fn iterate_included_project_tree(
                     } else {
                         entry_subpath.as_bytes()
                     };
-                    let result = glob::r#match(exclude.glob.slice(), match_path);
+                    let result = exclude.glob.r#match(match_path);
                     if result.is_negated() && !result.matches() {
                         included = false;
                     }
@@ -1651,14 +1651,14 @@ fn is_excluded<'a>(
             } else {
                 entry_name
             };
-            let result = glob::r#match(pattern.glob.slice(), match_path);
+            let result = pattern.glob.r#match(match_path);
             if result.is_negated() {
                 if !result.matches() {
                     ignored = false;
                 }
             } else if result.matches() {
                 ignored = true;
-                ignore_pattern = pattern.glob.slice();
+                ignore_pattern = pattern.glob.pattern();
                 ignore_kind = ignore.kind;
             }
         }
@@ -3533,7 +3533,7 @@ fn edit_root_package_json(
 /// Might come from .npmignore, .gitignore, or `files` in package.json
 // Note: `CowSliceZ<u8>` is not `Clone`; manual borrow via `as_positive`.
 pub(crate) struct Pattern {
-    pub(crate) glob: CowString,
+    pub(crate) glob: glob::Prepared<CowString>,
     pub(crate) flags: PatternFlags,
 }
 
@@ -3628,16 +3628,17 @@ impl Pattern {
         }
 
         Ok(Some(Pattern {
-            glob: CowString::init_owned(buf),
+            glob: glob::Prepared::new(CowString::init_owned(buf)),
             flags,
         }))
     }
 
     /// Invert a negated pattern to a positive pattern
     pub(crate) fn as_positive(&self) -> Pattern {
-        debug_assert!(self.flags.contains(PatternFlags::NEGATED) && self.glob.length() > 0);
+        debug_assert!(self.flags.contains(PatternFlags::NEGATED));
         Pattern {
-            glob: self.glob.borrow_subslice(1, None), // remove the leading `!`
+            // remove the leading `!`
+            glob: glob::Prepared::new(self.glob.source().borrow_subslice(1, None)),
             flags: {
                 let mut f = self.flags;
                 f.remove(PatternFlags::NEGATED);

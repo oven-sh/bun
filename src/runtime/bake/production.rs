@@ -335,7 +335,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
 
     let Some(config_promise) =
-        JSModuleLoader::load_and_evaluate_module_ptr(vm.global, Some(&config_entry_point_string))
+        JSModuleLoader::load_and_evaluate_module_ptr(vm.global, &config_entry_point_string)
     else {
         debug_assert!(global.has_exception());
         return Err(crate::Error::JSError);
@@ -573,9 +573,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 .iter()
                 .map(|s| Box::<[u8]>::from(*s))
                 .collect(),
-            // `Style` is `Clone` (the `JavascriptDefined` arm panics inside
-            // `clone()`).
-            style: fsr.style.clone(),
+            style: fsr.style,
             allow_layouts: fsr.allow_layouts,
             server_file: OpaqueFileId::init(server_file.get()),
             client_file: client_file.map(|f| OpaqueFileId::init(f.get())),
@@ -771,6 +769,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         OutputKind::ModuleInfo
                         | OutputKind::BuiltinBytecode
                         | OutputKind::BytecodeStringTable
+                        | OutputKind::BytecodePayload
                         | OutputKind::ModuleInfoStringTable
                         | OutputKind::PrelinkedModuleGraph => {}
                         OutputKind::MetafileJson | OutputKind::MetafileMarkdown => {}

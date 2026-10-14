@@ -9,15 +9,11 @@
 //! body forwards to the canonical `bun_jsc::JSValue` / `JSGlobalObject`
 //! inherent so there is exactly one FFI declaration per symbol.
 
-#![allow(non_snake_case)]
-
 // ─── pure-Rust leaf (no JSC) — always compiles ───────────────────────────
 pub(crate) mod diff {
     // mod-rs path rule: inline `mod diff` + `#[path]` → test_runner/diff/<file>
     #[path = "printDiff.rs"]
     pub(crate) mod print_diff;
-    #[path = "text_diff.rs"]
-    pub(crate) mod text_diff;
 }
 
 // ─── JSC-heavy core ──────────────────────────────────────────────────────

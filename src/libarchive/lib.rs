@@ -5,7 +5,6 @@
 // below; higher-level extraction logic (`Archiver`, `BufferReadStream`) sits
 // on top and uses `bun_sys` for I/O.
 // ──────────────────────────────────────────────────────────────────────────
-use core::ffi::c_int;
 use core::ptr;
 
 use bun_collections::StringArrayHashMap;
@@ -907,7 +906,6 @@ pub struct BufferReadStream {
     buf: *const [u8],
 
     archive: *mut Archive,
-    reading: bool,
 }
 
 impl BufferReadStream {
@@ -925,7 +923,6 @@ impl BufferReadStream {
         Self {
             buf: std::ptr::from_ref::<[u8]>(buf),
             archive: Archive::read_new(),
-            reading: false,
         }
     }
 
@@ -965,11 +962,7 @@ impl BufferReadStream {
         // the first concatenated archive would be read.
         let _ = archive.read_set_options(c"read_concatenated_archives");
 
-        let rc = archive.read_open_memory(self.buf());
-
-        self.reading = (rc as c_int) > -1;
-
-        rc
+        archive.read_open_memory(self.buf())
     }
 }
 

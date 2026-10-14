@@ -15,7 +15,6 @@ pub use bun_core::StringBuilder;
 
 // FFI surface over vendor/picohttpparser. Hand-written rather than
 // bindgen-generated.
-#[allow(non_camel_case_types)]
 mod c {
     use core::ffi::{c_char, c_int};
     #[repr(C)]

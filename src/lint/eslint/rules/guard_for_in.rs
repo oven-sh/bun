@@ -1,0 +1,53 @@
+use bun_lint::prelude::*;
+
+/// Require `for-in` loops to include an `if` statement.
+pub struct GuardForIn;
+
+const WRAP: Message = Message::new(
+    "wrap",
+    "The body of a for-in should be wrapped in an if statement to filter unwanted properties from the prototype.",
+);
+
+/// `continue`, or a block that contains only a `continue`.
+fn is_continue(stmt: Stmt) -> bool {
+    match stmt.kind() {
+        StmtKind::Continue(_) => true,
+        StmtKind::Block(statements) => {
+            statements.len() == 1 && statements.first().is_some_and(|it| it.tag() == StmtTag::Continue)
+        }
+        _ => false,
+    }
+}
+
+fn is_guarded(body: Stmt) -> bool {
+    match body.kind() {
+        StmtKind::Empty | StmtKind::If { .. } => true,
+        StmtKind::Block(statements) => match statements.first().map(Stmt::kind) {
+            None => true,
+            Some(StmtKind::If { yes, .. }) => statements.len() == 1 || is_continue(yes),
+            Some(_) => false,
+        },
+        _ => false,
+    }
+}
+
+impl Rule for GuardForIn {
+    const META: Meta = Meta::eslint("guard-for-in", Kind::Suggestion);
+    const ON: On = On::new().stmts(&[StmtTag::ForIn]);
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        GuardForIn
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::ForIn { expr, body, .. } = stmt.kind()
+            && !is_guarded(body)
+        {
+            let whole = stmt.span();
+            // oxlint points at the head, which it takes to end one byte after the object.
+            let end = if cx.language().is_oxlint { expr.outer_span().end + 1 } else { whole.end };
+            cx.report(Span::new(whole.start, end), WRAP);
+        }
+    }
+}

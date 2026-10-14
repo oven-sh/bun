@@ -361,7 +361,7 @@ impl Terminal {
     ///
     /// Only valid for the `BufferedReaderParent` /
     /// `{Posix,Windows}StreamingWriterParent` thunks where `this` is the
-    /// registered BACKREF — do NOT call from `WindowsWriterParent::ref_` /
+    /// registered BACKREF — do NOT call from `WriterParent::ref_` /
     /// `deref` (those run while a `&mut self.writer` borrow is live and must
     /// avoid forming `&Terminal`; see Stacked-Borrows note there).
     #[inline]
@@ -614,7 +614,7 @@ impl Terminal {
     }
 
     /// Get the slave fd for subprocess to use
-    #[allow(dead_code)]
+    #[cfg(unix)]
     pub(crate) fn get_slave_fd(&self) -> Fd {
         self.slave_fd.get()
     }
@@ -1798,7 +1798,6 @@ impl Terminal {
 
     fn on_write(&self, amount: usize, status: WriteStatus) {
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
-        let _ = amount;
         match status {
             WriteStatus::Pending => {}
             // `PosixStreamingWriter` never dispatches `on_ready`, so POSIX
@@ -2078,22 +2077,25 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     }
 }
 
+impl bun_io::pipe_writer::WriterParent for Terminal {
+    unsafe fn ref_(this: *mut Self) {
+        // SAFETY: BACKREF set via writer.parent. Intrusive refcount bump via raw
+        // pointer — do NOT form &Terminal here: this is called from inside writer
+        // methods while a &mut self.writer borrow is live (Stacked-Borrows aliasing).
+        unsafe { bun_ptr::RefCount::<Terminal>::ref_(this) };
+    }
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: see ref_. Intrusive refcount drop via raw pointer; may free
+        // `this`. See ref_ for aliasing rationale.
+        unsafe { bun_ptr::RefCount::<Terminal>::deref(this) };
+    }
+}
+
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
     unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
         // SAFETY: BACKREF set via writer.parent; shared-only read.
         unsafe { (*this).event_loop_handle.uv_loop() }
-    }
-    unsafe fn ref_(this: *mut Self) {
-        // SAFETY: see loop_. Intrusive refcount bump via raw pointer — do NOT
-        // form &Terminal here: this is called from inside writer methods while
-        // a &mut self.writer borrow is live (Stacked-Borrows aliasing).
-        unsafe { bun_ptr::RefCount::<Terminal>::ref_(this) };
-    }
-    unsafe fn deref(this: *mut Self) {
-        // SAFETY: see loop_. Intrusive refcount drop via raw pointer; may free
-        // `this`. See ref_ for aliasing rationale.
-        unsafe { bun_ptr::RefCount::<Terminal>::deref(this) };
     }
 }
 

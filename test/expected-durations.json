@@ -5355,7 +5355,7 @@
     "windows": 6,
     "windows-aarch64": 10
   },
-  "js/bun/test/parallel/test-http-13373-should-emit-close-and-complete-should-be-true-only-after-close.ts": {
+  "js/bun/test/parallel/test-http-13373-should-emit-close-and-complete-should-be-true-after-the-request-listener.ts": {
     "default": 2,
     "asan": 2,
     "musl": 3,

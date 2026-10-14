@@ -71,7 +71,7 @@ pub(crate) fn to_match_file_snapshot(
             throw!(this, global, signature, "\n\n{}\n", diff_format)
         }
         FileOutcome::IsSnapshotFile => Err(global.throw(format_args!(
-            "toMatchFileSnapshot() cannot use the file that holds the other snapshots of the test file: {}",
+            "toMatchFileSnapshot() can't write to the test file's own .snap file: {}",
             bstr::BStr::new(path.to_utf8().slice()),
         ))),
         FileOutcome::NotAllowedInCI => Err(global.throw(format_args!(

@@ -623,7 +623,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--reporter-outfile <STR>         Output file path for the reporter format (required with --reporter)."
     ),
     parse_param!(
-        "--reporter-junit-suites <STR>    How --reporter=junit writes describe blocks: 'nested' (default, a \\<testsuite\\> in the file's \\<testsuite\\>) or 'flat' (a prefix of the test's name)."
+        "--reporter-junit-suites <STR>    How --reporter=junit writes describe blocks: 'nested' (default) gives each block its own \\<testsuite\\>, 'flat' prefixes test names with the block names."
     ),
     parse_param!(
         "--dots                           Enable dots reporter. Shorthand for --reporter=dots."
@@ -663,10 +663,10 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--update-timings                 After the run, write measured per-file durations to the first --timings file (only this shard's files under --shard; merged with what was read otherwise)."
     ),
     parse_param!(
-        "--environment <STR>              Globals test files run with: 'node' (default), 'jsdom' or 'happy-dom'. A '@vitest-environment' or '@jest-environment' comment in a file overrides it."
+        "--environment <STR>              DOM for test files: 'node' (default, no DOM), 'jsdom' or 'happy-dom'. A '@vitest-environment' or '@jest-environment' comment in a file overrides it."
     ),
     parse_param!(
-        "--globals <STR>                  Where the globals 'test', 'expect', ... come from: 'bun' (default: \"vitest\" in a file that imports from it, else \"bun:test\") or 'vitest' (in every file)."
+        "--globals <STR>                  Module that 'test', 'expect' and the other globals come from: 'bun' (default) uses \"vitest\" in files that import from it and \"bun:test\" elsewhere, 'vitest' uses it everywhere."
     ),
 ];
 const TEST_PARAMS: &[ParamType] = concat_params!(

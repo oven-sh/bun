@@ -582,7 +582,7 @@ describe.concurrent(".resolves and .rejects", () => {
       "(pass) concurrent > does not await it",
       "(pass) concurrent > handles it",
       "(pass) next",
-      "error: A matcher that a concurrent test did not await timed out: its promise has not settled",
+      "error: An un-awaited matcher in a concurrent test timed out because its promise never settled",
     ]);
     expect(report.at(-1)).toBe("(pass) next");
     expect(failingLines(stderr, source)).toEqual(['expect(never()).resolves.toBe("not awaited");']);
@@ -655,7 +655,7 @@ describe.concurrent(".resolves and .rejects", () => {
         a: [
           "# Unhandled error between tests",
           "(pass) a",
-          "error: A matcher that was called outside of a test and not awaited timed out 250ms after the tests of its file: its promise has not settled",
+          "error: An un-awaited matcher called outside a test timed out 250ms after its file's tests finished because its promise never settled",
         ],
         b: ["(pass) b"],
       });
@@ -1445,24 +1445,24 @@ describe.concurrent("matchers that meet a pending promise", () => {
           calls.length = 0;
           const outcome = await matcher().then(
             () => "passes",
-            error => (error.message.includes("took another path") ? "took another path" : "fails"),
+            error => (error.message.includes("changed while the matcher waited") ? "values changed" : "fails"),
           );
           console.log(name + ": " + outcome + " | " + calls.join());
         });
       }
     `);
     expect(stdout).toEqual([
-      "both arrays lose their first item: took another path | toBeAnything,toBeOdd 2",
-      "the same with expect.resolvesTo: took another path | ",
-      "the same function with other arguments: took another path | toBeDivisibleBy 2",
-      "toContainEqual() of an array that is consumed: took another path | toBeOdd 1",
-      "keys that are gone when they are read again: took another path | toBeAnything,toBeOdd 2",
-      "a getter that returns another number: took another path | toBeOdd 1",
-      "a getter that returns another object each time: took another path | toBeThis",
-      "a getter that returns another promise each time: took another path | ",
-      "another call of a mock: took another path | toBeOdd 1",
-      "-0 that becomes 0: took another path | toBeThis",
-      "what differs before the matcher comes to where it waited: took another path | toBeAnything,toBeOdd 1",
+      "both arrays lose their first item: values changed | toBeAnything,toBeOdd 2",
+      "the same with expect.resolvesTo: values changed | ",
+      "the same function with other arguments: values changed | toBeDivisibleBy 2",
+      "toContainEqual() of an array that is consumed: values changed | toBeOdd 1",
+      "keys that are gone when they are read again: values changed | toBeAnything,toBeOdd 2",
+      "a getter that returns another number: values changed | toBeOdd 1",
+      "a getter that returns another object each time: values changed | toBeThis",
+      "a getter that returns another promise each time: values changed | ",
+      "another call of a mock: values changed | toBeOdd 1",
+      "-0 that becomes 0: values changed | toBeThis",
+      "what differs before the matcher comes to where it waited: values changed | toBeAnything,toBeOdd 1",
       "NaN: passes | toBeThis,toBeOdd 1",
       "-0: passes | toBeThis,toBeOdd 1",
       "a getter that returns another string with the same text: passes | toBeThis,toBeOdd 1",
@@ -1640,7 +1640,7 @@ describe.concurrent("matchers that meet a pending promise", () => {
       });
     `);
     const cannotWait =
-      "[object Error] An asynchronous matcher can only be waited for by a matcher of expect(), which then returns a promise: await expect(received).toEqual(expected)";
+      "[object Error] An async matcher only works inside an expect() matcher, which then returns a promise: await expect(received).toEqual(expected)";
     expect(stdout).toEqual([
       "true false",
       cannotWait,
@@ -2006,7 +2006,7 @@ describe.concurrent("expect.poll()", () => {
         console.log(fn.mock.calls.length);
       });
     `);
-    const use = "Use vi.waitFor() for a condition that takes time to hold";
+    const use = "Use vi.waitFor() instead";
     expect(stdout).toEqual([
       `expect.poll() does not support .toThrow(). ${use}`,
       `expect.poll() does not support .toThrowError(). ${use}`,

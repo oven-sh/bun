@@ -1223,7 +1223,7 @@ static JSValue fetchESMSourceCode(
             if (cached->sourceType() != JSC::SourceProviderSourceType::Program) {
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(Ref(*cached)))));
             }
-            // Mirror the guard in fetchCommonJSModule: a Module.wrap override only
+            // Mirror the guard in requireFromIsolatedModuleCache: a Module.wrap override only
             // affects CJS evaluation, so don't serve a cached Program-type provider
             // when one is active in this global — fall through to re-transpile.
             if (!globalObject->hasOverriddenModuleWrapper) {

@@ -30,12 +30,12 @@ public:
     // the same path → not cacheable by path alone).
     static bool canUse(JSC::VM&, void* bunVM, const BunString* typeAttribute = nullptr);
 
-    // Only tags whose provider holds JS transpiled from the on-disk file at
-    // the cache key. Loader-specific outputs (File, JSON, Object*, custom CJS
-    // extensions, Wasm, builtins) are excluded — they can be produced for the
-    // same path via `with {type: ...}` or require.extensions, and the lookup is
-    // keyed by path alone, so caching them would let a later default-loader
-    // import of that path hit the wrong provider.
+    // Only tags whose provider holds transpiled JS, from the on-disk file at the
+    // cache key or from a plugin's contents. Loader-specific outputs (File, JSON,
+    // Object*, custom CJS extensions, Wasm, builtins) are excluded — they can be
+    // produced for the same path via `with {type: ...}` or require.extensions, and
+    // lookup() doesn't compare the tag, so caching them would let a later
+    // default-loader import of that path hit the wrong provider.
     static bool isTagCacheable(SyntheticModuleType tag)
     {
         switch (tag) {

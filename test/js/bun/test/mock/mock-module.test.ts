@@ -1349,7 +1349,7 @@ describe.concurrent("factories", () => {
 
           test("note", () => {
             const message = "Cannot access 'later' before initialization.";
-            const note = "\\nnote: vi.mock() and jest.mock() run before the imports and the top-level variables of the file, so a factory cannot use them. Declare what it needs with vi.hoisted().";
+            const note = "\\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables, so a factory can't use them. Declare what it needs with vi.hoisted().";
             for (const name of ["throws", "rejected", "rejects"]) {
               expect(errors[name]).toBeInstanceOf(ReferenceError);
               expect(errors[name].message).toBe(message + note);
@@ -1384,7 +1384,7 @@ describe.concurrent("factories", () => {
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain(
-      "ReferenceError: Cannot access 'later' before initialization.\nnote: vi.mock() and jest.mock() run before the imports and the top-level variables of the file, so a factory cannot use them. Declare what it needs with vi.hoisted().",
+      "ReferenceError: Cannot access 'later' before initialization.\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables, so a factory can't use them. Declare what it needs with vi.hoisted().",
     );
     expect(stderr).toContain(" 0 pass\n 1 fail\n 1 error\n");
     expect(exitCode).toBe(1);
@@ -1735,7 +1735,7 @@ describe.concurrent("a factory that returns a module namespace object", () => {
         ...files,
         "re-exports.test.ts": `
           import { expect, mock, test, vi } from "bun:test";
-          const message = "mock(module, fn) requires a function that does not return the namespace object of a module that re-exports the mocked module";
+          const message = "mock(module, fn): the factory can't return the namespace object of a module that re-exports the mocked module";
 
           test.each(["./star", "./named", "./star-of-star"])("%s", async specifier => {
             mock.module("./a", () => ({ a: "first" }));
@@ -2218,7 +2218,7 @@ describe.concurrent("import cycles through a mocked module", () => {
     });
     const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain(
-      "ReferenceError: Cannot access 'later' before initialization.\nnote: vi.mock() and jest.mock() run before the imports",
+      "ReferenceError: Cannot access 'later' before initialization.\nnote: vi.mock() and jest.mock() are hoisted above the file's imports",
     );
     expect(stderr).toContain(" 0 pass\n 1 fail\n 1 error\n");
     expect(exitCode).toBe(1);

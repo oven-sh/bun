@@ -152,7 +152,7 @@ impl Environment {
             Some(Err(name)) => {
                 print_file_name();
                 bun_core::warn!(
-                    "The {} test environment of {} is not supported",
+                    "The {} test environment requested by {} is not supported",
                     bun_core::fmt::quote(name),
                     bun_core::fmt::quote(path),
                 );

@@ -1066,7 +1066,7 @@ static void addHoistingNote(JSC::VM& vm, JSValue error)
     String message = messageOfUninitializedVariableError(vm, error);
     if (message.isNull())
         return;
-    uncheckedDowncast<JSC::ErrorInstance>(error)->putDirect(vm, vm.propertyNames->message, jsString(vm, makeString(message, "\nnote: vi.mock() and jest.mock() run before the imports and the top-level variables of the file, so a factory cannot use them. Declare what it needs with vi.hoisted()."_s)), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    uncheckedDowncast<JSC::ErrorInstance>(error)->putDirect(vm, vm.propertyNames->message, jsString(vm, makeString(message, "\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables, so a factory can't use them. Declare what it needs with vi.hoisted()."_s)), static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 }
 
 JSValue JSModuleMock::callFactory(Zig::GlobalObject* globalObject, bool synchronous, JSObject* dependency)
@@ -1238,7 +1238,7 @@ void JSModuleMock::settle(Zig::GlobalObject* globalObject, JSValue value)
     bool readsItself = readsExportsOfModule(globalObject, esmExports, key, seen);
     RETURN_IF_EXCEPTION(scope, );
     if (readsItself) {
-        JSC::throwTypeError(globalObject, scope, "mock(module, fn) requires a function that does not return the namespace object of a module that re-exports the mocked module"_s);
+        JSC::throwTypeError(globalObject, scope, "mock(module, fn): the factory can't return the namespace object of a module that re-exports the mocked module"_s);
         return;
     }
 

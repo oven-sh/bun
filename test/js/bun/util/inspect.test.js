@@ -1541,7 +1541,7 @@ describe("a value whose [nodejs.util.inspect.custom] cannot be read", () => {
         const handler = `{ getPrototypeOf() { throw new Error("has no prototype"); } }`;
         expect(await reportOf(`{ a: 1, value: Object.create(new Proxy({}, ${handler})) }`)).toEqual({
           stdout: "",
-          stderr: "error\n{\n  a: 1,\n  value: [threw while it was printed]\n",
+          stderr: "error\n{\n  a: 1,\n  value: [threw while printing]\n",
           exitCode: 1,
         });
       });

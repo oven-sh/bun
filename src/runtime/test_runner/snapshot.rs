@@ -760,8 +760,8 @@ impl Snapshots {
 
             // 2. load file text
             // avoid `Jest::runner()` (would alias `&mut TestRunner` over the live
-            // `&mut self` / `ils_info` borrow of `runner.snapshots`). See comment in `parse_file`.
-            // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
+            // `&mut self` / `ils_info` borrow of `runner.snapshots`). See comment in `snapshot_file_path`.
+            // SAFETY: see `snapshot_file_path` — raw-pointer projection to disjoint `.files` field.
             let test_file_source = unsafe {
                 let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
                 &(*p).files.items_source()[file_id as usize]

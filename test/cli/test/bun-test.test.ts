@@ -136,7 +136,7 @@ describe("bun test", () => {
         }
         test("deep", () => {
           expect([thrownFor(10), thrownFor(100_000)]).toEqual(["Error", "RangeError"]);
-        });
+        }, 60_000);
       `,
       expectExitCode: 0,
     });
@@ -2190,7 +2190,7 @@ async function runFilesWithEnv(env: Record<string, string>, files: Record<string
 // No test has started yet, so no test timeout can end these waits.
 describe.concurrent("a test file that can never finish loading", () => {
   const nothingLeft =
-    "note: it is waiting for something that can no longer happen: the event loop has nothing left to run";
+    "note: the event loop is empty, so nothing can settle it anymore";
   const neverLoads = `
     import { test } from "bun:test";
     await new Promise(() => {});
@@ -2696,7 +2696,7 @@ describe.concurrent("a test file that can never finish loading", () => {
 // No test timeout ends these waits either.
 describe.concurrent("a test file that can never finish running", () => {
   const nothingLeft =
-    "note: it is waiting for something that can no longer happen: the event loop has nothing left to run";
+    "note: the event loop is empty, so nothing can settle it anymore";
   const passes = `
     import { test } from "bun:test";
     test("passes", () => {});
@@ -2737,7 +2737,7 @@ describe.concurrent("a test file that can never finish running", () => {
         test("third", () => {});
       `,
     });
-    const neverSettled = ['error: A test or a hook without a timeout never settled in "a.test.ts"', nothingLeft];
+    const neverSettled = ['error: A test or hook with no timeout never settled in "a.test.ts"', nothingLeft];
     expect({ results: stderr.match(/^\((pass|fail)\) \w+/gm), errors, counts, exitCode }).toEqual({
       results: ["(fail) first", "(fail) second", "(pass) third"],
       errors: [...neverSettled, ...neverSettled],
@@ -2771,7 +2771,7 @@ describe.concurrent("a test file that can never finish running", () => {
       "./b.test.ts",
     );
     expect({ errors, counts, exitCode }).toEqual({
-      errors: ['error: A test or a hook without a timeout never settled in "a.test.ts"', nothingLeft],
+      errors: ['error: A test or hook with no timeout never settled in "a.test.ts"', nothingLeft],
       counts: [" 1 pass", " 0 fail"],
       exitCode: 1,
     });

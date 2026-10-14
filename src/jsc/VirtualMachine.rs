@@ -7468,7 +7468,7 @@ impl VirtualMachine {
                 formatter.disable_inspect_custom = prev_disable_inspect_custom;
                 // An exception thrown while printing must not replace the one being reported.
                 if global_ref.has_exception() && global_ref.clear_exception_except_termination() {
-                    pretty_write!(writer, "<r><d>[threw while it was printed]<r>")?;
+                    pretty_write!(writer, "<r><d>[threw while printing]<r>")?;
                 }
                 writer.write_all(b"\n")?;
             }

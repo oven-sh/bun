@@ -140,7 +140,7 @@ impl ApiSet {
                 .find(|(known, _)| name.eq_ascii(known.as_bytes()))
             else {
                 return Err(global.throw_invalid_arguments(format_args!(
-                    "'{option}' has \"{name}\", which is not a timer function or clock that can be faked"
+                    "'{option}' contains \"{name}\", which can't be faked"
                 )));
             };
             let set = set.get_or_insert_with(ApiSet::default);
@@ -1449,7 +1449,7 @@ fn error_if_reading_globals(global: &JSGlobalObject) -> JsResult<()> {
         return Ok(());
     }
     Err(global.throw(format_args!(
-        "useFakeTimers() and useRealTimers() cannot be called by the getter of a global that they replace."
+        "useFakeTimers() and useRealTimers() can't be called from the getter of a global they replace."
     )))
 }
 

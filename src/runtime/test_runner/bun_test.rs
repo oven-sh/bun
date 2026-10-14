@@ -172,7 +172,7 @@ pub(crate) mod js_fns {
     }
 
     // `adt_const_params` is unstable, so the body takes `tag` at runtime and
-    // 5 thin `#[host_fn]` wrappers below supply the per-tag entry points
+    // thin `#[host_fn]` wrappers below supply the per-tag entry points
     // (one fn per JS function so JSFunction::create gets a distinct address).
     pub(crate) fn generic_hook_impl(
         tag: GenericHookTag,
@@ -269,7 +269,7 @@ pub(crate) mod js_fns {
                     let Some((sequence, _)) = bun_test.execution.get_current_and_valid_execution_sequence(&active) else {
                         return Err(if tag.deferred().is_some() && flavor == Flavor::Vitest {
                             global_this.throw(format_args!(
-                                "Cannot call {0}() here. It cannot be called inside a concurrent test. Use the one of the test context: test(name, ({{ {0} }}) => {{}})",
+                                "Cannot call {0}() inside a concurrent test. Use the one from the test context: test(name, ({{ {0} }}) => {{}})",
                                 tag_name
                             ))
                         } else if tag == GenericHookTag::OnTestFinished {

@@ -1345,7 +1345,7 @@ describe.concurrent("the end of a test file", () => {
       lines: [
         "a.test.ts:",
         "(pass) replaces a fake by a getter",
-        "error: useFakeTimers() and useRealTimers() cannot be called by the getter of a global that they replace.",
+        "error: useFakeTimers() and useRealTimers() can't be called from the getter of a global they replace.",
         "b.test.ts:",
         "(pass) nothing is faked",
       ],
@@ -1515,7 +1515,7 @@ describe("a global with a getter", () => {
     withGetter("clearTimeout", getter, () => {
       vi.useFakeTimers();
       expect(thrown).toEqual([
-        new Error("useFakeTimers() and useRealTimers() cannot be called by the getter of a global that they replace."),
+        new Error("useFakeTimers() and useRealTimers() can't be called from the getter of a global they replace."),
       ]);
       expect(vi.isFakeTimers()).toBe(true);
       (expect(Object.getOwnPropertyDescriptor(globalThis, "clearTimeout")!.value) as any).toBeFunction();
@@ -1682,8 +1682,8 @@ describe("useFakeTimers({ toFake, doNotFake })", () => {
     [{ toFake: ["setTimeout", null] }, "'toFake' must be an array of strings"],
     [{ doNotFake: "Date" }, "'doNotFake' must be an array of strings"],
     [{ toNotFake: [{}] }, "'toNotFake' must be an array of strings"],
-    [{ toFake: ["setTimeOut"] }, `'toFake' has "setTimeOut", which is not a timer function or clock that can be faked`],
-    [{ doNotFake: [""] }, `'doNotFake' has "", which is not a timer function or clock that can be faked`],
+    [{ toFake: ["setTimeOut"] }, `'toFake' contains "setTimeOut", which can't be faked`],
+    [{ doNotFake: [""] }, `'doNotFake' contains "", which can't be faked`],
   ])("%j throws and leaves the real timers", (options, message) => {
     // @ts-expect-error
     expect(() => vi.useFakeTimers(options)).toThrow(message);

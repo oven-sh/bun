@@ -51,7 +51,7 @@ pub enum Mode {
     Test,
 }
 
-// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. All three
+// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. All
 // fields are written exactly once in `create_unbound` and never mutated again,
 // so no `Cell`/`JsCell` wrapping is needed — the type is read-only after
 // construction. `generic_if`/`generic_extend`/`fn_each`/`call_as_function` all
@@ -660,7 +660,7 @@ impl ScopeFunctions {
                 let mut parameter_of_callback = None;
                 if let (Some(parameter), Some(_)) = (parameter, callback) {
                     let (call, ordinal) = if self.each.is_empty() { ("()", "first") } else { ("", "second") };
-                    let why = "fixtures are set up for the properties it names";
+                    let why = "fixtures are chosen by the properties it destructures";
                     let error = match parameter.get().unwrap_or(&ContextParameter::Absent) {
                         ContextParameter::Absent | ContextParameter::Properties(_) => None,
                         ContextParameter::RestProperty => Some(global.create_error_instance(format_args!(

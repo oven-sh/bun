@@ -204,7 +204,7 @@ pub enum TopLevelWaitError {
     #[error("Stopped")]
     Stopped,
     #[error(
-        "it is waiting for something that can no longer happen: the event loop has nothing left to run"
+        "the event loop is empty, so nothing can settle it anymore"
     )]
     NothingLeft,
 }

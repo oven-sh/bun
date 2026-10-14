@@ -180,7 +180,7 @@ await new Promise(() => {});
 
 ```txt
 error: "/path/to/test.ts" never finished loading
-note: it is waiting for something that can no longer happen: the event loop has nothing left to run
+note: the event loop is empty, so nothing can settle it anymore
 note: unsettled top-level await in "/path/to/test.ts"
 ```
 

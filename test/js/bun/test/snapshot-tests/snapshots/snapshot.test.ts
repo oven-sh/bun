@@ -2098,7 +2098,7 @@ describe.concurrent("toMatchFileSnapshot()", () => {
         "path": "\n\nMatcher error: Expected first argument to be a string\n",
         "hint": "\n\nMatcher error: Expected second argument to be a string\n",
         "own":
-          "toMatchFileSnapshot() cannot use the file that holds the other snapshots of the test file: ./__snapshots__/a.test.js.snap",
+          "toMatchFileSnapshot() can't write to the test file's own .snap file: ./__snapshots__/a.test.js.snap",
         "directory": expect.stringMatching(/^(EISDIR|EACCES|EPERM): .*'<dir>\/__snapshots__'$/),
         "long": "ENAMETOOLONG",
         "null byte": "\n\nMatcher error: Expected first argument to be a string without null bytes\n",

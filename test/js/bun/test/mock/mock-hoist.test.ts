@@ -912,7 +912,7 @@ describe.concurrent.each(["jest", "vi"])("a top-level variable in a factory of %
   ])("stays in its place: %s", async (declaration, name) => {
     const { stderr, exitCode } = await run(file(declaration, name, `value`));
     expect(stderr).toContain(
-      `ReferenceError: Cannot access '${name}' before initialization.\nnote: vi.mock() and jest.mock() run before the imports and the top-level variables of the file`,
+      `ReferenceError: Cannot access '${name}' before initialization.\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables`,
     );
     expect(exitCode).toBe(1);
   });
@@ -921,7 +921,7 @@ describe.concurrent.each(["jest", "vi"])("a top-level variable in a factory of %
     expect(await events(file(`const fake = "x";`, `fake`, `value`))).toEqual([["x"]]);
     const { stderr, exitCode } = await run(file(`const fake = String("x");`, `fake`, `value`));
     expect(stderr).toContain(
-      `ReferenceError: Cannot access 'fake' before initialization.\nnote: vi.mock() and jest.mock() run before the imports and the top-level variables of the file`,
+      `ReferenceError: Cannot access 'fake' before initialization.\nnote: vi.mock() and jest.mock() are hoisted above the file's imports and top-level variables`,
     );
     expect(exitCode).toBe(1);
   });

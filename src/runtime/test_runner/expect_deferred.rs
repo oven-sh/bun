@@ -457,7 +457,7 @@ impl Pass {
     #[cold]
     fn took_another_path(global: &JSGlobalObject) -> JsError {
         global.throw(format_args!(
-            "A matcher that waited for a promise took another path when it went on: what it compares has changed in the meantime, or is another value each time it is read. `await` the matcher before you change what it compares, and compare values that stay the same"
+            "The values being compared changed while the matcher waited for a promise, or a getter returns a different value on each read. `await` the matcher before changing them, and compare values that stay the same"
         ))
     }
 
@@ -519,7 +519,7 @@ impl Pass {
     pub(crate) fn wait_for(global: &JSGlobalObject, promise: AnyPromise) -> JsError {
         let Some(pass) = Self::current() else {
             return global.throw(format_args!(
-                "An asynchronous matcher can only be waited for by a matcher of expect(), which then returns a promise: await expect(received).toEqual(expected)"
+                "An async matcher only works inside an expect() matcher, which then returns a promise: await expect(received).toEqual(expected)"
             ));
         };
         let journal = match pass.journal(global, pass.cursor.get()) {
@@ -654,7 +654,7 @@ impl ExpectDeferred {
         this.replays.set(this.replays.get() + 1);
         let result = if this.replays.get() > Self::MAX_REPLAYS {
             Err(global.throw(format_args!(
-                "{}() has waited for {} promises, one after the other, and met one more",
+                "{}() waited for {} promises in a row and hit another one",
                 call.get_name(global)?,
                 Self::MAX_REPLAYS,
             )))
@@ -823,7 +823,7 @@ impl ExpectDeferred {
             global,
             Some(group_index),
             format_args!(
-                "A matcher that a concurrent test did not await timed out: its promise has not settled"
+                "An un-awaited matcher in a concurrent test timed out because its promise never settled"
             ),
         );
     }
@@ -859,7 +859,7 @@ impl ExpectDeferred {
             global,
             None,
             format_args!(
-                "A matcher that was called outside of a test and not awaited timed out {timeout_ms}ms after the tests of its file: its promise has not settled"
+                "An un-awaited matcher called outside a test timed out {timeout_ms}ms after its file's tests finished because its promise never settled"
             ),
         );
         StepResult::Complete
@@ -1035,7 +1035,7 @@ impl Expect {
             .any(|not_polled| name.eq_ascii(not_polled))
         {
             return Err(global.throw(format_args!(
-                "expect.poll() does not support .{name}(). Use vi.waitFor() for a condition that takes time to hold"
+                "expect.poll() does not support .{name}(). Use vi.waitFor() instead"
             )));
         }
         let function =

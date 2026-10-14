@@ -89,7 +89,7 @@ function warnings(output: string) {
 }
 
 function cannotSetUp(name: string, file: string) {
-  return `Cannot set up the "${name}" test environment of "${file}"`;
+  return `Cannot set up the "${name}" test environment for "${file}"`;
 }
 
 function cannotFindPackage(name: string, file: string) {
@@ -371,7 +371,7 @@ describe.concurrent("test environment", () => {
       expect(stderr).toContain(
         [
           "a.test.js:",
-          `warn: The "${name}" test environment of "${join(String(dir), "a.test.js")}" is not supported`,
+          `warn: The "${name}" test environment requested by "${join(String(dir), "a.test.js")}" is not supported`,
           `note: the supported environments are "node", "jsdom" and "happy-dom"`,
           "",
         ].join("\n"),
@@ -761,7 +761,7 @@ describe.concurrent("test environment", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("an environment that cannot be taken away is an error", async () => {
+    test("fails if the environment can't be torn down", async () => {
       using dir = tempDir("test-environment", {
         ...fakePackages,
         "1.test.js": `// ${VITEST} happy-dom
@@ -771,7 +771,7 @@ describe.concurrent("test environment", () => {
       });
       const { stdout, stderr, exitCode } = await bunTest(String(dir));
       expect(stderr).toContain(
-        `error: The "happy-dom" test environment cannot be taken away: "Request" of globalThis can no longer be redefined\n`,
+        `error: Cannot tear down the "happy-dom" test environment: globalThis.Request can no longer be redefined\n`,
       );
       expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["2.test.js happy-dom#1 http://localhost:3000"]);
       expect(summary(stderr)).toEqual(["2 pass", "0 fail", "1 error"]);
@@ -791,7 +791,7 @@ describe.concurrent("test environment", () => {
       });
       const { stdout, stderr, exitCode } = await bunTest(String(dir));
       expect(stderr).toContain(
-        `error: The "happy-dom" test environment cannot be taken away: "Request" of globalThis can no longer be redefined\n`,
+        `error: Cannot tear down the "happy-dom" test environment: globalThis.Request can no longer be redefined\n`,
       );
       expect(stdout.filter(line => !line.startsWith("open "))).toEqual(["2.test.js node "]);
       expect(summary(stderr)).toEqual(["2 pass", "0 fail", "1 error"]);
@@ -1001,7 +1001,7 @@ describe.concurrent("test environment", () => {
     expect(stderr).toContain(
       errorBetweenTests(
         "error: The test environment never finished closing",
-        "note: it is waiting for something that can no longer happen: the event loop has nothing left to run",
+        "note: the event loop is empty, so nothing can settle it anymore",
       ),
     );
     expect(stdout.filter(line => !line.startsWith("open "))).toEqual([

@@ -2929,11 +2929,11 @@ impl TestCommand {
                 entry_data: Some(entry),
                 ..
             } => (
-                "A test or a hook without a timeout",
+                "A test or hook with no timeout",
                 Some((entry.entry, i64::from(entry.attempt))),
             ),
-            bun_test::RefDataValue::Done => ("The promise of a matcher that was not awaited", None),
-            _ => ("A test or a hook without a timeout", None),
+            bun_test::RefDataValue::Done => ("An un-awaited matcher's promise", None),
+            _ => ("A test or hook with no timeout", None),
         }
     }
 
@@ -3160,14 +3160,14 @@ impl TestCommand {
 
                     vm.exit_handler.exit_code = 1;
                     vm.is_shutting_down = true;
-                    // `global_exit()` diverges, so the `exit_file()` defer
-                    // above never fires. Release the active file's
+                    // `global_exit()` diverges, so `EnteredFile`'s `Drop`
+                    // never runs. Release the active file's
                     // `Strong`s and the preload-hook scope here so
                     // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
                     // then clear `RUNNER` so finalizers can't observe a
                     // partially-torn-down `TestRunner`.
-                    // SAFETY: single-threaded; raw-ptr reborrow mirrors the
-                    // defer's escape.
+                    // SAFETY: single-threaded; raw-ptr reborrow mirrors
+                    // `EnteredFile::drop`.
                     unsafe {
                         (*bun_test_root_ptr).deinit_for_exit();
                         jest::Jest::RUNNER.write(None);

@@ -498,7 +498,7 @@ impl<'a> Arguments<'a, '_> {
         let Some(base_dir) = base_dir else {
             return self.invalid(
                 loc,
-                format_args!("The \"import.meta.glob\" option \"base\" is too long for a path"),
+                format_args!("The \"import.meta.glob\" option \"base\" is too long"),
             );
         };
 
@@ -548,7 +548,7 @@ impl<'a> Arguments<'a, '_> {
             let Some(pattern) = pattern else {
                 return self.invalid(
                     glob_loc,
-                    format_args!("The glob pattern is too long for a path"),
+                    format_args!("The glob pattern is too long"),
                 );
             };
             patterns.push(pattern);
@@ -581,7 +581,7 @@ impl<'a> Arguments<'a, '_> {
                 return self.invalid(
                     path_loc,
                     format_args!(
-                        "The way to \"{}\" is too long for a path",
+                        "The path to \"{}\" is too long",
                         bstr::BStr::new(file)
                     ),
                 );
@@ -590,7 +590,7 @@ impl<'a> Arguments<'a, '_> {
                 self.warn(
                     path_loc,
                     format_args!(
-                        "\"import.meta.glob\" skips \"{}\", whose name cannot be imported",
+                        "\"import.meta.glob\" skipped \"{}\" because its name can't be used in an import",
                         bstr::BStr::new(&import_path)
                     ),
                 );
@@ -1069,7 +1069,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         for call in calls {
             if let ExprData::ECall(mut eager) = call.data {
                 eager.target = self.import_meta_glob_throws(
-                    b"The \"import.meta.glob\" option \"eager\" needs import statements, which a CommonJS module cannot have",
+                    b"The \"import.meta.glob\" option \"eager\" needs import statements, so it can't be used in a CommonJS module",
                     call.loc,
                 );
             }
@@ -1091,7 +1091,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         }
         let loc = Loc::EMPTY;
         let function = self.import_meta_glob_throws(
-            b"\"import.meta.glob\" is replaced when its file is transpiled: call it by this name, with literals",
+            b"\"import.meta.glob\" is expanded at transpile time, so call it directly and pass literals",
             loc,
         );
         let value = Expr::assign(dot(Expr::init(E::ImportMeta {}, loc), b"glob"), function);

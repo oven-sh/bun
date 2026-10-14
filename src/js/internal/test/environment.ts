@@ -420,7 +420,7 @@ function enter(name: string, environment: Environment, keep: boolean) {
     const closed = keep ? undefined : environment.close();
     if (stuck !== undefined) {
       throw new Error(
-        `The "${name}" test environment cannot be taken away: "${stuck}" of globalThis can no longer be redefined`,
+        `Cannot tear down the "${name}" test environment: globalThis.${stuck} can no longer be redefined`,
       );
     }
     return closed;
@@ -448,7 +448,7 @@ function setup(
   if (typeof result !== "string") result = enter(name, result, keep);
   if (typeof result !== "string") return result;
 
-  const message = `Cannot set up the "${name}" test environment of "${file}": ${result}`;
+  const message = `Cannot set up the "${name}" test environment for "${file}": ${result}`;
   if (isFromComment) return message;
   const error = new Error(message);
   captureStackTrace(error, setup);

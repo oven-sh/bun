@@ -202,7 +202,7 @@ describe.concurrent("import.meta.glob", () => {
         ["./dir/a.ts"],
         "function",
         true,
-        [`TypeError: "import.meta.glob" is replaced when its file is transpiled: call it by this name, with literals`],
+        [`TypeError: "import.meta.glob" is expanded at transpile time, so call it directly and pass literals`],
       ],
       stderr: "",
       exitCode: 0,
@@ -372,9 +372,9 @@ describe.concurrent("import.meta.glob", () => {
   });
 
   test.each([
-    [`"./${"a/".repeat(60_000)}*.ts"`, "The glob pattern is too long for a path"],
-    [`"./*.ts", { base: "./${"a/".repeat(60_000)}" }`, 'The "import.meta.glob" option "base" is too long for a path'],
-  ])("text that is too long for a path", async (args, message) => {
+    [`"./${"a/".repeat(60_000)}*.ts"`, "The glob pattern is too long"],
+    [`"./*.ts", { base: "./${"a/".repeat(60_000)}" }`, 'The "import.meta.glob" option "base" is too long'],
+  ])("a pattern or base that is too long", async (args, message) => {
     expect(
       await runEntry(
         `try { import.meta.glob(${args}); } catch (error) { console.log(error.name + ": " + error.message); }`,
@@ -395,7 +395,7 @@ describe.concurrent("import.meta.glob", () => {
     );
     const { stdout, stderr, exitCode } = await run(String(dir), [join(deep, "m.js")]);
     expect({ stdout: stdout.replaceAll(String(dir), "<dir>"), stderr, exitCode }).toEqual({
-      stdout: `TypeError: The way to "<dir>/x/a.js" is too long for a path\n`,
+      stdout: `TypeError: The path to "<dir>/x/a.js" is too long\n`,
       stderr: "",
       exitCode: 0,
     });
@@ -443,7 +443,7 @@ describe.concurrent("import.meta.glob", () => {
       using dir = tempDir("import-meta-glob", { ...names, "entry.js": print(", eager: true") });
       const built = await run(String(dir), ["build", "--target=bun", "--outfile=out.js", "entry.js"]);
       expect(built.stderr.split("\n").filter(line => line.startsWith("warn"))).toEqual([
-        `warn: "import.meta.glob" skips "./w/back\\slash.js", whose name cannot be imported`,
+        `warn: "import.meta.glob" skipped "./w/back\\slash.js" because its name can't be used in an import`,
       ]);
       expect(built.exitCode).toBe(0);
       const { stdout, stderr, exitCode } = await run(String(dir), ["out.js"]);
@@ -592,7 +592,7 @@ describe.concurrent("import.meta.glob", () => {
     });
 
     test("an eager call throws when it is reached, and the others are replaced", async () => {
-      const message = `TypeError: The "import.meta.glob" option "eager" needs import statements, which a CommonJS module cannot have`;
+      const message = `TypeError: The "import.meta.glob" option "eager" needs import statements, so it can't be used in a CommonJS module`;
       expect(
         await requireEach({
           "lazy.cjs": `module.exports = Object.keys(import.meta.glob("./dir/[ab].ts", { import: "name" }));`,

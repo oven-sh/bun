@@ -450,7 +450,7 @@ describe.concurrent("test context", () => {
         "Cannot call skip() after its test has finished",
         "Cannot call annotate() after its test has finished",
         "a pass",
-        "Cannot call onTestFailed() here. It cannot be called inside a concurrent test. Use the one of the test context: test(name, ({ onTestFailed }) => {})",
+        "Cannot call onTestFailed() inside a concurrent test. Use the one from the test context: test(name, ({ onTestFailed }) => {})",
       ],
       exitCode: 0,
     });
@@ -2864,7 +2864,7 @@ describe.concurrent("test.extend()", () => {
         });
       `,
     });
-    const why = "fixtures are set up for the properties it names";
+    const why = "fixtures are chosen by the properties it destructures";
     expect({ log, results, errors, exitCode }).toEqual({
       log: [
         "afterEach cycle: fail Fixtures depend on each other: x <- y <- x",

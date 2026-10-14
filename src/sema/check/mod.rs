@@ -797,6 +797,7 @@ impl<'s> Program<'s> {
             has_ambient_context: false,
             suggestions_among_globals: Default::default(),
             alias_symbols: Default::default(),
+            could_contain_type_variables: Default::default(),
             has_compared_without_total_order: std::cell::Cell::new(false),
             symbol_ids: None,
             parsed_again_for_await: None,
@@ -1535,6 +1536,8 @@ pub struct Checker<'p, 's> {
     suggestions_among_globals: errors::SuggestionsAmongGlobals,
     /// `t.alias.symbol` by type: see `alias_symbol_of_type`.
     alias_symbols: std::cell::RefCell<FxHashMap<TypeId, Option<Sym>>>,
+    /// What `could_contain_type_variables` has found, by type.
+    could_contain_type_variables: std::cell::RefCell<FxHashMap<TypeId, bool>>,
     /// Set by `compare_type_names` where `CompareTypes` is not transitive.
     has_compared_without_total_order: std::cell::Cell<bool>,
     /// `Some`: this checker hands out symbol ids. See check/symbol_ids.rs.

@@ -1855,7 +1855,13 @@ impl<'f, 's> Binder<'f, 's> {
             {
                 return Some(SymbolId::NONE);
             }
-            if let Some(&symbol) = tables[s.locals.idx()].get(name)
+            // `meaning&ast.SymbolFlagsType`: a type parameter of a class or an interface is one symbol with the member of its
+            // name, which is not in scope.
+            let is_member = matches!(s.kind, ScopeKind::Class(_) | ScopeKind::Interface(_))
+                && (tables[s.locals.idx()].get(name))
+                    .is_some_and(|it| b.symbols[it.idx()].flags.contains(SymFlags::TYPE_PARAMETER));
+            if !is_member
+                && let Some(&symbol) = tables[s.locals.idx()].get(name)
                 && b.symbols[symbol.idx()]
                     .flags
                     .intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)

@@ -2960,6 +2960,22 @@ impl<'p, 's> Checker<'p, 's> {
         if self.has_type_variables(ty) || self.is_instantiable(ty) {
             return true;
         }
+        if self.flags(ty) & (tf::OBJECT | tf::UNION_OR_INTERSECTION) == 0 {
+            return false;
+        }
+        // `ObjectFlagsCouldContainTypeVariablesComputed`. Types share their parts: without it a part is visited once for each
+        // path to it, 2^n times in `type P1 = Pair<P0, P0>` .. `type Pn = Pair<Pn-1, Pn-1>`.
+        if let Some(&known) = self.could_contain_type_variables.borrow().get(&ty) {
+            return known;
+        }
+        let could_contain = self.could_contain_type_variables_worker(ty);
+        let mut known = self.could_contain_type_variables.borrow_mut();
+        known.insert(ty, could_contain);
+        could_contain
+    }
+
+    /// `couldContainTypeVariablesWorker`
+    fn could_contain_type_variables_worker(&self, ty: TypeId) -> bool {
         let some = |types: &[TypeId]| types.iter().any(|&t| self.could_contain_type_variables(t));
         let generic_kinds = SymFlags::FUNCTION
             | SymFlags::METHOD

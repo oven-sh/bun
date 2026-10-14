@@ -5383,9 +5383,14 @@ impl<'p, 's> Checker<'p, 's> {
                 // operand types may be narrower than the final ones. Outside one this check also
                 // stands for the later one in the normal mode, so it reports.
                 let (l, r) = self.check_operands(file, left, right);
-                let is_in_flow_loop = (self.flow_loops.last())
-                    .is_some_and(|pushed| self.is_flow_loop_visible(pushed.5));
-                if !(is_in_flow_loop && self.is_checked_type_only(file, e)) {
+                let flow_loop = (self.flow_loops.last().map(|pushed| pushed.5))
+                    .filter(|&pushed_at| self.is_flow_loop_visible(pushed_at));
+                if let Some(pushed_at) = flow_loop
+                    && self.is_checked_type_only(file, e)
+                {
+                    // What has not reported is not stored: the check in the normal mode comes here again.
+                    self.taint_from(pushed_at);
+                } else {
                     let hir = self.hir(file);
                     let is_equality = matches!(op, BinOp::EqEq | BinOp::EqEqEq);
                     // A JavaScript file reports only `===` and `!==`.

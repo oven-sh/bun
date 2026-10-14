@@ -12,6 +12,11 @@ const {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  fsCpSubdirOfSelfError,
+  newCpWalk,
+  isOwnOutput,
+  followedLink,
+  unreadRootIn,
 } = require("internal/fs/cp-sync");
 
 const {
@@ -33,7 +38,7 @@ const { basename, dirname, isAbsolute, join, parse, resolve } = require("node:pa
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseReject = Promise.$reject;
 
-async function checkPaths(src, dest, opts) {
+async function checkPaths(src, dest, opts, walk?, frame?, dirent?) {
   if (opts.filter && !(await opts.filter(src, dest))) {
     return { __proto__: null, skipped: true };
   }
@@ -68,14 +73,18 @@ async function checkPaths(src, dest, opts) {
     }
   }
 
-  if (srcStat.isDirectory() && isSrcSubdir(src, dest)) {
-    throw fsCpEinvalError({
-      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
+  if (srcStat.isDirectory()) {
+    let own = isSrcSubdir(src, dest);
+    if (!own && walk !== undefined) {
+      if (followedLink(dirent, opts)) {
+        for (let f = frame; f !== null; f = f.up) f.stat ??= await lstat(f.path, { bigint: true });
+      } else {
+        const root = unreadRootIn(walk, srcStat);
+        if (root !== null) root.stat = await lstat(root.path, { bigint: true });
+      }
+      own = isOwnOutput(frame, srcStat);
+    }
+    if (own) throw fsCpSubdirOfSelfError(src, dest);
   }
   return { __proto__: null, srcStat, destStat, skipped: false };
 }
@@ -91,62 +100,59 @@ function getStats(src, dest, opts) {
   ]);
 }
 
-async function resolveExistingRealpath(p) {
-  let current = resolve(p);
-  const tail: string[] = [];
-  for (;;) {
-    try {
-      current = await realpath(current);
-      break;
-    } catch (err: any) {
-      if (err?.code !== "ENOENT") return resolve(p);
-      const parent = dirname(current);
-      if (parent === current) break;
-      tail.push(basename(current));
-      current = parent;
-    }
+// Recursively check if dest parent is a subdirectory of src.
+// It works for all file types including symlinks since it
+// checks the src and dest inodes. It starts from the deepest
+// parent and stops once it reaches the src parent or the root path.
+async function checkParentPaths(src, srcStat, dest) {
+  const srcParent = resolve(dirname(src));
+  const destParent = resolve(dirname(dest));
+  if (destParent === srcParent || destParent === parse(destParent).root) {
+    return;
   }
-  let i = tail.length;
-  while (i > 0) current = join(current, tail[--i]);
-  return current;
+  let destStat;
+  try {
+    destStat = await stat(destParent, { bigint: true });
+  } catch (err: any) {
+    if (err.code === "ENOENT") return;
+    throw err;
+  }
+  if (areIdentical(srcStat, destStat)) {
+    throw fsCpEinvalError({
+      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
+      path: dest,
+      syscall: "cp",
+      errno: EINVAL,
+      code: "EINVAL",
+    });
+  }
+  return checkParentPaths(src, srcStat, destParent);
 }
 
-async function checkParentPaths(src, srcStat, dest) {
-  if (srcStat.isDirectory()) {
-    const resolvedSrc = await resolveExistingRealpath(src);
-    const resolvedDest = await resolveExistingRealpath(dest);
-    if (isSrcSubdir(resolvedSrc, resolvedDest)) {
-      throw fsCpEinvalError({
-        message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-        path: dest,
-        syscall: "cp",
-        errno: EINVAL,
-        code: "EINVAL",
-      });
-    }
-  }
-  const srcParent = resolve(dirname(src));
-  let destParent = resolve(dirname(dest));
+async function resolveExistingRealpath(p: string) {
+  const missing: string[] = [];
   for (;;) {
-    if (destParent === srcParent || destParent === parse(destParent).root) return;
-    let destStat;
     try {
-      destStat = await stat(destParent, { bigint: true });
+      p = await realpath(p);
+      break;
     } catch (err: any) {
-      if (err.code === "ENOENT") return;
-      throw err;
+      const parent = dirname(p);
+      if (err?.code !== "ENOENT" || parent === p) return undefined;
+      missing.push(basename(p));
+      p = parent;
     }
-    if (areIdentical(srcStat, destStat)) {
-      throw fsCpEinvalError({
-        message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-        path: dest,
-        syscall: "cp",
-        errno: EINVAL,
-        code: "EINVAL",
-      });
-    }
-    destParent = resolve(dirname(destParent));
   }
+  while (missing.length > 0) p = join(p, missing.pop()!);
+  return p;
+}
+
+// The native walker has no own-output check, so a dest that resolves into src must not reach it.
+async function nativeDirCopyIsSafe(src: string, dest: string) {
+  const realSrc = await resolveExistingRealpath(src);
+  const realDestParent = await resolveExistingRealpath(dirname(dest));
+  if (realSrc === undefined || realDestParent === undefined) return false;
+  if (isSrcSubdir(realSrc, join(realDestParent, basename(dest)))) throw fsCpSubdirOfSelfError(src, dest);
+  return true;
 }
 
 // The native recursive copy (a single clonefile() on macOS) copies symlinks
@@ -199,7 +205,11 @@ async function tryNativeFastPath(src, dest, opts) {
     // node's walker: dest must not exist (no merge semantics) and the tree
     // must contain only regular files and directories.
     return {
-      ok: process.platform === "darwin" && !destStat && (await treeContainsOnlyFilesAndDirs(src)),
+      ok:
+        process.platform === "darwin" &&
+        !destStat &&
+        (await treeContainsOnlyFilesAndDirs(src)) &&
+        (await nativeDirCopyIsSafe(src, dest)),
       checked,
     };
   }
@@ -216,15 +226,31 @@ async function cpFn(src, dest, opts, checked?) {
   const { srcStat, destStat, skipped } = checked ?? (await checkPaths(src, dest, opts));
   if (skipped) return;
   if (checked === undefined) await checkParentPaths(src, srcStat, dest);
-  return checkParentDir(destStat, src, dest, opts);
+  const walk = opts.recursive && srcStat.isDirectory() ? newCpWalk() : undefined;
+  return checkParentDir(destStat, src, dest, opts, walk, srcStat);
 }
 
-async function checkParentDir(destStat, src, dest, opts) {
+async function checkParentDir(destStat, src, dest, opts, walk?, srcStat?) {
   const destParent = dirname(dest);
-  const dirExists = await pathExists(destParent);
-  if (dirExists) return getStatsForCopy(destStat, src, dest, opts);
-  await mkdir(destParent, { recursive: true });
-  return getStatsForCopy(destStat, src, dest, opts);
+  if (walk === undefined || destStat) {
+    const dirExists = await pathExists(destParent);
+    if (dirExists) return getStatsForCopy(destStat, src, dest, opts, walk, null);
+    await mkdir(destParent, { recursive: true });
+    return getStatsForCopy(destStat, src, dest, opts, walk, null);
+  }
+  let parent = await PromisePrototypeThen.$call(stat(destParent, { bigint: true }), undefined, parentStatRejected);
+  if (parent === undefined) {
+    await mkdir(destParent, { recursive: true });
+    parent = await stat(destParent, { bigint: true });
+  } else if (areIdentical(srcStat, parent)) {
+    throw fsCpSubdirOfSelfError(src, dest);
+  }
+  walk.parent = parent;
+  return getStatsForCopy(destStat, src, dest, opts, walk, null);
+}
+
+function parentStatRejected(err) {
+  return err.code === "ENOENT" ? undefined : PromiseReject(err);
 }
 
 function pathExistsFulfilled() {
@@ -237,11 +263,11 @@ function pathExists(dest) {
   return PromisePrototypeThen.$call(stat(dest), pathExistsFulfilled, pathExistsRejected);
 }
 
-async function getStatsForCopy(destStat, src, dest, opts) {
+async function getStatsForCopy(destStat, src, dest, opts, walk?, frame?) {
   const statFn = opts.dereference ? stat : lstat;
   const srcStat = await statFn(src);
   if (srcStat.isDirectory() && opts.recursive) {
-    return onDir(srcStat, destStat, src, dest, opts);
+    return onDir(srcStat, destStat, src, dest, opts, walk ?? newCpWalk(), frame ?? null);
   } else if (srcStat.isDirectory()) {
     throw fsEisdirError({
       message: `${src} is a directory (not copied)`,
@@ -344,8 +370,8 @@ async function setDestTimestamps(src, dest) {
   return utimes(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
 }
 
-function onDir(srcStat, destStat, src, dest, opts) {
-  if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts);
+function onDir(srcStat, destStat, src, dest, opts, walk, frame) {
+  if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts, walk, frame);
   if (opts.errorOnExist && !opts.force) {
     throw fsCpEExistError({
       message: `${dest} already exists`,
@@ -355,23 +381,30 @@ function onDir(srcStat, destStat, src, dest, opts) {
       code: "EEXIST",
     });
   }
-  return copyDir(src, dest, opts);
+  return copyDir(src, dest, opts, walk, { stat: destStat, path: dest, up: frame });
 }
 
-async function mkDirAndCopy(srcMode, src, dest, opts) {
+async function mkDirAndCopy(srcMode, src, dest, opts, walk, frame) {
   await mkdir(dest);
-  await copyDir(src, dest, opts);
+  if (frame === null) {
+    frame = { stat: null, path: dest, up: null };
+    if (walk.parent !== undefined) walk.root = frame;
+  } else if (opts.dereference) {
+    frame = { stat: null, path: dest, up: frame };
+  }
+  await copyDir(src, dest, opts, walk, frame);
   return setDestMode(dest, srcMode);
 }
 
-async function copyDir(src, dest, opts) {
+async function copyDir(src, dest, opts, walk, frame) {
   const dir = await opendir(src);
 
-  for await (const { name } of dir) {
+  for await (const dirent of dir) {
+    const { name } = dirent;
     const srcItem = join(src, name);
     const destItem = join(dest, name);
-    const { destStat, skipped } = await checkPaths(srcItem, destItem, opts);
-    if (!skipped) await getStatsForCopy(destStat, srcItem, destItem, opts);
+    const { destStat, skipped } = await checkPaths(srcItem, destItem, opts, walk, frame, dirent);
+    if (!skipped) await getStatsForCopy(destStat, srcItem, destItem, opts, walk, frame);
   }
 }
 

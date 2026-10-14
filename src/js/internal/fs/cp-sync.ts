@@ -70,6 +70,16 @@ function fsCpEinvalError(context) {
   return decorateSystemError($ERR_FS_CP_EINVAL(context.message), "Invalid src or dest", context);
 }
 
+function fsCpSubdirOfSelfError(src, dest) {
+  return fsCpEinvalError({
+    message: `cannot copy ${src} to a subdirectory of self ${dest}`,
+    path: dest,
+    syscall: "cp",
+    errno: EINVAL,
+    code: "EINVAL",
+  });
+}
+
 function fsCpFifoPipeError(context) {
   return decorateSystemError($ERR_FS_CP_FIFO_PIPE(context.message), "Cannot copy a FIFO pipe", context);
 }
@@ -160,6 +170,40 @@ function isSrcSubdir(src, dest) {
 
 type BigIntStats = import("node:fs").BigIntStats;
 
+// A dest directory on the current recursion path; stat stays null for one this copy made until it is needed.
+interface CpFrame {
+  stat: BigIntStats | null;
+  path: string;
+  up: CpFrame | null;
+}
+
+// One per recursive directory copy: the directory a new root was made in, and that root's frame while unread.
+interface CpWalk {
+  parent: BigIntStats | undefined;
+  root: CpFrame | null;
+}
+
+function newCpWalk(): CpWalk {
+  return { parent: undefined, root: null };
+}
+
+function isOwnOutput(frame: CpFrame | null, srcStat: BigIntStats) {
+  for (let f = frame; f !== null; f = f.up) {
+    const stat = f.stat;
+    if (stat !== null && areIdentical(srcStat, stat)) return true;
+  }
+  return false;
+}
+
+function followedLink(dirent, opts: CpOptions) {
+  return opts.dereference && !dirent.isDirectory();
+}
+
+function unreadRootIn(walk: CpWalk, srcStat: BigIntStats) {
+  const root = walk.root;
+  return root !== null && root.stat === null && areIdentical(srcStat, walk.parent) ? root : null;
+}
+
 interface CpOptions {
   dereference: boolean;
   errorOnExist: boolean;
@@ -186,8 +230,22 @@ interface SkippedPaths {
 }
 
 function checkPathsSync(src, dest, opts: CpOptions & { filter: undefined }): CheckedPaths;
-function checkPathsSync(src, dest, opts: CpOptions): CheckedPaths | SkippedPaths;
-function checkPathsSync(src, dest, opts: CpOptions): CheckedPaths | SkippedPaths {
+function checkPathsSync(
+  src,
+  dest,
+  opts: CpOptions,
+  walk?: CpWalk,
+  frame?: CpFrame,
+  dirent?,
+): CheckedPaths | SkippedPaths;
+function checkPathsSync(
+  src,
+  dest,
+  opts: CpOptions,
+  walk?: CpWalk,
+  frame?: CpFrame,
+  dirent?,
+): CheckedPaths | SkippedPaths {
   if (opts.filter) {
     const shouldCopy = opts.filter(src, dest);
     if ($isPromise(shouldCopy)) {
@@ -227,14 +285,18 @@ function checkPathsSync(src, dest, opts: CpOptions): CheckedPaths | SkippedPaths
     }
   }
 
-  if (srcStat.isDirectory() && isSrcSubdir(src, dest)) {
-    throw fsCpEinvalError({
-      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
+  if (srcStat.isDirectory()) {
+    let own = isSrcSubdir(src, dest);
+    if (!own && walk !== undefined && frame !== undefined) {
+      if (followedLink(dirent, opts)) {
+        for (let f: CpFrame | null = frame; f !== null; f = f.up) f.stat ??= lstatSync(f.path, { bigint: true });
+      } else {
+        const root = unreadRootIn(walk, srcStat);
+        if (root !== null) root.stat = lstatSync(root.path, { bigint: true });
+      }
+      own = isOwnOutput(frame, srcStat);
+    }
+    if (own) throw fsCpSubdirOfSelfError(src, dest);
   }
   return { __proto__: null, srcStat, destStat, skipped: false };
 }
@@ -254,62 +316,53 @@ function getStatsSync(src, dest, opts) {
   return { srcStat, destStat };
 }
 
-function resolveExistingRealpathSync(p) {
-  let current = resolve(p);
-  const tail: string[] = [];
-  for (;;) {
-    try {
-      current = realpathSync(current);
-      break;
-    } catch (err: any) {
-      if (err?.code !== "ENOENT") return resolve(p);
-      const parent = dirname(current);
-      if (parent === current) break;
-      tail.push(basename(current));
-      current = parent;
-    }
+function checkParentPathsSync(src, srcStat, dest) {
+  const srcParent = resolve(dirname(src));
+  const destParent = resolve(dirname(dest));
+  if (destParent === srcParent || destParent === parse(destParent).root) return;
+  let destStat;
+  try {
+    destStat = statSync(destParent, { bigint: true });
+  } catch (err: any) {
+    if (err.code === "ENOENT") return;
+    throw err;
   }
-  let i = tail.length;
-  while (i > 0) current = join(current, tail[--i]);
-  return current;
+  if (areIdentical(srcStat, destStat)) {
+    throw fsCpEinvalError({
+      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
+      path: dest,
+      syscall: "cp",
+      errno: EINVAL,
+      code: "EINVAL",
+    });
+  }
+  return checkParentPathsSync(src, srcStat, destParent);
 }
 
-function checkParentPathsSync(src, srcStat, dest) {
-  if (srcStat.isDirectory()) {
-    const resolvedSrc = resolveExistingRealpathSync(src);
-    const resolvedDest = resolveExistingRealpathSync(dest);
-    if (isSrcSubdir(resolvedSrc, resolvedDest)) {
-      throw fsCpEinvalError({
-        message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-        path: dest,
-        syscall: "cp",
-        errno: EINVAL,
-        code: "EINVAL",
-      });
-    }
-  }
-  const srcParent = resolve(dirname(src));
-  let destParent = resolve(dirname(dest));
+function resolveExistingRealpathSync(p: string) {
+  const missing: string[] = [];
   for (;;) {
-    if (destParent === srcParent || destParent === parse(destParent).root) return;
-    let destStat;
     try {
-      destStat = statSync(destParent, { bigint: true });
+      p = realpathSync(p);
+      break;
     } catch (err: any) {
-      if (err.code === "ENOENT") return;
-      throw err;
+      const parent = dirname(p);
+      if (err?.code !== "ENOENT" || parent === p) return undefined;
+      missing.push(basename(p));
+      p = parent;
     }
-    if (areIdentical(srcStat, destStat)) {
-      throw fsCpEinvalError({
-        message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-        path: dest,
-        syscall: "cp",
-        errno: EINVAL,
-        code: "EINVAL",
-      });
-    }
-    destParent = resolve(dirname(destParent));
   }
+  while (missing.length > 0) p = join(p, missing.pop()!);
+  return p;
+}
+
+// The native walker has no own-output check, so a dest that resolves into src must not reach it.
+function nativeDirCopyIsSafeSync(src: string, dest: string) {
+  const realSrc = resolveExistingRealpathSync(src);
+  const realDestParent = resolveExistingRealpathSync(dirname(dest));
+  if (realSrc === undefined || realDestParent === undefined) return false;
+  if (isSrcSubdir(realSrc, join(realDestParent, basename(dest)))) throw fsCpSubdirOfSelfError(src, dest);
+  return true;
 }
 
 // The native recursive copy (a single clonefile() on macOS) copies symlinks
@@ -362,7 +415,11 @@ function tryNativeFastPathSync(src, dest, opts: CpOptions & { filter: undefined 
     // node's walker: dest must not exist (no merge semantics) and the tree
     // must contain only regular files and directories.
     return {
-      ok: process.platform === "darwin" && !destStat && treeContainsOnlyFilesAndDirsSync(src),
+      ok:
+        process.platform === "darwin" &&
+        !destStat &&
+        treeContainsOnlyFilesAndDirsSync(src) &&
+        nativeDirCopyIsSafeSync(src, dest),
       checked,
     };
   }
@@ -379,21 +436,36 @@ function cpSyncFn(src, dest, opts, checked?) {
   const { srcStat, destStat, skipped } = checked ?? checkPathsSync(src, dest, opts);
   if (skipped) return;
   if (checked === undefined) checkParentPathsSync(src, srcStat, dest);
-  return checkParentDir(destStat, src, dest, opts);
+  const walk = opts.recursive && srcStat.isDirectory() ? newCpWalk() : undefined;
+  return checkParentDir(destStat, src, dest, opts, walk, srcStat);
 }
 
-function checkParentDir(destStat, src, dest, opts) {
+function checkParentDir(destStat, src, dest, opts, walk?: CpWalk, srcStat?: BigIntStats) {
   const destParent = dirname(dest);
-  if (!existsSync(destParent)) mkdirSync(destParent, { recursive: true });
-  return getStats(destStat, src, dest, opts);
+  if (walk === undefined || destStat) {
+    if (!existsSync(destParent)) mkdirSync(destParent, { recursive: true });
+    return getStats(destStat, src, dest, opts, walk, null);
+  }
+  let parent: BigIntStats | undefined;
+  try {
+    parent = statSync(destParent, { bigint: true, throwIfNoEntry: false });
+  } catch {}
+  if (parent === undefined) {
+    mkdirSync(destParent, { recursive: true });
+    parent = statSync(destParent, { bigint: true });
+  } else if (areIdentical(srcStat, parent)) {
+    throw fsCpSubdirOfSelfError(src, dest);
+  }
+  walk.parent = parent;
+  return getStats(destStat, src, dest, opts, walk, null);
 }
 
-function getStats(destStat, src, dest, opts) {
+function getStats(destStat, src, dest, opts, walk?: CpWalk, frame?: CpFrame | null) {
   const statSyncFn = opts.dereference ? statSync : lstatSync;
   const srcStat = statSyncFn(src);
 
   if (srcStat.isDirectory() && opts.recursive) {
-    return onDir(srcStat, destStat, src, dest, opts);
+    return onDir(srcStat, destStat, src, dest, opts, walk ?? newCpWalk(), frame ?? null);
   } else if (srcStat.isDirectory()) {
     throw fsEisdirError({
       message: `${src} is a directory (not copied)`,
@@ -486,8 +558,8 @@ function setDestTimestamps(src, dest) {
   return utimesSync(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
 }
 
-function onDir(srcStat, destStat, src, dest, opts) {
-  if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts);
+function onDir(srcStat, destStat, src, dest, opts, walk: CpWalk, frame: CpFrame | null) {
+  if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts, walk, frame);
   if (opts.errorOnExist && !opts.force) {
     throw fsCpEExistError({
       message: `${dest} already exists`,
@@ -497,22 +569,28 @@ function onDir(srcStat, destStat, src, dest, opts) {
       code: "EEXIST",
     });
   }
-  return copyDir(src, dest, opts);
+  return copyDir(src, dest, opts, walk, { stat: destStat, path: dest, up: frame });
 }
 
-function mkDirAndCopy(srcMode, src, dest, opts) {
+function mkDirAndCopy(srcMode, src, dest, opts, walk: CpWalk, frame: CpFrame | null) {
   mkdirSync(dest);
-  copyDir(src, dest, opts);
+  if (frame === null) {
+    frame = { stat: null, path: dest, up: null };
+    if (walk.parent !== undefined) walk.root = frame;
+  } else if (opts.dereference) {
+    frame = { stat: null, path: dest, up: frame };
+  }
+  copyDir(src, dest, opts, walk, frame);
   return setDestMode(dest, srcMode);
 }
 
-function copyDir(src, dest, opts) {
+function copyDir(src, dest, opts, walk: CpWalk, frame: CpFrame) {
   for (const dirent of readdirSync(src, { withFileTypes: true })) {
     const { name } = dirent;
     const srcItem = join(src, name);
     const destItem = join(dest, name);
-    const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts);
-    if (!skipped) getStats(destStat, srcItem, destItem, opts);
+    const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts, walk, frame, dirent);
+    if (!skipped) getStats(destStat, srcItem, destItem, opts, walk, frame);
   }
 }
 
@@ -588,4 +666,9 @@ export default {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  fsCpSubdirOfSelfError,
+  newCpWalk,
+  isOwnOutput,
+  followedLink,
+  unreadRootIn,
 };

@@ -1,6 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, type DirectoryTree, isLinux, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, type DirectoryTree, isLinux, isMacOS, isPosix, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { isAbsolute, join } from "path";
 
@@ -8,6 +8,17 @@ const impls = [
   ["cpSync", fs.cpSync],
   ["cp", fs.promises.cp],
 ] as const;
+
+function listTree(root: string, rel = ""): string[] {
+  return fs
+    .readdirSync(join(root, rel), { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : 1))
+    .flatMap(entry =>
+      entry.isDirectory()
+        ? [`${rel}${entry.name}/`, ...listTree(root, `${rel}${entry.name}/`)]
+        : [`${rel}${entry.name}`],
+    );
+}
 
 for (const [name, copy] of impls) {
   async function copyShouldThrow(...args: Parameters<typeof copy>) {
@@ -405,82 +416,134 @@ for (const [name, copy] of impls) {
       assertContent(basename + "/result/a.dir/c.txt", "c");
     });
 
-    // The "copy to a subdirectory of self" guard is a path-string prefix check,
-    // so a destination reached through a symlink that points into the source
-    // tree defeats it and the walker re-enters src on every level until
-    // ENAMETOOLONG, leaving a deep garbage subtree behind. checkParentPaths
-    // now realpath-resolves both sides before comparing.
-    test("rejects symlink-aliased dest that resolves into src", async () => {
-      using dir = tempDir("cp-alias-subdir", {
-        "src/sub/.keep": "",
+    // The walker must never copy a directory it is writing into. The layouts
+    // below reach the copy's own output through a second name that the
+    // path-string guard cannot see. Without the identity check each one nests
+    // copies until ENAMETOOLONG.
+    describe("copy into its own output", () => {
+      // Long enough that an unguarded copy runs out of path after a few levels.
+      const deep = Buffer.alloc(isWindows ? 100 : 200, "d").toString();
+
+      test("dest through a symlink to a source subdirectory", async () => {
+        using dir = tempDir("cp-own-alias", { "src/sub": {} });
+        const base = String(dir);
+        const src = join(base, "src");
+        fs.symlinkSync(join(src, "sub"), join(base, "alias"), "junction");
+
+        const err = await copyShouldThrow(src, join(base, "alias", deep), { recursive: true });
+        expect(err.code).toBe("ERR_FS_CP_EINVAL");
+        // macOS takes the native route here, which is refused before it starts.
+        expect(listTree(join(src, "sub"))).toEqual(isMacOS ? [] : [`${deep}/`, `${deep}/sub/`]);
       });
-      const base = String(dir);
-      const src = join(base, "src");
-      fs.symlinkSync(join(src, "sub"), join(base, "alias"), "junction");
-      // Long component so the unfixed recursion hits ENAMETOOLONG in a handful
-      // of levels instead of hundreds.
-      const destName = Buffer.alloc(200, "d").toString();
 
-      const err = await copyShouldThrow(src, join(base, "alias", destName), { recursive: true });
-      expect(err.code).toBe("ERR_FS_CP_EINVAL");
-      expect(fs.readdirSync(join(src, "sub"))).toEqual([".keep"]);
-    });
+      test("dest through a relative symlink, walked in JS on every platform", async () => {
+        using dir = tempDir("cp-own-alias-rel", { "src/sub": {} });
+        const base = String(dir);
+        const src = join(base, "src");
+        fs.symlinkSync(join("src", "sub"), join(base, "alias"), "junction");
 
-    test("rejects symlink-aliased dest with missing intermediate directories", async () => {
-      using dir = tempDir("cp-alias-deep", {
-        "src/sub/.keep": "",
+        const err = await copyShouldThrow(src, join(base, "alias", deep), { recursive: true, force: false });
+        expect(err.code).toBe("ERR_FS_CP_EINVAL");
+        expect(listTree(join(src, "sub"))).toEqual([`${deep}/`, `${deep}/sub/`]);
       });
-      const base = String(dir);
-      const src = join(base, "src");
-      fs.symlinkSync(join(src, "sub"), join(base, "alias"), "junction");
-      const destName = Buffer.alloc(200, "d").toString();
 
-      const err = await copyShouldThrow(src, join(base, "alias", "a", "b", destName), { recursive: true });
-      expect(err.code).toBe("ERR_FS_CP_EINVAL");
-      expect(fs.readdirSync(join(src, "sub"))).toEqual([".keep"]);
-    });
+      test("dest through a symlink, with missing parent directories", async () => {
+        using dir = tempDir("cp-own-alias-deep", { "src/sub": {} });
+        const base = String(dir);
+        const src = join(base, "src");
+        fs.symlinkSync(join(src, "sub"), join(base, "alias"), "junction");
 
-    test("rejects relative-symlink-aliased dest that resolves into src", async () => {
-      using dir = tempDir("cp-alias-rel", {
-        "src/sub/.keep": "",
+        const err = await copyShouldThrow(src, join(base, "alias", "a", "b", deep), { recursive: true });
+        expect(err.code).toBe("ERR_FS_CP_EINVAL");
+        expect(listTree(join(src, "sub"))).toEqual(
+          isMacOS
+            ? []
+            : ["a/", "a/b/", `a/b/${deep}/`, `a/b/${deep}/sub/`, `a/b/${deep}/sub/a/`, `a/b/${deep}/sub/a/b/`],
+        );
       });
-      const base = String(dir);
-      const src = join(base, "src");
-      fs.symlinkSync(join("src", "sub"), join(base, "alias"), "junction");
-      const destName = Buffer.alloc(200, "d").toString();
 
-      const err = await copyShouldThrow(src, join(base, "alias", destName), { recursive: true });
-      expect(err.code).toBe("ERR_FS_CP_EINVAL");
-      expect(fs.readdirSync(join(src, "sub"))).toEqual([".keep"]);
-    });
+      // On Windows ".." is resolved as text, so this spelling names a sibling of src there.
+      test.skipIf(isWindows)("dest whose parent resolves to src through a symlink and '..'", async () => {
+        using dir = tempDir("cp-own-dotdot", { "src/sub": {} });
+        const base = String(dir);
+        const src = join(base, "src");
+        fs.symlinkSync(join(src, "sub"), join(base, "alias"));
 
-    // Negative control: a symlinked dest that lands outside src must still
-    // copy normally.
-    test("allows symlink-aliased dest that resolves outside src", async () => {
-      using dir = tempDir("cp-alias-outside", {
-        "src/file.txt": "payload",
-        "other/.keep": "",
+        const err = await copyShouldThrow(src, `${base}/alias/../${deep}`, { recursive: true });
+        expect(err.code).toBe("ERR_FS_CP_EINVAL");
+        expect(listTree(src)).toEqual(["sub/"]);
       });
-      const base = String(dir);
-      fs.symlinkSync(join(base, "other"), join(base, "alias"), "junction");
 
-      await copy(join(base, "src"), join(base, "alias", "copy"), { recursive: true });
-      expect(fs.readFileSync(join(base, "other", "copy", "file.txt"), "utf8")).toBe("payload");
-    });
+      test("dereference: a symlink inside an existing dest points into src", async () => {
+        using dir = tempDir("cp-own-deref-dest", { "src/sub": { [deep]: {} }, "dest": {} });
+        const base = String(dir);
+        const src = join(base, "src");
+        fs.symlinkSync(join(src, "sub", deep), join(base, "dest", "sub"), "junction");
 
-    // Negative control: dest reached through a symlink to src's parent lands
-    // as a sibling of src, not inside it; the realpath comparison must not
-    // over-reject this.
-    test("allows symlink-aliased dest that resolves to a sibling of src", async () => {
-      using dir = tempDir("cp-alias-sibling", {
-        "src/file.txt": "payload",
+        const err = await copyShouldThrow(src, join(base, "dest"), { recursive: true, dereference: true });
+        expect(err.code).toBe("ERR_FS_CP_EINVAL");
+        expect(listTree(src)).toEqual(["sub/", `sub/${deep}/`]);
       });
-      const base = fs.realpathSync(String(dir));
-      fs.symlinkSync(base, join(base, "plink"), "junction");
 
-      await copy(join(base, "src"), join(base, "plink", "pcopy"), { recursive: true });
-      expect(fs.readFileSync(join(base, "pcopy", "file.txt"), "utf8")).toBe("payload");
-      expect(fs.readdirSync(join(base, "src"))).toEqual(["file.txt"]);
+      test("dereference: a symlink inside src points at the directory being created", async () => {
+        using dir = tempDir("cp-own-deref-src", { "src": { [deep]: {} } });
+        const base = String(dir);
+        const src = join(base, "src");
+        const link = Buffer.alloc(isWindows ? 50 : 200, "l").toString();
+        fs.symlinkSync(join(base, "dest", deep), join(src, deep, link), "junction");
+
+        const err = await copyShouldThrow(src, join(base, "dest"), { recursive: true, dereference: true });
+        expect(err.code).toBe("ERR_FS_CP_EINVAL");
+        expect(listTree(join(base, "dest"))).toEqual([`${deep}/`]);
+      });
+
+      // A directory this copy made and already finished is ordinary input again.
+      test("dereference: a symlink to an already copied sibling is still copied", async () => {
+        using dir = tempDir("cp-own-deref-sibling", { "src": { "p": {}, "q": {} } });
+        const base = String(dir);
+        const src = join(base, "src");
+        const order: string[] = [];
+        if (name === "cpSync") order.push(...fs.readdirSync(src));
+        else for await (const dirent of await fs.promises.opendir(src)) order.push(dirent.name);
+        const [first, second] = order;
+        fs.writeFileSync(join(src, first, "f.txt"), "payload");
+        fs.symlinkSync(join(base, "dest", first), join(src, second, "link"), "junction");
+
+        await copy(src, join(base, "dest"), { recursive: true, dereference: true });
+        expect(listTree(join(base, "dest")).sort()).toEqual(
+          [`${first}/`, `${first}/f.txt`, `${second}/`, `${second}/link/`, `${second}/link/f.txt`].sort(),
+        );
+      });
+
+      // The filter is asked first, so a copy that skips its own output still succeeds, as in Node.js.
+      test("a filter that skips the output directory keeps the copy legal", async () => {
+        using dir = tempDir("cp-own-filter", { "src/file.txt": "payload", "src/sub": {} });
+        const base = String(dir);
+        const src = join(base, "src");
+        fs.symlinkSync(join(src, "sub"), join(base, "alias"), "junction");
+
+        await copy(src, join(base, "alias", "copy"), { recursive: true, filter: (s: string) => !s.endsWith("copy") });
+        expect(listTree(join(src, "sub"))).toEqual(["copy/", "copy/file.txt", "copy/sub/"]);
+      });
+
+      test("dest through a symlink that leads outside src is copied", async () => {
+        using dir = tempDir("cp-alias-outside", { "src/file.txt": "payload", "other": {} });
+        const base = String(dir);
+        fs.symlinkSync(join(base, "other"), join(base, "alias"), "junction");
+
+        await copy(join(base, "src"), join(base, "alias", "copy"), { recursive: true });
+        expect(listTree(join(base, "other"))).toEqual(["copy/", "copy/file.txt"]);
+      });
+
+      test("dest through a symlink to the parent of src is copied as a sibling", async () => {
+        using dir = tempDir("cp-alias-sibling", { "src/file.txt": "payload" });
+        const base = fs.realpathSync(String(dir));
+        fs.symlinkSync(base, join(base, "plink"), "junction");
+
+        await copy(join(base, "src"), join(base, "plink", "pcopy"), { recursive: true });
+        expect(listTree(join(base, "pcopy"))).toEqual(["file.txt"]);
+        expect(listTree(join(base, "src"))).toEqual(["file.txt"]);
+      });
     });
 
     test.if(process.platform === "win32")("should not throw EBUSY when copying the same file on windows", async () => {
@@ -506,6 +569,79 @@ test("cp with missing callback throws", () => {
     // @ts-expect-error
     fs.cp("a", "b" as any);
   }).toThrow(/"cb"/);
+});
+
+test("fs.cp reports a copy into its own output to the callback", async () => {
+  using dir = tempDir("cp-own-callback", { "src/sub": {} });
+  const base = String(dir);
+  const src = join(base, "src");
+  fs.symlinkSync(join(src, "sub"), join(base, "alias"), "junction");
+  const deep = Buffer.alloc(isWindows ? 100 : 200, "d").toString();
+
+  const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException | null>();
+  fs.cp(src, join(base, "alias", deep), { recursive: true, force: false }, resolve);
+  expect((await promise)?.code).toBe("ERR_FS_CP_EINVAL");
+  expect(listTree(join(src, "sub"))).toEqual([`${deep}/`, `${deep}/sub/`]);
+});
+
+// A bind mount gives a directory a second name that no path resolution sees through.
+const canBindMount =
+  isLinux &&
+  (() => {
+    try {
+      const probe = "mount -t tmpfs tmpfs /tmp && mkdir /tmp/a /tmp/b && mount -o bind /tmp/a /tmp/b";
+      return (
+        Bun.spawnSync({ cmd: ["unshare", "-Urm", "sh", "-c", probe], stdout: "ignore", stderr: "ignore" }).exitCode ===
+        0
+      );
+    } catch {
+      return false;
+    }
+  })();
+
+describe.skipIf(!canBindMount)("copy into its own output through a bind mount", () => {
+  test.each([
+    ["cpSync", `fs.cpSync("a/sub", "b/t", { recursive: true })`],
+    ["promises.cp", `await fs.promises.cp("a/sub", "b/t", { recursive: true })`],
+  ])("%s", async (_, call) => {
+    using dir = tempDir("cp-own-bind", { "a": {}, "b": {} });
+    // The inode limit ends an unguarded copy quickly.
+    const script = [
+      "set -e",
+      "mount -t tmpfs -o nr_inodes=64,size=1m tmpfs a",
+      "mkdir -p a/sub/inner",
+      "mount -o bind a/sub/inner b",
+      'exec "$BUN_EXE" -e "$CP_FIXTURE"',
+    ].join("\n");
+    const fixture = `
+      const fs = require("fs");
+      const list = (rel) => fs.readdirSync(rel, { withFileTypes: true }).sort((x, y) => (x.name < y.name ? -1 : 1))
+        .flatMap(entry => (entry.isDirectory() ? [rel + "/" + entry.name, ...list(rel + "/" + entry.name)] : []));
+      (async () => {
+        let code = "none";
+        try {
+          ${call};
+        } catch (e) {
+          code = e.code;
+        }
+        console.log(JSON.stringify({ code, dirs: list("a") }));
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: ["unshare", "-Urm", "sh", "-c", script],
+      env: { ...bunEnv, BUN_EXE: bunExe(), CP_FIXTURE: fixture },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      code: "ERR_FS_CP_EINVAL",
+      dirs: ["a/sub", "a/sub/inner", "a/sub/inner/t", "a/sub/inner/t/inner"],
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // On Windows, _copySingleFileSync's reparse-point branch opens a handle to the
@@ -731,6 +867,7 @@ test.skipIf(!isPosix)(
     expect(stdout.trim()).toBe("ok");
     expect(exitCode).toBe(0);
   },
+  30_000,
 );
 
 test.skipIf(!isLinux)("fs.cp and fs.copyFile create the destination with the source file's mode", async () => {

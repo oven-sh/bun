@@ -10,6 +10,7 @@ const {
   isWebStream,
   isTransformStream,
   isWritableStream,
+  isWritableStreamLike,
   isReadableStream,
 } = require("internal/streams/utils");
 const eos = require("internal/streams/end-of-stream");
@@ -37,7 +38,7 @@ export default function compose(...streams) {
   }
 
   for (let n = 0; n < streams.length; ++n) {
-    if (!isNodeStream(streams[n]) && !isWebStream(streams[n])) {
+    if (!isNodeStream(streams[n]) && !isWebStream(streams[n]) && !isWritableStreamLike(streams[n])) {
       // TODO(ronag): Add checks for non streams.
       continue;
     }
@@ -47,7 +48,15 @@ export default function compose(...streams) {
     ) {
       throw $ERR_INVALID_ARG_VALUE(`streams[${n}]`, orgStreams[n], "must be readable");
     }
-    if (n > 0 && !(isWritable(streams[n]) || isWritableStream(streams[n]) || isTransformStream(streams[n]))) {
+    if (
+      n > 0 &&
+      !(
+        isWritable(streams[n]) ||
+        isWritableStream(streams[n]) ||
+        isTransformStream(streams[n]) ||
+        isWritableStreamLike(streams[n])
+      )
+    ) {
       throw $ERR_INVALID_ARG_VALUE(`streams[${n}]`, orgStreams[n], "must be writable");
     }
   }

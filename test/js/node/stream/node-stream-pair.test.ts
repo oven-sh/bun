@@ -594,6 +594,30 @@ describe("a userland WritableStream as the last stage", () => {
     });
   }
 
+  test("of compose()", async () => {
+    const out = userlandSink();
+    const composed = compose(source(), out.stream);
+    assert.deepStrictEqual(
+      { readable: composed.readable, writable: composed.writable },
+      { readable: false, writable: false },
+    );
+    await once(composed, "close");
+    assert.strictEqual(out.text(), "hello");
+  });
+
+  for (const [position, members, message] of [
+    ["first", () => [userlandSink().stream, new PassThrough()], /^The argument 'streams\[0\]' must be readable\./],
+    [
+      "middle",
+      () => [source(), userlandSink().stream, new PassThrough()],
+      /^The argument 'streams\[1\]' must be readable\./,
+    ],
+  ] as const) {
+    test(`not as the ${position} member of compose(): it is not readable`, () => {
+      assert.throws(() => compose(...members()), { code: "ERR_INVALID_ARG_VALUE", message });
+    });
+  }
+
   test("an options object with getWriter() and abort() is a stream, not the options", async () => {
     const options = { signal: new AbortController().signal, getWriter() {}, abort() {} };
     await assert.rejects(pipelineP(source(), sink().stream, options), { code: "ERR_INVALID_ARG_TYPE" });

@@ -1367,8 +1367,7 @@ fn arr2<T>(a: T, b: T) -> Vec<T> {
     vec![a, b]
 }
 
-/// CSS Values 4 `#round-func` and `#round-infinities`: the result is the multiple of |B| just below
-/// or just above A, and `nearest` goes up on a tie. This differs from lightningcss on purpose.
+/// CSS Values 4 `#round-func` and `#round-infinities`. This differs from lightningcss on purpose.
 #[inline(never)]
 fn round(strategy: RoundingStrategy, value: f32, to: f32) -> f32 {
     let step = to.abs();

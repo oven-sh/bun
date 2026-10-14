@@ -2520,16 +2520,18 @@ describe("several writes to a handed-off socket in one task", () => {
     }
   });
 
-  test.concurrent.each([
-    "process.exit(0)",
-    "process.reallyExit(0)",
-    "process.kill(process.pid, 'SIGTERM')",
-    "process.kill(process.pid, 'SIGKILL')",
-    "process.abort()",
-    // On Windows it throws.
-    "process.execve(process.execPath, [process.execPath, '-e', '0'])",
-    "throw new Error('uncaught')",
-  ])("%s sends them", async endTheProcess => {
+  // On Windows the end of a process resets its connections, so the client gets ECONNRESET instead of the end of the stream.
+  test.concurrent
+    .skipIf(isWindows)
+    .each([
+      "process.exit(0)",
+      "process.reallyExit(0)",
+      "process.kill(process.pid, 'SIGTERM')",
+      "process.kill(process.pid, 'SIGKILL')",
+      "process.abort()",
+      "process.execve(process.execPath, [process.execPath, '-e', '0'])",
+      "throw new Error('uncaught')",
+    ])("%s sends them", async endTheProcess => {
     const fixture = /* js */ `
       const http = require("node:http");
       const server = http.createServer();
@@ -2539,7 +2541,9 @@ describe("several writes to a handed-off socket in one task", () => {
       });
       server.listen(0, "127.0.0.1", () => console.log(server.address().port));
     `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "ignore" });
+    // process.abort() must not leave a core file: the CI lanes that upload them fail the test file for it.
+    const cmd = ["/bin/sh", "-c", 'ulimit -c 0 && exec "$@"', "--", bunExe(), "-e", fixture];
+    await using proc = Bun.spawn({ cmd, env: bunEnv, stdout: "pipe", stderr: "ignore" });
     const reader = proc.stdout.getReader();
     const port = Number(new TextDecoder().decode((await reader.read()).value));
     reader.releaseLock();

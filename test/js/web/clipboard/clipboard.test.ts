@@ -3,11 +3,12 @@
 // CI or with BUN_TEST_SYSTEM_CLIPBOARD=1. Where no clipboard is reachable
 // (headless Linux) they assert the "NotAllowedError" rejection instead.
 import { dlopen, FFIType, ptr, toBuffer } from "bun:ffi";
+import { setClipboardHelperTimeoutForTesting, setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isCI, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { once } from "node:events";
-import { chmodSync, existsSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
 
@@ -879,6 +880,7 @@ const TEXT_TOO_LARGE = "NotAllowedError: The text on the clipboard is too large 
 // Whether a process is still there. One that was ended and that nobody has
 // collected yet (a zombie) is not.
 function isRunning(pid: string) {
+  if (pid === "") return false;
   try {
     const stat = readFileSync("/proc/" + pid + "/stat", "utf8");
     return stat[stat.lastIndexOf(")") + 2] !== "Z";
@@ -897,10 +899,10 @@ async function hasEnded(pid: string) {
 // Available to every child script: settle a promise into something JSON can
 // carry, read what a stand-in recorded, and print the one line the test reads.
 // `limitHelperRuns` replaces the 10 seconds a helper run may take. `running`
-// and `ended` are the two functions above, for a pid that a stand-in recorded.
-// On a machine under heavy load the time limit can end a stand-in before it
-// records the pid. Then nothing of it is left to look at. `started` waits for
-// a file that a stand-in writes first, and fails when none comes.
+// is `isRunning` for a pid that a stand-in recorded. On a machine under heavy
+// load the time limit can end a stand-in before it records the pid. Then
+// nothing of it is left to look at. `started` waits for a file that a stand-in
+// writes first, and fails when none comes.
 const CHILD_PRELUDE = `
   const { readFileSync, readdirSync } = require("node:fs");
   const CLIP_DIR = process.env.CLIP_DIR;
@@ -912,7 +914,6 @@ const CHILD_PRELUDE = `
   const print = value => console.log(JSON.stringify(value));
   const limitHelperRuns = ms => require("bun:internal-for-testing").setClipboardHelperTimeoutForTesting(ms);
   ${isRunning}
-  ${hasEnded}
   const started = async name => {
     for (let tries = 0; tries < 600; tries++) {
       if (require("node:fs").existsSync(CLIP_DIR + "/" + name)) return;
@@ -920,16 +921,14 @@ const CHILD_PRELUDE = `
     }
     throw new Error("the stand-in never wrote " + name);
   };
-  const recordedPid = name => {
+  const running = name => {
     try {
-      return received(name).trim();
+      return isRunning(received(name).trim());
     } catch (e) {
       if (e.code !== "ENOENT") throw e;
-      return "";
+      return false;
     }
   };
-  const running = name => recordedPid(name) !== "" && isRunning(recordedPid(name));
-  const ended = async name => recordedPid(name) === "" || (await hasEnded(recordedPid(name)));
 `;
 
 // A pidfd tells the wait that a helper exited, and a memfd holds its output.
@@ -937,10 +936,15 @@ const CHILD_PRELUDE = `
 // intervals and the output comes through a socket pair.
 const NO_PIDFD_NO_MEMFD = { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1", BUN_FEATURE_FLAG_DISABLE_MEMFD: "1" };
 
+// A stand-in appends "<name> <args>" to a log and then runs its sh `body`; a
+// helper given no body exits 127, which is what sh reports for a program that
+// is not installed.
+function standIn(body = "exit 127") {
+  return `#!/bin/sh\nprintf '%s\\n' "\${0##*/} $*" >> "$CLIP_DIR/log"\n${body}\n`;
+}
+
 // Runs `script` in a child whose PATH starts with a directory of stand-ins for
-// the four helpers. A stand-in appends "<name> <args>" to a log and then runs
-// its sh `body`; a helper given no body exits 127, which is what sh reports
-// for a program that is not installed. The child sees the directory as
+// the four helpers. The child sees the directory as
 // $CLIP_DIR, and $TMPDIR (where writes stage their payload) is a subdirectory
 // whose name needs quoting. Returns the child's JSON line and the log.
 async function runWithHelpers(
@@ -954,9 +958,7 @@ async function runWithHelpers(
     "main.js": CHILD_PRELUDE + script,
     "tmp 'dir'": {},
   };
-  for (const helper of HELPERS) {
-    files[helper] = `#!/bin/sh\nprintf '%s\\n' "\${0##*/} $*" >> "$CLIP_DIR/log"\n${bodies[helper] ?? "exit 127"}\n`;
-  }
+  for (const helper of HELPERS) files[helper] = standIn(bodies[helper]);
   using dir = tempDir("clipboard-helpers", files);
   for (const helper of HELPERS) chmodSync(join(String(dir), helper), 0o755);
   await using proc = Bun.spawn({
@@ -1135,39 +1137,6 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
     expect(result).toEqual({ types: ["text/html"], html: "<b>hi</b>" });
   });
 
-  // A string has a length limit, and a helper can print more text than that.
-  // The child lowers the limit to 1 MiB, so no helper has to print 2 GiB. The
-  // limit counts UTF-16 units, which "two-byte" has half as many of as bytes.
-  test("readText() rejects text that is too large for a string", async () => {
-    const { result } = await runWithHelpers(
-      { xclip: `cat "$CLIP_DIR/$(cat "$CLIP_DIR/selection")"` },
-      `
-        const { writeFileSync } = require("node:fs");
-        require("bun:internal-for-testing").setSyntheticAllocationLimitForTesting(1024 * 1024);
-        let pastes = 0;
-        navigator.clipboard.addEventListener("paste", () => pastes++);
-        const result = {};
-        for (const selection of ["fits", "too-large", "two-byte"]) {
-          pastes = 0;
-          writeFileSync(CLIP_DIR + "/selection", selection);
-          result[selection] = { ...(await settle(navigator.clipboard.readText(), text => text.length)), pastes };
-        }
-        print(result);
-      `,
-      {},
-      {
-        "fits": Buffer.alloc(1024 * 1024, "a").toString(),
-        "too-large": Buffer.alloc(1024 * 1024 + 1, "a").toString(),
-        "two-byte": Buffer.alloc(1024 * 1024 + 2, "é").toString(),
-      },
-    );
-    expect(result).toEqual({
-      "fits": { ok: 1024 * 1024, pastes: 1 },
-      "too-large": { error: TEXT_TOO_LARGE, pastes: 0 },
-      "two-byte": { ok: 512 * 1024 + 1, pastes: 1 },
-    });
-  });
-
   test("Wayland helpers are preferred, X11 ones are the fallback, and read() is best-effort per type", async () => {
     const { result, log } = await runWithHelpers(
       {
@@ -1301,53 +1270,6 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
       writeText: { error: HELPER_FAILED },
       writeHtml: { error: HELPER_FAILED },
     });
-  });
-
-  // A hung selection owner: the helper records its pid and never returns. It
-  // also ignores SIGTERM, which is a request and not an order. The shell that
-  // has the trap is the one that waits, so the stand-in does not `exec` its
-  // sleep. The time limit needs no program from PATH (no `sh`, no `sleep`),
-  // which has only the stand-ins here. With a Wayland display alone, each
-  // operation has one candidate helper.
-  const hangs = [
-    `trap '' TERM`,
-    `echo $$ > "$CLIP_DIR/helper-pid"`,
-    `n=0; while [ $n -lt 300 ]; do /bin/sleep 0.1; n=$((n + 1)); done`,
-  ].join("\n");
-  const WAYLAND_ONLY = { DISPLAY: "", WAYLAND_DISPLAY: "wayland-0" };
-  test.each([
-    { operation: `readText()`, kernel: "a pidfd and a memfd", env: {} },
-    { operation: `writeText("x")`, kernel: "a pidfd and a memfd", env: {} },
-    { operation: `readText()`, kernel: "no pidfd and no memfd", env: NO_PIDFD_NO_MEMFD },
-  ])(
-    "a helper that hangs is ended at the time limit and the operation fails: $operation with $kernel",
-    async ({ operation, env }) => {
-      const { result } = await runWithHelpers(
-        { "wl-paste": hangs, "wl-copy": hangs },
-        `
-          process.env.PATH = CLIP_DIR;
-          limitHelperRuns(500);
-          const settled = await settle(navigator.clipboard.${operation});
-          print({ settled, helperStillRunning: running("helper-pid") });
-        `,
-        { ...WAYLAND_ONLY, ...env },
-      );
-      expect(result).toEqual({ settled: { error: HELPER_FAILED }, helperStillRunning: false });
-    },
-  );
-
-  // The time limit is for the helper and for everything it started.
-  test("a helper that waits for its own child is ended together with the child", async () => {
-    const { result } = await runWithHelpers(
-      { "wl-paste": `sleep 300 &\necho $! > "$CLIP_DIR/child-pid"\nwait` },
-      `
-        limitHelperRuns(500);
-        const readText = await settle(navigator.clipboard.readText());
-        print({ readText, childEnded: await ended("child-pid") });
-      `,
-      WAYLAND_ONLY,
-    );
-    expect(result).toEqual({ readText: { error: HELPER_FAILED }, childEnded: true });
   });
 
   // A helper's output is captured in a memfd where there is one, and through a
@@ -1581,6 +1503,151 @@ describe.concurrent.skipIf(!isLinux)("POSIX helper backend", () => {
       result: { received: "from the worker" },
       log: ["wl-copy --type text/plain;charset=utf-8", "xclip -selection clipboard -in"],
     });
+  });
+});
+
+// These tests set a limit for this process through `bun:internal-for-testing`
+// and call the clipboard here. A child that loads that module needs more than
+// a second for it in a debug build, and several such children at once need
+// longer. The tests point process.env at their stand-ins, so they run one at a
+// time.
+describe.skipIf(!isLinux)("POSIX helper backend, in this process", () => {
+  const settled = (promise: Promise<unknown>) =>
+    promise.then(
+      value => ({ ok: value }),
+      (e: Error) => ({ error: e.name + ": " + e.message }),
+    );
+
+  // "" when the time limit ended the stand-in before it recorded the pid.
+  const recordedPid = (dir: string, name: string) =>
+    existsSync(join(dir, name)) ? readFileSync(join(dir, name), "utf8").trim() : "";
+
+  // Points this process at a directory of stand-ins while `body` runs. PATH has
+  // that directory and nothing else.
+  async function withStandIns(
+    bodies: Partial<Record<Helper, string>>,
+    env: Record<string, string>,
+    body: (dir: string) => Promise<void>,
+    extraFiles: Record<string, string> = {},
+  ) {
+    const files: Record<string, string> = { ...extraFiles };
+    for (const helper of HELPERS) files[helper] = standIn(bodies[helper]);
+    using dir = tempDir("clipboard-helpers-here", files);
+    for (const helper of HELPERS) chmodSync(join(String(dir), helper), 0o755);
+    const changed = { DISPLAY: ":0", WAYLAND_DISPLAY: "", CLIP_DIR: String(dir), PATH: String(dir), ...env };
+    const saved = Object.keys(changed).map(name => [name, process.env[name]] as const);
+    Object.assign(process.env, changed);
+    try {
+      await body(String(dir));
+    } finally {
+      for (const [name, value] of saved) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  }
+
+  // A string has a length limit, and a helper can print more text than that.
+  // The limit is 1 MiB here, so no helper has to print 2 GiB. It counts UTF-16
+  // units, which "two-byte" has half as many of as bytes.
+  test("readText() rejects text that is too large for a string", async () => {
+    await withStandIns(
+      { xclip: `/bin/cat "$CLIP_DIR/$(/bin/cat "$CLIP_DIR/selection")"` },
+      {},
+      async dir => {
+        let pastes = 0;
+        const countPaste = () => pastes++;
+        navigator.clipboard.addEventListener("paste", countPaste);
+        const previous = setSyntheticAllocationLimitForTesting(1024 * 1024);
+        const result: Record<string, unknown> = {};
+        try {
+          for (const selection of ["fits", "too-large", "two-byte"]) {
+            pastes = 0;
+            writeFileSync(join(dir, "selection"), selection);
+            const read = await settled(navigator.clipboard.readText().then(text => text.length));
+            result[selection] = { ...read, pastes };
+          }
+        } finally {
+          setSyntheticAllocationLimitForTesting(previous);
+          navigator.clipboard.removeEventListener("paste", countPaste);
+        }
+        expect(result).toEqual({
+          "fits": { ok: 1024 * 1024, pastes: 1 },
+          "too-large": { error: TEXT_TOO_LARGE, pastes: 0 },
+          "two-byte": { ok: 512 * 1024 + 1, pastes: 1 },
+        });
+      },
+      {
+        "fits": Buffer.alloc(1024 * 1024, "a").toString(),
+        "too-large": Buffer.alloc(1024 * 1024 + 1, "a").toString(),
+        "two-byte": Buffer.alloc(1024 * 1024 + 2, "é").toString(),
+      },
+    );
+  });
+
+  // A hung selection owner: the helper records its pid and never returns. It
+  // also ignores SIGTERM, which is a request and not an order. The shell that
+  // has the trap is the one that waits, so the stand-in does not `exec` its
+  // sleep. The time limit needs no program from PATH (no `sh`, no `sleep`).
+  // With a Wayland display alone, each operation has one candidate helper.
+  const hangs = [
+    `trap '' TERM`,
+    `echo $$ > "$CLIP_DIR/helper-pid"`,
+    `n=0; while [ $n -lt 300 ]; do /bin/sleep 0.1; n=$((n + 1)); done`,
+  ].join("\n");
+  const WAYLAND_ONLY = { DISPLAY: "", WAYLAND_DISPLAY: "wayland-0" };
+
+  test.each([
+    { operation: `readText()`, start: () => navigator.clipboard.readText() },
+    { operation: `writeText("x")`, start: () => navigator.clipboard.writeText("x") },
+  ])("a helper that hangs is ended at the time limit and the operation fails: $operation", async ({ start }) => {
+    await withStandIns({ "wl-paste": hangs, "wl-copy": hangs }, WAYLAND_ONLY, async dir => {
+      const previous = setClipboardHelperTimeoutForTesting(500);
+      try {
+        const result = await settled(start());
+        expect({ result, helperStillRunning: isRunning(recordedPid(dir, "helper-pid")) }).toEqual({
+          result: { error: HELPER_FAILED },
+          helperStillRunning: false,
+        });
+      } finally {
+        setClipboardHelperTimeoutForTesting(previous);
+      }
+    });
+  });
+
+  // The time limit is for the helper and for everything it started.
+  test("a helper that waits for its own child is ended together with the child", async () => {
+    await withStandIns(
+      { "wl-paste": `/bin/sleep 300 &\necho $! > "$CLIP_DIR/child-pid"\nwait` },
+      WAYLAND_ONLY,
+      async dir => {
+        const previous = setClipboardHelperTimeoutForTesting(500);
+        try {
+          const result = await settled(navigator.clipboard.readText());
+          const child = recordedPid(dir, "child-pid");
+          const childEnded = await hasEnded(child);
+          if (!childEnded) process.kill(Number(child), "SIGKILL");
+          expect({ result, childEnded }).toEqual({ result: { error: HELPER_FAILED }, childEnded: true });
+        } finally {
+          setClipboardHelperTimeoutForTesting(previous);
+        }
+      },
+    );
+  });
+
+  // The kernel features are fixed when a process starts, so this one is a child.
+  test("a helper that hangs is ended at the time limit with no pidfd and no memfd", async () => {
+    const { result } = await runWithHelpers(
+      { "wl-paste": hangs },
+      `
+        process.env.PATH = CLIP_DIR;
+        limitHelperRuns(500);
+        const settled = await settle(navigator.clipboard.readText());
+        print({ settled, helperStillRunning: running("helper-pid") });
+      `,
+      { ...WAYLAND_ONLY, ...NO_PIDFD_NO_MEMFD },
+    );
+    expect(result).toEqual({ settled: { error: HELPER_FAILED }, helperStillRunning: false });
   });
 });
 

@@ -653,7 +653,11 @@ fn for_each_edge(
                 part_index,
                 if !c.is_external_dynamic_import(record, source_index) {
                     Edge::Import(other)
-                } else if record.kind == ImportKind::Require && !part_has_no_side_effects(part) {
+                } else if record.kind == ImportKind::Require
+                    && !part_has_no_side_effects(part)
+                    // A property read calls nothing that the part declares.
+                    && !part.removable_if_namespace_reads_bind
+                {
                     Edge::LoadNow(other)
                 } else {
                     Edge::LoadLater(other)

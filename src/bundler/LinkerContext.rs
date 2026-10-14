@@ -3101,7 +3101,9 @@ impl<'a> LinkerContext<'a> {
 
         let parts = ctx.parts[source_index as usize].as_slice();
         for (part_index, part) in parts.iter().enumerate() {
-            let mut can_be_removed_if_unused = part.can_be_removed_if_unused;
+            let mut can_be_removed_if_unused = part.can_be_removed_if_unused
+                || (part.removable_if_namespace_reads_bind
+                    && self.part_namespace_reads_are_bound(part));
 
             if can_be_removed_if_unused && part.tag == bun_ast::PartTag::CommonjsNamedExport {
                 if self.graph.meta.items_flags()[source_index as usize].wrap == WrapKind::Cjs {
@@ -4411,6 +4413,30 @@ impl<'a> LinkerContext<'a> {
         importer_module_type != crate::options::ModuleType::Esm
             && exports.contains(b"__esModule")
             && exports.contains(b"default")
+    }
+
+    /// `Part::removable_if_namespace_reads_bind`: every read off a `require()`
+    /// / `import()` local that runs with `part` prints as a binding
+    /// (`bind_namespace_local_read`), so none of them reads a property.
+    fn part_namespace_reads_are_bound(&self, part: &Part) -> bool {
+        part.symbol_uses
+            .keys()
+            .iter()
+            .zip(part.symbol_uses.values())
+            .all(|(item, item_use)| {
+                !item_use.runs_namespace_read()
+                    || self
+                        .graph
+                        .symbols
+                        .get_const(*item)
+                        .and_then(|symbol| symbol.namespace_alias.as_ref())
+                        .is_some_and(|alias| {
+                            self.graph
+                                .import_member_bindings
+                                .get(&alias.namespace_ref)
+                                .is_some_and(|names| names.contains_key(alias.alias.slice()))
+                        })
+            })
     }
 
     /// `const { a } = ns` where `ns` is an import namespace. The parser

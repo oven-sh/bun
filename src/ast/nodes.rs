@@ -1040,6 +1040,14 @@ pub struct Part {
     /// don't have this flag enabled must be included.
     pub can_be_removed_if_unused: bool,
 
+    /// The only side effects of this part are reads off a local that holds a
+    /// `require()` / `import()` namespace (`E::Dot::is_import_property_use`).
+    /// The linker can remove the part like one with `can_be_removed_if_unused`
+    /// if it binds each of them to an export: the import items whose entry in
+    /// `symbol_uses` has `symbol::Use::runs_namespace_read`. A read it does
+    /// not bind can run a getter. Never set with `can_be_removed_if_unused`.
+    pub removable_if_namespace_reads_bind: bool,
+
     /// This is used for generated parts that we don't want to be present if they
     /// aren't needed. This enables tree shaking for these parts even if global
     /// tree shaking isn't enabled.
@@ -1094,6 +1102,7 @@ impl Default for Part {
             import_symbol_property_uses: None,
             dependencies: Vec::new_in(bun_alloc::AstAlloc),
             can_be_removed_if_unused: false,
+            removable_if_namespace_reads_bind: false,
             force_tree_shaking: false,
             tag: PartTag::None,
         }

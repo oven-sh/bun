@@ -25,7 +25,8 @@ pub(crate) mod prelude {
     pub(crate) use super::source_text::SourceText;
     pub(crate) use super::trivia::{
         DanglingIndentMode, FormatDanglingComments, FormatLeadingComments, FormatTrailingComments,
-        format_dangling_comments, format_leading_comments, format_trailing_comments,
+        format_dangling_comments, format_leading_comments, format_leading_comments_of_ignored,
+        format_trailing_comments,
     };
     pub(crate) use super::utils::operators::{BinOpExt, Precedence, UnOpExt};
 }

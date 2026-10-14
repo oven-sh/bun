@@ -207,10 +207,11 @@ fn format_node_in_list<'a>(
     }
     let is_suppressed = f.comments().is_suppressed(span.start)
         || f.comments().has_trailing_suppression_comment(span.end);
-    format_leading_comments(span).fmt(f);
     if is_suppressed {
+        format_leading_comments_of_ignored(span).fmt(f);
         f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
     } else {
+        format_leading_comments(span).fmt(f);
         f.in_scope(span, write);
     }
     if !(is_before_another && no_comment_trails_what_is_before_another(f)) {
@@ -476,6 +477,12 @@ fn cast_comment_goes_into_added_parentheses(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
+/// `a as B // prettier-ignore ⏎ ? c : d`: Prettier writes `(a as B)`, as it does where it formats. oxfmt writes no
+/// parentheses that are not there.
+fn adds_parentheses_to_what_is_ignored(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
+}
+
 /// Prettier's `printIgnored` for an expression, in the parentheses that it needs.
 fn write_suppressed_expression<'a>(
     expr: Expr<'a>,
@@ -487,6 +494,11 @@ fn write_suppressed_expression<'a>(
         true => parentheses::expression::chain_expression_needs_parentheses(expr, f),
         false => parentheses::expression::needs_parentheses(expr, f),
     };
+    let needs_parentheses =
+        match adds_parentheses_to_what_is_ignored(f) {
+            true => needs_parentheses,
+            false => needs_parentheses && expr.is_parenthesized(),
+        } || parentheses::expression::source_text_needs_its_parentheses(expr, f);
     // A class expression with decorators is on lines of its own.
     let is_decorated_class =
         matches!(expr.kind(), ExprKind::Class(class) if class.decorators().next().is_some());
@@ -517,7 +529,7 @@ impl<'a> FormatExpr<'a> {
         if print::function::write_called_function_with_comments(self.expr, self.options, f) {
             return;
         }
-        format_leading_comments(self.expr.span()).fmt(f);
+        format_leading_comments_of_ignored(self.expr.span()).fmt(f);
         write_suppressed_expression(self.expr, self.is_chain_expression(), f);
     }
 }
@@ -528,12 +540,15 @@ pub(crate) fn write_ignored_node<'a>(node: Option<Node<'a>>, span: Span, f: &mut
     match node {
         Some(Node::Expr(e)) => FormatExpr::with_options(e, ExprOptions::None).write_as_it_is(f),
         Some(Node::Type(ty)) => {
-            format_leading_comments(span).fmt(f);
+            format_leading_comments_of_ignored(span).fmt(f);
             write_suppressed_type(ty, f);
         }
         _ => write!(
             f,
-            [format_leading_comments(span), FormatSuppressedNode(span)]
+            [
+                format_leading_comments_of_ignored(span),
+                FormatSuppressedNode(span)
+            ]
         ),
     }
 }
@@ -893,7 +908,7 @@ fn format_statement_with_comments<'a>(
         .has_trailing_suppression_comment(node.span().end)
         || (span.end < node.span().end && f.comments().has_trailing_suppression_comment(span.end))
     {
-        format_leading_comments(span).fmt(f);
+        format_leading_comments_of_ignored(span).fmt(f);
         write_ignored_statement(statement, span, f);
         return write_trailing_comments_of(node, f);
     }
@@ -901,7 +916,7 @@ fn format_statement_with_comments<'a>(
         // Decorators can be written before `export`, and comments before and after them.
         AstNodes::ExportNamedDeclaration(_) | AstNodes::ExportDefaultDeclaration(_) => {
             if f.comments().is_suppressed(span.start) {
-                format_leading_comments(span).fmt(f);
+                format_leading_comments_of_ignored(span).fmt(f);
                 write_ignored_statement(statement, span, f);
                 return write_trailing_comments_in(span, || node.parent(), f);
             }
@@ -935,7 +950,7 @@ fn format_declaration_with_comments<'a>(
         false => statement.ast_parent(),
     };
     if f.comments().is_suppressed(span.start) {
-        format_leading_comments(span).fmt(f);
+        format_leading_comments_of_ignored(span).fmt(f);
         write_ignored_statement(statement, span, f);
         return write_trailing_comments_in(span, parent, f);
     }

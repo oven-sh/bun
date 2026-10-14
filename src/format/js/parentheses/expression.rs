@@ -40,6 +40,73 @@ pub(crate) fn chain_expression_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<
     }
 }
 
+/// Whether the source text of `e`, which is in parentheses there, means something else without them, where `e` itself
+/// needs none. What is formatted gets them further in, or is written otherwise: `({}.a) && b` is `({}).a && b`,
+/// `(new A).b` is `new A().b`. Prettier leaves them out of what it writes as it is.
+pub(crate) fn source_text_needs_its_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    if !e.is_parenthesized() {
+        return false;
+    }
+    match e.kind() {
+        // `(a<T>) + b`
+        ExprKind::Instantiation { .. } => return true,
+        // Something follows that would be taken for a part of what is made.
+        ExprKind::New(_) if f.source_text().byte_at(e.span().end - 1) != Some(b')') => {
+            return true;
+        }
+        _ => {}
+    }
+    // What it starts with: `{`, `function`, `class` and `let[` start a statement.
+    let mut first = e;
+    while let Some(next) = match first.kind() {
+        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
+        ExprKind::Call(call) | ExprKind::TaggedTemplate(call) => Some(call.callee()),
+        ExprKind::Cond { test, .. } => Some(test),
+        ExprKind::As { expr, .. }
+        | ExprKind::AsConst(expr)
+        | ExprKind::Satisfies { expr, .. }
+        | ExprKind::NonNull(expr)
+        | ExprKind::Instantiation { expr, .. }
+            if !first.is_angle_bracket_assertion() =>
+        {
+            Some(expr)
+        }
+        ExprKind::Unary {
+            op: UnOp::PostInc | UnOp::PostDec,
+            operand,
+        } => Some(operand),
+        _ => first.left(),
+    } {
+        if next.is_parenthesized() {
+            break;
+        }
+        let starts_statement = matches!(
+            next.kind(),
+            ExprKind::Object(_) | ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Ident(_)
+        );
+        if starts_statement && needs_parentheses(next, f) {
+            return true;
+        }
+        first = next;
+    }
+    // `in` ends the initializer of a `for`.
+    is_in_for_statement_initializer(e, f) && has_bare_in(Node::Expr(e))
+}
+
+/// Whether there is an `a in b` in `node` with no parentheses around it in `node`.
+fn has_bare_in(node: Node<'_>) -> bool {
+    let mut found = false;
+    node.for_each_child(|child| {
+        found = found
+            || match child {
+                Node::Expr(it) if it.is_parenthesized() => false,
+                Node::Expr(it) if it.binary_op() == Some(BinOp::In) => true,
+                _ => has_bare_in(child),
+            };
+    });
+    found || matches!(node, Node::Expr(it) if it.binary_op() == Some(BinOp::In))
+}
+
 /// Whether `e` itself needs parentheses, not the `ChainExpression` around it.
 #[inline]
 pub(crate) fn needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {

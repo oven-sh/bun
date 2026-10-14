@@ -31,9 +31,18 @@ pub(crate) const fn format_leading_comments<'a>(span: Span) -> FormatLeadingComm
     FormatLeadingComments::Node(span)
 }
 
+/// The same for a node that is written as it is in the source.
+#[inline]
+pub(crate) const fn format_leading_comments_of_ignored<'a>(
+    span: Span,
+) -> FormatLeadingComments<'a> {
+    FormatLeadingComments::IgnoredNode(span)
+}
+
 #[derive(Debug, Copy, Clone)]
 pub(crate) enum FormatLeadingComments<'a> {
     Node(Span),
+    IgnoredNode(Span),
     Comments(&'a [Comment]),
 }
 
@@ -41,11 +50,18 @@ impl<'a> Format<'a> for FormatLeadingComments<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let (comments, node_start) = match *self {
-            Self::Node(span) if f.comments().next_start() > span.start => return,
-            Self::Node(span) => (f.comments().comments_leading_node(span), span.start),
+            Self::Node(span) | Self::IgnoredNode(span)
+                if f.comments().next_start() > span.start =>
+            {
+                return;
+            }
+            Self::Node(span) | Self::IgnoredNode(span) => {
+                (f.comments().comments_leading_node(span), span.start)
+            }
             Self::Comments(comments) => (comments, u32::MAX),
         };
-        write_leading_comments(comments, node_start, f);
+        let is_ignored = matches!(self, Self::IgnoredNode(_));
+        write_leading_comments(comments, node_start, is_ignored, f);
     }
 }
 
@@ -72,14 +88,19 @@ fn end_with_semicolon_of_statement_before(comment: &Comment, f: &Formatter<'_>) 
     }
 }
 
-/// `node_start`: where the node starts that they lead.
+/// `node_start`: where the node starts that they lead. `is_ignored`: it is written as it is in the source. It is too if
+/// one of them says so.
 #[cold]
-fn write_leading_comments<'a>(comments: &'a [Comment], node_start: u32, f: &mut Formatter<'a>) {
+fn write_leading_comments<'a>(
+    comments: &'a [Comment],
+    node_start: u32,
+    is_ignored: bool,
+    f: &mut Formatter<'a>,
+) {
     // A comment that has been moved out of a node that is written as it is in the source is in that
     // text.
-    let is_ignored = comments
-        .iter()
-        .any(|comment| comment.is_moved() && f.comments().is_suppression_comment(comment));
+    let is_ignored =
+        is_ignored || (comments.iter()).any(|comment| f.comments().is_suppression_comment(comment));
     for comment in comments {
         f.comments_mut().increment_printed_count();
         if is_ignored && comment.is_moved() && comment.span.start >= node_start {

@@ -4658,28 +4658,37 @@ impl VirtualMachine {
         self.hot_reload_counter += 1;
         // reload_entry_point() stores into pending_internal_promise whenever it returns a promise.
         let main = self.main;
+        // Nothing prints what a reload logs, so the log can hold what earlier reloads said.
+        let logged = self
+            .log_mut()
+            .map(|log| (log.msgs.len(), log.errors, log.warnings));
         // Note: reshaped for borrowck — copy the `RawSlice` first to avoid
         // overlapping `&self`/`&mut self` borrows.
         if let Err(err) = self.reload_entry_point(main.slice()) {
-            self.reject_failed_reload(err);
+            self.reject_failed_reload(err, logged);
         }
     }
 
     /// A reload that gives an error and no promise, as when a preload file is gone. The error
     /// becomes the rejection of the reload: the run loop reports it and waits for the next
     /// save, as for an import that is gone. (A first start with the same error exits.)
+    /// `logged` is the log's length and counts from before the reload: the error is in what
+    /// the reload added.
     #[cold]
-    fn reject_failed_reload(&mut self, err: crate::CrateError) {
+    fn reject_failed_reload(&mut self, err: crate::CrateError, logged: Option<(usize, u32, u32)>) {
         use crate::LogJsc as _;
         let global = self.global();
         let reason = if global.has_exception() {
             Err(jsc::JsError::Thrown)
         } else {
-            match self.log_mut() {
-                Some(log) if !log.msgs.is_empty() => {
-                    let reason = log.to_js(global, format_args!("Failed to reload"));
-                    log.reset();
-                    reason
+            match (self.log_mut(), logged) {
+                (Some(log), Some((len, errors, warnings)))
+                    if log.errors > errors && log.msgs.len() > len =>
+                {
+                    let mut added = bun_ast::Log::init();
+                    added.msgs = log.msgs.split_off(len);
+                    (log.errors, log.warnings) = (errors, warnings);
+                    added.to_js(global, format_args!("Failed to reload"))
                 }
                 _ => Ok(global.create_error_instance(format_args!(
                     "Error occurred loading entry point: {}",

@@ -7409,9 +7409,7 @@ impl NodeFS {
         if PREALLOCATE_SUPPORTED && buf.len() >= PREALLOCATE_LENGTH {
             'preallocate: {
                 let is_path = matches!(args.file, PathOrFileDescriptor::Path(_));
-                // Preallocating grows the file, so skip it when the kernel picks
-                // the write offset at write() time: an O_APPEND write would land
-                // after the grown end, leaving a hole where the data belongs.
+                // An O_APPEND write lands at EOF, not at the cursor.
                 let appends = if is_path {
                     (args.flag.as_int() & sys::O::APPEND) != 0
                 } else {

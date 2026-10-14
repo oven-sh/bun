@@ -630,6 +630,43 @@ describe("bundler", () => {
       expect(api.readFile("/out.js")).toContain(`from "react"`);
     },
   });
+  // A plugin module has the path text "react" when the plugin answers `{ external: true }`
+  // for the import of "react" in late.js. The import stays external. late.js is loaded
+  // only after the "virt" answer is queued.
+  itBundled("plugin/ResolveExternalWithoutPathNotLinkedToModuleWithSameText", () => {
+    const virtAnswered = Promise.withResolvers<void>();
+    return {
+      files: {
+        "/entry.js": /* js */ `
+          import { x } from "virt";
+          import "./late.js";
+          console.log(x);
+        `,
+        "/late.js": ``,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^virt$/ }, () => {
+          virtAnswered.resolve();
+          return { path: "react", namespace: "virt" };
+        });
+        builder.onLoad({ filter: /.*/, namespace: "virt" }, () => {
+          return { contents: `export const x = "x";`, loader: "js" };
+        });
+        builder.onResolve({ filter: /^react$/ }, () => ({ external: true }));
+        builder.onLoad({ filter: /late\.js$/ }, async () => {
+          await virtAnswered.promise;
+          return { contents: `import React from "react"; console.log(React);`, loader: "js" };
+        });
+      },
+      onAfterBundle(api) {
+        const contents = api.readFile("/out.js");
+        expect(contents).toContain(`from "react"`);
+        expect(contents).toContain(`"x"`);
+        expect(contents).not.toContain(`__toESM(,`);
+        expect(contents).not.toContain(`__INVALID__REF__`);
+      },
+    };
+  });
 
   // The bundler's path map is keyed by path text alone. A plugin module can
   // have the same text as the specifier of an import that did not resolve to a
@@ -698,16 +735,6 @@ describe("bundler", () => {
       late: `import React from "react"; export default React;`,
       setup: builder => {
         builder.onResolve({ filter: /^react$/ }, args => ({ path: args.path, external: true }));
-      },
-      stdout: "x real",
-    },
-    {
-      // The same answer without a path: the import keeps the specifier "react".
-      name: "PluginAnswersExternalWithoutPath",
-      text: "react",
-      late: `import React from "react"; export default React;`,
-      setup: builder => {
-        builder.onResolve({ filter: /^react$/ }, () => ({ external: true }));
       },
       stdout: "x real",
     },

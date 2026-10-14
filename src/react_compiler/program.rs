@@ -150,6 +150,14 @@ pub trait Host {
     }
 
     fn record_usage(&mut self, ref_: Ref);
+
+    /// Codegen emits `ns.name`, its copy of a property read, and has called
+    /// [`Host::record_usage`] for `ns`. When `ns` is a local that holds a
+    /// `require()` / `import()` namespace and the visit pass made an import
+    /// item for `ns.name`, the host counts the copy as the visit pass counted
+    /// the read and returns true: the copy gets `E::Dot::is_import_property_use`.
+    fn namespace_local_read(&mut self, ns: Ref, name: &[u8]) -> bool;
+
     fn add_import_record(&mut self, path: &[u8], kind: ImportKind) -> (u32, Ref);
 }
 

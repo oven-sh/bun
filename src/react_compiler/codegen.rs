@@ -1992,7 +1992,13 @@ fn codegen_base_instruction_value(
             object, property, ..
         } => {
             let obj = codegen_place_to_expression(cx, object)?;
-            Ok(property_access_expr(obj, property, loc, None))
+            let read = property_access_expr(obj, property, loc, None);
+            if let (ExprData::EIdentifier(ns), ExprData::EDot(mut dot)) = (obj.data, read.data)
+                && cx.cg.host.namespace_local_read(ns.ref_, dot.name.slice())
+            {
+                dot.is_import_property_use = true;
+            }
+            Ok(read)
         }
         InstructionValue::PropertyStore {
             object,

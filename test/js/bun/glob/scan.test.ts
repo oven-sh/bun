@@ -1201,6 +1201,42 @@ afterAll(() => {
   } catch {}
 });
 
+describe("extglob and brace sequences", () => {
+  const scan = (pattern: string, cwd: string) =>
+    Array.from(new Glob(pattern).scanSync({ cwd }))
+      .map(p => p.replaceAll("\\", "/"))
+      .sort();
+
+  test("scan finds the same files that match accepts", () => {
+    using dir = tempDir("glob-extglob", {
+      "a.js": "",
+      "b.js": "",
+      "c.js": "",
+      "a.test.js": "",
+      "1.txt": "",
+      "2.txt": "",
+      "3.txt": "",
+      "a/x.js": "",
+      "b/x.js": "",
+      "ab/x.js": "",
+      "c/x.js": "",
+      "app/(marketing)/page.js": "",
+      "app/marketing/page.js": "",
+    });
+    const cwd = String(dir);
+    expect(scan("@(a|b).js", cwd)).toEqual(["a.js", "b.js"]);
+    expect(scan("+(a|b).js", cwd)).toEqual(["a.js", "b.js"]);
+    expect(scan("!(a|b).js", cwd)).toEqual(["a.test.js", "c.js"]);
+    expect(scan("*.@(txt|md)", cwd)).toEqual(["1.txt", "2.txt", "3.txt"]);
+    expect(scan("{1..2}.txt", cwd)).toEqual(["1.txt", "2.txt"]);
+    expect(scan("@(a|b)/*.js", cwd)).toEqual(["a/x.js", "b/x.js"]);
+    expect(scan("+(a|b)/*.js", cwd)).toEqual(["a/x.js", "ab/x.js", "b/x.js"]);
+    expect(scan("**/!(x|page).js", cwd)).toEqual(["a.js", "a.test.js", "b.js", "c.js"]);
+    expect(scan("app/(marketing)/*.js", cwd)).toEqual(["app/(marketing)/page.js"]);
+    expect(scan("app/(marketing)/**", cwd)).toEqual(["app/(marketing)/page.js"]);
+  });
+});
+
 describe.skipIf(!isWindows)("glob scan descends read-only directories", () => {
   test.skipIf(!roDirEnforced)(
     `RX-only directory is descended, creates still fail${roDirEnforced ? "" : " (skipped: ACL not enforced under this token)"}`,

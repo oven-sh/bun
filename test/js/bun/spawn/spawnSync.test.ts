@@ -15,7 +15,7 @@ describe("spawnSync", () => {
     );
   });
 
-  for (const ioOption of ["ignore", "pipe", "inherit"]) {
+  for (const ioOption of ["ignore", "pipe", "inherit"] as const) {
     it(`should not set a timeout if timeout is 0 and ${ioOption} is used for stdout`, () => {
       const start = performance.now();
       const result = Bun.spawnSync({

@@ -16,6 +16,7 @@ import {
 import { createConnection, createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
+import { asyncIterableBodyShapes, settled as settledBody } from "../web/streams/async-iterable-body-shapes";
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {
     setTimeout(() => {
@@ -752,6 +753,36 @@ describe("HTMLRewriter", () => {
         expect(cancelled).toEqual(["AbortError: The operation was aborted."]);
       });
     });
+
+    // An async-iterable input gets the same cancel, with the same reason. It is closed
+    // the way `for await` leaves an iterator: return(). The reason is not thrown into it.
+    describe.each(asyncIterableBodyShapes)(
+      "a still-open async-iterable input (%s) is closed with return() when",
+      (_, make) => {
+        it("the output reader cancels", async () => {
+          const shape = make({ chunk: "<p>one</p>" });
+          const res = new HTMLRewriter().on("p", { element() {} }).transform(new Response(shape.body));
+          const reader = res.body.getReader();
+          const first = await reader.read();
+          expect(new TextDecoder().decode(first.value)).toBe("<p>one</p>");
+          await reader.cancel(new Error("reader went away"));
+          expect(await settledBody(shape)).toEqual(shape.expected);
+        });
+
+        it("a handler throws", async () => {
+          const shape = make({ chunk: "<p>one</p>" });
+          const res = new HTMLRewriter()
+            .on("p", {
+              element() {
+                throw new Error("handler threw");
+              },
+            })
+            .transform(new Response(shape.body));
+          await expect(res.text()).rejects.toThrow("handler threw");
+          expect(await settledBody(shape)).toEqual(shape.expected);
+        });
+      },
+    );
 
     // Two rewriters chained, both suspending: `init()`'s own comment names
     // "another transform()" as a supported consumer of a pending body.

@@ -1,0 +1,37 @@
+------------------
+{ printWidth: 80 }
+------------------
+const isValid = node.some(
+  (attrNode) =>
+    attrNode.type === "JSXAttribute" && attrNode.name.name === "is",
+    // To learn more
+    // see https
+);
+const x = (a) => a && b;
+// c
+foo(
+  (a) =>
+    a && b,
+    // c
+);
+foo((a) => a + b /* d */);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const isValid = node.some(
+  (attrNode) =>
+    attrNode.type === "JSXAttribute" && attrNode.name.name === "is",
+    // To learn more
+    // see https
+);
+const x = (a) => a && b;
+// c
+foo(
+  (a) =>
+    a && b,
+    // c
+);
+foo((a) => a + b /* d */);
+
+===================== End =====================

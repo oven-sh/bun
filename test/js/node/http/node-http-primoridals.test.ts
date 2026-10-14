@@ -47,8 +47,8 @@ test("Overriding Request, Response, Headers, and Blob should not break node:http
     get type() {
       throw new Error("type getter should not be called");
     }
-  };
-  globalThis.Request = class MyRequest {};
+  } as any;
+  globalThis.Request = class MyRequest {} as any;
   globalThis.Headers = class MyHeaders {
     entries() {
       throw new Error("entries should not be called");
@@ -85,8 +85,8 @@ test("Overriding Request, Response, Headers, and Blob should not break node:http
     append() {
       throw new Error("append should not be called");
     }
-  };
-  globalThis.Blob = class MyBlob {};
+  } as any;
+  globalThis.Blob = class MyBlob {} as any;
 
   const http = require("http");
   const server = http.createServer((req, res) => {

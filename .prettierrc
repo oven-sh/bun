@@ -25,6 +25,14 @@
       "options": {
         "printWidth": 100
       }
+    },
+    {
+      "files": ["src/runtime/cli/init/**"],
+      "options": {
+        "arrowParens": "always",
+        "printWidth": 80,
+        "quoteProps": "as-needed"
+      }
     }
   ]
 }

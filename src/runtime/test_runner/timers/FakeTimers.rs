@@ -116,6 +116,8 @@ impl ApiSet {
             | 1 << Api::Performance as u16
             | 1 << Api::Hrtime as u16,
     );
+    /// What Vitest fakes by default. "bun:test" leaves these real, because suites written for it wait for one with fake timers on.
+    const IMMEDIATES: ApiSet = ApiSet(1 << Api::SetImmediate as u16 | 1 << Api::ClearImmediate as u16);
 
     fn contains(self, api: Api) -> bool {
         self.0 & (1 << api as u16) != 0
@@ -198,10 +200,10 @@ struct Options {
 }
 
 impl Options {
-    fn from_js(global: &JSGlobalObject, value: JSValue, flavor: Flavor) -> JsResult<Options> {
+    fn from_js(global: &JSGlobalObject, value: JSValue, flavor: Flavor, faked: ApiSet) -> JsResult<Options> {
         let mut options = Options {
             now: None,
-            faked: ApiSet::DEFAULT,
+            faked,
             tick_mode: TickMode::Manual,
             loop_limit: match flavor {
                 Flavor::Vi => 10_000,
@@ -1483,7 +1485,23 @@ fn use_fake_timers(
     frame: &CallFrame,
     flavor: Flavor,
 ) -> JsResult<JSValue> {
-    let options = Options::from_js(global, frame.argument(0), flavor)?;
+    use_fake_timers_with_default(global, frame, flavor, ApiSet::DEFAULT)
+}
+
+/// `vi.useFakeTimers()` of "vitest".
+#[bun_jsc::host_fn]
+fn vitest_use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let faked = ApiSet(ApiSet::DEFAULT.0 | ApiSet::IMMEDIATES.0);
+    use_fake_timers_with_default(global, frame, Flavor::Vi, faked)
+}
+
+fn use_fake_timers_with_default(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+    flavor: Flavor,
+    faked: ApiSet,
+) -> JsResult<JSValue> {
+    let options = Options::from_js(global, frame.argument(0), flavor, faked)?;
     let date_now = options.now.unwrap_or_else(|| match flavor {
         // vitest starts from the current `Date.now()`, mocked or not (`setSystemTime()`, the previous fake clock).
         Flavor::Vi => bun_jsc::cpp::JSC__JSGlobalObject__jsDateNow(global),
@@ -1540,10 +1558,7 @@ fn milliseconds_argument(
             "{function}() ms is out of range. It must be >= 0 and <= {max_advance}. Received {ms:.0}"
         )));
     }
-    // When advanceTimersByTime(0) is called, advance by 1ms to fire setTimeout(fn, 0) timers.
-    // This is because setTimeout(fn, 0) is internally scheduled with a 1ms delay per HTML spec,
-    // and Jest/testing-library expect advanceTimersByTime(0) to fire such "immediate" timers.
-    Ok(if ms == 0.0 { 1.0 } else { ms })
+    Ok(ms)
 }
 
 #[bun_jsc::host_fn]
@@ -1593,7 +1608,7 @@ pub(crate) fn advance_by_ms(global: &JSGlobalObject, ms: f64) -> Result<JSValue,
     if !is_active() {
         return Ok(JSValue::ZERO);
     }
-    advance(global, if ms == 0.0 { 1.0 } else { ms })
+    advance(global, ms)
 }
 
 #[bun_jsc::host_fn]
@@ -1857,6 +1872,11 @@ const FLAVORED_FAKE_TIMERS_FNS: &[(&str, u32, JSHostFn, JSHostFn)] = &[
         __jsc_host_jest_run_only_pending_timers_async,
     ),
 ];
+
+pub(crate) fn put_vitest_fns(global: &JSGlobalObject, vi: JSValue) {
+    let function = JSFunction::create(global, "useFakeTimers", __jsc_host_vitest_use_fake_timers, 0, Default::default());
+    vi.put(global, b"useFakeTimers", function);
+}
 
 pub(crate) fn put_timers_fns(global: &JSGlobalObject, jest: JSValue, vi: JSValue) {
     for &(name, arity, func) in FAKE_TIMERS_FNS {

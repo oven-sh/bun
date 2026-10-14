@@ -3501,12 +3501,8 @@ extern "C" void Bun__deleteEventLoopTask(WebCore::EventLoopTask* task)
 
 RefPtr<Performance> GlobalObject::performance()
 {
-    if (!m_performance) {
-        auto* context = this->scriptExecutionContext();
-        double nanoTimeOrigin = Bun__readOriginTimerStart(this->bunVM());
-        auto timeOrigin = MonotonicTime::fromRawSeconds(nanoTimeOrigin / 1000.0);
-        m_performance = Performance::create(context, timeOrigin);
-    }
+    if (!m_performance)
+        m_performance = Performance::create(this->scriptExecutionContext());
 
     return m_performance;
 }
@@ -3737,6 +3733,8 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         if (!query.isEmpty())
             resolved = makeString(resolved, query);
     }
+    if (hasModuleMocks) [[unlikely]]
+        resolved = Bun::keyOfImportByPackage(globalObject, resolved, referrerString);
     if (moduleMocksRun) [[unlikely]]
         resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
     Identifier resolvedKey = Identifier::fromString(vm, resolved);

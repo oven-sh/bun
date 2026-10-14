@@ -128,6 +128,7 @@ impl All {
         global_this: &JSGlobalObject,
         countdown: JSValue,
         overflow_behavior: CountdownOverflowBehavior,
+        clock: Clock,
         warn: bool,
     ) -> JsResult<u32> {
         // Both match arms below enforce the [0, i32::MAX] range (Clamp
@@ -173,7 +174,12 @@ impl All {
                             )?;
                         }
                     }
-                    1
+                    // As in @sinonjs/fake-timers, a fake timer without a delay is due now. See `FakeTimers::min_delay_ms()`.
+                    if clock == Clock::Fake && !(countdown_double > i32::MAX as f64) {
+                        0
+                    } else {
+                        1
+                    }
                 } else {
                     countdown_double as u32
                 }
@@ -201,6 +207,7 @@ impl All {
             cx.global(),
             countdown,
             CountdownOverflowBehavior::Clamp,
+            Clock::Real,
             true,
         )?;
         let wrapped_promise = promise.with_async_context_if_needed(cx.global());
@@ -251,10 +258,12 @@ impl All {
         all.last_id = all.last_id.wrapping_add(1);
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
+        let clock = all.fake_timers.clock_while_active(clock);
         let countdown_int = all.js_value_to_countdown(
             cx.global(),
             countdown,
             CountdownOverflowBehavior::OneMs,
+            clock,
             true,
         )?;
         Ok(TimeoutObject::init(
@@ -264,7 +273,7 @@ impl All {
             countdown_int,
             wrapped_callback,
             arguments,
-            all.fake_timers.clock_while_active(clock),
+            clock,
         ))
     }
 
@@ -282,10 +291,12 @@ impl All {
         all.last_id = all.last_id.wrapping_add(1);
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
+        // Never 0, on either clock: it would be due again at the time it fired, so advancing the fake clock wouldn't end.
         let countdown_int = all.js_value_to_countdown(
             cx.global(),
             countdown,
             CountdownOverflowBehavior::OneMs,
+            Clock::Real,
             true,
         )?;
         Ok(TimeoutObject::init(

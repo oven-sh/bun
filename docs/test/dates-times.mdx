@@ -169,14 +169,17 @@ vi.useFakeTimers({ toFake: ["Date"] }); // setTimeout stays real
 jest.useFakeTimers({ doNotFake: ["performance"] }); // performance.now() stays real
 ```
 
-| Name                                                           | Faked by default |
-| -------------------------------------------------------------- | ---------------- |
-| `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval`   | Yes              |
-| `Date`, `performance`, `hrtime`                                | Yes              |
-| `requestAnimationFrame`, `cancelAnimationFrame`                | Yes, with a DOM  |
-| `setImmediate`, `clearImmediate`, `nextTick`, `queueMicrotask` | No               |
+| Name                                                         | Faked by default          |
+| ------------------------------------------------------------ | ------------------------- |
+| `setTimeout`, `clearTimeout`, `setInterval`, `clearInterval` | Yes                       |
+| `Date`, `performance`, `hrtime`                              | Yes                       |
+| `requestAnimationFrame`, `cancelAnimationFrame`              | Yes, with a DOM           |
+| `setImmediate`, `clearImmediate`                             | With `vi` from `"vitest"` |
+| `nextTick`, `queueMicrotask`                                 | No                        |
 
-Vitest and Jest fake `setImmediate` by default. In `bun:test`, it stays real unless you list it in `toFake`. Bun only fakes `requestAnimationFrame` when a DOM library has defined it on `globalThis`.
+Vitest and Jest fake `setImmediate` by default. So does `vi` imported from `"vitest"`. With `vi` and `jest` from `"bun:test"`, it stays real unless you list it in `toFake`, because tests written for `bun:test` may wait for one while fake timers are on. Bun only fakes `requestAnimationFrame` when a DOM library has defined it on `globalThis`.
+
+As in Vitest and Jest, a fake `setTimeout()` without a delay is due right away, so `advanceTimersByTime(0)` runs it without moving the clock. If it's set while a fake timer's callback is running, it's due 1 ms later.
 
 `AbortSignal.timeout()`, `Bun.sleep()` and `Bun.cron()` follow the fake clock when `setTimeout` is faked.
 

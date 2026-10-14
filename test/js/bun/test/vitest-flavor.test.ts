@@ -1548,6 +1548,38 @@ describe.concurrent("behavior depends on the module a function is imported from"
     expect({ log, exitCode }).toEqual({ log: ["bun:test false 0", "vitest true 0"], exitCode: 0 });
   });
 
+  test("not.toMatchObject() with a value that isn't an object", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = fn => { try { fn(); return "passes"; } catch (error) { return /Matcher error: .*/.exec(Bun.stripANSI(error.message))?.[0] ?? "fails"; } };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, () => {
+            for (const value of [undefined, null, "string", 1]) {
+              console.log(name, String(value), "|", outcome(() => expect(value).not.toMatchObject({ a: 1 })), "|", outcome(() => expect({ a: 1 }).not.toMatchObject(value)));
+            }
+            console.log(name, outcome(() => expect({ a: 1 }).not.toMatchObject({ a: 1 })), outcome(() => expect({ a: 2 }).not.toMatchObject({ a: 1 })));
+            console.log(name, outcome(() => expect(undefined).toMatchObject({ a: 1 })) !== "passes");
+          });
+        }
+      `,
+    });
+    const refused =
+      "Matcher error: received value must be a non-null object | Matcher error: expected value must be a non-null object";
+    expect({ log, exitCode }).toEqual({
+      log: [
+        ...["undefined", "null", "string", "1"].map(value => `bun ${value} | ${refused}`),
+        "bun fails passes",
+        "bun true",
+        ...["undefined", "null", "string", "1"].map(value => `vitest ${value} | passes | passes`),
+        "vitest fails passes",
+        "vitest true",
+      ],
+      exitCode: 0,
+    });
+  });
+
   test(`"bun:test" and "@jest/globals" keep the done callback`, async () => {
     const { log, results, exitCode } = await runTests({
       "a.test.js": `
@@ -1567,7 +1599,7 @@ describe.concurrent("behavior depends on the module a function is imported from"
     expect({ log, results, exitCode }).toEqual({
       log: [
         "true false false false",
-        "true true true true true true",
+        "true false true true true true",
         "bun beforeEach function",
         "bun function",
         "bun beforeEach function",

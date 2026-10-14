@@ -491,20 +491,22 @@ As in Vitest, the context isn't a `done` callback. Calling it throws an error.
 
 In `bun test`, `"vitest"` is a built-in module, like `"bun:test"` and `"@jest/globals"`. Each module behaves like the runner it's named after, so a test file or helper module keeps the behavior it was written for:
 
-|                                                           | `"bun:test"`, `"@jest/globals"`      | `"vitest"`                                                   |
-| --------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------ |
-| Test or hook callback's parameter                         | a `done` callback that Bun waits for | the [test context](#test-context)                            |
-| `test.each` callback's extra parameter                    | a `done` callback                    | `undefined`                                                  |
-| Values in a `test.each` title                             | printed in full: `{ a: "x" }`        | printed as in Vitest: `{ a: 'x' }`, `[ 0, 1, …(118) ]`       |
-| `beforeAll` and `afterAll` callback parameters            | `(done)`                             | `({}, suite)`                                                |
-| `afterEach` and `afterAll` hooks in the same scope        | run in registration order            | run in reverse registration order                            |
-| Function returned by `beforeEach` or `beforeAll`          | ignored                              | runs after the matching `afterEach` / `afterAll` hooks       |
-| `test(name, { skip, only, todo, fails, concurrent }, fn)` | these options are ignored            | these options work like the modifiers                        |
-| `describe(name, options, fn)`                             | options are ignored                  | options are the defaults for the tests inside                |
-| `test(name)` without a callback                           | an error                             | a todo test                                                  |
-| Mock functions before each test                           | left alone                           | cleared ([`clearMocks`](/test/configuration#test-execution)) |
-| Default hook timeout                                      | same as a test's                     | 10 seconds, or `--timeout` if it's longer                    |
-| `beforeAll` in a scope with only skipped tests            | runs                                 | doesn't run                                                  |
+|                                                           | `"bun:test"`, `"@jest/globals"`      | `"vitest"`                                                           |
+| --------------------------------------------------------- | ------------------------------------ | -------------------------------------------------------------------- |
+| Test or hook callback's parameter                         | a `done` callback that Bun waits for | the [test context](#test-context)                                    |
+| `test.each` callback's extra parameter                    | a `done` callback                    | `undefined`                                                          |
+| Values in a `test.each` title                             | printed in full: `{ a: "x" }`        | printed as in Vitest: `{ a: 'x' }`, `[ 0, 1, …(118) ]`               |
+| `beforeAll` and `afterAll` callback parameters            | `(done)`                             | `({}, suite)`                                                        |
+| `afterEach` and `afterAll` hooks in the same scope        | run in registration order            | run in reverse registration order                                    |
+| Function returned by `beforeEach` or `beforeAll`          | ignored                              | runs after the matching `afterEach` / `afterAll` hooks               |
+| `test(name, { skip, only, todo, fails, concurrent }, fn)` | these options are ignored            | these options work like the modifiers                                |
+| `describe(name, options, fn)`                             | options are ignored                  | options are the defaults for the tests inside                        |
+| `test(name)` without a callback                           | an error                             | a todo test                                                          |
+| Mock functions before each test                           | left alone                           | cleared ([`clearMocks`](/test/configuration#test-execution))         |
+| Default hook timeout                                      | same as a test's                     | 10 seconds, or `--timeout` if it's longer                            |
+| `beforeAll` in a scope with only skipped tests            | runs                                 | doesn't run                                                          |
+| `.not.toMatchObject()` with a value that isn't an object  | an error                             | passes                                                               |
+| `vi.useFakeTimers()`                                      | leaves `setImmediate` real           | fakes `setImmediate` ([list](/test/dates-times#choose-what-to-fake)) |
 
 `"vitest"` also exports `suite`, `vitest`, `onTestFailed`, `assertType` and `TestRunner.getCurrentTest()`, which returns the running test's [`task`](#test-context).
 

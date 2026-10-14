@@ -854,7 +854,6 @@ impl TimerObjectInternals {
         debug_assert!(!state.is_null(), "RuntimeState not installed");
 
         let now = self.clock_now();
-        // Only `Bun.sleep()` has an `interval` below 1.
         let min_delay = if self.flags.get().fake() {
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; field read only.
             unsafe { (*state).timer.fake_timers.min_delay_ms() }

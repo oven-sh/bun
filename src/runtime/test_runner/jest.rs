@@ -390,17 +390,22 @@ pub(crate) mod Jest {
     fn create_test_module(global_object: &JSGlobalObject, flavor: Flavor) -> JsResult<JSValue> {
         let module = JSValue::create_empty_object(global_object, 32);
 
+        let copy_properties = |from: JSValue, to: JSValue| -> JsResult<()> {
+            let properties = jsc::JSPropertyIterator::init(
+                global_object,
+                from.to_object(global_object)?,
+                jsc::JSPropertyIteratorOptions::new(false, true),
+            )?;
+            while let Some((name, value)) = properties.next()? {
+                to.put(global_object, &*name, value);
+            }
+            Ok(())
+        };
+
         // Start from "bun:test"'s exports, so whatever isn't overridden below is the same object in both modules.
         if flavor == Flavor::Vitest {
             let shared = jsc::from_js_host_call(global_object, || Bun__Jest__testModuleObject(global_object))?;
-            let exports = jsc::JSPropertyIterator::init(
-                global_object,
-                shared.to_object(global_object)?,
-                jsc::JSPropertyIteratorOptions::new(false, true),
-            )?;
-            while let Some((name, value)) = exports.next()? {
-                module.put(global_object, &*name, value);
-            }
+            copy_properties(shared, module)?;
         }
 
         let scope_functions = |kind: ScopeKind, self_mode: ScopeMode, name: &'static str| {
@@ -463,7 +468,11 @@ pub(crate) mod Jest {
                 );
                 module.put(global_object, b"suite", describe_scope_functions);
                 module.put(global_object, b"TestRunner", crate::test_runner::test_context::create_test_runner(global_object));
-                if let Some(vi) = module.get(global_object, "vi")? {
+                if let Some(shared) = module.get(global_object, "vi")? {
+                    let vi = JSValue::create_empty_object(global_object, 64);
+                    copy_properties(shared, vi)?;
+                    fake_timers::put_vitest_fns(global_object, vi);
+                    module.put(global_object, b"vi", vi);
                     module.put(global_object, b"vitest", vi);
                 }
                 module.put(

@@ -12,6 +12,14 @@ pub(crate) fn to_match_object(
         this.matcher_prelude(global, frame.this(), "toMatchObject", "<green>expected<r>")?;
     let args = frame.arguments();
 
+    // Jest refuses a value that isn't an object. To Vitest it's one that doesn't match.
+    if not
+        && !(received_object.is_object() && args.first().is_some_and(|expected| expected.is_object()))
+        && this.bun_test().is_some_and(|buntest| this.is_in_vitest_test(buntest.get()))
+    {
+        return Ok(JSValue::UNDEFINED);
+    }
+
     if !received_object.is_object() {
         let signature: &str = get_signature("toMatchObject", "<green>expected<r>", not);
         return throw!(

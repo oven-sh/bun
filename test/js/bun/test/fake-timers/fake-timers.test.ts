@@ -1,6 +1,6 @@
 import { RedisClient, SQL } from "bun";
 import { heapStats } from "bun:jsc";
-import { jest, setSystemTime } from "bun:test";
+import { vi as bunVi, jest, setSystemTime } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { spawnSync as childProcessSpawnSync } from "node:child_process";
 import nodeTimers, { setTimeout as nodeSetTimeout } from "node:timers";
@@ -1023,12 +1023,18 @@ describe("useFakeTimers with options", () => {
 // useFakeTimers() swaps the globals, as in Vitest and Jest, so a saved reference to the real setTimeout stays real.
 describe("the functions useFakeTimers() replaces", () => {
   test("are other function objects, and useRealTimers() puts the real ones back", () => {
-    const names = ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] as const;
+    const names = [
+      "setTimeout",
+      "clearTimeout",
+      "setInterval",
+      "clearInterval",
+      "setImmediate",
+      "clearImmediate",
+    ] as const;
     vi.useFakeTimers();
     const fakes = Object.fromEntries(names.map(name => [name, globalThis[name]]));
     expect(names.filter(name => fakes[name] === saved[name])).toEqual([]);
     expect(names.map(name => [typeof fakes[name], fakes[name].name])).toEqual(names.map(name => ["function", name]));
-    expect(setImmediate).toBe(saved.setImmediate);
 
     vi.useFakeTimers();
     expect(names.filter(name => globalThis[name] === fakes[name] || globalThis[name] === saved[name])).toEqual([]);
@@ -1235,6 +1241,23 @@ describe("the functions useFakeTimers() replaces", () => {
     vi.advanceTimersByTime(5);
     expect({ ticks, pending: vi.getTimerCount(), now: performance.now() }).toEqual({ ticks: 1, pending: 0, now: 0 });
   });
+});
+
+test("performance can be read for the first time while the clock is at 0", async () => {
+  using dir = tempDir("fake-timers-performance", {
+    // JSC looks up a function's globals when it links the function, so only a helper reads it after useFakeTimers().
+    "a.test.js": `
+      import { expect, test, vi } from "bun:test";
+      const read = () => [performance.now(), performance.timeOrigin, performance.mark("mark", { startTime: 5 }).startTime];
+      test("in a helper", () => {
+        vi.useFakeTimers({ now: 0 });
+        expect(read()).toEqual([0, 0, 5]);
+      });
+    `,
+  });
+  const { stderr, exitCode } = await run(["test"], String(dir));
+  expect(stderr).toContain(" 1 pass\n 0 fail\n");
+  expect(exitCode).toBe(0);
 });
 
 describe.concurrent("the end of a test file", () => {
@@ -1487,7 +1510,7 @@ describe("a global with a getter", () => {
   }
 
   test("that throws leaves the current fake timers untouched", () => {
-    vi.useFakeTimers({ now: 5 });
+    vi.useFakeTimers({ now: 5, doNotFake: ["setImmediate"] });
     const fake = setTimeout;
     const fired = vi.fn();
     setTimeout(fired, 10);
@@ -1530,6 +1553,158 @@ describe("a global with a getter", () => {
   });
 });
 
+// Expected values are what Vitest 5.0.3 logs for the same code.
+describe("a timer without a delay", () => {
+  type Log = (string | number)[];
+  const at = (log: Log, name: string) => () => log.push(`${name}@${Date.now()}`);
+  const chain = async (log: Log) => {
+    for (const name of "abc") {
+      await new Promise(resolve => setTimeout(resolve, 0));
+      log.push(`${name}@${Date.now()}`);
+    }
+  };
+
+  describe.each([
+    ["vi", vi],
+    ["jest", jest],
+  ])("%s", (_, api) => {
+    const advance = (ms: number) => void api.advanceTimersByTime(ms);
+    const inATimer = (log: Log, outer: number, inner: number) =>
+      setTimeout(() => {
+        at(log, "outer")();
+        setTimeout(at(log, "inner"), inner);
+      }, outer);
+
+    test.each<[string, (log: Log) => unknown, Log]>([
+      [
+        "advancing by 0 doesn't move the clock",
+        log => (advance(0), advance(0), log.push(Date.now(), performance.now())),
+        [0, 0],
+      ],
+      ["nor after advancing by 5", log => (advance(5), advance(0), log.push(Date.now())), [5]],
+      [
+        "nor asynchronously",
+        async log => {
+          await api.advanceTimersByTimeAsync(0);
+          await api.advanceTimersByTimeAsync(0);
+          log.push(Date.now());
+        },
+        [0],
+      ],
+      ["is due now", log => (setTimeout(at(log, "0"), 0), setTimeout(at(log, "none")), advance(0)), ["0@0", "none@0"]],
+      [
+        "and so is one with a negative or NaN delay",
+        log => (setTimeout(at(log, "negative"), -5), setTimeout(at(log, "NaN"), NaN), advance(0)),
+        ["negative@0", "NaN@0"],
+      ],
+      ["a delay of 1 isn't", log => (setTimeout(at(log, "1"), 1), advance(0), log.push("-"), advance(1)), ["-", "1@1"]],
+      [
+        "set in a timer's callback, it's due 1 ms later",
+        log => (inATimer(log, 10, 0), advance(10), log.push("-"), advance(1)),
+        ["outer@10", "-", "inner@11"],
+      ],
+      [
+        "also when the outer one has no delay either",
+        log => (inATimer(log, 0, 0), advance(0), log.push("-"), advance(0), log.push("-"), advance(1)),
+        ["outer@0", "-", "-", "inner@1"],
+      ],
+      [
+        "the timer it sets counts from the time it fired at",
+        log => (inATimer(log, 0, 2000), advance(2000)),
+        ["outer@0", "inner@2000"],
+      ],
+      [
+        "runAllTimers()",
+        log => (inATimer(log, 10, 0), api.runAllTimers(), log.push(Date.now())),
+        ["outer@10", "inner@11", 11],
+      ],
+      [
+        "an interval still waits 1 ms (Vitest never returns from this)",
+        log => {
+          const interval = setInterval(at(log, "interval"), 0);
+          advance(0);
+          log.push("-");
+          advance(2);
+          clearInterval(interval);
+        },
+        ["-", "interval@1", "interval@2"],
+      ],
+      [
+        "a chain of them, advancing by 0",
+        async log => {
+          chain(log);
+          for (let i = 0; i < 3; i++) {
+            await api.advanceTimersByTimeAsync(0);
+            log.push("-");
+          }
+        },
+        ["a@0", "-", "-", "-"],
+      ],
+      [
+        "a chain of them, advancing by 5",
+        async log => {
+          chain(log);
+          await api.advanceTimersByTimeAsync(5);
+          log.push(Date.now());
+        },
+        ["a@0", "b@1", "c@2", 5],
+      ],
+    ])("%s", async (_, run, expected) => {
+      api.useFakeTimers({ now: 0 });
+      const log: Log = [];
+      await run(log);
+      expect(log).toEqual(expected);
+    });
+  });
+
+  test.each<[string, (log: Log) => unknown, Log]>([
+    ["counts as a timer", log => (setImmediate(() => {}), log.push(vi.getTimerCount())), [1]],
+    ["advanceTimersByTime(0)", log => (setImmediate(at(log, "immediate")), vi.advanceTimersByTime(0)), ["immediate@0"]],
+    ["runAllTimers()", log => (setImmediate(at(log, "immediate")), vi.runAllTimers()), ["immediate@0"]],
+    ["runOnlyPendingTimers()", log => (setImmediate(at(log, "immediate")), vi.runOnlyPendingTimers()), ["immediate@0"]],
+    [
+      "advanceTimersToNextTimer()",
+      log => (setImmediate(at(log, "immediate")), vi.advanceTimersToNextTimer()),
+      ["immediate@0"],
+    ],
+    ["its arguments", log => (setImmediate((...args) => log.push(args.join()), "a", "b"), vi.runAllTimers()), ["a,b"]],
+    [
+      "clearImmediate()",
+      log => (clearImmediate(setImmediate(at(log, "immediate"))), vi.runAllTimers(), log.push(vi.getTimerCount())),
+      [0],
+    ],
+    [
+      "fires before a timer due at the same time",
+      log => (setTimeout(at(log, "timeout"), 0), setImmediate(at(log, "immediate")), vi.advanceTimersByTime(0)),
+      ["immediate@0", "timeout@0"],
+    ],
+    [
+      "set in a timer's callback, it's due 1 ms later",
+      log => {
+        setTimeout(() => (at(log, "timeout")(), setImmediate(at(log, "immediate"))), 10);
+        vi.advanceTimersByTime(10);
+        log.push("-");
+        vi.advanceTimersByTime(1);
+      },
+      ["timeout@10", "-", "immediate@11"],
+    ],
+  ])('setImmediate() with vi.useFakeTimers() of "vitest": %s', async (_, run, expected) => {
+    vi.useFakeTimers({ now: 0 });
+    const log: Log = [];
+    await run(log);
+    expect(log).toEqual(expected);
+  });
+
+  test.each([
+    ["vi", bunVi],
+    ["jest", jest],
+  ])('setImmediate() stays real with %s.useFakeTimers() of "bun:test"', async (_, api) => {
+    api.useFakeTimers();
+    expect(setImmediate).toBe(saved.setImmediate);
+    await new Promise(resolve => setImmediate(resolve));
+  });
+});
+
 describe("useFakeTimers({ toFake, doNotFake })", () => {
   // There's no global to swap for these, so they follow whichever clock setTimeout is on.
   const likeSetTimeout = ["AbortSignal.timeout", "Bun.sleep", "Bun.cron"];
@@ -1544,7 +1719,16 @@ describe("useFakeTimers({ toFake, doNotFake })", () => {
     "hrtime",
     ...likeSetTimeout,
   ];
-  const byDefault = ["setTimeout", "setInterval", "Date", "performance", "hrtime", ...likeSetTimeout];
+  // "vitest" fakes what Vitest fakes. "bun:test" leaves setImmediate real, as it always has.
+  const defaults = [
+    [vi, everything.filter(name => name !== "nextTick" && name !== "queueMicrotask")],
+    [bunVi, everything.filter(name => name !== "nextTick" && name !== "queueMicrotask" && name !== "setImmediate")],
+    [jest, everything.filter(name => name !== "nextTick" && name !== "queueMicrotask" && name !== "setImmediate")],
+  ] as const;
+  const without =
+    (...names: string[]) =>
+    (byDefault: readonly string[]) =>
+      byDefault.filter(name => !names.includes(name));
 
   function whatIsFaked(): string[] {
     const schedulers: Record<string, () => unknown> = {
@@ -1583,11 +1767,11 @@ describe("useFakeTimers({ toFake, doNotFake })", () => {
     return everything.filter(name => found.includes(name));
   }
 
-  test.each<[object | undefined, string[]]>([
-    [undefined, byDefault],
-    [{}, byDefault],
-    [{ toFake: [] }, byDefault],
-    [{ toFake: null }, byDefault],
+  test.each<[object | undefined, string[] | ((byDefault: readonly string[]) => string[])]>([
+    [undefined, without()],
+    [{}, without()],
+    [{ toFake: [] }, without()],
+    [{ toFake: null }, without()],
     [{ toFake: ["Date"] }, ["Date"]],
     [{ toFake: ["setTimeout"] }, ["setTimeout", ...likeSetTimeout]],
     [{ toFake: ["setInterval", "clearInterval"] }, ["setInterval"]],
@@ -1598,18 +1782,19 @@ describe("useFakeTimers({ toFake, doNotFake })", () => {
     [{ toFake: ["queueMicrotask"] }, ["queueMicrotask"]],
     [{ toFake: ["Intl", "Temporal", "requestIdleCallback", "cancelIdleCallback"] }, []],
     [{ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] }, []],
-    [{ doNotFake: [] }, byDefault],
-    [{ doNotFake: ["Date"] }, byDefault.filter(name => name !== "Date")],
-    [{ doNotFake: ["performance", "hrtime"] }, ["setTimeout", "setInterval", "Date", ...likeSetTimeout]],
-    [{ doNotFake: ["setTimeout"] }, ["setInterval", "Date", "performance", "hrtime"]],
-    [{ doNotFake: ["nextTick", "setImmediate"] }, byDefault],
-    [{ toNotFake: ["setInterval"] }, byDefault.filter(name => name !== "setInterval")],
+    [{ doNotFake: [] }, without()],
+    [{ doNotFake: ["Date"] }, without("Date")],
+    [{ doNotFake: ["performance", "hrtime"] }, without("performance", "hrtime")],
+    [{ doNotFake: ["setTimeout"] }, without("setTimeout", ...likeSetTimeout)],
+    [{ doNotFake: ["nextTick", "setImmediate"] }, without("setImmediate")],
+    [{ toNotFake: ["setInterval"] }, without("setInterval")],
     [
       { toFake: ["Date", "setTimeout", "setImmediate"], doNotFake: ["Date"] },
       ["setTimeout", "setImmediate", ...likeSetTimeout],
     ],
-  ])("%j", (options, expected) => {
-    for (const api of [vi, jest]) {
+  ])("%j", (options, faked) => {
+    for (const [api, byDefault] of defaults) {
+      const expected = typeof faked === "function" ? faked(byDefault) : faked;
       api.useFakeTimers(options as any);
       expect(setTimeout !== saved.setTimeout).toBe(expected.includes("setTimeout"));
       expect(whatIsFaked()).toEqual(expected);

@@ -196,7 +196,7 @@ impl BuildCommand {
             };
             if let Some(kind) = kind {
                 bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> cannot use {} source map without --outdir or --outfile (use --sourcemap=inline to print it to stdout)",
+                    "<r><red>error<r><d>:<r> cannot use {} source map without --outdir or --outfile\n<blue>note<r><d>:<r> use --sourcemap=inline to print the source map to stdout",
                     kind
                 );
                 Global::exit(1);

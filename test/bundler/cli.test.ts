@@ -406,7 +406,8 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
     );
     expect(stdout).toBe("");
     expect(stderr).toBe(
-      `error: cannot use ${kind === "external" ? "an external" : "a linked"} source map without --outdir or --outfile (use --sourcemap=inline to print it to stdout)\n`,
+      `error: cannot use ${kind === "external" ? "an external" : "a linked"} source map without --outdir or --outfile\n` +
+        `note: use --sourcemap=inline to print the source map to stdout\n`,
     );
     expect(tree(String(dir))).toEqual(fixture);
     expect(exitCode).toBe(1);
@@ -443,6 +444,24 @@ describe.concurrent("--sourcemap never writes next to the entry point", () => {
       for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
     },
   );
+
+  test("--no-bundle --outfile in another directory writes there", async () => {
+    using dir = tempDir("build-no-bundle-outfile-dir", fixture);
+    const { stdout, stderr, exitCode } = await build(
+      String(dir),
+      "src/entry.js",
+      "--no-bundle",
+      "--outfile=dist/js/entry.js",
+    );
+    expect(stderr).toBe("");
+    expect(stdout).toContain("entry.js");
+    expect(exitCode).toBe(0);
+
+    const after = tree(String(dir));
+    expect(Object.keys(after)).toEqual(["dist/js/entry.js", ...Object.keys(fixture)]);
+    expect(after["dist/js/entry.js"]).toContain("console.log(dep)");
+    for (const file of Object.keys(fixture)) expect(after[file]).toBe(fixture[file]);
+  });
 
   test("a standalone html build with --sourcemap and no --outdir writes to the cwd", async () => {
     using dir = tempDir("build-sourcemap-standalone-html", fixture);

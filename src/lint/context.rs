@@ -53,6 +53,8 @@ pub struct Details {
     pub end_position: Option<Position>,
     /// [`Report::comments_apply_at`]
     pub comments_apply_at: Option<Span>,
+    /// [`Report::claims`], or [`Report::unless_claimed`]
+    pub(crate) claim: Option<Claim>,
     /// [`Report::listened_on`]
     pub listened_on: Option<Span>,
     /// What is said at the place of the report.
@@ -105,8 +107,49 @@ pub(crate) struct Sink {
     pub(crate) calls_in_turns: OnceCell<Box<[(Span, u32)]>>,
     /// A rule has asked for [`File::modules`]: the file may be linted again.
     pub(crate) asks_about_modules: Cell<bool>,
-    /// [`Cx::is_decided_with_types`]: the rules that it is true for, by [`CxBase::rule`].
-    pub(crate) yields_to_types: Cell<crate::rule_set::RuleBits>,
+    /// The rules of the [pairs](crate::rule_set::Pairs) that are at work on the file, by [`CxBase::rule`], each with the number
+    /// of its pair in the file and whether it is the rule with types.
+    pub(crate) paired: RefCell<SmallVec<[(u16, u8, bool); 8]>>,
+}
+
+/// The node that a rule of a [pair](crate::rule_set::Pairs) reports a problem in, by its span. Nodes in each other can start
+/// at the same place or end at the same place: `a.filter(f)[0].filter(f)`, `async () => async () => 1`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Claim {
+    start: u32,
+    end: u32,
+    pair: u8,
+    /// The report is of the rule with types.
+    pub(crate) with_types: bool,
+}
+
+impl Claim {
+    /// What the report of the rule with types has for the same node.
+    pub(crate) fn with_types(self) -> Claim {
+        Claim {
+            with_types: true,
+            ..self
+        }
+    }
+}
+
+impl Sink {
+    /// `rule`: [`CxBase::rule`]. `None`: it is not the rule with types, or the one without, of a pair that is at work on the
+    /// file. So code that both rules of a pair run can claim and report unless claimed.
+    fn claim_of(&self, rule: u16, with_types: bool, node: Span) -> Option<Claim> {
+        let paired = self.paired.borrow();
+        let pair = paired
+            .iter()
+            .find(|it| it.0 == rule && it.2 == with_types)?
+            .1;
+        let Span { start, end } = node;
+        Some(Claim {
+            start,
+            end,
+            pair,
+            with_types,
+        })
+    }
 }
 
 impl File<'_> {
@@ -162,6 +205,13 @@ impl<'a, R: Rule> Cx<'a, R> {
         self.base.file
     }
 
+    /// For a rule with types: the rule without types of its [pair](crate::rule_set::Pairs) is at work on the file too, and what
+    /// that one reports is hidden where this one [claims](Report::claims) the node.
+    pub fn stands_in(&self) -> bool {
+        let paired = self.base.file.sink.paired.borrow();
+        paired.iter().any(|it| it.0 == self.base.rule && it.2)
+    }
+
     /// Reports `message` at a node, a token, a comment or a [`Span`].
     ///
     /// What is returned adds to the report, which is made when it goes out of scope:
@@ -172,23 +222,6 @@ impl<'a, R: Rule> Cx<'a, R> {
     ///     .fix(|fixer| fixer.remove(declaration));
     /// ```
     #[inline]
-    /// For a rule without types that looks for what a rule with types looks for too. Whether that rule runs on the file and
-    /// `subject`, the value whose type it goes by, has one: then it decides, and this rule says nothing. It says nothing about
-    /// an `any` or a name that is not declared, which are left to this rule.
-    pub fn is_decided_with_types(&self, subject: crate::ast::Expr<'a>) -> bool {
-        self.base
-            .file
-            .sink
-            .yields_to_types
-            .get()
-            .has(self.base.rule)
-            && {
-                let ty = subject.ty();
-                !ty.is_unresolved()
-                    && !crate::types::tsutils::is_type_flag_set(ty, crate::types::TypeFlags::ANY)
-            }
-    }
-
     pub fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
         self.base.report(at.span(), at.packed_node(), message)
     }
@@ -400,6 +433,28 @@ impl<'a> Report<'a> {
     pub fn end_at(mut self, end: Position) -> Self {
         if let Some(details) = self.details() {
             details.end_position = Some(end);
+        }
+        self
+    }
+
+    /// For a rule with types that has a [pair](crate::rule_set::Pairs): the problem is in `node`. While this report is shown, what
+    /// the rule without types reports [about `node`](Report::unless_claimed) is not. Both name the same node.
+    pub fn claims(self, node: impl Spanned) -> Self {
+        self.claim(true, node.span())
+    }
+
+    /// For a rule without types that has a [pair](crate::rule_set::Pairs): see [`Report::claims`].
+    pub fn unless_claimed(self, node: impl Spanned) -> Self {
+        self.claim(false, node.span())
+    }
+
+    fn claim(mut self, with_types: bool, node: Span) -> Self {
+        let rule = self.diagnostic.as_ref().map(|it| it.rule);
+        let claim = rule.and_then(|rule| self.file.sink.claim_of(rule, with_types, node));
+        if claim.is_some()
+            && let Some(details) = self.details()
+        {
+            details.claim = claim;
         }
         self
     }

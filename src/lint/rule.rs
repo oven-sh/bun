@@ -381,9 +381,9 @@ pub struct Meta {
     pub is_deprecated: bool,
     /// The rule of ESLint that this rule of typescript-eslint replaces.
     pub extends_base_rule: Option<&'static str>,
-    /// For a rule without types: the rule of typescript-eslint that looks for the same with types, and whether this one goes on
-    /// beside it. See [`Pairs`](crate::rule_set::Pairs), which is made of it when the linter is compiled.
-    pub(crate) with_types: Option<(&'static str, bool)>,
+    /// For a rule without types: the rule of typescript-eslint that looks for the same with types. See
+    /// [`Pairs`](crate::rule_set::Pairs), which is made of it when the linter is compiled.
+    pub(crate) with_types: Option<&'static str>,
     /// It is about several files: see [`modules`](crate::modules).
     pub needs_modules: bool,
     /// The rule is a port of oxlint's version, not of the ESLint plugin's, so the messages, locations, fixes and options are
@@ -542,15 +542,9 @@ impl Meta {
         self
     }
 
-    /// [`Meta::with_types`]: it does not run beside that rule.
-    pub const fn replaced_with_types_by(mut self, name: &'static str) -> Meta {
-        self.with_types = Some((name, false));
-        self
-    }
-
-    /// [`Meta::with_types`]: it goes on beside that rule, and asks [`Cx::is_decided_with_types`](crate::context::Cx).
-    pub const fn yields_with_types_to(mut self, name: &'static str) -> Meta {
-        self.with_types = Some((name, true));
+    /// [`Meta::with_types`]
+    pub const fn with_types(mut self, name: &'static str) -> Meta {
+        self.with_types = Some(name);
         self
     }
 

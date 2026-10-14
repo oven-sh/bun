@@ -77,18 +77,10 @@ pub trait RuleSet: Starts + Sized + 'static {
 
 /// The rules without types whose check a rule of typescript-eslint makes with types: the core rule that it extends, and
 /// unicorn's rule for the same code. A problem is reported once: with an `.oxlintrc.json` and types for the file, where both
-/// are on only the rule with types runs, with the more severe of the two severities.
-///
-/// Two of unicorn's rules go on: the rule with types says nothing about a value without a type, and `prefer-find` looks at
-/// fewer uses of the array than `prefer-array-find`. They say nothing where the other decides:
-/// [`Cx::is_decided_with_types`](crate::context::Cx::is_decided_with_types).
+/// are on, the rule with types [claims](crate::context::Report::claims) each node that it reports, and what the other has to
+/// say about that node [is not shown](crate::context::Report::unless_claimed). Neither knows what the other looks at.
 pub struct Pairs {
     pub(crate) without_types: RuleBits,
-    /// Those of them that go on.
-    pub(crate) yielding: RuleBits,
-    /// Those of them for which a comment that disables them has nothing to do where the other rule reports: those that go on,
-    /// and those with a name of their own. A comment with the name that both have is about the other rule too.
-    pub(crate) keeps_comments: RuleBits,
     /// For each of them, by its number: the number of the rule with types.
     pub(crate) typed: [u16; NUMBERS],
 }
@@ -112,8 +104,6 @@ impl Pairs {
     const fn of(metas: &[Option<&'static Meta>]) -> Pairs {
         let mut pairs = Pairs {
             without_types: RuleBits::EMPTY,
-            yielding: RuleBits::EMPTY,
-            keeps_comments: RuleBits::EMPTY,
             typed: [u16::MAX; NUMBERS],
         };
         let mut typed = 0;
@@ -130,27 +120,16 @@ impl Pairs {
                 if let Some(it) = metas[number]
                     && !it.requires_types
                 {
-                    let goes_on = match (it.with_types, with_types.extends_base_rule) {
-                        (Some((name, goes_on)), _) if is_same_text(name, with_types.name) => {
-                            Some(goes_on)
+                    let is_pair = match (it.with_types, with_types.extends_base_rule) {
+                        (Some(name), _) => is_same_text(name, with_types.name),
+                        (None, Some(base)) => {
+                            matches!(it.plugin, Plugin::Eslint) && is_same_text(base, it.name)
                         }
-                        (None, Some(base))
-                            if matches!(it.plugin, Plugin::Eslint)
-                                && is_same_text(base, it.name) =>
-                        {
-                            Some(false)
-                        }
-                        _ => None,
+                        (None, None) => false,
                     };
-                    if let Some(goes_on) = goes_on {
+                    if is_pair {
                         pairs.without_types.insert(number as u16);
                         pairs.typed[number] = typed as u16;
-                        if goes_on {
-                            pairs.yielding.insert(number as u16);
-                        }
-                        if goes_on || !is_same_text(it.name, with_types.name) {
-                            pairs.keeps_comments.insert(number as u16);
-                        }
                     }
                 }
                 number += 1;

@@ -189,6 +189,8 @@ pub struct LintMessage {
     pub end: Option<(u32, u32)>,
     /// The file is not linted because of it.
     pub is_fatal: bool,
+    /// [`Report::claims`](crate::context::Report::claims)
+    pub claim: Option<crate::context::Claim>,
     pub fix: Option<Fix>,
     pub suggestions: Vec<Suggestion>,
     pub suppressions: Vec<Suppression>,
@@ -264,6 +266,7 @@ impl Default for LintMessage {
             column: 0,
             end: None,
             is_fatal: false,
+            claim: None,
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),
@@ -317,6 +320,7 @@ impl<'a> Locator<'a> {
             column,
             end: Some(self.position(span.end)),
             is_fatal: false,
+            claim: None,
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),

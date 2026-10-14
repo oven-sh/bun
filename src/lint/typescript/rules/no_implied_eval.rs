@@ -19,16 +19,7 @@ const GLOBAL_CANDIDATES: [&str; 3] = ["global", "globalThis", "window"];
 const EVAL_LIKE_FUNCTIONS: [&str; 4] = ["execScript", "setImmediate", "setInterval", "setTimeout"];
 
 fn is_global_candidate(object: Expr) -> bool {
-    let is_oxlint = object.file().language().is_oxlint;
-    match object.kind() {
-        ExprKind::Ident(name) => name.is_any(&GLOBAL_CANDIDATES),
-        // `globalThis.globalThis`, which the core rule follows.
-        ExprKind::Dot { obj, name, .. } if is_oxlint => name.name().is_any(&GLOBAL_CANDIDATES) && is_global_candidate(obj),
-        ExprKind::Index { obj, index, .. } if is_oxlint => {
-            index.as_string().is_some_and(|it| it.is_any(&GLOBAL_CANDIDATES)) && is_global_candidate(obj)
-        }
-        _ => false,
-    }
+    object.as_ident().is_some_and(|name| name.is_any(&GLOBAL_CANDIDATES))
 }
 
 fn get_callee_name(node: Expr<'_>, is_oxlint: bool) -> Option<Name<'_>> {
@@ -137,10 +128,11 @@ impl Rule for NoImpliedEval {
                 .ts_symbol()
                 .is_some_and(|symbol| symbol.declarations().any(|declaration| declaration.is_in_linted_file()));
             if !is_declared_in_file {
-                match handler.is_parenthesized() {
+                let report = match handler.is_parenthesized() {
                     true => cx.report(handler.outer_span(), NO_IMPLIED_EVAL_ERROR),
                     false => cx.report(handler, NO_IMPLIED_EVAL_ERROR),
                 };
+                report.claims(node);
             }
             return;
         }

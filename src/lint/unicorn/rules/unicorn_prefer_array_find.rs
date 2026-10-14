@@ -10,8 +10,7 @@ pub struct PreferArrayFind;
 const PREFER_ARRAY_FIND: Message = Message::new("", "Prefer `find` over filtering and accessing the first result.");
 
 impl Rule for PreferArrayFind {
-    const META: Meta =
-        Meta::oxlint(Plugin::Unicorn, "prefer-array-find", Kind::Suggestion).yields_with_types_to("prefer-find");
+    const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-find", Kind::Suggestion).with_types("prefer-find");
     const ON: On = On::new().method_calls(&["filter"]);
     no_state!();
 
@@ -30,12 +29,8 @@ impl Rule for PreferArrayFind {
         {
             // The name `filter`.
             let callee = call.callee();
-            // `a.filter(f)[0]` and `a.filter(f).at(0)` are all that typescript-eslint's `prefer-find` looks at.
-            if is_first_taken_at_once(e) && callee.object().is_some_and(|it| cx.is_decided_with_types(it)) {
-                return;
-            }
             let property = static_property_info(callee).filter(|_| !callee.is_parenthesized());
-            cx.report(property.map_or_else(|| e.span(), |it| it.0), PREFER_ARRAY_FIND);
+            cx.report(property.map_or_else(|| e.span(), |it| it.0), PREFER_ARRAY_FIND).unless_claimed(e);
         }
     }
 }
@@ -55,24 +50,6 @@ fn is_array_pattern_of_one(pat: Pat) -> bool {
 fn is_array_target_of_one(target: Expr) -> bool {
     matches!(target.kind(), ExprKind::Array(elements) if elements.len() == 1
         && elements.first().is_some_and(|it| !matches!(it.tag(), ExprTag::Missing | ExprTag::Spread)))
-}
-
-/// `a.filter(f)[0]`, `a.filter(f).at(0)`: not `a.filter(f)?.[0]` or `a.filter(f).at?.(0)`.
-fn is_first_taken_at_once(filter_call: Expr) -> bool {
-    let Some(Node::Expr(member)) = outermost_wrapper(filter_call).map(|it| it.parent()) else {
-        return false;
-    };
-    if member.is_optional() {
-        return false;
-    }
-    if member.index().is_some_and(is_number_0) {
-        return true;
-    }
-    let Some(Node::Expr(parent)) = outermost_wrapper(member).map(|it| it.parent()) else {
-        return false;
-    };
-    static_property_name(member).is_some_and(|it| it.is("at"))
-        && (parent.as_call()).is_some_and(|it| !it.is_optional() && it.args().first().is_some_and(|it| is_number_value(it, 0.0)))
 }
 
 /// `filter_call`: `a.filter(f)`

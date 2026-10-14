@@ -7,6 +7,7 @@ use crate::ast::{
     Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Ident, Key, KeyKind, List, Member,
     MemberKind, ModuleName, Node, Prop, PropKind, Stmt, StmtKind, StmtTag, VarDecl, VarKind,
 };
+use crate::fix::{Fix, Fixer};
 use crate::language::{LanguageOptions, SourceType};
 use crate::semantic::{Declaration, Scope, ScopeKind, Symbol};
 use crate::span::Span;
@@ -402,6 +403,18 @@ pub fn after_comment_decoration(mut line: &[u8], is_block: bool) -> &[u8] {
             trimmed => return trimmed,
         };
     }
+}
+
+/// What `no-throw-literal` makes of `throw "a"`: `throw new Error("a")`. `None`: `argument`, without what only concerns types, is
+/// not a string or a template.
+pub fn wrap_in_new_error(fixer: Fixer, argument: Expr) -> Option<Fix> {
+    let inner = argument.skip_type_wrappers();
+    if !matches!(inner.tag(), ExprTag::String | ExprTag::Template) {
+        return None;
+    }
+    let whole = argument.outer_span();
+    let text = fixer.file().slice(whole);
+    Some(fixer.replace(whole, [&b"new Error("[..], text, b")"].concat()))
 }
 
 /// `format_word_list`: `a`, `a and b`, `a, b, and c`.

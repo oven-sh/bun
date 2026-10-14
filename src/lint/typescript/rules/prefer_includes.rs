@@ -23,8 +23,13 @@ fn is_number(node: Expr, value: f64) -> bool {
 
 /// tsgolint's `isNumberLiteral`: a numeric literal, or `-` before one. Nothing is evaluated.
 fn tsgolint_is_number_literal(node: Expr, value: f64) -> bool {
+    if node.is_parenthesized() {
+        return false;
+    }
     match node.kind() {
-        ExprKind::Unary { op: UnOp::Minus, operand } => operand.as_number().map(|number| -number) == Some(value),
+        ExprKind::Unary { op: UnOp::Minus, operand } => {
+            !operand.is_parenthesized() && operand.as_number().map(|number| -number) == Some(value)
+        }
         _ => node.as_number() == Some(value),
     }
 }
@@ -295,18 +300,19 @@ impl PreferIncludes {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
+        // tsgolint wants the call on the left as it is written.
+        if is_oxlint && call_node.is_parenthesized() {
+            return;
+        }
         // Upstream's selector takes every `MemberExpression` directly in the call: also an argument.
         // tsgolint takes the callee alone.
         let candidates = if is_oxlint { 1 } else { usize::MAX };
         for node in std::iter::once(call.callee()).chain(call.args()).take(candidates) {
             let is_index_of = if is_oxlint {
-                // With a name that is no `#indexOf`. `(a?.indexOf)(b)` calls a `ChainExpression`.
-                let is_named = match node.kind() {
-                    ExprKind::Dot { name, .. } => name.name().is("indexOf"),
-                    ExprKind::Index { index, .. } => index.as_string().is_some_and(|it| it.is("indexOf")),
-                    _ => false,
-                };
-                is_named && !node.is_chain_root() && tsgolint_is_number_literal(right, number)
+                // The property access as it is written, with a name that is no `#indexOf`.
+                matches!(node.kind(), ExprKind::Dot { name, .. } if name.name().is("indexOf"))
+                    && !node.is_parenthesized()
+                    && tsgolint_is_number_literal(right, number)
             } else {
                 // `(a?.indexOf)(b)` calls a `ChainExpression`.
                 matches!(node.tag(), ExprTag::Dot | ExprTag::Index)
@@ -330,13 +336,9 @@ impl PreferIncludes {
             {
                 continue;
             }
-            let report = cx.report(compare_node, PREFER_INCLUDES);
+            let report = cx.report(compare_node, PREFER_INCLUDES).claims(compare_node);
             // `a?.indexOf(b) !== -1` is not the same as `a?.includes(b)`. tsgolint makes it that.
             if call_node.is_chain_root() && !is_oxlint {
-                continue;
-            }
-            // The fix is for `a.indexOf(b) !== -1` as it is written.
-            if is_oxlint && (node.tag() != ExprTag::Dot || node.is_parenthesized() || call_node.is_parenthesized()) {
                 continue;
             }
             report.fix(|fixer| {

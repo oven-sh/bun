@@ -77,7 +77,7 @@ pub use syntax::{
 };
 
 use crate::ast::File;
-use crate::context::{Diagnostic, Severity};
+use crate::context::{Claim, Diagnostic, Severity};
 use crate::js_plugin;
 use crate::options::{Json, Options};
 use crate::oxlint_order::Ran as InOxlint;
@@ -802,44 +802,33 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
-        // See `Pairs`.
+        // See `Pairs`. Where the rule without types is the more severe, both report as they are: a report less would be a
+        // milder one.
         let pairs = S::PAIRS;
         if file.types.is_some()
             && file.language().is_oxlint
             && (!is_plain || prepared.on.intersects(&pairs.without_types))
         {
-            let mut on = RuleBits::EMPTY;
-            for it in enabled.iter().filter(|it| it.severity != Severity::Off) {
-                on.insert(it.rule.number());
-            }
-            // The rules with types that stand in for another, each with the severity of that one.
-            let mut standing_in: smallvec::SmallVec<[(u16, Severity); 4]> = Default::default();
-            let mut yields = RuleBits::EMPTY;
-            for (index, it) in enabled.iter_mut().enumerate() {
+            let mut paired = file.sink.paired.borrow_mut();
+            for (index, it) in enabled.iter().enumerate() {
                 let number = it.rule.number();
-                let typed = pairs.typed[number as usize];
-                if !on.has(number) || !pairs.without_types.has(number) || !on.has(typed) {
+                if it.severity == Severity::Off || !pairs.without_types.has(number) {
                     continue;
                 }
-                standing_in.push((typed, it.severity));
-                match pairs.yielding.has(number) {
-                    true => yields.insert(index as u16),
-                    false => it.severity = Severity::Off,
-                }
-                if pairs.keeps_comments.has(number) {
-                    let meta = S::METAS.get(number as usize).copied().flatten();
-                    rules_to_ignore.extend(meta.map(RuleId::Known));
-                }
-            }
-            if !standing_in.is_empty() {
-                for it in &mut enabled {
-                    let number = it.rule.number();
-                    for &(_, severity) in standing_in.iter().filter(|other| other.0 == number) {
-                        it.severity = it.severity.max(severity);
+                let typed = pairs.typed[number as usize];
+                let with_types = (enabled.iter()).position(|other| {
+                    other.rule.number() == typed && other.severity >= it.severity
+                });
+                if let Some(with_types) = with_types {
+                    let with_types = with_types as u16;
+                    let known = paired.iter().find(|it| it.0 == with_types).map(|it| it.1);
+                    let pair = known.unwrap_or(paired.len() as u8);
+                    if known.is_none() {
+                        paired.push((with_types, pair, true));
                     }
+                    paired.push((index as u16, pair, false));
                 }
             }
-            file.sink.yields_to_types.set(yields);
         }
         let wants_places = options.wants_places || wants_fixes || has_directives;
         let of_js = problems.len() - before_js;
@@ -960,6 +949,14 @@ impl<S: RuleSet> Linter<S> {
             }
         }
         let places = wants_places.then_some(&locator);
+        // Without comments that disable, all that is reported is shown.
+        let claims = diagnostics
+            .iter()
+            .filter_map(|it| it.details.as_deref()?.claim);
+        let shown: Vec<Claim> = match has_directives {
+            true => Vec::new(),
+            false => sorted(claims.filter(|it| it.with_types)),
+        };
         // What becomes of what the last rule and `messageId` change that change something.
         let mut changes = (None, config::OxlintChanges::default());
         for (at, step) in order.into_iter().zip(1..) {
@@ -969,6 +966,10 @@ impl<S: RuleSet> Linter<S> {
             let Some(rule) = ran(diagnostic.rule as usize) else {
                 continue;
             };
+            let claim = diagnostic.details.as_deref().and_then(|it| it.claim);
+            if claim.is_some_and(|it| is_hidden(it, &shown)) {
+                continue;
+            }
             let changes_something = diagnostic.fix.is_some() || !diagnostic.suggestions.is_empty();
             let follows_oxlint = changes_something && file.language().is_oxlint;
             let key = Some((diagnostic.rule, diagnostic.message_id));
@@ -983,6 +984,7 @@ impl<S: RuleSet> Linter<S> {
                     true => step + before_in_run(step),
                     false => ranks.get(at as usize).copied().unwrap_or(0),
                 },
+                claim,
                 ..to_message(diagnostic, rule.reported_as(), places)
             });
             let Some(message) =
@@ -1111,6 +1113,13 @@ impl<S: RuleSet> Linter<S> {
                         comments.iter().filter(is_directive).filter(is_understood),
                         messages,
                     );
+                    let is_shown = |it: &&LintMessage| it.suppressions.is_empty();
+                    let claims = messages.iter().filter(is_shown).filter_map(|it| it.claim);
+                    let shown = sorted(claims.filter(|it| it.with_types));
+                    messages.retain(|it| {
+                        !it.suppressions.is_empty()
+                            || !it.claim.is_some_and(|it| is_hidden(it, &shown))
+                    });
                     LintMessage::sort(messages);
                 } else {
                     disable::apply_disable_directives(
@@ -1181,6 +1190,17 @@ fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
     }
 }
 
+fn sorted(claims: impl Iterator<Item = Claim>) -> Vec<Claim> {
+    let mut claims: Vec<Claim> = claims.collect();
+    claims.sort_unstable();
+    claims
+}
+
+/// [`Report::unless_claimed`](crate::context::Report::unless_claimed). `shown`: the claims of the reports that are shown, sorted.
+fn is_hidden(claim: Claim, shown: &[Claim]) -> bool {
+    !claim.with_types && shown.binary_search(&claim.with_types()).is_ok()
+}
+
 /// Takes out of `diagnostic` what is on the heap. `locator`: `None` if nothing reads where it is.
 #[inline]
 fn to_message(
@@ -1209,6 +1229,7 @@ fn to_message(
             None => end,
         }),
         is_fatal: false,
+        claim: None,
         fix: diagnostic.fix.take(),
         suggestions: match diagnostic.suggestions.is_empty() {
             true => Vec::new(),
@@ -1247,6 +1268,7 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs, wants_fixes: bool) ->
         column: report.column.unwrap_or(0),
         end: report.end,
         is_fatal: false,
+        claim: None,
         fix: report.fix.filter(|_| wants_fixes),
         suggestions: (report.suggestions.into_iter().filter(|_| wants_fixes))
             .map(Into::into)
@@ -1336,6 +1358,7 @@ impl ThrownError<'_> {
             column: 0,
             end: None,
             is_fatal: true,
+            claim: None,
             fix: None,
             suggestions: Vec::new(),
             suppressions: Vec::new(),

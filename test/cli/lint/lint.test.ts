@@ -4403,209 +4403,380 @@ maybe(() => { return f; });
         const tsconfig = JSON.stringify({
           compilerOptions: { strict: true, target: "esnext", lib: ["esnext", "dom"] },
         });
-        const both = (rules: string[], severity = "error") =>
-          rc({ plugins: ["unicorn", "typescript"], rules: Object.fromEntries(rules.map(it => [it, severity])) });
-        /** Each row in a directory of its own. What is reported for each text. */
-        const lintRows = async (rows: [rules: string[], text: string][], args: string[]) => {
+        const config = (rules: Record<string, string>, more: object = {}) =>
+          rc({ plugins: ["unicorn", "typescript"], env: { browser: true }, rules, ...more });
+        const on = (rules: string[]) => config(Object.fromEntries(rules.map(it => [it, "error"])));
+        /** Each row in a directory of its own. What is reported for each, in the order of the rows. */
+        const lintRows = async (rows: [config: string, text: string][], args: string[]) => {
           const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
-          rows.forEach(([rules, text], index) => {
-            files[`${index}/.oxlintrc.json`] = both(rules);
+          rows.forEach(([config, text], index) => {
+            files[`${index}/.oxlintrc.json`] = config;
             files[`${index}/tsconfig.json`] = tsconfig;
             files[`${index}/a.ts`] = text;
           });
           const all = places((await lint(files, ["-f", "json", ...args])).raw);
-          return Object.fromEntries(
-            rows.map(([, text], index) => [
-              text,
-              all.filter(it => it.startsWith(`${index}/`)).map(it => it.slice(`${index}/`.length)),
-            ]),
+          return rows.map((_, index) =>
+            all.filter(it => it.startsWith(`${index}/`)).map(it => it.slice(`${index}/`.length)),
           );
         };
-        const includes = ["unicorn/prefer-includes", "typescript/prefer-includes"];
-        const find = ["unicorn/prefer-array-find", "typescript/prefer-find"];
-        const rows: [rules: string[], text: string][] = [
-          [["require-await", "typescript/require-await"], "export async function f() {\n  return 1;\n}\n"],
-          [["no-implied-eval", "typescript/no-implied-eval"], 'setTimeout("alert(1)", 1);\n'],
-          [["prefer-promise-reject-errors", "typescript/prefer-promise-reject-errors"], "void Promise.reject(5);\n"],
-          [["no-throw-literal", "typescript/only-throw-error"], 'throw "a";\n'],
+        // The rule without types, the rule with types, and code with one thing to report per line.
+        const pairs: [untyped: string, typed: string, lines: string[]][] = [
           [
-            ["prefer-destructuring", "typescript/prefer-destructuring"],
-            "declare const o: { a: number };\nexport const a = o.a;\n",
-          ],
-          [["dot-notation", "typescript/dot-notation"], 'declare const o: { a: number };\nexport const a = o["a"];\n'],
-          [
-            ["consistent-return", "typescript/consistent-return"],
-            "export function f(a: boolean) {\n  if (a) return 1;\n  return;\n}\n",
-          ],
-          [
-            ["unicorn/prefer-string-starts-ends-with", "typescript/prefer-string-starts-ends-with"],
-            "declare const s: string;\nexport const a = /^a/.test(s);\n",
-          ],
-          // The rule with types goes by the type of `s`. Without one it says nothing, and the other rule does.
-          [includes, 'declare const s: string[];\nexport const a = s.indexOf("a") !== -1;\n'],
-          [includes, 'declare const s: any;\nexport const a = s.indexOf("a") !== -1;\n'],
-          [includes, 'declare const s: string[];\nexport const a = s["indexOf"]("a") !== -1;\n'],
-          [includes, 'declare const s: { indexOf(a: string): number };\nexport const a = s.indexOf("a") !== -1;\n'],
-          [find, "declare const s: string[];\nexport const a = s.filter(Boolean)[0];\n"],
-          [find, "declare const s: string[];\nexport const a = s.filter(Boolean).at(0);\n"],
-          [find, "declare const s: any;\nexport const a = s.filter(Boolean)[0];\n"],
-          // `prefer-find` does not look at these.
-          [find, "declare const s: string[];\nexport const a = s.filter(Boolean).shift();\n"],
-          [find, "declare const s: string[];\nexport const [a] = s.filter(Boolean);\n"],
-          [find, "declare const s: string[];\nexport const a = s.filter(Boolean).at?.(0);\n"],
-          // The types say that it is fine.
-          [
-            ["require-await", "typescript/require-await"],
-            "export async function f() {\n  return new Promise<void>(r => r());\n}\n",
+            "require-await",
+            "typescript/require-await",
+            [
+              "declare const p: Promise<number>;",
+              "export async function a() { return 1; }",
+              "export const b = async () => 1;",
+              "export const c = { async m() { return 1; } };",
+              "export class D { async m() { return 1; } }",
+              "export async function e() { return p; }",
+              "export async function f() { await p; }",
+              "export async function* g() { yield 1; }",
+            ],
           ],
           [
-            ["no-throw-literal", "typescript/only-throw-error"],
-            "export class E extends Error {\n  f() {\n    throw this;\n  }\n}\n",
+            "no-implied-eval",
+            "typescript/no-implied-eval",
+            [
+              'setTimeout("alert(1)", 1);',
+              'window.setTimeout("alert(1)", 1);',
+              'self.setTimeout("alert(1)", 1);',
+              'window[`setTimeout`]("alert(1)", 1);',
+              '(window?.setTimeout)("alert(1)", 1);',
+              "declare const s: string;",
+              "setTimeout(s, 1);",
+              "setTimeout(() => {}, 1);",
+              "export {};",
+            ],
+          ],
+          [
+            "no-throw-literal",
+            "typescript/only-throw-error",
+            [
+              "declare const e: Error;",
+              "declare const x: any;",
+              'export function a() { throw "a"; }',
+              "export function b() { throw 1; }",
+              'export function c() { throw "a" as any; }',
+              "export function d() { throw class extends Error {}; }",
+              'export function f() { throw x && "a"; }',
+              "export function g(s: string) { throw s; }",
+              "export function h() { throw e; }",
+            ],
+          ],
+          [
+            "prefer-promise-reject-errors",
+            "typescript/prefer-promise-reject-errors",
+            [
+              "declare const s: string;",
+              "void Promise.reject(5);",
+              'void Promise[("reject")](5);',
+              "void new Promise((_, reject) => reject(5));",
+              "void new Promise((...a) => a[1](5));",
+              "void Promise.reject(s);",
+              'void Promise.reject(new Error("a"));',
+            ],
+          ],
+          [
+            "prefer-destructuring",
+            "typescript/prefer-destructuring",
+            [
+              "declare const o: { a: number; b: number[] };",
+              "export const a = o.a;",
+              "export const b: number[] = o.b;",
+              "export const { b: c } = o;",
+            ],
+          ],
+          [
+            "unicorn/prefer-string-starts-ends-with",
+            "typescript/prefer-string-starts-ends-with",
+            [
+              "declare const s: string;",
+              "export const a = /^abc/.test(s);",
+              "export const b = /abc$/.test(s);",
+              "export const c = /^abc/g.test(s);",
+              "export const d = /^123/i.test(s);",
+              "export const e = /^abc/.test!(s);",
+              "export const f = /^{{/.test(s);",
+              'export const g = s.slice(0, 3) === "abc";',
+              "export const h = /^a|b/.test(s);",
+            ],
+          ],
+          [
+            "unicorn/prefer-includes",
+            "typescript/prefer-includes",
+            [
+              "declare const a: string[];",
+              "declare const x: any;",
+              "declare const o: { indexOf(a: string): number };",
+              'export const b = a.indexOf("b") !== -1;',
+              'export const c = a.indexOf!("b") !== -1;',
+              'export const d = (a.indexOf)("b") !== -1;',
+              'export const e = a["indexOf"]("b") !== -1;',
+              'export const f = a.indexOf("b") !== (-1);',
+              'export const g = x.indexOf("b") !== -1;',
+              'export const h = o.indexOf("b") !== -1;',
+              'export const i = a.indexOf("b") <= -1;',
+              'export const j = a.includes("b");',
+            ],
+          ],
+          [
+            "unicorn/prefer-array-find",
+            "typescript/prefer-find",
+            [
+              "declare const a: string[];",
+              "declare const aa: string[][];",
+              "declare const x: any;",
+              "export const b = a.filter(Boolean)[0];",
+              "export const c = a.filter(Boolean).at(0);",
+              "export const d = a.filter(Boolean)![0];",
+              "export const e = (a.filter(Boolean) as string[])[0];",
+              "export const f = a.filter?.(Boolean)[0];",
+              "export const g = a.filter(Boolean)?.at(0);",
+              "export const h = a.filter(Boolean).at!(0);",
+              "export const i = a.filter(Boolean).shift();",
+              "export const [j] = a.filter(Boolean);",
+              "export const k = x.filter(Boolean)[0];",
+              // Two calls that start at the same place. Only the first is for both rules.
+              "export const l = aa.filter(Boolean)[0]",
+              "  .filter(Boolean).pop();",
+              "export const m = a.find(Boolean);",
+            ],
           ],
         ];
+        const text = (lines: string[]) => lines.join("\n") + "\n";
+        const lineOf = (place: string) => place.slice(0, place.indexOf(" "));
 
-        test("is reported once where the file has types", async () => {
-          expect(await lintRows(rows, ["--type-aware"])).toMatchInlineSnapshot(`
+        test("with both on, what either reports alone is reported once", async () => {
+          const rowsOf = (rules: (pair: (typeof pairs)[number]) => string[]) =>
+            pairs.map((pair): [string, string] => [on(rules(pair)), text(pair[2])]);
+          const [untyped, typed, both] = await Promise.all([
+            lintRows(
+              rowsOf(it => [it[0]]),
+              ["--type-aware"],
+            ),
+            lintRows(
+              rowsOf(it => [it[1]]),
+              ["--type-aware"],
+            ),
+            lintRows(
+              rowsOf(it => [it[0], it[1]]),
+              ["--type-aware"],
+            ),
+          ]);
+          for (const [index, [name]] of pairs.entries()) {
+            const withTypes = new Set(typed[index].map(lineOf));
+            const rest = untyped[index].filter(it => !withTypes.has(lineOf(it)));
+            expect([name, both[index]]).toEqual([name, [...typed[index], ...rest].sort()]);
+            // There is code that both report, and all but one pair has code that only the rule without types reports.
+            const hasBoth = untyped[index].length > rest.length;
+            const hasRest = rest.length > 0 || name === "prefer-destructuring";
+            expect([name, hasBoth, hasRest]).toEqual([name, true, true]);
+          }
+          expect(Object.fromEntries(pairs.map(([name], index) => [name, both[index]]))).toMatchInlineSnapshot(`
             {
-              "declare const o: { a: number };\\nexport const a = o.a;\\n": [
+              "no-implied-eval": [
+                "a.ts:1 typescript(no-implied-eval) error",
+                "a.ts:2 typescript(no-implied-eval) error",
+                "a.ts:3 eslint(no-implied-eval) error",
+                "a.ts:4 eslint(no-implied-eval) error",
+                "a.ts:5 eslint(no-implied-eval) error",
+                "a.ts:7 typescript(no-implied-eval) error",
+              ],
+              "no-throw-literal": [
+                "a.ts:3 typescript(only-throw-error) error",
+                "a.ts:4 typescript(only-throw-error) error",
+                "a.ts:5 eslint(no-throw-literal) error",
+                "a.ts:6 eslint(no-throw-literal) error",
+                "a.ts:7 eslint(no-throw-literal) error",
+                "a.ts:8 typescript(only-throw-error) error",
+              ],
+              "prefer-destructuring": [
                 "a.ts:2 eslint(prefer-destructuring) error",
               ],
-              "declare const o: { a: number };\\nexport const a = o[\\"a\\"];\\n": [
-                "a.ts:2 typescript(dot-notation) error",
+              "prefer-promise-reject-errors": [
+                "a.ts:2 typescript(prefer-promise-reject-errors) error",
+                "a.ts:3 eslint(prefer-promise-reject-errors) error",
+                "a.ts:4 typescript(prefer-promise-reject-errors) error",
+                "a.ts:5 eslint(prefer-promise-reject-errors) error",
+                "a.ts:6 typescript(prefer-promise-reject-errors) error",
               ],
-              "declare const s: any;\\nexport const a = s.filter(Boolean)[0];\\n": [
-                "a.ts:2 unicorn(prefer-array-find) error",
+              "require-await": [
+                "a.ts:2 typescript(require-await) error",
+                "a.ts:3 typescript(require-await) error",
+                "a.ts:4 typescript(require-await) error",
+                "a.ts:5 typescript(require-await) error",
+                "a.ts:6 eslint(require-await) error",
+                "a.ts:8 typescript(require-await) error",
               ],
-              "declare const s: any;\\nexport const a = s.indexOf(\\"a\\") !== -1;\\n": [
-                "a.ts:2 unicorn(prefer-includes) error",
+              "unicorn/prefer-array-find": [
+                "a.ts:10 unicorn(prefer-array-find) error",
+                "a.ts:11 unicorn(prefer-array-find) error",
+                "a.ts:12 unicorn(prefer-array-find) error",
+                "a.ts:13 unicorn(prefer-array-find) error",
+                "a.ts:14 typescript(prefer-find) error",
+                "a.ts:15 unicorn(prefer-array-find) error",
+                "a.ts:4 typescript(prefer-find) error",
+                "a.ts:5 typescript(prefer-find) error",
+                "a.ts:6 unicorn(prefer-array-find) error",
+                "a.ts:7 unicorn(prefer-array-find) error",
+                "a.ts:8 unicorn(prefer-array-find) error",
+                "a.ts:9 typescript(prefer-find) error",
               ],
-              "declare const s: string;\\nexport const a = /^a/.test(s);\\n": [
+              "unicorn/prefer-includes": [
+                "a.ts:10 unicorn(prefer-includes) error",
+                "a.ts:11 typescript(prefer-includes) error",
+                "a.ts:4 typescript(prefer-includes) error",
+                "a.ts:5 unicorn(prefer-includes) error",
+                "a.ts:6 unicorn(prefer-includes) error",
+                "a.ts:7 unicorn(prefer-includes) error",
+                "a.ts:8 unicorn(prefer-includes) error",
+                "a.ts:9 unicorn(prefer-includes) error",
+              ],
+              "unicorn/prefer-string-starts-ends-with": [
                 "a.ts:2 typescript(prefer-string-starts-ends-with) error",
-              ],
-              "declare const s: string[];\\nexport const [a] = s.filter(Boolean);\\n": [
-                "a.ts:2 unicorn(prefer-array-find) error",
-              ],
-              "declare const s: string[];\\nexport const a = s.filter(Boolean).at(0);\\n": [
-                "a.ts:2 typescript(prefer-find) error",
-              ],
-              "declare const s: string[];\\nexport const a = s.filter(Boolean).at?.(0);\\n": [
-                "a.ts:2 unicorn(prefer-array-find) error",
-              ],
-              "declare const s: string[];\\nexport const a = s.filter(Boolean).shift();\\n": [
-                "a.ts:2 unicorn(prefer-array-find) error",
-              ],
-              "declare const s: string[];\\nexport const a = s.filter(Boolean)[0];\\n": [
-                "a.ts:2 typescript(prefer-find) error",
-              ],
-              "declare const s: string[];\\nexport const a = s.indexOf(\\"a\\") !== -1;\\n": [
-                "a.ts:2 typescript(prefer-includes) error",
-              ],
-              "declare const s: string[];\\nexport const a = s[\\"indexOf\\"](\\"a\\") !== -1;\\n": [
-                "a.ts:2 typescript(prefer-includes) error",
-              ],
-              "declare const s: { indexOf(a: string): number };\\nexport const a = s.indexOf(\\"a\\") !== -1;\\n": [],
-              "export async function f() {\\n  return 1;\\n}\\n": [
-                "a.ts:1 typescript(require-await) error",
-              ],
-              "export async function f() {\\n  return new Promise<void>(r => r());\\n}\\n": [],
-              "export class E extends Error {\\n  f() {\\n    throw this;\\n  }\\n}\\n": [],
-              "export function f(a: boolean) {\\n  if (a) return 1;\\n  return;\\n}\\n": [
-                "a.ts:3 typescript(consistent-return) error",
-              ],
-              "setTimeout(\\"alert(1)\\", 1);\\n": [
-                "a.ts:1 typescript(no-implied-eval) error",
-              ],
-              "throw \\"a\\";\\n": [
-                "a.ts:1 typescript(only-throw-error) error",
-              ],
-              "void Promise.reject(5);\\n": [
-                "a.ts:1 typescript(prefer-promise-reject-errors) error",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) error",
+                "a.ts:4 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:5 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:6 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:7 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:8 typescript(prefer-string-starts-ends-with) error",
               ],
             }
           `);
         });
 
-        test("is reported by the rule without types where the file has none", async () => {
-          expect(await lintRows([rows[0], rows[2], rows[3]], [])).toMatchInlineSnapshot(`
-            {
-              "export async function f() {\\n  return 1;\\n}\\n": [
-                "a.ts:1 eslint(require-await) error",
+        const await_ = ["require-await", "typescript/require-await"];
+        const throw_ = ["no-throw-literal", "typescript/only-throw-error"];
+        const f = "export async function f() {\n  return 1;\n}\n";
+
+        test("without types for the file, the rule without types reports", async () => {
+          const rows = pairs
+            .slice(0, 4)
+            .map(([untyped, typed, lines]): [string, string] => [on([untyped, typed]), text(lines)]);
+          const alone = pairs.slice(0, 4).map(([untyped, , lines]): [string, string] => [on([untyped]), text(lines)]);
+          expect(await lintRows(rows, [])).toEqual(await lintRows(alone, []));
+        });
+
+        test("where the rule without types is the more severe, both report", async () => {
+          const starts = (untyped: string, typed: string) =>
+            config({
+              "unicorn/prefer-string-starts-ends-with": untyped,
+              "typescript/prefer-string-starts-ends-with": typed,
+            });
+          const code =
+            'declare const s: string;\nexport const a = /^a/.test(s);\nexport const b = s.slice(0, 1) === "a";\n';
+          const rows: [string, string][] = [
+            [starts("error", "warn"), code],
+            [starts("warn", "error"), code],
+            [starts("warn", "warn"), code],
+          ];
+          expect(await lintRows(rows, ["--type-aware"])).toMatchInlineSnapshot(`
+            [
+              [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) warning",
+                "a.ts:2 unicorn(prefer-string-starts-ends-with) error",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) warning",
               ],
-              "throw \\"a\\";\\n": [
-                "a.ts:1 eslint(no-throw-literal) error",
+              [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) error",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) error",
               ],
-              "void Promise.reject(5);\\n": [
-                "a.ts:1 eslint(prefer-promise-reject-errors) error",
+              [
+                "a.ts:2 typescript(prefer-string-starts-ends-with) warning",
+                "a.ts:3 typescript(prefer-string-starts-ends-with) warning",
               ],
-            }
+            ]
           `);
         });
 
-        test("is reported by the rule without types where only that one is on", async () => {
-          const alone = [rows[0], rows[2], rows[3]].map(([rules, text]): [string[], string] => [
-            rules.slice(0, 1),
-            text,
-          ]);
-          expect(await lintRows(alone, ["--type-aware"])).toMatchInlineSnapshot(`
-            {
-              "export async function f() {\\n  return 1;\\n}\\n": [
-                "a.ts:1 eslint(require-await) error",
-              ],
-              "throw \\"a\\";\\n": [
-                "a.ts:1 eslint(no-throw-literal) error",
-              ],
-              "void Promise.reject(5);\\n": [
-                "a.ts:1 eslint(prefer-promise-reject-errors) error",
-              ],
-            }
-          `);
-        });
-
-        test("a comment that disables either rule disables the report", async () => {
-          const f = "export async function f() {\n  return 1;\n}\n";
-          const await_ = ["require-await", "typescript/require-await"];
-          const comments: [rules: string[], text: string][] = [
-            [await_, `// oxlint-disable-next-line require-await\n${f}`],
-            [await_, `// oxlint-disable-next-line typescript/require-await\n${f}`],
-            [await_, `// oxlint-disable-next-line require-await, typescript/require-await\n${f}`],
-            // Nothing to disable.
-            [await_, "// oxlint-disable-next-line require-await\nexport function f() {\n  return 1;\n}\n"],
+        test("comments that disable work as they do for two reports", async () => {
+          const find = ["unicorn/prefer-array-find", "typescript/prefer-find"];
+          const first = "declare const a: string[];\n";
+          const rows: [string, string][] = [
             // A name means the rule whatever plugin it is written with.
+            [on(await_), `// oxlint-disable-next-line require-await\n${f}`],
+            [on(await_), `// oxlint-disable-next-line typescript/require-await\n${f}`],
+            [on(await_), `// oxlint-disable-next-line require-await, typescript/require-await\n${f}`],
+            // Nothing to disable.
+            [on(await_), "// oxlint-disable-next-line require-await\nexport function f() {\n  return 1;\n}\n"],
+            [on(throw_), "// oxlint-disable-next-line\nexport const a = 1;\n"],
+            // The two have different names. A comment for one leaves the report of the other, and is in use.
+            [on(throw_), '// oxlint-disable-next-line no-throw-literal\nthrow "a";\n'],
+            [on(throw_), '// oxlint-disable-next-line typescript/only-throw-error\nthrow "a";\n'],
+            [on(throw_), '// oxlint-disable-next-line no-throw-literal, typescript/only-throw-error\nthrow "a";\n'],
+            [on(throw_), '// oxlint-disable-next-line\nthrow "a";\n'],
             [
-              includes,
-              'declare const s: string[];\n// oxlint-disable-next-line unicorn/prefer-includes\nexport const a = s.indexOf("a") !== -1;\n',
+              on(find),
+              `${first}// oxlint-disable-next-line typescript/prefer-find\nexport const b = a.filter(Boolean)[0];\n`,
             ],
             [
-              includes,
-              'declare const s: any;\n// oxlint-disable-next-line unicorn/prefer-includes\nexport const a = s.indexOf("a") !== -1;\n',
+              on(find),
+              `${first}// oxlint-disable-next-line unicorn/prefer-array-find\nexport const b = a.filter(Boolean)[0];\n`,
             ],
-            // The two have different names. The comment is not called unused, and is not about the other rule.
+            // The two report on different lines.
             [
-              ["no-throw-literal", "typescript/only-throw-error"],
-              '// oxlint-disable-next-line no-throw-literal\nthrow "a";\n',
-            ],
-            [
-              ["no-throw-literal", "typescript/only-throw-error"],
-              '// oxlint-disable-next-line no-throw-literal, typescript/only-throw-error\nthrow "b";\n',
+              on(await_),
+              "export const g = async (\n  a: number,\n  // oxlint-disable-next-line require-await\n) => a;\n",
             ],
           ];
-          expect(await lintRows(comments, ["--type-aware", "--report-unused-disable-directives"]))
-            .toMatchInlineSnapshot(`
+          const reported = await lintRows(rows, ["--type-aware", "--report-unused-disable-directives"]);
+          expect(Object.fromEntries(rows.map(([, code], index) => [code, reported[index]]))).toMatchInlineSnapshot(`
             {
+              "// oxlint-disable-next-line\\nexport const a = 1;\\n": [
+                "a.ts:1 undefined warning",
+              ],
+              "// oxlint-disable-next-line\\nthrow \\"a\\";\\n": [],
               "// oxlint-disable-next-line no-throw-literal\\nthrow \\"a\\";\\n": [
                 "a.ts:2 typescript(only-throw-error) error",
               ],
-              "// oxlint-disable-next-line no-throw-literal, typescript/only-throw-error\\nthrow \\"b\\";\\n": [],
+              "// oxlint-disable-next-line no-throw-literal, typescript/only-throw-error\\nthrow \\"a\\";\\n": [],
               "// oxlint-disable-next-line require-await\\nexport async function f() {\\n  return 1;\\n}\\n": [],
               "// oxlint-disable-next-line require-await\\nexport function f() {\\n  return 1;\\n}\\n": [
                 "a.ts:1 undefined warning",
               ],
               "// oxlint-disable-next-line require-await, typescript/require-await\\nexport async function f() {\\n  return 1;\\n}\\n": [],
+              "// oxlint-disable-next-line typescript/only-throw-error\\nthrow \\"a\\";\\n": [
+                "a.ts:2 eslint(no-throw-literal) error",
+              ],
               "// oxlint-disable-next-line typescript/require-await\\nexport async function f() {\\n  return 1;\\n}\\n": [],
-              "declare const s: any;\\n// oxlint-disable-next-line unicorn/prefer-includes\\nexport const a = s.indexOf(\\"a\\") !== -1;\\n": [],
-              "declare const s: string[];\\n// oxlint-disable-next-line unicorn/prefer-includes\\nexport const a = s.indexOf(\\"a\\") !== -1;\\n": [],
+              "declare const a: string[];\\n// oxlint-disable-next-line typescript/prefer-find\\nexport const b = a.filter(Boolean)[0];\\n": [
+                "a.ts:3 unicorn(prefer-array-find) error",
+              ],
+              "declare const a: string[];\\n// oxlint-disable-next-line unicorn/prefer-array-find\\nexport const b = a.filter(Boolean)[0];\\n": [
+                "a.ts:3 typescript(prefer-find) error",
+              ],
+              "export const g = async (\\n  a: number,\\n  // oxlint-disable-next-line require-await\\n) => a;\\n": [
+                "a.ts:1 eslint(require-await) error",
+              ],
             }
           `);
+        });
+
+        test("a file that is linted again for a rule about several files", async () => {
+          const files = {
+            ".oxlintrc.json": config(
+              { "no-throw-literal": "error", "typescript/only-throw-error": "error", "import/named": "error" },
+              { plugins: ["unicorn", "typescript", "import"] },
+            ),
+            "tsconfig.json": tsconfig,
+            "a.ts": 'import { b } from "./b";\n// oxlint-disable-next-line no-throw-literal\nthrow `${b}`;\n',
+            "b.ts": 'export const b = 1;\nthrow "b";\n',
+          };
+          const { raw } = await lint(files, ["-f", "json", "--type-aware", "--report-unused-disable-directives"]);
+          expect(places(raw)).toMatchInlineSnapshot(`
+            [
+              "a.ts:3 typescript(only-throw-error) error",
+              "b.ts:2 typescript(only-throw-error) error",
+            ]
+          `);
+        });
+
+        test("the rule with types suggests what the hidden report of no-throw-literal does", async () => {
+          const project = { ".oxlintrc.json": on(throw_), "tsconfig.json": tsconfig, "a.ts": 'throw "a";\n' };
+          const { files } = await lint(project, ["--type-aware", "--fix-suggestions", "a.ts"], { reads: ["a.ts"] });
+          expect(files["a.ts"]).toBe('throw new Error("a");\n');
         });
       });
 

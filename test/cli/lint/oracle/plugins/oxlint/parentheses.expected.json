@@ -47,12 +47,5 @@
   "paren-template-value.ts:5:13+12 typescript(no-unnecessary-template-expression)",
   "paren-template-value.ts:6:13+8 typescript(no-unnecessary-template-expression)"
  ],
- "parentheses/restrict-template-expressions/default": [],
- "parentheses/prefer-includes/default": [
-  "paren-callee.ts:6:18+21 typescript(prefer-includes)",
-  "paren-left-call.ts:6:18+21 typescript(prefer-includes)",
-  "right-paren-negative.ts:6:19+21 typescript(prefer-includes)",
-  "right-paren-negative.ts:7:19+21 typescript(prefer-includes)",
-  "right-paren-negative.ts:8:19+19 typescript(prefer-includes)"
- ]
+ "parentheses/restrict-template-expressions/default": []
 }

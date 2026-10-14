@@ -17,7 +17,7 @@ const ENDS_WITH: Message = Message::new("", "Prefer String#endsWith over a regex
 impl Rule for PreferStringStartsEndsWith {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-string-starts-ends-with", Kind::Problem)
         .fixable(Fixable::Code)
-        .replaced_with_types_by("prefer-string-starts-ends-with");
+        .with_types("prefer-string-starts-ends-with");
     const ON: On = On::new().method_calls(&["test"]);
     no_state!();
 
@@ -48,7 +48,7 @@ impl Rule for PreferStringStartsEndsWith {
         let Some((is_start, characters)) = check_regex(literal.pattern(), literal.flags()) else {
             return;
         };
-        cx.report(member, if is_start { STARTS_WITH } else { ENDS_WITH }).fix(|fixer| {
+        cx.report(member, if is_start { STARTS_WITH } else { ENDS_WITH }).unless_claimed(e).fix(|fixer| {
             let target = can_replace(call)?;
             let argument: String = characters.iter().map(|it| char::from_u32(*it)).collect::<Option<_>>()?;
             let method: &[u8] = if is_start { b".startsWith(" } else { b".endsWith(" };

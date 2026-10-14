@@ -203,9 +203,7 @@ impl Stopped {
 pub enum TopLevelWaitError {
     #[error("Stopped")]
     Stopped,
-    #[error(
-        "the event loop is empty, so nothing can settle it anymore"
-    )]
+    #[error("the event loop is empty, so nothing can settle it anymore")]
     NothingLeft,
 }
 

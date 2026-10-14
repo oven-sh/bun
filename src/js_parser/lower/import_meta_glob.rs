@@ -546,10 +546,7 @@ impl<'a> Arguments<'a, '_> {
                 );
             };
             let Some(pattern) = pattern else {
-                return self.invalid(
-                    glob_loc,
-                    format_args!("The glob pattern is too long"),
-                );
+                return self.invalid(glob_loc, format_args!("The glob pattern is too long"));
             };
             patterns.push(pattern);
         }
@@ -580,10 +577,7 @@ impl<'a> Arguments<'a, '_> {
             let (Some(import_path), Some(key)) = (import_path, key) else {
                 return self.invalid(
                     path_loc,
-                    format_args!(
-                        "The path to \"{}\" is too long",
-                        bstr::BStr::new(file)
-                    ),
+                    format_args!("The path to \"{}\" is too long", bstr::BStr::new(file)),
                 );
             };
             if is_not_an_import_path(&import_path, is_bundling) {

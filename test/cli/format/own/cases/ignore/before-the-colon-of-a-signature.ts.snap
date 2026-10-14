@@ -38,6 +38,13 @@ interface T {
   [i /* comment */]: J;
 }
 
+interface U {
+  a/* comment */ : B;
+  c/* prettier-ignore */ : | D<  E > /* comment */;
+  f// comment
+  : G;
+}
+
 -------------------
 { printWidth: 100 }
 -------------------
@@ -76,6 +83,13 @@ interface T {
   /* 2 */ : F;
   g /* comment */?: H;
   [i /* comment */]: J;
+}
+
+interface U {
+  a/* comment */ : B;
+  c/* prettier-ignore */ : | D<  E > /* comment */;
+  f// comment
+  : G;
 }
 
 ===================== End =====================

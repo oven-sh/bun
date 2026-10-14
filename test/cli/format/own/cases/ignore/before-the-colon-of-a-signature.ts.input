@@ -40,3 +40,11 @@ interface T {
   g /* comment */ ?: H;
   [i /* comment */ ]: J;
 }
+
+interface U {
+  a /* comment */ : | B;
+  c /* prettier-ignore */ : | D<  E > /* comment */;
+  f
+  // comment
+  : & G;
+}

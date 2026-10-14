@@ -1192,6 +1192,14 @@ describe.concurrent("bun fmt", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("a comment before the `:` in an object type of Flow stays there with the configuration of oxfmt", async () => {
+    // oxfmt has no Flow, so this is what Prettier prints.
+    const files = { ".oxfmtrc.json": "{}", "a.js": "// @flow\ntype A = { a /* comment */ : B };\n" };
+    const result = await format(files, ["--parser", "flow"], { reads: ["a.js"] });
+    expect(result.files["a.js"]).toBe("// @flow\ntype A = { a /* comment */: B };\n");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("`<!--` and `-->` comments in a script", async () => {
     // What oxfmt 0.72 prints, unless it says otherwise. Prettier 3.9.9 does not parse these files.
     const rows = [

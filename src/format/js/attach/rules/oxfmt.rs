@@ -788,11 +788,15 @@ impl<'a> Rules<'_, 'a, '_> {
         else {
             return None;
         };
+        // oxfmt has no Flow, and the printer of a member of an object type of Flow writes no comments of a type annotation.
+        if self.cx.file.is_flow() {
+            return None;
+        }
         let ty = member.ty()?;
         let type_annotation = Owner::Node(N::TSTypeAnnotation(ty));
         let comment = self.context.comment;
         // For Prettier the type annotation of a signature has no comments, so there the type is the following node.
-        let is_between_key_and_colon = [type_annotation, Owner::Node(ty.as_ast_nodes())]
+        let is_between_key_and_colon = [type_annotation, self.cx.owner_of_type(ty)]
             .contains(&self.following_node?)
             && comment.span().end <= self.cx.start_of(type_annotation);
         if !is_between_key_and_colon

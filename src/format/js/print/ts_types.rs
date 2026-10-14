@@ -384,7 +384,10 @@ pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
                 if owned.is_ignored {
                     format_node(type_annotation, f, |_| {});
                     // `B` is copied and not printed, and these are behind what is copied.
-                    return write!(f, trailing_comments(ty.as_ast_nodes()));
+                    return write!(
+                        f,
+                        trailing_comments(without_lone_operator(ty).as_ast_nodes())
+                    );
                 }
                 write!(f, FormatLeadingComments::Comments(owned.leading));
             }

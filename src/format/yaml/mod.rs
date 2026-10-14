@@ -1,6 +1,7 @@
 //! YAML: Prettier's `language-yaml` and the tree of `yaml-unist-parser`, which is made of what Bun's parser reads.
 
 mod ast;
+pub(crate) mod highlight;
 mod printer;
 mod scalar;
 

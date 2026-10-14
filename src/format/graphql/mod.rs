@@ -8,6 +8,7 @@
 
 mod comments;
 pub(crate) mod embed;
+pub(crate) mod highlight;
 mod parser;
 mod printer;
 mod range;

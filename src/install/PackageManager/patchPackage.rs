@@ -3,7 +3,7 @@ use std::io::Write as _;
 
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, fmt as bun_fmt};
-use bun_core::{ZStr, strings};
+use bun_core::{ZBox, ZStr, strings};
 use bun_paths::platform;
 use bun_paths::resolve_path;
 use bun_paths::{PathBuffer, Platform, SEP};
@@ -25,6 +25,8 @@ use crate::{
     BuntagHashBuf, DependencyID, Features, PackageID, Resolution, buntaghashbuf_make,
     initialize_store, invalid_package_id,
 };
+
+use crate::patch_install::PatchStamp;
 
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
@@ -288,7 +290,7 @@ pub fn do_patch_commit(
     )
     .expect("formatting into a Vec is infallible");
 
-    let patchfile_contents: Vec<u8> = 'brk: {
+    let patchfile_contents: Option<Vec<u8>> = 'brk: {
         let new_folder = changes_dir;
         let mut buf2 = bun_paths::path_buffer_pool::get();
         let mut buf3 = bun_paths::path_buffer_pool::get();
@@ -451,12 +453,13 @@ pub fn do_patch_commit(
             }
         }
 
+        // From here on a failure leaves `'brk`: `Global::crash()` would skip the deferred restore.
         let mut cwdbuf = bun_paths::path_buffer_pool::get();
         let cwd = match sys::getcwd_z(&mut cwdbuf) {
             Ok(fd) => fd,
             Err(e) => {
                 bun_core::pretty_error!("<r><red>error<r>: failed to get cwd path {}<r>\n", e);
-                Global::crash();
+                break 'brk None;
             }
         };
         let mut gitbuf = bun_paths::path_buffer_pool::get();
@@ -471,63 +474,24 @@ pub fn do_patch_commit(
                 bun_core::pretty_error!(
                     "<r><red>error<r>: git must be installed to use `bun patch --commit` <r>\n",
                 );
-                Global::crash();
+                break 'brk None;
             }
         };
-        let paths = bun_patch::git_diff_preprocess_paths(old_folder, new_folder);
-        let (opts, _envp_guard) =
-            bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &mut manager.event_loop);
-
-        let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
-            Err(e) => {
-                bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
-                Global::crash();
-            }
-            Ok(Ok(r)) => r,
-            Ok(Err(e)) => {
-                bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e);
-                Global::crash();
-            }
+        let diff = GitDiff {
+            cwd,
+            git,
+            old_folder,
         };
-
-        let contents: Vec<u8> =
-            match bun_patch::diff_post_process(&mut spawn_result, &paths[0], &paths[1]) {
-                Err(e) => {
-                    bun_core::pretty_error!(
-                        "<r><red>error<r>: failed to make diff {}<r>\n",
-                        e.name(),
-                    );
-                    Global::crash();
-                }
-                Ok(Ok(stdout)) => stdout,
-                Ok(Err(stderr)) => {
-                    struct Truncate<'a> {
-                        stderr: &'a Vec<u8>,
-                    }
-
-                    impl fmt::Display for Truncate<'_> {
-                        fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-                            let truncate_stderr = self.stderr.len() > 256;
-                            if truncate_stderr {
-                                write!(
-                                    writer,
-                                    "{}... ({} more bytes)",
-                                    bstr::BStr::new(&self.stderr[0..256]),
-                                    self.stderr.len() - 256
-                                )
-                            } else {
-                                write!(writer, "{}", bstr::BStr::new(&self.stderr[..]))
-                            }
-                        }
-                    }
-                    bun_core::pretty_error!(
-                        "<r><red>error<r>: failed to make diff {}<r>\n",
-                        Truncate { stderr: &stderr }
-                    );
-                    drop(stderr);
-                    Global::crash();
-                }
-            };
+        let event_loop = &mut manager.event_loop;
+        let Some(mut contents) = diff.run(old_folder, new_folder, new_folder, event_loop) else {
+            break 'brk None;
+        };
+        if diff
+            .without_patch_hash(&mut contents, new_folder, pkg.resolution.tag, event_loop)
+            .is_none()
+        {
+            break 'brk None;
+        }
 
         if contents.is_empty() {
             bun_core::pretty!(
@@ -540,7 +504,10 @@ pub fn do_patch_commit(
             return Ok(None);
         }
 
-        break 'brk contents;
+        break 'brk Some(contents);
+    };
+    let Some(patchfile_contents) = patchfile_contents else {
+        Global::crash();
     };
 
     // write the patch contents to temp file then rename
@@ -605,6 +572,174 @@ pub fn do_patch_commit(
         patchfile_path,
         not_in_workspace_root,
     }))
+}
+
+/// `git diff --no-index` against the unpatched cache folder, as `bun patch --commit` runs it.
+struct GitDiff<'a> {
+    cwd: &'a ZStr,
+    git: &'a ZStr,
+    old_folder: &'a [u8],
+}
+
+impl GitDiff<'_> {
+    /// The diff of `old` and `new`, with the unpatched folder and `new_folder` taken out of its paths. `None` after it printed the error.
+    fn run(
+        &self,
+        old: &[u8],
+        new: &[u8],
+        new_folder: &[u8],
+        event_loop: &mut bun_event_loop::AnyEventLoop,
+    ) -> Option<Vec<u8>> {
+        let paths = bun_patch::git_diff_preprocess_paths(old, new);
+        let folders = bun_patch::git_diff_preprocess_paths(self.old_folder, new_folder);
+        let (opts, _envp_guard) =
+            bun_patch::spawn_opts(&paths[0], &paths[1], self.cwd, self.git, event_loop);
+
+        let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
+            Err(e) => {
+                bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
+                return None;
+            }
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
+                bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e);
+                return None;
+            }
+        };
+
+        match bun_patch::diff_post_process(&mut spawn_result, &folders[0], &folders[1]) {
+            Err(e) => {
+                bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
+                None
+            }
+            Ok(Ok(stdout)) => Some(stdout),
+            Ok(Err(stderr)) => {
+                struct Truncate<'a> {
+                    stderr: &'a Vec<u8>,
+                }
+
+                impl fmt::Display for Truncate<'_> {
+                    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        let truncate_stderr = self.stderr.len() > 256;
+                        if truncate_stderr {
+                            write!(
+                                writer,
+                                "{}... ({} more bytes)",
+                                bstr::BStr::new(&self.stderr[0..256]),
+                                self.stderr.len() - 256
+                            )
+                        } else {
+                            write!(writer, "{}", bstr::BStr::new(&self.stderr[..]))
+                        }
+                    }
+                }
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: failed to make diff {}<r>\n",
+                    Truncate { stderr: &stderr }
+                );
+                None
+            }
+        }
+    }
+
+    /// Replaces the diff of the file that holds the patch hash of the copy with the diff of that file without the hash.
+    fn without_patch_hash(
+        &self,
+        diff: &mut Vec<u8>,
+        new_folder: &[u8],
+        tag: crate::resolution::Tag,
+        event_loop: &mut bun_event_loop::AnyEventLoop,
+    ) -> Option<()> {
+        let file = PatchStamp::file(tag).as_bytes();
+        let (without_hash, mode) = match PatchStamp::without_hash(new_folder, self.old_folder, tag)
+        {
+            Ok(Some(found)) => found,
+            Ok(None) => return Some(()),
+            Err(e) => {
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: failed to read the patch hash of <b>{}<r>: {}<r>\n",
+                    bstr::BStr::new(new_folder),
+                    e,
+                );
+                return None;
+            }
+        };
+
+        // The copy keeps its patch hash. An install after a commit that stopped here must still find it.
+        let mut name_buf = [0u8; 64];
+        let name = bun_paths::fs::FileSystem::tmpname(
+            b"patch_hash",
+            &mut name_buf,
+            bun_core::fast_random(),
+        )
+        .expect("a temporary name fits in 64 bytes");
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let scratch = ZBox::from_bytes(
+            resolve_path::join_z_buf::<platform::Auto>(
+                &mut buf.0,
+                &[b"node_modules", name.as_bytes()],
+            )
+            .as_bytes(),
+        );
+        let scratch_file = ZBox::from_bytes(
+            resolve_path::join_z_buf::<platform::Auto>(&mut buf.0, &[scratch.as_bytes(), file])
+                .as_bytes(),
+        );
+        let old_file =
+            resolve_path::join_z_buf::<platform::Auto>(&mut buf.0, &[self.old_folder, file]);
+
+        let written = sys::mkdir(scratch.as_zstr(), 0o755)
+            .and_then(|()| {
+                sys::File::openat(
+                    Fd::cwd(),
+                    scratch_file.as_bytes(),
+                    sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
+                    mode,
+                )
+            })
+            .and_then(|opened| opened.write_all(&without_hash));
+        let file_diff = match written {
+            Ok(()) => self.run(
+                old_file.as_bytes(),
+                scratch_file.as_bytes(),
+                scratch.as_bytes(),
+                event_loop,
+            ),
+            Err(e) => {
+                bun_core::pretty_error!(
+                    "<r><red>error<r>: failed to write <b>{}<r>: {}<r>\n",
+                    bstr::BStr::new(scratch_file.as_bytes()),
+                    e,
+                );
+                None
+            }
+        };
+        let _ = sys::unlink(scratch_file.as_zstr());
+        let _ = sys::rmdir(scratch.as_zstr());
+
+        replace_diff_of_file(diff, file, &file_diff?);
+        Some(())
+    }
+}
+
+/// Replaces the section of `file` in the output of `git diff` with `section`.
+fn replace_diff_of_file(diff: &mut Vec<u8>, file: &[u8], section: &[u8]) {
+    let header = [b"diff --git a/".as_slice(), file, b" b/", file, b"\n"].concat();
+    let mut from = 0;
+    let start = loop {
+        let Some(found) = strings::index_of(&diff[from..], &header) else {
+            return;
+        };
+        let found = from + found;
+        if found == 0 || diff[found - 1] == b'\n' {
+            break found;
+        }
+        from = found + 1;
+    };
+    let after_header = start + header.len();
+    let end = strings::index_of(&diff[after_header..], b"\ndiff --git ")
+        .map_or(diff.len(), |next| after_header + next + 1);
+    diff.splice(start..end, section.iter().copied());
 }
 
 fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {

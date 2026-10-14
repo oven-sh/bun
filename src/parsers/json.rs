@@ -645,31 +645,112 @@ fn parse_auto_quoted_string(
     }
 }
 
-/// Extracts the top-level `name` and `version` strings from a package.json.
+/// A `u64` in hex.
+const PATCH_HASH_MAX_LEN: usize = 16;
+
+/// Extracts the top-level `name` and `version` strings from a package.json, and a leading patch hash.
 pub struct PackageJSONVersionChecker<'a> {
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
 
     pub(crate) found_version_buf: [u8; 1024],
     pub(crate) found_name_buf: [u8; 1024],
+    found_patch_hash_buf: [u8; PATCH_HASH_MAX_LEN],
     found_name_len: usize,
     found_version_len: usize,
+    found_patch_hash_len: usize,
     pub has_found_name: bool,
     pub has_found_version: bool,
 }
 
 impl<'a> PackageJSONVersionChecker<'a> {
+    /// First key of the package.json of a patched copy. `bun install` writes the hash of the patch under it.
+    pub const PATCH_HASH_KEY: &'static [u8] = b"_bunPatchHash";
+
     pub fn init(source: &'a bun_ast::Source, log: &'a mut bun_ast::Log) -> Self {
         Self {
             source,
             log,
             found_version_buf: [0; 1024],
             found_name_buf: [0; 1024],
+            found_patch_hash_buf: [0; PATCH_HASH_MAX_LEN],
             found_name_len: 0,
             found_version_len: 0,
+            found_patch_hash_len: 0,
             has_found_name: false,
             has_found_version: false,
         }
+    }
+
+    /// Value of [`Self::PATCH_HASH_KEY`]; empty when it is not the first key.
+    #[inline]
+    pub fn found_patch_hash(&self) -> &[u8] {
+        &self.found_patch_hash_buf[..self.found_patch_hash_len]
+    }
+
+    /// `contents` with the key first in the root object. `None` when the root is no object.
+    pub fn with_patch_hash(contents: &[u8], hash: &[u8]) -> Option<Vec<u8>> {
+        let open = skip_ws_and_comments(contents, 0)?;
+        if contents[open] != b'{' {
+            return None;
+        }
+        let first = skip_ws_and_comments(contents, open + 1)?;
+        let mut out =
+            Vec::with_capacity(contents.len() + Self::PATCH_HASH_KEY.len() + hash.len() + 6);
+        out.extend_from_slice(&contents[..=open]);
+        out.push(b'"');
+        out.extend_from_slice(Self::PATCH_HASH_KEY);
+        out.extend_from_slice(b"\":\"");
+        out.extend_from_slice(hash);
+        out.push(b'"');
+        if contents[first] != b'}' {
+            out.push(b',');
+        }
+        out.extend_from_slice(&contents[open + 1..]);
+        Some(out)
+    }
+
+    /// Finds the key as the first one of the root object, with any spacing: (`{`, its value, the first byte after its `,`).
+    fn leading_patch_hash_span(contents: &[u8]) -> Option<(usize, core::ops::Range<usize>, usize)> {
+        let open = skip_ws_and_comments(contents, 0)?;
+        if contents[open] != b'{' {
+            return None;
+        }
+        let key = skip_ws_and_comments(contents, open + 1)?;
+        let after_key = skip_string_token(contents, key)?;
+        if contents[key + 1..after_key - 1] != *Self::PATCH_HASH_KEY {
+            return None;
+        }
+        let colon = skip_ws_and_comments(contents, after_key)?;
+        if contents[colon] != b':' {
+            return None;
+        }
+        let value = skip_ws_and_comments(contents, colon + 1)?;
+        let after_value = skip_string_token(contents, value)?;
+        let value = value + 1..after_value - 1;
+        if value.is_empty() || value.len() > PATCH_HASH_MAX_LEN {
+            return None;
+        }
+        let rest = match skip_ws_and_comments(contents, after_value) {
+            Some(comma) if contents[comma] == b',' => comma + 1,
+            _ => after_value,
+        };
+        Some((open, value, rest))
+    }
+
+    /// [`Self::found_patch_hash`] without a parse of the rest of the file.
+    pub fn leading_patch_hash(contents: &[u8]) -> Option<&[u8]> {
+        let (_, value, _) = Self::leading_patch_hash_span(contents)?;
+        Some(&contents[value])
+    }
+
+    /// The inverse of [`Self::with_patch_hash`], for any spacing around the key. `None` when it is not the first key.
+    pub fn without_patch_hash(contents: &[u8]) -> Option<Vec<u8>> {
+        let (open, _, rest) = Self::leading_patch_hash_span(contents)?;
+        let mut out = Vec::with_capacity(open + 1 + contents.len() - rest);
+        out.extend_from_slice(&contents[..=open]);
+        out.extend_from_slice(&contents[rest..]);
+        Some(out)
     }
 
     /// Whether the checker's exclusively-borrowed `Log` recorded any errors.
@@ -694,6 +775,10 @@ impl<'a> PackageJSONVersionChecker<'a> {
         let js_ast::expr::Data::EObjectJSON(obj) = &parsed.root.data else {
             return Ok(());
         };
+        if let Some(patch_hash) = Self::leading_patch_hash(&self.source.contents) {
+            self.found_patch_hash_buf[..patch_hash.len()].copy_from_slice(patch_hash);
+            self.found_patch_hash_len = patch_hash.len();
+        }
         for row in obj.get().properties() {
             let Some(value) = row.value.as_str() else {
                 continue;
@@ -2238,6 +2323,106 @@ mod tests {
         let mut checker = PackageJSONVersionChecker::init(&source, &mut log);
         checker.parse().unwrap();
         assert!(!checker.has_found_name && !checker.has_errors());
+    }
+
+    #[test]
+    fn package_json_version_checker_patch_hash() {
+        bun_ast::initialize_store_or_reset();
+        let _scope = js_ast::StoreResetGuard::new();
+        let patch_hash = |contents: &'static [u8]| {
+            let source = bun_ast::Source::init_path_string("package.json", contents);
+            let mut log = bun_ast::Log::init();
+            let mut checker = PackageJSONVersionChecker::init(&source, &mut log);
+            checker.parse().unwrap();
+            assert_eq!(
+                (checker.found_name(), checker.found_version()),
+                (b"p".as_slice(), b"1.0.0".as_slice())
+            );
+            checker.found_patch_hash().to_vec()
+        };
+        assert_eq!(
+            patch_hash(br#"{"_bunPatchHash":"60dea556caf42d1e","name":"p","version":"1.0.0"}"#),
+            b"60dea556caf42d1e"
+        );
+        // Only the first key counts: the reader does not scan for it.
+        assert_eq!(
+            patch_hash(br#"{"name":"p","_bunPatchHash":"60dea556caf42d1e","version":"1.0.0"}"#),
+            b""
+        );
+        assert_eq!(
+            patch_hash(br#"{"_bunPatchHash":1,"name":"p","version":"1.0.0"}"#),
+            b""
+        );
+        assert_eq!(
+            patch_hash(br#"{"_bunPatchHash":"0123456789abcdef0","name":"p","version":"1.0.0"}"#),
+            b""
+        );
+
+        // Writing the key changes no other byte, and removing it gives the input back.
+        for (plain, stamped) in [
+            (
+                br#"{"name":"p","version":"1.0.0"}"#.as_slice(),
+                br#"{"_bunPatchHash":"ab12","name":"p","version":"1.0.0"}"#.as_slice(),
+            ),
+            (
+                "\u{FEFF} {\n  \"name\": \"p\"\n}\n".as_bytes(),
+                "\u{FEFF} {\"_bunPatchHash\":\"ab12\",\n  \"name\": \"p\"\n}\n".as_bytes(),
+            ),
+            (
+                b"{ }".as_slice(),
+                br#"{"_bunPatchHash":"ab12" }"#.as_slice(),
+            ),
+        ] {
+            let written = PackageJSONVersionChecker::with_patch_hash(plain, b"ab12").unwrap();
+            assert_eq!(written, stamped);
+            assert_eq!(
+                PackageJSONVersionChecker::without_patch_hash(&written).unwrap(),
+                plain
+            );
+            assert_eq!(
+                PackageJSONVersionChecker::leading_patch_hash(&written),
+                Some(b"ab12".as_slice())
+            );
+            assert!(PackageJSONVersionChecker::without_patch_hash(plain).is_none());
+            assert!(PackageJSONVersionChecker::leading_patch_hash(plain).is_none());
+        }
+        assert!(PackageJSONVersionChecker::with_patch_hash(b"[1]", b"ab12").is_none());
+        assert!(PackageJSONVersionChecker::with_patch_hash(b"", b"ab12").is_none());
+
+        // A formatter can change the spacing around the key. The key still comes out whole.
+        for (reformatted, plain) in [
+            (
+                b"{\n  \"_bunPatchHash\": \"ab12\",\n  \"name\": \"p\"\n}\n".as_slice(),
+                b"{\n  \"name\": \"p\"\n}\n".as_slice(),
+            ),
+            (
+                br#"{ "_bunPatchHash" : "ab12" , "name": "p" }"#.as_slice(),
+                br#"{ "name": "p" }"#.as_slice(),
+            ),
+            (
+                b"{\n  \"_bunPatchHash\": \"ab12\"\n}".as_slice(),
+                b"{\n}".as_slice(),
+            ),
+        ] {
+            assert_eq!(
+                PackageJSONVersionChecker::without_patch_hash(reformatted).unwrap(),
+                plain
+            );
+            assert_eq!(
+                PackageJSONVersionChecker::leading_patch_hash(reformatted),
+                Some(b"ab12".as_slice())
+            );
+        }
+        // What the reader does not take as a patch hash stays in the file.
+        for not_a_patch_hash in [
+            br#"{"_bunPatchHash":1,"name":"p"}"#.as_slice(),
+            br#"{"_bunPatchHash":"","name":"p"}"#.as_slice(),
+            br#"{"_bunPatchHash":"0123456789abcdef0","name":"p"}"#.as_slice(),
+            br#"{"name":"p","_bunPatchHash":"ab12"}"#.as_slice(),
+        ] {
+            assert!(PackageJSONVersionChecker::without_patch_hash(not_a_patch_hash).is_none());
+            assert!(PackageJSONVersionChecker::leading_patch_hash(not_a_patch_hash).is_none());
+        }
     }
 
     #[test]

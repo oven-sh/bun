@@ -137,14 +137,6 @@ fn is_natively_bound_member(object: &[u8], property: &[u8]) -> bool {
     members.iter().any(|member| member.as_bytes() == property)
 }
 
-/// What tsgolint's `nativelyBoundMembers` lacks: it is a table that was generated with an older Node.js.
-fn is_missing_from_tsgolint(object: &[u8], property: &[u8]) -> bool {
-    matches!(
-        (object, property),
-        (b"RegExp", b"escape") | (b"Atomics", b"pause") | (b"Math", b"f16round") | (b"Intl", b"DurationFormat")
-    )
-}
-
 const SUPPORTED_GLOBAL_TYPES: [&str; 12] = [
     "NumberConstructor",
     "ObjectConstructor",
@@ -231,7 +223,6 @@ fn is_natively_bound<'a>(object: ObjectNode<'a>, property: PropertyNode<'a>, is_
     // `@types/node`, and the signature in an interface does not say whether a method is bound.
     if let (Some(object_name), Some(property_name)) = (object.identifier, property.identifier)
         && is_natively_bound_member(object_name, property_name)
-        && !(is_oxlint && is_missing_from_tsgolint(object_name, property_name))
         && object.node.get_symbol_at_location().is_some_and(is_not_imported)
     {
         return true;

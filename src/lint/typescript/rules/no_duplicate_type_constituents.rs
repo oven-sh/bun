@@ -385,15 +385,13 @@ impl NoDuplicateTypeConstituents {
         if matches!(parent, Node::Type(parent) if parent.tag() == tag) {
             return;
         }
-        // tsgolint asks only for the question token. Its parent of a union in parentheses is the parenthesized type,
-        // and only a constructor has parameter properties.
+        // tsgolint asks only for the question token, and only a constructor has parameter properties.
         let is_of_optional_parameter = tag == TypeTag::Union
             && matches!(parent, Node::Param(param) if param.is_optional()
                 && match cx.language().is_oxlint {
                     true => {
-                        !node.is_parenthesized()
-                            && !(param.is_parameter_property()
-                                && param.func().is_some_and(|func| func.kind() == FnKind::Constructor))
+                        !(param.is_parameter_property()
+                            && param.func().is_some_and(|func| func.kind() == FnKind::Constructor))
                     }
                     false => {
                         param.pat().tag() == PatTag::Ident

@@ -13,14 +13,15 @@ fn is_array_or_tuple_type_at_location(object: Expr<'_>) -> bool {
         .any(|t| t.is_array_type() || t.is_tuple_type())
 }
 
-/// tsgolint's `IsArrayMethodCallWithPredicate`: the callee is an access expression itself, not one
-/// in parentheses, and its name is what the checker's `getAccessedPropertyName` says.
+/// tsgolint's `IsArrayMethodCallWithPredicate`: the name of the callee is what the checker's
+/// `getAccessedPropertyName` says.
 fn is_array_method_call_with_predicate_of_tsgolint(node: Expr<'_>) -> bool {
     let Some(call) = node.as_call() else {
         return false;
     };
     let callee = call.callee();
-    if callee.is_parenthesized() {
+    // `(a?.filter)(f)`: the parentheses end the chain, and the call is not a part of it.
+    if callee.is_chain_root() {
         return false;
     }
     let Some(object) = callee.object() else {

@@ -155,8 +155,7 @@ impl ConsistentReturn {
             }
             let has_value = argument.is_some_and(|value| {
                 !self.treat_undefined_as_unspecified
-                    || value.ty().flags() != TypeFlags::UNDEFINED
-                        && (value.is_parenthesized() || !ast_utils::is_specific_id(value, "undefined"))
+                    || value.ty().flags() != TypeFlags::UNDEFINED && !ast_utils::is_specific_id(value, "undefined")
             });
             if *expected.get_or_insert(has_value) != has_value {
                 has_mismatch = true;

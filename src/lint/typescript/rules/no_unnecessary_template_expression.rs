@@ -81,10 +81,6 @@ struct InterpolationInfo<'a> {
 }
 
 fn interpolation_of_expression(node: Expr<'_>) -> Option<Interpolation<'_>> {
-    // For tsgolint a `ParenthesizedExpression` is not the literal in it.
-    if node.file().language().is_oxlint && node.is_parenthesized() {
-        return None;
-    }
     Some(match node.kind() {
         ExprKind::Ident(name) if name.is_any(&["undefined", "Infinity", "NaN"]) => Interpolation::Name,
         ExprKind::String(value) => Interpolation::String(value),
@@ -107,10 +103,6 @@ fn interpolation_of_expression(node: Expr<'_>) -> Option<Interpolation<'_>> {
 fn interpolation_of_type(node: TypeNode<'_>) -> Option<Interpolation<'_>> {
     // The literal of `-1` is a `UnaryExpression`.
     let is_negative = || node.text().starts_with(b"-");
-    // For tsgolint a `ParenthesizedType` is not the literal in it.
-    if node.file().language().is_oxlint && node.is_parenthesized() {
-        return None;
-    }
     Some(match node.kind() {
         TypeKind::Keyword(Keyword::Null | Keyword::Undefined) => Interpolation::Name,
         TypeKind::StringLit(value) if node.text().starts_with(b"`") => {

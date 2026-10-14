@@ -135,11 +135,9 @@ impl AwaitThenable {
         if !is_promise_aggregator_method(node) {
             return;
         }
-        // In tsgolint a parenthesized array literal is not an array literal, and a range has the parentheses.
+        // In tsgolint a range has the parentheses.
         let is_oxlint = cx.language().is_oxlint;
-        if let ExprKind::Array(elements) = argument.kind()
-            && !(is_oxlint && argument.is_parenthesized())
-        {
+        if let ExprKind::Array(elements) = argument.kind() {
             for element in elements.iter().filter(|element| !element.is_missing()) {
                 if is_always_non_awaitable_type(get_constrained_type_at_location(element), element) {
                     let place = if is_oxlint { element.outer_span() } else { element.span() };

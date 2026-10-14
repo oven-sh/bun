@@ -67,7 +67,7 @@ fn as_reg_exp_constructor_call(node: Expr<'_>) -> Option<Call<'_>> {
         return None;
     };
     let callee = call.callee();
-    (callee.is_ident("RegExp") && !callee.is_parenthesized()).then_some(call)
+    callee.is_ident("RegExp").then_some(call)
 }
 
 /// The initializer of the variable, if a `const` declares it.
@@ -294,9 +294,9 @@ impl Rule for PreferRegexpExec {
         };
         let is_oxlint = cx.language().is_oxlint;
         let is_match = match is_oxlint {
-            // For tsgolint a callee in parentheses is no member access.
+            // `(a?.match)(b)` calls a `ChainExpression`.
             true => {
-                !member_node.is_parenthesized()
+                !member_node.is_chain_root()
                     && matches!(cx.file().type_checker().get_accessed_property_name(member_node), Some(b"match"))
             }
             // `(a?.match)(b)` calls a `ChainExpression`.

@@ -36,6 +36,8 @@ import whatOxlintFixes from "./oracle/plugins/oxlint/fixes.expected.json";
 import whatOxlintMarks from "./oracle/plugins/oxlint/labels.json";
 import { filesOf as filesOfMessages, helpsOf, entries as messages, messagesOf } from "./oracle/plugins/oxlint/messages";
 import optionsOfOxlint from "./oracle/plugins/oxlint/options.json";
+import parenthesesExpected from "./oracle/plugins/oxlint/parentheses.expected.json";
+import parentheses from "./oracle/plugins/oxlint/parentheses.json";
 import { labelsOf, projects } from "./oracle/plugins/oxlint/projects";
 
 afterAll(endChildren);
@@ -4589,6 +4591,20 @@ maybe(() => { return f; });
         isDebug || isASAN ? 120_000 : 30_000,
       );
 
+      // parentheses.json has code in parentheses that aren't needed, for the type-aware rules that used to treat it
+      // differently from the same code without them. parentheses.expected.json is what `bun lint` reports for it.
+      test("type-aware rules see through redundant parentheses", async () => {
+        const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        for (const { name, config, files: texts } of parentheses) {
+          files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
+          files[`${name}/tsconfig.json`] = JSON.stringify({ compilerOptions });
+          for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
+        }
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        expect(foundExactly(raw, Object.keys(parenthesesExpected))).toEqual(parenthesesExpected);
+      });
+
       // messages.json has what oxlint 1.87.0 with tsgolint 7.0.2003 says.
       test("the rules that oxlint shares with ESLint and typescript-eslint say what oxlint's say", async () => {
         const { raw } = await lint(filesOfMessages(messages), ["-f", "json", "--type-aware"]);
@@ -5002,6 +5018,92 @@ maybe(() => { return f; });
         expect(result.files).toEqual(
           Object.fromEntries(shapes.map(([, file, text, fixed], index) => [`${index}/${file}`, fixed ?? text])),
         );
+      });
+
+      test("redundant parentheses don't change what a type-aware rule reports", async () => {
+        const pairs: [rule: string, plain: string, parenthesized: string, reports: number][] = [
+          [
+            "require-array-sort-compare",
+            "declare const a: number[];\na.sort();\n",
+            "declare const a: number[];\n(a.sort)();\n",
+            1,
+          ],
+          [
+            "dot-notation",
+            'declare const a: { b: number };\nexport const c = a["b"];\n',
+            'declare const a: { b: number };\nexport const c = a[("b")];\n',
+            1,
+          ],
+          [
+            "use-unknown-in-catch-callback-variable",
+            "declare const p: Promise<number>;\nvoid p.catch((e) => e);\n",
+            "declare const p: Promise<number>;\nvoid (p.catch)((e) => e);\n",
+            1,
+          ],
+          [
+            "prefer-reduce-type-parameter",
+            "declare const a: number[];\nexport const r = a.reduce((x, y) => x.concat(y), [] as number[]);\n",
+            "declare const a: number[];\nexport const r = a.reduce((x, y) => x.concat(y), ([] as number[]));\n",
+            1,
+          ],
+          ["no-implied-eval", 'setTimeout("alert(1)", 1);\n', '(setTimeout)("alert(1)", 1);\n', 1],
+          [
+            "no-duplicate-type-constituents",
+            "export function f(a?: string | undefined) {\n  return a;\n}\n",
+            "export function f(a?: (string | undefined)) {\n  return a;\n}\n",
+            1,
+          ],
+          [
+            "prefer-regexp-exec",
+            "declare const s: string;\nexport const m = s.match(/x/);\n",
+            "declare const s: string;\nexport const m = (s.match)(/x/);\n",
+            1,
+          ],
+          [
+            "prefer-regexp-exec",
+            'declare const s: string;\nconst r = RegExp("a");\nexport const m = s.match(r);\n',
+            'declare const s: string;\nconst r = (RegExp)("a");\nexport const m = s.match(r);\n',
+            1,
+          ],
+          [
+            "await-thenable",
+            "export async function f() {\n  await Promise.all([1, 2]);\n}\n",
+            "export async function f() {\n  await Promise.all(([1, 2]));\n}\n",
+            2,
+          ],
+        ];
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        pairs.forEach(([rule, plain, parenthesized], index) => {
+          for (const [name, text] of [
+            ["plain", plain],
+            ["parenthesized", parenthesized],
+          ]) {
+            const it = { rule: `typescript/${rule}`, file: "a.ts", text, typed: true };
+            for (const [path, text] of Object.entries(filesOf(it))) files[`${index}-${name}/${path}`] = text;
+          }
+        });
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        const reported = (directory: string) =>
+          JSON.parse(raw)
+            .diagnostics.filter((it: { filename: string }) => it.filename.startsWith(`${directory}/`))
+            .map((it: { code: string }) => it.code);
+        const expected = pairs.map(([rule, , , reports]) =>
+          Array.from({ length: reports }, () => `typescript(${rule})`),
+        );
+        expect(pairs.map((_, index) => reported(`${index}-plain`))).toEqual(expected);
+        expect(pairs.map((_, index) => reported(`${index}-parenthesized`))).toEqual(expected);
+      });
+
+      test("unbound-method knows RegExp.escape and the other newer built-ins that are bound", async () => {
+        const it = {
+          rule: "typescript/unbound-method",
+          file: "a.ts",
+          text: "export const all = [RegExp.escape, Atomics.pause, Math.f16round, Intl.DurationFormat];\n",
+          typed: true,
+          compilerOptions: { lib: ["esnext"] },
+        };
+        const { raw } = await lint(filesOf(it), ["-f", "json", "--type-aware"]);
+        expect(JSON.parse(raw).diagnostics.map((it: { code: string }) => it.code)).toEqual([]);
       });
 
       test("what is left after the fixes is reported once, where it was", async () => {

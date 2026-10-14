@@ -92,13 +92,7 @@ fn have_the_same_target<'a>(ty: Type<'a>, receiver: Type<'a>) -> bool {
 fn is_new_map_without_arguments(sender_node: Expr) -> bool {
     match sender_node.kind() {
         ExprKind::New(call) => {
-            // tsgolint has a node for parentheses, which is neither a `new` nor an identifier.
-            let is_oxlint = sender_node.file().language().is_oxlint;
-            call.callee().is_ident("Map")
-                && call.args().is_empty()
-                && call.type_args().is_empty()
-                && !(is_oxlint
-                    && (sender_node.is_parenthesized() || call.callee().is_parenthesized()))
+            call.callee().is_ident("Map") && call.args().is_empty() && call.type_args().is_empty()
         }
         _ => false,
     }

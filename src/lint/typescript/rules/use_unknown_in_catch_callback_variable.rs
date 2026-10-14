@@ -138,9 +138,8 @@ fn check_call<'a>(node: Expr<'a>, cx: &Cx<'a, UseUnknownInCatchCallbackVariable>
         return;
     };
     let is_oxlint = callee.file().language().is_oxlint;
-    // `(a?.catch)(..)` calls a `ChainExpression`, and for tsgolint `(a.catch)(..)` calls a
-    // `ParenthesizedExpression`.
-    if callee.is_chain_root() || (is_oxlint && callee.is_parenthesized()) {
+    // `(a?.catch)(..)` calls a `ChainExpression`.
+    if callee.is_chain_root() {
         return;
     }
     let value = if is_oxlint { None } else { get_static_member_access_value(callee) };

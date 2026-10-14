@@ -56,9 +56,9 @@ async function runRepl(
   return { stdout, stderr, exitCode, outputs };
 }
 
-/** The texts the REPL copied to the clipboard. Each copy is one OSC 52 sequence that carries the text in base64. */
+/** The texts the REPL copied to the clipboard. Each copy is one OSC 52 sequence that carries the UTF-8 text in base64. */
 function copiedTexts(stdout: string): string[] {
-  return Array.from(stdout.matchAll(/\x1b\]52;c;([^\x07]*)\x07/g), match => atob(match[1]));
+  return Array.from(stdout.matchAll(/\x1b\]52;c;([^\x07]*)\x07/g), match => Buffer.from(match[1], "base64").toString());
 }
 
 interface Screen {
@@ -590,6 +590,8 @@ describe.concurrent("Bun REPL", () => {
         ".copy { let x = 1; x }",
         // The value of a block is not read as the { value } wrapper of the REPL transform.
         ".copy { ({ value: 5 }) }",
+        // Text that is not ASCII stays as it is. The count is in UTF-8 bytes.
+        '.copy { "caf\u00e9" }',
         // A promise is the value as it is. Only a top-level await is awaited.
         ".copy { Promise.resolve(1) }",
         "_",
@@ -598,11 +600,12 @@ describe.concurrent("Bun REPL", () => {
       expect(outputs).toEqual([
         "Copied 1 characters to clipboard",
         "Copied 15 characters to clipboard",
+        "Copied 5 characters to clipboard",
         "Copied 22 characters to clipboard",
         // .copy <block> sets _
         "Promise { <resolved> }",
       ]);
-      expect(copiedTexts(stdout)).toEqual(["1", "{\n  value: 5,\n}", "Promise { <resolved> }"]);
+      expect(copiedTexts(stdout)).toEqual(["1", "{\n  value: 5,\n}", "caf\u00e9", "Promise { <resolved> }"]);
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
@@ -611,8 +614,9 @@ describe.concurrent("Bun REPL", () => {
       const { stdout, outputs, stderr, exitCode } = await runRepl([
         ".copy await Promise.resolve(5)",
         "_",
+        // The promise settles in a later turn of the event loop.
         // The { value } wrapper of the REPL transform is removed one time only.
-        ".copy await new Promise(resolve => setTimeout(resolve, 5, { value: 9 }))",
+        ".copy await new Promise(resolve => setImmediate(resolve, { value: 9 }))",
         "_",
         ".exit",
       ]);

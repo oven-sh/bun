@@ -593,7 +593,8 @@ impl<'a> ImportTypeComments<'a> {
         let (leading, trailing) = (self.leading_source, self.trailing_source);
         format_with(move |f: &mut Formatter<'a>| {
             write!(f, FormatLeadingComments::Comments(leading));
-            match has_ignore_comment(&[leading], trailing, f) {
+            let is_ignored = has_ignore_comment(&[leading], trailing, f);
+            f.around_cursor(source, |f| match is_ignored {
                 true => write!(f, FormatSuppressedNode(source)),
                 false => write!(
                     f,
@@ -603,7 +604,7 @@ impl<'a> ImportTypeComments<'a> {
                         StringLiteralParentKind::Expression
                     )
                 ),
-            }
+            });
             write!(f, FormatTrailingComments::Comments(trailing));
         })
     }

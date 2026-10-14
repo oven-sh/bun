@@ -5369,6 +5369,13 @@ try {
         "x();\nclass A {\n  // c1\n}\ny();\n",
         "13",
       ],
+      // After the source of an import type, whose quotes change.
+      [
+        ["--parser", "typescript", "--cursor-offset", "30"],
+        "x  ( );\ntype A = import(  'a'  ).B;\ny  ( );\n",
+        'x();\ntype A = import("a").B;\ny();\n',
+        "24",
+      ],
       [
         ["--parser", "flow", "--cursor-offset", "28"],
         "x  ( );\ndeclare class A  // c1\n{}\ny  ( );\n",

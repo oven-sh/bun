@@ -70,7 +70,7 @@ describe("css", () => {
     },
   });
 
-  // firefox 104 (in the default targets) lacks :has(), so the list is
+  // firefox 114 (in the default targets) lacks :has(), so the list is
   // downleveled, but into a single :is()-wrapped rule instead of one rule
   // per selector with duplicated declarations.
   itBundled("css/has-selector-list-not-duplicated", {

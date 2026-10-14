@@ -801,6 +801,16 @@ describe("EventEmitter error handling", () => {
       expect(thrownBy(() => new EventEmitter().emit("error", x))).toBe(trapError);
     });
 
+    // Not as in Node: it throws a RangeError. JavaScriptCore's `x instanceof Error` never returns.
+    test("a prototype chain that cycles through a Proxy is no error", () => {
+      const x: object = new Proxy({}, { getPrototypeOf: () => x });
+      const thrown = thrownBy(() => new EventEmitter().emit("error", x)) as { code?: string; context?: unknown };
+      expect({ code: thrown.code, contextIsTheValue: thrown.context === x }).toEqual({
+        code: "ERR_UNHANDLED_ERROR",
+        contextIsTheValue: true,
+      });
+    });
+
     test.concurrent("the error reaches 'uncaughtException' unchanged", async () => {
       const script = `
         const { EventEmitter } = require("node:events");

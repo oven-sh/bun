@@ -125,6 +125,24 @@ describe("a comparison that fails, with a value that inherits from Error.prototy
       cause: compare(new Error("a", { cause: make() }), new Error("b")),
     }).toEqual({ operand: asNode, cause: asNode });
   });
+
+  // The copy of these operands keeps stack frames, so util.inspect also reads the stack of the cause.
+  // Node v26.3.0 throws a TypeError for both and leaves the limit at 0.
+  it.each<[string, () => Error]>([
+    [
+      "a stack that it inherits",
+      () => Object.assign(Object.create(new Error("x")), { cause: new DOMException("m", "AbortError") }),
+    ],
+    [
+      "an enumerable stack",
+      () => {
+        const error = new Error("x", { cause: new DOMException("m", "AbortError") });
+        return Object.defineProperty(error, "stack", { value: error.stack, enumerable: true });
+      },
+    ],
+  ])("a DOMException as the cause of an operand with %s", (_, make) => {
+    expect(compare(make(), new Error("y"))).toEqual({ throws: "AssertionError", stackTraceLimit });
+  });
 });
 
 // Node asks one isError everywhere in assert: a native error of any realm, or `instanceof Error`.
@@ -201,6 +219,12 @@ describe("errors that Error.isError() does not accept", () => {
       "Expected values to be strictly deep-equal:\n+ actual - expected\n\n" +
         "+ [Error: a] {\n+   [cause]: [Inherits: m] {\n+     code: 'E_OLD'\n+   }\n+ }\n- [Error: b]\n",
     );
+  });
+
+  // Not as in Node: it throws a RangeError. JavaScriptCore's `x instanceof Error` never returns.
+  it("a message whose prototype chain cycles through a Proxy is no error", () => {
+    const message: object = new Proxy({}, { getPrototypeOf: () => message });
+    expect(thrownBy(() => assert.ok(false, message as Error))).toBeInstanceOf(AssertionError);
   });
 
   it("globals replaced after node:assert is loaded change nothing", async () => {

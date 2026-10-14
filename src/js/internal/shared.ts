@@ -179,16 +179,27 @@ function guardCallback(callback) {
   };
 }
 
-const ErrorConstructor = Error;
+const ErrorPrototype = Error.prototype;
 const ErrorIsError = Error.isError;
-const FunctionPrototypeSymbolHasInstance = Function.prototype[Symbol.hasInstance];
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+// Only a Proxy can give a prototype chain no end. No real chain has this many of them.
+const kMaxProxiesInPrototypeChain = 1000;
 
 // Node's internal isError: a native error of any realm, or an object that inherits from Error.prototype.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util.js#L99-L104
 // Error.isError is the native half. It differs from isNativeError only for ResolveMessage and
 // BuildMessage, and both inherit from Error.prototype.
+// The loop is `Function.prototype[Symbol.hasInstance].call(Error, e)` with a bound: JavaScriptCore's
+// own walk never returns for a prototype chain that cycles through a Proxy.
 function isError(e: unknown): e is Error {
-  return ErrorIsError(e) || FunctionPrototypeSymbolHasInstance.$call(ErrorConstructor, e);
+  if (ErrorIsError(e)) return true;
+  let proxies = 0;
+  while ($isObject(e)) {
+    if ($isProxyObject(e) && ++proxies > kMaxProxiesInPrototypeChain) return false;
+    e = ObjectGetPrototypeOf(e);
+    if (e === ErrorPrototype) return true;
+  }
+  return false;
 }
 
 const nodeModulesRE = /[\\/]node_modules[\\/]/;

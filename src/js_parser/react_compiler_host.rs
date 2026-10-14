@@ -154,6 +154,16 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         self.p.record_usage(ref_);
     }
 
+    fn namespace_local_read(&mut self, ns: js_ast::Ref, name: &[u8]) -> bool {
+        let p = &mut *self.p;
+        let Some(item) = p.namespace_local_import_item(ns, name) else {
+            return false;
+        };
+        p.note_tracked_namespace_use(ns);
+        p.record_usage(item);
+        p.existing_part_use(item).is_some()
+    }
+
     fn add_import_record(&mut self, path: &[u8], kind: js_ast::ImportKind) -> (u32, js_ast::Ref) {
         let p = &mut *self.p;
         let path = p.arena.alloc_slice_copy(path);

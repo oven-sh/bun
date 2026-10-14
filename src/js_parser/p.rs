@@ -2048,7 +2048,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self.part_uses[index].1
     }
 
-    fn existing_part_use(&mut self, ref_: Ref) -> Option<&mut js_ast::symbol::Use> {
+    pub(crate) fn existing_part_use(&mut self, ref_: Ref) -> Option<&mut js_ast::symbol::Use> {
         let slot = *self.part_use_slot.get(ref_.inner_index() as usize)?;
         if (slot >> 32) as u32 != self.part_generation {
             return None;
@@ -6666,6 +6666,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// The import item that `maybe_rewrite_property_access` made for `ns.name`,
     /// where `ns` is a local that holds a `require()` / `import()` namespace.
     pub(crate) fn namespace_local_import_item(&self, ns: Ref, name: &[u8]) -> Option<Ref> {
+        if !self.dynamic_import_namespace_locals.contains_key(&ns) {
+            return None;
+        }
         let item = self.import_items_for_namespace.get(&ns)?.get(name)?.ref_;
         self.is_import_item.contains_key(&item).then_some(item)
     }

@@ -64,6 +64,15 @@ bun patch --commit react --patches-dir=mypatches
 bun patch-commit react
 ```
 
+#### A missing or empty patch file
+
+Bun reads every patch file that `"patchedDependencies"` names before it installs anything, also the patch of a package that this install does not need. If a file is missing or empty, `bun install` stops and prints the path of the file. So does every other command that installs packages first, such as `bun add` and `bun update`.
+
+To continue, do one of these:
+
+- Add the file at that path. A Dockerfile, or a CI or deploy script, that copies `package.json` and `bun.lock` before `bun install` has to copy the patch files too: `COPY patches ./patches`.
+- Remove the entry from `"patchedDependencies"` and run the command again. Bun then does not apply the patch.
+
 ---
 
 <Patch />

@@ -1,7 +1,15 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, runBunInstall, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isWindows,
+  normalizeBunSnapshot as normalizeBunSnapshot_,
+  runBunInstall,
+  tempDir,
+  type DirectoryTree,
+} from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 import { pathToFileURL } from "url";
@@ -1276,5 +1284,250 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
       });
       await installUnpatched(packageDir);
     });
+  });
+});
+
+// The hash of every patch file in `patchedDependencies` is taken before bun
+// resolves anything, so a file that cannot be hashed stops the install. For a
+// missing file bun used to print `bun patch <patch file>` as the way out. That
+// command ran the same install and printed the same message.
+describe("a patchedDependencies entry whose patch file cannot be hashed", () => {
+  const registry = new TestRegistry();
+
+  beforeAll(async () => {
+    await registry.start();
+  });
+
+  afterAll(() => {
+    registry.stop();
+  });
+
+  // Adds a file, so it applies to any version of the package.
+  const addFilePatch = `diff --git a/patched.txt b/patched.txt
+new file mode 100644
+index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e728b8dad
+--- /dev/null
++++ b/patched.txt
+@@ -0,0 +1 @@
++hello world
+`;
+
+  const patchPath = "patches/no-deps@1.0.0.patch";
+  const appPackageJson = (patchedDependencies?: Record<string, string>) =>
+    JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.0" }, patchedDependencies });
+  const patchedApp = appPackageJson({ "no-deps@1.0.0": patchPath });
+
+  const missing = `error: Couldn't find patch file: "<dir>/${patchPath}"`;
+  const entryNote = (key: string | undefined) =>
+    `note: "${key}" in "patchedDependencies" of "<dir>/package.json" points at this file`;
+  const orRemoveEntry = "or remove that entry (the patch is then not applied)";
+  const missingReport = [missing, entryNote("no-deps@1.0.0"), `note: add the file at that path, ${orRemoveEntry}`].join(
+    "\n",
+  );
+
+  const project = async (files: DirectoryTree | string) => (await registry.createTestDir({ files })).packageDir;
+  const patchedFile = (root: string) => Bun.file(join(root, "node_modules", "no-deps", "patched.txt"));
+
+  // Runs bun in `cwd`. `report` is the `error:` and `note:` lines it prints, with the project root as <dir>.
+  async function run(root: string, cwd: string, args: string[], env: Record<string, string> = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: {
+        ...bunEnv,
+        // A workspace member does not read the bunfig.toml of the root.
+        BUN_CONFIG_REGISTRY: registry.url,
+        BUN_INSTALL_CACHE_DIR: join(root, ".bun-cache"),
+        // yarn also reads the rc file of the home folder
+        HOME: root,
+        USERPROFILE: root,
+        ...env,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The hint that led back to the same message.
+    expect(stderr).not.toContain("To create a new patch file");
+    const report = normalizeBunSnapshot_(stderr, root)
+      .replaceAll("fstatat()", "stat()")
+      .split("\n")
+      .filter(line => /^(error|note):/.test(line))
+      .join("\n");
+    return { stdout, stderr, report, exitCode };
+  }
+
+  async function fails(root: string, cwd: string, args: string[], env?: Record<string, string>) {
+    const { report, exitCode } = await run(root, cwd, args, env);
+    return { report, exitCode };
+  }
+
+  async function installs(root: string, cwd = root) {
+    expect(await fails(root, cwd, ["install"])).toEqual({ report: "", exitCode: 0 });
+  }
+
+  test.concurrent("a missing file: the report names the entry, and both remedies work", async () => {
+    const root = await project({ "package.json": patchedApp });
+
+    for (const command of [["install"], ["add", "a-dep@1.0.1"], ["update"]]) {
+      expect({ command, ...(await fails(root, root, command)) }).toEqual({
+        command,
+        report: missingReport,
+        exitCode: 1,
+      });
+    }
+    expect(await Bun.file(join(root, "package.json")).text()).toBe(patchedApp);
+
+    // The progress line ends before the report starts.
+    expect(await fails(root, root, ["install"], { BUN_INSTALL_PROGRESS: "1" })).toEqual({
+      report: missingReport,
+      exitCode: 1,
+    });
+
+    const silent = await run(root, root, ["install", "--silent"]);
+    expect({ stdout: silent.stdout, stderr: silent.stderr, exitCode: silent.exitCode }).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 1,
+    });
+
+    // "add the file at that path"
+    await Bun.write(join(root, patchPath), addFilePatch);
+    await installs(root);
+    expect(await patchedFile(root).text()).toBe("hello world\n");
+
+    // The same state with a lockfile and an installed package.
+    rmSync(join(root, "patches"), { recursive: true });
+    expect(await fails(root, root, ["install", "--frozen-lockfile"])).toEqual({
+      report: missingReport,
+      exitCode: 1,
+    });
+
+    // "or remove that entry (the patch is then not applied)"
+    await Bun.write(join(root, "package.json"), appPackageJson());
+    await installs(root);
+    expect({
+      noDeps: await Bun.file(join(root, "node_modules", "no-deps", "package.json")).json(),
+      patched: await patchedFile(root).exists(),
+      lockfileHasPatches: (await Bun.file(join(root, "bun.lock")).text()).includes("patchedDependencies"),
+    }).toEqual({ noDeps: { name: "no-deps", version: "1.0.0" }, patched: false, lockfileHasPatches: false });
+  });
+
+  describe.each([
+    {
+      state: "a file that is empty",
+      files: { "package.json": patchedApp, patches: { "no-deps@1.0.0.patch": "" } },
+      report: [
+        `error: patch file is empty: "<dir>/${patchPath}"`,
+        entryNote("no-deps@1.0.0"),
+        `note: restore the file, ${orRemoveEntry}`,
+      ].join("\n"),
+      posixOnly: false,
+    },
+    // The hash of every entry is taken, also when no dependency matches the entry.
+    {
+      state: "a missing file of an entry that no dependency matches",
+      files: {
+        "package.json": JSON.stringify({ name: "app", patchedDependencies: { "no-deps@1.0.0": patchPath } }),
+      },
+      report: missingReport,
+      posixOnly: false,
+    },
+    // The file can be intact after an I/O error, so these two get the errno and no remedy.
+    {
+      state: "a directory in place of the file",
+      files: { "package.json": patchedApp, patches: { "no-deps@1.0.0.patch": { "file.txt": "" } } },
+      report: [
+        `error: failed to read patch file: EISDIR: <dir>/${patchPath}: Is a directory (pread())`,
+        entryNote("no-deps@1.0.0"),
+      ].join("\n"),
+      posixOnly: true,
+    },
+    {
+      state: "a regular file in place of the directory of the file",
+      files: { "package.json": patchedApp, patches: "not a directory" },
+      report: [
+        `error: failed to read patch file: ENOTDIR: <dir>/${patchPath}: Not a directory (stat())`,
+        entryNote("no-deps@1.0.0"),
+      ].join("\n"),
+      posixOnly: true,
+    },
+  ])("$state", ({ files, report, posixOnly }) => {
+    test.skipIf(posixOnly && isWindows).concurrent("bun install says why and names the entry", async () => {
+      const root = await project(files);
+
+      expect(await fails(root, root, ["install"])).toEqual({ report, exitCode: 1 });
+    });
+  });
+
+  test.concurrent("from a workspace member, the paths are those of the workspace root", async () => {
+    const rootPackageJson = (patchedDependencies?: Record<string, string>) =>
+      JSON.stringify({ name: "root", private: true, workspaces: ["packages/*"], patchedDependencies });
+    const root = await project({
+      "package.json": rootPackageJson({ "no-deps@1.0.0": patchPath }),
+      packages: {
+        member: {
+          "package.json": JSON.stringify({ name: "member", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+        },
+      },
+    });
+    const member = join(root, "packages", "member");
+
+    expect(await fails(root, member, ["install"])).toEqual({ report: missingReport, exitCode: 1 });
+
+    await Bun.write(join(root, "package.json"), rootPackageJson());
+    await installs(root, member);
+  });
+
+  test.concurrent("two entries that share one patch file are told apart by their keys", async () => {
+    const shared = "patches/shared.patch";
+    const manifest = {
+      name: "app",
+      dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+      patchedDependencies: { "no-deps@1.0.0": shared, "a-dep@1.0.1": shared } as Record<string, string>,
+    };
+    const root = await project({ "package.json": JSON.stringify(manifest) });
+
+    const named: (string | undefined)[] = [];
+    for (const _ of Object.keys(manifest.patchedDependencies)) {
+      const { report, exitCode } = await fails(root, root, ["install"]);
+      const key = report.match(/^note: "([^"]+)" in "patchedDependencies"/m)?.[1];
+      expect({ report, exitCode }).toEqual({
+        report: [
+          `error: Couldn't find patch file: "<dir>/${shared}"`,
+          entryNote(key),
+          `note: add the file at that path, ${orRemoveEntry}`,
+        ].join("\n"),
+        exitCode: 1,
+      });
+      named.push(key);
+
+      delete manifest.patchedDependencies[key!];
+      await Bun.write(join(root, "package.json"), JSON.stringify(manifest));
+    }
+    expect(named.sort()).toEqual(["a-dep@1.0.1", "no-deps@1.0.0"]);
+
+    await installs(root);
+  });
+
+  // A yarn.lock migration adds the entries of yarn.lock to package.json in memory
+  // and writes the file only with bun.lock. The report names an entry only when
+  // the user can find it in the file.
+  test.concurrent("an entry that is not in package.json on disk gets no entry note", async () => {
+    const fixture = join(import.meta.dir, "migration", "yarn-berry", "patch");
+    const patch = join(".yarn", "patches", "no-deps-npm-1.0.1-aa11bb22cc.patch");
+    const root = await project(fixture);
+    expect((await Bun.file(join(root, "package.json")).json()).patchedDependencies).toEqual({
+      "no-deps@1.0.0": ".yarn/patches/no-deps-npm-1.0.0-d5a9b7e1c2.patch",
+    });
+    rmSync(join(root, patch));
+
+    expect(await fails(root, root, ["install"])).toEqual({
+      report: `error: Couldn't find patch file: "<dir>/.yarn/patches/no-deps-npm-1.0.1-aa11bb22cc.patch"`,
+      exitCode: 1,
+    });
+
+    await Bun.write(join(root, patch), Bun.file(join(fixture, patch)));
+    await installs(root);
   });
 });

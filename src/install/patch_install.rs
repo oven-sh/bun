@@ -2,7 +2,7 @@ use crate::lockfile::package::PackageColumns as _;
 
 use bstr::BStr;
 
-use bun_ast::{Loc, Log};
+use bun_ast::Log;
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -14,7 +14,7 @@ use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 
 use crate::package_install::PackageInstall;
-use crate::package_manager;
+use crate::package_manager::{self, ROOT_PACKAGE_JSON_PATH};
 use crate::{
     DependencyID, PackageID, PackageManager, bun_hash_tag, lockfile::Package,
     resolution::Resolution,
@@ -98,9 +98,16 @@ pub struct CalcPatchHash {
 
     pub(crate) state: Option<EnqueueAfterState>,
 
-    pub(crate) result: Option<u64>,
+    /// `None` until the worker thread has run `calc_hash`.
+    pub(crate) result: Option<Result<u64, PatchFileError>>,
+}
 
-    pub(crate) logger: Log,
+/// Why the patch file of a `patchedDependencies` entry has no hash. Every
+/// variant carries the absolute path of the file.
+pub(crate) enum PatchFileError {
+    NotFound(Box<[u8]>),
+    Empty(Box<[u8]>),
+    Io(sys::Error),
 }
 
 pub struct EnqueueAfterState {
@@ -160,7 +167,7 @@ impl PatchTask {
             Callback::CalcHash(_) => {
                 let result = self.calc_hash();
                 if let Callback::CalcHash(ch) = &mut self.callback {
-                    ch.result = result;
+                    ch.result = Some(result);
                 }
                 // Reshaped for borrowck — `calc_hash` borrows `&mut self`, so we
                 // cannot hold a `&mut ch` across the call.
@@ -241,20 +248,15 @@ impl PatchTask {
         let Callback::CalcHash(calc_hash) = &mut self.callback else {
             unreachable!()
         };
-        let Some(hash) = calc_hash.result else {
-            if log_level != LogLevel::Silent {
-                if calc_hash.logger.has_errors() {
-                    let _ = calc_hash
-                        .logger
-                        .print(std::ptr::from_mut(Output::error_writer()));
-                } else {
-                    Output::err_generic(
-                        "Failed to calculate hash for patch <b>{}<r>",
-                        format_args!("{}", BStr::new(&calc_hash.patchfile_path)),
-                    );
+        let hash = match &calc_hash.result {
+            Some(Ok(hash)) => *hash,
+            Some(Err(err)) => {
+                if log_level != LogLevel::Silent {
+                    report_patch_file_error(manager, calc_hash.name_and_version_hash, err);
                 }
+                Global::crash();
             }
-            Global::crash();
+            None => unreachable!("the worker stores the result before it queues the task"),
         };
 
         let gop = bun_core::handle_oom(
@@ -599,11 +601,10 @@ impl PatchTask {
         Ok(())
     }
 
-    pub(crate) fn calc_hash(&mut self) -> Option<u64> {
+    pub(crate) fn calc_hash(&mut self) -> Result<u64, PatchFileError> {
         let Callback::CalcHash(calc_hash) = &mut self.callback else {
             unreachable!()
         };
-        let log = &mut calc_hash.logger;
 
         let dir = self.project_dir;
         let patchfile_path = &calc_hash.patchfile_path;
@@ -614,65 +615,26 @@ impl PatchTask {
             &mut absolute_patchfile_path_buf.0,
             &[dir, patchfile_path],
         );
+        let io =
+            |e: sys::Error| PatchFileError::Io(e.with_path(absolute_patchfile_path.as_bytes()));
 
         let stat: sys::Stat = match sys::stat(absolute_patchfile_path) {
-            sys::Result::Err(e) => {
-                if e.get_errno() == sys::Errno::ENOENT {
-                    // Not `self.manager()` — `&mut self.callback` is live.
-                    // BACKREF — read-only lockfile access on the worker thread.
-                    let manager = self.manager.get();
-                    bun_ast::add_error_pretty!(
-                        log,
-                        None,
-                        Loc::EMPTY,
-                        "Couldn't find patch file: '{}'\n\nTo create a new patch file run:\n\n  <cyan>bun patch {}<r>",
-                        BStr::new(&calc_hash.patchfile_path),
-                        BStr::new(
-                            manager
-                                .lockfile
-                                .patched_dependencies
-                                .get(&calc_hash.name_and_version_hash)
-                                .unwrap()
-                                .path
-                                .slice(&manager.lockfile.buffers.string_bytes)
-                        ),
-                    );
-                    return None;
-                }
-                bun_ast::add_warning_pretty!(
-                    log,
-                    None,
-                    Loc::EMPTY,
-                    "patchfile <b>{}<r> is empty, please restore or delete it.",
-                    BStr::new(absolute_patchfile_path.as_bytes()),
-                );
-                return None;
+            sys::Result::Err(e) if e.get_errno() == sys::Errno::ENOENT => {
+                return Err(PatchFileError::NotFound(Box::from(
+                    absolute_patchfile_path.as_bytes(),
+                )));
             }
+            sys::Result::Err(e) => return Err(io(e)),
             sys::Result::Ok(s) => s,
         };
         let size: u64 = u64::try_from(stat.st_size).expect("int cast");
         if size == 0 {
-            bun_ast::add_error_pretty!(
-                log,
-                None,
-                Loc::EMPTY,
-                "patchfile <b>{}<r> is empty, please restore or delete it.",
-                BStr::new(absolute_patchfile_path.as_bytes()),
-            );
-            return None;
+            return Err(PatchFileError::Empty(Box::from(
+                absolute_patchfile_path.as_bytes(),
+            )));
         }
 
-        let file = match sys::File::open(absolute_patchfile_path, sys::O::RDONLY, 0) {
-            sys::Result::Err(e) => {
-                log.add_error_fmt(
-                    None,
-                    Loc::EMPTY,
-                    format_args!("failed to open patch file: {}", e),
-                );
-                return None;
-            }
-            sys::Result::Ok(f) => f,
-        };
+        let file = sys::File::open(absolute_patchfile_path, sys::O::RDONLY, 0).map_err(io)?;
 
         let mut hasher = bun_sha_hmac::sha::hashers::SHA1::init();
 
@@ -680,21 +642,7 @@ impl PatchTask {
         let mut chunk = vec![0u8; CHUNK_SIZE];
         let mut offset: u64 = 0;
         while offset < size {
-            let n = match file.pread_all(&mut chunk[..], offset) {
-                sys::Result::Ok(n) => n,
-                sys::Result::Err(e) => {
-                    log.add_error_fmt(
-                        None,
-                        Loc::EMPTY,
-                        format_args!(
-                            "failed to read from patch file: {} ({})",
-                            e,
-                            BStr::new(absolute_patchfile_path.as_bytes())
-                        ),
-                    );
-                    return None;
-                }
-            };
+            let n = file.pread_all(&mut chunk[..], offset).map_err(io)?;
             if n == 0 {
                 break;
             }
@@ -704,7 +652,7 @@ impl PatchTask {
 
         let mut digest = [0u8; bun_sha_hmac::sha::hashers::SHA1::DIGEST];
         hasher.r#final(&mut digest);
-        Some(u64::from_le_bytes(digest[0..8].try_into().unwrap()))
+        Ok(u64::from_le_bytes(digest[0..8].try_into().unwrap()))
     }
 
     pub(crate) fn schedule(&mut self, batch: &mut Batch) {
@@ -734,7 +682,6 @@ impl PatchTask {
                 patchfile_path,
                 name_and_version_hash,
                 result: None,
-                logger: Log::init(),
             }),
             manager: bun_ptr::BackRef::new_mut(manager),
             project_dir: FileSystem::instance().top_level_dir(),
@@ -821,6 +768,77 @@ impl PatchTask {
             next: bun_threading::Link::new(),
         })
     }
+}
+
+/// Prints why a `patchedDependencies` entry stops the install.
+#[cold]
+#[inline(never)]
+fn report_patch_file_error(
+    manager: &mut PackageManager,
+    name_and_version_hash: u64,
+    err: &PatchFileError,
+) {
+    use bun_core::fmt::quote;
+
+    // The progress line has no newline yet.
+    manager.end_progress_bar();
+
+    // An I/O error can leave the file intact, so it gets no remedy.
+    let remedy = match err {
+        PatchFileError::NotFound(path) => {
+            Output::err_generic("Couldn't find patch file: {}", (quote(path),));
+            Some("add the file at that path")
+        }
+        PatchFileError::Empty(path) => {
+            Output::err_generic("patch file is empty: {}", (quote(path),));
+            Some("restore the file")
+        }
+        PatchFileError::Io(e) => {
+            Output::err_generic("failed to read patch file: {}", (e,));
+            None
+        }
+    };
+
+    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
+    let root_package_json: &ZStr = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
+    let Some(key) = patched_dependencies_key(root_package_json, name_and_version_hash) else {
+        return;
+    };
+    bun_core::note!(
+        "{} in \"patchedDependencies\" of {} points at this file",
+        quote(&key),
+        quote(root_package_json.as_bytes()),
+    );
+    if let Some(remedy) = remedy {
+        bun_core::note!(
+            "{}, or remove that entry (the patch is then not applied)",
+            remedy
+        );
+    }
+}
+
+/// The `patchedDependencies` key that hashes to `name_and_version_hash`; the
+/// lockfile keeps only the hash. Read from the file on disk, because an entry
+/// that bun holds only in memory (`bun patch --commit`, a yarn.lock migration)
+/// is not there to edit.
+fn patched_dependencies_key(
+    root_package_json: &ZStr,
+    name_and_version_hash: u64,
+) -> Option<Box<[u8]>> {
+    let source = bun_ast::to_source(root_package_json, Default::default()).ok()?;
+    let parsed = crate::bun_json::ParsedJson::parse_package_json(&source, &mut Log::init()).ok()?;
+    let mut found = None;
+    parsed
+        .root
+        .get_object(b"patchedDependencies")?
+        .for_each_property(|key, _, _| {
+            if found.is_none()
+                && bun_semver::string::Builder::string_hash(key) == name_and_version_hash
+            {
+                found = Some(Box::from(key));
+            }
+        });
+    found
 }
 
 use crate::PreinstallState;

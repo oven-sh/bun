@@ -2123,14 +2123,15 @@ impl<'a> Repl<'a> {
         // Create arena for parsing
         let arena = bun_alloc::Arena::new();
 
-        let processed_code = wrap_likely_object_literal(code, &arena);
-
         // Set up parser options with repl_mode enabled
         let mut opts = bun_js_parser::ParserOptions::init(
             vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Tsx,
         );
         opts.repl_mode = true;
+        // A block that does not end with `;` is an error here, and the callers evaluate it as
+        // written: the transform gives a block no completion value.
+        opts.repl_leading_brace = bun_js_parser::ReplLeadingBrace::Expression;
         opts.features.dead_code_elimination = false; // REPL needs all code
         opts.features.top_level_await = true; // Enable top-level await in REPL
         // Keep `lower_using` at its default (true) here even though JavaScriptCore
@@ -2153,7 +2154,7 @@ impl<'a> Repl<'a> {
         let mut log = bun_ast::Log::init();
 
         // Create source
-        let source = bun_ast::Source::init_path_string(b"[repl]", processed_code);
+        let source = bun_ast::Source::init_path_string(b"[repl]", code);
 
         // Parse with REPL transforms
         let parser = match bun_js_parser::Parser::init(
@@ -3049,7 +3050,5 @@ fn is_incomplete_code(code: &[u8]) -> bool {
     // Incomplete if any unclosed delimiters or unclosed strings
     in_string != 0 || in_template || brace_count > 0 || bracket_count > 0 || paren_count > 0
 }
-
-use crate::api::js_transpiler::wrap_likely_object_literal;
 
 const VERSION: &str = Environment::VERSION_STRING;

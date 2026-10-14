@@ -105,7 +105,22 @@ enum HeadParse {
     NeedMore,
 }
 
-/// What is left of the body of a response that is not a 101 (RFC 9112 §6.3).
+/// Whether node:http, and `ws` with it, takes `response` for the switch to another protocol: a 101 with
+/// a value in `Upgrade` and the `upgrade` option in `Connection`. ws.ts is told the answer.
+fn is_upgrade(response: &picohttp::Response) -> bool {
+    let (mut upgrade, mut connection) = (false, false);
+    for header in response.headers.list {
+        if strings::eql_case_insensitive_ascii(header.name(), b"upgrade", true) {
+            upgrade |= !header.value().is_empty();
+        } else if strings::eql_case_insensitive_ascii(header.name(), b"connection", true) {
+            connection |= HeaderValueIterator::init(header.value())
+                .any(|option| strings::eql_case_insensitive_ascii(option, b"upgrade", true));
+        }
+    }
+    response.status_code == 101 && upgrade && connection
+}
+
+/// What is left of the body of a response that is no upgrade (RFC 9112 §6.3).
 #[derive(Clone, Copy)]
 enum ResponseBody {
     Length(u64),
@@ -115,6 +130,9 @@ enum ResponseBody {
 
 impl ResponseBody {
     fn of(response: &picohttp::Response) -> Self {
+        if matches!(response.status_code, 101 | 204 | 304) {
+            return Self::Length(0);
+        }
         let mut transfer_encoding: Option<bun_http::Encoding> = None;
         let mut content_length: Option<u64> = None;
         for header in response.headers.list {
@@ -128,7 +146,6 @@ impl ResponseBody {
             }
         }
         match transfer_encoding {
-            _ if matches!(response.status_code, 204 | 304) => Self::Length(0),
             Some(bun_http::Encoding::Chunked) => {
                 let mut decoder = picohttp::phr_chunked_decoder::default();
                 decoder.consume_trailer = 1;
@@ -200,7 +217,7 @@ pub struct HTTPClient<const SSL: bool> {
     to_send_len: Cell<usize>,
     /// What was read since the last request went out and is not consumed yet.
     body: JsCell<Vec<u8>>,
-    /// Made by the `ws` module: it times the handshake, and reads the body of a response that is not a 101.
+    /// Made by the `ws` module: it times the handshake, and reads the body of a response that is no upgrade.
     ws_mode: bool,
     /// Set while that body is read.
     response_body: Cell<Option<ResponseBody>>,
@@ -947,7 +964,12 @@ where
     }
 
     /// Forward the handshake response to C++ as a `'handshake'` event.
-    fn dispatch_handshake(ws: BackRef<CppWebSocket>, response: &picohttp::Response, body: &[u8]) {
+    fn dispatch_handshake(
+        ws: BackRef<CppWebSocket>,
+        response: &picohttp::Response,
+        is_upgrade: bool,
+        body: &[u8],
+    ) {
         let raw_headers: Vec<super::cpp_websocket::RawHeader> = response
             .headers
             .list
@@ -961,6 +983,7 @@ where
             u16::try_from(response.status_code).unwrap_or(0),
             response.status,
             &raw_headers,
+            is_upgrade,
             body,
         );
     }
@@ -976,21 +999,21 @@ where
         if let Some(ws) = this.cpp_websocket() {
             let vm = bun_jsc::virtual_machine::VirtualMachine::get();
             let is_101 = response.status_code == 101;
-            let reads_body = !is_101 && this.ws_mode;
+            let reads_body = this.ws_mode && !is_upgrade(&response);
             if reads_body {
                 this.response_body.set(Some(ResponseBody::of(&response)));
                 this.body.set(rest.to_vec());
                 // 'unexpected-response' and what came with the head share one checkpoint, as in
                 // node:http, whose parser finishes the chunk it holds.
                 let _scope = vm.enter_event_loop_scope();
-                Self::dispatch_handshake(ws, &response, &[]);
+                Self::dispatch_handshake(ws, &response, false, &[]);
                 return Self::handle_response_body(this, &[]);
             }
             {
                 // 'upgrade' and 'open' share the checkpoint that `did_connect` runs after 'open'.
                 let _scope = is_101.then(|| vm.enter_event_loop_scope_without_checkpoint());
                 let body: &[u8] = if is_101 { &[] } else { rest };
-                Self::dispatch_handshake(ws, &response, body);
+                Self::dispatch_handshake(ws, &response, true, body);
             }
             if this.cpp_websocket().is_none() {
                 // The listener closed the WebSocket: its checkpoint is this one.
@@ -1020,7 +1043,7 @@ where
         }
     }
 
-    /// `pause()` / `resume()` while CONNECTING hold back the body of a response that is not a 101, never
+    /// `pause()` / `resume()` while CONNECTING hold back the body of a response that is no upgrade, never
     /// the handshake. What one read brought is still delivered.
     ///
     /// Takes `ThisPtr<Self>` because a resume that the kernel refuses closes the socket; see `cancel`.

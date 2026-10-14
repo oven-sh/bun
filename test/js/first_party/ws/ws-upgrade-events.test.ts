@@ -8,9 +8,12 @@ import {
   acceptKey,
   createPeer,
   dial,
+  encodeFrame,
   event,
   implementations,
+  OP,
   openClient,
+  response101,
   show,
   showError,
   type PeerOptions,
@@ -381,6 +384,89 @@ describe.each(implementations)("ws client, 'upgrade' and 'unexpected-response' (
         let received = 0;
         for await (const data of response) received += data.length;
         expect(received).toBe(sent);
+      });
+    });
+
+    // For an HTTP parser a 101 is an upgrade only with an Upgrade header and the token "upgrade" in Connection. Any
+    // other 101 is a response like a 404, and like every 1xx it has no body.
+    describe("a 101 that is no upgrade", () => {
+      type Answer = { replace: Record<string, string | null>; headers?: string[]; after?: string | Buffer };
+
+      /** What the response, its request and the socket emit. `then` runs once response and request have closed. */
+      async function events({ replace, headers, after = "" }: Answer, then: (conn: RawSocket) => void) {
+        await using client = await dial(
+          implementation,
+          {},
+          { respond: conn => Buffer.concat([Buffer.from(response101(conn, headers, replace)), Buffer.from(after)]) },
+        );
+        const { ws } = client;
+        const response: string[] = [];
+        const request: string[] = [];
+        const [req, res] = await new Promise<[ClientRequest, IncomingMessage]>(resolve =>
+          ws.on("unexpected-response", (req: ClientRequest, res: IncomingMessage) => {
+            for (const name of ["aborted", "end", "close"]) res.on(name, () => response.push(name));
+            res.on("error", error => response.push(`error ${showError(error)}`));
+            res.on("data", chunk => response.push(`data ${show(chunk)}`));
+            for (const name of ["abort", "close"]) req.on(name, () => request.push(name));
+            req.on("error", error => request.push(`error ${showError(error)}`));
+            resolve([req, res]);
+          }),
+        );
+        if (!res.closed) await event(res, "close");
+        if (!request.includes("close")) await event(req, "close");
+        then(await client.peer.connection());
+        // Whatever that does to the client has happened once another connection has gone there and back.
+        await using control = await openClient(implementation);
+        await control.conn.roundTrip();
+        // Copies: the disposal of `client` aborts the request.
+        return {
+          statusCode: res.statusCode,
+          response: [...response],
+          request: [...request],
+          flags: { complete: res.complete, aborted: res.aborted, destroyed: [res.destroyed, req.destroyed] },
+          socket: [ws.readyState, ...client.events],
+        };
+      }
+      // It does not wait for the peer, and what becomes of the socket is up to the listener.
+      const emptyResponse = {
+        statusCode: 101,
+        response: ["end", "close"],
+        request: ["close"],
+        flags: { complete: true, aborted: false, destroyed: [true, true] },
+        socket: [WebSocket.CONNECTING],
+      };
+      const frame = encodeFrame(OP.text, "hi");
+
+      describe.each<Pick<Answer, "replace"> & { wrong: string }>([
+        { wrong: "no Upgrade", replace: { Upgrade: null } },
+        { wrong: "Connection: keep-alive", replace: { Connection: "keep-alive" } },
+        { wrong: "no Connection", replace: { Connection: null } },
+        { wrong: "neither Upgrade nor Connection", replace: { Upgrade: null, Connection: null } },
+      ])("$wrong", ({ replace }) => {
+        describe.each([
+          { what: "nothing", after: "" },
+          { what: "a frame", after: frame },
+        ])("$what after the head", ({ after }) => {
+          test.each([
+            { then: "ends the connection", act: (conn: RawSocket) => conn.end() },
+            { then: "keeps it open", act: () => {} },
+          ])("the response ends at once and the socket stays CONNECTING; then the peer $then", async ({ act }) => {
+            expect(await events({ replace, after }, act)).toEqual(emptyResponse);
+          });
+        });
+      });
+
+      test.each<Omit<Answer, "replace"> & { what: string }>([
+        { what: "a Content-Length and that many bytes", headers: ["Content-Length: 3"], after: "abc" },
+        { what: "a Content-Length and no byte", headers: ["Content-Length: 3"], after: "" },
+        { what: "chunks", headers: ["Transfer-Encoding: chunked"], after: "3\r\nabc\r\n0\r\n\r\n" },
+        { what: "another response behind it", after: "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi" },
+      ])("has no body, with $what", async answer => {
+        expect(await events({ replace: { Upgrade: null }, ...answer }, () => {})).toEqual(emptyResponse);
+      });
+
+      test("a frame in a later packet reaches nobody", async () => {
+        expect(await events({ replace: { Upgrade: null } }, conn => conn.write(frame))).toEqual(emptyResponse);
       });
     });
 

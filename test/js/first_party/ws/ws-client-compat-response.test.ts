@@ -35,7 +35,8 @@ describe.each(implementations)("ws client, the server's answer ($name)", ({ ws: 
   describe("the body of a response that is not a 101, after 'unexpected-response'", () => {
     /** The response of 'unexpected-response' to `head`, and the server's end of the connection. */
     async function unexpected(head: string, secure = false) {
-      const client = await dial(implementation, { ca: harnessTls.cert }, { respond: () => head, secure });
+      const respond = (conn: RawSocket) => (conn.socket.write(head, "latin1"), null);
+      const client = await dial(implementation, { ca: harnessTls.cert }, { respond, secure });
       const [, response] = (await event(client.ws, "unexpected-response")) as [unknown, IncomingMessage];
       return { client, response, conn: await client.peer.connection() };
     }
@@ -122,6 +123,27 @@ describe.each(implementations)("ws client, the server's answer ($name)", ({ ws: 
       const { client, response } = await unexpected("HTTP/1.1 204 No Content\r\nContent-Length: 6\r\n\r\n");
       await using _ = client;
       expect(await readAll(response)).toBe("");
+    });
+
+    // node:http takes a 101 for an upgrade only with a value in Upgrade and the "upgrade" option in Connection. See
+    // ws-upgrade-events.test.ts for what such a response is. These are the heads that are easy to take for an upgrade.
+    test.each([
+      { what: "Upgrade has no value", headers: ["Upgrade:", "Connection: Upgrade"] },
+      { what: "two Upgrade lines have no value", headers: ["Upgrade:", "Upgrade:", "Connection: Upgrade"] },
+      {
+        what: "Connection has another option that ends in it",
+        headers: ["Upgrade: websocket", "Connection: xupgrade"],
+      },
+      { what: "a space is in the option", headers: ["Upgrade: websocket", "Connection: close upgrade"] },
+      { what: "a no-break space follows the option", headers: ["Upgrade: websocket", "Connection: upgrade\xa0"] },
+      { what: "a no-break space precedes the option", headers: ["Upgrade: websocket", "Connection: a,\xa0upgrade"] },
+    ])("a 101 is a response without a body when $what", async ({ headers }) => {
+      const head = ["HTTP/1.1 101 Switching Protocols", ...headers, "Content-Length: 2", "", "no"].join("\r\n");
+      const { client, response } = await unexpected(head);
+      await using _ = client;
+      expect(await readAll(response)).toBe("");
+      expect(response.complete).toBe(true);
+      expect(client.events).toEqual([]);
     });
 
     // Node keeps the connection for the agent's next request, without a hold on the process. The built-in has no

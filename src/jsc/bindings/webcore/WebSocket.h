@@ -248,7 +248,7 @@ public:
         FfiSlice name;
         FfiSlice value;
     };
-    void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body);
+    void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, bool isUpgrade, std::span<const uint8_t> body);
     // Made by the `ws` module: nothing is dispatched as an Event, the wrapper's handler table is called.
     bool isWsMode() const { return m_connectedOptions.ws_mode; }
     // It gets the decoded body of a response that is not a 101: handlers.body(chunk), then

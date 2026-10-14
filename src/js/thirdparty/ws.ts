@@ -233,7 +233,7 @@ interface ServerHandlers {
 }
 
 interface ClientHandlers extends Omit<ServerHandlers, "close"> {
-  handshake(this: WebSocket, statusCode: number, statusMessage: string, rawHeaders: string[]): void;
+  handshake(this: WebSocket, statusCode: number, statusMessage: string, rawHeaders: string[], isUpgrade: boolean): void;
   body(this: WebSocket, chunk: Buffer | null, aborted: boolean, reset: boolean): void;
   open(this: WebSocket): void;
   error(this: WebSocket, error: NativeError): void;
@@ -1697,16 +1697,11 @@ const clientHandlers: ClientHandlers = {
   pong: serverHandlers.pong,
   drain: serverHandlers.drain,
   // `req.on('response')` and `req.on('upgrade')` of initAsClient().
-  handshake(statusCode, statusMessage, rawHeaders) {
+  // `isUpgrade`: a 101 that llhttp takes for an upgrade, which needs an `Upgrade` header and `Connection: upgrade`.
+  handshake(statusCode, statusMessage, rawHeaders, isUpgrade) {
     const req = this._req as ClientRequest;
-    const upgrade = headerValue(rawHeaders, "upgrade");
 
-    // Like llhttp, which takes a 101 for an upgrade only with an Upgrade header and `Connection: upgrade`.
-    if (
-      statusCode !== 101 ||
-      upgrade === undefined ||
-      !/(?:^|,)\s*upgrade\s*(?:,|$)/i.test(headerValue(rawHeaders, "connection")!)
-    ) {
+    if (!isUpgrade) {
       if (followRedirect(this, req, statusCode, headerValue(rawHeaders, "location"))) return;
 
       // All that the native socket still does is to read the body. What happens next is up to the listener, as
@@ -1736,7 +1731,7 @@ const clientHandlers: ClientHandlers = {
       if (this.readyState !== CONNECTING) return;
     }
 
-    validateUpgrade(this, req, rawHeaders, upgrade);
+    validateUpgrade(this, req, rawHeaders, headerValue(rawHeaders, "upgrade"));
   },
   // The body of a response that is no 101, then `null`. `aborted`: the connection ended before the body did.
   // `reset`: it ended with an error, which fails the request too.

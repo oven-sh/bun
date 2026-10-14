@@ -98,6 +98,7 @@ unsafe extern "C" {
         status_code: u16,
         status_message: FfiSlice<'_>,
         headers: FfiSlice<'_, RawHeader<'_>>,
+        is_upgrade: bool,
         body: FfiSlice<'_>,
     );
     safe fn WebSocket__isWsMode(websocket_context: &CppWebSocket) -> bool;
@@ -197,6 +198,7 @@ impl CppWebSocket {
         status_code: u16,
         status_message: &[u8],
         headers: &[RawHeader<'_>],
+        is_upgrade: bool,
         body: &[u8],
     ) {
         let event_loop = VirtualMachine::get().event_loop_mut();
@@ -206,6 +208,7 @@ impl CppWebSocket {
             status_code,
             status_message.into(),
             headers.into(),
+            is_upgrade,
             body.into(),
         );
         event_loop.exit();

@@ -1263,7 +1263,7 @@ void WebSocket::streamDestroy()
     callHandler(JSC::Identifier::fromString(scriptExecutionContext()->vm(), "destroy"_s), JSC::ArgList());
 }
 
-void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body)
+void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, bool isUpgrade, std::span<const uint8_t> body)
 {
     // Only the `ws` module and tests want it; the browser-style path pays nothing.
     if (!isWsMode() && !this->hasEventListeners(eventNames().handshakeEvent))
@@ -1295,6 +1295,7 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     arguments.append(JSC::jsString(vm, WTF::String({ statusMessage.data(), statusMessage.size() })));
     arguments.append(rawHeaders);
     if (isWsMode()) {
+        arguments.append(JSC::jsBoolean(isUpgrade));
         callHandler(JSC::Identifier::fromString(vm, eventNames().handshakeEvent), arguments);
         return;
     }
@@ -1536,9 +1537,9 @@ struct FfiRawHeaderSlice {
     size_t len;
 };
 
-extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, WebCore::WebSocket::FfiSlice statusMessage, FfiRawHeaderSlice headers, WebCore::WebSocket::FfiSlice body)
+extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, WebCore::WebSocket::FfiSlice statusMessage, FfiRawHeaderSlice headers, bool isUpgrade, WebCore::WebSocket::FfiSlice body)
 {
-    webSocket->didReceiveHandshakeResponse(statusCode, statusMessage.span(), std::span(headers.ptr, headers.len), body.span());
+    webSocket->didReceiveHandshakeResponse(statusCode, statusMessage.span(), std::span(headers.ptr, headers.len), isUpgrade, body.span());
 }
 
 extern "C" bool WebSocket__isWsMode(WebCore::WebSocket* webSocket)

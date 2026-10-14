@@ -233,7 +233,19 @@ describe.skipIf(!hasTable)("with a feature table", () => {
   test.concurrent(
     "a crash report has the addresses it would have had",
     async () => {
-      using dir = tempDir("exclude-features", files);
+      const dir = tempDir("exclude-features", files);
+      // Windows goes on with a report of its own about a crash, and has the executable open for that long.
+      await using removal = {
+        async [Symbol.asyncDispose]() {
+          for (const deadline = Date.now() + 20_000; ; await Bun.sleep(100)) {
+            try {
+              return dir[Symbol.dispose]();
+            } catch (e) {
+              if (!isWindows || Date.now() > deadline) throw e;
+            }
+          }
+        },
+      };
       const cwd = String(dir);
       const compiled = await Promise.all([
         compile(cwd, "full"),

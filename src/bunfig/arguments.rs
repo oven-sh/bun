@@ -61,7 +61,11 @@ fn unreadable_config(
     config_path: &[u8],
 ) -> Result<(), crate::Error> {
     if auto_loaded {
-        if err.is_unreadable_file(config_path) {
+        if bun_ast::DEFAULT_LOG_LEVEL
+            .load()
+            .at_least(bun_ast::Level::Warn)
+            && err.is_unreadable_file(config_path)
+        {
             bun_core::warn!(
                 "{}\nThe settings in <b>{}<r> are not applied.",
                 err,

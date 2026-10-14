@@ -5264,6 +5264,11 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each(files)("--silent says nothing about %s", async (_, path) => {
+    const silent = await run(["install", "--silent"], dir => mkdirSync(join(dir, path)), path.startsWith("xdg"));
+    expect(silent).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
   test.each(files)("%s has mode 000", async (_, path, message) => {
     const { stderr, exitCode } = await run(
       ["install"],

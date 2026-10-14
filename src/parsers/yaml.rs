@@ -142,6 +142,35 @@ impl YAML {
             )),
         }
     }
+
+    /// The tokens of any text. At an error, `resume(tokens, read)` returns the offset of the line to start over at.
+    pub fn tokens_despite_errors(
+        text: &[u8],
+        mut resume: impl FnMut(&mut Vec<SourceToken>, core::ops::Range<usize>) -> usize,
+    ) -> Vec<SourceToken> {
+        // `Pos::loc` counts in `i32`.
+        let text = (text.get(..bun_ast::Source::MAX_PARSEABLE_LEN)).unwrap_or(text);
+        let bump = bun_alloc::Arena::new();
+        let mut allocator = ast::ASTMemoryAllocator::borrowing(&bump);
+        let _scope = allocator.enter();
+        let mut tokens = Vec::new();
+        let mut start = 0;
+        loop {
+            let mut parser: Parser<Utf8> = Parser::init(&bump, text, CyclicAliases::Reject);
+            parser.pos = Pos::from(start);
+            parser.line_start_pos = parser.pos;
+            parser.written = Some(tokens);
+            let result = parser.parse();
+            tokens = parser.written.take().unwrap_or_default();
+            if result.is_ok() {
+                return tokens;
+            }
+            start = resume(&mut tokens, start..parser.pos.cast()).max(start + 1);
+            if start >= text.len() {
+                return tokens;
+            }
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]

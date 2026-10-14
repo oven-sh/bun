@@ -11,7 +11,6 @@
 //! specification wherever they differ from it.
 
 #![forbid(unsafe_code)]
-#![allow(dead_code)] // TEMPORARY while languages are stubs
 // For what only `--debug-check` runs: `#[optimize(size)]` roughly halves it, and how fast it is doesn't matter.
 #![feature(optimize_attribute)]
 

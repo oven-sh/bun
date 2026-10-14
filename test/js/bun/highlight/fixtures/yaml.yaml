@@ -1,0 +1,91 @@
+%YAML 1.2
+%TAG !e! tag:example.com,2000:app/ # a handle
+--- # the first document
+name: Build and test
+"on":
+  push:
+    branches: [main, "release/**", 'say "hi"', "tab\there"]
+  schedule:
+    - cron: "0 4 * * 1"
+
+env: &defaults
+  CI: true
+  DEBUG: False
+  RETRIES: 3
+  RATIO: 0.75
+  BIG: 6.02e+23
+  HEX: 0xFF
+  OCTAL: 0o755
+  NEGATIVE: -12
+  INFINITE: .inf
+  MINUS_INFINITE: -.Inf
+  NOT_A_NUMBER: .NaN
+  NOTHING: null
+  TILDE: ~
+  EMPTY:
+  VERSION: 1.2.3
+  URL: https://example.com/a#b?c=d
+  TIME: 12:30:45
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    env:
+      <<: *defaults
+      EXTRA: &extra "it's \"quoted\" \\ \x41 \u00e9 \U0001F600 \
+        and goes on"
+      SINGLE: 'it''s "single"'
+    strategy:
+      matrix: { os: [ubuntu-latest, macos-latest], node: [18, 20], "fast": true }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install
+        run: bun install
+      - name: A long script
+        run: | # keep the line breaks
+          echo "key: value"
+          # not a comment
+          bun test
+      - name: Folded
+        description: >-
+          These lines are
+          joined by spaces.
+
+          This is a new paragraph.
+      - name: Indented
+        text: |2+
+            two more
+
+      - plain text that
+        goes on in the next line
+      - - nested
+        - sequence
+      - ? - a sequence
+          - as a key
+        : complex value
+      - ? |
+          a block scalar as a key
+        : !!set { x, y }
+
+tagged:
+  string: !!str 123
+  local: !shape circle
+  handle: !e!widget { size: 1 }
+  verbatim: !<tag:yaml.org,2002:int> 5
+  binary: !!binary |
+    R0lGODlhDAAMAIQAAP
+  anchored: !!seq &list
+    - *extra
+    - *defaults
+...
+---
+- second document
+- { a: 1, b, c: d }
+- []
+- {}
+---
+"a scalar document"
+---
+|
+  a block scalar document
+...

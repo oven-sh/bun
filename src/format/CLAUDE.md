@@ -343,7 +343,20 @@ Rules for a `highlight.rs`:
 - Linear time, no limits, and anything that recurses asks the stack first, as everywhere in this crate.
 - Adding spans in source order without overlap skips the sort and the flattening. `js/highlight.rs` does.
 
-JavaScript and TypeScript (`js/highlight.rs`): the tokens are `bun lint`'s (`File::tokens`), the parser is the one that recovers from errors like `tsc`, a walk marks the names whose place says what they are, and the scopes (`bun_lint::semantic`) say what every other name refers to. A name that is neither is a contextual keyword. JSON is parsed as an expression in parentheses.
+What each language starts from:
+
+| Language                          | Tokens                                                                                        | What refines them                                                                                                                                                                                     |
+| --------------------------------- | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| JavaScript, TypeScript, JSX, JSON | `bun lint`'s (`File::tokens`), on the tree of the parser that recovers from errors like `tsc` | A tree walk marks names by where they appear. The scopes (`bun_lint::semantic`) resolve every other name. A name with neither is a contextual keyword. JSON is parsed as an expression in parentheses |
+| CSS, SCSS, Less                   | `postcss.rs`: `Tokenizer::next_tolerant_token`                                                | A lookahead to `{`, `;` or `}` tells a rule from a declaration, for valid and broken code alike. No tree                                                                                              |
+| HTML, Vue, Angular                | `html/lexer.rs` with `Options::is_tolerant`                                                   | The last start tag says what language the raw text after it is in. Angular expressions: `html/angular/highlight.rs`, on Angular's own lexer                                                           |
+| Svelte                            | A scan shaped like `Parser::run`                                                              | `js/skim.rs` finds where each `{ }` ends                                                                                                                                                              |
+| Handlebars                        | `handlebars/lexer.rs`: `lex_tolerantly`                                                       | The tokens next to a name. A small state machine reads the HTML between mustaches                                                                                                                     |
+| Markdown, MDX                     | `bun_md`'s events, with `wants_source`                                                        | `js/skim.rs` finds where `{ }`, `import` and `export` end in MDX                                                                                                                                      |
+| GraphQL                           | The lexer in `graphql/parser.rs`                                                              | The nodes that the parser built before it gave up                                                                                                                                                     |
+| YAML, TOML                        | `bun_parsers`: `tokens_despite_errors`                                                        | The next token: a scalar before a `:` is a key                                                                                                                                                        |
+
+`js/skim.rs` goes over JavaScript token by token without parsing it. It's for code whose end has to be found before it can be parsed.
 
 Tests: `test/js/bun/highlight/highlight.test.ts`. Each file in `fixtures/` is highlighted whole (a snapshot), cut off at many places, and with pieces missing.
 

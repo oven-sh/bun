@@ -154,11 +154,19 @@ impl ResponseBody {
                     picohttp::phr_decode_chunked(&raw mut *decoder, data.as_mut_ptr(), &raw mut len)
                 };
                 data.truncate(len);
-                // -2: the last chunk is still to come. A malformed body ends where it breaks.
+                // -2: the last chunk is still to come. -1: malformed, the body breaks off here.
+                if rc >= 0 {
+                    *self = Self::Length(0);
+                }
                 rc != -2
             }
             Self::UntilClose => false,
         }
+    }
+
+    /// Whether a connection that ends now, however it does, has delivered all of it.
+    fn is_complete(&self) -> bool {
+        matches!(self, Self::Length(0) | Self::UntilClose)
     }
 }
 
@@ -639,10 +647,11 @@ where
         detail: BunString,
     ) {
         if let Some((ws, _cpp_ref)) = this.outgoing_websocket.replace(None) {
-            if this.response_body.take().is_some() {
-                ws.did_receive_response_body(&[], true);
-            } else {
-                ws.did_fail(code, 0, system_code, detail);
+            match this.response_body.take() {
+                Some(body) => {
+                    ws.did_end_response_body(!body.is_complete(), !system_code.is_empty());
+                }
+                None => ws.did_fail(code, 0, system_code, detail),
             }
         }
     }
@@ -1002,7 +1011,7 @@ where
         // `ws` has no timer for the body: the next piece has this long, whether the peer or the reader waits.
         this.tcp.get().set_timeout(handshake_timeout_seconds());
         if !chunk.is_empty() {
-            ws.did_receive_response_body(&chunk, false);
+            ws.did_receive_response_body(&chunk);
         }
         if ended {
             Self::terminate(this, ErrorCode::Ended);

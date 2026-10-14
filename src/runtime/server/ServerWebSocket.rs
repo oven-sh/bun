@@ -1560,13 +1560,20 @@ impl WsPackageSocket {
 
     /// The landing frame of a uWS callback: what a handler left pending is folded here.
     ///
+    /// Entered: the context of the script that made the server, as for every other event of an `http.Server`'s
+    /// connections. Not the handlers' own: they are one set per server, given by whoever upgraded first.
+    ///
     /// # Safety
     /// `this` is the live user-data slot of the socket.
     #[inline(always)]
     unsafe fn land(this: *mut Self, deliver: impl FnOnce(&Self) -> JsResult<()>) {
         // SAFETY: per the contract of this function.
         let this = unsafe { &*this };
-        let _context = this.0.enter_handlers_context();
+        let handler = this.0.handler();
+        // An open socket keeps its server from draining, which is what clears `server`.
+        let _context = handler
+            .server
+            .map(|server| handler.vm().enter_context(server.context_id()));
         crate::dispatch::fold(deliver(this));
     }
 }

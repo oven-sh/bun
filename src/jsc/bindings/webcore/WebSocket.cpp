@@ -793,7 +793,8 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     case ConnectedWebSocketKind::None:
         break;
     }
-    if (wasPaused)
+    // The `ws` module's socket stays paused, as npm ws's does.
+    if (wasPaused && !isPaused())
         queueInitialDataDelivery();
     return {};
 }
@@ -813,7 +814,7 @@ void WebSocket::terminate()
 
 bool WebSocket::pause()
 {
-    if (m_state != CONNECTING && m_state != OPEN)
+    if (!canPause())
         return false;
     m_paused = true;
     return applyPauseToConnectedClient();
@@ -821,11 +822,11 @@ bool WebSocket::pause()
 
 bool WebSocket::resume()
 {
-    if (m_state != CONNECTING && m_state != OPEN)
+    if (!canPause())
         return false;
     const bool wasPaused = std::exchange(m_paused, false);
     const bool applied = applyPauseToConnectedClient();
-    if (wasPaused && m_state == OPEN)
+    if (wasPaused && dispatchesFrames())
         queueInitialDataDelivery();
     return applied;
 }
@@ -1320,22 +1321,23 @@ void WebSocket::didReceiveHandshakeResponse(uint16_t statusCode, std::span<const
     dispatchEvent(MessageEvent::create(eventNames().handshakeEvent, WTF::move(init), EventIsTrusted::Yes));
 }
 
-void WebSocket::didReceiveResponseBody(std::span<const uint8_t> chunk, bool ended)
+void WebSocket::didReceiveResponseBody(std::span<const uint8_t> chunk)
+{
+    callHandlerWithBuffer(WebCore::builtinNames(scriptExecutionContext()->vm()).bodyPublicName(), chunk);
+}
+
+void WebSocket::didEndResponseBody(bool aborted, bool reset)
 {
     Ref protectedThis { *this };
-    auto& name = WebCore::builtinNames(scriptExecutionContext()->vm()).bodyPublicName();
-    if (!chunk.empty())
-        callHandlerWithBuffer(name, chunk);
-    if (!ended)
-        return;
-
     m_upgradeClient = nullptr;
     if (m_state == CLOSED)
         return;
     m_state = CLOSED;
     JSC::MarkedArgumentBuffer arguments;
     arguments.append(JSC::jsNull());
-    callHandler(name, arguments);
+    arguments.append(JSC::jsBoolean(aborted));
+    arguments.append(JSC::jsBoolean(reset));
+    callHandler(WebCore::builtinNames(scriptExecutionContext()->vm()).bodyPublicName(), arguments);
     m_asyncContext.clear();
     m_pendingActivity = nullptr;
 }
@@ -1524,9 +1526,14 @@ extern "C" bool WebSocket__isWsMode(WebCore::WebSocket* webSocket)
     return webSocket->isWsMode();
 }
 
-extern "C" void WebSocket__didReceiveResponseBody(WebCore::WebSocket* webSocket, WebCore::WebSocket::FfiSlice chunk, bool ended)
+extern "C" void WebSocket__didReceiveResponseBody(WebCore::WebSocket* webSocket, WebCore::WebSocket::FfiSlice chunk)
 {
-    webSocket->didReceiveResponseBody(chunk.span(), ended);
+    webSocket->didReceiveResponseBody(chunk.span());
+}
+
+extern "C" void WebSocket__didEndResponseBody(WebCore::WebSocket* webSocket, bool aborted, bool reset)
+{
+    webSocket->didEndResponseBody(aborted, reset);
 }
 
 extern "C" void WebSocket__didFail(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode, size_t bufferedAmount, BunString systemCode, BunString detail)

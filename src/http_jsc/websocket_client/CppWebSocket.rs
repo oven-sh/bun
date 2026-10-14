@@ -104,7 +104,11 @@ unsafe extern "C" {
     safe fn WebSocket__didReceiveResponseBody(
         websocket_context: &CppWebSocket,
         chunk: FfiSlice<'_>,
-        ended: bool,
+    );
+    safe fn WebSocket__didEndResponseBody(
+        websocket_context: &CppWebSocket,
+        aborted: bool,
+        reset: bool,
     );
     safe fn WebSocket__didClose(
         websocket_context: &CppWebSocket,
@@ -203,12 +207,20 @@ impl CppWebSocket {
         WebSocket__isWsMode(self)
     }
 
-    /// A decoded piece of the body of a response that is not a 101, if not empty. After `ended` C++ has
-    /// let go of the upgrade client.
-    pub(crate) fn did_receive_response_body(&self, chunk: &[u8], ended: bool) {
+    /// A decoded piece of the body of a response that is not a 101.
+    pub(crate) fn did_receive_response_body(&self, chunk: &[u8]) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        WebSocket__didReceiveResponseBody(self, chunk.into(), ended);
+        WebSocket__didReceiveResponseBody(self, chunk.into());
+        event_loop.exit();
+    }
+
+    /// `aborted`: the connection was over before that body. `reset`: a read failed. C++ has let go
+    /// of the upgrade client.
+    pub(crate) fn did_end_response_body(&self, aborted: bool, reset: bool) {
+        let event_loop = VirtualMachine::get().event_loop_mut();
+        event_loop.enter();
+        WebSocket__didEndResponseBody(self, aborted, reset);
         event_loop.exit();
     }
 

@@ -234,7 +234,7 @@ interface ServerHandlers {
 
 interface ClientHandlers extends Omit<ServerHandlers, "close"> {
   handshake(this: WebSocket, statusCode: number, statusMessage: string, rawHeaders: string[]): void;
-  body(this: WebSocket, chunk: Buffer | null): void;
+  body(this: WebSocket, chunk: Buffer | null, aborted: boolean, reset: boolean): void;
   open(this: WebSocket): void;
   error(this: WebSocket, error: NativeError): void;
   close(this: WebSocket, code: number, reason: string): void;
@@ -1264,9 +1264,6 @@ class WebSocket extends EventEmitter {
     this._readyState = CLOSING;
     setCloseTimer(this);
 
-    // The native client reads on to find the peer's Close frame.
-    if (this[kTransport] === DIALLED) this._paused = false;
-
     // 1005 is the native spelling of a Close frame with no body.
     if (this[kTransport] === UPGRADED) this[kNative]!.close(code === undefined ? 1005 : code, data);
     else if (code === undefined) this[kNative]!.close();
@@ -1730,6 +1727,7 @@ const clientHandlers: ClientHandlers = {
     if (this.listenerCount("upgrade") > 0) {
       const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders);
 
+      res.complete = true;
       res.push(null);
       this.emit("upgrade", res);
 
@@ -1739,12 +1737,28 @@ const clientHandlers: ClientHandlers = {
 
     validateUpgrade(this, req, rawHeaders, upgrade);
   },
-  // The body of a response that is no 101, then `null`.
-  body(chunk) {
+  // The body of a response that is no 101, then `null`. `aborted`: the connection ended before the body did.
+  // `reset`: it ended with an error, which fails the request too.
+  body(chunk, aborted, reset) {
     const req = this._req as ClientRequest | null;
     const res = req?.res;
 
-    if (res && !res.push(chunk) && chunk !== null) req[kNative]?.pause();
+    if (!res) return;
+
+    if (aborted) {
+      res.destroy(connResetException("aborted"));
+    } else {
+      if (chunk === null) res.complete = true;
+      if (!res.push(chunk) && chunk !== null) req[kNative]?.pause();
+    }
+
+    if (reset) {
+      const err = connResetException("read ECONNRESET");
+
+      err.errno = -require("node:os").constants.errno.ECONNRESET;
+      err.syscall = "read";
+      requestFailed(req, err);
+    }
   },
   open() {
     clearTimeout(this[kHandshakeTimer]);
@@ -2295,22 +2309,23 @@ class ClientRequest extends EventEmitter {
 
     // A request that its owner destroys fails the handshake, as `req.on('error')` would see it. One that got its
     // response has nothing to report but `err`.
-    if (!err && this.res === null) err = connResetException();
+    if (!err && this.res === null) err = connResetException("socket hang up");
 
-    if (err) process.nextTick(requestOnDestroyed, this, err);
+    if (err) process.nextTick(requestFailed, this, err);
 
     process.nextTick(emitRequestClose, this);
     return this;
   }
 }
 
-function connResetException(): ConnectError {
-  const err: ConnectError = new Error("socket hang up");
+function connResetException(message: string): ConnectError {
+  const err: ConnectError = new Error(message);
   err.code = "ECONNRESET";
   return err;
 }
 
-function requestOnDestroyed(req: ClientRequest, err: Error): void {
+// `req.on('error')` of initAsClient().
+function requestFailed(req: HandshakeRequest, err: Error): void {
   const websocket = req[kWebSocket];
 
   if (websocket._req !== req || req[kAborted]) return;
@@ -2336,12 +2351,7 @@ function emitRequestClose(req: ClientRequest): void {
 //
 
 function requestOnError(this: HttpClientRequest, err: Error): void {
-  const websocket = this[kWebSocket];
-
-  if (websocket._req !== this || this[kAborted]) return;
-
-  websocket._req = null;
-  emitErrorAndClose(websocket, err);
+  requestFailed(this, err);
 }
 
 function requestOnResponse(this: HttpClientRequest, res: IncomingMessage): void {

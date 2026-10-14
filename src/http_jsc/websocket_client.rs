@@ -334,8 +334,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         let over_stream = matches!(self.io(), Io::Stream);
         match outcome {
             Outcome::Clean => {
-                // `terminate()` does not reach what is left.
+                // Neither `resume()` nor `terminate()` reaches what is left.
                 if self.options.ws_mode {
+                    self.resume();
                     self.arm_close_timeout();
                 }
                 // Our side has nothing more to send; the server closes the connection (RFC 6455 §7.1.1).
@@ -1229,16 +1230,17 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Our half of the closing handshake. `payload` is the status code and the
     /// reason, or empty. The frame goes behind what is unsent, and the rest of
     /// the handshake has `close_timeout_seconds` from now. `asked_by_owner`: `close()`
-    /// was called, for which `ws` has started a timer of its own that ends in `terminate()`.
+    /// was called, for which `ws` has started a timer of its own that ends in `terminate()`,
+    /// and after which a socket it paused stays paused.
     fn send_close(&self, payload: &[u8], asked_by_owner: bool) {
         if !self.can_send() {
             return;
         }
         log!("Sending close ({} bytes)", payload.len());
         self.close_sent.set(true);
-        // Only a read sees the peer's Close frame and its FIN.
-        self.resume();
         if !(asked_by_owner && self.options.ws_mode) {
+            // Only a read sees the peer's Close frame and its FIN.
+            self.resume();
             self.arm_close_timeout();
         }
         self.send_control_frame(Opcode::Close, payload);

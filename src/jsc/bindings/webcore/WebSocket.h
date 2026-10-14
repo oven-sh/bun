@@ -190,7 +190,7 @@ public:
     // and holds back the body of a response that is not a 101.
     bool pause();
     bool resume();
-    bool isPaused() const { return m_paused && (m_state == CONNECTING || m_state == OPEN); }
+    bool isPaused() const { return m_paused && canPause(); }
 
     // For `_socket` of the `ws` module.
     // Whether the connection keeps the process alive. An unref() while CONNECTING holds once connected.
@@ -248,9 +248,10 @@ public:
     void didReceiveHandshakeResponse(uint16_t statusCode, std::span<const uint8_t> statusMessage, std::span<const HandshakeRawHeader> headers, std::span<const uint8_t> body);
     // Made by the `ws` module: nothing is dispatched as an Event, the wrapper's handler table is called.
     bool isWsMode() const { return m_connectedOptions.ws_mode; }
-    // It gets the decoded body of a response that is not a 101: handlers.body(chunk), then handlers.body(null).
-    // That response is the outcome, so neither handlers.error nor handlers.close follows.
-    void didReceiveResponseBody(std::span<const uint8_t> chunk, bool ended);
+    // It gets the decoded body of a response that is not a 101: handlers.body(chunk), then
+    // handlers.body(null, aborted, reset). That response is the outcome, so neither handlers.error nor handlers.close follows.
+    void didReceiveResponseBody(std::span<const uint8_t> chunk);
+    void didEndResponseBody(bool aborted, bool reset);
 
     // C++-only callback mode. When set, didConnect/didReceiveMessage/
     // didClose call these function pointers directly instead of building
@@ -347,6 +348,7 @@ private:
     void callHandlerWithBuffer(const JSC::Identifier& name, std::span<const uint8_t>, JSC::JSValue secondArgument = {});
     // The `ws` module hears frames until the peer's Close frame.
     bool dispatchesFrames() const { return m_state == OPEN || (m_state == CLOSING && isWsMode()); }
+    bool canPause() const { return m_state == CONNECTING || dispatchesFrames(); }
 
     void sendWebSocketString(const String& message, Opcode, uint8_t flags);
     void sendWebSocketData(std::span<const uint8_t>, Opcode, uint8_t flags);

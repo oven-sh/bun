@@ -347,8 +347,7 @@ describe.each(implementations)("ws, shape ($name)", ({ ws: implementation, built
       expect(await conn.rest()).toEqual(["close 1000"]);
     });
 
-    const untilResume = "the peer's Close frame is not read until resume()";
-    test(`close() on a paused socket: ${builtin ? "it reads again" : untilResume}`, async () => {
+    test("close() on a paused socket: the peer's Close frame is not read until resume()", async () => {
       await using client = await openClient(implementation);
       const { ws, conn, events } = client;
       ws.pause();
@@ -356,19 +355,27 @@ describe.each(implementations)("ws, shape ($name)", ({ ws: implementation, built
       expect(await conn.next()).toBe("close 1000");
       conn.close(1000);
       conn.end();
-      // On the built-in close() resumes a client, so that the closing handshake can end.
-      if (builtin) {
-        expect(ws.isPaused).toBe(false);
-      } else {
-        // A CLOSING socket cannot send a marker: another connection goes there and back.
-        await using other = await openClient(implementation);
-        expect(await other.conn.roundTrip()).toEqual([]);
-        expect([ws.readyState, ws.isPaused]).toEqual([WebSocket.CLOSING, true]);
-        expect(events).toEqual(opening);
-        ws.resume();
-      }
+      // A CLOSING socket cannot send a marker: another connection goes there and back.
+      await using other = await openClient(implementation);
+      expect(await other.conn.roundTrip()).toEqual([]);
+      expect([ws.readyState, ws.isPaused]).toEqual([WebSocket.CLOSING, true]);
+      expect(events).toEqual(opening);
+
+      ws.resume();
       await client.closed;
       expect(events).toEqual([...opening, "close 1000 Buffer() rs=3"]);
+    });
+
+    // `closeTimeout` is an option of ws 8.19 and later. The package in node_modules has a constant 30 s.
+    test.skipIf(!builtin)("close() on a paused socket that is never resumed: `closeTimeout` ends it", async () => {
+      await using client = await openClient(implementation, { closeTimeout: 50 } as {});
+      const { ws, conn, events } = client;
+      ws.pause();
+      ws.close(1000);
+      await client.closed;
+      expect(events).toEqual([...opening, "close 1006 Buffer() rs=3"]);
+      expect(ws.isPaused).toBe(true);
+      expect(await conn.rest()).toEqual(["close 1000"]);
     });
   });
 

@@ -5,12 +5,13 @@ import { afterAll, beforeAll, describe, expect, setSystemTime, test } from "bun:
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCertificate } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
 import http from "node:http";
 import http2 from "node:http2";
 import { builtinModules } from "node:module";
 import { PerformanceObserver } from "node:perf_hooks";
 import { join } from "path";
+import { WebSocketServer } from "ws";
 import {
   listeningServer,
   pgAuthenticationOk,
@@ -2830,6 +2831,54 @@ describe("ModuleGraph isolation: what is the host's, or the realm's, survives a 
       await until(() => entries > afterTheGraph);
     } finally {
       observer.disconnect();
+    }
+  });
+
+  test("an http.Server of the host's: the connections `ws` upgrades on it are the host's, also when a graph was the first to call handleUpgrade()", async () => {
+    const graph = new ModuleGraph();
+    const wss = new WebSocketServer({ noServer: true });
+    const server = http.createServer();
+    const clients: WebSocket[] = [];
+    try {
+      const ranIn: (Graph | undefined)[] = [];
+      const accept = (...connection: Parameters<typeof wss.handleUpgrade> extends [...infer C, unknown] ? C : never) =>
+        wss.handleUpgrade(...connection, ws =>
+          ws.on("message", data => {
+            ranIn.push(ModuleGraph.current);
+            ws.send(String(data));
+          }),
+        );
+      server.on("upgrade", (request, socket, head) =>
+        request.url === "/graph" ? graph.run(accept, request, socket, head) : accept(request, socket, head),
+      );
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const connect = async (path: string) => {
+        const client = new WebSocket(`ws://127.0.0.1:${(server.address() as { port: number }).port}${path}`);
+        clients.push(client);
+        await new Promise((resolve, reject) => Object.assign(client, { onopen: resolve, onerror: reject }));
+        return client;
+      };
+      const echo = (client: WebSocket, text: string) =>
+        new Promise(resolve => {
+          client.onmessage = event => resolve(event.data);
+          client.send(text);
+        });
+
+      const throughTheGraph = await connect("/graph");
+      const theHosts = await connect("/host");
+      expect([await echo(throughTheGraph, "1"), await echo(theHosts, "2")]).toEqual(["1", "2"]);
+      expect(ranIn).toEqual([undefined, undefined]);
+
+      graph.dispose();
+      expect([
+        await echo(throughTheGraph, "3"),
+        await echo(theHosts, "4"),
+        await echo(await connect("/host"), "5"),
+      ]).toEqual(["3", "4", "5"]);
+    } finally {
+      for (const client of clients) client.terminate();
+      server.close();
+      graph.dispose();
     }
   });
 });

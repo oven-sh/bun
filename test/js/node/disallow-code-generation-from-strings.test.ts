@@ -118,6 +118,11 @@ const files = {
         Bun.plugin({ name: "module-source", setup(build) { build.module("made:source", () => ({ contents: "export default 1 + 1", loader: "ts" })); } });
         return (await import("made:source")).default;
       },
+      // Bun makes a module of the text whatever the loader is.
+      pluginModuleData: async () => {
+        Bun.plugin({ name: "module-data", setup(build) { build.module("made:data", () => ({ contents: "a = 2", loader: "toml" })); } });
+        return typeof (await import("made:data"));
+      },
       inspectorOpen: () => { inspector.open(0, "127.0.0.1"); inspector.close(); return 2; },
       // The refusal does not depend on what script can replace.
       inspectorOpenWhenInstanceofLies: () => {
@@ -132,10 +137,6 @@ const files = {
       vmCreateContext: () => typeof vm.createContext({}, { codeGeneration: { strings: true } }),
       vmSyntheticModule: () => typeof new vm.SyntheticModule(["x"], function () { this.setExport("x", 1); }),
       moduleWrapperSameValue: () => { Module.wrapper[0] = Module.wrapper[0]; return "set"; },
-      pluginModuleData: async () => {
-        Bun.plugin({ name: "module-data", setup(build) { build.module("made:data", () => ({ contents: "a = 2", loader: "toml" })); } });
-        return typeof (await import("made:data"));
-      },
       pluginModuleExports: async () => {
         Bun.plugin({ name: "module-exports", setup(build) { build.module("made:exports", () => ({ exports: { default: 2 }, loader: "object" })); } });
         return (await import("made:exports")).default;
@@ -229,6 +230,7 @@ const everythingElse = {
   workerEvalOption: 2,
   pluginOnLoadSource: 2,
   pluginModuleSource: 2,
+  pluginModuleData: "object",
   inspectorOpen: 2,
   inspectorOpenWhenInstanceofLies: 2,
   jscStartRemoteDebugger: 2,
@@ -238,7 +240,6 @@ const notScriptFromAString = {
   vmCreateContext: "object",
   vmSyntheticModule: "object",
   moduleWrapperSameValue: "set",
-  pluginModuleData: "object",
   pluginModuleExports: 2,
   jsonParse: 2,
   regexp: "2",

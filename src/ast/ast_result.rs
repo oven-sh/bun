@@ -262,6 +262,8 @@ pub type TsEnumsMap =
 /// `import X ...; X.name` where `X` resolved to a module namespace while
 /// linking: `X` -> `name` -> the generated import symbol bound to that export.
 /// The printer emits that symbol in place of the property access.
+/// `X` is also a local that holds a `require()` / `import()` namespace:
+/// `name` -> the import item of `X.name`, when the linker resolved it.
 pub type ImportMemberBindings =
     ArrayHashMap<Ref, StringHashMap<Ref, AstAlloc>, AutoContext, AstAlloc>;
 

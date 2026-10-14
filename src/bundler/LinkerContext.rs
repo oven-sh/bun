@@ -4589,6 +4589,15 @@ impl<'a> LinkerContext<'a> {
             if is_call_item
                 && !self.binds_call_item(source_index, import_ref, named_import, &result)
             {
+                // A name the importee does not have reads `undefined`.
+                if self
+                    .graph
+                    .symbols
+                    .get_const(import_ref)
+                    .is_some_and(|symbol| symbol.import_item_status == ImportItemStatus::Missing)
+                {
+                    self.bind_namespace_local_read(import_ref, named_import);
+                }
                 continue;
             }
 
@@ -4600,6 +4609,9 @@ impl<'a> LinkerContext<'a> {
                 }
                 MatchImportKind::Normal | MatchImportKind::NormalAndNamespace => {
                     self.bind_matched_import(imports_to_bind, import_ref, &result, re_exports);
+                    if is_call_item {
+                        self.bind_namespace_local_read(import_ref, named_import);
+                    }
                 }
                 MatchImportKind::Namespace => {
                     // SAFETY: the mutated symbol slot is disjoint from `named_import`
@@ -4923,6 +4935,34 @@ impl<'a> LinkerContext<'a> {
                 }
             }
         }
+    }
+
+    /// `import_ref` is the item of `ns.name`, a read off a local that holds a
+    /// `require()` / `import()` namespace. The linker resolved it, so the
+    /// printer writes the item in place of each such read
+    /// (`E::Dot::is_import_property_use`). A read with no entry prints as
+    /// written. A local that a pattern binds is no such read: its symbol has
+    /// no `namespace_alias`.
+    fn bind_namespace_local_read(&mut self, import_ref: Ref, named_import: &NamedImport) {
+        let Some(alias) = named_import.alias else {
+            return;
+        };
+        if self
+            .graph
+            .symbols
+            .get_const(import_ref)
+            .is_none_or(|symbol| symbol.namespace_alias.is_none())
+        {
+            return;
+        }
+        // `alias` is in the arena of the file's AST, which outlives printing.
+        self.graph
+            .import_member_bindings
+            .get_or_put_value(named_import.namespace_ref, Default::default())
+            .expect("OOM")
+            .value_ptr
+            .put_static_key(alias.slice(), import_ref)
+            .expect("OOM");
     }
 
     /// Records a `Normal`/`NormalAndNamespace` match for `import_ref`.

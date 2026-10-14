@@ -788,8 +788,8 @@ declare module "module" {
 }
 `;
 
-    for (const [name] of jsclasses) {
-      dts += `\ndeclare function $inherits${name}(value: any): value is ${name};`;
+    for (const [name, , type = name] of jsclasses) {
+      dts += `\ndeclare function $inherits${name}(value: any): value is ${type};`;
     }
 
     return dts;

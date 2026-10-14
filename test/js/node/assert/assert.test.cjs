@@ -139,6 +139,109 @@ describe("AssertionError diff rendering", () => {
     );
   });
 
+  // node:assert prints its values with the inspect hooks off, and node's util.inspect then
+  // prints a URL as its href. The messages are node v26.3.0's.
+  describe("URL", () => {
+    const a = new URL("http://example.com/a");
+    const b = new URL("http://example.com/b");
+
+    test.each([
+      ["strictEqual", 'Expected "actual" to be reference-equal to "expected":'],
+      ["deepStrictEqual", "Expected values to be strictly deep-equal:"],
+      ["partialDeepStrictEqual", "Expected values to be partially and strictly deep-equal:"],
+    ])("%s shows the two hrefs as a diff", (method, header) => {
+      expect(messageOf(() => assert[method](a, b))).toBe(
+        `${header}\n+ actual - expected\n\n+ http://example.com/a\n- http://example.com/b\n`,
+      );
+    });
+
+    test("a nested URL shows its href in the diff", () => {
+      expect(messageOf(() => assert.deepStrictEqual({ url: a }, { url: b }))).toBe(
+        "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  {\n+   url: http://example.com/a\n-   url: http://example.com/b\n  }\n",
+      );
+      const thrown = () => {
+        throw Object.assign(new Error("failed"), { url: a });
+      };
+      expect(messageOf(() => assert.throws(thrown, { url: b }))).toBe(
+        "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  Comparison {\n+   url: http://example.com/a\n-   url: http://example.com/b\n  }\n",
+      );
+    });
+
+    test("the messages without a diff name the hrefs", () => {
+      expect(messageOf(() => assert.equal(a, b))).toBe("http://example.com/a == http://example.com/b");
+      expect(messageOf(() => assert.deepEqual(a, b))).toBe(
+        "Expected values to be loosely deep-equal:\n\nhttp://example.com/a\n\nshould loosely deep-equal\n\nhttp://example.com/b",
+      );
+      expect(messageOf(() => assert.notStrictEqual(a, a))).toBe(
+        'Expected "actual" not to be reference-equal to "expected":\n\nhttp://example.com/a',
+      );
+      expect(messageOf(() => assert.notDeepStrictEqual(a, a))).toBe(
+        'Expected "actual" not to be strictly deep-equal to:\n\nhttp://example.com/a',
+      );
+    });
+
+    test("two values that print the same text keep the same-structure message", () => {
+      class MyURL extends URL {}
+      const sameStructure = text => `Values have same structure but are not reference-equal:\n\n${text}\n`;
+      expect(messageOf(() => assert.strictEqual(a, new URL(a.href)))).toBe(sameStructure("http://example.com/a"));
+      expect(messageOf(() => assert.strictEqual(a, new MyURL(a.href)))).toBe(sameStructure("http://example.com/a"));
+      expect(messageOf(() => assert.deepStrictEqual(a, new MyURL(a.href)))).toBe(sameStructure("http://example.com/a"));
+      expect(messageOf(() => assert.strictEqual([], []))).toBe(sameStructure("[]"));
+    });
+
+    // node's util.inspect reads `href` of every class instance it prints, and rethrows what the getter throws.
+    test("a href getter that throws gives its own error, not an AssertionError", () => {
+      const error = new Error("href getter");
+      class Broken {
+        get href() {
+          throw error;
+        }
+      }
+      let thrown;
+      try {
+        assert.deepStrictEqual({ a: new Broken() }, { a: 1 });
+      } catch (e) {
+        thrown = e;
+      }
+      expect(thrown).toBe(error);
+    });
+
+    // util.inspect loads on the first use. The child replaces the global before that, as a preload or
+    // happy-dom's registrator does (its URL is a subclass of the native one).
+    test("a globalThis.URL replaced before node:assert loads does not change the message", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const NativeURL = globalThis.URL;
+           globalThis.URL = class URL extends NativeURL {};
+           const assert = require("node:assert");
+           const util = require("node:util");
+           const messageOf = fn => { try { fn(); } catch (e) { return e.name + ": " + e.message; } };
+           const a = new NativeURL("http://example.com/a");
+           const b = new NativeURL("http://example.com/b");
+           class Link { get href() { return "http://example.com/a"; } }
+           const rows = [messageOf(() => assert.strictEqual(a, b)), util.inspect(a, { customInspect: false })];
+           delete globalThis.URL;
+           rows.push(messageOf(() => assert.strictEqual(new Link(), new Link())));
+           console.log(JSON.stringify(rows));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: [
+          'AssertionError: Expected "actual" to be reference-equal to "expected":\n+ actual - expected\n\n+ http://example.com/a\n- http://example.com/b\n',
+          "http://example.com/a",
+          "AssertionError: Values have same structure but are not reference-equal:\n\nLink {}\n",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   // The per-character diff is only used when colors are on, so it runs in a child with FORCE_COLOR.
   test("colored char diff handles Latin-1, UTF-16 and mixed inputs", async () => {
     await using proc = Bun.spawn({

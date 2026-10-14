@@ -3,9 +3,11 @@ export default [
   // tests if a value is an instanceof a native class in a robust cross-realm manner
   // source-of-truth impl in src/codegen/generate-classes.ts
   // result in build/debug/codegen/ZigGeneratedClasses.cpp
+  // [C++ class without its "JS" prefix, header, TypeScript type if it has another name]
   ["Blob"],
   ["ReadableStream", "streams/JSReadableStream.h"],
   ["WritableStream", "streams/JSWritableStream.h"],
   ["TransformStream", "streams/JSTransformStream.h"],
   ["ArrayBuffer"],
+  ["DOMURL", "JSDOMURL.h", "URL"],
 ];

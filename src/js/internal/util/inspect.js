@@ -179,14 +179,14 @@ const {
 
 // We need this duplicate here to avoid a circular dependency between node:assert and node:util.
 class AssertionError extends Error {
-  constructor(message, isForced = false) {
+  constructor(message) {
     super(message);
     this.name = "AssertionError";
     this.code = "ERR_ASSERTION";
     this.operator = "==";
-    this.generatedMessage = !isForced;
-    this.actual = isForced && undefined;
-    this.expected = !isForced || undefined;
+    this.generatedMessage = true;
+    this.actual = false;
+    this.expected = true;
   }
 }
 function assert(p, message) {
@@ -1386,6 +1386,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
   if (noIterator) {
     keys = getKeys(value, ctx.showHidden);
     braces = ["{", "}"];
+    let href;
     if (typeof value === "function") {
       base = getFunctionBase(ctx, value, constructor, tag);
       if (keys.length === 0 && protoProps === undefined) return ctx.stylize(base, "special");
@@ -1452,6 +1453,17 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       if (keys.length === 0 && protoProps === undefined) {
         return base;
       }
+    } else if (
+      // node's isURL() arm (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L1402).
+      // $inheritsDOMURL is true only for a native URL object, whatever `globalThis.URL` is.
+      typeof (href = value.href) === "string" &&
+      $inheritsDOMURL(value) &&
+      !(recurseTimes > ctx.depth && ctx.depth !== null)
+    ) {
+      base = href;
+      if (keys.length === 0 && protoProps === undefined) {
+        return base;
+      }
     } else {
       if (keys.length === 0 && protoProps === undefined) {
         if (isExternal(value)) {
@@ -1507,7 +1519,8 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
         "special",
       );
     }
-    throw new AssertionError("handleMaxCallStackSize assertion failed: " + String(err), true);
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/inspect.js#L1455
+    throw err;
   }
   const circular = ctx.circular;
   if (circular !== undefined) {

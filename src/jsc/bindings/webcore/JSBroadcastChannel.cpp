@@ -164,7 +164,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
 {
     auto& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     auto* channel = JSBroadcastChannel::toWrapped(vm, callFrame->thisValue());
     if (!channel) {
@@ -178,10 +177,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
     RETURN_IF_EXCEPTION(throwScope, {});
     if (depth < 0) {
         return JSValue::encode(jsNontrivialString(vm, "BroadcastChannel"_s));
-    }
-
-    if (!depthValue.isUndefinedOrNull()) {
-        depthValue = jsNumber(depth - 1);
     }
 
     JSObject* options = optionsValue.toObject(lexicalGlobalObject);
@@ -201,33 +196,22 @@ JSC_DEFINE_HOST_FUNCTION(jsBroadcastChannelPrototype_inspectCustom, (JSC::JSGlob
         RETURN_IF_EXCEPTION(throwScope, {});
     }
 
-    PutPropertySlot slot(newOptions);
-    newOptions->put(newOptions, lexicalGlobalObject, Identifier::fromString(vm, "depth"_s), depthValue, slot);
+    // node: `depth: options.depth == null ? null : options.depth - 1`
+    JSValue childDepth = jsNull();
+    JSValue optionsDepth = options->get(lexicalGlobalObject, Identifier::fromString(vm, "depth"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
+    if (!optionsDepth.isUndefinedOrNull()) {
+        double optionsDepthNumber = optionsDepth.toNumber(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        childDepth = jsNumber(optionsDepthNumber - 1);
+    }
+    newOptions->putDirect(vm, Identifier::fromString(vm, "depth"_s), childDepth, 0);
 
     JSObject* inputObj = constructEmptyObject(lexicalGlobalObject);
     inputObj->putDirect(vm, vm.propertyNames->name, jsString(vm, channel->name()), 0);
     inputObj->putDirect(vm, Identifier::fromString(vm, "active"_s), jsBoolean(!channel->isClosed()), 0);
 
-    JSFunction* utilInspect = globalObject->utilInspectFunction();
-    RETURN_IF_EXCEPTION(throwScope, {});
-    auto callData = JSC::getCallData(utilInspect);
-    MarkedArgumentBuffer arguments;
-    arguments.append(inputObj);
-    arguments.append(newOptions);
-
-    auto inspectResult = JSC::profiledCall(globalObject, ProfilingReason::API, utilInspect, callData, inputObj, arguments);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto* inspectString = inspectResult.toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto inspectStringView = inspectString->view(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    JSValue result = jsString(vm, makeString("BroadcastChannel "_s, inspectStringView.data));
-
-    return JSValue::encode(result);
+    RELEASE_AND_RETURN(throwScope, Bun::WebStreams::inspectWithName(lexicalGlobalObject, WTF::String("BroadcastChannel"_s), inputObj, newOptions));
 }
 
 void JSBroadcastChannelPrototype::finishCreation(VM& vm, JSGlobalObject* globalObject)

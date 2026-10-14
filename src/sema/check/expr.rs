@@ -4410,14 +4410,29 @@ impl<'p, 's> Checker<'p, 's> {
     /// A part of `checkExpression` that the walk or a pass over the file has here, at the point
     /// where tsgo gets to it: what `check` asks for may be in resolution. What it reports directly
     /// is dropped. The walk or the pass gets there again and reports.
+    ///
+    /// Except what only this check can report. On the back edge of a loop the reference has the
+    /// types the loop has collected so far. Narrowed to nothing, that is `silentNeverType`, to
+    /// which nothing is assignable: `last = last.next = node` in a loop that began with
+    /// `last === null`. The walk has the final type and reports nothing.
     fn look_at_with(&mut self, check: impl FnOnce(&mut Self)) {
-        // FOR SPEED: with nothing in resolution they ask for the same.
-        if self.stack.iter().any(|&q| self.is_resolution(q)) {
-            let (reported, requests) =
-                (self.reported.len(), self.reported_iteration_requests.len());
+        let in_flow_loop = !self.flow_loops.is_empty();
+        // FOR SPEED: with nothing in resolution and no loop in progress they ask for the same.
+        if in_flow_loop || self.stack.iter().any(|&q| self.is_resolution(q)) {
+            let (reported, requests, never_targets) = (
+                self.reported.len(),
+                self.reported_iteration_requests.len(),
+                self.silent_never_target_errors,
+            );
             check(self);
-            self.reported.truncate(reported);
-            self.settle_iteration_requests(requests, true);
+            let is_dropped = !in_flow_loop || self.silent_never_target_errors == never_targets;
+            if is_dropped {
+                self.reported.truncate(reported);
+            } else {
+                // Not left to the frames around, which drop what a check on a back edge reports.
+                self.log_reported_from(reported);
+            }
+            self.settle_iteration_requests(requests, is_dropped);
         }
     }
 

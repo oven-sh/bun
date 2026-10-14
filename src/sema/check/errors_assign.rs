@@ -1320,6 +1320,9 @@ impl Checker<'_, '_> {
         if error_node.is_none() {
             return false;
         }
+        if target == TypeId::SILENT_NEVER {
+            self.silent_never_target_errors += 1;
+        }
         let output = diagnostic_output.as_deref_mut();
         if let Some((file, e)) = expr
             && self.elaborate_error(file, e, is_effective, source, target, head_message, output)

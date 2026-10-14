@@ -387,6 +387,8 @@ pub(crate) mod prune_command;
 pub(crate) mod publish_command;
 #[path = "remove_command.rs"]
 pub(crate) mod remove_command;
+#[path = "run_abort.rs"]
+pub(crate) mod run_abort;
 #[path = "scan_command.rs"]
 pub(crate) mod scan_command;
 #[path = "script_or_command.rs"]

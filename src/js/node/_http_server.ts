@@ -1462,6 +1462,8 @@ function detachSocketListenersForHandoff(socket) {
   socket[kHandedOff] = true;
   socket.removeListener("error", socketOnError);
   socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
+  socket.removeListener("close", socketOnClose);
+  socket[kSocketOnCloseListener] = false;
   socket.on("end", onReadableStreamEnd);
   // Like Node's onParserExecuteCommon: a flowing socket would drop tunnel bytes that arrive before the listener attaches a reader.
   socket.readableFlowing = null;

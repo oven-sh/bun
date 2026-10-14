@@ -3593,7 +3593,7 @@ describe("a 'close' event that user code emits", () => {
     ],
   ];
   // The fixture runs these on TCP only.
-  const tunnelsLikeNode: typeof likeNode = [
+  const tcpOnlyLikeNode: typeof likeNode = [
     [
       "socket.emit('close') in a CONNECT tunnel",
       "HTTP/1.1 200 Connection Established\r\n\r\ntunnel-bytes",
@@ -3604,13 +3604,35 @@ describe("a 'close' event that user code emits", () => {
       "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: custom\r\n\r\ntunnel-bytes",
       ["'close' listeners of the socket: 0"],
     ],
+    [
+      "socket.emit('close') in a CONNECT tunnel after a request",
+      ok(`${keepAlive}Content-Length: 5\r\n`, "first") + "HTTP/1.1 200 Connection Established\r\n\r\ntunnel-bytes",
+      ["'close' listeners of the socket: 0"],
+    ],
+    // The body of the request was read, so Node.js does not abort the request and the socket
+    // stays. The response is closed all the same: its end() sends no chunk.
+    [
+      "socket.emit('close') after the request body, then end() without a chunk",
+      ok(`${keepAlive}Content-Length: 0\r\n`),
+      ["response 'close'", "response destroyed true, closed true", "the socket is not destroyed"],
+    ],
+    [
+      "socket.emit('close') after the request body and flushHeaders()",
+      chunkedHead + "0\r\n\r\n",
+      ["response 'close'", "response destroyed true, closed true", "the socket is not destroyed"],
+    ],
+    [
+      "socket.emit('close') after the request body and write()",
+      chunkedHead + "1\r\na\r\n0\r\n\r\n",
+      ["response 'close'", "response destroyed true, closed true", "the socket is not destroyed"],
+    ],
   ];
 
   for (const transport of ["tcp", "tls"]) {
     it.concurrent(
       `does not end the response, and the connection goes on as in Node.js (${transport})`,
       async () => {
-        const scenarios = (transport === "tcp" ? [...likeNode, ...tunnelsLikeNode] : likeNode).filter(
+        const scenarios = (transport === "tcp" ? [...likeNode, ...tcpOnlyLikeNode] : likeNode).filter(
           // The fixture leaves this one out on Windows.
           ([scenario]) => !(isWindows && scenario === "emitted while the body drains"),
         );

@@ -124,9 +124,9 @@ const endOnALaterTurn = async (req, res) => {
 };
 
 // A tunnel: the listener of 'connect' or 'upgrade' has the socket. 'close' is emitted on it by
-// hand, then the tunnel is used.
-async function tunnel(eventName, request, head) {
-  const server = await listen({}, answerSentinel);
+// hand, then the tunnel is used. With `first`, the connection has served that request before.
+async function tunnel(eventName, request, head, first = "") {
+  const server = await listen({}, (req, res) => res.end("first"));
   server.on(eventName, (req, socket) => {
     socket.on("error", () => {});
     socket.write(head);
@@ -138,6 +138,10 @@ async function tunnel(eventName, request, head) {
     });
   });
   const connection = await connect(server);
+  if (first) {
+    connection.client.write(first);
+    while (!connection.received().endsWith("first")) await once(connection.client, "data");
+  }
   connection.client.write(request);
   await connection.closed;
   close(server);
@@ -193,6 +197,28 @@ const socketCloseAfterWrite = options =>
       endUnlessAborted(socket);
     },
     { options, sentinel: false },
+  );
+
+// The body of the request was read to its end, so Node.js does not abort the request and the
+// socket stays. The response is closed all the same: a later end() drops its chunk.
+const post = "POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello";
+const socketCloseAfterTheRequestBody = (send, chunk) =>
+  firstThenSentinel(
+    async (req, res) => {
+      const socket = req.socket;
+      recordAbort(req, res);
+      req.resume();
+      await once(req, "end");
+      send(res);
+      await turn();
+      socket.emit("close");
+      events.push(`response destroyed ${res.destroyed}, closed ${res.closed}`);
+      await turn();
+      res.end(chunk);
+      await once(res, "finish");
+      endUnlessAborted(socket);
+    },
+    { request: post, sentinel: false },
   );
 
 const scenarios = {
@@ -414,8 +440,8 @@ const scenarios = {
 // Winsock takes the whole body in one send() on loopback, so no response is left that drains.
 if (process.platform === "win32") delete scenarios["emitted while the body drains"];
 
-// Not on TLS: the TLSSocket of Node.js has 'close' listeners of its own, which take the event as
-// the end of the TLS session.
+// These use the socket after the event. Not on TLS: the TLSSocket of Node.js has 'close' listeners
+// of its own, which take the event as the end of the TLS session.
 if (!isTLS) {
   scenarios["socket.emit('close') in a CONNECT tunnel"] = () =>
     tunnel(
@@ -429,6 +455,19 @@ if (!isTLS) {
       get("/first", "Connection: Upgrade\r\nUpgrade: custom\r\n"),
       "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: custom\r\n\r\n",
     );
+  scenarios["socket.emit('close') in a CONNECT tunnel after a request"] = () =>
+    tunnel(
+      "connect",
+      "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n",
+      "HTTP/1.1 200 Connection Established\r\n\r\n",
+      get("/first"),
+    );
+  scenarios["socket.emit('close') after the request body, then end() without a chunk"] = () =>
+    socketCloseAfterTheRequestBody(() => {});
+  scenarios["socket.emit('close') after the request body and flushHeaders()"] = () =>
+    socketCloseAfterTheRequestBody(res => res.flushHeaders(), "body");
+  scenarios["socket.emit('close') after the request body and write()"] = () =>
+    socketCloseAfterTheRequestBody(res => res.write("a"), "body");
 }
 
 (async () => {

@@ -1472,6 +1472,30 @@ describe("backpressure", () => {
           return sock;
         },
       },
+      // The next two are served from JS, over the socket the server is given. The http.Server
+      // of the first never listens: a net.Server accepts its connections.
+      'emit("connection")': {
+        createServer(listener: RequestListener) {
+          const server = http.createServer(listener);
+          return net.createServer(socket => void server.emit("connection", socket));
+        },
+        async connect(port: number) {
+          const sock = net.connect(port, "127.0.0.1");
+          sock.on("error", () => {});
+          await once(sock, "connect");
+          return sock;
+        },
+      },
+      "http2 allowHTTP1": {
+        createServer: (listener: RequestListener) =>
+          http2.createSecureServer({ ...tlsOptions, allowHTTP1: true }, listener as never),
+        async connect(port: number) {
+          const sock = nodeTls.connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+          sock.on("error", () => {});
+          await once(sock, "secureConnect");
+          return sock;
+        },
+      },
     };
     type Transport = (typeof transports)[keyof typeof transports];
 
@@ -1585,6 +1609,111 @@ describe("backpressure", () => {
           upload.sock.destroy();
         }
       });
+    });
+
+    // A stopped socket reads nothing, so it does not see the FIN of a client that
+    // has read its response and leaves. The keep-alive timeout that starts when
+    // the response finishes is what closes the connection, as in Node.
+    describe.each(['emit("connection")', "http2 allowHTTP1"] as const)("%s", name => {
+      const transport = transports[name];
+
+      it("closes a connection it stopped reading once the response is out and the keep-alive timeout passes", async () => {
+        const events: string[] = [];
+        const closed = Promise.withResolvers<void>();
+        await using server = transport.createServer((req, res) => {
+          const socket = req.socket;
+          Object.assign((socket as any).server, { keepAliveTimeout: 1, keepAliveTimeoutBuffer: 0 });
+          socket.on("timeout", () => events.push("timeout"));
+          socket.on("close", () => closed.resolve());
+          res.on("finish", () => events.push("finish"));
+          // One chunk, then no more reads. The response goes out only after the
+          // rest of the body has filled the request's buffer and stopped the socket.
+          req.once("data", () => {
+            req.pause();
+            const answerOnceStopped = () => {
+              if (!socket.isPaused() || req.readableLength < req.readableHighWaterMark) return;
+              socket.removeListener("pause", answerOnceStopped);
+              events.push("stopped");
+              res.writeHead(413, { "Content-Length": 0 }).end();
+            };
+            socket.on("pause", answerOnceStopped);
+            answerOnceStopped();
+          });
+        });
+        await once(server.listen(0, "127.0.0.1"), "listening");
+
+        const sock = await transport.connect((server.address() as AddressInfo).port);
+        try {
+          // The client has the whole response, or the server has already closed the connection.
+          const answered = Promise.withResolvers<void>();
+          let response = "";
+          sock.on("data", chunk => {
+            response += chunk.toString("latin1");
+            if (response.includes("\r\n\r\n")) answered.resolve();
+          });
+          sock.on("close", () => answered.resolve());
+          sock.write(`POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${TOTAL}\r\n\r\n`);
+          for (let sent = 0; sent < 1024 * 1024; sent += BLOCK.byteLength) sock.write(BLOCK);
+          await answered.promise;
+          // A clean FIN with nothing left unread: a reset would close the stopped socket by itself.
+          sock.end();
+          await closed.promise;
+          expect(events).toEqual(["stopped", "finish", "timeout"]);
+        } finally {
+          sock.destroy();
+        }
+      });
+    });
+
+    // The handler restarts the stopped socket from inside its own AsyncLocalStorage store when it
+    // starts to read, and the request pipelined behind must not run in that store. A duplexPair
+    // side gets one 'data' per write of the other side, so what waits behind the stop is fixed.
+    it("does not run the next pipelined request in the async context that restarted the socket", async () => {
+      const als = new AsyncLocalStorage<string>();
+      const CHUNK = Buffer.alloc(16 * 1024, "b");
+      const CHUNKS = 8;
+      const stores: Record<string, string | undefined> = {};
+      const second = Promise.withResolvers<void>();
+      const server = http.createServer((req, res) => {
+        stores[`request ${req.url}`] = als.getStore();
+        if (req.url === "/second") {
+          req.resume();
+          res.end("second");
+          return void second.resolve();
+        }
+        const socket = req.socket;
+        const readOnceStopped = () => {
+          if (!socket.isPaused() || req.readableLength < req.readableHighWaterMark) return;
+          socket.removeListener("pause", readOnceStopped);
+          // The read starts in a later turn than the stop, inside the store.
+          als.run("first", () =>
+            setImmediate(() => {
+              stores["read of /first starts"] = als.getStore();
+              req.on("data", () => {});
+              req.on("end", () => res.end("first"));
+            }),
+          );
+        };
+        socket.on("pause", readOnceStopped);
+        readOnceStopped();
+      });
+      const [clientSide, serverSide] = duplexPair();
+      try {
+        server.emit("connection", serverSide);
+        clientSide.resume();
+        clientSide.write(`POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: ${CHUNKS * CHUNK.length}\r\n\r\n`);
+        for (let i = 0; i < CHUNKS; i++) clientSide.write(CHUNK);
+        clientSide.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        await second.promise;
+        expect(stores).toEqual({
+          "request /first": undefined,
+          "read of /first starts": "first",
+          "request /second": undefined,
+        });
+      } finally {
+        clientSide.destroy();
+        serverSide.destroy();
+      }
     });
 
     it("delivers the rest of a body and the FIN that arrived while the connection was paused once the request resumes", async () => {

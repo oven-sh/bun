@@ -224,8 +224,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         loc: name_loc,
                                         ref_: new_ref,
                                     };
-                                    // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
-                                    VecExt::append(&mut p.module_scope_mut().generated, new_ref);
+                                    // The item of a read off a `require()` / `import()`
+                                    // local never prints under its own name, so it
+                                    // takes none from the bindings of a nested scope.
+                                    if dynamic_record.is_none() {
+                                        // SAFETY: module_scope is arena-owned and valid for the parser lifetime.
+                                        VecExt::append(
+                                            &mut p.module_scope_mut().generated,
+                                            new_ref,
+                                        );
+                                    }
 
                                     p.import_items_for_namespace
                                         .get_mut(&id.ref_)
@@ -281,6 +289,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if identifier_opts.is_call_target() || identifier_opts.is_template_tag()
                             {
                                 p.symbols[ref_.inner_index() as usize].set_called_as_method(true);
+                            }
+
+                            // Only the linker knows whether the item binds to an
+                            // export, so the read stays a property access. The
+                            // caller marks it (`record_import_property_use`).
+                            if dynamic_record.is_some() {
+                                p.note_import_use(ref_, identifier_opts);
+                                break 'sw;
                             }
 
                             return Some(

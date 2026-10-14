@@ -314,10 +314,15 @@ pub struct Dot {
     /// the call target but keeping any arguments with side effects.
     pub call_can_be_unwrapped_if_unused: CallUnwrap,
 
-    /// `target` is an `EImportIdentifier` and this read was counted in
-    /// `Part::import_symbol_property_uses` instead of as a use of the import,
-    /// so the linker may bind it straight to the export it names
-    /// (`LinkerGraph::import_member_bindings`).
+    /// The linker may bind this read straight to the export it names
+    /// (`LinkerGraph::import_member_bindings`). The printer then writes that
+    /// export in place of the read. One of:
+    /// - `target` is an import, and the read was counted in
+    ///   `Part::import_symbol_property_uses` instead of as a use of the import.
+    /// - `target` is a local that holds a `require()` / `import()` namespace,
+    ///   and the part counts a use of the import item of `target.name`. Until
+    ///   the linker binds that item, the read is a property access like any
+    ///   other: it can run a getter, and a call through it passes `target`.
     pub is_import_property_use: bool,
 }
 impl Default for Dot {

@@ -2146,7 +2146,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// See `Symbol::import_used_as_value`.
-    fn note_import_use(&mut self, ref_: Ref, opts: IdentifierOpts) {
+    pub(crate) fn note_import_use(&mut self, ref_: Ref, opts: IdentifierOpts) {
         if !opts.is_property_access_target() && !self.is_control_flow_dead {
             self.symbols[ref_.inner_index() as usize].set_import_used_as_value(true);
         }
@@ -3012,6 +3012,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EDot(mut e) => {
+                    // A read the linker may bind to an export: the `require()` /
+                    // `import()` of its local must stay in the declaration.
+                    if e.is_import_property_use
+                        && matches!(e.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
+                    {
+                        break 'outer;
+                    }
+
                     if let Some(done) = self.substitute_single_use_symbol_in_child(
                         &mut e.target,
                         expr,
@@ -3121,6 +3129,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::ExprData::EIndex(mut index) => {
+                    // As for a dot access above.
+                    if index.is_import_property_use
+                        && matches!(index.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_.eql(r#ref))
+                    {
+                        break 'outer;
+                    }
+
                     if let Some(done) = self.substitute_single_use_symbol_in_child(
                         &mut index.target,
                         expr,
@@ -6711,6 +6726,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// namespace-member binding in the linker can drop `X` when every use was
     /// resolved that way. Returns whether it was recorded; the caller marks the
     /// node (`E::Dot::is_import_property_use`) so the printer knows the two agree.
+    ///
+    /// `ns.name` off a `require()` / `import()` local is marked too, when
+    /// `maybe_rewrite_property_access` counted its import item in this part:
+    /// the linker binds that item or the read prints as written.
     pub(crate) fn record_import_property_use(
         &mut self,
         target: &Expr,
@@ -6730,13 +6749,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 id.ref_
             }
+            // A file with no `require()` / `import()` local stops here.
+            _ if self.dynamic_import_namespace_locals.is_empty() => return false,
+            js_ast::ExprData::EIdentifier(id) => {
+                return self.can_record_import_property_use(opts)
+                    && self
+                        .namespace_local_import_item(id.ref_, name)
+                        .is_some_and(|item| self.existing_part_use(item).is_some());
+            }
+            // `ns.a.b` reads `b` off the import item of `ns.a`.
+            js_ast::ExprData::EDot(_) | js_ast::ExprData::EIndex(_) => {
+                match self.namespace_local_read_item(target) {
+                    Some(item) => item,
+                    None => return false,
+                }
+            }
             _ => return false,
         };
-        if !self.options.bundle
-            || self.is_control_flow_dead
-            || opts.assign_target() != js_ast::AssignTarget::None
-            || opts.is_delete_target()
-        {
+        if !self.can_record_import_property_use(opts) {
             return false;
         }
         // Same node visited again (const inlining); already counted.
@@ -6760,6 +6790,39 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         inner_use.count_estimate += 1;
         inner_use.is_call_target |= opts.is_call_target() || opts.is_template_tag();
         true
+    }
+
+    fn can_record_import_property_use(&self, opts: IdentifierOpts) -> bool {
+        self.options.bundle
+            && !self.is_control_flow_dead
+            && opts.assign_target() == js_ast::AssignTarget::None
+            && !opts.is_delete_target()
+    }
+
+    /// The import item that `maybe_rewrite_property_access` made for `ns.name`,
+    /// where `ns` is a local that holds a `require()` / `import()` namespace.
+    pub(crate) fn namespace_local_import_item(&self, ns: Ref, name: &[u8]) -> Option<Ref> {
+        let item = self.import_items_for_namespace.get(&ns)?.get(name)?.ref_;
+        self.is_import_item.contains_key(&item).then_some(item)
+    }
+
+    /// The import item of `expr` when it is such a read and is marked
+    /// (`E::Dot::is_import_property_use`).
+    fn namespace_local_read_item(&self, expr: &Expr) -> Option<Ref> {
+        let (target, name) = match &expr.data {
+            js_ast::ExprData::EDot(dot) if dot.is_import_property_use => {
+                (dot.target, dot.name.slice())
+            }
+            js_ast::ExprData::EIndex(index) if index.is_import_property_use => {
+                let key = index.index.unwrap_inlined().data.as_e_string()?;
+                (index.target, key.data.slice())
+            }
+            _ => return None,
+        };
+        let js_ast::ExprData::EIdentifier(id) = target.data else {
+            return None;
+        };
+        self.namespace_local_import_item(id.ref_, name)
     }
 
     pub(crate) fn ignore_usage(&mut self, r#ref: Ref) {

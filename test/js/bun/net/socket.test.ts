@@ -5621,6 +5621,7 @@ it("a socket whose peer refills the receive buffer during data() does not hold t
             }
             // The kernel sizes the receive buffer by how fast it is drained, so drain it at full
             // speed first. From then on, take long enough for the peer to fill it again.
+            // SO_RCVBUF cannot do this: Linux caps it at net.core.rmem_max, by default too small for a full read.
             if (reads > 50) Bun.sleepSync(1);
           },
         },

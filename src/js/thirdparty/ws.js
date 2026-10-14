@@ -208,10 +208,8 @@ class BunWebSocket extends EventEmitter {
         tlsOptions = require("internal/tls").nodeClientTlsToNative({ __proto__: null, ...ownOptions, ...connectOpts });
       }
 
-      let maxPayload = 0;
-      const limit = ownOptions.maxPayload;
-      // No limit in npm ws is the largest one the native client takes. `undefined` keeps the default.
-      if (limit !== undefined) maxPayload = normalizeMaxPayload(limit) || 0x7fffffff;
+      // 0 is no limit in npm ws. Here it keeps the limit of the native client.
+      const maxPayload = normalizeMaxPayload(ownOptions.maxPayload);
       let handshakeTimeout = 0;
       const timeout = ownOptions.handshakeTimeout;
       if (timeout !== undefined) {

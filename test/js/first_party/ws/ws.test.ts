@@ -2408,26 +2408,31 @@ describe("client limits", () => {
       return await emitted(new WebSocket(server.url, options as ClientOptions));
     }
 
-    // `maxPayload | 0`, and no limit when that is not above 0. Bun's 'close' then has the reason text of the native
-    // socket for a connection the server dropped. npm ws has none.
-    it.each([0, -1, NaN, null, Infinity, 200 * MiB])("%p is no limit below 150 MiB", async maxPayload => {
-      expect(await receiveHeaderThenEnd({ maxPayload })).toEqual([
+    // The limit is `maxPayload | 0`. Not above 0 is no limit in npm ws, and so is `undefined`. Bun then keeps the
+    // 128 MiB of its native socket, with the events of that socket. The default of npm ws is 100 MiB.
+    it.each([
+      undefined,
+      { headers: { "x-test": "1" } },
+      { maxPayload: undefined },
+      { maxPayload: 0 },
+      { maxPayload: -1 },
+      { maxPayload: NaN },
+      { maxPayload: null },
+      { maxPayload: Infinity },
+    ])("without a number above 0 the limit stays 128 MiB, options: %p", async options => {
+      expect(await receiveHeaderThenEnd(options)).toEqual([
+        "open",
+        { close: 1009, reason: "Message too big", readyState: WebSocket.CLOSED },
+      ]);
+    });
+
+    // Bun's 'close' has the reason text of the native socket for a connection the server dropped. npm ws has none.
+    it("a number above 128 MiB is the limit", async () => {
+      expect(await receiveHeaderThenEnd({ maxPayload: 200 * MiB })).toEqual([
         "open",
         { close: 1006, reason: "Connection ended", readyState: WebSocket.CLOSED },
       ]);
     });
-
-    // Bun's limit without the option is 128 MiB, with the events of the native socket. npm ws has 100 MiB, and no
-    // limit for `undefined`.
-    it.each([undefined, { headers: { "x-test": "1" } }, { maxPayload: undefined }])(
-      "without it the limit stays 128 MiB, options: %p",
-      async options => {
-        expect(await receiveHeaderThenEnd(options)).toEqual([
-          "open",
-          { close: 1009, reason: "Message too big", readyState: WebSocket.CLOSED },
-        ]);
-      },
-    );
 
     it.each([
       [1.5, 1],

@@ -235,13 +235,13 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         uint32_t length = cell.value.packed_array.length;
         bool isFloat = cell.value.packed_array.elem == PackedArrayElem::Float4;
 
-        auto readElement = [&](uint32_t i) -> JSValue {
+        auto readBits = [data](uint32_t i) -> uint32_t {
             uint32_t bigEndian;
             memcpy(&bigEndian, data + static_cast<size_t>(i) * 8 + 4, sizeof(bigEndian));
-            uint32_t bits = __builtin_bswap32(bigEndian);
-            if (isFloat)
-                return jsNumber(static_cast<double>(std::bit_cast<float>(bits)));
-            return jsNumber(static_cast<int32_t>(bits));
+            return __builtin_bswap32(bigEndian);
+        };
+        auto readFloat = [&](uint32_t i) -> double {
+            return static_cast<double>(std::bit_cast<float>(readBits(i)));
         };
 
         // A double array cannot hold NaN (it is the hole value), so a float4[]
@@ -250,20 +250,33 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         if (isFloat) {
             indexingType = ArrayWithDouble;
             for (uint32_t i = 0; i < length; i++) {
-                if (std::isnan(readElement(i).asNumber())) {
+                if (std::isnan(readFloat(i))) {
                     indexingType = ArrayWithContiguous;
                     break;
                 }
             }
         }
 
+        // The values are numbers, never cells, so no write barrier is needed.
         JSC::JSArray* array = nullptr;
         {
             JSC::ObjectInitializationScope initializationScope(vm);
             array = JSC::JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType), length);
             if (array) {
-                for (uint32_t i = 0; i < length; i++)
-                    array->initializeIndex(initializationScope, i, readElement(i), indexingType);
+                switch (indexingType) {
+                case ArrayWithInt32:
+                    for (uint32_t i = 0; i < length; i++)
+                        array->initializeIndexWithoutBarrier(initializationScope, i, jsNumber(static_cast<int32_t>(readBits(i))), ArrayWithInt32);
+                    break;
+                case ArrayWithDouble:
+                    for (uint32_t i = 0; i < length; i++)
+                        array->initializeIndexWithoutBarrier(initializationScope, i, jsDoubleNumber(readFloat(i)), ArrayWithDouble);
+                    break;
+                default:
+                    for (uint32_t i = 0; i < length; i++)
+                        array->initializeIndexWithoutBarrier(initializationScope, i, jsNumber(readFloat(i)), ArrayWithContiguous);
+                    break;
+                }
             }
         }
         if (!array) [[unlikely]] {

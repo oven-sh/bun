@@ -1560,6 +1560,25 @@ describe("Transactions", () => {
       expect({ close, ...(await after(db)) }).toEqual({ close: "fulfilled", ...clean });
     });
 
+    test("tx.close({ timeout }) after the rollback sends no ROLLBACK when its timer fires", async () => {
+      await using db = await open();
+      let close: string | undefined;
+      await settle(
+        db.begin(async tx => {
+          const started = Promise.withResolvers<void>();
+          // close() waits for its timer while a savepoint is pending. This one stays pending.
+          void tx.savepoint(() => {
+            started.resolve();
+            return new Promise(() => {});
+          });
+          await started.promise;
+          await tx`INSERT OR ROLLBACK INTO k VALUES (1)`.catch(() => {});
+          close = await settle(tx.close({ timeout: 0.001 }));
+        }),
+      );
+      expect({ close, ...(await after(db)) }).toEqual({ close: "fulfilled", ...clean });
+    });
+
     test("a conflict of a statement on the instance stops what begin() started", async () => {
       await using db = await open();
       const begin = await settle(

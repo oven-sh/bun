@@ -257,7 +257,7 @@ const SQL = function SQL(
     values: any[],
     pooledConnection: PooledConnection,
     transactionQueries: Set<Query<any, any>>,
-    handler = queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+    handler?,
   ) {
     try {
       let flags = connectionInfo.bigint
@@ -271,7 +271,7 @@ const SQL = function SQL(
         strings,
         values,
         flags,
-        handler,
+        handler || queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
         pool,
       );
       transactionQueries.add(query);
@@ -809,10 +809,12 @@ const SQL = function SQL(
             for (const query of transactionQueries) {
               (query as Query<any, any>).cancel();
             }
-            if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
-              await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+            if (hasTransaction(pooledConnection)) {
+              if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
+                await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+              }
+              await run_internal_transaction_sql(ROLLBACK_COMMAND);
             }
-            await run_internal_transaction_sql(ROLLBACK_COMMAND);
             state.connectionState |= ReservedConnectionState.closed;
             resolve();
           }, timeout * 1000);

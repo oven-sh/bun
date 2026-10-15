@@ -1095,8 +1095,8 @@ function asyncWrap(fn: any, name: string) {
       let pendingEndPromise: Promise<number> | null = null;
       let error: unknown = null;
       // What further writes reject with: the first write that rejected, or
-      // fail()'s reason. Only fail() sets `error`, so end()/endSync()/fail()
-      // still run after a rejected write, as in node.
+      // fail()'s reason. As in node, only fail() sets `error`, so
+      // end()/endSync()/fail() still run after a rejected write.
       let writeError: unknown = null;
       // Count of in-flight async writes (write() doesn't serialize callers,
       // so several can be on the threadpool at once).
@@ -1169,11 +1169,12 @@ function asyncWrap(fn: any, name: string) {
             if (position >= 0) position += bytesWritten;
           }
         } catch (err) {
-          // Node keeps the writer usable here. A failed/aborted write may have
-          // hit the disk partially and the cursor/limit were advanced
-          // optimistically, so refuse further writes. A writer that can never
-          // write again needs no ref: give it back after the last in-flight
-          // write. The lock and autoClose wait for end()/fail(), as in node.
+          // Node has no catch here: its writer stays usable and holds its ref
+          // until end()/fail() (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L759-L789).
+          // Bun refuses further writes: the write may have hit the disk
+          // partially and the cursor/limit were advanced optimistically. Such a
+          // writer needs no ref, so it gives the ref back after the last
+          // in-flight write. The lock and autoClose still wait for end()/fail().
           if (!closed && !writeError && err) {
             writeError = err;
             deferredTeardown = releaseRef;

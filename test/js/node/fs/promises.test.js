@@ -462,7 +462,10 @@ describe("FileHandle.writer() after a rejected write", () => {
     "[Symbol.dispose]()": w => w[Symbol.dispose](),
   };
 
-  // Every write on a read-only handle rejects.
+  // Every write on a read-only handle rejects. Windows reports another errno.
+  const readOnlyError = isWindows ? {} : { code: "EBADF" };
+  const writeOnce = (w, method) => (method === "write" ? w.write("x") : w.writev(["x", "y"]));
+
   describe.each(["write", "writev"])("%s on a read-only handle", method => {
     describe.each([false, true])("autoClose: %p", autoClose => {
       it.each(Object.keys(terminals))("%s gives the handle back", async terminal => {
@@ -470,7 +473,7 @@ describe("FileHandle.writer() after a rejected write", () => {
         const fh = await openHandle(join(dir, "x.txt"), "r");
         const fd = fh.fd;
         const w = fh.writer({ autoClose });
-        await expect(method === "write" ? w.write("x") : w.writev(["x", "y"])).rejects.toThrow();
+        await expect(writeOnce(w, method)).rejects.toMatchObject(readOnlyError);
         await terminals[terminal](w);
         if (autoClose) {
           expect(fh.fd).toBe(-1);
@@ -481,6 +484,20 @@ describe("FileHandle.writer() after a rejected write", () => {
         await expectHandleReleased(fh, fd);
       });
     });
+
+    it("with no terminal call the handle stays locked and can be closed", async () => {
+      await using dir = tempDir("writer-rejected-no-terminal", { "x.txt": "hello" });
+      const fh = await openHandle(join(dir, "x.txt"), "r");
+      const fd = fh.fd;
+      const w = fh.writer({ autoClose: true });
+      await expect(writeOnce(w, method)).rejects.toMatchObject(readOnlyError);
+      // the lock and autoClose wait for end() or fail(), as in node
+      expect(fh.fd).toBe(fd);
+      expect(() => fh.writer()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+      await expectHandleReleased(fh, fd);
+      // a late terminal call finds the handle closed
+      expect(await w.end()).toBe(0);
+    });
   });
 
   it("further writes reject with the first error until fail() sets its reason", async () => {
@@ -488,18 +505,18 @@ describe("FileHandle.writer() after a rejected write", () => {
     const fh = await openHandle(join(dir, "x.txt"), "r");
     const fd = fh.fd;
     const w = fh.writer();
-    const first = await w.write("x").then(
-      () => null,
-      e => e,
-    );
-    expect(first).toBeInstanceOf(Error);
-    await expect(w.write("y")).rejects.toBe(first);
-    await expect(w.writev(["y"])).rejects.toBe(first);
-    expect([w.writeSync("y"), w.writevSync(["y"])]).toEqual([false, false]);
+    // two writes in flight: the one that rejects first sets the error
+    const errors = [];
+    await Promise.all([w.write("x"), w.writev(["y"])].map(p => p.then(expect.unreachable, e => errors.push(e))));
+    const [first] = errors;
+    expect(first).toMatchObject(readOnlyError);
+    await expect(w.write("z")).rejects.toBe(first);
+    await expect(w.writev(["z"])).rejects.toBe(first);
+    expect([w.writeSync("z"), w.writevSync(["z"])]).toEqual([false, false]);
 
     const reason = new Error("stop");
     w.fail(reason);
-    await expect(w.write("y")).rejects.toBe(reason);
+    await expect(w.write("z")).rejects.toBe(reason);
     await expect(w.end()).rejects.toBe(reason);
     expect(w.endSync()).toBe(-1);
     await expectHandleReleased(fh, fd);
@@ -523,18 +540,18 @@ describe("FileHandle.writer() after a rejected write", () => {
     }
   });
 
-  it("with no terminal call the handle stays locked and can be closed", async () => {
-    await using dir = tempDir("writer-rejected-no-terminal", { "x.txt": "hello" });
-    const fh = await openHandle(join(dir, "x.txt"), "r");
+  it("end() that runs before the write rejects keeps its teardown", async () => {
+    await using dir = tempDir("writer-rejected-after-end", {});
+    const fh = await openHandle(join(dir, "x.txt"), "w");
     const fd = fh.fd;
     const w = fh.writer({ autoClose: true });
-    await expect(w.write("x")).rejects.toThrow();
-    // the lock and autoClose wait for end() or fail(), as in node
-    expect(fh.fd).toBe(fd);
-    expect(() => fh.writer()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
-    await expectHandleReleased(fh, fd);
-    // a late terminal call finds the handle closed
-    expect(await w.end()).toBe(0);
+    const reason = new Error("stop");
+    const pending = abortedWrite(w, reason);
+    const ended = w.end();
+    await expect(pending).rejects.toBe(reason);
+    expect(await ended).toBe(0);
+    expect(fh.fd).toBe(-1);
+    expect(() => fs.fstatSync(fd)).toThrow(expect.objectContaining({ code: "EBADF" }));
   });
 
   it("a close() that already waits settles when the rejected write lands", async () => {
@@ -617,6 +634,22 @@ describe("FileHandle.writer() after a rejected write", () => {
     }
   });
 
+  // A full pipe takes a part of the writev. The write of the rest then fails,
+  // so the rejection passes both catch arms.
+  it.skipIf(isWindows)("a writev that rejects in its write fallback releases once", async () => {
+    await using dir = tempDir("writer-rejected-partial", {});
+    const fifo = join(dir, "fifo");
+    mkfifo(fifo);
+    const fh = await openHandle(fifo, fs.constants.O_RDWR | fs.constants.O_NONBLOCK);
+    const fd = fh.fd;
+    const w = fh.writer();
+    const half = Buffer.alloc(1 << 20, 67);
+    await expect(w.writev([half, half])).rejects.toMatchObject({ code: "EAGAIN", syscall: "write" });
+    // a second release would have closed the handle
+    expect(fh.fd).toBe(fd);
+    await expectHandleReleased(fh, fd);
+  });
+
   it("a write that rejects with a falsy reason does not fail the writer", async () => {
     await using dir = tempDir("writer-rejected-falsy", {});
     const file = join(dir, "x.txt");
@@ -684,13 +717,15 @@ describe("FileHandle.writer() after a rejected write", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
-      pipeTo: ["rejected", -1],
-      preventFail: ["rejected", 0, -1],
-      toWritable: [true, -1],
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        pipeTo: ["rejected", -1],
+        preventFail: ["rejected", 0, -1],
+        toWritable: [true, -1],
+      }),
+      stderr: "",
+      exitCode: 0,
     });
-    expect(exitCode).toBe(0);
   });
 });
 

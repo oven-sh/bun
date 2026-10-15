@@ -919,6 +919,9 @@ impl Options {
             break 'brk Output::stderr_descriptor_type() != Output::DescriptorType::Terminal;
         };
 
+        // The default registry as the config files leave it.
+        let configured = self.scope.clone();
+
         // technically, npm_config is case in-sensitive
         {
             const REGISTRY_KEYS: [&[u8]; 3] = [
@@ -947,6 +950,12 @@ impl Options {
             self.registry_from_command_line = true;
         }
 
+        // Their credentials follow the default registry as its own do. Without them such a scope is like one with no entry.
+        if self.scope.url_hash != configured.url_hash
+            && !self.inherits_credentials(&configured, &self.scope.url.url())
+        {
+            at_default_registry.clear();
+        }
         for (name, registry) in at_default_registry {
             let registry = Api::NpmRegistry {
                 url: self.scope.url.href().into(),

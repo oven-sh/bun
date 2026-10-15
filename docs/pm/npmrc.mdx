@@ -80,7 +80,7 @@ The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runti
 myorg = "http://localhost:4873/"
 ```
 
-A scope whose registry is empty uses the default registry.
+A scope whose registry is empty uses the default registry. If `--registry` or an environment variable names another host than the config files do, credentials that the scope has of its own aren't sent there.
 
 ### Configure options for a specific registry
 

@@ -943,21 +943,24 @@ describe.concurrent("bun install config precedence", () => {
     expect(exitCode).toBe(0);
   });
 
-  const lastLayers: [name: string, args: (url: string) => string[], env: (url: string) => Record<string, string>][] = [
-    ["BUN_CONFIG_REGISTRY", () => [], url => ({ BUN_CONFIG_REGISTRY: url })],
-    ["NPM_CONFIG_REGISTRY", () => [], url => ({ NPM_CONFIG_REGISTRY: url })],
-    ["--registry", url => [`--registry=${url}`], () => ({})],
+  type Layer = (url: string) => Record<string, string>;
+  const lastLayers: [name: string, args: (url: string) => string[], env: Layer, files: Layer][] = [
+    ["BUN_CONFIG_REGISTRY", () => [], url => ({ BUN_CONFIG_REGISTRY: url }), () => ({})],
+    ["NPM_CONFIG_REGISTRY", () => [], url => ({ NPM_CONFIG_REGISTRY: url }), () => ({})],
+    ["BUN_CONFIG_REGISTRY in .env", () => [], () => ({}), url => ({ "project/.env": `BUN_CONFIG_REGISTRY=${url}\n` })],
+    ["--registry", url => [`--registry=${url}`], () => ({}), () => ({})],
   ];
 
   test.each(lastLayers)(
     "a scope with an empty registry URL is at the default registry from %s",
-    async (_, args, env) => {
+    async (_, args, env, files) => {
       using dead = deadRegistry();
+      const url = registry.registryUrl();
       using dir = tempDir("config-precedence", {
         "project/.npmrc": `registry=${dead.url}\n@types:registry=\${EMPTY_URL}\n`,
         "project/package.json": packageJson({ "@types/no-deps": "1.0.0" }),
+        ...files(url),
       });
-      const url = registry.registryUrl();
       const { stderr, exitCode } = await install(String(dir), args(url), { ...env(url), EMPTY_URL: "" });
       expect(stderr).not.toContain("error:");
       expect(dead.hits).toBe(0);
@@ -966,22 +969,43 @@ describe.concurrent("bun install config precedence", () => {
     },
   );
 
-  test.each(lastLayers)("a scope with a token and no URL is at the default registry from %s", async (_, args, env) => {
-    using dead = deadRegistry();
-    using capture = capturingRegistry();
-    using dir = tempDir("config-precedence", {
-      "project/bunfig.toml": bunfig({ registry: dead.url, scopes: { "needs-auth": { token: authToken } } }),
-      "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0", "no-deps": "1.0.0" }),
-    });
-    const { stderr, exitCode } = await install(String(dir), args(capture.url), env(capture.url));
-    expect(stderr).not.toContain("error:");
-    expect(dead.hits).toBe(0);
-    // The token is the scope's: the other package is asked for without it.
-    expect([...new Set(capture.authorizations)].sort()).toEqual([`Bearer ${authToken}`, null]);
-    expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
-    expect(installed(String(dir), "no-deps")).toBe(true);
-    expect(exitCode).toBe(0);
-  });
+  test.each(lastLayers)(
+    "a scope with a token and no URL is at the default registry from %s, which does not get the token",
+    async (_, args, env, files) => {
+      using dead = deadRegistry();
+      using capture = capturingRegistry();
+      using dir = tempDir("config-precedence", {
+        "project/bunfig.toml": bunfig({ registry: dead.url, scopes: { "needs-auth": { token: authToken } } }),
+        "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0" }),
+        ...files(capture.url),
+      });
+      const { exitCode } = await install(String(dir), args(capture.url), env(capture.url));
+      expect(dead.hits).toBe(0);
+      expect(capture.authorizations).not.toBeEmpty();
+      expect(new Set(capture.authorizations)).toStrictEqual(new Set([null]));
+      expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(false);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test.each(lastLayers)(
+    "a scope with a token and no URL keeps the token when %s names the configured registry",
+    async (_, args, env, files) => {
+      using capture = capturingRegistry();
+      using dir = tempDir("config-precedence", {
+        "project/bunfig.toml": bunfig({ registry: capture.url, scopes: { "needs-auth": { token: authToken } } }),
+        "project/package.json": packageJson({ "@needs-auth/test-pkg": "1.0.0", "no-deps": "1.0.0" }),
+        ...files(capture.url),
+      });
+      const { stderr, exitCode } = await install(String(dir), args(capture.url), env(capture.url));
+      expect(stderr).not.toContain("error:");
+      // The token is the scope's: the other package is asked for without it.
+      expect([...new Set(capture.authorizations)].sort()).toEqual([`Bearer ${authToken}`, null]);
+      expect(installed(String(dir), "@needs-auth", "test-pkg")).toBe(true);
+      expect(installed(String(dir), "no-deps")).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("a scope with an empty registry URL gets the credentials of the default registry", async () => {
     using dir = tempDir("config-precedence", {

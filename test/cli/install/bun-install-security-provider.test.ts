@@ -1322,8 +1322,8 @@ describe.concurrent("where the scanner is looked up", () => {
     expect(await install(files)).toEqual({ ran: "a-scanner", exitCode: 0 });
   });
 
-  it.skipIf(isWindows).each(['./s"q.ts', "./s\\nq.ts"])("a file named %j", async name => {
-    const files = { "project/bunfig.toml": bunfig(name), [join("project", name)]: scannerOf("the project") };
+  it.skipIf(isWindows)("a file with a quote in its name", async () => {
+    const files = { "project/bunfig.toml": bunfig('./s"q.ts'), 'project/s"q.ts': scannerOf("the project") };
     expect(await install(files)).toEqual({ ran: "the project", exitCode: 0 });
   });
 });

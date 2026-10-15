@@ -37,7 +37,7 @@ pub(crate) struct Coordinator<'a> {
     // backing storage has a null at [len] for execve-style consumers.
     pub(crate) argv: Box<[bun_spawn::CStrPtr]>,
     /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
-    /// and BUN_TEST_WORKER_ID appended.
+    /// (also as BUN_TEST_WORKER_ID and NODE_TEST_WORKER_ID), put into the map before it is serialized.
     pub(crate) envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub(crate) workers: &'a mut [Worker],

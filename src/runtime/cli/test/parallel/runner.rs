@@ -55,6 +55,7 @@ pub(crate) fn run_as_coordinator(
         // tests can rely on the var whenever --parallel is passed.
         let _ = env.map.put(b"JEST_WORKER_ID", b"1");
         let _ = env.map.put(b"BUN_TEST_WORKER_ID", b"1");
+        let _ = env.map.put(b"NODE_TEST_WORKER_ID", b"1");
         // SAFETY: see vm_ptr note above.
         TestCommand::run_all_tests(reporter, unsafe { &mut *vm_ptr }, files);
         return Ok(false);
@@ -65,7 +66,7 @@ pub(crate) fn run_as_coordinator(
     if Output::enable_ansi_colors_stderr() {
         let _ = env.map.put(b"FORCE_COLOR", b"1");
     }
-    // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
+    // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID / NODE_TEST_WORKER_ID (1-indexed,
     // matching Jest) so tests can pick distinct ports/databases. Serialize the
     // env map once per worker after .put() — appending after the fact would
     // create duplicate entries when the parent already has the variable set,
@@ -76,6 +77,7 @@ pub(crate) fn run_as_coordinator(
         write!(&mut id, "{}", i + 1).unwrap();
         let _ = env.map.put(b"JEST_WORKER_ID", &id);
         let _ = env.map.put(b"BUN_TEST_WORKER_ID", &id);
+        let _ = env.map.put(b"NODE_TEST_WORKER_ID", &id);
         envps.push(env.map.create_null_delimited_env_map()?);
     }
     let argv = build_worker_argv(ctx)?;

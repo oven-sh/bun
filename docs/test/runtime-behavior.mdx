@@ -44,6 +44,10 @@ To test with a specific time zone:
 TZ=America/New_York bun test
 ```
 
+### NODE_TEST_WORKER_ID
+
+`bun test` sets `$NODE_TEST_WORKER_ID`, as the Node.js test runner does, and overwrites a value that it inherits. The value is `"1"` in a serial run and the 1-based index of the worker with [`--parallel`](/test/parallel#worker-environment). In `node:test`, `t.workerId` is this value as a number.
+
 ## Test Timeouts
 
 Each test has a default timeout of 5000ms (5 seconds). Tests that exceed it fail.

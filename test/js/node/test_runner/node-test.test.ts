@@ -1,7 +1,21 @@
-import { spawn } from "bun";
+import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
 import { join } from "node:path";
+
+// A fixture that states what Node does is run on Node too. The reference is
+// the Node version that bun reports: not any other `node` on PATH, and not
+// the `node` shim that `bun run` puts there, which is bun.
+const referenceNode = (() => {
+  const node = nodeExe();
+  if (!node) return null;
+  const { stdout, exitCode } = spawnSync({
+    cmd: [node, "-p", "process.versions.bun ? '' : process.versions.node"],
+    env: bunEnv,
+    stderr: "ignore",
+  });
+  return exitCode === 0 && stdout.toString().trim() === process.versions.node ? node : null;
+})();
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -343,6 +357,97 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
   ]);
   return { exitCode, stdout, stderr };
 }
+
+async function runTestsOnNode(filenames: string[]) {
+  const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
+  await using proc = spawn({
+    cmd: [referenceNode!, "--test", ...testPaths],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [exitCode, stdout, stderr] = await Promise.all([proc.exited, proc.stdout.text(), proc.stderr.text()]);
+  return { exitCode, stdout, stderr };
+}
+
+describe.concurrent("t.workerId", () => {
+  const fixture = join(import.meta.dirname, "fixtures", "34-worker-id.js");
+  // Node's runner writes the id over a value that it inherits, so each run starts with one.
+  const inherited = { ...bunEnv, NODE_TEST_WORKER_ID: "7" };
+
+  async function outputOf(cmd: string[], cwd?: string) {
+    await using proc = spawn({ cmd, env: inherited, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { lines: stdout.match(/^[A-Z]+=.*$/gm), stderr, exitCode };
+  }
+
+  test("is 1 for a file that runs alone", async () => {
+    const { exitCode, stderr } = await runTests(["34-worker-id.js"], { NODE_TEST_WORKER_ID: "7" });
+    expect(stderr).toContain(" 5 pass");
+    expect({ exitCode, stderr }).toMatchObject({ exitCode: 0, stderr: expect.stringContaining(" 0 fail") });
+  }, 30_000);
+
+  // Runs only Node: it keeps 34-worker-id.js true on Node.
+  test.skipIf(!referenceNode)("is 1 for a file that runs alone on node", async () => {
+    const { exitCode, stdout } = await runTestsOnNode(["34-worker-id.js"]);
+    // 5 tests and 1 subtest.
+    expect(stdout).toContain("pass 6");
+    expect({ exitCode, stdout }).toMatchObject({ exitCode: 0, stdout: expect.stringContaining("fail 0") });
+  });
+
+  test("a preload, a bun:test file and a child process see the variable", async () => {
+    using dir = tempDir("node-test-worker-id", {
+      "preload.js": `console.log("PRELOAD=" + process.env.NODE_TEST_WORKER_ID);`,
+      "a.test.js": `
+          const { test } = require("bun:test");
+          test("a bun:test file", () => {
+            console.log("TEST=" + process.env.NODE_TEST_WORKER_ID);
+            const child = Bun.spawnSync({ cmd: [process.execPath, "-p", "process.env.NODE_TEST_WORKER_ID"] });
+            console.log("CHILD=" + child.stdout.toString().trim());
+          });
+        `,
+    });
+    const { lines, exitCode } = await outputOf(
+      [bunExe(), "test", "--preload", "./preload.js", "a.test.js"],
+      String(dir),
+    );
+    expect(lines).toEqual(["PRELOAD=1", "TEST=1", "CHILD=1"]);
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  test("every file of an --isolate run sees 1", async () => {
+    const file = `require("bun:test").test("t", () => console.log("ID=" + process.env.NODE_TEST_WORKER_ID));`;
+    using dir = tempDir("node-test-worker-id-isolate", { "a.test.js": file, "b.test.js": file });
+    const { lines, exitCode } = await outputOf([bunExe(), "test", "--isolate"], String(dir));
+    expect(lines).toEqual(["ID=1", "ID=1"]);
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  test("a file that run() starts sees 1", async () => {
+    using dir = tempDir("node-test-worker-id-run", {
+      "run.js": `
+          const { run } = require("node:test");
+          (async () => {
+            const counts = { pass: 0, fail: 0 };
+            for await (const { type, data } of run({ files: [process.argv[2]] })) {
+              if (data.details?.type !== "test") continue;
+              if (type === "test:pass") counts.pass++;
+              if (type === "test:fail") counts.fail++;
+            }
+            console.log("COUNTS=" + JSON.stringify(counts));
+          })();
+        `,
+    });
+    const script = join(String(dir), "run.js");
+    const onBun = await outputOf([bunExe(), script, fixture]);
+    expect(onBun.lines).toEqual([`COUNTS={"pass":6,"fail":0}`]);
+    expect(onBun.exitCode).toBe(0);
+    if (referenceNode) {
+      const onNode = await outputOf([referenceNode, script, fixture]);
+      expect(onNode.lines).toEqual(onBun.lines);
+    }
+  }, 30_000);
+});
 
 describe("node:test mock", () => {
   const { mock } = require("node:test");

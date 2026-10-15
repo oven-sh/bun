@@ -2372,6 +2372,8 @@ impl TestCommand {
                     &mut coverage_options,
                 )?;
             } else {
+                // node's runner writes the worker id of a test file over an inherited one (runner.js:499-503, :1016).
+                let _ = env_loader.map.put(b"NODE_TEST_WORKER_ID", b"1");
                 Self::run_all_tests(&mut reporter, vm, test_files);
             }
         }

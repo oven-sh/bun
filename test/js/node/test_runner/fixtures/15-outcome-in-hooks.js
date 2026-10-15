@@ -27,11 +27,14 @@ test("afterEach sees passed=false and the thrown error for a failing subtest", a
 });
 
 test("workerId reads NODE_TEST_WORKER_ID", t => {
-  assert.strictEqual(t.workerId, undefined);
-  process.env.NODE_TEST_WORKER_ID = "3";
+  // The runner sets the variable: 1 for a file that runs alone.
+  assert.strictEqual(t.workerId, 1);
   try {
+    process.env.NODE_TEST_WORKER_ID = "3";
     assert.strictEqual(t.workerId, 3);
-  } finally {
     delete process.env.NODE_TEST_WORKER_ID;
+    assert.strictEqual(t.workerId, undefined);
+  } finally {
+    process.env.NODE_TEST_WORKER_ID = "1";
   }
 });

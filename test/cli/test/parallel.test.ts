@@ -46,6 +46,40 @@ test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID
   expect(c2).toBe(0);
 });
 
+test("--parallel: NODE_TEST_WORKER_ID is the worker's id, and an inherited value does not survive", async () => {
+  // The sleep keeps each worker busy, so that every file lands on its own worker.
+  const fixture = `import {test} from "bun:test"; test("t", async () => { await Bun.sleep(200); console.log("WID="+process.env.JEST_WORKER_ID+" "+process.env.NODE_TEST_WORKER_ID); });`;
+  using dir = tempDir("parallel-node-worker-id", {
+    "a.test.js": fixture,
+    "b.test.js": fixture,
+    "c.test.js": fixture,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=3"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", NODE_TEST_WORKER_ID: "7" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const seen = [...(stdout + stderr).matchAll(/WID=(\S+) (\S+)/g)].map(m => `${m[1]} ${m[2]}`);
+  expect(seen.sort()).toEqual(["1 1", "2 2", "3 3"]);
+  expect(exitCode).toBe(0);
+
+  // One file runs in the main process. The id is still 1.
+  using single = tempDir("parallel-node-worker-id-single", { "a.test.js": fixture });
+  await using p2 = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=5"],
+    env: { ...bunEnv, NODE_TEST_WORKER_ID: "7" },
+    cwd: String(single),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [o2, e2, c2] = await Promise.all([p2.stdout.text(), p2.stderr.text(), p2.exited]);
+  expect(o2 + e2).toContain("WID=1 1");
+  expect(c2).toBe(0);
+});
+
 test("--parallel runs files across workers and aggregates totals", async () => {
   using dir = tempDir("parallel-basic", {
     "a.test.js": `import {test,expect} from "bun:test"; test("a1",()=>expect(1).toBe(1)); test("a2",()=>expect(1).toBe(1));`,

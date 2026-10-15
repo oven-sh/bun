@@ -17,4 +17,4 @@ PassThrough.prototype._transform = function (chunk, encoding, cb) {
   cb(null, chunk);
 };
 
-export default PassThrough;
+export default PassThrough as unknown as typeof import("node:stream").PassThrough;

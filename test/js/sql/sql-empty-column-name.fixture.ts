@@ -12,6 +12,7 @@
 import { SQL } from "bun";
 import {
   listeningServer,
+  mysqlAckSessionSetup,
   mysqlColumnDefinition,
   mysqlHandshakeV10,
   mysqlLenencInt,
@@ -49,7 +50,7 @@ async function postgresServer() {
     socket.on("error", () => {});
     let startup = true;
     let buffered = Buffer.alloc(0);
-    socket.on("data", data => {
+    socket.on("data", (data: Buffer) => {
       if (startup) {
         startup = false;
         socket.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
@@ -103,13 +104,14 @@ async function mysqlServer() {
     socket.write(mysqlHandshakeV10());
     let authed = false;
     let buffered = Buffer.alloc(0);
-    socket.on("data", data => {
+    socket.on("data", (data: Buffer) => {
       buffered = mysqlReadPackets(Buffer.concat([buffered, data]), (seq, payload) => {
         if (!authed) {
           authed = true;
           socket.write(mysqlOkPacket(seq + 1));
           return;
         }
+        if (mysqlAckSessionSetup(socket, payload)) return;
         switch (payload[0]) {
           case COM_QUERY:
             socket.write(mysqlTextResultSet(1, columns, [values]));

@@ -1,3 +1,4 @@
+import { dnsGetaddrinfoError } from "bun:internal-for-testing";
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
@@ -612,11 +613,48 @@ describe("test invalid arguments", () => {
   it("dns.lookupService", async () => {
     expect(() => {
       dns.lookupService("", 443, (err, hostname, service) => {});
-    }).toThrow("Expected address to be a non-empty string for 'lookupService'.");
+    }).toThrow("The argument 'address' is invalid. Received ''");
     expect(() => {
       dns.lookupService("google.com", 443, (err, hostname, service) => {});
-    }).toThrow(`The "address" argument is invalid. Received type string ('google.com')`);
+    }).toThrow("The argument 'address' is invalid. Received 'google.com'");
   });
+});
+
+// https://github.com/oven-sh/bun/issues/39550
+// Node treats a third argument as the callback: query(name, options, callback).
+describe("a third argument shifts the callback", () => {
+  const resolvers = [
+    ["dns.resolve4", dns.resolve4],
+    ["dns.resolve6", dns.resolve6],
+    ["dns.resolveAny", dns.resolveAny],
+    ["dns.resolveCname", dns.resolveCname],
+    ["dns.resolveCaa", dns.resolveCaa],
+    ["dns.resolveMx", dns.resolveMx],
+    ["dns.resolveNaptr", dns.resolveNaptr],
+    ["dns.resolveNs", dns.resolveNs],
+    ["dns.resolvePtr", dns.resolvePtr],
+    ["dns.resolveSoa", dns.resolveSoa],
+    ["dns.resolveSrv", dns.resolveSrv],
+    ["dns.resolveTxt", dns.resolveTxt],
+    ["dns.reverse", dns.reverse],
+  ];
+
+  it.each(resolvers)("%s throws when the third argument is not a function", (_, fn) => {
+    expect(() => fn("localhost", () => {}, "ignored-value")).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('The "callback" argument must be of type function'),
+      }),
+    );
+  });
+
+  it.each(resolvers.filter(([name]) => name !== "dns.reverse"))(
+    "%s accepts an options argument before the callback",
+    (_, fn, done) => {
+      // The overlong name fails locally, so the callback runs without network access.
+      fn(Buffer.alloc(2000, "a").toString(), {}, () => done());
+    },
+  );
 });
 
 describe("dns.lookupService", () => {
@@ -990,5 +1028,81 @@ describe("pending cache", () => {
   test.concurrent("concurrent lookup() of the same name all settle", async () => {
     const results = await Promise.all(Array.from({ length: 8 }, () => dns_promises.lookup("localhost", { family: 4 })));
     expect(results).toEqual(Array(8).fill({ address: "127.0.0.1", family: 4 }));
+  });
+});
+
+// The socket never answers. The QTYPE that reaches it and the syscall the
+// cancelled query reports pin resolve()'s rrtype dispatch to the query that
+// resolveNaptr() issues; decoding is covered by the resolveNaptr() tests.
+test.concurrent.each(["NAPTR", "naptr"])("resolve(hostname, %p) issues a NAPTR query", async rrtype => {
+  const socket = dgram.createSocket("udp4");
+  try {
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const resolver = new dns_promises.Resolver();
+    resolver.setServers(["127.0.0.1:" + socket.address().port]);
+    const received = once(socket, "message");
+    const promise = resolver.resolve("naptr.example.test", rrtype);
+    const [query] = await received;
+    // QNAME ends at the first zero byte after the 12-byte header; QTYPE follows it.
+    expect(query.readUInt16BE(query.indexOf(0, 12) + 1)).toBe(35);
+    resolver.cancel();
+    expect(await promise.catch(err => err)).toMatchObject({ code: "ECANCELLED", syscall: "queryNaptr" });
+  } finally {
+    socket.close();
+  }
+});
+
+// dns.lookup() is getaddrinfo(3). Node reports a temporary resolver failure
+// (every nameserver timed out or answered SERVFAIL) as `EAI_AGAIN` with
+// libuv's errno, and retry libraries key on that code. Bun used to report it
+// as the c-ares code `ETIMEOUT`. CI cannot point getaddrinfo at a failing
+// resolver, so this drives the same mapping the system backend, fetch() and
+// Bun.connect() use with the raw EAI_* status.
+describe("getaddrinfo status mapping", () => {
+  test("EAI_AGAIN is reported as EAI_AGAIN, like Node", () => {
+    const err = dnsGetaddrinfoError("EAI_AGAIN", "redis.example");
+    expect(err).toBeInstanceOf(Error);
+    expect(err).toMatchObject({
+      message: "getaddrinfo EAI_AGAIN redis.example",
+      code: "EAI_AGAIN",
+      errno: -3001,
+      syscall: "getaddrinfo",
+      hostname: "redis.example",
+    });
+  });
+
+  test("EAI_NONAME is still reported as ENOTFOUND, like Node", () => {
+    expect(dnsGetaddrinfoError("EAI_NONAME", "redis.example")).toMatchObject({
+      message: "getaddrinfo ENOTFOUND redis.example",
+      code: "ENOTFOUND",
+      syscall: "getaddrinfo",
+      hostname: "redis.example",
+    });
+  });
+});
+
+it("argument validation errors name the argument", () => {
+  const message = fn => {
+    try {
+      fn();
+    } catch (e) {
+      return e.message;
+    }
+  };
+  expect({
+    all: message(() => dns.lookup("localhost", { all: 1 }, () => {})),
+    verbatim: message(() => dns.lookup("localhost", { verbatim: 1 }, () => {})),
+    ipv4: message(() => new dns.Resolver().setLocalAddress(1)),
+    ipv6: message(() => new dns.Resolver().setLocalAddress("127.0.0.1", 1)),
+    lookupService: message(() => dns.lookupService(1, 80, () => {})),
+    promisesLookupService: message(() => dns.promises.lookupService(1, 80)),
+  }).toEqual({
+    all: 'The "options.all" property must be of type boolean. Received type number (1)',
+    verbatim: 'The "options.verbatim" property must be of type boolean. Received type number (1)',
+    ipv4: 'The "ipv4" argument must be of type string. Received type number (1)',
+    ipv6: 'The "ipv6" argument must be of type string. Received type number (1)',
+    lookupService: "The argument 'address' is invalid. Received 1",
+    promisesLookupService: "The argument 'address' is invalid. Received 1",
   });
 });

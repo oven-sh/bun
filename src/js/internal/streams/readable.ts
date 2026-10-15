@@ -1316,12 +1316,16 @@ Readable.prototype.compose = function compose(stream, options) {
   return composedStream;
 };
 
+interface StreamAsyncIterator extends AsyncGenerator<any, void, unknown> {
+  stream?: import("node:stream").Readable;
+}
+
 function streamToAsyncIterator(stream, options?) {
   if (typeof stream.read !== "function") {
     stream = Readable.wrap(stream, { objectMode: true });
   }
 
-  const iter = createAsyncIterator(stream, options);
+  const iter: StreamAsyncIterator = createAsyncIterator(stream, options);
   iter.stream = stream;
   return iter;
 }
@@ -1340,7 +1344,7 @@ async function* createAsyncIterator(stream, options) {
 
   stream.on("readable", next);
 
-  let error: Error | null;
+  let error: Error | null | undefined;
   const cleanup = eos(stream, { writable: false }, err => {
     error = err ? aggregateTwoErrors(error as Error, err) : null;
     callback();
@@ -1713,7 +1717,7 @@ Readable.toWeb = function (streamReadable, options) {
   return lazyWebStreams().newReadableStreamFromStreamReadable(streamReadable, options);
 };
 
-Readable.wrap = function (src, options) {
+Readable.wrap = function (src, options?) {
   return new Readable({
     objectMode: src.readableObjectMode ?? src.objectMode ?? true,
     ...options,
@@ -1724,4 +1728,7 @@ Readable.wrap = function (src, options) {
   }).wrap(src);
 };
 
-export default Readable as unknown as typeof import("node:stream").Readable;
+export default Readable as unknown as typeof import("node:stream").Readable & {
+  ReadableState: typeof ReadableState;
+  wrap: typeof Readable.wrap;
+};

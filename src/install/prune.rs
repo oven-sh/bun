@@ -1,6 +1,7 @@
 use core::cell::{Cell, RefCell};
 use core::ops::Range;
 use std::io::Write as _;
+use std::sync::Arc;
 
 use bstr::BStr;
 use bun_collections::{DynamicBitSet, index_sort};
@@ -9,17 +10,19 @@ use bun_core::{Global, Output, ZStr, handle_oom, strings};
 use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, E, EntryKind, O};
+use bun_threading::{WaitGroup, WorkPool};
 
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
-use crate::isolated_install::{Store, Timings, build_store};
+use crate::isolated_install::{Store, build_whole_store};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
-use crate::lockfile::{LoadResult, Lockfile, reachable, tree};
+use crate::lockfile::{LoadResult, Lockfile, print_log_errors, reachable, tree};
 use crate::lockfile_real::package::{Diff, DiffSummary, Package};
+use crate::package_install::{StagingLock, StagingPath};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::package_manager::workspace_selection::{self, RootSelection};
-use crate::{Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
+use crate::{DependencyID, Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
 
 const STORE_DIR: &[u8] = b"node_modules/.bun";
 const ROOT_DIR: &[u8] = b"node_modules";
@@ -65,9 +68,19 @@ struct Plan {
     folders: Vec<Folder>,
     removals: Vec<Removal>,
     checked: usize,
+    /// No install is linking: a `StagingPath` or an `OldModules` is what one that died left.
+    leftovers: bool,
+    /// What `open_workspace_folder` refused. A plan with one is not executed.
+    linked_folders: Vec<Box<[u8]>>,
 }
 
 impl Plan {
+    fn sorted_linked_folders(&mut self) -> &[Box<[u8]>] {
+        sort_names(&mut self.linked_folders);
+        self.linked_folders.dedup();
+        &self.linked_folders
+    }
+
     fn push_folder(&mut self, path: &[u8], kind: FolderKind) -> usize {
         self.folders.push(Folder {
             path: path.into(),
@@ -205,7 +218,7 @@ fn zname(name: &[u8]) -> Vec<u8> {
     z
 }
 
-fn sort_names(names: &mut Vec<Box<[u8]>>) {
+pub(crate) fn sort_names(names: &mut Vec<Box<[u8]>>) {
     index_sort::sort_vec_unstable_by(names, |a, b| a.cmp(b));
 }
 
@@ -259,8 +272,8 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     manager.options.enable.set(Enable::FROZEN_LOCKFILE, true);
     manager.summary = exit_unless_lockfile_matches_package_json(manager, "prune")?;
 
-    let store_present = match Dir::open(ROOT_DIR) {
-        Ok(node_modules) => lstat_kind(&node_modules, b".bun") == EntryKind::Directory,
+    let node_modules = match Dir::open(ROOT_DIR) {
+        Ok(node_modules) => node_modules,
         Err(err) if err.get_errno() == E::ENOENT => {
             if !quiet {
                 Output::flush();
@@ -279,27 +292,38 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         }
     };
 
-    let layout = match linker {
+    let configured = match linker {
         NodeLinker::Isolated => Layout::Isolated,
         _ => Layout::Hoisted,
     };
-    if layout == Layout::Hoisted && store_present && store_has_entries() {
-        refuse_layout_mismatch(layout, quiet);
-    }
+    let layout = detect_layout(manager, &node_modules, configured);
+    drop(node_modules);
 
     let workspace_names = collect_workspace_names(manager);
     let selection = select_importers(manager, original_cwd);
 
-    let mut plan = Plan::default();
+    let staging_lock = StagingLock::acquire();
+    let mut plan = Plan {
+        leftovers: !staging_lock.is_busy,
+        ..Default::default()
+    };
     match layout {
         Layout::Hoisted => plan_hoisted(manager, &workspace_names, selection.as_ref(), &mut plan),
         Layout::Isolated => plan_isolated(manager, &workspace_names, selection.as_ref(), &mut plan),
     }
-    Output::flush();
-
-    if layout_mismatch(&plan, layout, store_present) {
-        refuse_layout_mismatch(layout, quiet);
+    if !plan.linked_folders.is_empty() {
+        if !quiet {
+            for folder in plan.sorted_linked_folders() {
+                Output::err_generic(
+                    "{} is a symlink, so nothing was pruned",
+                    (BStr::new(folder),),
+                );
+            }
+            bun_core::note!("to prune this project, remove the link and run 'bun install'");
+        }
+        Global::exit(1);
     }
+    Output::flush();
 
     let n = plan.removals.len();
     let checked = plan.checked;
@@ -311,7 +335,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
                 .filter(|f| matches!(f.kind, FolderKind::NodeModules | FolderKind::Store))
                 .count();
             bun_core::pretty!(
-                "<r><green>Done<r>! Checked <green>{} package{}<r> across {} folder{} <d>(nothing to prune)<r> ",
+                "<r><green>Done<r>! Checked <green>{} installed package{}<r> across {} folder{} <d>(nothing to prune)<r> ",
                 checked,
                 plural(checked),
                 folders,
@@ -333,15 +357,16 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
                 plan.print_row(removal);
             }
             bun_core::pretty!(
-                "<r><b>{}<r> package{} can be removed <d>(checked {})<r> ",
+                "<r><b>{}<r> package{} can be removed <d>(checked {} installed package{})<r> ",
                 n,
                 plural(n),
-                checked
+                checked,
+                plural(checked)
             );
             print_elapsed();
             print_apply_hint();
         }
-        return Ok(());
+        Global::exit(manager.options.check as u32);
     }
 
     let failed = execute(&plan, quiet);
@@ -354,7 +379,11 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         if failed > 0 {
             bun_core::pretty!(", <red>{} failed<r>", failed);
         }
-        bun_core::pretty!(" <d>(checked {})<r> ", checked);
+        bun_core::pretty!(
+            " <d>(checked {} installed package{})<r> ",
+            checked,
+            plural(checked)
+        );
         print_elapsed();
     }
     if failed > 0 {
@@ -369,26 +398,122 @@ fn store_has_entries() -> bool {
     };
     read_entries(&store)
         .iter()
-        .any(|(name, kind)| *kind == EntryKind::Directory && split_store_key(name).1.is_some())
+        .any(|(name, _)| split_store_key(name).1.is_some())
 }
 
-fn refuse_layout_mismatch(layout: Layout, quiet: bool) -> ! {
-    if !quiet {
-        let (configured, actual) = match layout {
-            Layout::Hoisted => ("hoisted", "isolated"),
-            Layout::Isolated => ("isolated", "hoisted"),
-        };
-        Output::err_generic(
-            "node_modules was installed with the {s} linker, but bun prune would use the {s} linker",
-            (actual, configured),
-        );
-        bun_core::note!(
-            "run 'bun prune --linker {}' to prune it as-is, or 'bun install' to reinstall with the {} linker",
-            actual,
-            configured
-        );
+fn extracted(tag: ResolutionTag) -> bool {
+    matches!(
+        tag,
+        ResolutionTag::Npm
+            | ResolutionTag::LocalTarball
+            | ResolutionTag::RemoteTarball
+            | ResolutionTag::Git
+            | ResolutionTag::Github
+    )
+}
+
+/// Which linkers the entries of the importer folders (root and workspace `node_modules`) come from.
+struct LayoutEvidence<'a> {
+    /// Sorted dependency names that resolve to an extracted package.
+    extracted_aliases: Vec<&'a [u8]>,
+    hoisted: bool,
+    isolated: bool,
+}
+
+impl<'a> LayoutEvidence<'a> {
+    fn init(lockfile: &'a Lockfile) -> LayoutEvidence<'a> {
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let resolutions = lockfile.buffers.resolutions.as_slice();
+        let pkg_res = lockfile.packages.items_resolution();
+        let mut extracted_aliases: Vec<&[u8]> = deps
+            .iter()
+            .zip(resolutions)
+            .filter(|(_, pkg_id)| {
+                pkg_res
+                    .get(**pkg_id as usize)
+                    .is_some_and(|res| extracted(res.tag))
+            })
+            .map(|(dep, _)| dep.name.slice(buf))
+            .collect();
+        index_sort::sort_vec_unstable_by(&mut extracted_aliases, |a, b| a.cmp(b));
+        extracted_aliases.dedup();
+        LayoutEvidence {
+            extracted_aliases,
+            hoisted: false,
+            isolated: false,
+        }
     }
-    Global::exit(1);
+
+    fn mixed(&self) -> bool {
+        self.hoisted && self.isolated
+    }
+
+    fn scan(&mut self, dir: &Dir) {
+        let mut alias = Vec::new();
+        for (name, kind) in read_entries(dir) {
+            if self.mixed() {
+                return;
+            }
+            if name.first() == Some(&b'@') && kind == EntryKind::Directory {
+                let Ok(scope_dir) = dir.open_at(&name) else {
+                    continue;
+                };
+                for (inner, inner_kind) in read_entries(&scope_dir) {
+                    alias.clear();
+                    alias.extend_from_slice(&name);
+                    alias.push(b'/');
+                    alias.extend_from_slice(&inner);
+                    self.vote(&scope_dir, &alias, &inner, inner_kind);
+                }
+                continue;
+            }
+            self.vote(dir, &name, &name, kind);
+        }
+    }
+
+    // A dangling store link is junk, not evidence.
+    fn vote(&mut self, dir: &Dir, alias: &[u8], name: &[u8], kind: EntryKind) {
+        match kind {
+            EntryKind::Directory if self.extracted_aliases.binary_search(&alias).is_ok() => {
+                self.hoisted = true;
+            }
+            EntryKind::SymLink
+                if store_link_target(dir, name).is_some() && !is_dangling(dir, name) =>
+            {
+                self.isolated = true;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// `configured` only decides when the folders hold both layouts.
+fn detect_layout(manager: &PackageManager, node_modules: &Dir, configured: Layout) -> Layout {
+    let lockfile: &Lockfile = &manager.lockfile;
+    let mut evidence = LayoutEvidence::init(lockfile);
+    evidence.scan(node_modules);
+    for pkg_id in 0..lockfile.packages.len() {
+        if evidence.mixed() {
+            break;
+        }
+        if is_pruned_workspace(manager, pkg_id) {
+            continue;
+        }
+        let Some(folder) = workspace_node_modules(lockfile, pkg_id as PackageID) else {
+            continue;
+        };
+        if let Some(dir) = open_workspace_folder(&folder, &mut Vec::new()) {
+            evidence.scan(&dir);
+        }
+    }
+    match (evidence.isolated, evidence.hoisted) {
+        (true, false) => Layout::Isolated,
+        (false, true) => Layout::Hoisted,
+        (true, true) => configured,
+        (false, false) if store_has_entries() => Layout::Isolated,
+        (false, false) => Layout::Hoisted,
+    }
 }
 
 fn print_apply_hint() {
@@ -398,7 +523,7 @@ fn print_apply_hint() {
         .skip_while(|arg| **arg != *b"prune")
         .skip(1)
     {
-        if arg.starts_with(b"--dry-run") {
+        if arg.starts_with(b"--dry-run") || arg.starts_with(b"--check") {
             continue;
         }
         bun_core::pretty!(" {}", BStr::new(arg));
@@ -409,7 +534,10 @@ fn print_apply_hint() {
 
 fn is_pruned_workspace(manager: &PackageManager, pkg_id: usize) -> bool {
     let pruned = &manager.summary.pruned_workspaces;
-    !pruned.is_empty() && pruned.contains(&manager.lockfile.packages.items_name_hash()[pkg_id])
+    // A registry package can share the name of a pruned workspace.
+    !pruned.is_empty()
+        && manager.lockfile.packages.items_resolution()[pkg_id].tag == ResolutionTag::Workspace
+        && pruned.contains(&manager.lockfile.packages.items_name_hash()[pkg_id])
 }
 
 fn collect_workspace_names(manager: &PackageManager) -> Vec<Box<[u8]>> {
@@ -461,9 +589,9 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     let mut to_root = Package::default();
     let mut resolver: () = ();
     let pm: *mut PackageManager = manager;
-    // SAFETY: same split as `hoist_filtered`; neither call reaches `lockfile` through `pm`.
+    // SAFETY: same split as `hoist_install_tree`; neither call reaches `lockfile` through `pm`.
     let summary = unsafe {
-        let parsed = to_root.parse_with_json::<()>(
+        let parsed = to_root.parse_with_json(
             &mut to_lockfile,
             &mut *pm,
             log,
@@ -500,6 +628,15 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
         }
     };
 
+    // The lockfile does not store the set. Take it from the manifests, as an install does.
+    manager
+        .lockfile
+        .self_contained_workspaces
+        .clear_retaining_capacity();
+    for key in to_lockfile.self_contained_workspaces.keys() {
+        manager.lockfile.self_contained_workspaces.put(*key, ())?;
+    }
+
     if summary.changes_dependencies() {
         if !quiet {
             Output::err_generic(
@@ -511,12 +648,6 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
         Global::exit(1);
     }
     Ok(summary)
-}
-
-fn print_log_errors(log: &bun_ast::Log) {
-    if log.has_errors() {
-        let _ = log.print(core::ptr::from_mut(Output::error_writer()));
-    }
 }
 
 struct Selection {
@@ -616,17 +747,98 @@ fn select_importers(manager: &PackageManager, original_cwd: &[u8]) -> Option<Sel
     })
 }
 
-fn hoist_filtered(manager: &mut PackageManager) {
-    let pm: *mut PackageManager = manager;
-    // SAFETY: same split as `PackageManager::load_lockfile_from_cwd` — `lockfile` is its own `Box` allocation and the Filter builder only reads `manager.options`/`subcommand`/`summary`.
-    let result = unsafe {
-        let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
-        let log: *mut bun_ast::Log = (*pm).log;
-        (*lf).hoist::<{ tree::BuilderMethod::Filter }>(&mut *log, Some(&*pm), true, &[], None)
-    };
-    if result.is_err() {
-        manager.crash();
+/// The dependency types an install lays out for local and for remote packages; `--production` / `--omit` narrow them.
+type InstallFeatures = (Features, Features);
+
+fn install_features(manager: &PackageManager) -> InstallFeatures {
+    (
+        manager.options.local_package_features,
+        manager.options.remote_package_features,
+    )
+}
+
+/// Every dependency type an install can lay out, whatever `--production` / `--omit` say for this run.
+fn full_install_features((mut local, mut remote): InstallFeatures) -> InstallFeatures {
+    local.dev_dependencies = true;
+    for features in [&mut local, &mut remote] {
+        features.optional_dependencies = true;
+        features.peer_dependencies = true;
     }
+    (local, remote)
+}
+
+fn with_install_features<T>(
+    manager: &mut PackageManager,
+    (local, remote): InstallFeatures,
+    f: impl FnOnce(&mut PackageManager) -> T,
+) -> T {
+    let saved = install_features(manager);
+    manager.options.local_package_features = local;
+    manager.options.remote_package_features = remote;
+    let result = f(manager);
+    (
+        manager.options.local_package_features,
+        manager.options.remote_package_features,
+    ) = saved;
+    result
+}
+
+/// The tree the lockfile saves (`Lockfile::resolve`), held while `manager.lockfile` carries the install tree.
+struct SavedTree {
+    trees: tree::List,
+    hoisted_dependencies: Vec<DependencyID>,
+}
+
+/// Hoists `manager.lockfile` into the tree an install of `features` lays out for every workspace
+/// (`Lockfile::filter`): the self-contained barrier applied, disabled and bundled dependencies left out.
+/// Returns the tree it replaced.
+fn hoist_install_tree(
+    manager: &mut PackageManager,
+    features: InstallFeatures,
+) -> Result<SavedTree, tree::SubtreeError> {
+    let saved = SavedTree {
+        trees: core::mem::take(&mut manager.lockfile.buffers.trees),
+        hoisted_dependencies: core::mem::take(&mut manager.lockfile.buffers.hoisted_dependencies),
+    };
+    let result = with_install_features(manager, features, |manager| {
+        let pm: *mut PackageManager = manager;
+        // SAFETY: same split as `PackageManager::load_lockfile_from_cwd` — `lockfile` is its own `Box` allocation and the Filter builder only reads `manager.options`/`subcommand`/`summary`.
+        unsafe {
+            let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
+            let log: *mut bun_ast::Log = (*pm).log;
+            (*lf).hoist::<{ tree::BuilderMethod::Filter }>(&mut *log, Some(&*pm), true, &[], None)
+        }
+    });
+    match result {
+        Ok(_) => Ok(saved),
+        Err(err) => {
+            restore_tree(&mut manager.lockfile, saved);
+            Err(err)
+        }
+    }
+}
+
+fn restore_tree(lockfile: &mut Lockfile, saved: SavedTree) {
+    lockfile.buffers.trees = saved.trees;
+    lockfile.buffers.hoisted_dependencies = saved.hoisted_dependencies;
+}
+
+/// Sorted. Only what this install places: the lockfile also has the dependency types it skips.
+pub(crate) fn top_level_names(manager: &mut PackageManager) -> Option<Vec<Box<[u8]>>> {
+    let saved = hoist_install_tree(manager, install_features(manager)).ok()?;
+    let buffers = &manager.lockfile.buffers;
+    let deps = buffers.dependencies.as_slice();
+    let buf = buffers.string_bytes.as_slice();
+    let mut names: Vec<Box<[u8]>> = (buffers.trees.first().into_iter())
+        .flat_map(|root| {
+            root.dependencies
+                .get(buffers.hoisted_dependencies.as_slice())
+        })
+        .map(|&id| deps[id as usize].name.slice(buf).into())
+        .collect();
+    sort_names(&mut names);
+    restore_tree(&mut manager.lockfile, saved);
+    Some(names)
 }
 
 struct TreeFolder {
@@ -641,10 +853,13 @@ struct HoistedTree<'a> {
     paths: Vec<u8>,
     expected: Vec<(&'a [u8], PackageID)>,
     quiet: bool,
+    /// The expected tree excludes dev/optional/peer dependencies.
+    filtered: bool,
     kept_mismatched: Cell<bool>,
     checked: RefCell<DynamicBitSet>,
     matched: RefCell<DynamicBitSet>,
     missing: RefCell<DynamicBitSet>,
+    other_version: RefCell<DynamicBitSet>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -652,10 +867,23 @@ enum Installed {
     Matches,
     Missing,
     Mismatch,
+    /// A version the lockfile installs elsewhere; the filter just favors a
+    /// different copy at this position, so it is kept without warning.
+    /// Only produced when `filtered` is set.
+    OtherVersion,
+}
+
+#[derive(Clone, Copy)]
+struct HoistedTreeInit {
+    /// suppress per-package progress output
+    quiet: bool,
+    /// the expected tree excludes dev/optional/peer dependencies (`--production` / `--omit`)
+    filtered: bool,
 }
 
 impl<'a> HoistedTree<'a> {
-    fn init(lockfile: &'a Lockfile, quiet: bool) -> HoistedTree<'a> {
+    fn init(lockfile: &'a Lockfile, opts: HoistedTreeInit) -> HoistedTree<'a> {
+        let HoistedTreeInit { quiet, filtered } = opts;
         let trees = lockfile.buffers.trees.as_slice();
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -700,6 +928,7 @@ impl<'a> HoistedTree<'a> {
         let checked = handle_oom(DynamicBitSet::init_empty(expected.len()));
         let matched = handle_oom(DynamicBitSet::init_empty(expected.len()));
         let missing = handle_oom(DynamicBitSet::init_empty(expected.len()));
+        let other_version = handle_oom(DynamicBitSet::init_empty(expected.len()));
         HoistedTree {
             lockfile,
             trees,
@@ -707,10 +936,12 @@ impl<'a> HoistedTree<'a> {
             paths,
             expected,
             quiet,
+            filtered,
             kept_mismatched: Cell::new(false),
             checked: RefCell::new(checked),
             matched: RefCell::new(matched),
             missing: RefCell::new(missing),
+            other_version: RefCell::new(other_version),
         }
     }
 
@@ -750,8 +981,10 @@ impl<'a> HoistedTree<'a> {
         };
         let (alias, pkg_id) = self.expected[idx];
         let installed = self.verified_installed(id, idx, alias, pkg_id);
-        if installed == Installed::Matches {
-            return true;
+        match installed {
+            Installed::Matches => return true,
+            Installed::OtherVersion => return false,
+            Installed::Missing | Installed::Mismatch => {}
         }
         self.kept_mismatched.set(true);
         if !self.quiet {
@@ -789,6 +1022,8 @@ impl<'a> HoistedTree<'a> {
                 Installed::Matches
             } else if self.missing.borrow().is_set(idx) {
                 Installed::Missing
+            } else if self.other_version.borrow().is_set(idx) {
+                Installed::OtherVersion
             } else {
                 Installed::Mismatch
             };
@@ -798,6 +1033,7 @@ impl<'a> HoistedTree<'a> {
         match installed {
             Installed::Matches => self.matched.borrow_mut().set(idx),
             Installed::Missing => self.missing.borrow_mut().set(idx),
+            Installed::OtherVersion => self.other_version.borrow_mut().set(idx),
             Installed::Mismatch => {}
         }
         installed
@@ -813,7 +1049,7 @@ impl<'a> HoistedTree<'a> {
         else {
             return Installed::Mismatch;
         };
-        let Some(folder) = open_tree_folder(self.lockfile, tree_id) else {
+        let Some(folder) = open_tree_folder(self.lockfile, tree_id, &mut Vec::new()) else {
             return Installed::Missing;
         };
         let kind = entry_kind_of(&folder, alias);
@@ -831,18 +1067,32 @@ impl<'a> HoistedTree<'a> {
             ResolutionTag::Folder if kind == EntryKind::SymLink => return Installed::Matches,
             _ => {}
         }
-        let Some(package) = descend(&folder, alias) else {
+        // A link counts as what it points at, as in `PackageInstall::verify`.
+        let package = match kind {
+            EntryKind::SymLink if is_dangling(&folder, alias) => return Installed::Missing,
+            EntryKind::SymLink => folder.open_at(alias).ok(),
+            _ => descend(&folder, alias),
+        };
+        let Some(package) = package else {
             return Installed::Mismatch;
         };
         let expected_name = self.lockfile.packages.items_name()[pkg_id as usize].slice(buf);
         let matches = match res.tag {
             ResolutionTag::Npm => {
-                installed_package_json(&package).is_some_and(|(name, version)| {
-                    let expected = res.npm().version.fmt(buf).to_string();
-                    version.is_some_and(|version| {
-                        without_build(&version) == without_build(expected.as_bytes())
-                    }) && name == expected_name
-                })
+                let Some((name, Some(version))) = installed_package_json(&package) else {
+                    return Installed::Mismatch;
+                };
+                if name != expected_name {
+                    return Installed::Mismatch;
+                }
+                let expected = res.npm().version.fmt(buf).to_string();
+                if without_build(&version) == without_build(expected.as_bytes()) {
+                    return Installed::Matches;
+                }
+                if self.filtered && self.version_in_lockfile(pkg_id, &version) {
+                    return Installed::OtherVersion;
+                }
+                return Installed::Mismatch;
             }
             ResolutionTag::Git | ResolutionTag::Github => {
                 sys::File::read_from(package.fd(), b".bun-tag")
@@ -858,6 +1108,25 @@ impl<'a> HoistedTree<'a> {
         } else {
             Installed::Mismatch
         }
+    }
+
+    /// Whether some npm package with the same name in the lockfile resolves
+    /// to `version`.
+    fn version_in_lockfile(&self, pkg_id: PackageID, version: &[u8]) -> bool {
+        let lockfile = self.lockfile;
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let name_hash = lockfile.packages.items_name_hash()[pkg_id as usize];
+        let Some(entry) = lockfile.package_index.get(&name_hash) else {
+            return false;
+        };
+        let pkg_res = lockfile.packages.items_resolution();
+        entry.as_slice().iter().any(|&id| {
+            pkg_res.get(id as usize).is_some_and(|res| {
+                res.tag == ResolutionTag::Npm
+                    && without_build(version)
+                        == without_build(res.npm().version.fmt(buf).to_string().as_bytes())
+            })
+        })
     }
 }
 
@@ -901,11 +1170,17 @@ fn plan_hoisted(
         return;
     }
 
-    hoist_filtered(manager);
+    if hoist_install_tree(manager, install_features(manager)).is_err() {
+        manager.crash();
+    }
 
     let quiet = manager.options.log_level == LogLevel::Silent;
+    let features = manager.options.local_package_features;
+    let filtered = !features.dev_dependencies
+        || !features.optional_dependencies
+        || !features.peer_dependencies;
     let lockfile: &Lockfile = &manager.lockfile;
-    let hoisted = HoistedTree::init(lockfile, quiet);
+    let hoisted = HoistedTree::init(lockfile, HoistedTreeInit { quiet, filtered });
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let trees = lockfile.buffers.trees.as_slice();
@@ -949,7 +1224,7 @@ fn plan_hoisted(
 
         let expected = hoisted.expected(tree_idx);
 
-        let Some(dir) = open_tree_folder(lockfile, tree_id) else {
+        let Some(dir) = open_tree_folder(lockfile, tree_id, &mut plan.linked_folders) else {
             continue;
         };
 
@@ -959,15 +1234,7 @@ fn plan_hoisted(
             {
                 continue;
             }
-            let extracted = matches!(
-                pkg_res[pkg_id as usize].tag,
-                ResolutionTag::Npm
-                    | ResolutionTag::LocalTarball
-                    | ResolutionTag::RemoteTarball
-                    | ResolutionTag::Git
-                    | ResolutionTag::Github
-            );
-            if !extracted || has_bundled_deps(lockfile, pkg_id) {
+            if !extracted(pkg_res[pkg_id as usize].tag) || has_bundled_deps(lockfile, pkg_id) {
                 continue;
             }
             let Some(nested) = descend(&dir, alias)
@@ -1021,7 +1288,7 @@ fn plan_hoisted(
         {
             continue;
         }
-        if let Ok(dir) = Dir::open(&folder_path) {
+        if let Some(dir) = open_workspace_folder(&folder_path, &mut plan.linked_folders) {
             scan_folder(
                 dir,
                 &folder_path,
@@ -1079,18 +1346,46 @@ fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
     (slice.begin() as usize..slice.end() as usize).any(|i| deps[i].behavior.is_bundled())
 }
 
-// Hoisted post-install pass for dedupe / audit fix / update (install_with_manager.rs).
-pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfile) {
+/// Removes what `before` placed and the install tree of all dependency types and platforms lacks.
+pub(crate) fn remove_collapsed_copies(manager: &mut PackageManager, before: &Lockfile) {
+    let options = &mut manager.options;
+    let platform = (options.cpu, options.os, options.libc);
+    options.cpu = crate::npm::Architecture::ALL;
+    options.os = crate::npm::OperatingSystem::ALL;
+    options.libc = <crate::npm::Libc as crate::npm::NegatableEnum>::ALL;
+    let hoisted = hoist_install_tree(manager, full_install_features(install_features(manager)));
+    let options = &mut manager.options;
+    (options.cpu, options.os, options.libc) = platform;
+    let Ok(saved) = hoisted else {
+        return;
+    };
+    plan_and_remove_collapsed_copies(manager, before);
+    restore_tree(&mut manager.lockfile, saved);
+}
+
+fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile) {
     let after: &Lockfile = &manager.lockfile;
     let workspace_names = collect_workspace_names(manager);
     if after.buffers.trees.is_empty()
-        || (before.buffers.trees.len() < 2 && workspace_names.is_empty())
+        || (before.buffers.trees.is_empty() && workspace_names.is_empty())
     {
         return;
     }
     let quiet = manager.options.log_level == LogLevel::Silent;
-    let old = HoistedTree::init(before, true);
-    let new = HoistedTree::init(after, quiet);
+    let old = HoistedTree::init(
+        before,
+        HoistedTreeInit {
+            quiet: true,
+            filtered: false,
+        },
+    );
+    let new = HoistedTree::init(
+        after,
+        HoistedTreeInit {
+            quiet,
+            filtered: false,
+        },
+    );
     let targets = manager.filtered_link_targets.as_ref();
     let selected: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(before));
     let importers = selected.as_ref().map(|_| tree_importers(before));
@@ -1101,7 +1396,7 @@ pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfil
     let old_deps = before.buffers.dependencies.as_slice();
     let old_buf = before.buffers.string_bytes.as_slice();
     let mut plan = Plan::default();
-    for old_idx in 1..old.folders.len() {
+    for old_idx in 0..old.folders.len() {
         let old_path = old.path(old_idx);
         if old_path.is_empty() {
             continue;
@@ -1128,17 +1423,25 @@ pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfil
         }
         let resolve_from: tree::Id = match surviving {
             Some(id) => new.trees[id as usize].parent,
+            None if old_idx == 0 => continue,
             None => match new_tree_at(old.path(old.trees[old_idx].parent as usize)) {
                 Some(parent_id) => parent_id,
                 None => continue,
             },
         };
-        if has_bundled_deps(before, tree_owner(before, old_idx))
-            || surviving.is_some_and(|id| has_bundled_deps(after, tree_owner(after, id as usize)))
-        {
+        // A tarball ships folders at any depth below the package that bundles.
+        let mut ships =
+            surviving.is_some_and(|id| has_bundled_deps(after, tree_owner(after, id as usize)));
+        let mut ancestor = old_idx;
+        while !ships && ancestor != 0 && ancestor < old.trees.len() {
+            ships = has_bundled_deps(before, tree_owner(before, ancestor));
+            ancestor = old.trees[ancestor].parent as usize;
+        }
+        if ships {
             continue;
         }
-        let Some(dir) = open_tree_folder(before, old_idx as tree::Id) else {
+        let Some(dir) = open_tree_folder(before, old_idx as tree::Id, &mut plan.linked_folders)
+        else {
             continue;
         };
         let folder_idx = plan.push_folder(old_path, FolderKind::NodeModules);
@@ -1177,7 +1480,11 @@ pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfil
         plan.retain(folder_idx, dir);
     }
 
-    // Workspace node_modules: dropped `before` rows resolve like nested trees; other entries go only once the root copy is installed.
+    // No bun.lock says that bun placed the other entries of a workspace's `node_modules`.
+    let removes_other_entries = matches!(
+        manager.subcommand,
+        crate::Subcommand::Dedupe | crate::Subcommand::Audit | crate::Subcommand::Update
+    );
     let selected_after: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(after));
     let buf = after.buffers.string_bytes.as_slice();
     let pkg_names = after.packages.items_name();
@@ -1202,7 +1509,7 @@ pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfil
             None => &[],
         };
         let surviving = tree_at(&new_paths, &tree_path);
-        let Ok(dir) = Dir::open(&folder_path) else {
+        let Some(dir) = open_workspace_folder(&folder_path, &mut plan.linked_folders) else {
             continue;
         };
         scan_folder(
@@ -1221,7 +1528,7 @@ pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfil
                 if was_row {
                     !new.removable(0, entry.alias, &folder_path)
                 } else {
-                    !new.collapsed_into_ancestor(0, entry.alias)
+                    !removes_other_entries || !new.collapsed_into_ancestor(0, entry.alias)
                 }
             },
             &mut plan,
@@ -1229,6 +1536,18 @@ pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfil
     }
 
     if plan.removals.is_empty() {
+        return;
+    }
+    if !plan.linked_folders.is_empty() {
+        if !quiet {
+            for folder in plan.sorted_linked_folders() {
+                bun_core::warn!(
+                    "{} is a symlink, so stale copies in node_modules were not removed",
+                    BStr::new(folder)
+                );
+            }
+            bun_core::note!("remove the link and run 'bun install', then 'bun prune'");
+        }
         return;
     }
     execute(&plan, true);
@@ -1251,7 +1570,11 @@ fn tree_at(paths: &[(&[u8], tree::Id)], path: &[u8]) -> Option<tree::Id> {
         .map(|i| paths[i].1)
 }
 
-fn open_tree_folder(lockfile: &Lockfile, tree_id: tree::Id) -> Option<Dir> {
+fn open_tree_folder(
+    lockfile: &Lockfile,
+    tree_id: tree::Id,
+    linked_folders: &mut Vec<Box<[u8]>>,
+) -> Option<Dir> {
     let trees = lockfile.buffers.trees.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let buf = lockfile.buffers.string_bytes.as_slice();
@@ -1265,7 +1588,7 @@ fn open_tree_folder(lockfile: &Lockfile, tree_id: tree::Id) -> Option<Dir> {
     while let Some(id) = chain.pop() {
         // `node_modules/<workspace>` is a link `bun link` may point anywhere; the tree lives in the workspace folder.
         if let Some(folder) = workspace_node_modules(lockfile, tree_owner(lockfile, id as usize)) {
-            dir = Dir::open(&folder).ok()?;
+            dir = open_workspace_folder(&folder, linked_folders)?;
             continue;
         }
         let package = descend(&dir, trees[id as usize].folder_name(deps, buf))?;
@@ -1287,7 +1610,22 @@ fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<
     Some(join(path, b"node_modules"))
 }
 
-fn descend(dir: &Dir, alias: &[u8]) -> Option<Dir> {
+/// The one way to open a workspace's `node_modules`, and the store. A link is not followed.
+fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> Option<Dir> {
+    let st = sys::lstat(ZStr::from_slice_with_nul(&zname(folder))).ok()?;
+    match sys::kind_from_mode(st.st_mode as sys::Mode) {
+        EntryKind::Directory => Dir::cwd()
+            .open_at_with(folder, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
+            .ok(),
+        EntryKind::SymLink => {
+            linked_folders.push(folder.into());
+            None
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn descend(dir: &Dir, alias: &[u8]) -> Option<Dir> {
     let (scope, name) = match strings::split_once_char(alias, b'/') {
         Some(split) if alias.first() == Some(&b'@') => (Some(split.0), split.1),
         _ => (None, alias),
@@ -1343,7 +1681,7 @@ fn lstat_kind(dir: &Dir, name: &[u8]) -> EntryKind {
     }
 }
 
-fn entry_kind(dir: &Dir, name: &[u8], kind: EntryKind) -> EntryKind {
+pub(crate) fn entry_kind(dir: &Dir, name: &[u8], kind: EntryKind) -> EntryKind {
     if kind != EntryKind::Unknown {
         return kind;
     }
@@ -1351,11 +1689,21 @@ fn entry_kind(dir: &Dir, name: &[u8], kind: EntryKind) -> EntryKind {
 }
 
 fn read_entries(dir: &Dir) -> Vec<(Box<[u8]>, EntryKind)> {
+    read_entries_and_leftovers(dir, false)
+}
+
+/// `leftovers`: also the `StagingPath`s, the `OldModules` and what was moved aside, the only names with a leading dot.
+fn read_entries_and_leftovers(dir: &Dir, leftovers: bool) -> Vec<(Box<[u8]>, EntryKind)> {
     let mut out = Vec::new();
     let mut iter = sys::iterate_dir(dir.fd());
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
-        if name.first() == Some(&b'.') {
+        if name.first() == Some(&b'.')
+            && !(leftovers
+                && (name.starts_with(StagingPath::PREFIX.as_bytes())
+                    || name.starts_with(OldModules::PREFIX.as_bytes())
+                    || name.starts_with(crate::package_install::MOVED_ASIDE_PREFIX.as_bytes())))
+        {
             continue;
         }
         let kind = entry_kind(dir, name, entry.kind);
@@ -1376,14 +1724,22 @@ fn scan_folder(
     let folder_idx = plan.push_folder(folder_path, FolderKind::NodeModules);
     plan.folders[folder_idx].touched = touched;
     let mut alias = Vec::new();
-    for (name, kind) in read_entries(&dir) {
+    for (name, kind) in read_entries_and_leftovers(&dir, plan.leftovers) {
+        if name.first() == Some(&b'.') {
+            plan.remove(folder_idx, &name, kind);
+            continue;
+        }
         if name.first() == Some(&b'@') && kind == EntryKind::Directory {
             let Ok(scope_dir) = dir.open_at(&name) else {
                 continue;
             };
             let scope_path = join(folder_path, &name);
             let scope_idx = plan.push_folder(&scope_path, FolderKind::Scope { parent: folder_idx });
-            for (inner, inner_kind) in read_entries(&scope_dir) {
+            for (inner, inner_kind) in read_entries_and_leftovers(&scope_dir, plan.leftovers) {
+                if inner.first() == Some(&b'.') {
+                    plan.remove(scope_idx, &inner, inner_kind);
+                    continue;
+                }
                 alias.clear();
                 alias.extend_from_slice(&name);
                 alias.push(b'/');
@@ -1457,37 +1813,10 @@ fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> D
     wanted
 }
 
-type StoreFeatures = (Features, Features);
-
-fn full_store_features((mut local, mut remote): StoreFeatures) -> StoreFeatures {
-    local.dev_dependencies = true;
-    for features in [&mut local, &mut remote] {
-        features.optional_dependencies = true;
-        features.peer_dependencies = true;
-    }
-    (local, remote)
-}
-
-fn build_store_with(manager: &mut PackageManager, (local, remote): StoreFeatures) -> Store {
-    let saved = (
-        manager.options.local_package_features,
-        manager.options.remote_package_features,
-    );
-    manager.options.local_package_features = local;
-    manager.options.remote_package_features = remote;
-    let store = build_store(
-        &*manager,
-        &manager.lockfile,
-        true,
-        &[],
-        None,
-        Timings::Quiet,
-    );
-    (
-        manager.options.local_package_features,
-        manager.options.remote_package_features,
-    ) = saved;
-    handle_oom(store)
+fn build_store_with(manager: &mut PackageManager, features: InstallFeatures) -> Store {
+    with_install_features(manager, features, |manager| {
+        handle_oom(build_whole_store(&*manager, &manager.lockfile))
+    })
 }
 
 fn push_store_entry_names(
@@ -1498,11 +1827,15 @@ fn push_store_entry_names(
 ) {
     let pkg_res = lockfile.packages.items_resolution();
     let node_pkg_ids = store.nodes.items_pkg_id();
+    let entry_nested_folder = store.entries.items_nested_folder();
     names.reserve(store.entries.len());
     let mut name: Vec<u8> = Vec::new();
     for (entry_idx, node_id) in store.entries.items_node_id().iter().enumerate() {
         let pkg_id = node_pkg_ids[node_id.get() as usize] as usize;
-        if pkg_res[pkg_id].tag == ResolutionTag::Workspace || !wanted.is_set(pkg_id) {
+        if pkg_res[pkg_id].tag == ResolutionTag::Workspace
+            || entry_nested_folder[entry_idx]
+            || !wanted.is_set(pkg_id)
+        {
             continue;
         }
         name.clear();
@@ -1521,11 +1854,8 @@ fn store_entry_names(manager: &mut PackageManager, wanted: &DynamicBitSet) -> Ve
     if manager.lockfile.packages.len() == 0 {
         return Vec::new();
     }
-    let own: StoreFeatures = (
-        manager.options.local_package_features,
-        manager.options.remote_package_features,
-    );
-    let full = full_store_features(own);
+    let own = install_features(manager);
+    let full = full_install_features(own);
     let mut names: Vec<Box<[u8]>> = Vec::new();
     for features in [Some(full), (own != full).then_some(own)]
         .into_iter()
@@ -1539,23 +1869,48 @@ fn store_entry_names(manager: &mut PackageManager, wanted: &DynamicBitSet) -> Ve
     names
 }
 
-fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>> {
+fn direct_aliases(
+    manager: &PackageManager,
+    pkg_id: PackageID,
+    linked: &mut reachable::Linked,
+) -> Vec<Box<[u8]>> {
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
-    let slice = lockfile.packages.items_dependencies()[pkg_id as usize];
-    let mut direct: Vec<Box<[u8]>> = Vec::new();
-    for dep_id in slice.begin()..slice.end() {
-        if is_filtered_dependency_or_workspace(
+    let dependency_lists = lockfile.packages.items_dependencies();
+    let slice = dependency_lists[pkg_id as usize];
+    let mut is_filtered = |dep_id: DependencyID, declarer: PackageID| {
+        is_filtered_dependency_or_workspace(
             dep_id,
-            pkg_id,
+            declarer,
             &[],
             true,
             manager,
             lockfile,
             resolutions,
-        ) {
+            linked,
+        )
+    };
+    let mut direct: Vec<Box<[u8]>> = Vec::new();
+    for dep_id in slice.begin()..slice.end() {
+        // `build_store` links a peer that `--omit=peer` leaves out when an ancestor provides it.
+        let dep = &deps[dep_id as usize];
+        let is_omitted_peer = dep.behavior.is_peer()
+            && !(dep.behavior).is_placed(manager.options.local_package_features);
+        let is_linked = if is_omitted_peer {
+            [pkg_id, 0].into_iter().any(|ancestor| {
+                let rows = dependency_lists[ancestor as usize];
+                (rows.begin()..rows.end()).any(|row| {
+                    deps[row as usize].name_hash == dep.name_hash
+                        && !deps[row as usize].behavior.is_peer()
+                        && !is_filtered(row, ancestor)
+                })
+            })
+        } else {
+            !is_filtered(dep_id, pkg_id)
+        };
+        if !is_linked {
             continue;
         }
         let target = resolutions[dep_id as usize];
@@ -1588,7 +1943,7 @@ fn plan_isolated(
     let manager: &PackageManager = manager;
 
     let mut removed_store: Vec<Box<[u8]>> = Vec::new();
-    if let Ok(store) = Dir::open(STORE_DIR) {
+    if let Some(store) = open_workspace_folder(STORE_DIR, &mut plan.linked_folders) {
         let store_idx = plan.push_folder(STORE_DIR, FolderKind::Store);
         for (name, kind) in read_entries(&store) {
             if &*name == b"node_modules" {
@@ -1596,6 +1951,7 @@ fn plan_isolated(
             }
             plan.checked += 1;
             if contains(&names, &name) {
+                plan_store_entry_leftovers(&store, &name, plan);
                 continue;
             }
             plan.remove(store_idx, &name, kind);
@@ -1609,6 +1965,7 @@ fn plan_isolated(
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
+    let mut linked = reachable::Linked::default();
     for pkg_id in 0..lockfile.packages.len() {
         let res = &pkg_res[pkg_id];
         let folder_path: Box<[u8]> = match res.tag {
@@ -1628,10 +1985,15 @@ fn plan_isolated(
         if is_pruned_workspace(manager, pkg_id) {
             continue;
         }
-        let Ok(dir) = Dir::open(&folder_path) else {
+        let dir = if pkg_id == 0 {
+            Dir::open(&folder_path).ok()
+        } else {
+            open_workspace_folder(&folder_path, &mut plan.linked_folders)
+        };
+        let Some(dir) = dir else {
             continue;
         };
-        let direct = direct_aliases(manager, pkg_id as PackageID);
+        let direct = direct_aliases(manager, pkg_id as PackageID, &mut linked);
         let folder_idx = scan_folder(
             dir,
             &folder_path,
@@ -1650,14 +2012,35 @@ fn plan_isolated(
     }
 }
 
-fn layout_mismatch(plan: &Plan, layout: Layout, store_present: bool) -> bool {
-    match layout {
-        Layout::Isolated => {
-            !store_present && plan.removals.iter().any(|r| r.kind == EntryKind::Directory)
-        }
-        Layout::Hoisted => plan.removals.iter().any(|r| {
-            r.kind == EntryKind::SymLink && store_link_target(plan.dir(r.folder), &r.name).is_some()
-        }),
+fn has_leftovers(dir: &Dir) -> bool {
+    read_entries_and_leftovers(dir, true)
+        .iter()
+        .any(|(name, kind)| match name.first() {
+            Some(b'.') => true,
+            Some(b'@') if *kind == EntryKind::Directory => dir.open_at(name).is_ok_and(|scope| {
+                read_entries_and_leftovers(&scope, true)
+                    .iter()
+                    .any(|(inner, _)| inner.first() == Some(&b'.'))
+            }),
+            _ => false,
+        })
+}
+
+/// Removes staging paths that a killed install left next to the package of a store entry we keep.
+fn plan_store_entry_leftovers(store: &Dir, entry: &[u8], plan: &mut Plan) {
+    if !plan.leftovers {
+        return;
+    }
+    let node_modules = join(entry, b"node_modules");
+    // `scan_folder` keeps every folder open until the plan runs, so only scan entries that need it.
+    if !(store.open_at(&node_modules)).is_ok_and(|dir| has_leftovers(&dir)) {
+        return;
+    }
+    // A second handle, because the first one has been read to the end.
+    if let Ok(dir) = store.open_at(&node_modules) {
+        let checked = plan.checked;
+        scan_folder(dir, &join(STORE_DIR, &node_modules), false, &|_| true, plan);
+        plan.checked = checked;
     }
 }
 
@@ -1684,6 +2067,37 @@ fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
     #[cfg(windows)]
     let result = result.or_else(|_| sys::rmdirat(dir.fd(), z));
     result
+}
+
+/// `path` is a directory the installer makes for itself: a link there came with the project.
+pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
+    #[cfg(not(windows))]
+    let (stat, remove) = (sys::lstatat(dir, path), || sys::unlinkat(dir, path));
+    // `lstatat` takes a junction for a directory. Every caller there names `path` from the cwd.
+    #[cfg(windows)]
+    let (stat, remove) = (sys::lstat(path), || {
+        let _ = dir;
+        sys::unlink(path).or_else(|_| sys::rmdir(path))
+    });
+    match stat {
+        Ok(st) if sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink => remove(),
+        // Below a plain file there is no link either.
+        Err(err) if !matches!(err.get_errno(), E::ENOENT | E::ENOTDIR) => Err(err),
+        _ => Ok(()),
+    }
+}
+
+/// For each component of `path` (absolute, or from the cwd) after `path[..real_len]`.
+pub(crate) fn remove_planted_links(path: &[u8], mut real_len: usize) -> sys::Maybe<()> {
+    let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    let mut buf = bun_paths::path_buffer_pool::get();
+    while real_len < path.len() {
+        let rest = &path[real_len + 1..];
+        real_len += 1 + strings::index_of_any(rest, separators).unwrap_or(rest.len());
+        let component = bun_paths::resolve_path::z(&path[..real_len], &mut buf);
+        remove_planted_link(&Dir::cwd(), component)?;
+    }
+    Ok(())
 }
 
 fn execute(plan: &Plan, quiet: bool) -> usize {
@@ -1744,20 +2158,22 @@ fn is_dangling(dir: &Dir, name: &[u8]) -> bool {
     }
 }
 
-fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) {
+/// Returns whether a link was removed.
+fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) -> bool {
     let mut alias = Vec::new();
+    let mut unlinked = false;
     for (name, kind) in read_entries(dir) {
         match kind {
             EntryKind::SymLink => {
                 if should_unlink(dir, &name, &name) {
-                    let _ = remove_link(dir, &name);
+                    unlinked |= remove_link(dir, &name).is_ok();
                 }
             }
             EntryKind::Directory if name.first() == Some(&b'@') => {
                 let Ok(scope_dir) = dir.open_at(&name) else {
                     continue;
                 };
-                let mut unlinked = false;
+                let mut unlinked_from_scope = false;
                 for (inner, inner_kind) in read_entries(&scope_dir) {
                     if inner_kind != EntryKind::SymLink {
                         continue;
@@ -1767,44 +2183,104 @@ fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) {
                     alias.push(b'/');
                     alias.extend_from_slice(&inner);
                     if should_unlink(&scope_dir, &alias, &inner) {
-                        unlinked |= remove_link(&scope_dir, &inner).is_ok();
+                        unlinked_from_scope |= remove_link(&scope_dir, &inner).is_ok();
                     }
                 }
                 drop(scope_dir);
-                if unlinked {
+                if unlinked_from_scope {
                     rmdir(dir, &name);
                 }
+                unlinked |= unlinked_from_scope;
             }
             _ => {}
         }
     }
+    unlinked
+}
+
+// An install that skips a dependency (`--omit`, `--os`, `--cpu`) still installs its dependent.
+fn unlink_removed_dependencies(store: &Dir) {
+    for (entry, kind) in read_entries(store) {
+        if kind != EntryKind::Directory || &*entry == b"node_modules" {
+            continue;
+        }
+        let Some(node_modules) = open_real_subdir(store, &entry)
+            .and_then(|entry_dir| open_real_subdir(&entry_dir, b"node_modules"))
+        else {
+            continue;
+        };
+        unlink_links(&node_modules, &|dir, _, name| is_dangling(dir, name));
+
+        // A dependency with the package's own name is linked inside the package.
+        let (package, _) = split_store_key(&entry);
+        let Some(package_dir) = descend(&node_modules, &package) else {
+            continue;
+        };
+        let Some(nested) = open_real_subdir(&package_dir, b"node_modules") else {
+            continue;
+        };
+        let unlinked = unlink_links(&nested, &|dir, alias, name| {
+            alias == &*package && is_dangling(dir, name)
+        });
+        drop(nested);
+        if unlinked {
+            rmdir(&package_dir, b"node_modules");
+        }
+    }
+}
+
+/// Removes the links in `node_modules/.bin` (on Windows the shim pairs) whose target is gone.
+pub(crate) fn prune_bins(node_modules: &Dir) {
+    if let Some(bin) = open_real_subdir(node_modules, b".bin") {
+        remove_dangling_bins(&bin, node_modules, None);
+    }
+}
+
+/// The folder also holds what is not bun's: only a link into `global_node_modules` goes.
+pub(crate) fn prune_global_bins(bin_path: &[u8], global_node_modules: &[u8]) {
+    let Some(parent) = bun_paths::dirname(bin_path).and_then(|parent| Dir::open(parent).ok())
+    else {
+        return;
+    };
+    if let Ok(bin) = parent.open_at(bun_paths::basename(bin_path)) {
+        remove_dangling_bins(&bin, &parent, Some((bin_path, global_node_modules)));
+    }
 }
 
 #[cfg(not(windows))]
-fn prune_bins(dir: &Dir) {
-    let Some(bin) = open_real_subdir(dir, b".bin") else {
-        return;
-    };
+fn remove_dangling_bins(bin: &Dir, _parent: &Dir, global: Option<(&[u8], &[u8])>) {
+    let mut link = bun_paths::path_buffer_pool::get();
     let mut dangling: Vec<Box<[u8]>> = Vec::new();
     let mut iter = sys::iterate_dir(bin.fd());
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
-        if entry_kind(&bin, name, entry.kind) == EntryKind::SymLink && is_dangling(&bin, name) {
-            dangling.push(name.into());
+        if entry_kind(bin, name, entry.kind) != EntryKind::SymLink || !is_dangling(bin, name) {
+            continue;
         }
+        if let Some((bin_path, global_node_modules)) = global {
+            let dest = zname(&join(bin_path, name));
+            let dest = ZStr::from_slice_with_nul(&dest);
+            match sys::readlink(dest, link.as_mut_slice()) {
+                Ok(len)
+                    if crate::bin_real::Linker::link_leads_into(
+                        dest,
+                        &link[..len],
+                        global_node_modules,
+                    ) => {}
+                _ => continue,
+            }
+        }
+        dangling.push(name.into());
     }
     drop(iter);
     for name in &dangling {
-        let _ = remove_link(&bin, name);
+        let _ = remove_link(bin, name);
     }
 }
 
-// `.bunx` layout: windows-shim/BinLinkingShim.rs (target path is relative to this node_modules folder).
+// `.bunx` layout: windows-shim/BinLinkingShim.rs. Only bun writes one, also in the global folder.
 #[cfg(windows)]
-fn prune_bins(dir: &Dir) {
-    let Some(bin) = open_real_subdir(dir, b".bin") else {
-        return;
-    };
+fn remove_dangling_bins(bin: &Dir, parent: &Dir, _global: Option<(&[u8], &[u8])>) {
     let mut shims: Vec<Box<[u8]>> = Vec::new();
     let mut iter = sys::iterate_dir(bin.fd());
     while let Ok(Some(entry)) = iter.next() {
@@ -1826,13 +2302,50 @@ fn prune_bins(dir: &Dir) {
             continue;
         };
         let target = strings::to_utf8_alloc_from_le_bytes(&shim[..target_len * 2]);
-        if !is_dangling(dir, &target) {
+        if !is_dangling(parent, &target) {
             continue;
         }
-        let _ = remove_link(&bin, &file_name);
+        let _ = remove_link(bin, &file_name);
         file_name.truncate(stem.len());
         file_name.extend_from_slice(b".exe");
-        let _ = remove_link(&bin, &file_name);
+        let _ = remove_link(bin, &file_name);
+    }
+}
+
+/// `dest` is a copy of the folder `src` without its `node_modules`. What cannot be listed stays.
+pub(crate) fn remove_entries_missing_from(src: &Dir, dest: &Dir) {
+    fn list(dir: &Dir) -> Option<Vec<(Box<[u8]>, EntryKind)>> {
+        let mut entries = Vec::new();
+        let mut iter = sys::iterate_dir(dir.fd());
+        while let Some(entry) = iter.next().ok()? {
+            entries.push((entry.name.slice_u8().into(), entry.kind));
+        }
+        Some(entries)
+    }
+    let Some(src_entries) = list(src) else {
+        return;
+    };
+    let Some(dest_entries) = list(dest) else {
+        return;
+    };
+    let mut names: Vec<Box<[u8]>> = src_entries.into_iter().map(|(name, _)| name).collect();
+    sort_names(&mut names);
+
+    let flags = O::RDONLY | O::CLOEXEC | O::NOFOLLOW;
+    for (name, kind) in &dest_entries {
+        if &**name == b"node_modules" {
+            continue;
+        }
+        if !contains(&names, name) {
+            let _ = dest.delete_tree(name);
+        } else if entry_kind(dest, name, *kind) == EntryKind::Directory
+            && let (Ok(src), Ok(dest)) = (
+                src.open_at_with(name, flags),
+                dest.open_at_with(name, flags),
+            )
+        {
+            remove_entries_missing_from(&src, &dest);
+        }
     }
 }
 
@@ -1847,10 +2360,13 @@ fn housekeeping(plan: &Plan, layout: Layout, manager: &PackageManager) {
                 if layout != Layout::Isolated {
                     continue;
                 }
-                let Some(hidden) = open_real_subdir(plan.dir(idx), b"node_modules") else {
-                    continue;
-                };
-                unlink_links(&hidden, &|dir, _, name| is_dangling(dir, name));
+                if let Some(hidden) = open_real_subdir(plan.dir(idx), b"node_modules") {
+                    unlink_links(&hidden, &|dir, _, name| is_dangling(dir, name));
+                }
+                // The planner already read `plan.dir(idx)` to its end.
+                if let Ok(store) = Dir::open(&folder.path) {
+                    unlink_removed_dependencies(&store);
+                }
             }
             FolderKind::NodeModules => {
                 if let (Layout::Isolated, Some(direct)) = (layout, &folder.direct) {
@@ -1869,5 +2385,36 @@ fn housekeeping(plan: &Plan, layout: Layout, manager: &PackageManager) {
                 prune_bins(plan.dir(idx));
             }
         }
+    }
+}
+
+/// The `node_modules/.old_modules-<hex>` that holds the other linker's tree.
+pub(crate) struct OldModules(pub(crate) Box<[u8]>);
+
+/// Dropping it waits for the deletion to end.
+pub(crate) struct OldModulesRemoval(Arc<WaitGroup>);
+
+impl OldModules {
+    pub(crate) const PREFIX: &'static str = ".old_modules-";
+
+    /// Deletes it on another thread. What cannot be deleted stays until `bun prune`.
+    pub(crate) fn remove(&self) -> OldModulesRemoval {
+        let done = Arc::new(WaitGroup::init_with_count(1));
+        handle_oom(WorkPool::go(
+            (self.0.clone(), Arc::clone(&done)),
+            |(name, done): (Box<[u8]>, Arc<WaitGroup>)| {
+                if let Ok(node_modules) = Dir::open(ROOT_DIR) {
+                    let _ = node_modules.delete_tree(&name);
+                }
+                done.finish();
+            },
+        ));
+        OldModulesRemoval(done)
+    }
+}
+
+impl Drop for OldModulesRemoval {
+    fn drop(&mut self) {
+        self.0.wait();
     }
 }

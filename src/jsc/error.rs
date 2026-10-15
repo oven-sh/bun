@@ -20,6 +20,10 @@ pub enum Error {
     MissingData,
     #[error("InvalidHash")]
     InvalidHash,
+    #[error("InvalidSourceMap")]
+    InvalidSourceMap,
+    #[error("NotARegularFile")]
+    NotARegularFile,
     #[error("CacheDisabled")]
     CacheDisabled,
     #[error("InvalidInputHash")]
@@ -42,14 +46,10 @@ pub enum Error {
     UnexpectedPendingResolution,
     #[error("WorkerTerminated")]
     WorkerTerminated,
-    #[error("JSErrorObject")]
-    JSErrorObject,
     #[error("ThreadSpawnFailed")]
     ThreadSpawnFailed,
     #[error("MissingDebugInfo")]
     MissingDebugInfo,
-    #[error("InvalidDebugInfo")]
-    InvalidDebugInfo,
     #[error("EndOfFile")]
     EndOfFile,
     #[error("FailedToOpenSocket")]
@@ -100,6 +100,8 @@ impl Error {
             Self::WriteFailed => "WriteFailed",
             Self::MissingData => "MissingData",
             Self::InvalidHash => "InvalidHash",
+            Self::InvalidSourceMap => "InvalidSourceMap",
+            Self::NotARegularFile => "NotARegularFile",
             Self::CacheDisabled => "CacheDisabled",
             Self::InvalidInputHash => "InvalidInputHash",
             Self::MismatchedFeatureHash => "MismatchedFeatureHash",
@@ -111,10 +113,8 @@ impl Error {
             Self::ServerEntryPointGenerate => "ServerEntryPointGenerate",
             Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
             Self::WorkerTerminated => "WorkerTerminated",
-            Self::JSErrorObject => "JSErrorObject",
             Self::ThreadSpawnFailed => "ThreadSpawnFailed",
             Self::MissingDebugInfo => "MissingDebugInfo",
-            Self::InvalidDebugInfo => "InvalidDebugInfo",
             Self::EndOfFile => "EndOfFile",
             Self::FailedToOpenSocket => "FailedToOpenSocket",
             Self::Sys(e) => <&'static str>::from(e),

@@ -153,9 +153,4 @@ unsigned long long PerformanceTiming::loadEventEnd() const
     return 0;
 }
 
-unsigned long long PerformanceTiming::monotonicTimeToIntegerMilliseconds(MonotonicTime timeStamp) const
-{
-    return timeStamp.secondsSinceEpoch().milliseconds();
-}
-
 } // namespace WebCore

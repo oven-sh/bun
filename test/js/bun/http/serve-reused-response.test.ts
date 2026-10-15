@@ -1,6 +1,7 @@
 import { serve } from "bun";
 import { describe, expect, it, jest } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // A fetch handler that returns a Response whose body has already been used
 // (most often the same Response object returned for every request) must invoke
@@ -259,5 +260,262 @@ describe("returning a Response with an already-used body", () => {
     expect(stderr).toContain("Response body already used");
     // The error is reported like any other unhandled error thrown from the fetch handler.
     expect(exitCode).toBe(1);
+  });
+
+  // The server refuses a stream body that another consumer holds, or whose Response was already
+  // sent. It never attached to that stream, so the teardown of the refused request must not end
+  // it. The default 500 reports the refusal as an unhandled error, so each case runs in its own
+  // process.
+  describe.concurrent("a body stream that the refused request never attached", () => {
+    const refusals = ["Stream already used, please create a new one", "Response body already used"];
+    async function run(script: string, args: string[] = []) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script, ...args],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const reports = refusals.reduce((count, refusal) => count + stderr.split(refusal).length - 1, 0);
+      return { ...JSON.parse(stdout), reports, exitCode };
+    }
+
+    const whole = "chunk1;chunk2;chunk3;chunk4;chunk5;chunk6;";
+    it.each([
+      ["GET", { status: 500, read: whole, reports: 1, exitCode: 1 }],
+      // HEAD sends no body, so the server has nothing to refuse.
+      ["HEAD", { status: 200, read: whole, reports: 0, exitCode: 0 }],
+    ] as const)("%s: the reader the handler holds on a fetch() body reads the whole body", async (method, expected) => {
+      const result = await run(`
+        const release = Promise.withResolvers();
+        const upstream = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          fetch() {
+            let sent = 0;
+            return new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  if (sent === 1) await release.promise;
+                  controller.enqueue(new TextEncoder().encode("chunk" + ++sent + ";"));
+                  if (sent === 6) controller.close();
+                },
+              }),
+            );
+          },
+        });
+        let reader;
+        let read = "";
+        const decoder = new TextDecoder();
+        const server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          development: false,
+          // The handler reads the upstream body itself and still returns the upstream Response.
+          async fetch() {
+            const upstreamResponse = await fetch(upstream.url);
+            reader = upstreamResponse.body.getReader();
+            read += decoder.decode((await reader.read()).value, { stream: true });
+            return upstreamResponse;
+          },
+        });
+        const response = await fetch(server.url, { method: ${JSON.stringify(method)} });
+        await response.text();
+        // The request is over and torn down. The upstream sends the rest only now.
+        release.resolve();
+        for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+          read += decoder.decode(chunk.value, { stream: true });
+        }
+        console.log(JSON.stringify({ status: response.status, read }));
+        await server.stop(true);
+        await upstream.stop(true);
+      `);
+      expect(result).toEqual(expected);
+    });
+
+    it("GET: the reader the handler holds on a file stream reads the whole file", async () => {
+      const size = 4 * 1024 * 1024;
+      using dir = tempDir("serve-refused-file-stream", { "body.bin": Buffer.alloc(size, "a") });
+      const result = await run(
+        `
+        let reader;
+        const server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          development: false,
+          fetch() {
+            const stream = Bun.file(process.argv[1]).stream();
+            const response = new Response(stream);
+            reader = stream.getReader();
+            return response;
+          },
+        });
+        const response = await fetch(server.url);
+        await response.text();
+        let read = 0;
+        for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) read += chunk.value.byteLength;
+        console.log(JSON.stringify({ status: response.status, read }));
+        await server.stop(true);
+      `,
+        [join(String(dir), "body.bin")],
+      );
+      expect(result).toEqual({ status: 500, read: size, reports: 1, exitCode: 1 });
+    });
+
+    it("GET: another client's download of the same fetch() body completes", async () => {
+      const result = await run(`
+        const release = Promise.withResolvers();
+        const upstream = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          fetch: () =>
+            new Response(
+              new ReadableStream({
+                async start(controller) {
+                  controller.enqueue(new TextEncoder().encode("part1;"));
+                  await release.promise;
+                  controller.enqueue(new TextEncoder().encode("part2;"));
+                  controller.close();
+                },
+              }),
+            ),
+        });
+        // Both adopt the body while nothing has read it.
+        const { body } = await fetch(upstream.url);
+        const responses = { "/sent": new Response(body), "/refused": new Response(body) };
+        const server = Bun.serve({
+          port: 0,
+          idleTimeout: 0,
+          development: false,
+          fetch: req => responses[new URL(req.url).pathname],
+        });
+        const inFlight = await fetch(new URL("/sent", server.url));
+        const reader = inFlight.body.getReader();
+        const decoder = new TextDecoder();
+        let read = decoder.decode((await reader.read()).value, { stream: true });
+        const refused = await fetch(new URL("/refused", server.url));
+        await refused.text();
+        release.resolve();
+        try {
+          for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+            read += decoder.decode(chunk.value, { stream: true });
+          }
+        } catch (error) {
+          read += "<" + error.code + ">";
+        }
+        console.log(JSON.stringify({ status: refused.status, read }));
+        await server.stop(true);
+        await upstream.stop(true);
+      `);
+      expect(result).toEqual({ status: 500, read: "part1;part2;", reports: 1, exitCode: 1 });
+    });
+
+    it.each([
+      ["GET", { status: 500, read: "part1;part2;", reports: 1, exitCode: 1 }],
+      ["HEAD", { status: 200, read: "part1;part2;", reports: 0, exitCode: 0 }],
+    ] as const)(
+      "%s for a fetch() Response that is already being sent leaves that download alone",
+      async (method, expected) => {
+        const result = await run(`
+          const release = Promise.withResolvers();
+          const upstream = Bun.serve({
+            port: 0,
+            idleTimeout: 0,
+            fetch: () =>
+              new Response(
+                new ReadableStream({
+                  async start(controller) {
+                    controller.enqueue(new TextEncoder().encode("part1;"));
+                    await release.promise;
+                    controller.enqueue(new TextEncoder().encode("part2;"));
+                    controller.close();
+                  },
+                }),
+              ),
+          });
+          const cached = await fetch(upstream.url);
+          // From here on the Response holds its body stream, and each request that returns it finds that stream.
+          cached.body;
+          const server = Bun.serve({ port: 0, idleTimeout: 0, development: false, fetch: () => cached });
+          const inFlight = await fetch(server.url);
+          const reader = inFlight.body.getReader();
+          const decoder = new TextDecoder();
+          let read = decoder.decode((await reader.read()).value, { stream: true });
+          const again = await fetch(server.url, { method: ${JSON.stringify(method)} });
+          await again.text();
+          release.resolve();
+          try {
+            for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+              read += decoder.decode(chunk.value, { stream: true });
+            }
+          } catch (error) {
+            read += "<" + error.code + ">";
+          }
+          console.log(JSON.stringify({ status: again.status, read }));
+          await server.stop(true);
+          await upstream.stop(true);
+        `);
+        expect(result).toEqual(expected);
+      },
+    );
+  });
+
+  // The refusal reaches error(), which has not answered yet when the client goes away. The abort
+  // of that request must leave the stream with the reader that holds it.
+  it("a client abort during error() for a refused stream leaves the stream with its reader", async () => {
+    const cancels: unknown[] = [];
+    const errors: unknown[] = [];
+    let sent = 0;
+    let reader!: ReadableStreamDefaultReader<Uint8Array>;
+    const { promise: errorEntered, resolve: enterError } = Promise.withResolvers<void>();
+    const { promise: abortObserved, resolve: observeAbort } = Promise.withResolvers<void>();
+    const { promise: gate, resolve: openGate } = Promise.withResolvers<void>();
+    await using server = serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(request) {
+        request.signal.addEventListener("abort", () => observeAbort(), { once: true });
+        const stream = new ReadableStream<Uint8Array>(
+          {
+            pull(controller) {
+              if (sent === 5) return controller.close();
+              controller.enqueue(new TextEncoder().encode(`chunk${++sent};`));
+            },
+            cancel(reason) {
+              cancels.push(reason);
+            },
+          },
+          { highWaterMark: 0 },
+        );
+        const response = new Response(stream);
+        reader = stream.getReader();
+        return response;
+      },
+      async error(err: any) {
+        errors.push(err.code);
+        enterError();
+        await gate;
+        return new Response("handled", { status: 500 });
+      },
+    });
+
+    const controller = new AbortController();
+    const aborted = fetch(server.url, { signal: controller.signal }).catch(() => {});
+    await errorEntered;
+    controller.abort();
+    await aborted;
+    await abortObserved;
+
+    const decoder = new TextDecoder();
+    let read = "";
+    for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+      read += decoder.decode(chunk.value, { stream: true });
+    }
+    expect({ read, cancels, errors }).toEqual({
+      read: "chunk1;chunk2;chunk3;chunk4;chunk5;",
+      cancels: [],
+      errors: ["ERR_STREAM_CANNOT_PIPE"],
+    });
+    openGate();
   });
 });

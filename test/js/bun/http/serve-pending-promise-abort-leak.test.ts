@@ -1002,3 +1002,296 @@ test.each([204, 304])("a %d Response with a ReadableStream body cancels the stre
   expect(cancelReasons).toStrictEqual([undefined]);
   await stopAndAssertDrained(server);
 });
+
+// A locked stream belongs to the consumer that holds it. The server does not transmit these
+// bodies, and it is not the one that reads them either, so it leaves them alone:
+// ReadableStream.prototype.cancel() rejects on a locked stream for the same reason.
+async function readToEnd(reader: ReadableStreamDefaultReader<Uint8Array>, decoder = new TextDecoder()) {
+  let text = "";
+  for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+    text += decoder.decode(chunk.value, { stream: true });
+  }
+  return text;
+}
+
+const heldReaderRows = [
+  [200, "HEAD"],
+  ...[204, 205, 304].flatMap(status => ["GET", "HEAD"].map(method => [status, method] as const)),
+] as const;
+test.each(heldReaderRows)(
+  "a %d Response (%s) does not cancel a body stream the handler still reads",
+  async (status, method) => {
+    let cancels = 0;
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    let reader!: ReadableStreamDefaultReader<Uint8Array>;
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch() {
+        const response = new Response(
+          new ReadableStream<Uint8Array>({
+            start(c) {
+              controller = c;
+              c.enqueue(new TextEncoder().encode("part1;"));
+            },
+            cancel() {
+              cancels++;
+            },
+          }),
+          { status },
+        );
+        reader = response.body!.getReader();
+        return response;
+      },
+    });
+
+    const res = await fetch(server.url, { method });
+    expect(res.status).toBe(status);
+    expect(await res.text()).toBe("");
+
+    // The response is complete. The reader the handler took still owns the stream.
+    expect(cancels).toBe(0);
+    controller.enqueue(new TextEncoder().encode("part2;"));
+    controller.close();
+    expect({ read: await readToEnd(reader), cancels }).toEqual({ read: "part1;part2;", cancels: 0 });
+    await stopAndAssertDrained(server);
+  },
+);
+
+test("a Response returned after server.stop(true) in the handler leaves a body stream that a reader holds", async () => {
+  let stopped: Promise<void> | undefined;
+  let cancels = 0;
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  let reader!: ReadableStreamDefaultReader<Uint8Array>;
+  using server = Bun.serve({
+    port: 0,
+    idleTimeout: 0,
+    fetch(_req, srv) {
+      stopped = srv.stop(true);
+      const response = new Response(
+        new ReadableStream<Uint8Array>({
+          start(c) {
+            controller = c;
+            c.enqueue(new TextEncoder().encode("part1;"));
+          },
+          cancel() {
+            cancels++;
+          },
+        }),
+      );
+      reader = response.body!.getReader();
+      return response;
+    },
+  });
+
+  await fetch(server.url).then(
+    () => {
+      throw new Error("the request should not get a response");
+    },
+    () => {},
+  );
+  await stopped!;
+  expect(cancels).toBe(0);
+  controller.enqueue(new TextEncoder().encode("part2;"));
+  controller.close();
+  expect({ read: await readToEnd(reader), cancels }).toEqual({ read: "part1;part2;", cancels: 0 });
+});
+
+// Two Responses can adopt one stream while nothing has read it. While the first is on the wire,
+// the server holds the stream's lock: through a reader, through the sink of a direct stream, or
+// through the native pipe of a fetch() body. A second request that sends no body must leave it.
+type Producing = AsyncDisposable & { stream: ReadableStream<Uint8Array>; finish(): void; cancels(): number };
+const producing: Record<string, () => Promise<Producing>> = {
+  "a ReadableStream": async () => {
+    let cancels = 0;
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        controller = c;
+        c.enqueue(new TextEncoder().encode("part1;"));
+      },
+      cancel() {
+        cancels++;
+      },
+    });
+    return {
+      stream,
+      finish() {
+        controller.enqueue(new TextEncoder().encode("part2;"));
+        controller.close();
+      },
+      cancels: () => cancels,
+      async [Symbol.asyncDispose]() {},
+    };
+  },
+  'a type: "direct" ReadableStream': async () => {
+    let cancels = 0;
+    const { promise: gate, resolve: finish } = Promise.withResolvers<void>();
+    const stream = new ReadableStream<Uint8Array>({
+      type: "direct",
+      async pull(controller) {
+        controller.write("part1;");
+        await controller.flush();
+        await gate;
+        controller.write("part2;");
+        controller.close();
+      },
+      cancel() {
+        cancels++;
+      },
+    });
+    return { stream, finish, cancels: () => cancels, async [Symbol.asyncDispose]() {} };
+  },
+  "a fetch() body": async () => {
+    let cancels = 0;
+    const { promise: gate, resolve: finish } = Promise.withResolvers<void>();
+    const upstream = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            async start(c) {
+              c.enqueue(new TextEncoder().encode("part1;"));
+              await gate;
+              c.enqueue(new TextEncoder().encode("part2;"));
+              c.close();
+            },
+            // Runs when the fetch() behind `body` drops its connection.
+            cancel() {
+              cancels++;
+            },
+          }),
+        ),
+    });
+    const { body } = await fetch(upstream.url);
+    return { stream: body!, finish, cancels: () => cancels, [Symbol.asyncDispose]: () => upstream.stop(true) };
+  },
+};
+
+test.each(Object.keys(producing))(
+  "a HEAD for another Response around %s that is being sent leaves that stream alone",
+  async kind => {
+    await using held = await producing[kind]();
+    const responses = { "/sent": new Response(held.stream), "/head": new Response(held.stream) };
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch: req => responses[new URL(req.url).pathname as keyof typeof responses],
+    });
+
+    const inFlight = await fetch(new URL("/sent", server.url));
+    const body = inFlight.body!.getReader();
+    const decoder = new TextDecoder();
+    let read = decoder.decode((await body.read()).value, { stream: true });
+
+    const head = await fetch(new URL("/head", server.url), { method: "HEAD" });
+    expect(await head.text()).toBe("");
+    expect(held.cancels()).toBe(0);
+
+    held.finish();
+    read += await readToEnd(body, decoder);
+    expect({ read, cancels: held.cancels() }).toEqual({ read: "part1;part2;", cancels: 0 });
+    await stopAndAssertDrained(server);
+  },
+);
+
+test.each(Object.keys(producing))(
+  "a Promise<Response> that settles after the client aborted leaves %s alone while another response sends it",
+  async kind => {
+    const { promise: handlerEntered, resolve: signalHandler } = Promise.withResolvers<void>();
+    const { promise: abortObserved, resolve: signalAbort } = Promise.withResolvers<void>();
+    const { promise: gate, resolve: openGate } = Promise.withResolvers<void>();
+    let handlerResult: Promise<Response> | undefined;
+    await using held = await producing[kind]();
+    // Both adopt the stream while nothing has read it.
+    const sent = new Response(held.stream);
+    const late = new Response(held.stream);
+
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/sent") return sent;
+        req.signal.addEventListener("abort", () => signalAbort(), { once: true });
+        signalHandler();
+        handlerResult = gate.then(() => late);
+        return handlerResult;
+      },
+    });
+
+    const inFlight = await fetch(new URL("/sent", server.url));
+    const body = inFlight.body!.getReader();
+    const decoder = new TextDecoder();
+    let read = decoder.decode((await body.read()).value, { stream: true });
+
+    const ac = new AbortController();
+    const aborted = fetch(new URL("/late", server.url), { signal: ac.signal }).catch(() => {});
+    await handlerEntered;
+    ac.abort();
+    await aborted;
+    await abortObserved;
+
+    // The server drops this Response. Its stream is the one the first request still sends.
+    openGate();
+    await handlerResult!;
+    expect(held.cancels()).toBe(0);
+
+    held.finish();
+    read += await readToEnd(body, decoder);
+    expect({ read, cancels: held.cancels() }).toEqual({ read: "part1;part2;", cancels: 0 });
+    await stopAndAssertDrained(server);
+  },
+);
+
+// The holder is a native pipe: a child's stdout wired to the stdin of another child.
+test("HEAD and a 204 leave a child's stdout with the process that reads it", async () => {
+  const size = 4 * 1024 * 1024;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const producer = [process.execPath, "-e", \`
+        const chunk = Buffer.alloc(65536, 97);
+        let sent = 0;
+        (function write() {
+          while (sent < ${size}) {
+            sent += chunk.length;
+            if (!process.stdout.write(chunk)) return process.stdout.once("drain", write);
+          }
+        })();
+      \`];
+      const counter = [process.execPath, "-e", \`
+        let received = 0;
+        process.stdin.on("data", chunk => (received += chunk.length)).on("end", () => console.log(received));
+      \`];
+      let sink;
+      const server = Bun.serve({
+        port: 0,
+        fetch(request) {
+          const source = Bun.spawn({ cmd: producer, stdout: "pipe", stderr: "inherit" });
+          const response = new Response(source.stdout, { status: Number(new URL(request.url).pathname.slice(1)) });
+          sink = Bun.spawn({ cmd: counter, stdin: source.stdout, stdout: "pipe", stderr: "inherit" });
+          return response;
+        },
+      });
+      const received = {};
+      for (const [method, status] of [["HEAD", 200], ["GET", 204]]) {
+        const response = await fetch(new URL("/" + status, server.url), { method });
+        await response.text();
+        received[method + " " + response.status] = Number(await sink.stdout.text());
+      }
+      console.log(JSON.stringify(received));
+      await server.stop(true);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ "HEAD 200": size, "GET 204": size });
+  expect(exitCode).toBe(0);
+});

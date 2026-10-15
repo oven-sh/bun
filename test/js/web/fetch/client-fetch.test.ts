@@ -115,6 +115,166 @@ test("pre aborted with closed readable request body", async () => {
   ).rejects.toThrow();
 });
 
+// fetch() attaches to a stream body only when the request is ready to send it. Until then the
+// stream is free and another consumer can take it. A fetch() that then gives up never held the
+// stream, so it leaves it with that consumer: ReadableStream.prototype.cancel() rejects on a
+// locked stream for the same reason.
+const fiveChunks = "chunk1;chunk2;chunk3;chunk4;chunk5;";
+function fiveChunkBody() {
+  const cancels: unknown[] = [];
+  let sent = 0;
+  const stream = new ReadableStream<Uint8Array>(
+    {
+      pull(controller) {
+        if (sent === 5) return controller.close();
+        controller.enqueue(new TextEncoder().encode(`chunk${++sent};`));
+      },
+      cancel(reason) {
+        cancels.push(reason);
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  return { stream, cancels };
+}
+async function readAll(reader: ReadableStreamDefaultReader<Uint8Array>) {
+  const decoder = new TextDecoder();
+  let text = "";
+  for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+    text += decoder.decode(chunk.value, { stream: true });
+  }
+  return text;
+}
+
+test.each(["fetch(url, init)", "fetch(request)"])(
+  "%s: abort leaves a readable request body with the reader that took it",
+  async how => {
+    await using server = createServer((req, res) => {}).listen(0);
+    await once(server, "listening");
+    const url = `http://localhost:${(server.address() as net.AddressInfo).port}`;
+
+    const { stream, cancels } = fiveChunkBody();
+    const ac = new AbortController();
+    const init = { method: "POST", body: stream, signal: ac.signal, duplex: "half" };
+    const response = how === "fetch(request)" ? fetch(new Request(url, init)) : fetch(url, init);
+    const reader = stream.getReader();
+    const reason = new Error("stop");
+    ac.abort(reason);
+
+    expect(await response.catch(error => error)).toBe(reason);
+    expect({ read: await readAll(reader), cancels }).toEqual({ read: fiveChunks, cancels: [] });
+  },
+);
+
+test('abort leaves a type: "direct" request body with the sink that took it', async () => {
+  await using server = createServer((req, res) => {}).listen(0);
+  await once(server, "listening");
+
+  let cancels = 0;
+  const { promise: gate, resolve: finish } = Promise.withResolvers<void>();
+  const stream = new ReadableStream({
+    type: "direct",
+    async pull(controller) {
+      controller.write("part1;");
+      await controller.flush();
+      await gate;
+      controller.write("part2;");
+      controller.close();
+    },
+    cancel() {
+      cancels++;
+    },
+  });
+  const ac = new AbortController();
+  const response = fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`, {
+    method: "POST",
+    body: stream,
+    signal: ac.signal,
+  });
+  const text = Bun.readableStreamToText(stream);
+  ac.abort();
+
+  expect((await response.catch(error => error)).name).toBe("AbortError");
+  expect(cancels).toBe(0);
+  finish();
+  expect({ text: await text, cancels }).toEqual({ text: "part1;part2;", cancels: 0 });
+});
+
+// fetch() reads `headers` after it took `body`, so the getter runs in the window.
+test.each([
+  ["pre aborted", {}, AbortSignal.abort(new Error("stop")), "stop"],
+  ["an invalid Content-Length", { "content-length": "abc" }, undefined, "Content-Length"],
+] as const)(
+  "%s: a fetch rejected before it sends leaves a readable request body with the reader that took it",
+  async (_, headers, signal, message) => {
+    const { stream, cancels } = fiveChunkBody();
+    let reader!: ReadableStreamDefaultReader<Uint8Array>;
+    const rejection = await fetch("http://localhost:1", {
+      method: "POST",
+      body: stream,
+      signal,
+      get headers() {
+        reader = stream.getReader();
+        return headers;
+      },
+    }).catch(error => error);
+
+    expect(rejection.message).toContain(message);
+    expect({ read: await readAll(reader), cancels }).toEqual({ read: fiveChunks, cancels: [] });
+  },
+);
+
+// The holder is a native pipe: a child's stdout wired to the stdin of another child.
+test("abort leaves a child's stdout with the process that reads it", async () => {
+  const size = 4 * 1024 * 1024;
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const producer = [process.execPath, "-e", \`
+        const chunk = Buffer.alloc(65536, 97);
+        let sent = 0;
+        (function write() {
+          while (sent < ${size}) {
+            sent += chunk.length;
+            if (!process.stdout.write(chunk)) return process.stdout.once("drain", write);
+          }
+        })();
+      \`];
+      const counter = [process.execPath, "-e", \`
+        let received = 0;
+        process.stdin.on("data", chunk => (received += chunk.length)).on("end", () => console.log(received));
+      \`];
+      const server = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          await request.arrayBuffer().catch(() => {});
+          return new Response("ok");
+        },
+      });
+      const source = Bun.spawn({ cmd: producer, stdout: "pipe", stderr: "inherit" });
+      const ac = new AbortController();
+      const response = fetch(server.url, { method: "POST", body: source.stdout, signal: ac.signal }).then(
+        () => "resolved",
+        error => error.name,
+      );
+      const sink = Bun.spawn({ cmd: counter, stdin: source.stdout, stdout: "pipe", stderr: "inherit" });
+      ac.abort();
+      console.log(JSON.stringify({ received: Number(await sink.stdout.text()), fetch: await response }));
+      await server.stop(true);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ received: size, fetch: "AbortError" });
+  expect(exitCode).toBe(0);
+});
+
 test("unsupported formData 1", async () => {
   await using server = createServer((req, res) => {
     res.setHeader("content-type", "asdasdsad");

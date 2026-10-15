@@ -176,8 +176,7 @@ fn empty_array() -> SQLDataCell {
     }
 }
 
-/// The rest of `slice` past an unquoted element of `len` bytes, when the element ends there.
-/// A separator goes with the element. A closing brace stays for the caller.
+/// The rest of `slice` after an unquoted element of `len` bytes: past its separator, or at the closing brace.
 #[inline(always)]
 fn after_element(slice: &[u8], len: usize, separator: u8) -> Option<&[u8]> {
     match *slice.get(len)? {
@@ -187,8 +186,7 @@ fn after_element(slice: &[u8], len: usize, separator: u8) -> Option<&[u8]> {
     }
 }
 
-/// Length of the JSON number at the start of `text`, 0 when there is none:
-/// `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?`
+/// Length of the JSON number `-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?` at the start of `text`, or 0.
 fn json_number_len(text: &[u8]) -> usize {
     let digits = |from: usize| {
         text[from..]
@@ -374,9 +372,7 @@ fn parse_array(
             slice = try_slice(slice, 1);
             continue;
         } else {
-            // array_out quotes an element that is empty, spells NULL, or holds a quote, a
-            // backslash, a brace, the separator or whitespace. So an unquoted element runs to the
-            // next separator or closing brace, and its bytes are the text output of the element type.
+            // array_out quotes any element with a quote, backslash, brace, separator or space, so an unquoted one ends at a separator or `}`.
 
             // A spelling that the type prints one way only is matched in place.
             macro_rules! fixed {
@@ -414,8 +410,7 @@ fn parse_array(
                 (b'-', ElementKind::Date | ElementKind::Timestamp) => {
                     fixed!(b"-infinity" => SQLDataCell::date(f64::NEG_INFINITY))
                 }
-                // No parser runs over an int8 that reads as a string, so it is checked in place:
-                // a sign or a digit, then digits.
+                // No parser runs over an int8 that reads as a string, so its sign and digits are checked in place.
                 (b'-' | b'0'..=b'9', ElementKind::Int8String) => {
                     let mut len: usize = 1;
                     while slice.get(len).is_some_and(u8::is_ascii_digit) {
@@ -429,8 +424,7 @@ fn parse_array(
                         continue;
                     }
                 }
-                // parse_f64 takes more than a JSON number (`inf`, `nan`, `+1`, `.5`), so the
-                // JSON grammar is checked first. It also finds the end of the element.
+                // parse_f64 also takes `inf`, `nan`, `+1` and `.5`, so the JSON number grammar is checked first.
                 (b'-' | b'0'..=b'9', ElementKind::Json) => {
                     let len = json_number_len(slice);
                     if len > 0
@@ -455,8 +449,7 @@ fn parse_array(
                 }
             };
             let element = &slice[..end];
-            // Each kind takes the parser `from_bytes` uses for the scalar type. Text that the
-            // parser refuses rejects the row.
+            // Each kind takes the parser `from_bytes` uses for the scalar type. Text it refuses rejects the row.
             match kind {
                 ElementKind::Int4 => array.push(SQLDataCell::int4(
                     bun_core::fmt::parse_decimal::<i32>(element)
@@ -491,8 +484,7 @@ fn parse_array(
                         None => parse_date_time_text(array_type, element, global_object)?,
                     },
                 )),
-                // A JSON string or object has a quote or a brace, so it is quoted. A number, true
-                // and false are matched above. What is left is an array of those.
+                // A JSON string or object is always quoted and the scalars are matched above, so this is a JSON array.
                 ElementKind::Json if ch == b'[' => array.push(SQLDataCell::json(element)),
                 // the only escape sequence possible here is \b
                 ElementKind::Text if element == b"\\b" => array.push(SQLDataCell::string(b"\x08")),

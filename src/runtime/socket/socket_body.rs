@@ -908,20 +908,13 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Whether Node's handle is a `Pipe`, if the last dial or the accepting listener says so.
     fn pipe_from_state(&self) -> Option<bool> {
-        use super::listener::UnixOrHost;
         if self.socket.get().is_named_pipe() {
             return Some(true);
         }
-        match self.connection.get() {
-            Some(UnixOrHost::Unix(_)) => return Some(true),
-            Some(UnixOrHost::Host { .. }) => return Some(false),
-            Some(UnixOrHost::Fd(_)) | None => {}
-        }
-        match &self.handlers.get().as_ref()?.listener()?.connection {
-            UnixOrHost::Unix(_) => Some(true),
-            UnixOrHost::Host { .. } => Some(false),
-            UnixOrHost::Fd(_) => None,
-        }
+        pipe_from_dial_or_listener(
+            self.connection.get().as_ref(),
+            self.handlers.get().as_deref(),
+        )
     }
 
     /// Node's `handle instanceof Pipe`. An adopted fd asks the kernel, and a pipe keeps the answer.
@@ -5099,6 +5092,23 @@ pub(crate) fn js_is_pipe_socket(
         return Ok(JSValue::from(this.is_pipe()));
     }
     Ok(JSValue::FALSE)
+}
+
+fn pipe_from_dial_or_listener(
+    dialed: Option<&super::listener::UnixOrHost>,
+    handlers: Option<&Handlers>,
+) -> Option<bool> {
+    use super::listener::UnixOrHost;
+    match dialed {
+        Some(UnixOrHost::Unix(_)) => return Some(true),
+        Some(UnixOrHost::Host { .. }) => return Some(false),
+        Some(UnixOrHost::Fd(_)) | None => {}
+    }
+    match &handlers?.listener()?.connection {
+        UnixOrHost::Unix(_) => Some(true),
+        UnixOrHost::Host { .. } => Some(false),
+        UnixOrHost::Fd(_) => None,
+    }
 }
 
 /// Whether Node wraps `fd` in a `Pipe`: a unix socket, or not a socket at all (a FIFO).

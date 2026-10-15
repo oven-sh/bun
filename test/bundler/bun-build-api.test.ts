@@ -1786,7 +1786,7 @@ export { greeting };`,
     await using proc = Bun.spawn({ cmd: [bunExe(), "build.ts"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
-      out: { calls: ["a:true", "b:true"], success: [true, true], inherited: value === "5" ? null : eval(value).length },
+      out: { calls: ["a:true", "b:true"], success: [true, true], inherited: JSON.parse(value).length ?? null },
       stderr: "",
       exitCode: 0,
     });

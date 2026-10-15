@@ -341,6 +341,7 @@ describe("Channel", () => {
           const values = {
             number: 5, string: "abc", boolean: true, object: {}, null: null, undefined: undefined,
             symbol: Symbol("s"), bigint: 1n, frozen: Object.freeze([]),
+            speciesObject: Object.assign([() => {}], { constructor: { [Symbol.species]: function () { return {}; } } }),
           };
           const outcome = {};
           for (const [name, value] of Object.entries(values)) {
@@ -349,7 +350,7 @@ describe("Channel", () => {
             dc._subscribers = value;
             try {
               dc.subscribe(() => {});
-              outcome[name] = "returned";
+              outcome[name] = name === "speciesObject" ? "length " + dc._subscribers.length : "returned";
             } catch (e) {
               outcome[name] = e.constructor.name;
             }
@@ -373,6 +374,7 @@ describe("Channel", () => {
         symbol: "returned",
         bigint: "returned",
         frozen: "returned",
+        speciesObject: "length 2",
       },
       stderr: "",
       exitCode: 0,

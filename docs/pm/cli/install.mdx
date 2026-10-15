@@ -596,27 +596,27 @@ Bun's usage of `Cache-Control` ignores `Age`. This improves performance, but mea
 
 A flag that `bun install` does not know is an error. So that a command line written for npm, Yarn or pnpm keeps working, `bun install`, `bun ci`, `bun add`, `bun remove` and `bun update` also take these:
 
-| Flag                                                           | What Bun does                                            |
-| -------------------------------------------------------------- | -------------------------------------------------------- |
-| `--save-dev`, `--save-exact`, `--save-optional`, `--save-peer` | `--dev`, `--exact`, `--optional`, `--peer`               |
-| `--no-optional`, `--ignore-optional`                           | `--omit=optional`                                        |
-| `--only=production`, `--only=prod`                             | `--omit=dev`                                             |
-| `--production=true`                                            | `--production`                                           |
-| `--package-lock-only`                                          | `--lockfile-only`                                        |
-| `--immutable`                                                  | `--frozen-lockfile`                                      |
-| `--shamefully-hoist`                                           | `--linker=hoisted`                                       |
-| `--progress=false`                                             | `--no-progress`                                          |
-| `--loglevel=silent`                                            | `--silent`                                               |
-| `--loglevel=error`, `--loglevel=warn`                          | `--quiet`                                                |
-| `--loglevel=verbose`, `--loglevel=silly`                       | `--verbose`                                              |
-| `--loglevel=notice`, `--loglevel=http`, `--loglevel=info`      | Nothing: the default output                              |
-| `--no-audit`, `--no-fund`, `--no-update-notifier`              | Nothing: an install does none of these                   |
-| `--legacy-peer-deps`                                           | Nothing: peers that conflict are not an error            |
-| `--ignore-engines`                                             | Nothing: `engines` is not checked                        |
-| `--unsafe-perm`                                                | Nothing: scripts run as the current user                 |
-| `--non-interactive`                                            | Nothing: an install asks no questions                    |
-| `--include=dev`, `--include=optional`, `--include=peer`        | Nothing: installed by default                            |
-| `--no-frozen-lockfile`, `--prefer-frozen-lockfile`             | Nothing: the default                                     |
+| Flag                                                           | What Bun does                                 |
+| -------------------------------------------------------------- | --------------------------------------------- |
+| `--save-dev`, `--save-exact`, `--save-optional`, `--save-peer` | `--dev`, `--exact`, `--optional`, `--peer`    |
+| `--no-optional`, `--ignore-optional`                           | `--omit=optional`                             |
+| `--only=production`, `--only=prod`                             | `--omit=dev`                                  |
+| `--production=true`                                            | `--production`                                |
+| `--package-lock-only`                                          | `--lockfile-only`                             |
+| `--immutable`                                                  | `--frozen-lockfile`                           |
+| `--shamefully-hoist`                                           | `--linker=hoisted`                            |
+| `--progress=false`                                             | `--no-progress`                               |
+| `--loglevel=silent`                                            | `--silent`                                    |
+| `--loglevel=error`, `--loglevel=warn`                          | `--quiet`                                     |
+| `--loglevel=verbose`, `--loglevel=silly`                       | `--verbose`                                   |
+| `--loglevel=notice`, `--loglevel=http`, `--loglevel=info`      | Nothing: the default output                   |
+| `--no-audit`, `--no-fund`, `--no-update-notifier`              | Nothing: an install does none of these        |
+| `--legacy-peer-deps`                                           | Nothing: peers that conflict are not an error |
+| `--ignore-engines`                                             | Nothing: `engines` is not checked             |
+| `--unsafe-perm`                                                | Nothing: scripts run as the current user      |
+| `--non-interactive`                                            | Nothing: an install asks no questions         |
+| `--include=dev`, `--include=optional`, `--include=peer`        | Nothing: installed by default                 |
+| `--no-frozen-lockfile`, `--prefer-frozen-lockfile`             | Nothing: the default                          |
 
 `--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. Bun still installs peer dependencies with `--legacy-peer-deps`; `--omit=peer` leaves them out.
 

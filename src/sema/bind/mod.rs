@@ -1573,6 +1573,11 @@ impl Bound<'_> {
         }
     }
 
+    /// Whether the file has a `typeof x` type.
+    pub(crate) fn has_type_queries(&self) -> bool {
+        !self.type_query_operands.is_empty()
+    }
+
     /// `IsInTypeQuery`: the type of `e` is queried, but `e` is not read.
     pub fn is_in_type_query(&self, e: ExprId) -> bool {
         self.type_query_operands.binary_search(&e).is_ok()

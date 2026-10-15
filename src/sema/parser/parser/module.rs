@@ -67,7 +67,7 @@ fn relate_to_open_brace(diagnostics: &mut [Diagnostic], open: u32) {
     }
 }
 
-impl<const GENERAL: bool> Parser<'_, GENERAL> {
+impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// Whether the text is read as acorn or Babel read it: what TypeScript's parser leaves to the
     /// checker is an error of their parsers.
     #[inline]
@@ -89,8 +89,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.expression_as_module_specifier(is_export);
             return (Atom::NONE, ResolutionMode::None);
         }
-        let (spec, pos) = (self.lx.atom, self.pos());
+        let (spec, pos, end) = (self.lx.atom, self.pos(), self.lx.end);
         self.next();
+        self.finish_name(pos, end);
         let mut mode = self.import_attributes_of_declaration(is_export);
         if !is_type_only {
             mode = ResolutionMode::None;
@@ -518,11 +519,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             self.next_after_name();
         }
         let (mut type_only, mut is_deferred) = (false, false);
-        if let Some((_, _, T::Type | T::TypeOf)) = identifier {
+        if let Some((_, keyword_pos, T::Type | T::TypeOf)) = identifier {
             let is_modifier = (self.token() != T::From
                 || self.is_identifier() && matches!(self.peek(), T::From | T::Equals))
                 && (self.is_identifier() || matches!(self.token(), T::Asterisk | T::OpenBrace));
             if is_modifier {
+                self.unfinish_name(keyword_pos);
                 type_only = true;
                 identifier = None;
                 if self.is_identifier() {
@@ -530,7 +532,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     self.next_after_name();
                 }
             }
-        } else if let Some((name, _, token)) = identifier
+        } else if let Some((name, keyword_pos, token)) = identifier
             // For Babel and oxc `source` is a phase too. It is kept like `defer`: the text tells them apart.
             && (token == T::Defer
                 || (self.options.dialect.babel || self.options.dialect.oxc)
@@ -545,6 +547,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 if token != T::Defer && !self.is_identifier() {
                     self.report();
                 }
+                self.unfinish_name(keyword_pos);
                 identifier = None;
                 if self.is_identifier() {
                     identifier = Some((self.lx.atom, self.pos(), self.token()));
@@ -584,6 +587,8 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 self.next();
                 self.expect(T::As);
                 (namespace, namespace_pos) = self.identifier_of_declaration();
+                // The `ImportNamespaceSpecifier` of ESTree.
+                self.finish_name(namespace_start, self.prev_end());
             } else {
                 has_named_imports = true;
                 let has_list = self.expect(T::OpenBrace);
@@ -703,6 +708,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         // `parseModuleReference`
         let target = if self.token() == T::Require && self.peek() == T::OpenParen {
             // `parseExternalModuleReference`
+            let reference_start = self.pos();
             self.next();
             self.next();
             let mut spec = Atom::NONE;
@@ -714,11 +720,13 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                     kind: SpecifierKind::Require,
                     mode: ResolutionMode::None,
                 });
-                self.next();
+                self.next_after_string();
             } else {
                 expression = self.expression_as_required_module();
             }
             self.expect(T::CloseParen);
+            // The `TSExternalModuleReference` of ESTree.
+            self.finish_name(reference_start, self.prev_end());
             ImportEqualsTarget::Require(spec)
         } else {
             // `parseEntityName`
@@ -777,7 +785,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         // Nothing stands for it.
         if self.f.exprs.len() == expression.idx() + 1 {
-            self.f.exprs.pop();
+            self.pop_expr();
         }
         ExprId::NONE
     }
@@ -833,6 +841,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if self.eat(T::As) {
                 let name = self.module_export_name();
                 (alias, alias_pos) = (name.text, name.pos);
+                // The `ExportNamespaceSpecifier` of Babel. typescript-estree has no such node.
+                if self.options.is_javascript {
+                    self.finish_name(star_pos, self.prev_end());
+                }
             }
             self.expect(T::From);
             let (spec, mode) = self.module_specifier(SpecifierKind::Import, true, type_only);

@@ -329,16 +329,27 @@ pub(crate) fn write_atomically(
     path: &[u8],
     text: &[u8],
 ) -> Result<(), Vec<u8>> {
-    let mut buffer = path_buffer_pool::get();
-    let real = bun_sys::realpath(for_libuv(path, &mut path_buffer_pool::get()), &mut buffer)
-        .map_err(|error| describe(&error))?
-        .to_vec();
+    let resolve = || {
+        let mut buffer = path_buffer_pool::get();
+        bun_sys::realpath(for_libuv(path, &mut path_buffer_pool::get()), &mut buffer)
+            .map(<[u8]>::to_vec)
+            .map_err(|error| describe(&error))
+    };
     // `bun lint` has the path as the system writes it.
-    let (path, portable) = (paths::from_native(path), paths::from_native(&real));
-    if portable != path
-        && paths::inside(cwd, &path).is_some()
-        && !repository(cwd).is_some_and(|it| paths::inside(&it, &portable).is_some())
-    {
+    let portable = paths::from_native(path);
+    let leads_out = |real: &[u8]| {
+        let real = paths::from_native(real);
+        real != portable
+            && paths::inside(cwd, &portable).is_some()
+            && !repository(cwd).is_some_and(|it| paths::inside(&it, &real).is_some())
+    };
+    let mut real = resolve()?;
+    // NTFS keeps a file that is open and has lost its name to another in a directory of its own. That is where this one is if
+    // another thread, which has reached it by another path, has replaced it since it was opened here. The new one has the name.
+    if cfg!(windows) && leads_out(&real) {
+        real = resolve()?;
+    }
+    if leads_out(&real) {
         return Err(b"it is a symlink to a file outside the repository".to_vec());
     }
     if !written.0.lock().insert(real.clone()) {

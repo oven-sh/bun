@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
+use bun_lint::types::IdMap;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashMap;
 
 /// Disallow the use of `eval()`.
 pub struct NoEval {
@@ -15,7 +15,7 @@ pub struct Known<'a> {
     /// Whether a `this` at a node, in a function or in a field of a class, is the global object.
     at: AncestorMemo<'a, bool>,
     /// The same directly in a function.
-    in_function: FxHashMap<Func<'a>, bool>,
+    in_function: IdMap<Func<'a>, bool>,
     bindings: ast_utils::ThisBindingMemo<'a>,
     /// Whether oxc takes the file for a module.
     is_module: Option<bool>,
@@ -115,7 +115,7 @@ impl NoEval {
         };
         let Known { at, in_function, bindings, .. } = &mut cx.state;
         let is_global_object = at.find(Node::Expr(e), |child, ancestor| match ancestor {
-            Node::Func(func) if !func.is_arrow() => Some(*in_function.entry(func).or_insert_with(|| {
+            Node::Func(func) if !func.is_arrow() => Some(*in_function.get_or_insert_with(func, || {
                 // oxlint takes a function for a constructor by its own name alone, and knows the capitals of ASCII.
                 let is_ascii = |it: Ident<'a>| it.bytes().first().is_some_and(u8::is_ascii);
                 let cap_is_constructor = !is_oxlint || func.name().is_some_and(is_ascii);

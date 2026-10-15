@@ -1855,7 +1855,13 @@ impl<'f, 's> Binder<'f, 's> {
             {
                 return Some(SymbolId::NONE);
             }
+            // `meaning&ast.SymbolFlagsType`: a type parameter of a class or an interface is one symbol with the member of its
+            // name, which is not in scope.
             if let Some(&symbol) = tables[s.locals.idx()].get(name)
+                && !(matches!(s.kind, ScopeKind::Class(_) | ScopeKind::Interface(_))
+                    && b.symbols[symbol.idx()]
+                        .flags
+                        .contains(SymFlags::TYPE_PARAMETER))
                 && b.symbols[symbol.idx()]
                     .flags
                     .intersects(SymFlags::VALUE | SymFlags::EXPORT_VALUE | SymFlags::ALIAS)

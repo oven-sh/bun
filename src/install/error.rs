@@ -70,6 +70,8 @@ pub enum Error {
     Failed,
     #[error("UnrecognizedDependencyFormat")]
     UnrecognizedDependencyFormat,
+    #[error("InvalidDependencyName")]
+    InvalidDependencyName,
     #[error("No global directory found")]
     NoGlobalDirectoryFound,
     #[error("InvalidPackageID")]
@@ -152,8 +154,6 @@ pub enum Error {
     IntegrityCheckFailed,
     #[error("RepositoryNotFound")]
     RepositoryNotFound,
-    #[error("DebugTextLockfileRoundTrip")]
-    DebugTextLockfileRoundTrip,
     #[error("NoPackage")]
     NoPackage,
     #[error("WriteFailed")]
@@ -174,10 +174,6 @@ pub enum Error {
     CorruptLockfile,
     #[error("Lockfile is missing resolution data")]
     LockfileIsMissingResolutionData,
-    #[error("MissingPackageName")]
-    MissingPackageName,
-    #[error("GlobError")]
-    GlobError,
     #[error("Lockfile validation failed: list is impossibly long")]
     LockfileValidationFailedListIsImpossiblyLong,
     #[error("Lockfile validation failed: alignment mismatch")]
@@ -278,6 +274,7 @@ impl Error {
             Self::HTTPError => "HTTPError",
             Self::Failed => "Failed",
             Self::UnrecognizedDependencyFormat => "UnrecognizedDependencyFormat",
+            Self::InvalidDependencyName => "InvalidDependencyName",
             Self::NoGlobalDirectoryFound => "No global directory found",
             Self::InvalidPackageID => "InvalidPackageID",
             Self::PartialInstallFailed => "PartialInstallFailed",
@@ -323,7 +320,6 @@ impl Error {
             Self::Fail => "Fail",
             Self::IntegrityCheckFailed => "IntegrityCheckFailed",
             Self::RepositoryNotFound => "RepositoryNotFound",
-            Self::DebugTextLockfileRoundTrip => "DebugTextLockfileRoundTrip",
             Self::NoPackage => "NoPackage",
             Self::WriteFailed => "WriteFailed",
             Self::InvalidCharacter => "InvalidCharacter",
@@ -336,8 +332,6 @@ impl Error {
             }
             Self::CorruptLockfile => "CorruptLockfile",
             Self::LockfileIsMissingResolutionData => "Lockfile is missing resolution data",
-            Self::MissingPackageName => "MissingPackageName",
-            Self::GlobError => "GlobError",
             Self::LockfileValidationFailedListIsImpossiblyLong => {
                 "Lockfile validation failed: list is impossibly long"
             }
@@ -454,6 +448,7 @@ impl From<Error> for bun_core::Error {
             Error::Alloc(a) => bun_core::Error::Alloc(a),
             Error::WriteFailed => bun_core::Error::WriteFailed,
             Error::InvalidCharacter => bun_core::Error::InvalidCharacter,
+            Error::FileNotFound => bun_core::Error::FileNotFound,
             _ => bun_core::Error::Unexpected,
         }
     }

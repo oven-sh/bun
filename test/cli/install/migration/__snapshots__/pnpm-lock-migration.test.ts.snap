@@ -8,15 +8,15 @@ exports[`pnpm-lock.yaml migration simple pnpm lockfile migration produces correc
     "": {
       "name": "simple-pnpm-test",
       "dependencies": {
-        "is-number": "^7.0.0",
-        "left-pad": "^1.3.0",
+        "is-number": "^2.0.0",
+        "left-pad": "^1.0.0",
       },
     },
   },
   "packages": {
-    "is-number": ["is-number@7.0.0", "", {}, "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng=="],
+    "is-number": ["is-number@2.0.0", "", {}, "sha512-BUFNwemjM+kyrOa4KeXh4B3ay3Sh7HnmxWp+uRrGMJXuzc8vp/MsCyPX08NxfZvWWy0pOTj6tkJ3kgTqUUkN3w=="],
 
-    "left-pad": ["left-pad@1.3.0", "", {}, "sha512-XI5MPzVNApjAyhQzphX8BkmKsKUxD4LdyK24iZeQGinBN9yTQT3bFlCBy/aVx2HrNcqQGsdot8ghrjyrvMCoEA=="],
+    "left-pad": ["left-pad@1.0.0", "", {}, "sha512-+4x+fPUv96e+piHW2kG7BY7sTzd1MfANrsWt1zvG+91BjS+/aOvQSzqrsL9kYgPnwBqN/COQOCKxc9f2jPPwOw=="],
   }
 }
 "

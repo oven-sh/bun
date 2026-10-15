@@ -258,6 +258,11 @@ impl Plugin {
         })
     }
 
+    /// Whether, with a configuration of ESLint, the rules here answer for the plugin that is usually called `prefix`.
+    pub fn is_native_under_eslint(prefix: &[u8]) -> bool {
+        Plugin::answers_in_place_of(prefix, None)
+    }
+
     /// The version of the package that the rules here do the same as, if they answer in place of one.
     pub fn follows(self) -> Option<&'static str> {
         match self.names().under_eslint {
@@ -376,6 +381,9 @@ pub struct Meta {
     pub is_deprecated: bool,
     /// The rule of ESLint that this rule of typescript-eslint replaces.
     pub extends_base_rule: Option<&'static str>,
+    /// For a rule without types: the rule of typescript-eslint that looks for the same with types. See
+    /// [`Pairs`](crate::rule_set::Pairs), which is made of it when the linter is compiled.
+    pub(crate) with_types: Option<&'static str>,
     /// It is about several files: see [`modules`](crate::modules).
     pub needs_modules: bool,
     /// The rule is a port of oxlint's version, not of the ESLint plugin's, so the messages, locations, fixes and options are
@@ -408,6 +416,7 @@ impl Meta {
             uses_types: false,
             is_deprecated: false,
             extends_base_rule: None,
+            with_types: None,
             needs_modules: false,
             follows_oxlint: false,
             hands_back: false,
@@ -533,6 +542,12 @@ impl Meta {
         self
     }
 
+    /// [`Meta::with_types`]
+    pub const fn with_types(mut self, name: &'static str) -> Meta {
+        self.with_types = Some(name);
+        self
+    }
+
     pub const fn extends_base_rule(mut self, name: &'static str) -> Meta {
         self.extends_base_rule = Some(name);
         self
@@ -549,7 +564,9 @@ pub trait Rule: Send + Sync + Sized + 'static {
     /// [`Rule::start`] for a rule that keeps nothing.
     type State<'a>;
 
-    /// `options`: what follows the severity in the configuration.
+    /// `options`: what follows the severity in the configuration. They have passed the schema and not yet [`Rule::validate`],
+    /// which is asked afterwards: this takes whatever the schema lets through, without a panic. What it makes of options that
+    /// `validate` refuses lints nothing.
     fn new(options: &Options) -> Self;
 
     /// What is wrong with `options` that the schema of the rule cannot tell, where ESLint's rule throws: the message.

@@ -15,6 +15,7 @@ use crate::linter::syntax::oxc::{closest, private_name_as_operand};
 use crate::linter::syntax::{Stage, SyntaxError};
 use crate::regex;
 use crate::tokens::skip_trivia;
+use crate::types::IdMap;
 use crate::utils::ancestor_memo::AncestorMemo;
 use bun_core::strings;
 use bun_sema::bind::Parent;
@@ -1392,8 +1393,21 @@ impl<'a> Checks<'a, '_> {
         ];
         for (tag, of_acorn, word) in words {
             for it in self.exprs_of(tag) {
-                let first = (self.tops.outward(Node::Expr(it)))
-                    .find(|it| matches!(it, Node::Param(_) | Node::Func(_)));
+                // For oxc neither `this` nor the key of an index signature is a formal parameter, and a signature in a type does
+                // not end the parameter that the type is of.
+                let first = self.tops.outward(Node::Expr(it)).find(|&it| match it {
+                    Node::Param(param) => {
+                        let function = param.func();
+                        !(of_oxc
+                            && function.is_some_and(|it| {
+                                it.kind() == FnKind::IndexSignature
+                                    || it.this_param() == Some(param)
+                            }))
+                    }
+                    // Within a type nothing else is without a body.
+                    Node::Func(function) => !of_oxc || function.has_body(),
+                    _ => false,
+                });
                 if !matches!(first, Some(Node::Param(_))) {
                     continue;
                 }
@@ -1417,8 +1431,29 @@ impl<'a> Checks<'a, '_> {
         if self.lacks(rare::SUSPENDS_IN_STATIC_BLOCK) {
             return;
         }
+        // A signature in a type starts nothing.
+        let is_signature = |it: &Func| match it.kind() {
+            FnKind::CallSignature
+            | FnKind::ConstructSignature
+            | FnKind::FunctionType
+            | FnKind::ConstructorType
+            | FnKind::IndexSignature => true,
+            // Of an interface or a type literal. A class has them without a body too.
+            FnKind::Method | FnKind::Getter | FnKind::Setter => {
+                let mut around = Node::Func(*it).ancestors();
+                !it.has_body()
+                    && !matches!(
+                        around.find(|it| !matches!(it, Node::Member(_))),
+                        Some(Node::Class(_))
+                    )
+            }
+            _ => false,
+        };
         let is_in_block = |node: Node<'a>| {
-            let function = node.enclosing_function();
+            let mut function = node.enclosing_function();
+            while let Some(signature) = function.filter(is_signature) {
+                function = Node::Func(signature).enclosing_function();
+            }
             function.is_some_and(|it| it.kind() == FnKind::StaticBlock)
         };
         for it in self.exprs_of(ExprTag::Await) {
@@ -1550,7 +1585,7 @@ impl<'a> Checks<'a, '_> {
             return;
         }
         // The private names of a class are collected once: there can be as many of them as there are uses.
-        let mut names_of: FxHashMap<Class<'a>, FxHashSet<&'a [u8]>> = FxHashMap::default();
+        let mut names_of: IdMap<Class<'a>, FxHashSet<&'a [u8]>> = IdMap::default();
         let mut is_declared = |tops: &mut Tops<'a>, node: Node<'a>, name: &[u8]| {
             let mut inside = node;
             tops.outward(node).any(|it| {
@@ -1568,8 +1603,9 @@ impl<'a> Checks<'a, '_> {
                             _ => None,
                         };
                         names_of
-                            .entry(class)
-                            .or_insert_with(|| class.members().iter().filter_map(private).collect())
+                            .get_or_insert_with(class, || {
+                                class.members().iter().filter_map(private).collect()
+                            })
                             .contains(name)
                     }
                     _ => false,

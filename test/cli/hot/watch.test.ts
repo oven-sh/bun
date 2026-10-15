@@ -145,7 +145,7 @@ describe.todoIf(isBroken && isWindows)("--watch recovers from a missing import",
     await proc.exited;
   });
 
-  test("bun build --watch keeps rebuilding and recovers", async () => {
+  test.concurrent("bun build --watch keeps rebuilding and recovers", async () => {
     await using dir = tempDir("build-watch-missing-import", {
       "entry.js": `import { a } from "./a.js"; import { b } from "./b.js"; console.log(a + b);`,
       "b.js": "export const b = 2;",

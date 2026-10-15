@@ -1635,6 +1635,8 @@ impl Template {
 
     /// Writes `contents` into a package.json that exists as a regular file with no
     /// content. Any other package.json is not opened, and the result is `false`.
+    #[cold]
+    #[inline(never)]
     fn fill_empty_package_json(contents: &[u8]) -> Result<bool, Error> {
         let is_empty_file = |stat: &bun_sys::Stat| {
             bun_sys::is_regular_file(stat.st_mode as bun_sys::Mode) && stat.st_size == 0

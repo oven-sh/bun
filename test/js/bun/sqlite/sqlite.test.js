@@ -4493,7 +4493,7 @@ describe("binding values", () => {
       using dir = tempDir("sqlite-prepare-bind-throws", {});
       const file = path.join(realpathSync(String(dir)), "kept.db");
       const open = () => readdirSync("/proc/self/fd").filter(fd => { try { return readlinkSync("/proc/self/fd/" + fd) === file; } catch { return false; } }).length; // prettier-ignore
-      const db = new Database(file);
+      using db = new Database(file);
       expect(() => db.prepare("SELECT ? AS a", [Symbol()])).toThrow("Binding expected");
       expect(open()).toBe(1);
       db.close();

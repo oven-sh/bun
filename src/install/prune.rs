@@ -2132,12 +2132,12 @@ pub(crate) enum Place {
 }
 
 impl Place {
-    /// `name`: of the package that `alias` is or was resolved to.
+    /// `package_name`: of the package that `alias` is or was resolved to.
     ///
     /// An install lays a link (the isolated linker, a workspace, `link:`), a folder with `.bun-tag`
     /// (git, GitHub, a tarball: it needs no package.json), or a folder whose package.json has the
     /// name of the package or of the dependency (the registry, `file:`, the copy of `bun patch`).
-    pub(crate) fn of(node_modules: &Dir, alias: &[u8], name: &[u8]) -> Place {
+    pub(crate) fn of(node_modules: &Dir, alias: &[u8], package_name: &[u8]) -> Place {
         match entry_kind_of(node_modules, alias) {
             EntryKind::Unknown => return Place::Free,
             EntryKind::SymLink => return Place::Link,
@@ -2149,7 +2149,7 @@ impl Place {
         };
         let is_laid = lstat_kind(&package, crate::package_install::BUN_TAG) != EntryKind::Unknown
             || installed_package_json(&package)
-                .is_some_and(|(found, _)| found == alias || found == name);
+                .is_some_and(|(found, _)| found == alias || found == package_name);
         if is_laid {
             Place::Laid(package)
         } else {

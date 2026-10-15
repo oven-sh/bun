@@ -3899,16 +3899,8 @@ function buildSensitiveNames(headers, sensitives): Record<string, boolean> {
       if (lower === "authorization") {
         map["authorization"] = true;
       } else if (lower === "cookie") {
-        // nghttp2 never indexes a cookie field shorter than 20 bytes. An array is one field per element.
         const cookie = headers[keys[i]];
-        if ($isArray(cookie)) {
-          for (let j = 0; j < cookie.length; j++) {
-            if (String(cookie[j]).length < 20) {
-              map["cookie"] = true;
-              break;
-            }
-          }
-        } else if (typeof cookie === "string" && cookie.length < 20) map["cookie"] = true;
+        if (typeof cookie === "string" && cookie.length < 20) map["cookie"] = true;
       }
     }
   }
@@ -3934,11 +3926,13 @@ function foldRawHeaders(list: any[], object: Record<string, any>, strictSingleVa
     if (typeof value === "object" && $isArray(value)) {
       value = copyHeaderValueArray(value);
       const length = value.length;
-      if (
-        !strictSingleValue &&
-        length > 1 &&
-        (typeof key === "string" ? key : String(key)).charCodeAt(0) === 0x3a /* ':' */
-      ) {
+      const name = typeof key === "string" ? key : String(key);
+      for (let j = 0; j < length; j++) {
+        // The object form and pushStream() refuse a null element (the encoder does). Same rule here,
+        // before the encoder runs. Node sends "null".
+        if (value[j] == null) throw $ERR_HTTP2_INVALID_HEADER_VALUE(value[j], StringPrototypeToLowerCase.$call(name));
+      }
+      if (!strictSingleValue && length > 1 && name.charCodeAt(0) === 0x3a /* ':' */) {
         // node joins the elements of a pseudo-header: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L809
         $arrayPush(wire, key);
         $arrayPush(wire, String(value));

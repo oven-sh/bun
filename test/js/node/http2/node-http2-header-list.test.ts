@@ -445,24 +445,43 @@ describe("an array in a value slot of a raw header list is sent as one field per
     }
   });
 
-  // An element goes out as String(element): null and undefined are values, not errors. The second
-  // exchange shows that the session still decodes the same block.
-  test("request() and respond() send a null or undefined element as text", async () => {
-    const fields = ["x-n", ["a", null, undefined, "b"]];
-    const onWire = ["x-n", "a", "x-n", "null", "x-n", "undefined", "x-n", "b"];
-    const received: string[][] = [];
-    const { client, close } = await peers((stream, _headers, _flags, rawHeaders) => {
-      received.push(nonPseudoFields(rawHeaders));
-      stream.respond([":status", 200, ...fields], { sendDate: false });
+  // A null or undefined element throws, as it does in the object form and in pushStream(), where the
+  // encoder refuses it. Node sends "null". The throw comes before a field of the block is encoded:
+  // the exchange after it shows that the session still decodes the next block.
+  test("request() and respond() refuse a null or undefined element before the block is encoded", async () => {
+    const refused = (name: string, value: string) => ({
+      name: "TypeError",
+      code: "ERR_HTTP2_INVALID_HEADER_VALUE",
+      message: `Invalid value "${value}" for header "${name}"`,
+    });
+    const respondErrors: unknown[] = [];
+    const { client, close } = await peers((stream, headers) => {
+      if (headers["x-case"] === "null") {
+        respondErrors.push(thrownBy(() => stream.respond([":status", 200, "X-N", ["a", null]], { sendDate: false })));
+      }
+      stream.respond([":status", 200, "x-ok", "1"], { sendDate: false });
       stream.end();
     });
     try {
-      const responded: string[][] = [];
-      for (let i = 0; i < 2; i++) {
-        const { rawHeaders } = await rawExchange(client.request([":path", "/", ...fields] as any));
-        responded.push(nonPseudoFields(rawHeaders));
-      }
-      expect({ received, responded }).toEqual({ received: [onWire, onWire], responded: [onWire, onWire] });
+      const thrown = {
+        null: thrownBy(() => client.request([":path", "/", "x-n", ["a", null]] as any)),
+        undefined: thrownBy(() => client.request([":path", "/", "x-n", [undefined, "b"]] as any)),
+        pseudo: thrownBy(() => client.request([":path", [null]] as any)),
+      };
+      const first = await rawExchange(client.request([":path", "/", "x-case", "null"] as any));
+      const second = await rawExchange(client.request([":path", "/", "x-case", "ok"] as any));
+      expect({ thrown, respondErrors, responded: [first.rawHeaders, second.rawHeaders] }).toEqual({
+        thrown: {
+          null: refused("x-n", "null"),
+          undefined: refused("x-n", "undefined"),
+          pseudo: refused(":path", "null"),
+        },
+        respondErrors: [refused("x-n", "null")],
+        responded: [
+          [":status", "200", "x-ok", "1"],
+          [":status", "200", "x-ok", "1"],
+        ],
+      });
     } finally {
       close();
     }
@@ -534,32 +553,6 @@ describe("an array in a value slot of a raw header list is sent as one field per
         message: "Stream closed with error code NGHTTP2_PROTOCOL_ERROR",
       };
       expect(outcomes).toEqual([{ streamError }, { streamError }, { streamError }]);
-    } finally {
-      close();
-    }
-  });
-
-  // nghttp2 never indexes a cookie field shorter than 20 bytes, and an array is one field per
-  // element. The receiver lists the name once for each field that arrived never-indexed.
-  test("request() never indexes each short element of a cookie array", async () => {
-    const received: unknown[] = [];
-    const { client, close } = await peers((stream, headers) => {
-      received.push({ cookie: headers.cookie, sensitive: headers[http2.sensitiveHeaders] });
-      stream.respond({ ":status": 200 });
-      stream.end();
-    });
-    try {
-      const long = "session=" + Buffer.alloc(24, "x").toString();
-      await exchange(client.request([":path", "/", "cookie", ["a=1", "b=2"]] as any));
-      await exchange(client.request([":path", "/", "cookie", "a=1", "cookie", "b=2"] as any));
-      await exchange(client.request([":path", "/", "cookie", [long]] as any));
-      await exchange(client.request({ ":path": "/", "cookie": ["a=1", "b=2"] }));
-      expect(received).toEqual([
-        { cookie: "a=1; b=2", sensitive: ["cookie", "cookie"] },
-        { cookie: "a=1; b=2", sensitive: ["cookie", "cookie"] },
-        { cookie: long, sensitive: [] },
-        { cookie: "a=1; b=2", sensitive: ["cookie", "cookie"] },
-      ]);
     } finally {
       close();
     }

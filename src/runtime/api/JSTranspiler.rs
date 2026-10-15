@@ -37,7 +37,7 @@ use bun_options_types::schema::api;
 // `#[repr(transparent)]`, so field offsets are unchanged.
 #[bun_jsc::JsClass(name = "Transpiler")]
 #[derive(bun_ptr::RefCounted)]
-pub struct JSTranspiler {
+pub(crate) struct JSTranspiler {
     pub(crate) transpiler: JsCell<Transpiler::Transpiler<'static>>,
     /// Read-only after construction EXCEPT for `config.log`, which is the
     /// resting-state log that `transpiler.log: *mut Log` points at between
@@ -48,7 +48,7 @@ pub struct JSTranspiler {
     // Arena bulk-frees the config strings. Boxed so its
     // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
-    pub arena: Box<Arena>,
+    pub(crate) _arena: Box<Arena>,
     pub(crate) ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
@@ -60,7 +60,7 @@ fn default_transform_options() -> api::TransformOptions {
     }
 }
 
-pub struct Config {
+pub(crate) struct Config {
     pub(crate) transform: api::TransformOptions,
     pub(crate) default_loader: Loader,
     pub(crate) macro_map: MacroMap,
@@ -154,7 +154,7 @@ const PROP_ITER_OPTS: JSPropertyIteratorOptions = JSPropertyIteratorOptions {
 impl Config {
     // NOTE: out-param constructor kept as `&mut self` because `self` is a pre-initialized
     // field on `JSTranspiler` (in-place mutation), not a fresh value to return.
-    pub fn from_js(
+    pub(crate) fn from_js(
         &mut self,
         global: &JSGlobalObject,
         object: JSValue,
@@ -992,7 +992,7 @@ impl JSTranspiler {
 
         let this: Box<JSTranspiler> = Box::new(JSTranspiler {
             config: JsCell::new(config),
-            arena,
+            _arena: arena,
             transpiler: JsCell::new(transpiler),
             scan_pass_result: JsCell::new(ScanPassResult::init()),
             buffer_writer: JsCell::new(None),

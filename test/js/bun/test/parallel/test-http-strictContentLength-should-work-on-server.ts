@@ -1,6 +1,7 @@
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import http from "node:http";
+import type { AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
 
 const { promise, resolve, reject } = Promise.withResolvers();
@@ -39,6 +40,6 @@ await using server = http.createServer((req, res) => {
 });
 
 await once(server.listen(0), "listening");
-const url = `http://localhost:${server.address().port}`;
+const url = `http://localhost:${(server.address() as AddressInfo).port}`;
 await fetch(url, { method: "GET" }).catch(() => {});
 await promise;

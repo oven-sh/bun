@@ -26,12 +26,12 @@
           };
         };
 
-        # LLVM 23 - matching the bootstrap script (targets 23.1.1, actual version from nixpkgs-unstable)
+        # LLVM 23 - the major of pins.llvm in scripts/build/ci-images/spec.ts (actual version from nixpkgs-unstable)
         llvm = pkgs.llvmPackages_23.llvm;
         clang = pkgs.llvmPackages_23.clang;
         lld = pkgs.llvmPackages_23.lld;
 
-        # Node.js 26 - matching the bootstrap script (targets 26.3.0, actual version from nixpkgs-unstable)
+        # Node.js 26 - the major of pins.nodejs in scripts/build/ci-images/spec.ts (actual version from nixpkgs-unstable)
         nodejs = pkgs.nodejs_26;
 
         # Build tools and dependencies
@@ -60,7 +60,7 @@
           # Python for build scripts
           pkgs.python3
 
-          # Other build dependencies from bootstrap.sh
+          # Other build dependencies, as on the CI images (scripts/build/ci-images/spec.ts)
           pkgs.libtool
           pkgs.ruby
           pkgs.perl
@@ -80,9 +80,9 @@
 
           # Additional dependencies for Linux
         ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-          pkgs.gdb # for debugging core dumps (from bootstrap.sh line 1535)
+          pkgs.gdb # for debugging core dumps
 
-          # Chromium dependencies for Puppeteer testing (from bootstrap.sh lines 1397-1483)
+          # Chromium dependencies for Puppeteer testing
           # X11 and graphics libraries
           pkgs.xorg.libX11
           pkgs.xorg.libxcb

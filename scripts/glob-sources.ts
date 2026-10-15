@@ -52,6 +52,10 @@ const patterns = {
   js: {
     paths: ["src/js/**/*.{js,ts}", "src/install/PackageManager/scanner-entry.ts"],
   },
+  /** one page per lint rule, read by generate-lint-docs.ts */
+  lintRuleDocs: {
+    paths: ["docs/lint/rules/*/**/*.mdx"],
+  },
   /** the codegen scripts themselves */
   jsCodegen: {
     paths: ["src/codegen/*.ts"],
@@ -77,8 +81,7 @@ const patterns = {
   },
   /**
    * all `*.rs` + workspace manifests — implicit inputs to the cargo step.
-   * `rust-toolchain.toml` is included so a nightly bump invalidates the
-   * staticlib (cargo's own fingerprinting then forces a full rebuild).
+   * `rust-toolchain.toml` is included so a nightly bump re-plans the crate graph.
    * `.html` under `src/runtime/` is embedded with `include_bytes!` (e.g. the
    * dev error page template), so edits to it must re-run cargo too.
    */

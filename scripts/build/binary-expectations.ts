@@ -18,6 +18,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import { versionScriptPath } from "./flags.ts";
 
 export type BinaryFormat = "elf" | "macho" | "pe";
 
@@ -91,6 +92,13 @@ export interface BinaryExpectations {
   /** Undefined dynamic symbols that must not appear (`*` wildcards). */
   forbiddenImports: string[];
   /**
+   * The exact set of imported symbols, for a program small enough that every import is a decision (the Windows
+   * `.bin/` shim). Undefined = only `forbiddenImports` is checked.
+   */
+  importedSymbols?: string[];
+  /** The file may not be larger than this many bytes. */
+  maxFileSize?: number;
+  /**
    * Allowed static initializers (`*` wildcards over the symbol each
    * .init_array / __init_offsets entry points at). Ours is a codebase with
    * none of its own; the runtime's (mimalloc, libstdc++'s locale tables,
@@ -109,6 +117,8 @@ export interface BinaryExpectations {
     rwxLoad: false;
     relro: boolean;
     bindNow: boolean;
+    /** A PT_TLS segment. Absent on Android: bun targets API 28, bionic has ELF TLS from 29, so every thread-local is emulated. */
+    tlsSegment: boolean;
   };
   pe?: {
     /** Exact set of IMAGE_DLL_CHARACTERISTICS_* names. */
@@ -124,8 +134,8 @@ export interface BinaryExpectations {
   /**
    * The profile executable keeps a symbol table and debug sections (ELF; on
    * Mach-O debug info lives in the dSYM, on PE in the PDB). `compressed`:
-   * the DWARF sections carry SHF_COMPRESSED (at link, or post-link with
-   * rust-lld — flags.ts --compress-debug-sections).
+   * the DWARF sections carry SHF_COMPRESSED (flags.ts
+   * --compress-debug-sections).
    */
   debugInfo?: { symtab: boolean; debugSections: boolean; compressed: boolean };
 }
@@ -158,6 +168,14 @@ export function versionScriptGlobals(path: string): { patterns: string[]; demang
     (inCxx ? demangledPatterns : patterns).push(s);
   }
   return { patterns, demangledPatterns };
+}
+
+/** A version script's `global:` block in the form lld's `--export-dynamic-symbol-list` reads. */
+export function exportList(versionScript: string): string {
+  const { patterns, demangledPatterns } = versionScriptGlobals(versionScript);
+  const lines = patterns.map(p => `  ${p};`);
+  if (demangledPatterns.length > 0) lines.push('  extern "C++" {', ...demangledPatterns.map(p => `    ${p};`), "  };");
+  return `{\n${lines.join("\n")}\n};\n`;
 }
 
 /** One symbol per line, `#`/`;` comments and blank lines skipped (symbols.txt, symbols.def bodies). */
@@ -236,6 +254,17 @@ function runtimeInitializers(cfg: Config): string[] {
     // prebuilt WebKit's call the __aarch64_* helpers that bring these in.
     initializers.push("init_have_lse_atomics", "__init_cpu_features");
   }
+  if (cfg.fuzzilli && gnu) {
+    // -fsanitize-coverage: the constructor that hands the guards to
+    // FuzzilliREPRL.cpp (one for the binary, bun's objects and the -coverage
+    // WebKit's share it), and the two of clang's runtime, which the flag
+    // links (flags.ts).
+    initializers.push(
+      "sancov.module_ctor_trace_pc_guard",
+      "_GLOBAL__sub_I_sanitizer_common_libcdep.cpp",
+      "_GLOBAL__sub_I_ubsan_init_standalone.cpp",
+    );
+  }
   return initializers;
 }
 
@@ -296,6 +325,42 @@ const PREBUILT_BMALLOC_DLLEXPORTS = {
   patterns: ["?*@bmalloc@@*"],
 };
 
+/**
+ * The Windows `.bin/` shim (src/install/windows-shim): `bun install` writes a copy of it next to every package
+ * binary, and it runs on every `bun run` of one. It is freestanding: no CRT, no allocator, no formatting machinery,
+ * raw NT calls. Everything here is that property stated as a check.
+ */
+export function shimExpectations(): BinaryExpectations {
+  return {
+    format: "pe",
+    exports: { exact: [], patterns: [] },
+    // kernel32 and ntdll are in every Windows process; anything else is a DLL load added to every launch.
+    neededLibs: { names: ["KERNEL32.dll", "ntdll.dll"], exact: true },
+    forbiddenImports: [],
+    importedSymbols: [
+      "CreateProcessW",
+      "GetConsoleMode",
+      "GetExitCodeProcess",
+      "GetLastError",
+      "NtClose",
+      "NtCreateFile",
+      "NtReadFile",
+      "NtWriteFile",
+      "RtlExitUserProcess",
+      "SetConsoleCtrlHandler",
+      "SetConsoleMode",
+      "WaitForSingleObject",
+    ],
+    // 8 KiB today. A panic path that formats a message, or an allocator, shows up as tens of KiB.
+    maxFileSize: 16 * 1024,
+    minOSVersion: "6.0",
+    pe: {
+      dllCharacteristics: ["DYNAMIC_BASE", "HIGH_ENTROPY_VA", "NX_COMPAT", "TERMINAL_SERVER_AWARE"],
+      subsystem: "IMAGE_SUBSYSTEM_WINDOWS_CUI",
+    },
+  };
+}
+
 export function binaryExpectations(cfg: Config): BinaryExpectations {
   const format = binaryFormat(cfg);
   const src = (f: string) => join(cfg.cwd, "src", f);
@@ -316,7 +381,14 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     cfg.webkit === "local" && cfg.linux && cfg.abi !== "android"
       ? ["libicudata.so.*", "libicui18n.so.*", "libicuuc.so.*"]
       : [];
-  const allowedLibs = [...sanitizerLibs, ...localWebKitLibs, ...(cfg.abi === "android" ? ["liblog.so"] : [])];
+  // --fuzzilli=on: clang's coverage runtime needs it.
+  const coverageLibs = cfg.fuzzilli && cfg.linux && cfg.abi === "gnu" ? ["libresolv.so.2"] : [];
+  const allowedLibs = [
+    ...sanitizerLibs,
+    ...coverageLibs,
+    ...localWebKitLibs,
+    ...(cfg.abi === "android" ? ["liblog.so"] : []),
+  ];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
 
   switch (format) {
@@ -364,7 +436,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
 
       return {
         format,
-        exports: { versionScript: src(cfg.freebsd ? "linker-freebsd.lds" : "linker.lds"), exact: [], patterns: [] },
+        exports: { versionScript: versionScriptPath(cfg), exact: [], patterns: [] },
         neededLibs: { names: neededLibs, exact: pinned, allowed: allowedLibs },
         ...(pinned && { maxSymbolVersions, versionNames }),
         forbiddenImports: forbiddenImports(cfg),
@@ -379,6 +451,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           rwxLoad: false,
           relro: false,
           bindNow: false,
+          tlsSegment: !android,
         },
         debugInfo: { symtab: true, debugSections: true, compressed: true },
       };
@@ -433,6 +506,10 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "?*@node@@*",
             "llhttp_*",
             ...PREBUILT_BMALLOC_DLLEXPORTS.patterns,
+            // The debug WebKit prebuilt's libpas exports its system-heap entry
+            // points the same way (`-export:` directives in the archive
+            // members); the release prebuilt has none. Debug builds only.
+            ...(cfg.debug ? ["pas_system_heap_*"] : []),
           ],
         },
         neededLibs: {
@@ -454,7 +531,11 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "ole32.dll",
           ],
           exact: true,
-          allowed: sanitizerLibs,
+          // bcrypt.dll: libarchive's archive_random.c / archive_digest.c call
+          // BCryptOpenAlgorithmProvider and BCryptGenRandom. A release link
+          // drops them as unreferenced (/OPT:REF); a debug link keeps every
+          // section, and the import with them. Never in a shipped binary.
+          allowed: [...sanitizerLibs, ...(cfg.debug ? ["bcrypt.dll"] : [])],
         },
         minOSVersion: "6.0",
         forbiddenImports: forbiddenImports(cfg),

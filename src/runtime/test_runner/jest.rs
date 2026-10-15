@@ -12,7 +12,7 @@ use bun_jsc::{
 };
 use crate::timer::ElTimespec;
 
-pub use super::bun_test;
+pub(crate) use super::bun_test;
 use super::expect::{Expect, ExpectTypeOf};
 use super::scope_functions::{create_bound, Mode as ScopeKind};
 use super::snapshot::Snapshots;
@@ -27,7 +27,7 @@ struct RepeatInfo {
 }
 
 #[derive(Default)]
-pub struct CurrentFile {
+pub(crate) struct CurrentFile {
     title: Box<[u8]>,
     prefix: Box<[u8]>,
     repeat_info: RepeatInfo,
@@ -109,7 +109,7 @@ impl CurrentFile {
     }
 }
 
-pub struct TestRunner<'a> {
+pub(crate) struct TestRunner<'a> {
     pub(crate) current_file: CurrentFile,
     pub(crate) files: FileList,
     pub(crate) index: FileMap,
@@ -123,7 +123,7 @@ pub struct TestRunner<'a> {
     /// Borrowed view over `ctx.test_options.concurrent_test_glob` (owned
     /// `Vec<Box<[u8]>>` with process lifetime); see the detach in
     /// `test_command.rs` where this is populated.
-    pub(crate) concurrent_test_glob: Option<&'a [&'a [u8]]>,
+    pub(crate) concurrent_test_glob: Option<&'a [bun_glob::Prepared<&'a [u8]>]>,
     pub(crate) bail: u32,
     pub(crate) max_concurrency: u32,
 
@@ -229,7 +229,7 @@ impl<'a> TestRunner<'a> {
 
         // Check if the file path matches any of the glob patterns
         for pattern in glob_patterns {
-            if bun_glob::matcher::r#match(pattern, file_path).matches() {
+            if pattern.r#match(file_path).matches() {
                 return true;
             }
         }
@@ -259,7 +259,7 @@ impl<'a> TestRunner<'a> {
 use crate::timer::EventLoopTimerState as TimerState;
 
 #[derive(Default, Clone, Copy)]
-pub struct Summary {
+pub(crate) struct Summary {
     pub(crate) pass: u32,
     pub(crate) expectations: u32,
     pub(crate) skip: u32,
@@ -280,7 +280,7 @@ pub(crate) struct GetOrPutFileResult {
     pub(crate) file_id: FileId,
 }
 
-pub struct File {
+pub(crate) struct File {
     pub source: bun_ast::Source,
 }
 
@@ -297,7 +297,7 @@ bun_collections::multi_array_columns! {
 pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
 
 #[allow(non_snake_case)]
-pub mod Jest {
+pub(crate) mod Jest {
     use super::*;
 
     // JS-VM-thread-only singleton; RacyCell

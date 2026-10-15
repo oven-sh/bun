@@ -1,0 +1,19 @@
+{
+  "src/jsc/bindings/JSCommonJSExtensions.cpp": 1,
+  "src/jsc/bindings/JSCommonJSModule.cpp": 3,
+  "src/jsc/bindings/JSEnvironmentVariableMap.cpp": 1,
+  "src/jsc/bindings/JSMockFunction.cpp": 1,
+  "src/jsc/bindings/NodeVM.cpp": 1,
+  "src/jsc/bindings/NodeVM.h": 1,
+  "src/jsc/bindings/NodeVMScript.cpp": 3,
+  "src/jsc/bindings/NodeVMScript.h": 1,
+  "src/jsc/bindings/ZigGlobalObject.cpp": 2,
+  "src/jsc/bindings/bindings.cpp": 1,
+  "src/jsc/bindings/napi.cpp": 1,
+  "src/jsc/bindings/webcore/JSAbortAlgorithm.cpp": 1,
+  "src/jsc/bindings/webcore/JSCallbackData.cpp": 1,
+  "src/jsc/bindings/webcore/JSCallbackData.h": 2,
+  "src/jsc/bindings/webcore/JSPerformanceObserverCallback.cpp": 1,
+  "src/jsc/modules/NodeModuleModule.cpp": 1,
+  "src/runtime/bake/BakeProduction.cpp": 1
+}

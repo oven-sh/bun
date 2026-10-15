@@ -2,7 +2,9 @@
 //! each chunk (out) or each time the socket has drained (in).
 
 use super::{MAX_PIPELINE_SIZE, PostgresSQLConnection, Socket};
-use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, js_error_to_postgres};
+use crate::jsc::{
+    AutoFlush as _, CallFrame, JSGlobalObject, JSValue, JsResult, js_error_to_postgres,
+};
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::error_jsc::postgres_error_to_js;
 use crate::postgres::postgres_request as PostgresRequest;

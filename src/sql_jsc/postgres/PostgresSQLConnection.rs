@@ -4,11 +4,9 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::jsc::EventLoopTimer;
-use crate::jsc::webcore::AutoFlusher;
 use crate::jsc::{
-    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, Strong,
-    VirtualMachine, VirtualMachineSqlExt as _, bun_string_jsc, run_callback,
+    self as jsc, AutoFlush, CallFrame, JSGlobalObject, JSValue, JsResult, Strong, VirtualMachine,
+    VirtualMachineSqlExt as _, bun_string_jsc, run_callback,
 };
 use bun_boringssl as BoringSSL;
 use bun_boringssl_sys::OwnedSslCtx;
@@ -20,10 +18,9 @@ use bun_core::{self};
 use bun_io::KeepAlive;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_uws as uws;
-use core::ptr::NonNull;
 use std::rc::Rc;
 
-use crate::jsc::{EventLoopTimerState, EventLoopTimerTag};
+use crate::jsc::EventLoopTimerTag;
 use crate::postgres::AuthenticationState;
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::data_cell as DataCell;
@@ -77,22 +74,6 @@ pub mod js {
 #[path = "CopyStream.rs"]
 mod copy_stream;
 
-impl jsc::JsClass for PostgresSQLConnection {
-    fn to_js(self, global: &JSGlobalObject) -> JSValue {
-        // Ownership transfers to the JSC wrapper's m_ctx; freed via `finalize`.
-        js::to_js(bun_core::heap::into_raw(Box::new(self)), global)
-    }
-    fn from_js(value: JSValue) -> Option<*mut Self> {
-        js::from_js(value)
-    }
-    fn from_js_direct(value: JSValue) -> Option<*mut Self> {
-        js::from_js_direct(value)
-    }
-    fn get_constructor(global: &JSGlobalObject) -> JSValue {
-        js::get_constructor(global)
-    }
-}
-
 // `verify_error_to_js` sunk to `bun_jsc::system_error`; reach it via
 // `crate::jsc::verify_error_to_js`.
 use crate::jsc::verify_error_to_js;
@@ -134,10 +115,7 @@ pub struct PostgresSQLConnection {
     // Read-only back-reference to the JS global; the VM/global strictly outlives
     // every connection it creates. Only ever borrowed via `global()`.
     pub(crate) global_object: BackRef<JSGlobalObject>,
-    // JSC_BORROW: process-lifetime singleton. `BackRef` so `vm()` is a safe
-    // deref; constructed via `new_mut` (write provenance from `&mut *vm_ptr`)
-    // so `vm_mut()`'s `&mut *as_ptr()` is sound.
-    pub(crate) vm: BackRef<VirtualMachine>,
+    vm: BackRef<VirtualMachine>,
     pub(crate) statements: JsCell<StatementCache>,
     prepared_statement_id: Cell<u64>,
     /// `ReadyForQuery::transaction_status` of the last one.
@@ -177,20 +155,9 @@ pub struct PostgresSQLConnection {
     pub(crate) ssl_mode: SSLMode,
     channel_binding: ChannelBinding,
 
-    pub(crate) idle_timeout_interval_ms: u32,
-    pub(crate) connection_timeout_ms: u32,
-
     pub(crate) flags: Cell<ConnectionFlags>,
-
-    /// Before being connected, this is a connection timeout timer.
-    /// After being connected, this is an idle timeout timer.
-    // Private — intrusive heap node; cross-crate `container_of` goes through
-    // [`Self::from_timer_ptr`] instead of `offset_of!` on the field. `JsCell`
-    // is `#[repr(transparent)]` so the byte offset of the inner
-    // `EventLoopTimer` equals `offset_of!(Self, timer)`.
-    timer: JsCell<EventLoopTimer>,
     timers: ConnectionTimers,
-    pub(crate) auto_flusher: JsCell<AutoFlusher>,
+    auto_flush_registered: Cell<bool>,
 
     /// Interned notification channel names; see `channel_name_js`.
     channel_names: JsCell<Vec<InternedChannel>>,
@@ -225,14 +192,13 @@ impl Drop for RowCells {
 }
 
 bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
-    from_timer_ptr => timer,
+    from_timer_ptr => timers.timer,
     from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
 );
 
 impl Drop for PostgresSQLConnection {
     fn drop(&mut self) {
         self.disconnect();
-        self.stop_timers();
         // `free_sensitive`: the connection options carry the password.
         for b in self.options_buf.iter_mut() {
             // SAFETY: plain byte write; volatile so it is not elided.
@@ -258,46 +224,15 @@ impl PostgresSQLConnection {
     fn global(&self) -> &JSGlobalObject {
         self.global_object.get()
     }
-    /// Shared borrow of the JS-thread `VirtualMachine` singleton stored in this
-    /// connection. Safe `Deref` via [`BackRef`] — JSC_BORROW: the VM strictly
-    /// outlives every connection it creates. The borrow does not overlap any of
-    /// `self`'s own bytes (`self.vm` points into a disjoint allocation), so it
-    /// does not conflict with `&self`/`JsCell` projections.
-    #[inline]
-    fn vm(&self) -> &VirtualMachine {
-        self.vm.get()
-    }
 
-    /// `&mut VirtualMachine` for the few `vm.timer()` / `vm.sql_state()` callers
-    /// whose trait methods take `&mut self`. The VM is a JS-thread singleton; we
-    /// never hold two `&mut` to it at once in this module. Explicit `'static` so
-    /// the return does not reborrow `*self` — callers pair this with
-    /// `self.timer.with_mut(|t| ...)` in the same expression.
-    #[inline]
-    fn vm_mut(&self) -> &'static mut VirtualMachine {
-        VirtualMachine::get_mut()
-    }
-
-    /// `&mut EventLoop` for `enter`/`exit`/`run_callback`. One audited unsafe
-    /// here replaces the per-site `unsafe { self.vm().event_loop_mut() }` —
-    /// the loop is a disjoint heap allocation owned by the JS-thread VM
-    /// singleton (see [`vm_mut`]); single-thread affinity ⇒ no two
-    /// `&mut EventLoop` ever coexist.
     #[inline]
     fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
-        // `vm_mut()` yields the process-lifetime `'static mut VM` (see above);
-        // the event loop it owns lives for the VM's lifetime. Single-JS-thread
-        // invariant ⇒ callers never hold two `&mut EventLoop` at once.
-        self.vm_mut().event_loop_mut()
+        VirtualMachine::get().event_loop_mut()
     }
 
-    /// `KeepAlive::{ref_,unref}` take an `EventLoopCtx` (manual vtable, lives in
-    /// `bun_io`). The sql_jsc-side `VirtualMachine` is a thin façade with no
-    /// direct conversion; route through the global hook (`get_vm_ctx(.Js)`) which
-    /// resolves to the same singleton VM stored in `self.vm`.
     #[inline]
     fn vm_ctx(&self) -> bun_io::EventLoopCtx {
-        bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
+        bun_io::js_vm_ctx()
     }
 
     // ---- self-referential connection-string slices ----------------------------
@@ -351,12 +286,21 @@ impl TimedConnection for PostgresSQLConnection {
         match self.status.get() {
             Status::Connected => Phase::Connected,
             Status::Failed => Phase::Failed,
-            _ => Phase::Connecting,
+            Status::SentStartupMessage => {
+                Phase::Connecting(" (sent startup message, but never received response)")
+            }
+            _ => Phase::Connecting(""),
         }
     }
 
     fn has_requests(&self) -> bool {
         self.has_query_running()
+    }
+
+    fn is_processing_data(&self) -> bool {
+        self.flags
+            .get()
+            .contains(ConnectionFlags::IS_PROCESSING_DATA)
     }
 
     fn fail_timeout(&self, kind: ConnTimeoutKind, message: core::fmt::Arguments<'_>) {
@@ -379,128 +323,34 @@ impl TimedConnection for PostgresSQLConnection {
     }
 }
 
-impl HasAutoFlush for PostgresSQLConnection {
-    fn on_auto_flush(this: *mut Self) -> bool {
-        // `this` is the live `PostgresSQLConnection` registered with the
-        // deferred-task queue (via `register_auto_flusher`, which passes
-        // `self.as_ctx_ptr()` — never null); the queue runs on the JS thread.
-        // R-2: `ParentRef` yields `&T` only — body takes `&self`.
-        let this = ParentRef::from(NonNull::new(this).expect("auto-flush ctx non-null"));
-        this.on_auto_flush_impl()
+impl AutoFlush for PostgresSQLConnection {
+    fn vm(&self) -> &VirtualMachine {
+        self.vm.get()
+    }
+
+    fn auto_flush_registered(&self) -> &Cell<bool> {
+        &self.auto_flush_registered
+    }
+
+    fn can_flush(&self) -> bool {
+        self.status.get() == Status::Connected
+            && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
+            && self.write_buffer.get().len() > 0
+    }
+
+    fn on_auto_flush(&self) -> bool {
+        let _guard = self.ref_guard();
+        // With backpressure, onWritable drains.
+        if !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
+            self.drain_internal();
+        }
+        let again = self.can_flush();
+        self.auto_flush_registered.set(again);
+        again
     }
 }
 
 impl PostgresSQLConnection {
-    fn on_auto_flush_impl(&self) -> bool {
-        if self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
-            debug!("onAutoFlush: has backpressure");
-            self.auto_flusher.with_mut(|a| a.registered = false);
-            // if we have backpressure, wait for onWritable
-            return false;
-        }
-        let _guard = self.ref_guard();
-        debug!("onAutoFlush: draining");
-        // drain as much as we can
-        self.drain_internal();
-
-        // if we dont have backpressure and if we still have data to send, return true otherwise return false and wait for onWritable
-        let keep_flusher_registered = !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
-            && self.write_buffer.get().len() > 0;
-        debug!(
-            "onAutoFlush: keep_flusher_registered: {}",
-            keep_flusher_registered
-        );
-        self.auto_flusher
-            .with_mut(|a| a.registered = keep_flusher_registered);
-        keep_flusher_registered
-    }
-
-    fn register_auto_flusher(&self) {
-        let data_to_send = self.write_buffer.get().len();
-        debug!(
-            "registerAutoFlusher: backpressure: {} registered: {} data_to_send: {}",
-            self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE),
-            self.auto_flusher.get().registered,
-            data_to_send
-        );
-
-        if !self.auto_flusher.get().registered // should not be registered
-            && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) // if has backpressure we need to wait for onWritable event
-            && data_to_send > 0 // we need data to send
-            && self.status.get() == Status::Connected
-        // and we need to be connected
-        {
-            AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(
-                self.as_ctx_ptr(),
-                self.vm(),
-            );
-            self.auto_flusher.with_mut(|a| a.registered = true);
-        }
-    }
-
-    fn unregister_auto_flusher(&self) {
-        debug!(
-            "unregisterAutoFlusher registered: {}",
-            self.auto_flusher.get().registered
-        );
-        if self.auto_flusher.get().registered {
-            AutoFlusher::unregister_deferred_microtask_with_type::<Self>(
-                self.as_ctx_ptr(),
-                self.vm(),
-            );
-            self.auto_flusher.with_mut(|a| a.registered = false);
-        }
-    }
-
-    fn get_timeout_interval(&self) -> u32 {
-        match self.status.get() {
-            Status::Connected if self.is_busy() => 0,
-            Status::Connected => self.idle_timeout_interval_ms,
-            Status::Failed => 0,
-            _ => self.connection_timeout_ms,
-        }
-    }
-
-    pub(crate) fn disable_connection_timeout(&self) {
-        self.timer.with_mut(|t| {
-            if t.state == EventLoopTimerState::ACTIVE {
-                self.vm_mut().timer().remove(t);
-            }
-            t.state = EventLoopTimerState::CANCELLED;
-        });
-    }
-
-    pub(crate) fn reset_connection_timeout(&self) {
-        // if we are processing data, don't reset the timeout, wait for the data to be processed
-        if self
-            .flags
-            .get()
-            .contains(ConnectionFlags::IS_PROCESSING_DATA)
-        {
-            return;
-        }
-        let interval = self.get_timeout_interval();
-        self.timer.with_mut(|t| {
-            if t.state == EventLoopTimerState::ACTIVE {
-                self.vm_mut().timer().remove(t);
-            }
-            if interval == 0 {
-                return;
-            }
-            t.next = bun_core::Timespec::ms_from_now(
-                bun_core::TimespecMockMode::ForceRealTime,
-                i64::from(interval),
-            );
-        });
-        if interval != 0 {
-            // whole-struct provenance: the fire path recovers the container from this pointer.
-            let t = core::ptr::addr_of!(self.timer)
-                .cast::<EventLoopTimer>()
-                .cast_mut();
-            self.vm_mut().timer().insert(t);
-        }
-    }
-
     pub fn get_on_notification(_this: &Self, this_value: JSValue, _: &JSGlobalObject) -> JSValue {
         js::onnotification_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
     }
@@ -535,7 +385,7 @@ impl PostgresSQLConnection {
         // SAFETY: `raw` is a live connected socket in its context's Postgres TCP group.
         let tls_group: &mut bun_uws::SocketGroup = unsafe {
             bun_jsc::rare_data::SocketGroups::of((*raw).group())
-                .postgres_group::<true>(self.vm_mut().uws_loop())
+                .postgres_group::<true>(self.vm().uws_loop())
         };
 
         // SAFETY: `secure` is set to a live `SSL_CTX*` before `setup_tls` is
@@ -592,48 +442,6 @@ impl PostgresSQLConnection {
         // ext is now repointed; safe to kick the handshake (any dispatch lands here).
         // `on_handshake` sends the StartupMessage.
         sock.start_tls_handshake();
-    }
-
-    pub fn on_connection_timeout(&self) {
-        debug!("onConnectionTimeout");
-
-        self.timer
-            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
-        if self
-            .flags
-            .get()
-            .contains(ConnectionFlags::IS_PROCESSING_DATA)
-        {
-            return;
-        }
-
-        if self.get_timeout_interval() == 0 {
-            self.reset_connection_timeout();
-            return;
-        }
-
-        use bun_core::fmt::{ConnTimeoutKind::*, fmt_conn_timeout};
-        let (code, kind, ms, sfx): (&[u8], _, _, _) = match self.status.get() {
-            Status::Connected => (
-                b"ERR_POSTGRES_IDLE_TIMEOUT",
-                Idle,
-                self.idle_timeout_interval_ms,
-                "",
-            ),
-            Status::SentStartupMessage => (
-                b"ERR_POSTGRES_CONNECTION_TIMEOUT",
-                Connection,
-                self.connection_timeout_ms,
-                " (sent startup message, but never received response)",
-            ),
-            _ => (
-                b"ERR_POSTGRES_CONNECTION_TIMEOUT",
-                Connection,
-                self.connection_timeout_ms,
-                "",
-            ),
-        };
-        self.fail_fmt(code, format_args!("{}", fmt_conn_timeout(kind, ms, sfx)));
     }
 
     pub(crate) fn start(&self) {
@@ -718,7 +526,7 @@ impl PostgresSQLConnection {
 
     pub fn finalize(&self) {
         debug!("PostgresSQLConnection finalize");
-        self.stop_timers();
+        self.timers.stop();
         self.js_value.with_mut(|r| r.finalize());
     }
 
@@ -774,7 +582,7 @@ impl PostgresSQLConnection {
     }
 
     pub(crate) fn fail_with_js_value(&self, value: JSValue) {
-        self.stop_timers();
+        self.timers.stop();
         if self.status.get() == Status::Failed {
             self.update_has_pending_activity();
             return;
@@ -1064,10 +872,6 @@ impl PostgresSQLConnection {
             return;
         }
         self.update_flags(|f| f.insert(ConnectionFlags::IS_PROCESSING_DATA));
-
-        if self.status.get() == Status::Connected {
-            self.disable_connection_timeout();
-        }
 
         let event_loop = self.event_loop();
         event_loop.enter();
@@ -1421,21 +1225,19 @@ fn open(
             }),
             ssl_mode: params.ssl_mode,
             channel_binding: params.channel_binding,
-            idle_timeout_interval_ms: params.idle_timeout_ms,
-            connection_timeout_ms: params.connection_timeout_ms,
             flags: Cell::new(if params.use_unnamed_prepared_statements {
                 ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS
             } else {
                 ConnectionFlags::empty()
             }),
-            timer: JsCell::new(EventLoopTimer::init_paused(
-                EventLoopTimerTag::PostgresSQLConnectionTimeout,
-            )),
             timers: ConnectionTimers::new(
+                params.idle_timeout_ms,
+                params.connection_timeout_ms,
                 params.max_lifetime_ms,
+                EventLoopTimerTag::PostgresSQLConnectionTimeout,
                 EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
             ),
-            auto_flusher: JsCell::new(AutoFlusher::default()),
+            auto_flush_registered: Cell::new(false),
             channel_names: JsCell::new(Vec::new()),
             copy_out: JsCell::new(Vec::new()),
         }));
@@ -1637,15 +1439,6 @@ impl PostgresSQLConnection {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn stop_timers(&self) {
-        self.timer.with_mut(|t| {
-            if t.state == EventLoopTimerState::ACTIVE {
-                self.vm_mut().timer().remove(t);
-            }
-        });
-        self.timers.stop();
-    }
-
     fn clean_up_requests(&self, js_reason: Option<JSValue>) {
         // R-2: `&self` carries no `noalias`; every field accessed below is
         // `Cell`/`JsCell`-backed, so re-entrant JS callbacks (promise reject →
@@ -1690,7 +1483,7 @@ impl PostgresSQLConnection {
     }
 
     pub(crate) fn disconnect(&self) {
-        self.stop_timers();
+        self.timers.stop();
         self.unregister_auto_flusher();
         if self.status.get() == Status::Connected {
             self.status.set(Status::Disconnected);
@@ -1854,7 +1647,7 @@ impl PostgresSQLConnection {
         // SAFETY: `raw` is the live connected socket of this session, in a group of its context.
         let group = unsafe {
             bun_jsc::rare_data::SocketGroups::of((*raw).group())
-                .postgres_group::<false>(self.vm_mut().uws_loop())
+                .postgres_group::<false>(self.vm().uws_loop())
         };
         // Before the dial: a dial that fails at once ends the hold by itself.
         self.update_flags(|f| f.insert(ConnectionFlags::CANCEL_IN_FLIGHT));
@@ -1875,7 +1668,7 @@ impl PostgresSQLConnection {
                 },
                 channel_binding: self.channel_binding,
                 idle_timeout_ms: 0,
-                connection_timeout_ms: match self.connection_timeout_ms {
+                connection_timeout_ms: match self.timers.connection_timeout_ms {
                     0 => CANCEL_REQUEST_TIMEOUT_MS,
                     session => session.min(CANCEL_REQUEST_TIMEOUT_MS),
                 },
@@ -1978,13 +1771,8 @@ pub struct Writer {
     pub(crate) connection: BackRef<PostgresSQLConnection>,
 }
 
-impl Writer {
-    // `write_buffer` is a `JsCell`; route mutation through the safe
-    // closure-scoped `with_mut` and reads through `get()` so the backref
-    // deref stays inside `BackRef`'s safe `Deref` — no raw `get_mut`
-    // escape hatch needed.
-
-    pub(crate) fn write(&mut self, data: &[u8]) -> Result<(), AnyPostgresError> {
+impl protocol::WriterContext for Writer {
+    fn write(self, data: &[u8]) -> Result<(), AnyPostgresError> {
         self.connection
             .write_buffer
             .with_mut(|b| b.write(data))
@@ -1992,7 +1780,7 @@ impl Writer {
         Ok(())
     }
 
-    pub(crate) fn pwrite(&mut self, data: &[u8], index: usize) -> Result<(), AnyPostgresError> {
+    fn pwrite(self, data: &[u8], index: usize) -> Result<(), AnyPostgresError> {
         self.connection.write_buffer.with_mut(|b| {
             let index = b.head as usize + index;
             b.byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
@@ -2000,23 +1788,8 @@ impl Writer {
         Ok(())
     }
 
-    pub(crate) fn offset(self) -> usize {
-        self.connection.write_buffer.get().len() as usize
-    }
-}
-
-impl protocol::WriterContext for Writer {
-    #[inline]
     fn offset(self) -> usize {
-        Writer::offset(self)
-    }
-    #[inline]
-    fn write(mut self, bytes: &[u8]) -> Result<(), AnyPostgresError> {
-        Writer::write(&mut self, bytes)
-    }
-    #[inline]
-    fn pwrite(mut self, bytes: &[u8], i: usize) -> Result<(), AnyPostgresError> {
-        Writer::pwrite(&mut self, bytes, i)
+        self.connection.write_buffer.get().len() as usize
     }
 }
 
@@ -2048,14 +1821,12 @@ impl Reader {
     fn read_buffer(&self) -> &OffsetByteList {
         self.connection.read_buffer.get()
     }
+}
 
+impl protocol::ReaderContext for Reader {
     fn mark_message_start(&mut self) {
         let head = self.read_buffer().head;
         self.connection.last_message_start.set(head);
-    }
-
-    fn ensure_length(self, count: usize) -> bool {
-        self.ensure_capacity(count)
     }
 
     fn peek(&self) -> &[u8] {
@@ -2068,7 +1839,7 @@ impl Reader {
         });
     }
 
-    fn ensure_capacity(self, count: usize) -> bool {
+    fn ensure_length(&mut self, count: usize) -> bool {
         let buf = self.read_buffer();
         (buf.head as usize) + count <= buf.byte_list.len()
     }
@@ -2082,7 +1853,7 @@ impl Reader {
         // reshaped for borrowck — capture as `RawSlice` before calling
         // skip(); the read_buffer backing storage is not reallocated by skip().
         let slice = bun_ptr::RawSlice::new(&remaining[..count]);
-        self.skip(count);
+        protocol::ReaderContext::skip(self, count);
         Ok(Data::Temporary(slice))
     }
 
@@ -2092,38 +1863,11 @@ impl Reader {
         if let Some(zero) = strings::index_of_char(remain, 0) {
             // `RawSlice` backref into read_buffer (not reallocated by skip()).
             let slice = bun_ptr::RawSlice::new(&remain[..zero as usize]);
-            self.skip(zero as usize + 1);
+            protocol::ReaderContext::skip(self, zero as usize + 1);
             return Ok(Data::Temporary(slice));
         }
 
         Err(AnyPostgresError::ShortRead)
-    }
-}
-
-impl protocol::ReaderContext for Reader {
-    #[inline]
-    fn mark_message_start(&mut self) {
-        Reader::mark_message_start(self)
-    }
-    #[inline]
-    fn peek(&self) -> &[u8] {
-        Reader::peek(self)
-    }
-    #[inline]
-    fn skip(&mut self, count: usize) {
-        Reader::skip(self, count)
-    }
-    #[inline]
-    fn ensure_length(&mut self, count: usize) -> bool {
-        Reader::ensure_length(*self, count)
-    }
-    #[inline]
-    fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
-        Reader::read(self, count)
-    }
-    #[inline]
-    fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
-        Reader::read_z(self)
     }
 }
 

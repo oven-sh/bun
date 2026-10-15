@@ -1092,14 +1092,8 @@ defineProperty(defaultSQLObject, "options", { get: defaultSQLOptions });
 defineProperty(defaultSQLObject, Symbol.asyncDispose, { get: defaultSQLAsyncDispose });
 setPrototypeOf(defaultSQLObject, SQLPrototype);
 
+// Bun.sql and Bun.SQL
 export default {
-  sql: defaultSQLObject,
   default: defaultSQLObject,
   SQL,
-  Query,
-  postgres: SQL,
-  SQLError,
-  PostgresError,
-  MySQLError,
-  SQLiteError,
 };

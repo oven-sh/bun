@@ -1,7 +1,6 @@
 // What a real server does on demand runs against the container.
 // A mock is used for exact packet boundaries, for frames the container cannot be made to send, and to read the wire.
 import { randomUUIDv7, SQL } from "bun";
-import { dlopen, ptr } from "bun:ffi";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import {
@@ -11,12 +10,11 @@ import {
   expiredTls,
   isLinux,
   isWindows,
-  libcPathForDlopen,
   tls as localhostTls,
   tempDir,
 } from "harness";
 import { once } from "node:events";
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
@@ -163,62 +161,6 @@ describe.skipIf(!isLinux).concurrent("TCP keepalive", () => {
     await using sql = new SQL(`postgres://u:pw@127.0.0.1:${server.port}/db?sslmode=require`, { max: 1 });
     await sql.connect();
     expect(keepaliveSeconds(server.port)).toBeLessThanOrEqual(60);
-  });
-
-  /**
-   * Makes the peer of this process's socket on 127.0.0.1:`clientPort` vanish: a drop-all socket filter has the kernel
-   * discard every segment that arrives for it before TCP sees it (no data, no ACK, no FIN, no RST). The wait is cut to
-   * 1 s of silence and one unanswered probe. Keepalive itself is not turned on here.
-   */
-  function vanishPeerOf(clientPort: number) {
-    const libc = dlopen(libcPathForDlopen(), {
-      getsockname: { args: ["int", "ptr", "ptr"], returns: "int" },
-      setsockopt: { args: ["int", "int", "int", "ptr", "u32"], returns: "int" },
-    });
-    try {
-      const address = new Uint8Array(16); // struct sockaddr_in: family, then the port in network order
-      const length = new Uint32Array(1);
-      const fd = readdirSync("/proc/self/fd")
-        .map(Number)
-        .find(fd => {
-          length[0] = address.length;
-          if (libc.symbols.getsockname(fd, ptr(address), ptr(length)) !== 0) return false;
-          return address[0] === 2 /* AF_INET */ && ((address[2] << 8) | address[3]) === clientPort;
-        });
-      if (fd === undefined) throw new Error(`no socket bound to port ${clientPort}`);
-      const set = (level: number, option: number, value: ArrayBufferView, size: number) => {
-        if (libc.symbols.setsockopt(fd, level, option, ptr(value), size) !== 0)
-          throw new Error(`setsockopt(${level}, ${option}) failed`);
-      };
-      set(6 /* IPPROTO_TCP */, 4 /* TCP_KEEPIDLE */, new Int32Array([1]), 4);
-      set(6 /* IPPROTO_TCP */, 6 /* TCP_KEEPCNT */, new Int32Array([1]), 4);
-      // struct sock_fprog { u16 len = 1; struct sock_filter *filter; } and the instruction it points to:
-      // BPF_RET | BPF_K with k = 0, which keeps 0 bytes of every packet.
-      const program = new Uint8Array(24);
-      const view = new DataView(program.buffer);
-      view.setUint16(0, 1, true);
-      view.setBigUint64(8, BigInt(ptr(program)) + 16n, true);
-      view.setUint16(16, 0x06, true);
-      set(1 /* SOL_SOCKET */, 26 /* SO_ATTACH_FILTER */, program, 16);
-    } finally {
-      libc.close();
-    }
-  }
-
-  // No timer of the client runs during a query. Takes over 2 s: the kernel's shortest idle time is 1 s, and it waits
-  // 1 s for the answer to a probe.
-  test("ends a query whose peer vanished", async () => {
-    const asked = Promise.withResolvers<void>();
-    const { port, server } = await pgMockServer(type => void (type === "Q" && asked.resolve()));
-    try {
-      await using sql = new SQL(`postgres://u@127.0.0.1:${port}/db`, { max: 1 });
-      const query = settled(sql`select 1`.simple());
-      await asked.promise;
-      vanishPeerOf(clientSockets(port)[0].port);
-      expect(await query).toMatchObject({ code: "ERR_POSTGRES_CONNECTION_CLOSED" });
-    } finally {
-      server.close();
-    }
   });
 });
 

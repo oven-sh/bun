@@ -16,6 +16,7 @@
 
 #![warn(unused_must_use)]
 
+use core::cell::Cell;
 use core::ffi::{c_char, c_void};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
@@ -414,43 +415,32 @@ impl TimerHeap {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// AutoFlusher — thin VM-taking wrapper over
-// bun_jsc::event_loop::EventLoop::deferred_tasks.
-// ──────────────────────────────────────────────────────────────────────────
+/// A connection that writes what one turn of JS queued on it in one flush, at the end of the turn.
+pub(crate) trait AutoFlush: Sized {
+    fn vm(&self) -> &VirtualMachine;
+    fn auto_flush_registered(&self) -> &Cell<bool>;
+    /// Connected, without backpressure, and with something to write.
+    fn can_flush(&self) -> bool;
+    /// Returns what it left in `auto_flush_registered`: whether to run again after the next turn.
+    fn on_auto_flush(&self) -> bool;
 
-#[derive(Default, Debug)]
-pub struct AutoFlusher {
-    pub(crate) registered: bool,
-}
-
-/// SQL connection types implement this to participate in deferred flushing.
-pub trait HasAutoFlush: Sized {
-    fn on_auto_flush(this: *mut Self) -> bool;
-}
-
-impl AutoFlusher {
-    pub(crate) fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlush>(
-        this: *mut T,
-        vm: &VirtualMachine,
-    ) {
-        // Body is fully safe — `cast()` is safe and `on_auto_flush` takes a
-        // raw pointer by value. `ctx` is the `*mut T` registered below; the
-        // queue feeds it back unchanged. A safe `extern "C" fn` coerces to the
-        // `DeferredRepeatingTask` fn-pointer type.
-        extern "C" fn trampoline<T: HasAutoFlush>(ctx: *mut c_void) -> bool {
-            T::on_auto_flush(ctx.cast::<T>())
+    fn register_auto_flusher(&self) {
+        extern "C" fn run<T: AutoFlush>(ctx: *mut c_void) -> bool {
+            let this = NonNull::new(ctx.cast::<T>()).expect("auto-flush ctx non-null");
+            bun_ptr::ParentRef::from(this).on_auto_flush()
         }
-        // `event_loop_mut()` is the canonical safe `&mut EventLoop` accessor
-        // (single audited deref inside `VirtualMachine`); `deferred_tasks` is an
-        // embedded field with stable address for the VM lifetime.
-        let q = &mut vm.event_loop_mut().deferred_tasks;
-        q.post_task(NonNull::new(this.cast::<c_void>()), trampoline::<T>);
+        if !self.auto_flush_registered().get() && self.can_flush() {
+            let tasks = &mut self.vm().event_loop_mut().deferred_tasks;
+            tasks.post_task(Some(NonNull::from(self).cast()), run::<Self>);
+            self.auto_flush_registered().set(true);
+        }
     }
-    pub(crate) fn unregister_deferred_microtask_with_type<T>(this: *mut T, vm: &VirtualMachine) {
-        // See register_deferred_microtask_with_type_unchecked.
-        let q = &mut vm.event_loop_mut().deferred_tasks;
-        q.unregister_task(NonNull::new(this.cast::<c_void>()));
+
+    fn unregister_auto_flusher(&self) {
+        if self.auto_flush_registered().replace(false) {
+            let tasks = &mut self.vm().event_loop_mut().deferred_tasks;
+            tasks.unregister_task(Some(NonNull::from(self).cast()));
+        }
     }
 }
 
@@ -579,15 +569,6 @@ pub mod api {
         pub use super::server_config::SSLConfig;
     }
 }
-
-pub mod webcore {
-    pub use super::AutoFlusher;
-}
-
-/// `bun_jsc::JsClass` — generic downcast trait backing `JSValue::as_<T>()`.
-/// Re-exported so the codegen module's blanket impls land on the same trait
-/// `bun_jsc::JSValue::as_<T>()` keys on.
-pub use bun_jsc::JsClass;
 
 // ──────────────────────────────────────────────────────────────────────────
 // codegen::JS{Type} — per-JsClass cached-value getters/setters generated from

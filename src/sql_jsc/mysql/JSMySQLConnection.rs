@@ -2,10 +2,9 @@ use core::cell::Cell;
 use core::ffi::c_void;
 
 use crate::jsc::{
-    CallFrame, EventLoopSqlExt as _, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
-    GlobalRef, HasAutoFlush, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, KeepAlive,
-    VirtualMachine, VirtualMachineSqlExt as _, codegen::js_mysql_connection as js, run_callback,
-    webcore::AutoFlusher,
+    AutoFlush, CallFrame, EventLoopSqlExt as _, EventLoopTimerTag, GlobalRef, JSGlobalObject,
+    JSValue, JsCell, JsRef, JsResult, KeepAlive, VirtualMachine, VirtualMachineSqlExt as _,
+    codegen::js_mysql_connection as js, run_callback,
 };
 use crate::shared::CachedStructure;
 use crate::shared::cached_structure::{column_name_to_js, transform_name};
@@ -14,7 +13,6 @@ use crate::shared::connection_timers::{ConnectionTimers, Phase, TimedConnection}
 use crate::shared::server_identity;
 use bun_core::fmt::ConnTimeoutKind;
 use bun_core::strings;
-use bun_core::{TimespecMockMode, timespec};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLErrorT;
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
@@ -38,12 +36,6 @@ use super::protocol::result_set::{self as ResultSet};
 
 bun_core::declare_scope!(MySQLConnection, visible);
 
-// The #[bun_jsc::JsClass] proc-macro is not applied because this type
-// already has its `to_js`/`from_js` wired through `crate::jsc::codegen::
-// js_mysql_connection` (which owns the extern symbols) — the hand-rolled
-// `impl crate::jsc::JsClass` below forwards to those. `crate::jsc` re-exports
-// `bun_jsc::{JSGlobalObject, CallFrame, JSValue}`, so the types are identical;
-// switching to the derive is a mechanical follow-up, not a layering blocker.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
 // shim still emits `this: &mut JSMySQLConnection` — `&mut T` auto-derefs
@@ -57,9 +49,6 @@ pub struct JSMySQLConnection {
     js_value: JsCell<JsRef>,
     // LIFETIMES.tsv: JSC_BORROW — assigned from createInstance param; never freed
     global_object: GlobalRef,
-    // LIFETIMES.tsv: STATIC — globalObject.bunVM() singleton. `BackRef` so the
-    // hot `vm()` deref is safe; `vm_mut()` routes through the canonical
-    // `VirtualMachine::as_mut()` accessor.
     vm: BackRef<VirtualMachine>,
     poll_ref: JsCell<KeepAlive>,
 
@@ -69,28 +58,18 @@ pub struct JSMySQLConnection {
     // `from_field_ptr!` (offset unchanged — `JsCell` is transparent).
     pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
 
-    pub(crate) auto_flusher: JsCell<AutoFlusher>,
-
-    pub(crate) idle_timeout_interval_ms: u32,
-    pub(crate) connection_timeout_ms: u32,
-    /// Before being connected, this is a connection timeout timer.
-    /// After being connected, this is an idle timeout timer.
-    // Private — intrusive heap node; cross-crate `container_of` goes through
-    // [`Self::from_timer_ptr`] instead of `offset_of!` on the field.
-    timer: JsCell<EventLoopTimer>,
+    auto_flush_registered: Cell<bool>,
     timers: ConnectionTimers,
 }
 
 bun_event_loop::impl_timer_owner!(JSMySQLConnection;
-    from_timer_ptr => timer,
+    from_timer_ptr => timers.timer,
     from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
 );
 
-bun_jsc::impl_js_class_via_generated!(JSMySQLConnection => crate::jsc::codegen::js_mysql_connection);
-
 impl Drop for JSMySQLConnection {
     fn drop(&mut self) {
-        self.stop_timers();
+        self.timers.stop();
         let ctx = self.vm_ctx();
         self.poll_ref.with_mut(|p| p.unref(ctx));
         self.unregister_auto_flusher();
@@ -112,30 +91,9 @@ impl JSMySQLConnection {
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
-    /// Shared borrow of the JS-thread `VirtualMachine` singleton stored in this
-    /// connection. Safe `Deref` via [`BackRef`] — the VM strictly outlives
-    /// every connection it creates (process-lifetime singleton).
-    #[inline]
-    fn vm(&self) -> &VirtualMachine {
-        self.vm.get()
-    }
-    /// Short-lived `&mut VirtualMachine` for the few `vm.timer()` callers
-    /// (jsc shim's `timer()` is `&mut self`). The VM is a JS-thread singleton;
-    /// we never hold two `&mut` to it at once in this module.
-    fn vm_mut(&self) -> &'static mut VirtualMachine {
-        VirtualMachine::get_mut()
-    }
-
-    /// `&mut EventLoop` for `entered()`/`run_callback`. One audited unsafe
-    /// here replaces the per-site `unsafe { self.vm().event_loop_mut() }` —
-    /// the loop is a disjoint heap allocation owned by the JS-thread VM
-    /// singleton; single-thread affinity ⇒ no two `&mut EventLoop` coexist.
     #[inline]
     fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
-        // `vm_mut()` yields the process-lifetime `'static mut VM` (see above);
-        // the owned event loop lives for the VM's lifetime. Single-JS-thread
-        // invariant ⇒ callers never overlap `&mut`.
-        self.vm_mut().event_loop_mut()
+        VirtualMachine::get().event_loop_mut()
     }
 
     #[inline]
@@ -150,15 +108,24 @@ impl TimedConnection for JSMySQLConnection {
     }
 
     fn phase(&self) -> Phase {
+        use my_sql_connection::Status as S;
         match self.connection.get().status {
-            my_sql_connection::Status::Connected => Phase::Connected,
-            my_sql_connection::Status::Failed => Phase::Failed,
-            _ => Phase::Connecting,
+            S::Connected => Phase::Connected,
+            S::Disconnected | S::Failed => Phase::Failed,
+            S::Connecting => Phase::Connecting(""),
+            S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => {
+                Phase::Connecting(" (during authentication)")
+            }
+            S::SessionSetup => Phase::Connecting(" (during session setup)"),
         }
     }
 
     fn has_requests(&self) -> bool {
         !self.connection.get().is_idle()
+    }
+
+    fn is_processing_data(&self) -> bool {
+        self.connection.get().is_processing_data()
     }
 
     fn fail_timeout(&self, kind: ConnTimeoutKind, message: core::fmt::Arguments<'_>) {
@@ -180,14 +147,27 @@ impl TimedConnection for JSMySQLConnection {
     }
 }
 
-impl HasAutoFlush for JSMySQLConnection {
-    fn on_auto_flush(this: *mut Self) -> bool {
-        // `this` is the live `*mut JSMySQLConnection` registered with the
-        // deferred-task queue; the queue runs on the JS thread. R-2: deref as
-        // shared — `on_auto_flush` body takes `&self`. `ParentRef` (lifetime-
-        // erased `&T`) centralises the backref deref under its own invariant.
-        ParentRef::from(core::ptr::NonNull::new(this).expect("auto-flush ctx non-null"))
-            .on_auto_flush()
+impl AutoFlush for JSMySQLConnection {
+    fn vm(&self) -> &VirtualMachine {
+        self.vm.get()
+    }
+
+    fn auto_flush_registered(&self) -> &Cell<bool> {
+        &self.auto_flush_registered
+    }
+
+    fn can_flush(&self) -> bool {
+        self.connection.get().can_flush()
+    }
+
+    fn on_auto_flush(&self) -> bool {
+        // With backpressure, onWritable drains.
+        if !self.connection.get().has_backpressure() {
+            self.drain_internal();
+        }
+        let again = self.can_flush();
+        self.auto_flush_registered.set(again);
+        again
     }
 }
 
@@ -212,136 +192,6 @@ impl JSMySQLConnection {
     }
 
     // ────────────────────────────────────────────────────────────────────────
-
-    pub(crate) fn on_auto_flush(&self) -> bool {
-        bun_core::scoped_log!(MySQLConnection, "onAutoFlush");
-        if self.connection.get().has_backpressure() {
-            self.auto_flusher.with_mut(|a| a.registered = false);
-            // if we have backpressure, wait for onWritable
-            return false;
-        }
-
-        // drain as much as we can
-        self.drain_internal();
-
-        // if we dont have backpressure and if we still have data to send, return true otherwise return false and wait for onWritable
-        let keep_flusher_registered = self.connection.get().can_flush();
-        self.auto_flusher
-            .with_mut(|a| a.registered = keep_flusher_registered);
-        keep_flusher_registered
-    }
-
-    fn register_auto_flusher(&self) {
-        if !self.auto_flusher.get().registered // should not be registered
-            && self.connection.get().can_flush()
-        {
-            AutoFlusher::register_deferred_microtask_with_type_unchecked(
-                self.as_ctx_ptr(),
-                self.vm(),
-            );
-            self.auto_flusher.with_mut(|a| a.registered = true);
-        }
-    }
-
-    fn unregister_auto_flusher(&self) {
-        if self.auto_flusher.get().registered {
-            AutoFlusher::unregister_deferred_microtask_with_type(self.as_ctx_ptr(), self.vm());
-            self.auto_flusher.with_mut(|a| a.registered = false);
-        }
-    }
-
-    fn stop_timers(&self) {
-        bun_core::scoped_log!(MySQLConnection, "stopTimers");
-        if self.timer.get().state == EventLoopTimerState::ACTIVE {
-            self.timer.with_mut(|t| self.vm_mut().timer().remove(t));
-        }
-        self.timers.stop();
-    }
-
-    fn get_timeout_interval(&self) -> u32 {
-        match self.connection.get().status {
-            my_sql_connection::Status::Connected => {
-                if self.is_busy() {
-                    return 0;
-                }
-                self.idle_timeout_interval_ms
-            }
-            my_sql_connection::Status::Failed => 0,
-            _ => self.connection_timeout_ms,
-        }
-    }
-
-    pub(crate) fn reset_connection_timeout(&self) {
-        let interval = self.get_timeout_interval();
-        bun_core::scoped_log!(MySQLConnection, "resetConnectionTimeout {}", interval);
-        if self.timer.get().state == EventLoopTimerState::ACTIVE {
-            self.timer.with_mut(|t| self.vm_mut().timer().remove(t));
-        }
-        if self.connection.get().status == my_sql_connection::Status::Failed
-            || self.connection.get().is_processing_data()
-            || interval == 0
-        {
-            return;
-        }
-
-        self.timer.with_mut(|t| {
-            t.next = timespec::ms_from_now(TimespecMockMode::ForceRealTime, interval.into());
-        });
-        // whole-struct provenance: the fire path recovers the container from this pointer.
-        let t = core::ptr::addr_of!(self.timer)
-            .cast::<EventLoopTimer>()
-            .cast_mut();
-        self.vm_mut().timer().insert(t);
-    }
-
-    pub fn on_connection_timeout(&self) {
-        self.timer
-            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
-
-        if self.connection.get().is_processing_data() {
-            return;
-        }
-
-        if self.connection.get().status == my_sql_connection::Status::Failed {
-            return;
-        }
-
-        if self.get_timeout_interval() == 0 {
-            self.reset_connection_timeout();
-            return;
-        }
-
-        use bun_core::fmt::{ConnTimeoutKind::*, fmt_conn_timeout};
-        use my_sql_connection::Status as S;
-        let (code, kind, ms, sfx) = match self.connection.get().status {
-            S::Connected => (
-                AnyMySQLErrorT::IdleTimeout,
-                Idle,
-                self.idle_timeout_interval_ms,
-                "",
-            ),
-            S::Connecting => (
-                AnyMySQLErrorT::ConnectionTimedOut,
-                Connection,
-                self.connection_timeout_ms,
-                "",
-            ),
-            S::Handshaking | S::Authenticating | S::AuthenticationAwaitingPk => (
-                AnyMySQLErrorT::ConnectionTimedOut,
-                Connection,
-                self.connection_timeout_ms,
-                " (during authentication)",
-            ),
-            S::SessionSetup => (
-                AnyMySQLErrorT::ConnectionTimedOut,
-                Connection,
-                self.connection_timeout_ms,
-                " (during session setup)",
-            ),
-            S::Disconnected | S::Failed => return,
-        };
-        self.fail_fmt(code, format_args!("{}", fmt_conn_timeout(kind, ms, sfx)));
-    }
 
     // Exported via the `.classes.ts` codegen (`MySQLConnectionClass__construct`).
     pub fn constructor(
@@ -492,14 +342,12 @@ impl JSMySQLConnection {
                 !path.is_empty(),
                 found_rows,
             )),
-            auto_flusher: JsCell::new(AutoFlusher::default()),
-            idle_timeout_interval_ms: args.idle_timeout_ms,
-            connection_timeout_ms: args.connection_timeout_ms,
-            timer: JsCell::new(EventLoopTimer::init_paused(
-                EventLoopTimerTag::MySQLConnectionTimeout,
-            )),
+            auto_flush_registered: Cell::new(false),
             timers: ConnectionTimers::new(
+                args.idle_timeout_ms,
+                args.connection_timeout_ms,
                 args.max_lifetime_ms,
+                EventLoopTimerTag::MySQLConnectionTimeout,
                 EventLoopTimerTag::MySQLConnectionMaxLifetime,
             ),
         }));
@@ -683,7 +531,7 @@ impl JSMySQLConnection {
             return;
         }
         let _guard = self.ref_guard();
-        self.stop_timers();
+        self.timers.stop();
         self.connection_mut().quit();
         self.connection_mut().status = my_sql_connection::Status::Failed;
         // Raises the socket's close event, which comes back here: no `connection_mut()` borrow is live.
@@ -938,7 +786,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
     ) {
-        if !this.connection.get().awaits_tls_handshake() {
+        if success == 1 && !this.connection.get().awaits_tls_handshake() {
             return;
         }
         if !this.connection_mut().do_handshake(success, ssl_error) {
@@ -1048,9 +896,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
 // Result-mode enum lives in `bun_sql::shared` (`SQLQueryResultMode`); aliased
 // here as `ResultMode` to keep the call sites readable.
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode as ResultMode;
-
-// pub const js = jsc.Codegen.JSMySQLConnection; — re-exported via `use ... as js` above.
-// fromJS / fromJSDirect / toJS — provided by #[bun_jsc::JsClass] derive.
 
 /// Sibling modules import the JS-wrapper type under the bare
 /// `MySQLConnection` name (the connection state-machine struct lives in

@@ -12,7 +12,7 @@ type SQLQueryResultMode = import("./query").SQLQueryResultMode;
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
 const { SQLResultArray, normalizeQuery, pushBindParam } = require("internal/sql/shared");
-const { SQLQueryResultMode, isStarted } = require("internal/sql/query");
+const { SQLQueryResultMode } = require("internal/sql/query");
 const { SQLiteError } = require("internal/sql/errors");
 
 let lazySQLiteModule: typeof BunSQLiteModule;
@@ -300,7 +300,6 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   public storedError: Error | null = null;
   private _closed: boolean = false;
   public queries: Set<Query<any, any>> = new Set();
-  public openTransaction: Set<Query<any, any>> | null = null;
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions) {
     this.connectionInfo = connectionInfo;
@@ -507,13 +506,6 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       // The getter throws on a closed database. The caller then goes on as if nothing was known.
       return true;
     }
-  }
-  noteFailedStatement(connection: BunSQLiteModule.Database): void {
-    const queries = this.openTransaction;
-    if (queries === null || this.isInTransaction(connection)) return;
-    this.openTransaction = null;
-    // SQLite ended the transaction. What its begin() already started would run in autocommit.
-    for (const query of queries) if (isStarted(query)) query.cancel();
   }
   rollbackFailedCommit(connection: BunSQLiteModule.Database): void {
     try {

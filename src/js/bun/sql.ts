@@ -126,7 +126,6 @@ const SQL = function SQL(
       }
     } catch (err) {
       query.reject(err as Error);
-      if (pool.noteFailedStatement) pool.noteFailedStatement(connectionHandle);
     }
   }
   function queryFromPoolHandler(query, handle, err) {
@@ -204,7 +203,6 @@ const SQL = function SQL(
       }
     } catch (err) {
       query.reject(err);
-      if (pool.noteFailedStatement) pool.noteFailedStatement(pooledConnection);
       // The statement failed inside this call (SQLite runs it synchronously).
       return true;
     }
@@ -213,12 +211,6 @@ const SQL = function SQL(
   // SQLite ends a transaction by itself inside a failing statement. A ROLLBACK then has nothing to end.
   function hasTransaction(pooledConnection) {
     return pool.isInTransaction === undefined || pool.isInTransaction(pooledConnection);
-  }
-
-  function beginFromTransactionHandler(transactionQueries, query, handle, err) {
-    if (!queryFromTransactionHandler.$call(this, transactionQueries, query, handle, err) && !err && !query.cancelled) {
-      pool.openTransaction = transactionQueries;
-    }
   }
 
   // Rolls back in the call where COMMIT failed: the runner resumes after other statements of the connection ran.
@@ -899,10 +891,7 @@ const SQL = function SQL(
     }
     let needs_rollback = false;
     try {
-      await run_internal_transaction_sql(
-        BEGIN_COMMAND,
-        pool.noteFailedStatement && beginFromTransactionHandler.bind(pooledConnection, state.queries),
-      );
+      await run_internal_transaction_sql(BEGIN_COMMAND);
       needs_rollback = true;
       let transaction_result = await callback(transaction_sql);
       if ($isArray(transaction_result)) {
@@ -946,7 +935,6 @@ const SQL = function SQL(
       return reject(err);
     } finally {
       state.connectionState |= ReservedConnectionState.closed;
-      if (pool.openTransaction === state.queries) pool.openTransaction = null;
       // Use adapter method to detach connection close handler
       if (pool.detachConnectionCloseHandler) {
         pool.detachConnectionCloseHandler(pooledConnection, onClose);

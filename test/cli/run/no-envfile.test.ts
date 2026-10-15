@@ -301,7 +301,7 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
       };
       const macro =
         "import { values } from " +
-        JSON.stringify(import.meta.dir + "/values.ts") +
+        JSON.stringify(import.meta.dir.replaceAll("\\", "/") + "/values.ts") +
         ' with { type: "macro" };\nconsole.log(values());\n';
       const print = "console.log([process.env.API_KEY, process.env.ONLY_IN_DOT_ENV].join())";
 
@@ -364,7 +364,7 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const line = stdout.split("\n").find(line => line.startsWith("REPORT "));
+    const line = stdout.split(/\r?\n/).find(line => line.startsWith("REPORT "));
     return { report: line ? JSON.parse(line.slice("REPORT ".length)) : { stdout, stderr }, exitCode };
   }
 
@@ -410,7 +410,7 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
       export async function nested() {
         const code =
           "import { values } from " +
-          JSON.stringify(import.meta.dir + "/values.ts") +
+          JSON.stringify(import.meta.dir.replaceAll("\\", "/") + "/values.ts") +
           ' with { type: "macro" };\nconsole.log(values());\n';
         return await new Bun.Transpiler({ loader: "ts" }).transform(code);
       }
@@ -439,7 +439,7 @@ describe("a build, a macro, an HTML route and a Worker read no .env file themsel
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const lines = stdout.split("\n");
+    const lines = stdout.split(/\r?\n/);
     // The values that the call of the macro became in the bundle, or null if the bundle has no such line.
     const macro = (name: string) => {
       const line = lines.find(line => line.startsWith(`console.log("${name}"`));

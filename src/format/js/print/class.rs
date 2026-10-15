@@ -7,7 +7,7 @@ use super::semicolon::OptionalSemicolon;
 use super::type_parameters::{FormatTSTypeParametersOptions, type_arguments, type_parameters};
 use crate::js::attach::Marker;
 use crate::js::format::{
-    FormatTypeAnnotation, format_name, format_node, identifier,
+    FormatTypeAnnotation, format_name, format_node, identifier, name_without_comments,
     terminator_of_what_is_ignored_follows_semi,
 };
 use crate::js::parentheses::expression::needs_parentheses;
@@ -396,7 +396,7 @@ impl<'a> Format<'a> for FormatClass<'a> {
                     [
                         space(),
                         FormatLeadingComments::Comments(comments.leading),
-                        source_text(id.span()),
+                        name_without_comments(id.span()),
                         indent(&FormatTrailingComments::Comments(comments.trailing))
                     ]
                 );

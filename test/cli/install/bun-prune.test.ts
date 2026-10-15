@@ -1,6 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
+import { bunEnv, bunExe, isRoot, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
 import {
   chmodSync,
   closeSync,
@@ -11,14 +11,15 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { TestRegistry } from "registry";
+import { installEnv, TestRegistry } from "registry";
 
 const registry = new TestRegistry();
 
@@ -29,9 +30,6 @@ beforeAll(async () => {
 afterAll(() => {
   registry.stop();
 });
-
-// CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`; concurrent cases sharing one cache race on Windows.
-const installEnv = (dir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") });
 
 const WARN = (expected: string, kept: string) =>
   `warn: ${expected} is not the version bun.lock expects; keeping ${kept}`;
@@ -63,6 +61,7 @@ async function prune(where: string | { dir: string; cwd: string }, ...args: stri
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expectNoDanglingStoreLinks(dir);
   return { stdout, stderr, exitCode };
 }
 
@@ -79,10 +78,54 @@ async function pruneMerged(dir: string, ...args: string[]) {
       stderr: fd,
     });
     const exitCode = await proc.exited;
+    expectNoDanglingStoreLinks(dir);
     return { lines: out(readFileSync(log, "utf8")).split("\n"), exitCode };
   } finally {
     closeSync(fd);
   }
+}
+
+// Whatever a prune removes from node_modules/.bun, no package link of the store that stays may point at it: not
+// in an entry's node_modules, not in the package's own node_modules (where a dependency with the package's name
+// is linked), and not in the hidden hoisted folder node_modules/.bun/node_modules.
+function expectNoDanglingStoreLinks(dir: string) {
+  const store = join(dir, "node_modules", ".bun");
+  const isRealDirectory = (path: string) => lstatSync(path, { throwIfNoEntry: false })?.isDirectory() ?? false;
+  const dangling: string[] = [];
+  const scan = (folder: string) => {
+    if (!isRealDirectory(folder)) {
+      return;
+    }
+    for (const entry of readdirSync(folder, { withFileTypes: true })) {
+      const path = join(folder, entry.name);
+      if (entry.isSymbolicLink()) {
+        if (!existsSync(path)) {
+          dangling.push(relative(dir, path));
+        }
+      } else if (entry.isDirectory() && entry.name.startsWith("@")) {
+        scan(path);
+      }
+    }
+  };
+  for (const entry of existsSync(store) ? readdirSync(store, { withFileTypes: true }) : []) {
+    // A symlinked entry belongs to the global store.
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    if (entry.name === "node_modules") {
+      scan(join(store, "node_modules"));
+      continue;
+    }
+    const modules = join(store, entry.name, "node_modules");
+    scan(modules);
+    // `name@version` or `@scope+name@version`
+    const name = entry.name.split("@", entry.name.startsWith("@") ? 2 : 1).join("@");
+    const own = name.startsWith("@") ? name.replace("+", "/") : name;
+    if (isRealDirectory(join(modules, own))) {
+      scan(join(modules, own, "node_modules"));
+    }
+  }
+  expect(dangling).toEqual([]);
 }
 
 function out(stdout: string) {
@@ -365,6 +408,30 @@ test.concurrent.each([["--production"], ["--prod"], ["--omit=dev"]] as string[][
   },
 );
 
+// As `bun install --production`. A required peer stays: bun installs peerDependencies by default.
+test.concurrent.each(linkers)(
+  "%s: --production removes a devDependency that is also an optional peerDependency",
+  async linker => {
+    const dir = await setupWithLinker(linker, {
+      name: "foo",
+      devDependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+      peerDependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1" },
+      peerDependenciesMeta: { "no-deps": { optional: true } },
+    });
+    const nm = join(dir, "node_modules");
+    expect(existsSync(join(nm, "no-deps"))).toBeTrue();
+
+    // isolated counts the store entry and the node_modules link of each package
+    const checked = linker === "hoisted" ? 2 : 4;
+    const { stdout, exitCode } = await prune(dir, "--production", "--linker", linker);
+    expect(out(stdout)).toEndWith(`- no-deps@1.0.0\n${REMOVED(1, checked)}`);
+    expect(exitCode).toBe(0);
+    expect(existsSync(join(nm, "no-deps"))).toBeFalse();
+    expect(existsSync(join(nm, "a-dep"))).toBeTrue();
+    await expectProductionInstallIsNoop(dir);
+  },
+);
+
 test.concurrent("--production keeps a package that prod and dev both need", async () => {
   const pkg = {
     name: "foo",
@@ -435,6 +502,42 @@ test.concurrent("--dry-run prints without deleting; --silent deletes without pri
   expect(existsSync(junk)).toBeFalse();
 
   const clean = await prune(dir, "--dry-run");
+  expect(lines(clean.stdout)).toStrictEqual([BANNER, "", NOTHING(1, 1)]);
+  expect(clean.exitCode).toBe(0);
+});
+
+// `--check` is the CI gate: the same report as `--dry-run`, but exits 1 when anything would be removed, like `bun dedupe --check`.
+test.concurrent("--check reports and exits 1 without deleting", async () => {
+  const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
+  const junk = plant(dir, "node_modules/junk");
+
+  const check = await prune(dir, "--check");
+  expect(lines(check.stdout)).toStrictEqual([BANNER, "", "- junk", CAN_BE_REMOVED(1, 2), APPLY_HINT()]);
+  expect(check.stderr).toBe("");
+  expect(existsSync(junk)).toBeTrue();
+  expect(check.exitCode).toBe(1);
+
+  // The report is identical to --dry-run; only the exit code differs.
+  const dryRun = await prune(dir, "--dry-run");
+  expect(out(dryRun.stdout)).toBe(out(check.stdout));
+  expect(dryRun.exitCode).toBe(0);
+
+  // The hint omits both flags, so it stays copy-pasteable.
+  const both = await prune(dir, "--dry-run", "--check");
+  expect(lines(both.stdout)).toStrictEqual(lines(check.stdout));
+  expect(both.exitCode).toBe(1);
+
+  const silent = await prune(dir, "--check", "--silent");
+  expect(silent.stdout).toBe("");
+  expect(silent.stderr).toBe("");
+  expect(existsSync(junk)).toBeTrue();
+  expect(silent.exitCode).toBe(1);
+
+  const apply = await prune(dir);
+  expect(apply.exitCode).toBe(0);
+  expect(existsSync(junk)).toBeFalse();
+
+  const clean = await prune(dir, "--check");
   expect(lines(clean.stdout)).toStrictEqual([BANNER, "", NOTHING(1, 1)]);
   expect(clean.exitCode).toBe(0);
 });
@@ -862,6 +965,76 @@ test.concurrent("hoisted: dot entries and files are never touched even when the 
   expect(existsSync(emptyStore)).toBeTrue();
   expect(existsSync(cache)).toBeTrue();
   expect(existsSync(integrity)).toBeTrue();
+});
+
+// `bun install` links a package in a `.bun-tmp-<hash>` directory next to it, and moves the one it
+// replaces to `.old-<random>`. One that is there while no install is running is what a killed install left.
+test.concurrent("hoisted: what a killed install left in its staging directories is removed", async () => {
+  using tmp = tempDir("prune-staging-leftovers", {
+    "package.json": JSON.stringify({ name: "empty" }),
+    "bun.lock": `{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "empty",
+    },
+  },
+  "packages": {}
+}
+`,
+  });
+  const dir = String(tmp);
+  const left = plant(dir, "node_modules/.bun-tmp-0123456789abcdef");
+  const leftInScope = plant(dir, "node_modules/@scope/.bun-tmp-fedcba9876543210");
+  const movedAside = plant(dir, "node_modules/.old-0123456789ABCDEF");
+  const cache = plant(dir, "node_modules/.cache/whatever@1.0.0");
+  const rows = ["- .bun-tmp-0123456789abcdef", "- .old-0123456789ABCDEF", "- @scope/.bun-tmp-fedcba9876543210"];
+
+  const dry = await prune(dir, "--dry-run");
+  expect(dry.stderr).toBe("");
+  expect(lines(dry.stdout)).toEqual([BANNER, "", ...rows, CAN_BE_REMOVED(3, 0), APPLY_HINT()]);
+  expect(dry.exitCode).toBe(0);
+  expect([left, leftInScope, movedAside].map(path => existsSync(path))).toEqual([true, true, true]);
+
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(stderr).toBe("");
+  expect(lines(stdout)).toEqual([BANNER, "", ...rows, REMOVED(3, 0)]);
+  expect(exitCode).toBe(0);
+  expect({
+    left: existsSync(left) || existsSync(movedAside),
+    scope: existsSync(join(dir, "node_modules", "@scope")),
+    cache: existsSync(cache),
+  }).toEqual({ left: false, scope: false, cache: true });
+});
+
+test.concurrent("isolated: removes staging leftovers inside a store entry it keeps", async () => {
+  const dir = await setupWithLinker("isolated", {
+    name: "foo",
+    dependencies: { "no-deps": "1.0.0", "@types/no-deps": "1.0.0" },
+  });
+  const entries = storeEntries(dir);
+  const store = join(dir, "node_modules", ".bun");
+  const left = plant(dir, "node_modules/.bun/no-deps@1.0.0/node_modules/.bun-tmp-0123456789abcdef");
+  const leftInScope = plant(
+    dir,
+    "node_modules/.bun/@types+no-deps@1.0.0/node_modules/@types/.bun-tmp-fedcba9876543210",
+  );
+
+  const dry = await prune(dir, "--dry-run");
+  expect(dry.stderr).toBe("");
+  expect(dry.exitCode).toBe(0);
+  expect([left, leftInScope].map(path => existsSync(path))).toEqual([true, true]);
+
+  const { stderr, exitCode } = await prune(dir);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  expect([left, leftInScope].map(path => existsSync(path))).toEqual([false, false]);
+  // the packages next to them stay
+  expect(storeEntries(dir)).toStrictEqual(entries);
+  expect(existsSync(join(store, "no-deps@1.0.0", "node_modules", "no-deps", "package.json"))).toBeTrue();
+  expect(
+    existsSync(join(store, "@types+no-deps@1.0.0", "node_modules", "@types", "no-deps", "package.json")),
+  ).toBeTrue();
 });
 
 // The links into node_modules/.bun say how the tree was installed; a contradicting --linker does not make
@@ -1764,6 +1937,28 @@ test.concurrent(
   },
 );
 
+// The unselected root reaches the workspace through its optional peer, a second row with the workspace's name.
+test.concurrent(
+  "isolated: --production --filter keeps the store entry when the unselected root names the workspace as an optional peer",
+  async () => {
+    const dir = await setupWorkspaces("isolated", {
+      root: { peerDependencies: { selected: "*" }, peerDependenciesMeta: { selected: { optional: true } } },
+      packages: { selected: { dependencies: { "no-deps": "1.0.0" }, devDependencies: { "a-dep": "1.0.1" } } },
+    });
+    const storeEntry = join(dir, "node_modules", ".bun", "a-dep@1.0.1");
+
+    const { stdout, exitCode } = await prune(dir, "--production", "--filter", "selected", "--linker", "isolated");
+    expect(out(stdout)).toMatchInlineSnapshot(`
+      "bun prune <version> (<revision>)
+
+      - a-dep@1.0.1 (packages/selected/node_modules)
+      1 package removed (checked 4 installed packages)"
+    `);
+    expect(exitCode).toBe(0);
+    expect(existsSync(storeEntry)).toBeTrue();
+  },
+);
+
 test.concurrent.each(linkers)(
   "%s: --filter limits extraneous entries to the selected workspaces' own folders; name, path and glob selectors",
   async linker => {
@@ -1987,6 +2182,40 @@ test.concurrent.each([["--os=aix"], ["--cpu=s390x"]])(
   },
 );
 
+// native-libc-glibc and native-libc-musl differ only in their `libc` field. The libc is passed
+// explicitly throughout because the default differs per host (and non-Linux hosts do not filter).
+test.concurrent("--libc removes the variant of the other libc, pruning for the installed libc keeps it", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir();
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      optionalDependencies: { "native-libc-glibc": "1.0.0", "native-libc-musl": "1.0.0" },
+    }),
+  );
+  expect(await install(dir, "--libc=glibc")).toContain("+ native-libc-glibc@1.0.0");
+  const nm = join(dir, "node_modules");
+  const glibc = join(nm, "native-libc-glibc", "package.json");
+  const musl = join(nm, "native-libc-musl", "package.json");
+  expect([existsSync(glibc), existsSync(musl)]).toStrictEqual([true, false]);
+
+  const same = await prune(dir, "--libc=glibc");
+  expect(out(same.stdout)).toEndWith(NOTHING(1, 1));
+  expect(same.exitCode).toBe(0);
+  expect(existsSync(glibc)).toBeTrue();
+
+  const other = await prune(dir, "--libc=musl");
+  expect(lines(other.stdout)).toStrictEqual([BANNER, "", "- native-libc-glibc@1.0.0", REMOVED(1, 1)]);
+  expect(other.exitCode).toBe(0);
+  expect(existsSync(glibc)).toBeFalse();
+
+  expect(await install(dir, "--libc=musl")).toContain("+ native-libc-musl@1.0.0");
+  expect([existsSync(glibc), existsSync(musl)]).toStrictEqual([false, true]);
+  const musl2 = await prune(dir, "--libc=musl");
+  expect(out(musl2.stdout)).toEndWith(NOTHING(1, 1));
+  expect(musl2.exitCode).toBe(0);
+});
+
 test.concurrent.each(["hoisted", "isolated"] as Linker[])(
   "%s: an npm: alias is kept under its alias name",
   async linker => {
@@ -2045,7 +2274,7 @@ test.concurrent("isolated + publicHoistPattern: hoisted links follow their store
   expect(await file(join(nm, "no-deps", "package.json")).json()).toMatchObject({ version: "1.0.0" });
 });
 
-test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+test.concurrent.skipIf(isWindows || isRoot)(
   "a failed deletion is reported, the rest is removed, exit code 1",
   async () => {
     const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
@@ -2156,6 +2385,69 @@ test.concurrent.each(["hoisted", "isolated"] as Linker[])(
     const plain = await prune(plainDir, "--linker", linker);
     expect(out(plain.stdout)).toEndWith(linker === "hoisted" ? NOTHING(2, 1) : NOTHING(3, 2));
     expect(plain.exitCode).toBe(0);
+  },
+);
+
+// `bun install --omit=peer` links a workspace's peer when the root provides it. `bun prune --omit=peer` keeps that link.
+test.concurrent.each([false, true])(
+  "isolated (globalStore: %p): --omit=peer keeps a workspace peer link the root provides",
+  async globalStore => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore },
+    });
+    await writeWorkspaces(dir, packageJson, {
+      root: { dependencies: { "no-deps": "1.0.0" } },
+      packages: { a: { peerDependencies: { "no-deps": "^1.0.0" } } },
+    });
+    await install(dir, "--omit=peer", "--linker", "isolated");
+    const peerLink = join(dir, "packages", "a", "node_modules", "no-deps", "package.json");
+    expect(existsSync(peerLink)).toBeTrue();
+
+    const { stdout, exitCode } = await prune(dir, "--omit=peer", "--linker", "isolated");
+    expect(out(stdout)).toEndWith(NOTHING(3, 3));
+    expect(exitCode).toBe(0);
+    expect(existsSync(peerLink)).toBeTrue();
+    expect(await install(dir, "--omit=peer", "--linker", "isolated")).toContain("no changes");
+  },
+);
+
+// `lib` tests against its optional peer, and only its consumer `web` brings the package. Both flags leave `lib` without
+// the link, whether the install never makes it or the prune takes it away.
+test.concurrent.each(["an install with the flags", "a full install"])(
+  "isolated: --production --omit=peer, install and prune agree on a dev + optional peer that a consumer provides (after %s)",
+  async start => {
+    const flags = ["--production", "--omit=peer", "--linker", "isolated"];
+    const dir = await setupWorkspaces("isolated", {
+      packages: {
+        lib: {
+          devDependencies: { "no-deps": "1.0.0" },
+          peerDependencies: { "no-deps": "*" },
+          peerDependenciesMeta: { "no-deps": { optional: true } },
+        },
+        web: { dependencies: { lib: "workspace:*", "no-deps": "1.0.0" } },
+      },
+    });
+    const sees = (member: string) =>
+      existsSync(join(dir, "packages", member, "node_modules", "no-deps", "package.json"));
+    expect({ lib: sees("lib"), web: sees("web") }).toEqual({ lib: true, web: true });
+    const lockBefore = await lock(dir);
+
+    if (start === "an install with the flags") {
+      for (const at of [dir, join(dir, "packages", "lib"), join(dir, "packages", "web")]) {
+        rmSync(join(at, "node_modules"), { recursive: true, force: true });
+      }
+      await install(dir, ...flags);
+      expect({ lib: sees("lib"), web: sees("web") }).toEqual({ lib: false, web: true });
+    }
+
+    const { stdout, exitCode } = await prune(dir, ...flags);
+    expect(out(stdout)).toEndWith(start === "a full install" ? REMOVED(1, 4) : NOTHING(3, 3));
+    expect(exitCode).toBe(0);
+    expect({ lib: sees("lib"), web: sees("web") }).toEqual({ lib: false, web: true });
+
+    expect(await install(dir, ...flags)).toContain("no changes");
+    expect({ lib: sees("lib"), web: sees("web") }).toEqual({ lib: false, web: true });
+    expect(await lock(dir)).toBe(lockBefore);
   },
 );
 
@@ -2304,15 +2596,20 @@ test.concurrent("keeps dependencies bundled inside a file: dependency", async ()
     write(packageJson, JSON.stringify({ name: "foo", dependencies: { local: "file:./local" } })),
     write(
       join(dir, "local", "package.json"),
-      JSON.stringify({ name: "local", version: "1.0.0", bundleDependencies: ["inner"] }),
+      JSON.stringify({
+        name: "local",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+        bundleDependencies: ["no-deps"],
+      }),
     ),
     write(
-      join(dir, "local", "node_modules", "inner", "package.json"),
-      JSON.stringify({ name: "inner", version: "1.0.0" }),
+      join(dir, "local", "node_modules", "no-deps", "package.json"),
+      JSON.stringify({ name: "no-deps", version: "1.0.0" }),
     ),
   ]);
   await runBunInstall(installEnv(dir), dir);
-  const inner = join(dir, "node_modules", "local", "node_modules", "inner", "package.json");
+  const inner = join(dir, "node_modules", "local", "node_modules", "no-deps", "package.json");
   expect(existsSync(inner)).toBeTrue();
   const junk = plant(dir, "node_modules/junk");
 
@@ -2627,9 +2924,25 @@ test.concurrent("--production --linker hoisted on an isolated install prunes the
   expect(storeEntries(dir)).toStrictEqual([]);
 });
 
-// A hoisted install after an isolated one reuses the links into the store that still match bun.lock.
-// The hoisted planner trusts them the way the installer does; --linker isolated prunes the same
-// mixed tree as an isolated install.
+// Up to Bun 1.4 a hoisted install over an isolated one kept the store and the links into it that still
+// matched bun.lock, and installed the rest around them. Those trees are still on disk, but `bun install`
+// now moves the isolated tree aside first, so what is in the root folder sits out the hoisted install.
+async function hoistedInstallAroundIsolated(dir: string) {
+  const nm = join(dir, "node_modules");
+  const aside = join(dir, "isolated-entries");
+  const isolatedEntries = readdirSync(nm);
+  mkdirSync(aside);
+  for (const name of isolatedEntries) renameSync(join(nm, name), join(aside, name));
+  await install(dir, "--linker", "hoisted");
+  for (const name of isolatedEntries) {
+    rmSync(join(nm, name), { recursive: true, force: true });
+    renameSync(join(aside, name), join(nm, name));
+  }
+  rmSync(aside, { recursive: true });
+}
+
+// The hoisted planner trusts the links into the store the way the installer does; --linker isolated
+// prunes the same mixed tree as an isolated install.
 test.concurrent("mixed: a hoisted install over an isolated one is pruned as the configured linker", async () => {
   const dir = await setupWorkspaces("isolated", {
     root: { dependencies: { "no-deps": "2.0.0" } },
@@ -2637,7 +2950,7 @@ test.concurrent("mixed: a hoisted install over an isolated one is pruned as the 
   });
   const nm = join(dir, "node_modules");
   const aNm = join(dir, "packages", "a", "node_modules");
-  await install(dir, "--linker", "hoisted");
+  await hoistedInstallAroundIsolated(dir);
   expect(isSymlink(join(nm, "no-deps"))).toBeTrue();
   expect(isSymlink(join(nm, "one-dep"))).toBeFalse();
   expect(existsSync(join(nm, "one-dep", "package.json"))).toBeTrue();
@@ -2685,6 +2998,96 @@ test.concurrent("mixed: a hoisted install over an isolated one is pruned as the 
   expect(() => lstatSync(join(nm, "one-dep"))).toThrow();
   expect(isSymlink(join(nm, "no-deps"))).toBeTrue();
   expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.1", "no-deps@2.0.0", "one-dep@1.0.0"]);
+});
+
+// `bun install` moves the tree of the other linker into node_modules/.old_modules-<random> and deletes
+// it once it has installed its own.
+test.concurrent(
+  "a switch of linkers leaves nothing of the tree it replaces, and every --linker prunes the new one as it is",
+  async () => {
+    const dir = await setupWorkspaces("isolated", {
+      root: { dependencies: { "no-deps": "2.0.0" } },
+      packages: { a: { dependencies: { "one-dep": "1.0.0", "no-deps": "2.0.0" } } },
+    });
+    const nm = join(dir, "node_modules");
+    const isolated = readdirSync(nm).toSorted();
+    expect(isolated).toStrictEqual([".bun", "no-deps"]);
+
+    await install(dir, "--linker", "hoisted");
+    expect(readdirSync(nm).toSorted()).toStrictEqual(["a", "no-deps", "one-dep"]);
+    for (const flags of [[], ["--linker", "isolated"], ["--linker", "hoisted"]]) {
+      const { stdout, stderr, exitCode } = await prune(dir, ...flags);
+      expect(stderr).toBe("");
+      expect(lines(stdout)).toStrictEqual([BANNER, "", NOTHING(4, 2)]);
+      expect(exitCode).toBe(0);
+    }
+
+    await install(dir, "--linker", "isolated");
+    expect(readdirSync(nm).toSorted()).toStrictEqual(isolated);
+  },
+);
+
+// Up to Bun 1.4 nothing deleted it, and an install that fails keeps it. The store in it is no evidence of the layout.
+test.concurrent.each(linkers)(
+  "%s: the trees that earlier switches of linkers set aside are removed",
+  async (linker: Linker) => {
+    const dir = await setupWorkspaces(linker, {
+      root: { dependencies: { "no-deps": "2.0.0" } },
+      packages: { a: { dependencies: { "one-dep": "1.0.0", "no-deps": "2.0.0" } } },
+    });
+    const nm = join(dir, "node_modules");
+    const installed = readdirSync(nm).toSorted();
+    const old = ".old_modules-0123456789abcdef";
+    plant(dir, `node_modules/${old}/.bun/stale@1.0.0/node_modules/stale`);
+    plant(dir, `node_modules/${old}/stale`);
+    plant(dir, `node_modules/${old}/.old_a_modules/stale`);
+    plant(dir, `node_modules/${old}/.old_modules-fedcba9876543210/stale`);
+    const checked = linker === "hoisted" ? 4 : 6;
+
+    for (const flags of [[], ["--linker", "isolated"], ["--linker", "hoisted"]]) {
+      const dry = await prune(dir, "--dry-run", ...flags);
+      expect(dry.stderr).toBe("");
+      expect(lines(dry.stdout)).toStrictEqual([
+        BANNER,
+        "",
+        `- ${old}`,
+        CAN_BE_REMOVED(1, checked),
+        APPLY_HINT(...flags),
+      ]);
+      expect(dry.exitCode).toBe(0);
+    }
+    expect(readdirSync(nm).toSorted()).toStrictEqual([...installed, old].toSorted());
+
+    const { stdout, stderr, exitCode } = await prune(dir);
+    expect(stderr).toBe("");
+    expect(lines(stdout)).toStrictEqual([BANNER, "", `- ${old}`, REMOVED(1, checked)]);
+    expect(exitCode).toBe(0);
+    expect(readdirSync(nm).toSorted()).toStrictEqual(installed);
+    expect(await install(dir, "--linker", linker)).toContain("no changes");
+  },
+);
+
+test.concurrent("a switch of linkers that fails keeps the tree it set aside", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "hoisted" } });
+  const tarball = join(dir, "local-1.0.0.tgz");
+  await Bun.Archive.write(
+    tarball,
+    { "package/package.json": JSON.stringify({ name: "local", version: "1.0.0" }) },
+    { compress: "gzip" },
+  );
+  await write(
+    packageJson,
+    JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0", local: "file:./local-1.0.0.tgz" } }),
+  );
+  await install(dir, "--linker", "hoisted");
+  rmSync(tarball);
+  rmSync(join(dir, ".bun-cache"), { recursive: true });
+
+  const { exitCode } = await bun(dir, "install", "--linker", "isolated");
+  expect(exitCode).toBe(1);
+  const old = readdirSync(join(dir, "node_modules")).filter(name => name.startsWith(".old_modules-"));
+  expect(old).toHaveLength(1);
+  expect(readdirSync(join(dir, "node_modules", old[0])).toSorted()).toStrictEqual(["local", "no-deps"]);
 });
 
 // `rm -rf node_modules` leaves the workspace folders' links into the store behind. After a hoisted
@@ -2747,7 +3150,7 @@ test.concurrent("mixed: a stale store under a hoisted install does not make the 
   for (const name of readdirSync(nm)) {
     if (!name.startsWith(".")) rmSync(join(nm, name), { recursive: true });
   }
-  await install(dir, "--linker", "hoisted");
+  await hoistedInstallAroundIsolated(dir);
   expect(existsSync(join(nm, "one-dep", "package.json"))).toBeTrue();
   expect(isSymlink(join(nm, "one-dep"))).toBeFalse();
   expect(existsSync(join(nm, "no-deps", "package.json"))).toBeTrue();
@@ -2773,7 +3176,7 @@ test.concurrent("mixed: real directories of npm: aliases are hoisted evidence", 
   for (const name of readdirSync(nm)) {
     if (!name.startsWith(".")) rmSync(join(nm, name), { recursive: true });
   }
-  await install(dir, "--linker", "hoisted");
+  await hoistedInstallAroundIsolated(dir);
   expect(isSymlink(join(nm, "x"))).toBeFalse();
   expect(existsSync(join(nm, "x", "package.json"))).toBeTrue();
   expect(existsSync(join(nm, "y", "package.json"))).toBeTrue();
@@ -2915,6 +3318,30 @@ test.concurrent(
 );
 
 test.concurrent(
+  "isolated: a file: dependency declared by a registry package is not a store entry, a leftover one is removed",
+  async () => {
+    // file-dep@1.0.0 declares `"files": "file:./the-files"`; the installer links the
+    // folder inside the package's own store entry instead of creating one for it.
+    const dir = await setupWithLinker("isolated", { name: "foo", dependencies: { "file-dep": "1.0.0" } });
+    expect(storeEntries(dir)).toStrictEqual(["file-dep@1.0.0"]);
+    const filesLink = join(dir, "node_modules", ".bun", "file-dep@1.0.0", "node_modules", "files");
+    expect(isSymlink(filesLink)).toBeTrue();
+    plant(dir, "node_modules/.bun/files@file+.+the-files/node_modules/files");
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--linker", "isolated");
+    expect(stderr).not.toContain("warn:");
+    expect(lines(stdout)).toContain("- files@file+.+the-files");
+    expect(exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual(["file-dep@1.0.0"]);
+    expect(existsSync(join(filesLink, "package.json"))).toBeTrue();
+
+    const again = await prune(dir, "--linker", "isolated");
+    expect(out(again.stdout)).toEndWith(NOTHING(2, 2));
+    expect(again.exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
   "workspaces: without --linker, a bun.lock with configVersion 1 is pruned with the isolated linker",
   async () => {
     const { packageDir: dir, packageJson } = await registry.createTestDir({});
@@ -3037,6 +3464,222 @@ test.concurrent.each([["--os=aix"], ["--cpu=s390x"]])(
     expect(existsSync(join(store, "no-deps@1.0.0"))).toBeTrue();
     expect(existsSync(join(nm, "no-deps", "package.json"))).toBeTrue();
     expect(await install(dir, flag, "--linker", "isolated")).toContain("no changes");
+  },
+);
+
+// Every entry below node_modules: "dir", "file", or where a link points, relative to `dir`.
+// A relinking install links the bins of an entry's dependencies again but not the entry's own bins, so prune
+// leaves the `.bin` folder of a store entry alone. `storeBins: false` leaves those folders out.
+function nodeModulesTree(dir: string, { storeBins }: { storeBins: boolean }) {
+  const tree: Record<string, string> = {};
+  const walk = (rel: string) => {
+    for (const entry of readdirSync(join(dir, rel), { withFileTypes: true })) {
+      const path = `${rel}/${entry.name}`;
+      if (entry.name === ".bin" && !storeBins && rel !== "node_modules") {
+        continue;
+      }
+      if (entry.isSymbolicLink()) {
+        const target = resolve(dir, rel, readlinkSync(join(dir, path)));
+        tree[path] = `-> ${relative(dir, target).replaceAll("\\", "/")}`;
+      } else if (entry.isDirectory()) {
+        tree[path] = "dir";
+        walk(path);
+      } else {
+        tree[path] = "file";
+      }
+    }
+  };
+  walk("node_modules");
+  return tree;
+}
+
+// What `bun install <flags>` lays out in an empty folder from the package.json, bun.lock and tarballs of `dir`.
+async function freshInstallTree(dir: string, ...flags: string[]) {
+  const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+  for (const name of readdirSync(dir)) {
+    if (name === "package.json" || name === "bun.lock" || name.endsWith(".tgz")) {
+      copyFileSync(join(dir, name), join(packageDir, name));
+    }
+  }
+  await install(packageDir, "--frozen-lockfile", "--linker", "isolated", ...flags);
+  return nodeModulesTree(packageDir, { storeBins: false });
+}
+
+test.concurrent.each([["--omit=optional"], ["--os=aix"], ["--cpu=s390x"]])(
+  "isolated: %s unlinks a removed optional dependency from the store entry of its dependent",
+  async (flag: string) => {
+    const dir = await setupWithLinker("isolated", { name: "foo", dependencies: { "test-postinstall-skip": "1.0.0" } });
+    const dependent = join(dir, "node_modules", ".bun", "test-postinstall-skip@1.0.0", "node_modules");
+    expect(readdirSync(dependent).toSorted()).toStrictEqual([
+      ".bin",
+      "test-postinstall-skip",
+      "test-postinstall-skip-native",
+    ]);
+    expect(isSymlink(join(dependent, "test-postinstall-skip-native"))).toBeTrue();
+    const installed = nodeModulesTree(dir, { storeBins: true });
+
+    const { stdout, exitCode } = await prune(dir, flag, "--linker", "isolated");
+    expect(out(stdout)).toMatchInlineSnapshot(`
+      "bun prune <version> (<revision>)
+
+      - test-postinstall-skip-native@1.0.0
+      1 package removed (checked 3 installed packages)"
+    `);
+    expect(exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual(["test-postinstall-skip@1.0.0"]);
+    expect(readdirSync(dependent).toSorted()).toStrictEqual([".bin", "test-postinstall-skip"]);
+    expect(nodeModulesTree(dir, { storeBins: false })).toEqual(await freshInstallTree(dir, flag));
+
+    // An install without the flag puts the entry and the link back.
+    await install(dir, "--linker", "isolated");
+    expect(nodeModulesTree(dir, { storeBins: true })).toEqual(installed);
+  },
+);
+
+// A dependency on a workspace package or a `file:` folder is a link out of the store.
+test.concurrent(
+  "isolated: a link in a kept store entry to a folder outside the store stays while it resolves",
+  async () => {
+    const dir = await setupWithLinker("isolated", { name: "foo", dependencies: { "test-postinstall-skip": "1.0.0" } });
+    const dependent = "node_modules/.bun/test-postinstall-skip@1.0.0/node_modules";
+    linkOutside(dir, `${dependent}/there`);
+    rmSync(linkOutside(dir, `${dependent}/gone`), { recursive: true });
+
+    const { stdout, exitCode } = await prune(dir, "--omit=optional", "--linker", "isolated");
+    expect(lines(stdout)).toStrictEqual([BANNER, "", "- test-postinstall-skip-native@1.0.0", REMOVED(1, 3)]);
+    expect(exitCode).toBe(0);
+    expect(readdirSync(join(dir, dependent)).toSorted()).toStrictEqual([".bin", "test-postinstall-skip", "there"]);
+    expect(isSymlink(join(dir, dependent, "there"))).toBeTrue();
+  },
+);
+
+// `bun install` falls back to a junction when Windows refuses a symlink. A junction holds the absolute path.
+test.concurrent("isolated: an absolute link from a kept store entry to a removed one is unlinked", async () => {
+  const dir = await setupWithLinker("isolated", { name: "foo", dependencies: { "no-deps": "1.0.0" } });
+  const kept = join(dir, "node_modules", ".bun", "no-deps@1.0.0", "node_modules");
+  const stale = plant(dir, "node_modules/.bun/stale@1.0.0/node_modules/stale");
+  const scopedStale = plant(dir, "node_modules/.bun/@scope+stale@1.0.0/node_modules/@scope/stale");
+  mkdirSync(join(kept, "@scope"));
+  symlinkSync(stale, join(kept, "stale"), "junction");
+  symlinkSync(scopedStale, join(kept, "@scope", "stale"), "junction");
+  expect(existsSync(join(kept, "stale", "package.json"))).toBeTrue();
+  expect(existsSync(join(kept, "@scope", "stale", "package.json"))).toBeTrue();
+
+  const { stdout, exitCode } = await prune(dir, "--linker", "isolated");
+  expect(lines(stdout)).toStrictEqual([BANNER, "", "- @scope/stale@1.0.0", "- stale@1.0.0", REMOVED(2, 4)]);
+  expect(exitCode).toBe(0);
+  expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.0"]);
+  expect(readdirSync(kept)).toStrictEqual(["no-deps"]);
+});
+
+// A package a test packs itself, installed as `file:./<name>-<version>.tgz`.
+async function packTarball(dir: string, pkg: { name: string; version: string } & Record<string, unknown>) {
+  const tarball = `${pkg.name}-${pkg.version}.tgz`;
+  await Bun.Archive.write(join(dir, tarball), { "package/package.json": JSON.stringify(pkg) }, { compress: "gzip" });
+  return `file:./${tarball}`;
+}
+
+test.concurrent(
+  "isolated: --omit=optional unlinks the scoped and the unscoped optional dependencies of a tarball package",
+  async () => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const dependency = await packTarball(dir, {
+      name: "dependent",
+      version: "1.0.0",
+      dependencies: { "no-deps": "1.0.0" },
+      optionalDependencies: { "what-bin": "1.0.0", "@scoped/has-bin-entry": "1.0.0" },
+    });
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { dependent: dependency } }));
+    await install(dir, "--linker", "isolated");
+    const entry = storeEntries(dir).find(name => name.startsWith("dependent@"))!;
+    const dependent = join(dir, "node_modules", ".bun", entry, "node_modules");
+    expect(readdirSync(dependent).toSorted()).toStrictEqual([".bin", "@scoped", "dependent", "no-deps", "what-bin"]);
+    expectBinInstalled(dependent, "what-bin");
+    expectBinInstalled(dependent, "has-bin-entry");
+    const installed = nodeModulesTree(dir, { storeBins: true });
+
+    const { stdout, exitCode } = await prune(dir, "--omit=optional", "--linker", "isolated");
+    expect(out(stdout)).toMatchInlineSnapshot(`
+      "bun prune <version> (<revision>)
+
+      - @scoped/has-bin-entry@1.0.0
+      - what-bin@1.0.0
+      2 packages removed (checked 5 installed packages)"
+    `);
+    expect(exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual([entry, "no-deps@1.0.0"]);
+    expect(readdirSync(dependent).toSorted()).toStrictEqual([".bin", "dependent", "no-deps"]);
+    expect(isSymlink(join(dependent, "no-deps"))).toBeTrue();
+    expect(nodeModulesTree(dir, { storeBins: false })).toEqual(await freshInstallTree(dir, "--omit=optional"));
+
+    // An install without the flag puts the entries, the links and the bins back.
+    await install(dir, "--linker", "isolated");
+    expect(nodeModulesTree(dir, { storeBins: true })).toEqual(installed);
+  },
+);
+
+// The installer links a dependency that has the name of the package itself inside the package:
+// <entry>/node_modules/<name>/node_modules/<name>.
+test.concurrent(
+  "isolated: --omit=optional unlinks an optional dependency that has the dependent's own name",
+  async () => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    const dependency = await packTarball(dir, {
+      name: "no-deps",
+      version: "9.9.9",
+      optionalDependencies: { "no-deps": "1.0.0" },
+    });
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": dependency } }));
+    await install(dir, "--linker", "isolated");
+    const entry = storeEntries(dir).find(name => name !== "no-deps@1.0.0")!;
+    const own = join(dir, "node_modules", ".bun", entry, "node_modules", "no-deps");
+    expect(await file(join(own, "package.json")).json()).toMatchObject({ version: "9.9.9" });
+    expect(isSymlink(join(own, "node_modules", "no-deps"))).toBeTrue();
+    expect(await file(join(own, "node_modules", "no-deps", "package.json")).json()).toMatchObject({ version: "1.0.0" });
+    const installed = nodeModulesTree(dir, { storeBins: true });
+
+    const { stdout, exitCode } = await prune(dir, "--omit=optional", "--linker", "isolated");
+    expect(lines(stdout)).toStrictEqual([BANNER, "", "- no-deps@1.0.0", REMOVED(1, 3)]);
+    expect(exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual([entry]);
+    expect(readdirSync(own).toSorted()).toStrictEqual([".bun-tag", "package.json"]);
+    expect(nodeModulesTree(dir, { storeBins: false })).toEqual(await freshInstallTree(dir, "--omit=optional"));
+
+    await install(dir, "--linker", "isolated");
+    expect(nodeModulesTree(dir, { storeBins: true })).toEqual(installed);
+  },
+);
+
+// `nativeDependencies` points the bins of a package at the platform package it depends on, as it does for esbuild
+// by default. A relinking install does not link those bins again, so prune must leave them for the entry to return.
+test.concurrent(
+  "isolated: an install after --omit=optional restores the bins that point into a native package",
+  async () => {
+    const dir = await setupWithLinker("isolated", {
+      name: "foo",
+      dependencies: { "test-postinstall-skip-parent": "1.0.0" },
+      nativeDependencies: ["test-postinstall-skip"],
+    });
+    const store = join(dir, "node_modules", ".bun");
+    const native = "test-postinstall-skip-native@1.0.0";
+    for (const entry of ["test-postinstall-skip-parent@1.0.0", "test-postinstall-skip@1.0.0"]) {
+      expectBinInstalled(join(store, entry, "node_modules"), "skip-test-cmd");
+    }
+    const installed = nodeModulesTree(dir, { storeBins: true });
+    if (!isWindows) {
+      const ownBin = `node_modules/.bun/test-postinstall-skip@1.0.0/node_modules/.bin/skip-test-cmd`;
+      expect(installed[ownBin]).toBe(
+        `-> node_modules/.bun/${native}/node_modules/test-postinstall-skip-native/bin/cmd.js`,
+      );
+    }
+
+    const { stdout, exitCode } = await prune(dir, "--omit=optional", "--linker", "isolated");
+    expect(lines(stdout)).toStrictEqual([BANNER, "", `- ${native}`, REMOVED(1, 4)]);
+    expect(exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual(["test-postinstall-skip-parent@1.0.0", "test-postinstall-skip@1.0.0"]);
+
+    await install(dir, "--linker", "isolated");
+    expect(nodeModulesTree(dir, { storeBins: true })).toEqual(installed);
   },
 );
 
@@ -3219,6 +3862,179 @@ test.concurrent("hoisted: a nested copy of a link: dependency is removed when th
   expect(await file(join(dir, "linked", "package.json")).json()).toStrictEqual({ name: "linked", version: "1.0.0" });
 });
 
+// Behind a workspace's `node_modules` that is a link are entries the workspace does not own (the root's, for one).
+// So a project with such a link is not pruned at all. An install puts a directory in the place of the link.
+const REFUSED = (...folders: string[]) =>
+  [
+    ...folders.map(folder => `error: ${folder} is a symlink, so nothing was pruned`),
+    "note: to prune this project, remove the link and run 'bun install'",
+  ].join("\n");
+
+// Every path below `dir`. A link is listed and not followed.
+function listing(dir: string, prefix = ""): string[] {
+  return readdirSync(join(dir, prefix), { withFileTypes: true })
+    .flatMap(entry => {
+      const path = join(prefix, entry.name);
+      return entry.isDirectory() ? [path, ...listing(dir, path)] : [path];
+    })
+    .toSorted();
+}
+
+// Puts a link at the workspace's `node_modules`. What the install wrote there moves to `storage`, which the link leads to.
+function linkToOwnStorage(dir: string, workspace: string) {
+  const workspaceModules = join(dir, "packages", workspace, "node_modules");
+  const storage = join(dir, "packages", workspace, "storage");
+  if (existsSync(workspaceModules)) renameSync(workspaceModules, storage);
+  else mkdirSync(storage);
+  symlinkSync(storage, workspaceModules, "junction");
+  return storage;
+}
+
+const linkedWorkspaceCases: [string, (dir: string, elsewhere: string) => string][] = [
+  ["the root's", dir => join(dir, "node_modules")],
+  ["a sibling's", dir => join(dir, "packages", "b", "node_modules")],
+  ["a scope folder of the root", dir => join(dir, "node_modules", "@types")],
+  ["a folder elsewhere", (_, elsewhere) => elsewhere],
+];
+
+for (const linker of linkers) {
+  for (const [name, target] of linkedWorkspaceCases) {
+    const title = `${linker}: nothing is pruned when a workspace node_modules is a link to ${name}`;
+    test.concurrent(title, async () => {
+      const dir = await setupWorkspaces(linker, {
+        root: { dependencies: { "no-deps": "1.0.0", "what-bin": "1.0.0", "@types/is-number": "1.0.0" } },
+        packages: {
+          a: { dependencies: { "what-bin": "1.5.0" }, devDependencies: { "a-dep": "1.0.1" } },
+          b: { dependencies: { "no-deps": "2.0.0" } },
+        },
+      });
+      using elsewhere = tempDir("prune-elsewhere", {
+        "first/package.json": JSON.stringify({ name: "first" }),
+        "second/index.js": "",
+      });
+      const workspaceModules = join(dir, "packages", "a", "node_modules");
+      rmSync(workspaceModules, { recursive: true, force: true });
+      symlinkSync(target(dir, String(elsewhere)), workspaceModules, "junction");
+      plant(dir, "node_modules/stray-root");
+      plant(dir, "node_modules/@types/stray-scoped");
+      plant(dir, "node_modules/no-deps/node_modules/stray-nested");
+      plant(dir, "packages/b/node_modules/stray-b");
+      const before = { project: listing(dir), elsewhere: listing(String(elsewhere)) };
+
+      for (const flags of [["--dry-run"], ["--check"], ["--production"], []]) {
+        const { stdout, stderr, exitCode } = await prune(dir, "--linker", linker, ...flags);
+        expect(out(stderr)).toBe(REFUSED("packages/a/node_modules"));
+        expect(out(stdout)).toBe(BANNER);
+        expect({ project: listing(dir), elsewhere: listing(String(elsewhere)) }).toEqual(before);
+        expect(exitCode).toBe(1);
+      }
+    });
+  }
+}
+
+// `b` has a tree and is reached first. `a` has none and is reached last. `one-dep` has a tree below `b`'s, so two
+// walks reach that link. The errors come sorted, one per folder.
+test.concurrent("hoisted: two workspaces behind links get one error each and one note", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "one-dep": "npm:a-dep@1.0.1", "no-deps": "2.0.0" } },
+    packages: {
+      a: { dependencies: { "a-dep": "1.0.1" } },
+      b: { dependencies: { "one-dep": "1.0.0", "no-deps": "1.0.0" } },
+    },
+  });
+  linkToOwnStorage(dir, "a");
+  const storage = linkToOwnStorage(dir, "b");
+  const nested = join(storage, "one-dep", "node_modules", "no-deps", "package.json");
+  expect((await file(nested).json()).version).toBe("1.0.1");
+  const stray = plant(dir, "packages/b/storage/stray");
+
+  const { stderr, exitCode } = await prune(dir, "--linker", "hoisted");
+  expect(out(stderr)).toBe(REFUSED("packages/a/node_modules", "packages/b/node_modules"));
+  expect(existsSync(stray)).toBeTrue();
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent("hoisted: a file at a workspace's node_modules is no error", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+  });
+  writeFileSync(join(dir, "packages", "a", "node_modules"), "");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted");
+  expect(stderr).toBe("");
+  expect(lines(stdout).at(-1)).toBe(NOTHING(3, 1));
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("hoisted: --silent prints nothing for a workspace behind a link and exits 1", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "2.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+  });
+  linkToOwnStorage(dir, "a");
+  const stray = plant(dir, "node_modules/stray-root");
+
+  const { stdout, stderr, exitCode } = await prune(dir, "--linker", "hoisted", "--silent");
+  expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+  expect(existsSync(stray)).toBeTrue();
+  expect(exitCode).toBe(1);
+});
+
+// The pass that removes stale nested copies after a hoisted `bun update` (also `bun dedupe`, `bun audit fix`) walks the same folders.
+async function update(dir: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "update", "--linker", "hoisted"],
+    env: installEnv(dir),
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  return { stderr: out(stderr), exitCode };
+}
+
+test.concurrent("hoisted: bun update does not look behind a workspace node_modules that is a link", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "1.0.0" } },
+    packages: { a: { dependencies: { "a-dep": "1.0.1" } } },
+  });
+  symlinkSync(join(dir, "node_modules"), join(dir, "packages", "a", "node_modules"), "junction");
+  const before = listing(join(dir, "node_modules"));
+  expect(before).toContain(join("a-dep", "package.json"));
+
+  const { stderr, exitCode } = await update(dir);
+  expect(stderr).not.toContain("warn:");
+  expect(listing(join(dir, "node_modules"))).toEqual(before);
+  expect(exitCode).toBe(0);
+});
+
+// `a` finds its own what-bin in `b`'s folder, through the link. There the pass takes it for a copy that hides the root's.
+test.concurrent("hoisted: bun update removes no copy while a workspace node_modules is a link", async () => {
+  const dir = await setupWorkspaces("hoisted", {
+    root: { dependencies: { "no-deps": "1.0.0", "what-bin": "1.0.0" } },
+    packages: { a: { dependencies: { "what-bin": "1.5.0" } }, b: { dependencies: { "no-deps": "2.0.0" } } },
+  });
+  const siblingModules = join(dir, "packages", "b", "node_modules");
+  const workspaceModules = join(dir, "packages", "a", "node_modules");
+  renameSync(join(workspaceModules, "what-bin"), join(siblingModules, "what-bin"));
+  rmSync(workspaceModules, { recursive: true, force: true });
+  symlinkSync(siblingModules, workspaceModules, "junction");
+  const versions = async () => ({
+    "no-deps": (await file(join(siblingModules, "no-deps", "package.json")).json()).version,
+    "what-bin": (await file(join(siblingModules, "what-bin", "package.json")).json()).version,
+  });
+  expect(await versions()).toEqual({ "no-deps": "2.0.0", "what-bin": "1.5.0" });
+
+  const { stderr, exitCode } = await update(dir);
+  expect(stderr).toContain(
+    "warn: packages/a/node_modules is a symlink, so stale copies in node_modules were not removed\n" +
+      "note: remove the link and run 'bun install', then 'bun prune'",
+  );
+  expect(await versions()).toEqual({ "no-deps": "2.0.0", "what-bin": "1.5.0" });
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("hoisted: a nested copy left behind by an override to a tarball is removed", async () => {
   const dir = await setup({ name: "foo", dependencies: { "no-deps": "2.0.0", "one-dep": "1.0.0" } });
   const nm = join(dir, "node_modules");
@@ -3234,6 +4050,8 @@ test.concurrent("hoisted: a nested copy left behind by an override to a tarball 
       overrides: { "no-deps": copyTarball(dir, "no-deps", "2.0.0") },
     }),
   );
+  // In two steps, as after a `git pull`: the install that changes bun.lock removes the copy itself.
+  await install(dir, "--lockfile-only");
   await install(dir);
   expect(await lock(dir)).not.toContain('"one-dep/no-deps"');
   expect(await lock(dir)).toContain("no-deps-2.0.0.tgz");
@@ -3533,7 +4351,7 @@ test.concurrent(
   },
 );
 
-// The docs point at --omit=optional; like every other flag bun prune does not know, --no-optional is ignored rather than rejected.
+// The docs point at --omit=optional; like every other flag bun prune does not know, --no-optional is rejected.
 test.concurrent("--no-optional is not --omit=optional", async () => {
   const dir = await setup({
     name: "foo",
@@ -3541,10 +4359,11 @@ test.concurrent("--no-optional is not --omit=optional", async () => {
     optionalDependencies: { "a-dep": "1.0.1" },
   });
 
-  const noOptional = await prune(dir, "--no-optional", "--dry-run");
-  expect(noOptional.stderr).toBe("");
-  expect(out(noOptional.stdout)).toEndWith(NOTHING(2, 1));
-  expect(noOptional.exitCode).toBe(0);
+  expect(await prune(dir, "--no-optional", "--dry-run")).toEqual({
+    stdout: "",
+    stderr: "error: bun prune has no --no-optional flag.\nnote: Run 'bun prune --help' for more information\n",
+    exitCode: 1,
+  });
 
   const omit = await prune(dir, "--omit=optional", "--dry-run");
   expect(out(omit.stdout)).toMatchInlineSnapshot(`
@@ -3576,9 +4395,11 @@ test.concurrent("--help lists every flag; -F is --filter, -p is --production", a
     Flags:
       -p, --production      Also remove packages that are only needed by devDependencies (alias: --prod)
           --omit=<val>      Also remove packages that are only needed by the given dependency types
+          --check           Exit with code 1 if node_modules has packages that can be removed, without deleting anything
           --dry-run         Print what would be removed without deleting anything
           --os=<val>        Prune for a different operating system than the current one
           --cpu=<val>       Prune for a different CPU architecture than the current one
+          --libc=<val>      Prune for a different libc than the current one
           --linker=<val>    Linker to assume when node_modules mixes isolated and hoisted installs (one of "isolated" or "hoisted")
       -F, --filter=<val>    Only prune the node_modules folders of the matching workspaces
           --silent          Don't log anything
@@ -3594,6 +4415,9 @@ test.concurrent("--help lists every flag; -F is --filter, -p is --production", a
 
       Show what would be removed without deleting anything
       bun prune --dry-run
+
+      Only report what would be removed; exit code 1 if there is anything (for CI)
+      bun prune --check
 
       Only prune what the app workspace no longer needs
       bun prune --production --filter app

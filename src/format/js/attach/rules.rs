@@ -140,8 +140,8 @@ impl<'a> Rules<'_, 'a, '_> {
 
     fn is_on_same_line_as_end_of(&self, owner: Owner<'a>) -> bool {
         // Prettier's `locEnd` of a statement does not include the `;`.
-        let end = self.cx.file.without_semicolon(self.cx.span_of(owner)).end;
-        let between = Span::new(end, self.context.comment.span().start);
+        let owner = self.cx.file.without_semicolon(self.cx.span_of(owner));
+        let between = owner.between(self.context.comment.span());
         !self.cx.source.has_newline_in_range(between)
     }
 
@@ -1227,7 +1227,7 @@ impl<'a> Rules<'_, 'a, '_> {
 
     fn should_attach_to_union_type_first_element(&self, owner: Owner<'a>) -> bool {
         let comment = self.context.comment;
-        let between = Span::new(comment.span().end, self.cx.start_of(owner));
+        let between = Span::after(comment.span(), self.cx.start_of(owner));
         is_union(owner)
             && self.is_single_line_block_comment()
             && !self.context.is_ignore_comment

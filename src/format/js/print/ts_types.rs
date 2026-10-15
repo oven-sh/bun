@@ -375,11 +375,23 @@ pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
             let Some(ty) = member.ty() else {
                 return write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
             };
-            write!(
-                f,
-                [member.flags().contains(Flags::OPTIONAL).then_some("?"), ":"]
-            );
-            write!(f, space());
+            write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
+            // `a?/* comment */ : B` for oxfmt. For Prettier the `: B` has no comments, and one before the `:` can lead `B`. So the
+            // `: B` is not entered: in it, nothing would look for a comment that is before it.
+            if !f.is_quiet() {
+                let type_annotation = AstNodes::TSTypeAnnotation(ty);
+                let owned = f.comments().of_node(type_annotation);
+                if owned.is_ignored {
+                    format_node(type_annotation, f, |_| {});
+                    // `B` is copied and not printed, and these are behind what is copied.
+                    return write!(
+                        f,
+                        trailing_comments(without_lone_operator(ty).as_ast_nodes())
+                    );
+                }
+                write!(f, FormatLeadingComments::Comments(owned.leading));
+            }
+            write!(f, [":", space()]);
             // `a: // comment ⏎ B` stays as it is for oxfmt. The comment dangles from the signature.
             if !f.is_quiet() && !union_writes_comments_behind_colon(without_lone_operator(ty), f) {
                 let comments_behind_colon = f.comments().of_node(node).dangling;
@@ -593,7 +605,8 @@ impl<'a> ImportTypeComments<'a> {
         let (leading, trailing) = (self.leading_source, self.trailing_source);
         format_with(move |f: &mut Formatter<'a>| {
             write!(f, FormatLeadingComments::Comments(leading));
-            match has_ignore_comment(&[leading], trailing, f) {
+            let is_ignored = has_ignore_comment(&[leading], trailing, f);
+            f.around_cursor(source, |f| match is_ignored {
                 true => write!(f, FormatSuppressedNode(source)),
                 false => write!(
                     f,
@@ -603,7 +616,7 @@ impl<'a> ImportTypeComments<'a> {
                         StringLiteralParentKind::Expression
                     )
                 ),
-            }
+            });
             write!(f, FormatTrailingComments::Comments(trailing));
         })
     }

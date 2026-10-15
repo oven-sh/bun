@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 
 test("it will create a snapshot file and directory if they don't exist", () => {
   const tempDir = tmpdirSync();
@@ -103,6 +103,51 @@ describe("writing the .snap file", () => {
     });
     const { exitCode } = await runBunTest(dir, ["./a.test.ts", "./b.test.ts"]);
     expect(fs.readFileSync(`${dir}/__snapshots__/a.test.ts.snap`, "utf8")).toBe(writtenSnap);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("--rerun-each writes the snapshots of a file that throws on its second load", async () => {
+    using dir = tempDir("snapshot-rerun-each-load-error", {
+      "a.test.ts": /*js*/ `
+        import { test, expect } from "bun:test";
+        if (globalThis.loadedOnce) throw new Error("second load");
+        globalThis.loadedOnce = true;
+        test("snap", () => { expect("value").toMatchSnapshot(); });
+      `,
+      "b.test.ts": `process.exit(1);`,
+    });
+    const { exitCode } = await runBunTest(dir, ["--rerun-each", "2", "./a.test.ts", "./b.test.ts"]);
+    expect(fs.readFileSync(`${dir}/__snapshots__/a.test.ts.snap`, "utf8")).toBe(writtenSnap);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("a .snap that fails to parse does not break the next file's snapshots", async () => {
+    using dir = tempDir("snapshot-parse-error-earlier-file", {
+      "a.test.ts": snapTest,
+      "b.test.ts": snapTest,
+      "__snapshots__": { "a.test.ts.snap": header + "\nexports[`snap 1`] = ;\n" },
+    });
+    const { stderr, exitCode } = await runBunTest(dir, ["./a.test.ts", "./b.test.ts"]);
+    expect(fs.readFileSync(`${dir}/__snapshots__/b.test.ts.snap`, "utf8")).toBe(writtenSnap);
+    expect(stderr).toContain("1 pass");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  // A FIFO accepts the open but not the positional write at the end of the file.
+  test.skipIf(isWindows).concurrent("a .snap that cannot be written fails the file and the run goes on", async () => {
+    using dir = tempDir("snapshot-write-error", {
+      "a.test.ts": snapTest,
+      "b.test.ts": snapTest,
+      "__snapshots__": {},
+    });
+    expect(Bun.spawnSync({ cmd: ["mkfifo", `${dir}/__snapshots__/a.test.ts.snap`] }).exitCode).toBe(0);
+    const { stderr, exitCode } = await runBunTest(dir, ["--update-snapshots", "./a.test.ts", "./b.test.ts"]);
+    expect(stderr).toContain("Failed to write snapshot file");
+    // Nothing of a's unwritten .snap ends up in b's.
+    expect(fs.readFileSync(`${dir}/__snapshots__/b.test.ts.snap`, "utf8")).toBe(writtenSnap);
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("1 fail");
     expect(exitCode).toBe(1);
   });
 });

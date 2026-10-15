@@ -2996,7 +2996,9 @@ impl TestCommand {
                         unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
                     }
 
-                    return Ok(());
+                    // No further repeats; the file still ends below so what an earlier repeat
+                    // recorded is written.
+                    break;
                 }
                 _ => {}
             }
@@ -3081,10 +3083,11 @@ impl TestCommand {
         if let Some(junit) = reporter.reporters.junit.as_mut() {
             let _ = junit.end_file(None);
         }
-        // Per file, so this file's snapshots are on disk however a later file ends.
+        // Per file, so this file's snapshots are on disk however a later file ends. A failed
+        // write fails the file, like a load error, and the run goes on to the next file.
         if let Err(err) = reporter.jest.snapshots.write_snapshot_file() {
             Output::err(err.name(), "Failed to write snapshot file", ());
-            return Err(err);
+            reporter.summary().fail += 1;
         }
         Ok(())
     }

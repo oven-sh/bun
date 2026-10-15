@@ -119,7 +119,6 @@ template<> struct WebCore::Converter<Bun::IDLArrayBufferRef>
         Ctx& ctx)
     {
         auto& vm = JSC::getVM(&globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
         if (auto* jsBuffer = JSC::toUnsharedArrayBuffer(vm, value)) {
             return jsBuffer;
         }
@@ -131,6 +130,8 @@ template<> struct WebCore::Converter<Bun::IDLArrayBufferRef>
             if (auto bytes = JSC::ArrayBuffer::tryCreate(jsView->span())) {
                 return bytes;
             }
+            // Declared where it throws: at the top, every caller would owe a check for the paths that cannot.
+            auto scope = DECLARE_THROW_SCOPE(vm);
             JSC::throwOutOfMemoryError(&globalObject, scope);
         }
         return std::nullopt;

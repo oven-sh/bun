@@ -129,15 +129,15 @@ export function cppEmplace(optional: string, fill: (target: string) => string): 
 }
 
 export abstract class Type {
-  /** `undefined` means "not provided". */
+  /** `undefined` means absent. */
   get optional(): OptionalType {
     return new OptionalType(this, "optional");
   }
-  /** `null` or `undefined` means "not provided". */
+  /** `null` or `undefined` means absent. */
   get nullable(): OptionalType {
     return new OptionalType(this, "nullable");
   }
-  /** Every falsy value means "not provided". */
+  /** Every falsy value means absent. */
   get falsyAsNull(): OptionalType {
     return new OptionalType(this, "falsyAsNull");
   }
@@ -145,7 +145,7 @@ export abstract class Type {
   get withValue(): WithValueType {
     return new WithValueType(this);
   }
-  /** Value to use when not provided. Only for arguments and dictionary members. */
+  /** Value to use when absent. Only for arguments and dictionary members. */
   default(value: unknown): DefaultType {
     return new DefaultType(this, value);
   }
@@ -812,14 +812,14 @@ export class OptionalType extends Type {
   /** What converts in place is null when default-constructed. A pointer to a class instance, which does not, is not. */
   cppConvertInto(target: string, value: string, ctx: string, name: string): string {
     if (!this.convertsInPlace) return super.cppConvertInto(target, value, ctx, name);
-    const provided = {
+    const present = {
       optional: `!${value}.isUndefined()`,
       nullable: `!${value}.isUndefinedOrNull()`,
       falsyAsNull: `${value}.toBoolean(globalObject)`,
     }[this.modifier];
     const convert = (slot: string) => this.inner.cppConvertInto(slot, value, ctx, name);
     const body = this.inner.nullRepresentation === "optional" ? cppEmplace(target, convert) : convert(target);
-    return `if (${provided}) {\n${indent(body, 4)}\n}`;
+    return `if (${present}) {\n${indent(body, 4)}\n}`;
   }
   toCpp(value: unknown): string {
     return value == null ? `${this.idlType}::nullValue()` : this.inner.toCpp(value);
@@ -1204,7 +1204,7 @@ export class DictionaryType extends NamedType {
     });
     return fields.filter(text => text.length > 0).join("\n");
   }
-  /** Every member can be left out. */
+  /** Every member can be absent. */
   get hasDefault(): boolean {
     return this.members.every(member => member.type.takesUndefined);
   }

@@ -204,7 +204,7 @@ export const BracesOptions = b.dictionary({
 Each member is read, then converted, in declaration order, once. A member
 whose type does not accept `undefined` is required. A member can be written
 `{ type, internalName, altNames }` to rename its field or to accept other spellings.
-A dictionary whose members can all be left out implements `Default`.
+A dictionary whose members can all be absent implements `Default`.
 
 A member is looked up on the object and its prototype chain, **stopping before
 the calling realm's `Object.prototype`**, so a polluted `Object.prototype` cannot

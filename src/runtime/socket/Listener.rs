@@ -2043,7 +2043,8 @@ impl WindowsNamedPipeListeningContext {
 }
 
 /// `us_dispatch_server_name` for a socket adopted into TLS, which has no listen
-/// socket. Only the fd-adopt path registers this, not the duplex wrap.
+/// socket. The duplex wrap asks through `ask_server_name` too
+/// (`DuplexUpgradeContext::on_server_name`).
 ///
 /// # Safety
 /// `socket` is the live us_socket_t processing this ClientHello and `hostname`
@@ -2057,39 +2058,58 @@ pub(crate) extern "C" fn us_dispatch_socket_server_name(
     dispatch_server_name(socket, hostname, abort_handshake).cast()
 }
 
-/// Shared decoding of what the JS SNI handler returned. See
-/// `us_dispatch_server_name` for the contract.
-fn decode_sni_result(result: JSValue, abort_handshake: *mut core::ffi::c_int) -> *mut c_void {
-    if result.is_boolean() && result.to_boolean() {
+/// What the JS SNI handler (`ServerHandlers.serverName` in node:net) answered
+/// for one ClientHello. See `us_dispatch_server_name` for the contract.
+pub(crate) enum ServerNameAnswer {
+    /// undefined / null: the default context (on a listener, its SNI tree first).
+    Default,
+    /// A native SecureContext, for this handshake only.
+    Context(boring_sys::OwnedSslCtx),
+    /// `true`: the SNICallback is asynchronous. `handle.resumeSNI(...)` answers.
+    Pending,
+    /// An Error, a throw, or a value that is not a SecureContext: the
+    /// connection is dropped with no TLS alert.
+    Refused,
+}
+
+impl ServerNameAnswer {
+    fn from_js(result: JSValue) -> Self {
+        if result.is_boolean() && result.to_boolean() {
+            return Self::Pending;
+        }
+        if result.to_error().is_some() {
+            return Self::Refused;
+        }
+        if result.is_undefined_or_null() {
+            return Self::Default;
+        }
+        match result.as_class_ref::<SecureContext>() {
+            Some(sc) => {
+                let ctx = sc.ctx.clone();
+                super::socket_body::install_sni_alpn_selector(ctx.as_ptr());
+                Self::Context(ctx)
+            }
+            // Node treats anything else as an invalid SNI context.
+            None => Self::Refused,
+        }
+    }
+
+    /// openssl.c's form: the context with a +1 that the C dispatcher frees
+    /// after `SSL_set_SSL_CTX` took its own, or null with `*abort_handshake`
+    /// 1 (refuse) or 2 (suspend).
+    fn into_raw(self, abort_handshake: *mut core::ffi::c_int) -> *mut c_void {
+        let code = match self {
+            Self::Default => return core::ptr::null_mut(),
+            Self::Context(ctx) => return ctx.into_raw().cast(),
+            Self::Refused => 1,
+            Self::Pending => 2,
+        };
         if !abort_handshake.is_null() {
             // SAFETY: live out-parameter for the duration of this dispatch.
-            unsafe { *abort_handshake = 2 };
+            unsafe { *abort_handshake = code };
         }
-        return core::ptr::null_mut();
+        core::ptr::null_mut()
     }
-    if result.to_error().is_some() {
-        if !abort_handshake.is_null() {
-            // SAFETY: live out-parameter for the duration of this dispatch.
-            unsafe { *abort_handshake = 1 };
-        }
-        return core::ptr::null_mut();
-    }
-    if result.is_undefined_or_null() {
-        return core::ptr::null_mut();
-    }
-    if let Some(sc) = result.as_class_ref::<SecureContext>() {
-        // The C dispatcher frees this +1 after `SSL_set_SSL_CTX` takes its own.
-        let ctx = sc.ctx.clone().into_raw();
-        super::socket_body::install_sni_alpn_selector(ctx);
-        return ctx.cast();
-    }
-    // Anything else is not a SecureContext: Node treats this as an invalid SNI
-    // context and drops the connection.
-    if !abort_handshake.is_null() {
-        // SAFETY: live out-parameter for the duration of this dispatch.
-        unsafe { *abort_handshake = 1 };
-    }
-    core::ptr::null_mut()
 }
 
 /// `openssl.c`'s `us_select_cert_cb` (the early select-certificate callback)
@@ -2134,10 +2154,22 @@ fn dispatch_server_name(
         Some(tls) => tls,
         None => return core::ptr::null_mut(),
     };
+    // SAFETY: `hostname` is NUL-terminated per the fn contract.
+    let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
+    ask_server_name(tls, name).into_raw(abort_handshake)
+}
+
+/// Asks the `serverName` handler of a server-side socket. Both TLS engines
+/// call it: a `us_socket_t` from inside BoringSSL's early callback, the
+/// stream engine with its handshake paused.
+pub(crate) fn ask_server_name(
+    tls: bun_ptr::ThisPtr<TLSSocket>,
+    name: &core::ffi::CStr,
+) -> ServerNameAnswer {
     // An idle socket can drop its Handlers while the us_socket_t lives on;
     // `get_handlers()` would panic. Same guard as `select_alpn_callback`.
     if !tls.has_handlers() {
-        return core::ptr::null_mut();
+        return ServerNameAnswer::Default;
     }
     // No `Handlers::enter`/`exit` scope here: that protocol tracks the
     // accepted-socket callback lifecycle, and running it from inside the
@@ -2145,7 +2177,7 @@ fn dispatch_server_name(
     let handlers = tls.get_handlers();
     let callback = handlers.on_server_name();
     if callback.is_empty() {
-        return core::ptr::null_mut();
+        return ServerNameAnswer::Default;
     }
     let global = handlers.global_object;
     // The resume handle an asynchronous SNICallback uses (`handle.resumeSNI(...)`).
@@ -2159,8 +2191,6 @@ fn dispatch_server_name(
         None => TLSSocket::data_get_cached(socket_handle),
     }
     .unwrap_or(JSValue::UNDEFINED);
-    // SAFETY: `hostname` is NUL-terminated per the fn contract.
-    let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
     // Peer-supplied SNI bytes, decoded as Latin-1 like Node's `OneByteString`.
     let js_name = EncodedSlice::latin1(name.to_bytes()).to_js(&global);
     let result = match callback.call(&global, this_value, &[this_value, js_name, socket_handle]) {
@@ -2176,5 +2206,5 @@ fn dispatch_server_name(
     //     threw) -> abort the handshake; the connection is dropped without an
     //     alert and the JS side emits 'tlsClientError' from the
     //     handshake-failure path with the stashed error.
-    decode_sni_result(result, abort_handshake)
+    ServerNameAnswer::from_js(result)
 }

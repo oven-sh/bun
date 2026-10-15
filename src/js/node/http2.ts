@@ -94,8 +94,6 @@ const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 
 const H2FrameParser = $rust("h2_frame_parser.rs", "H2FrameParserConstructor");
-const { upgradeRawSocketToH2 } = require("node:_http2_upgrade");
-type UpgradableSecureServer = Parameters<typeof upgradeRawSocketToH2>[1];
 
 const kSettingIds: Record<number, string> = {
   0x1: "headerTableSize",
@@ -6639,7 +6637,6 @@ function onErrorSecureServerSession(err, socket) {
 function emitFrameErrorEventNT(stream, frameType, errorCode) {
   stream.emit("frameError", frameType, errorCode);
 }
-interface Http2SecureServer extends UpgradableSecureServer {}
 class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase) {
   declare keepAliveTimeout: number | undefined;
   declare headersTimeout: number | undefined;
@@ -6684,15 +6681,6 @@ class Http2SecureServer extends (tls.Server as unknown as Http2SecureServerBase)
       this.on("request", onRequestHandler);
     }
     this.on("tlsClientError", onErrorSecureServerSession);
-  }
-  emit(event: string, ...args: any[]) {
-    if (event === "connection") {
-      const socket = args[0];
-      if (socket && !(socket instanceof TLSSocket)) {
-        return upgradeRawSocketToH2(connectionListener, this, socket);
-      }
-    }
-    return super.emit(event, ...args);
   }
   setTimeout(ms, callback) {
     if (callback !== undefined && typeof callback !== "function") {

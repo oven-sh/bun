@@ -3197,7 +3197,7 @@ void us_ssl_ctx_set_sni_policy(SSL_CTX *ctx, int request_cert, int reject_unauth
  * authenticated again, against this context's CA. That refusal is deliberate
  * (RFC 6066 section 3; openssl/ssl.h: "partition session caches between SNI
  * hosts") and must not be relaxed for parity with another runtime. */
-static void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
+void us_ssl_apply_selected_ctx(SSL *ssl, SSL_CTX *ctx) {
   SSL_set_SSL_CTX(ssl, ctx);
   if (us_ctx_sni_policy_ex_idx < 0) return;
   uintptr_t policy = (uintptr_t)SSL_CTX_get_ex_data(ctx, us_ctx_sni_policy_ex_idx);

@@ -300,6 +300,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   public storedError: Error | null = null;
   private _closed: boolean = false;
   public queries: Set<Query<any, any>> = new Set();
+  public openTransaction: object | null = null;
 
   constructor(connectionInfo: Bun.SQL.__internal.DefinedSQLiteOptions) {
     this.connectionInfo = connectionInfo;
@@ -506,6 +507,12 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
       // The getter throws on a closed database. The caller then goes on as if nothing was known.
       return true;
     }
+  }
+  takeLostTransaction(connection: BunSQLiteModule.Database): object | undefined {
+    const state = this.openTransaction;
+    if (state === null || this.isInTransaction(connection)) return;
+    this.openTransaction = null;
+    return state;
   }
   rollbackFailedCommit(connection: BunSQLiteModule.Database): void {
     try {

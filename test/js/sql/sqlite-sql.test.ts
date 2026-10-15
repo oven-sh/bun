@@ -1578,6 +1578,189 @@ describe("Transactions", () => {
         next: "fulfilled",
       });
     });
+
+    // After the rollback, no other statement of the begin() runs outside a transaction.
+    describe("the other statements of the begin()", () => {
+      const refused = "ERR_SQLITE_INVALID_TRANSACTION_STATE";
+
+      describe.each(conflicts)("$name", ({ k, conflict, code }) => {
+        test("the queries of an array after the conflict do not run", async () => {
+          await using db = await open(k);
+          const begin = await settle(
+            db.begin(tx => [
+              tx`INSERT INTO t VALUES ('first')`,
+              tx.unsafe(conflict),
+              tx`INSERT INTO t VALUES ('second')`,
+            ]),
+          );
+          expect({ begin, ...(await after(db)) }).toEqual({ begin: code, ...clean });
+        });
+
+        test("a later statement rejects and writes nothing", async () => {
+          await using db = await open(k);
+          let later: string | undefined;
+          const begin = await settle(
+            db.begin(async tx => {
+              await tx`INSERT INTO t VALUES ('first')`;
+              await tx.unsafe(conflict).catch(() => {});
+              later = await settle(tx`INSERT INTO t VALUES ('second')`);
+            }),
+          );
+          expect({ later, begin, ...(await after(db)) }).toEqual({ later: refused, begin: refused, ...clean });
+        });
+      });
+
+      // A begin() that moves 40 rows to another table. The database gets full at the seventh insert.
+      describe.each([
+        { form: "an array", begin: "SQLITE_FULL", move: (tx, inserts) => [...inserts(), tx`DELETE FROM live`] },
+        {
+          form: "Promise.all",
+          begin: "SQLITE_FULL",
+          move: (tx, inserts) => Promise.all([...inserts(), tx`DELETE FROM live`]),
+        },
+        {
+          form: "Promise.allSettled, then the delete",
+          begin: refused,
+          move: async (tx, inserts) => {
+            await Promise.allSettled(inserts());
+            await tx`DELETE FROM live`;
+          },
+        },
+        {
+          form: "a loop that catches each failure, then the delete",
+          begin: refused,
+          move: async (tx, inserts) => {
+            for (const insert of inserts()) await insert.catch(() => {});
+            await tx`DELETE FROM live`;
+          },
+        },
+      ])("a full database, statements in $form", ({ begin: expected, move }) => {
+        test("no row is lost", async () => {
+          await using db = new SQL("sqlite://:memory:");
+          await db`CREATE TABLE live (id INTEGER PRIMARY KEY, payload TEXT)`;
+          await db`CREATE TABLE archive (id INTEGER PRIMARY KEY, payload TEXT)`;
+          const payload = Buffer.alloc(3000, "x").toString();
+          for (let id = 1; id <= 40; id++) await db`INSERT INTO live VALUES (${id}, ${payload})`;
+          const [{ page_count }] = await db`PRAGMA page_count`;
+          await db.unsafe(`PRAGMA max_page_count = ${page_count + 6}`);
+
+          const begin = await settle(
+            db.begin(tx =>
+              move(tx, () =>
+                Array.from({ length: 40 }, (_, i) => tx`INSERT INTO archive VALUES (${i + 1}, ${payload})`),
+              ),
+            ),
+          );
+          const [{ live }] = await db`SELECT count(*) AS live FROM live`;
+          const [{ archive }] = await db`SELECT count(*) AS archive FROM archive`;
+          expect({ begin, live, archive }).toEqual({ begin: expected, live: 40, archive: 0 });
+        });
+      });
+
+      test("a conflict of a statement on the instance stops what begin() started", async () => {
+        await using db = await open();
+        const begin = await settle(
+          db.begin(async tx => {
+            await tx`INSERT INTO t VALUES ('first')`;
+            await Promise.all([db`INSERT OR ROLLBACK INTO k VALUES (1)`, tx`INSERT INTO t VALUES ('second')`]);
+          }),
+        );
+        expect({ begin, ...(await after(db)) }).toEqual({ begin: primaryKey, ...clean });
+      });
+
+      test("the error says that the database rolled the transaction back", async () => {
+        await using db = await open();
+        let statement: Error | undefined;
+        const begin = await db
+          .begin(async tx => {
+            await tx`INSERT OR ROLLBACK INTO k VALUES (1)`.catch(() => {});
+            await tx`INSERT INTO t VALUES ('second')`.catch(e => (statement = e));
+          })
+          .catch(e => e);
+        expect({ statement: statement?.message, begin: begin.message }).toEqual({
+          statement: "cannot run a query: the database rolled back the transaction of this sql.begin()",
+          begin: "cannot commit: the database rolled back the transaction of this sql.begin()",
+        });
+      });
+
+      test("a query made before the rollback and started after it rejects", async () => {
+        await using db = await open();
+        let later: string | undefined;
+        const begin = await settle(
+          db.begin(async tx => {
+            const second = tx`INSERT INTO t VALUES ('second')`;
+            await tx`INSERT OR ROLLBACK INTO k VALUES (1)`.catch(() => {});
+            later = await settle(second);
+          }),
+        );
+        expect({ later, begin, ...(await after(db)) }).toEqual({ later: refused, begin: refused, ...clean });
+      });
+
+      test("tx.unsafe(), tx.savepoint() and a BEGIN through tx reject", async () => {
+        await using db = await open();
+        const later: Record<string, string> = {};
+        const begin = await settle(
+          db.begin(async tx => {
+            await tx`INSERT OR ROLLBACK INTO k VALUES (1)`.catch(() => {});
+            later.unsafe = await settle(tx.unsafe("INSERT INTO t VALUES ('second')"));
+            later.savepoint = await settle(tx.savepoint(sp => sp`INSERT INTO t VALUES ('third')`));
+            later.begin = await settle(tx.unsafe("BEGIN"));
+          }),
+        );
+        expect({ later, begin, ...(await after(db)) }).toEqual({
+          later: { unsafe: refused, savepoint: refused, begin: refused },
+          begin: refused,
+          ...clean,
+        });
+      });
+
+      test("begin() rejects when the callback returns with no other statement", async () => {
+        await using db = await open();
+        const begin = await settle(
+          db.begin(async tx => {
+            await tx`INSERT INTO t VALUES ('first')`;
+            await tx`INSERT OR ROLLBACK INTO k VALUES (1)`.catch(() => {});
+            return "done";
+          }),
+        );
+        expect({ begin, ...(await after(db)) }).toEqual({ begin: refused, ...clean });
+      });
+
+      test("a statement runs in a transaction that the callback opened by hand, and begin() rejects", async () => {
+        await using db = await open();
+        let inHand: string | undefined;
+        const begin = await settle(
+          db.begin(async tx => {
+            await tx`INSERT OR ROLLBACK INTO k VALUES (1)`.catch(() => {});
+            await db.unsafe("BEGIN");
+            inHand = await settle(tx`INSERT INTO t VALUES ('in the transaction opened by hand')`);
+          }),
+        );
+        expect({ inHand, begin, ...(await after(db)) }).toEqual({ inHand: "fulfilled", begin: refused, ...clean });
+      });
+
+      test("a statement that starts after begin() rejected writes nothing", async () => {
+        await using db = await open();
+        let handle: any;
+        let made: any;
+        const begin = await settle(
+          db.begin(async tx => {
+            handle = tx;
+            made = tx`INSERT INTO t VALUES ('made before')`;
+            await tx`INSERT OR ROLLBACK INTO k VALUES (1)`;
+          }),
+        );
+        const late = {
+          made: await settle(made),
+          unsafe: await settle(handle.unsafe("INSERT INTO t VALUES ('unsafe')")),
+        };
+        expect({ begin, late, ...(await after(db)) }).toEqual({
+          begin: primaryKey,
+          late: { made: refused, unsafe: refused },
+          ...clean,
+        });
+      });
+    });
   });
 });
 

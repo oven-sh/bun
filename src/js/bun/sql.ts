@@ -34,6 +34,8 @@ enum ReservedConnectionState {
   acceptQueries = 1 << 0,
   closed = 1 << 1,
   released = 1 << 2,
+  /// The database rolled the transaction of this begin() back inside a failing statement.
+  lostTransaction = 1 << 4,
 }
 
 interface TransactionState {
@@ -126,6 +128,7 @@ const SQL = function SQL(
       }
     } catch (err) {
       query.reject(err as Error);
+      if (pool.takeLostTransaction) markLostTransaction(connectionHandle);
     }
   }
   function queryFromPoolHandler(query, handle, err) {
@@ -179,8 +182,9 @@ const SQL = function SQL(
     transactionQueries.delete(query);
   }
 
-  function queryFromTransactionHandler(transactionQueries, query, handle, err) {
+  function queryFromTransactionHandler(state: TransactionState, query, handle, err) {
     const pooledConnection = this;
+    const transactionQueries = state.queries;
     if (err) {
       transactionQueries.delete(query);
       return query.reject(err);
@@ -190,6 +194,16 @@ const SQL = function SQL(
     if (query.cancelled) {
       transactionQueries.delete(query);
       return query.reject(pool.queryCancelledError());
+    }
+
+    // With no transaction open, the statement would run in autocommit.
+    if (state.connectionState & ReservedConnectionState.lostTransaction && !hasTransaction(pooledConnection)) {
+      transactionQueries.delete(query);
+      return query.reject(
+        pool.invalidTransactionStateError(
+          "cannot run a query: the database rolled back the transaction of this sql.begin()",
+        ),
+      );
     }
 
     query.finally(onTransactionQueryDisconnected.bind(transactionQueries, query));
@@ -203,8 +217,21 @@ const SQL = function SQL(
       }
     } catch (err) {
       query.reject(err);
+      if (pool.takeLostTransaction) markLostTransaction(pooledConnection);
       // The statement failed inside this call (SQLite runs it synchronously).
       return true;
+    }
+  }
+
+  // A statement of the connection failed. If the database ended a transaction in it, the begin() that had it is marked.
+  function markLostTransaction(connection) {
+    const state = pool.takeLostTransaction!(connection) as TransactionState | undefined;
+    if (state) state.connectionState |= ReservedConnectionState.lostTransaction;
+  }
+
+  function beginFromTransactionHandler(state: TransactionState, query, handle, err) {
+    if (!queryFromTransactionHandler.$call(this, state, query, handle, err) && !err && !query.cancelled) {
+      pool.openTransaction = state;
     }
   }
 
@@ -214,8 +241,8 @@ const SQL = function SQL(
   }
 
   // Rolls back in the call where COMMIT failed: the runner resumes after other statements of the connection ran.
-  function commitFromTransactionHandler(transactionQueries, query, handle, err) {
-    if (queryFromTransactionHandler.$call(this, transactionQueries, query, handle, err)) {
+  function commitFromTransactionHandler(state: TransactionState, query, handle, err) {
+    if (queryFromTransactionHandler.$call(this, state, query, handle, err)) {
       pool.rollbackFailedCommit!(this);
     }
   }
@@ -224,7 +251,7 @@ const SQL = function SQL(
     strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
     values: any[],
     pooledConnection: PooledConnection,
-    transactionQueries: Set<Query<any, any>>,
+    state: TransactionState,
   ) {
     try {
       const query = new Query(
@@ -233,11 +260,11 @@ const SQL = function SQL(
         connectionInfo.bigint
           ? SQLQueryFlags.allowUnsafeTransaction | SQLQueryFlags.bigint
           : SQLQueryFlags.allowUnsafeTransaction,
-        queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        queryFromTransactionHandler.bind(pooledConnection, state),
         pool,
       );
 
-      transactionQueries.add(query);
+      state.queries.add(query);
       return query;
     } catch (err) {
       return Promise.$reject(err);
@@ -248,7 +275,7 @@ const SQL = function SQL(
     strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
     values: any[],
     pooledConnection: PooledConnection,
-    transactionQueries: Set<Query<any, any>>,
+    state: TransactionState,
     handler?,
   ) {
     try {
@@ -263,10 +290,10 @@ const SQL = function SQL(
         strings,
         values,
         flags,
-        handler || queryFromTransactionHandler.bind(pooledConnection, transactionQueries),
+        handler || queryFromTransactionHandler.bind(pooledConnection, state),
         pool,
       );
-      transactionQueries.add(query);
+      state.queries.add(query);
       return query;
     } catch (err) {
       return Promise.$reject(err);
@@ -399,18 +426,18 @@ const SQL = function SQL(
         return new SQLHelper([strings], values);
       }
       // we use the same code path as the transaction sql
-      return queryFromTransaction(strings, values, pooledConnection, state.queries);
+      return queryFromTransaction(strings, values, pooledConnection, state);
     }
 
     reserved_sql.unsafe = (string, args = []) => {
-      return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
+      return unsafeQueryFromTransaction(string, args, pooledConnection, state);
     };
 
     reserved_sql.file = async (path: string, args = []) => {
       return await Bun.file(path)
         .text()
         .then(text => {
-          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
+          return unsafeQueryFromTransaction(text, args, pooledConnection, state);
         });
     };
 
@@ -685,7 +712,7 @@ const SQL = function SQL(
       if (state.connectionState & ReservedConnectionState.closed) {
         return Promise.$reject(pool.connectionClosedError());
       }
-      return unsafeQueryFromTransaction(string, [], pooledConnection, state.queries, handler);
+      return unsafeQueryFromTransaction(string, [], pooledConnection, state, handler);
     }
     function transaction_sql(
       strings: string | TemplateStringsArray | import("internal/sql/shared.ts").SQLHelper<any> | Query<any, any>,
@@ -706,16 +733,16 @@ const SQL = function SQL(
         return new SQLHelper([strings], values);
       }
 
-      return queryFromTransaction(strings, values, pooledConnection, state.queries);
+      return queryFromTransaction(strings, values, pooledConnection, state);
     }
     transaction_sql.unsafe = (string, args = []) => {
-      return unsafeQueryFromTransaction(string, args, pooledConnection, state.queries);
+      return unsafeQueryFromTransaction(string, args, pooledConnection, state);
     };
     transaction_sql.file = async (path: string, args = []) => {
       return await Bun.file(path)
         .text()
         .then(text => {
-          return unsafeQueryFromTransaction(text, args, pooledConnection, state.queries);
+          return unsafeQueryFromTransaction(text, args, pooledConnection, state);
         });
     };
     // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
@@ -891,11 +918,19 @@ const SQL = function SQL(
     }
     let needs_rollback = false;
     try {
-      await run_internal_transaction_sql(BEGIN_COMMAND);
+      await run_internal_transaction_sql(
+        BEGIN_COMMAND,
+        pool.takeLostTransaction && beginFromTransactionHandler.bind(pooledConnection, state),
+      );
       needs_rollback = true;
       let transaction_result = await callback(transaction_sql);
       if ($isArray(transaction_result)) {
         transaction_result = await Promise.all(transaction_result);
+      }
+      if (state.connectionState & ReservedConnectionState.lostTransaction) {
+        throw pool.invalidTransactionStateError(
+          "cannot commit: the database rolled back the transaction of this sql.begin()",
+        );
       }
       // at this point we dont need to rollback anymore
       needs_rollback = false;
@@ -904,7 +939,7 @@ const SQL = function SQL(
       }
       const commit_result = await run_internal_transaction_sql(
         COMMIT_COMMAND,
-        pool.rollbackFailedCommit && commitFromTransactionHandler.bind(pooledConnection, state.queries),
+        pool.rollbackFailedCommit && commitFromTransactionHandler.bind(pooledConnection, state),
       );
       // PostgreSQL answers COMMIT on an aborted transaction with a
       // CommandComplete tag of "ROLLBACK" (the session is already in the
@@ -935,6 +970,7 @@ const SQL = function SQL(
       return reject(err);
     } finally {
       state.connectionState |= ReservedConnectionState.closed;
+      if (pool.openTransaction === state) pool.openTransaction = null;
       // Use adapter method to detach connection close handler
       if (pool.detachConnectionCloseHandler) {
         pool.detachConnectionCloseHandler(pooledConnection, onClose);

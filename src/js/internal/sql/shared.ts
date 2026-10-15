@@ -2263,6 +2263,10 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   rollbackFailedCommit?(connection: Connection): void;
   /// SQLite only: it can end a transaction inside a failing statement. Whether a ROLLBACK has a transaction to end.
   isInTransaction?(connection: Connection): boolean;
+  /// SQLite only: the state of the begin() that has the open transaction. The runner sets it and clears it.
+  openTransaction?: object | null;
+  /// SQLite only: called where a statement failed. Returns and clears `openTransaction` if the database ended that transaction.
+  takeLostTransaction?(connection: Connection): object | undefined;
   attachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;
   detachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;
 

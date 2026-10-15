@@ -1971,14 +1971,19 @@ function connectError(native: NativeClient, error: NativeError): Error {
       err = new Error(`getaddrinfo ENOTFOUND ${url.hostname}`);
       err.syscall = "getaddrinfo";
       err.hostname = url.hostname;
-    } else if (errno === undefined) {
-      return error;
     } else if (url.protocol === "ws+unix:" || url.protocol === "wss+unix:") {
-      return new (require("internal/shared").ExceptionWithHostPort)(-errno, "connect", url.pathname.split(":")[0]);
+      const path = url.pathname.split(":")[0];
+      err = new Error(`connect ${code} ${path}`);
+      err.syscall = "connect";
+      err.address = path;
     } else {
+      // Not `ExceptionWithHostPort`, which takes the name from a number of libuv. All there is here is the name.
       const port = +url.port || (url.protocol === "wss:" ? 443 : 80);
       const host = url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname;
-      return new (require("internal/shared").ExceptionWithHostPort)(-errno, "connect", host, port);
+      err = new Error(`connect ${code} ${host}:${port}`);
+      err.syscall = "connect";
+      err.address = host;
+      err.port = port;
     }
   }
 

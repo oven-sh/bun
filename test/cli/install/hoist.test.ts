@@ -1729,6 +1729,57 @@ describe.concurrent("a peer dependency is the package that its dependent loads",
     await run(dir, "install", "--frozen-lockfile");
     expect(loaded(ui, "react")).toBe("19.0.0");
   });
+
+  // ui@1.2.0 fits the peer range of `lib` and cannot stand at the top, next to core 1. In the node_modules of `lib`,
+  // next to core 2, it would hide the ui@1.0.0 at the top that `lib` asks for itself.
+  test.each(
+    (["update", "update --latest", "add ui@^1.2.0"] as const).flatMap(command =>
+      [
+        ["dependencies", "~1.0.0"],
+        ["dependencies", "1.0.0"],
+        ["devDependencies", "~1.0.0"],
+      ].map(([group, range]) => [command, group, range] as const),
+    ),
+  )("hoisted: bun %s in another member, %s %p of the member itself", async (command, group, range) => {
+    const [any, later] = [{ peerDependencies: { core: ">=1" } }, { peerDependencies: { core: "^2.0.0" } }];
+    // The last one is `latest`.
+    const ui: Record<string, object> = { "1.0.0": any, "2.0.0": any, "1.2.0": later };
+    using server = await serveGraph({ ui, core: { "1.0.0": {}, "2.0.0": {} } });
+    delete ui["1.2.0"];
+    using tmp = tempDir("peer-and-own-range", {
+      "bunfig.toml": bunfig(server, "hoisted"),
+      "pk/app/bunfig.toml": bunfig(server, "hoisted"),
+      "package.json": JSON.stringify({
+        name: "root",
+        workspaces: ["pk/*"],
+        devDependencies: { ui: "<=1.2.0", core: "^1.0.0" },
+      }),
+      "pk/app/package.json": JSON.stringify({
+        name: "app",
+        dependencies: { ui: "latest" },
+        devDependencies: { core: "^2.0.0" },
+      }),
+      "pk/lib/package.json": JSON.stringify({
+        name: "lib",
+        dependencies: { core: "*" },
+        peerDependencies: { ui: "^1.0.0" },
+        [group]: { ...(group === "dependencies" ? { core: "*" } : {}), ui: range },
+      }),
+    });
+    const dir = String(tmp);
+    const [app, lib] = [join(dir, "pk", "app"), join(dir, "pk", "lib")];
+
+    await run(dir, "install");
+    expect([loaded(app, "ui"), loaded(lib, "ui")]).toEqual(["2.0.0", "1.0.0"]);
+    ui["1.2.0"] = later;
+    await run(app, ...command.split(" "));
+    expect([loaded(app, "ui"), loaded(lib, "ui")]).toEqual(["1.2.0", "1.0.0"]);
+    const tree = await lockfileTree(dir);
+    expect(tree["lib/ui"] ?? tree["ui"]).toBe("ui@1.0.0");
+    await wipe(dir, "pk/app", "pk/lib");
+    await run(dir, "install", "--frozen-lockfile");
+    expect([loaded(app, "ui"), loaded(lib, "ui")]).toEqual(["1.2.0", "1.0.0"]);
+  });
 });
 
 // An install removes a folder only if the bun.lock it started from placed a package there.

@@ -1381,6 +1381,36 @@ impl Tree {
                     entry.value_ptr.put(dep_id, ())?;
                 }
                 HoistDependencyResult::Placement { id, bundled } => {
+                    // Its own dependency of that name is what the package loads, from wherever that
+                    // one found its copy. A copy for the peer would stand in front of it.
+                    if dependency.behavior.is_peer()
+                        && !bundled
+                        && let Some(own) =
+                            (resolution_list.begin()..resolution_list.end()).find(|&own| {
+                                let own_row = &dependencies[own as usize];
+                                own_row.name_hash == dependency.name_hash
+                                    && !own_row.behavior.is_peer()
+                                    && builder.resolutions[own as usize] != invalid_package_id
+                            })
+                    {
+                        let own_pkg_id = builder.resolutions[own as usize];
+                        let own_behavior = dependencies[own as usize].behavior;
+                        let buf = lockfile.buffers.string_bytes.as_slice();
+                        // As for `Served`.
+                        if first_walk
+                            && bound_by_version
+                            && !own_behavior.is_optional()
+                            && !own_behavior.is_bundled()
+                            && pkg_resolutions[own_pkg_id as usize].satisfies_dependency_version(
+                                lockfile.catalogs.resolve_range(buf, dependency),
+                                buf,
+                                buf,
+                            )
+                        {
+                            builder.served.push((dep_id, own_pkg_id));
+                        }
+                        continue 'dep;
+                    }
                     // Only a placed row names a folder; enqueue reported an unresolved one's name.
                     let dependency_name = dependency
                         .name
@@ -1620,11 +1650,6 @@ impl Tree {
                 // Root dependencies are manually chosen by the user. Allow them
                 // to hoist other peers even if they don't satisfy the version
                 if is_root_dependency {
-                    return dedupe(); // 1
-                }
-
-                // Its own dependency of that name shares this copy: a copy below would hide it.
-                if own_dependency_shares_it() {
                     return dedupe(); // 1
                 }
             }

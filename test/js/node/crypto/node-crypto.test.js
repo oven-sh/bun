@@ -1353,6 +1353,7 @@ describe("crypto.diffieHellman key data", () => {
       ]) {
         expect(crypto.diffieHellman(options).toString("hex")).toBe(secret);
         expect(await diffieHellmanAsync(options)).toEqual({ err: null, secret: Buffer.from(secret, "hex") });
+        expect(await util.promisify(crypto.diffieHellman)(options)).toEqual(Buffer.from(secret, "hex"));
       }
     });
 
@@ -1652,6 +1653,107 @@ describe("crypto.diffieHellman key data", () => {
     };
     expect(crypto.diffieHellman(options).toString("hex")).toBe(x25519.secret);
     expect([...new Set(touched)]).toEqual(["publicKey", "privateKey", "public JWK", "private JWK"]);
+  });
+
+  it("reads a key buffer that a getter of privateKey made shorter at its new length", () => {
+    const publicPem = Buffer.from(x25519.publicKey.export({ type: "spki", format: "pem" }));
+    const privatePem = x25519.privateKey.export({ type: "pkcs8", format: "pem" });
+    const resizable = new ArrayBuffer(publicPem.length, { maxByteLength: publicPem.length });
+    new Uint8Array(resizable).set(publicPem);
+    const options = {
+      publicKey: new Uint8Array(resizable),
+      privateKey: {
+        get key() {
+          resizable.resize(5);
+          return privatePem;
+        },
+      },
+    };
+    const error = thrown(() => crypto.diffieHellman(options));
+    expect(resizable.byteLength).toBe(5);
+    expect(error).toBeDefined();
+    expect(error).toEqual(thrown(() => crypto.createPublicKey(publicPem.subarray(0, 5))));
+  });
+
+  it("reads both keys before a call with a callback returns", async () => {
+    const privatePem = Buffer.from(x25519.privateKey.export({ type: "pkcs8", format: "pem" }));
+    const publicPem = Buffer.from(x25519.publicKey.export({ type: "spki", format: "pem" }));
+    const pending = diffieHellmanAsync({ privateKey: privatePem, publicKey: publicPem });
+    privatePem.fill(0);
+    publicPem.fill(0);
+    expect(await pending).toEqual({ err: null, secret: Buffer.from(x25519.secret, "hex") });
+  });
+
+  it("derives with one KeyObject in many jobs at the same time", async () => {
+    const options = {
+      privateKey: x25519.privateKey,
+      publicKey: x25519.publicKey.export({ type: "spki", format: "pem" }),
+    };
+    const jobs = Array.from({ length: 32 }, () => diffieHellmanAsync(options));
+    expect(crypto.diffieHellman(options).toString("hex")).toBe(x25519.secret);
+    for (const result of await Promise.all(jobs)) {
+      expect(result).toEqual({ err: null, secret: Buffer.from(x25519.secret, "hex") });
+    }
+  });
+
+  it("keeps key data alive when a getter of privateKey collects garbage", () => {
+    const privatePem = x25519.privateKey.export({ type: "pkcs8", format: "pem" });
+    const publicPem = x25519.publicKey.export({ type: "spki", format: "pem" });
+    const encrypted = x25519.peerPrivateKey.export({
+      type: "pkcs8",
+      format: "pem",
+      cipher: "aes-256-cbc",
+      passphrase: "secret",
+    });
+    // The key and the passphrase are strings. Only the validated key holds the buffers with their bytes.
+    const publicKeys = [
+      publicPem,
+      { key: Buffer.from(publicPem).toString("hex"), encoding: "hex" },
+      { key: encrypted, passphrase: "secret" },
+    ];
+    for (const publicKey of publicKeys) {
+      const options = {
+        publicKey,
+        privateKey: {
+          get key() {
+            Bun.gc(true);
+            return privatePem;
+          },
+        },
+      };
+      expect(crypto.diffieHellman(options).toString("hex")).toBe(x25519.secret);
+    }
+  });
+
+  it("accepts CryptoKeys and emits DEP0203 one time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const crypto = require("node:crypto");
+         const warnings = [];
+         process.on("warning", warning => warnings.push(warning.code));
+         (async () => {
+           const generate = () => crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"]);
+           const [a, b] = await Promise.all([generate(), generate()]);
+           const expected = Buffer.from(
+             await crypto.subtle.deriveBits({ name: "X25519", public: b.publicKey }, a.privateKey, 256),
+           );
+           const secrets = [
+             crypto.diffieHellman({ privateKey: a.privateKey, publicKey: b.publicKey }),
+             crypto.diffieHellman({ privateKey: { key: a.privateKey }, publicKey: { key: b.publicKey } }),
+           ];
+           await new Promise(resolve => setImmediate(resolve));
+           console.log(JSON.stringify({ same: secrets.map(secret => secret.equals(expected)), warnings }));
+         })();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({ same: [true, true], warnings: ["DEP0203"] });
+    expect(exitCode).toBe(0);
   });
 });
 

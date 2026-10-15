@@ -532,6 +532,135 @@ describe("crypto.KeyObjects", () => {
     });
   });
 
+  // Node validates the key argument, then the other arguments, and reads the key last.
+  describe("order of the checks when two arguments are invalid", () => {
+    const data = Buffer.from("hello");
+    const thrown = (fn: () => unknown) => {
+      try {
+        fn();
+      } catch (err: any) {
+        return `${err.code}: ${err.message}`;
+      }
+    };
+    // These keys pass validation and fail when they are read.
+    const unreadable = [{ key: "not a key" }, { key: { kty: "nope" }, format: "jwk" }];
+    const invalidFormat = { key: publicPem, format: "banana" };
+
+    test("Sign#sign", () => {
+      const signWith = (key: any) => thrown(() => createSign("sha256").update(data).sign(key));
+      expect(signWith(1)).toBe(
+        'ERR_INVALID_ARG_TYPE: The "privateKey" argument must be of type string or an instance of ArrayBuffer, Buffer, TypedArray, DataView, KeyObject, or CryptoKey. Received type number (1)',
+      );
+      expect(signWith({ ...invalidFormat, padding: "bad" })).toBe(
+        "ERR_INVALID_ARG_VALUE: The property 'privateKey.format' is invalid. Received 'banana'",
+      );
+      expect(signWith({ ...invalidFormat, dsaEncoding: "bad" })).toBe(
+        "ERR_INVALID_ARG_VALUE: The property 'privateKey.format' is invalid. Received 'banana'",
+      );
+      for (const key of unreadable) {
+        expect(signWith({ ...key, padding: "bad" })).toBe(
+          "ERR_INVALID_ARG_VALUE: The property 'options.padding' is invalid. Received 'bad'",
+        );
+        expect(signWith({ ...key, dsaEncoding: "bad" })).toBe(
+          "ERR_INVALID_ARG_VALUE: The property 'options.dsaEncoding' is invalid. Received 'bad'",
+        );
+      }
+    });
+
+    test("Verify#verify", () => {
+      const verifyWith = (key: any, signature: any = data) =>
+        thrown(() => createVerify("sha256").update(data).verify(key, signature));
+      expect(verifyWith(invalidFormat, 5)).toBe(
+        "ERR_INVALID_ARG_VALUE: The property 'key.format' is invalid. Received 'banana'",
+      );
+      for (const key of unreadable) {
+        expect(verifyWith({ ...key, padding: "bad" })).toBe(
+          "ERR_INVALID_ARG_VALUE: The property 'options.padding' is invalid. Received 'bad'",
+        );
+        expect(verifyWith({ ...key, dsaEncoding: "bad" })).toBe(
+          "ERR_INVALID_ARG_VALUE: The property 'options.dsaEncoding' is invalid. Received 'bad'",
+        );
+        expect(verifyWith(key, 5)).toStartWith('ERR_INVALID_ARG_TYPE: The "signature" argument must be ');
+      }
+    });
+
+    test.each([
+      ["publicEncrypt", "key", publicEncrypt],
+      ["publicDecrypt", "key", publicDecrypt],
+      ["privateEncrypt", "privateKey", privateEncrypt],
+      ["privateDecrypt", "privateKey", privateDecrypt],
+    ] as const)("%s", (_, name, rsaFunction) => {
+      const call = (key: any, buffer: any = data) => thrown(() => rsaFunction(key, buffer));
+      expect(call({ ...invalidFormat, oaepHash: 5 })).toBe(
+        `ERR_INVALID_ARG_VALUE: The property '${name}.format' is invalid. Received 'banana'`,
+      );
+      expect(call({ ...invalidFormat, oaepHash: "nope" })).toBe(
+        `ERR_INVALID_ARG_VALUE: The property '${name}.format' is invalid. Received 'banana'`,
+      );
+      expect(call({ key: createSecretKey(Buffer.alloc(16)), oaepHash: "nope" })).toStartWith(
+        "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Invalid key object type secret, expected ",
+      );
+      // Node names these two options key.oaepHash and key.oaepLabel. Bun names them options.oaepHash and options.oaepLabel.
+      const oaepHashType = /^ERR_INVALID_ARG_TYPE: The "\w+\.oaepHash" property must be /;
+      const oaepLabelType = /^ERR_INVALID_ARG_TYPE: The "\w+\.oaepLabel" property must be /;
+      for (const key of unreadable) {
+        expect(call({ ...key, oaepHash: 5 })).toMatch(oaepHashType);
+        expect(call({ ...key, oaepLabel: 5 })).toMatch(oaepLabelType);
+        expect(call({ ...key, oaepHash: "nope", oaepLabel: 5 })).toMatch(oaepLabelType);
+        expect(call(key, 5)).toStartWith('ERR_INVALID_ARG_TYPE: The "buffer" argument must be ');
+        expect(call({ ...key, oaepHash: "nope" }, 5)).toStartWith(
+          'ERR_INVALID_ARG_TYPE: The "buffer" argument must be ',
+        );
+      }
+    });
+  });
+
+  test("publicEncrypt takes the bytes of the buffer after the getters of a JWK have run", () => {
+    const jwk = createPublicKey(publicPem).export({ format: "jwk" });
+    const keyWithGetter = (change: () => void) => ({
+      format: "jwk",
+      key: {
+        ...jwk,
+        get n() {
+          change();
+          return jwk.n;
+        },
+      },
+    });
+
+    const buffer = Buffer.from("before");
+    const encrypted = publicEncrypt(keyWithGetter(() => buffer.write("after!")) as any, buffer);
+    expect(privateDecrypt(privatePem, encrypted).toString()).toBe("after!");
+
+    // A detached buffer is empty. It is not read through the pointer it had when it was validated.
+    const detached = new Uint8Array(new ArrayBuffer(6));
+    const empty = publicEncrypt(keyWithGetter(() => void detached.buffer.transfer()) as any, detached);
+    expect(detached.byteLength).toBe(0);
+    expect(privateDecrypt(privatePem, empty).byteLength).toBe(0);
+  });
+
+  test("JWK and raw keys work in every function that takes a key", () => {
+    const data = Buffer.from("hello");
+    const ec = generateKeyPairSync("ec", { namedCurve: "P-256" });
+    const ecKeys = (keyObject: KeyObject, format: "raw-private" | "raw-public") =>
+      [
+        { key: keyObject.export({ format: "jwk" }), format: "jwk" },
+        { key: keyObject.export({ format } as any), format, asymmetricKeyType: "ec", namedCurve: "prime256v1" },
+      ] as any[];
+    for (const privateKey of ecKeys(ec.privateKey, "raw-private")) {
+      for (const publicKey of ecKeys(ec.publicKey, "raw-public")) {
+        expect(verify("sha256", data, publicKey, sign("sha256", data, privateKey))).toBe(true);
+        const signature = createSign("sha256").update(data).sign(privateKey);
+        expect(createVerify("sha256").update(data).verify(publicKey, signature)).toBe(true);
+      }
+    }
+
+    const privateJwk = { key: createPrivateKey(privatePem).export({ format: "jwk" }), format: "jwk" } as any;
+    const publicJwk = { key: createPublicKey(publicPem).export({ format: "jwk" }), format: "jwk" } as any;
+    expect(privateDecrypt(privateJwk, publicEncrypt(publicJwk, data))).toEqual(data);
+    expect(publicDecrypt(publicJwk, privateEncrypt(privateJwk, data))).toEqual(data);
+  });
+
   [
     {
       private: readFile(path.join(import.meta.dir, "fixtures", "ed25519_private.pem"), "ascii"),
@@ -2009,6 +2138,33 @@ describe.skipIf(!isASAN)("async crypto jobs: process.exit() in the callback leak
         const a = crypto.generateKeyPairSync("x25519", {});
         const b = crypto.generateKeyPairSync("x25519", {});
         crypto.diffieHellman({ privateKey: a.privateKey, publicKey: b.publicKey }, done);
+      }`,
+    "diffieHellman (PEM key data)": `{
+        const a = crypto.generateKeyPairSync("x25519", {});
+        const b = crypto.generateKeyPairSync("x25519", {});
+        crypto.diffieHellman({
+          privateKey: a.privateKey.export({ type: "pkcs8", format: "pem" }),
+          publicKey: b.publicKey.export({ type: "spki", format: "pem" }),
+        }, done);
+      }`,
+    "diffieHellman (encrypted PEM key data)": `{
+        const a = crypto.generateKeyPairSync("x25519", {});
+        const b = crypto.generateKeyPairSync("x25519", {});
+        crypto.diffieHellman({
+          privateKey: {
+            key: a.privateKey.export({ type: "pkcs8", format: "pem", cipher: "aes-256-cbc", passphrase: "secret" }),
+            passphrase: "secret",
+          },
+          publicKey: b.publicKey.export({ type: "spki", format: "pem" }),
+        }, done);
+      }`,
+    "diffieHellman (JWK key data)": `{
+        const a = crypto.generateKeyPairSync("x25519", {});
+        const b = crypto.generateKeyPairSync("x25519", {});
+        crypto.diffieHellman({
+          privateKey: { key: a.privateKey.export({ format: "jwk" }), format: "jwk" },
+          publicKey: { key: b.publicKey.export({ format: "jwk" }), format: "jwk" },
+        }, done);
       }`,
     "hkdf": `crypto.hkdf("sha256", "key", "salt", "info", 32, done);`,
     "checkPrime": `crypto.checkPrime(7n, done);`,

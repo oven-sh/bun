@@ -1,7 +1,8 @@
+use crate::compat;
 use crate::helpers;
-use crate::inlines;
-use crate::parser::{self, Parser};
-use crate::types::{OFF, SpanDetail, SpanType, TextType};
+use crate::inlines::Walk;
+use crate::parser::{self, MARK_CLOSER, MARK_HIDES, MARK_OPENER, Parser};
+use crate::types::{OFF, Reference, SpanDetail, SpanType, TextType};
 
 // Aliases for the real `SpanType` / `SpanDetail` types (named `Span` /
 // `SpanAttrs` in the original implementation).
@@ -20,13 +21,6 @@ const MAX_LINK_DEST_PAREN_DEPTH: u32 = 32;
 /// for every `[[` candidate (quadratic on inputs like `"[".repeat(n)` when
 /// wiki links are enabled, e.g. via `Bun.markdown.ansi`).
 const MAX_WIKI_BRACKET_DEPTH: u32 = 32;
-
-/// Result of `try_match_bracket_link`.
-pub(crate) struct BracketLinkMatch {
-    pub(crate) is_link: bool,
-    pub(crate) label_end: usize,
-    pub(crate) link_end: usize,
-}
 
 /// A successfully parsed link/image/wikilink whose opening span has been
 /// emitted. The caller renders `content[label_start..label_end]` as inline
@@ -129,250 +123,179 @@ pub(crate) fn scan_link_destination(text: &[u8], start: usize) -> Option<ParsedD
     })
 }
 
-/// Characters that can affect bracket matching: the brackets themselves,
-/// backslash escapes, code spans, and (unless HTML spans are disabled) HTML
-/// tags/autolinks. Used to SIMD-skip runs of ordinary text while building the
-/// bracket-pair map.
-const BRACKET_SCAN_CHARS: &[u8] = b"[]\\`<";
-const BRACKET_SCAN_CHARS_NO_HTML: &[u8] = b"[]\\`";
-
-/// Result of matching a `[` against its closing `]`.
-struct BracketScan {
-    /// Position of the matching `]`.
-    close: usize,
-    /// Whether another `[` opener was seen between the two.
-    has_inner_bracket: bool,
+/// A `[` of inline content, outside of code spans, HTML tags/autolinks and
+/// backslash escapes.
+#[derive(Clone, Copy)]
+pub(crate) struct Bracket {
+    open: OFF,
+    /// Where the `]` is that closes it. `UNMATCHED`: there is none.
+    close: OFF,
+    /// Where the link or the image ends that it starts. 0: it starts none.
+    link_end: OFF,
+    /// It is the `[` of `![`.
+    is_image: bool,
 }
 
-enum BracketLookup {
-    /// Opener was seen by the single-pass builder and has a matching `]`.
-    Matched(usize),
-    /// Opener was seen by the single-pass builder and has no matching `]`.
-    Unmatched,
-    /// Opener is unknown to the map (tokenization divergence, e.g. the caller
-    /// skipped a permissive autolink the builder tokenized through).
-    Unknown,
-}
-
-/// Bracket-pair map for one inline content slice, built in a single pass so
-/// link processing can find the `]` matching a given `[` without rescanning
-/// the rest of the slice for every opener — that rescan is quadratic on
-/// inputs like `"[".repeat(n)`. The backing vec is recycled through
-/// `Parser.bracket_pairs`, so steady-state rendering does not allocate here.
+/// The brackets of one inline content slice, and which of them are links,
+/// found in a single pass: as in cmark, what a `[` starts is decided when its
+/// `]` is reached. The backing vec is recycled through `Parser.bracket_pairs`,
+/// so steady-state rendering does not allocate here.
 pub(crate) struct BracketMatches {
-    /// `(open, close)` position of every `[` seen outside code spans, HTML
-    /// tags/autolinks and backslash escapes, ordered by `open`.
-    /// `close == UNMATCHED` marks an opener with no matching `]`.
-    pairs: Vec<(OFF, OFF)>,
-    /// The slice contains no `]` at all, so every opener is unmatched and
-    /// `pairs` was left empty.
-    no_closers: bool,
+    /// Ordered by `open`.
+    pairs: Vec<Bracket>,
 }
 
 impl BracketMatches {
     const UNMATCHED: OFF = OFF::MAX;
 
     /// Hand the backing storage back for reuse by the next inline slice.
-    pub(crate) fn into_storage(self) -> Vec<(OFF, OFF)> {
+    pub(crate) fn into_storage(self) -> Vec<Bracket> {
         self.pairs
     }
 
-    fn get(&self, open: usize) -> BracketLookup {
-        if self.no_closers {
-            return BracketLookup::Unmatched;
-        }
-        match self.pairs.binary_search_by_key(&(open as OFF), |&(o, _)| o) {
-            Ok(idx) => {
-                let close = self.pairs[idx].1;
-                if close == Self::UNMATCHED {
-                    BracketLookup::Unmatched
-                } else {
-                    BracketLookup::Matched(close as usize)
-                }
-            }
-            Err(_) => BracketLookup::Unknown,
-        }
+    /// Of the link, or the image, that the `[` at `open` starts: where its
+    /// label ends, and where it ends.
+    pub(crate) fn link(&self, open: usize, is_image: bool) -> Option<(usize, usize)> {
+        let index = self
+            .pairs
+            .binary_search_by_key(&(open as OFF), |it| it.open)
+            .ok()?;
+        let it = self.pairs[index];
+        (it.link_end != 0 && it.is_image == is_image)
+            .then_some((it.close as usize, it.link_end as usize))
     }
 
-    /// Whether any `[` opener was seen strictly between `lo` and `hi`.
-    fn has_opener_between(&self, lo: usize, hi: usize) -> bool {
-        let idx = self.pairs.partition_point(|&(o, _)| (o as usize) <= lo);
-        idx < self.pairs.len() && (self.pairs[idx].0 as usize) < hi
+    /// Nothing closes the brackets that are open, of which `top` is the last.
+    fn leave_open(pairs: &mut [Bracket], mut top: OFF) {
+        while top != Self::UNMATCHED {
+            let index = top as usize;
+            top = pairs[index].close;
+            pairs[index].close = Self::UNMATCHED;
+        }
     }
 }
 
 impl Parser<'_> {
-    /// Build the bracket-pair map for `content` in a single pass, using the
-    /// same tokenization as the matching scan (code spans, HTML tags,
-    /// autolinks and backslash escapes hide brackets). `storage` is the
-    /// recycled backing vec from `Parser.bracket_pairs`.
+    /// Pair the brackets of `content`, whose marks have been found, and tell
+    /// which of them are links, in a single pass (code spans, HTML tags,
+    /// autolinks and backslash escapes hide brackets). Fill `hidden` with what
+    /// hides them. `storage` is the recycled backing vec from
+    /// `Parser.bracket_pairs`.
     pub(crate) fn compute_bracket_matches(
-        &self,
+        &mut self,
         content: &[u8],
-        mut storage: Vec<(OFF, OFF)>,
+        mut storage: Vec<Bracket>,
     ) -> BracketMatches {
         storage.clear();
+        self.hidden.clear();
         debug_assert!(content.len() <= OFF::MAX as usize);
 
-        // No '[' means nothing will ever be looked up; no ']' means every
-        // opener is trivially unmatched (e.g. "[".repeat(n)) — skip the walk.
-        if bun_core::strings::index_of_char(content, b'[').is_none() {
-            return BracketMatches {
-                pairs: storage,
-                no_closers: false,
-            };
+        // Without a '[' and a ']' there is no link.
+        let has_pairs = self.marks_seen & MARK_OPENER != 0 && self.marks_seen & MARK_CLOSER != 0;
+        if self.marks_seen & MARK_HIDES == 0 && !has_pairs {
+            return BracketMatches { pairs: storage };
         }
-        if bun_core::strings::index_of_char(content, b']').is_none() {
-            return BracketMatches {
-                pairs: storage,
-                no_closers: true,
-            };
-        }
-
-        let scan_chars: &'static [u8] = if self.flags.no_html_spans {
-            BRACKET_SCAN_CHARS_NO_HTML
-        } else {
-            BRACKET_SCAN_CHARS
-        };
 
         // While an opener is still unmatched, its `close` slot holds the index
         // of the previous unmatched opener — a stack threaded through the vec
-        // itself, so no separate stack allocation is needed. Whatever is left
-        // on that stack at the end is rewritten to UNMATCHED.
+        // itself, so no separate stack allocation is needed.
         let mut top: OFF = BracketMatches::UNMATCHED;
+        // The openers before this index that are still unmatched have a link in
+        // them: links cannot contain other links (CommonMark §6.7)
+        let mut inactive_below: usize = 0;
+        // Where the last backslash escape ends.
+        let mut escape_end: usize = 0;
+        // Of the wiki links whose label `pos` is in: where what is around the
+        // label ends, and the opener that was the last before it.
+        let mut around_wiki_labels: Vec<(usize, OFF)> = Vec::new();
+        // A label is content of its own.
+        let mut end = content.len();
+        let mut walk = Walk::default();
         let mut pos: usize = 0;
-        while pos < content.len() {
-            match content[pos] {
-                b'\\' => pos += 2,
-                // Code spans take precedence over brackets (CommonMark §6.3)
-                b'`' => {
-                    let count = inlines::count_backticks(content, pos);
-                    if let Some(end_pos) = self.find_code_span_end(content, pos + count, count) {
-                        pos = end_pos + count;
-                    } else {
-                        pos += count;
-                    }
-                }
-                // HTML tags and autolinks take precedence over brackets
-                b'<' if !self.flags.no_html_spans => {
-                    if let Some(tag_end) = self.find_html_tag(content, pos) {
-                        pos = tag_end;
-                    } else if let Some(autolink) = self.find_autolink(content, pos) {
-                        pos = autolink.end_pos;
-                    } else {
-                        pos += 1;
-                    }
-                }
-                b'[' => {
-                    let idx = storage.len() as OFF;
-                    storage.push((pos as OFF, top));
-                    top = idx;
-                    pos += 1;
-                }
-                b']' => {
-                    if top != BracketMatches::UNMATCHED {
-                        let idx = top as usize;
-                        top = storage[idx].1;
-                        storage[idx].1 = pos as OFF;
-                    }
-                    pos += 1;
-                }
-                // Ordinary text: SIMD-jump to the next character that can
-                // affect bracket matching.
-                _ => match bun_core::strings::index_of_any(&content[pos..], scan_chars) {
-                    Some(rel) => pos += rel,
-                    None => break,
-                },
-            }
-        }
-
-        // Openers still on the threaded stack have no matching ']'.
-        while top != BracketMatches::UNMATCHED {
-            let idx = top as usize;
-            top = storage[idx].1;
-            storage[idx].1 = BracketMatches::UNMATCHED;
-        }
-
-        BracketMatches {
-            pairs: storage,
-            no_closers: false,
-        }
-    }
-
-    /// Find the `]` matching the `[` at `start` in `content`. `base` is the
-    /// offset of `content` within the slice `brackets` was built for (non-zero
-    /// when `content` is a link-label sub-slice). Falls back to a forward scan
-    /// when the opener is unknown to the map.
-    fn match_bracket(
-        &self,
-        content: &[u8],
-        start: usize,
-        brackets: &BracketMatches,
-        base: usize,
-    ) -> Option<BracketScan> {
-        match brackets.get(base + start) {
-            BracketLookup::Matched(close) if close > base && close - base < content.len() => {
-                Some(BracketScan {
-                    close: close - base,
-                    has_inner_bracket: brackets.has_opener_between(base + start, close),
-                })
-            }
-            BracketLookup::Unmatched => None,
-            _ => self.scan_bracket_close(content, start),
-        }
-    }
-
-    /// Forward scan for the `]` matching the `[` at `start`, skipping code
-    /// spans, HTML tags/autolinks and backslash escapes. Only used when the
-    /// opener is missing from the precomputed bracket map.
-    fn scan_bracket_close(&self, content: &[u8], start: usize) -> Option<BracketScan> {
-        let mut pos = start + 1;
-        let mut bracket_depth: u32 = 1;
-        let mut has_inner_bracket = false;
-        while pos < content.len() && bracket_depth > 0 {
-            if content[pos] == b'\\' && pos + 1 < content.len() {
-                pos += 2;
+        // Up to where `content` is taken by what comes before brackets.
+        let mut taken: usize = 0;
+        loop {
+            pos = self.next_mark(&mut walk, pos);
+            if pos >= end {
+                let Some((outer_end, outer_top)) = around_wiki_labels.pop() else {
+                    break;
+                };
+                BracketMatches::leave_open(&mut storage, top);
+                pos = end + 2;
+                taken = pos;
+                (end, top) = (outer_end, outer_top);
                 continue;
             }
-            // Skip code spans — they take precedence over brackets (CommonMark §6.3)
-            if content[pos] == b'`' {
-                let count = inlines::count_backticks(content, pos);
-                if let Some(end_pos) = self.find_code_span_end(content, pos + count, count) {
-                    pos = end_pos + count;
-                } else {
-                    pos += count;
-                }
-                continue;
-            }
-            // Skip HTML tags and autolinks — they take precedence over brackets
-            if content[pos] == b'<' && !self.flags.no_html_spans {
-                if let Some(tag_end) = self.find_html_tag(content, pos) {
-                    pos = tag_end;
-                    continue;
-                }
-                if let Some(autolink) = self.find_autolink(content, pos) {
-                    pos = autolink.end_pos;
-                    continue;
-                }
-            }
-            if content[pos] == b'[' {
-                bracket_depth += 1;
-                has_inner_bracket = true;
-            }
-            if content[pos] == b']' {
-                bracket_depth -= 1;
-            }
-            if bracket_depth > 0 {
+            let content = &content[..end];
+            if content[pos] == b'\\' {
                 pos += 1;
+                if pos < content.len() && helpers::is_ascii_punctuation(content[pos]) {
+                    pos += 1;
+                    escape_end = pos;
+                    taken = pos;
+                }
+                continue;
             }
+            // Code spans, HTML tags and autolinks take precedence over brackets
+            // (CommonMark §6.3)
+            if let Some(hidden) =
+                self.hidden_at(content, pos, taken, top != BracketMatches::UNMATCHED)
+            {
+                self.hidden.push(hidden);
+                pos = hidden.end;
+                taken = pos;
+                continue;
+            }
+            match content[pos] {
+                b'[' => {
+                    let is_image = pos > 0 && content[pos - 1] == b'!' && escape_end != pos;
+                    if self.flags.wiki_links
+                        && content.get(pos + 1) == Some(&b'[')
+                        && let Some(wiki_link) = self.match_wiki_link(content, pos)
+                        && !(is_image && self.is_image_around_brackets(content, pos, &wiki_link))
+                    {
+                        around_wiki_labels.push((end, top));
+                        (end, top) = (wiki_link.inner_end, BracketMatches::UNMATCHED);
+                        pos = match wiki_link.pipe_pos {
+                            Some(pipe) => pipe + 1,
+                            None => wiki_link.inner_start,
+                        };
+                        taken = pos;
+                        continue;
+                    }
+                    let index = storage.len() as OFF;
+                    storage.push(Bracket {
+                        open: pos as OFF,
+                        close: top,
+                        link_end: 0,
+                        is_image,
+                    });
+                    top = index;
+                }
+                b']' if top != BracketMatches::UNMATCHED => {
+                    let index = top as usize;
+                    let Bracket { open, is_image, .. } = storage[index];
+                    top = storage[index].close;
+                    storage[index].close = pos as OFF;
+                    if (is_image || index >= inactive_below)
+                        && let Some(link_end) = self.link_end_behind(content, open as usize, pos)
+                    {
+                        storage[index].link_end = link_end as OFF;
+                        if !is_image {
+                            inactive_below = index;
+                        }
+                        pos = link_end;
+                        taken = pos;
+                        continue;
+                    }
+                }
+                _ => {}
+            }
+            pos += 1;
         }
-        if bracket_depth != 0 {
-            return None;
-        }
-        Some(BracketScan {
-            close: pos,
-            has_inner_bracket,
-        })
+        BracketMatches::leave_open(&mut storage, top);
+
+        BracketMatches { pairs: storage }
     }
 
     /// Emit the opening span for a link/image whose label is about to be
@@ -383,27 +306,34 @@ impl Parser<'_> {
         dest: &[u8],
         title: &[u8],
         is_image: bool,
+        reference: Reference,
+        // Where the `[` is in the block's inline content.
+        bracket: usize,
     ) -> Result<LabelLeave, parser::Error> {
         if self.image_nesting_level > 0 {
             // Inside image alt text: emit only text, no HTML tags
             Ok(LabelLeave::AltText)
         } else if is_image {
+            self.at(bracket - 1, bracket + 1);
             self.renderer.enter_span(
                 Span::Img,
                 SpanAttrs {
                     href: dest,
                     title,
+                    reference,
                     ..Default::default()
                 },
             )?;
             self.image_nesting_level += 1;
             Ok(LabelLeave::Image)
         } else {
+            self.at(bracket, bracket + 1);
             self.renderer.enter_span(
                 Span::A,
                 SpanAttrs {
                     href: dest,
                     title,
+                    reference,
                     ..Default::default()
                 },
             )?;
@@ -421,12 +351,13 @@ impl Parser<'_> {
         base: usize,
     ) -> Result<Option<LabelParse>, parser::Error> {
         // start points at '['
-        // Find matching ']', skipping code spans and HTML tags (which take precedence)
-        let Some(bracket) = self.match_bracket(content, start, brackets, base) else {
+        let Some(label_end) = brackets
+            .link(base + start, is_image)
+            .and_then(|it| it.0.checked_sub(base))
+            .filter(|&label_end| start < label_end && label_end < content.len())
+        else {
             return Ok(None);
         };
-        let has_inner_bracket = bracket.has_inner_bracket;
-        let label_end = bracket.close;
         let label = &content[start + 1..label_end];
         let mut pos = label_end + 1; // skip ']'
 
@@ -455,6 +386,7 @@ impl Parser<'_> {
             };
 
             // Skip whitespace (including newlines)
+            let dest_end = pos;
             while pos < content.len()
                 && (helpers::is_blank(content[pos])
                     || content[pos] == b'\n'
@@ -463,9 +395,10 @@ impl Parser<'_> {
                 pos += 1;
             }
 
-            // Optional title
+            // Optional title, with whitespace before it
             let mut title: &[u8] = b"";
             if pos < content.len()
+                && pos > dest_end
                 && (content[pos] == b'"' || content[pos] == b'\'' || content[pos] == b'(')
             {
                 let close_char: u8 = if content[pos] == b'(' {
@@ -483,7 +416,10 @@ impl Parser<'_> {
                         continue;
                     }
                     // A ()-delimited title may not contain an unescaped '('
-                    if close_char == b')' && content[pos] == b'(' {
+                    if close_char == b')'
+                        && content[pos] == b'('
+                        && !compat::parenthesis_can_be_in_a_title(&self.flags)
+                    {
                         title_valid = false;
                         break;
                     }
@@ -512,15 +448,8 @@ impl Parser<'_> {
             if pos < content.len() && content[pos] == b')' {
                 pos += 1;
 
-                // Link nesting prohibition: links cannot contain other links (CommonMark §6.7)
-                if !is_image
-                    && has_inner_bracket
-                    && self.label_contains_link(label, brackets, base + start + 1)
-                {
-                    return Ok(None);
-                }
-
-                let leave = self.enter_label_span(dest, title, is_image)?;
+                let leave =
+                    self.enter_label_span(dest, title, is_image, Reference::None, base + start)?;
                 return Ok(Some(LabelParse {
                     label_start: start + 1,
                     label_end,
@@ -534,7 +463,7 @@ impl Parser<'_> {
         // A reference label must start immediately after the closing ']'; a
         // failed inline-link parse above may have advanced `pos` onto a later
         // '[' (e.g. "[foo](bar [ref])"), which must not be read as the
-        // reference (try_match_bracket_link checks the byte after ']' too).
+        // reference (link_end_behind checks the byte after ']' too).
         pos = label_end + 1;
         if pos < content.len() && content[pos] == b'[' {
             pos += 1;
@@ -550,10 +479,10 @@ impl Parser<'_> {
                 }
             }
             if pos < content.len() && content[pos] == b']' {
-                let ref_label = if pos > ref_start {
-                    &content[ref_start..pos]
+                let (ref_label, reference) = if pos > ref_start {
+                    (&content[ref_start..pos], Reference::Full)
                 } else {
-                    label
+                    (label, Reference::Collapsed)
                 };
                 pos += 1;
                 if let Some(ref_def) = self.lookup_ref_def(ref_label) {
@@ -561,17 +490,11 @@ impl Parser<'_> {
                     // lookup_ref_def is dropped before &mut self calls.
                     let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
                     let title: Box<[u8]> = Box::from(&ref_def.title[..]);
-                    // Link nesting prohibition
-                    if !is_image
-                        && has_inner_bracket
-                        && self.label_contains_link(label, brackets, base + start + 1)
-                    {
-                        return Ok(None);
-                    }
                     if !self.charge_ref_def_output(dest.len(), title.len()) {
                         return Ok(None);
                     }
-                    let leave = self.enter_label_span(&dest, &title, is_image)?;
+                    let leave =
+                        self.enter_label_span(&dest, &title, is_image, reference, base + start)?;
                     return Ok(Some(LabelParse {
                         label_start: start + 1,
                         label_end,
@@ -596,17 +519,16 @@ impl Parser<'_> {
                 // lookup_ref_def is dropped before &mut self calls.
                 let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
                 let title: Box<[u8]> = Box::from(&ref_def.title[..]);
-                // Link nesting prohibition
-                if !is_image
-                    && has_inner_bracket
-                    && self.label_contains_link(label, brackets, base + start + 1)
-                {
-                    return Ok(None);
-                }
                 if !self.charge_ref_def_output(dest.len(), title.len()) {
                     return Ok(None);
                 }
-                let leave = self.enter_label_span(&dest, &title, is_image)?;
+                let leave = self.enter_label_span(
+                    &dest,
+                    &title,
+                    is_image,
+                    Reference::Shortcut,
+                    base + start,
+                )?;
                 return Ok(Some(LabelParse {
                     label_start: start + 1,
                     label_end,
@@ -619,36 +541,19 @@ impl Parser<'_> {
         Ok(None)
     }
 
-    /// Try to match a bracket pair starting at `start` and check if it forms a link.
-    /// Returns whether it's a link, where the label ends, and the full link end position.
-    /// `base` is the offset of `content` within the slice `brackets` was built for.
-    pub(crate) fn try_match_bracket_link(
-        &mut self,
-        content: &[u8],
-        start: usize,
-        brackets: &BracketMatches,
-        base: usize,
-    ) -> BracketLinkMatch {
-        let Some(bracket) = self.match_bracket(content, start, brackets, base) else {
-            return BracketLinkMatch {
-                is_link: false,
-                label_end: 0,
-                link_end: 0,
-            };
-        };
-
-        let label_end = bracket.close;
+    /// Where the link or the image ends whose label is between the `[` at
+    /// `start` and the `]` at `label_end`, if what is behind the label makes it
+    /// one.
+    fn link_end_behind(&mut self, content: &[u8], start: usize, label_end: usize) -> Option<usize> {
         let pos = label_end + 1; // skip ]
 
         if pos >= content.len() {
             // Shortcut reference check
             let inner_label = &content[start + 1..label_end];
-            let is_ref = self.lookup_ref_def(inner_label).is_some();
-            return BracketLinkMatch {
-                is_link: is_ref,
-                label_end,
-                link_end: label_end + 1,
-            };
+            return self
+                .lookup_ref_def(inner_label)
+                .is_some()
+                .then_some(label_end + 1);
         }
 
         // Inline link: ](...)
@@ -666,13 +571,15 @@ impl Parser<'_> {
                 None => content.len(),
             };
             // Skip whitespace
+            let dest_end = p;
             while p < content.len()
                 && (helpers::is_blank(content[p]) || content[p] == b'\n' || content[p] == b'\r')
             {
                 p += 1;
             }
-            // Optional title
+            // Optional title, with whitespace before it
             if p < content.len()
+                && p > dest_end
                 && (content[p] == b'"' || content[p] == b'\'' || content[p] == b'(')
             {
                 let close_ch: u8 = if content[p] == b'(' { b')' } else { content[p] };
@@ -685,7 +592,10 @@ impl Parser<'_> {
                         continue;
                     }
                     // A ()-delimited title may not contain an unescaped '('
-                    if close_ch == b')' && content[p] == b'(' {
+                    if close_ch == b')'
+                        && content[p] == b'('
+                        && !compat::parenthesis_can_be_in_a_title(&self.flags)
+                    {
                         title_valid = false;
                         break;
                     }
@@ -706,11 +616,7 @@ impl Parser<'_> {
                 p += 1;
             }
             if p < content.len() && content[p] == b')' {
-                return BracketLinkMatch {
-                    is_link: true,
-                    label_end,
-                    link_end: p + 1,
-                };
+                return Some(p + 1);
             }
         }
 
@@ -734,92 +640,63 @@ impl Parser<'_> {
                     &content[start + 1..label_end]
                 };
                 if self.lookup_ref_def(ref_label).is_some() {
-                    return BracketLinkMatch {
-                        is_link: true,
-                        label_end,
-                        link_end: p + 1,
-                    };
+                    return Some(p + 1);
                 }
             }
         }
 
         // Shortcut reference: like process_link, a shortcut must not be
         // followed by '[' (the lookahead and the parser must agree on what
-        // is a link or label_contains_link rejects constructs the parser
-        // renders)
+        // is a link)
         if content.get(label_end + 1) != Some(&b'[') {
             let inner_label = &content[start + 1..label_end];
             if self.lookup_ref_def(inner_label).is_some() {
-                return BracketLinkMatch {
-                    is_link: true,
-                    label_end,
-                    link_end: label_end + 1,
-                };
+                return Some(label_end + 1);
             }
         }
 
-        BracketLinkMatch {
-            is_link: false,
-            label_end,
-            link_end: label_end + 1,
-        }
+        None
     }
 
-    /// Check if a link label contains an inner link construct.
-    /// Used to enforce the "links cannot contain other links" rule (CommonMark §6.7).
-    /// `base` is the offset of `label` within the slice `brackets` was built for.
-    pub(crate) fn label_contains_link(
+    /// `![[a]](b)` is an image. Whether the `[` at `open` is closed as one by the second `]` of `wiki_link`, which starts there.
+    fn is_image_around_brackets(
         &mut self,
-        label: &[u8],
-        brackets: &BracketMatches,
-        base: usize,
+        content: &[u8],
+        open: usize,
+        wiki_link: &WikiLinkMatch,
     ) -> bool {
-        let mut pos: usize = 0;
-        while pos < label.len() {
-            if label[pos] == b'\\' && pos + 1 < label.len() {
-                pos += 2;
-                continue;
-            }
-            // Skip code spans
-            if label[pos] == b'`' {
-                let count = inlines::count_backticks(label, pos);
-                if let Some(end_pos) = self.find_code_span_end(label, pos + count, count) {
-                    pos = end_pos + count;
-                } else {
-                    // No closer: skip the whole run so it isn't re-counted per
-                    // backtick (quadratic on long unclosed runs in a label).
-                    pos += count;
+        let (mut pos, mut depth) = (wiki_link.inner_start, 0_u32);
+        let mut taken = pos;
+        while pos < wiki_link.inner_end {
+            if content[pos] == b'\\' {
+                pos += 1;
+                if content
+                    .get(pos)
+                    .is_some_and(|it| helpers::is_ascii_punctuation(*it))
+                {
+                    pos += 1;
+                    taken = pos;
                 }
                 continue;
             }
-            // Skip HTML tags and autolinks
-            if label[pos] == b'<' && !self.flags.no_html_spans {
-                if let Some(tag_end) = self.find_html_tag(label, pos) {
-                    pos = tag_end;
-                    continue;
-                }
-                if let Some(al) = self.find_autolink(label, pos) {
-                    pos = al.end_pos;
-                    continue;
-                }
+            if let Some(hidden) = self.hidden_at(content, pos, taken, true) {
+                pos = hidden.end;
+                taken = pos;
+                continue;
             }
-            if label[pos] == b'[' {
-                // Skip images (![...]) — images are allowed inside links
-                let is_inner_image = pos > 0 && label[pos - 1] == b'!';
-                // Try to find matching ] and check for link syntax
-                let inner = self.try_match_bracket_link(label, pos, brackets, base);
-                if inner.is_link && !is_inner_image {
-                    return true;
-                }
-                if inner.link_end > pos {
-                    // Skip past entire construct (including (url) or [ref] for images)
-                    pos = inner.link_end;
-                    continue;
-                }
+            match content[pos] {
+                b'[' => depth += 1,
+                b']' if depth == 0 => return false,
+                b']' => depth -= 1,
+                _ => {}
             }
             pos += 1;
         }
-        false
+        pos == wiki_link.inner_end
+            && depth == 0
+            && self
+                .link_end_behind(content, open, wiki_link.inner_end + 1)
+                .is_some()
     }
 
     /// Lookahead-only match of `[[destination]]` / `[[destination|label]]`,
@@ -882,6 +759,7 @@ impl Parser<'_> {
         &mut self,
         content: &[u8],
         start: usize,
+        base: usize,
     ) -> Result<Option<LabelParse>, parser::Error> {
         let Some(m) = self.match_wiki_link(content, start) else {
             return Ok(None);
@@ -890,6 +768,7 @@ impl Parser<'_> {
         let target = &content[m.inner_start..m.pipe_pos.unwrap_or(m.inner_end)];
 
         // Render the wikilink
+        self.at(base + start, base + start + 2);
         self.renderer.enter_span(
             Span::Wikilink,
             SpanAttrs {
@@ -949,60 +828,57 @@ impl Parser<'_> {
                     });
                 }
             }
+        }
 
-            // Check for email autolink
-            let mut email_pos = pos;
-            // username part
+        // Check for email autolink
+        let mut email_pos = pos;
+        // username part
+        while email_pos < content.len()
+            && (helpers::is_alpha_num(content[email_pos])
+                || bun_core::strings::contains_char(b".!#$%&'*+/=?^_`{|}~-", content[email_pos]))
+        {
+            email_pos += 1;
+        }
+        if email_pos < content.len() && content[email_pos] == b'@' && email_pos > pos {
+            email_pos += 1;
+            // domain part: labels separated by '.', each 1-63 chars, alphanumeric or
+            // hyphen, which is neither the first nor the last of them
+            let mut label_len: u32 = 0;
+            let mut valid_domain = true;
             while email_pos < content.len()
                 && (helpers::is_alpha_num(content[email_pos])
                     || content[email_pos] == b'.'
-                    || content[email_pos] == b'-'
-                    || content[email_pos] == b'_'
-                    || content[email_pos] == b'+')
+                    || content[email_pos] == b'-')
             {
+                if content[email_pos] == b'.' {
+                    if label_len == 0 || content[email_pos - 1] == b'-' {
+                        valid_domain = false;
+                        break;
+                    }
+                    label_len = 0;
+                } else {
+                    if label_len == 0 && content[email_pos] == b'-' {
+                        valid_domain = false;
+                        break;
+                    }
+                    label_len += 1;
+                    if label_len > 63 {
+                        valid_domain = false;
+                        break;
+                    }
+                }
                 email_pos += 1;
             }
-            if email_pos < content.len() && content[email_pos] == b'@' && email_pos > pos {
-                email_pos += 1;
-                // domain part: labels separated by '.', each 1-63 chars, alphanumeric or hyphen
-                let domain_start = email_pos;
-                let mut label_len: u32 = 0;
-                let mut dot_count: u32 = 0;
-                let mut valid_domain = true;
-                while email_pos < content.len()
-                    && (helpers::is_alpha_num(content[email_pos])
-                        || content[email_pos] == b'.'
-                        || content[email_pos] == b'-')
-                {
-                    if content[email_pos] == b'.' {
-                        if label_len == 0 {
-                            valid_domain = false;
-                            break;
-                        }
-                        label_len = 0;
-                        dot_count += 1;
-                    } else {
-                        label_len += 1;
-                        if label_len > 63 {
-                            valid_domain = false;
-                            break;
-                        }
-                    }
-                    email_pos += 1;
-                }
-                if valid_domain
-                    && email_pos < content.len()
-                    && content[email_pos] == b'>'
-                    && email_pos > domain_start
-                    && label_len > 0
-                    && dot_count > 0
-                    && helpers::is_alpha_num(content[email_pos - 1])
-                {
-                    return Some(Autolink {
-                        end_pos: email_pos + 1,
-                        is_email: true,
-                    });
-                }
+            if valid_domain
+                && email_pos < content.len()
+                && content[email_pos] == b'>'
+                && label_len > 0
+                && helpers::is_alpha_num(content[email_pos - 1])
+            {
+                return Some(Autolink {
+                    end_pos: email_pos + 1,
+                    is_email: true,
+                });
             }
         }
 
@@ -1013,7 +889,10 @@ impl Parser<'_> {
         &mut self,
         url: &[u8],
         is_email: bool,
+        // Where the `<` is in the block's inline content.
+        beg: usize,
     ) -> crate::types::JsResult<()> {
+        self.at(beg, beg + 1);
         self.renderer.enter_span(
             Span::A,
             SpanAttrs {
@@ -1023,8 +902,54 @@ impl Parser<'_> {
                 ..Default::default()
             },
         )?;
+        self.at(beg + 1, beg + 1 + url.len());
         self.emit_text(TextType::Normal, url)?;
+        self.at(beg + 1 + url.len(), beg + 2 + url.len());
         self.renderer.leave_span(Span::A)?;
         Ok(())
+    }
+
+    /// Where the `[^label]` at `pos` ends, if a footnote of that name is defined.
+    pub(crate) fn footnote_reference_end(&self, content: &[u8], pos: usize) -> Option<usize> {
+        if content.get(pos + 1) != Some(&b'^') {
+            return None;
+        }
+        let label_beg = pos + 2;
+        let mut end = label_beg;
+        loop {
+            match *content.get(end)? {
+                b']' => break,
+                b'[' | b' ' | b'\t' | b'\n' | b'\r' => return None,
+                b'\\' if matches!(content.get(end + 1), Some(b'[' | b'\\' | b']')) => end += 2,
+                _ => end += 1,
+            }
+            if end - label_beg > crate::ref_defs::MAX_LINK_LABEL_LEN {
+                return None;
+            }
+        }
+        let label = self.normalize_label(&content[label_beg..end]);
+        (!label.is_empty() && self.footnote_labels.contains(&label)).then_some(end + 1)
+    }
+
+    pub(crate) fn render_footnote_reference(
+        &mut self,
+        label: &[u8],
+        // Where the `[` is in the block's inline content.
+        beg: usize,
+    ) -> crate::types::JsResult<()> {
+        if self.image_nesting_level > 0 {
+            return Ok(());
+        }
+        self.at(beg, beg + 2);
+        self.renderer.enter_span(
+            Span::A,
+            SpanAttrs {
+                href: label,
+                reference: Reference::Footnote,
+                ..Default::default()
+            },
+        )?;
+        self.at(beg + 2 + label.len(), beg + 3 + label.len());
+        self.renderer.leave_span(Span::A)
     }
 }

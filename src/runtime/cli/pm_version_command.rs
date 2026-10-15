@@ -4,11 +4,11 @@ use bstr::BStr;
 
 use crate::api::bun::process::Status as ProcStatus;
 use crate::api::bun::process::sync::{
-    Options as SpawnSyncOptions, SyncStdio as Stdio, spawn as spawn_sync,
+    Options as SpawnSyncOptions, Result as SpawnSyncResult, SyncStdio as Stdio, spawn as spawn_sync,
 };
 use crate::cli::command;
 use crate::cli::run_command::RunCommand;
-use bun_alloc::{AllocError, Arena};
+use bun_alloc::Arena;
 use bun_ast::ExprData;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var};
@@ -38,31 +38,17 @@ enum VersionType {
 
 impl VersionType {
     fn from_string(str: &[u8]) -> Option<VersionType> {
-        if str == b"patch" {
-            return Some(VersionType::Patch);
-        }
-        if str == b"minor" {
-            return Some(VersionType::Minor);
-        }
-        if str == b"major" {
-            return Some(VersionType::Major);
-        }
-        if str == b"prepatch" {
-            return Some(VersionType::Prepatch);
-        }
-        if str == b"preminor" {
-            return Some(VersionType::Preminor);
-        }
-        if str == b"premajor" {
-            return Some(VersionType::Premajor);
-        }
-        if str == b"prerelease" {
-            return Some(VersionType::Prerelease);
-        }
-        if str == b"from-git" {
-            return Some(VersionType::FromGit);
-        }
-        None
+        Some(match str {
+            b"patch" => VersionType::Patch,
+            b"minor" => VersionType::Minor,
+            b"major" => VersionType::Major,
+            b"prepatch" => VersionType::Prepatch,
+            b"preminor" => VersionType::Preminor,
+            b"premajor" => VersionType::Premajor,
+            b"prerelease" => VersionType::Prerelease,
+            b"from-git" => VersionType::FromGit,
+            _ => return None,
+        })
     }
 }
 
@@ -73,16 +59,16 @@ impl PmVersionCommand {
         positionals: &[&[u8]],
         original_cwd: &[u8],
     ) -> Result<(), crate::Error> {
-        let package_json_dir = Self::find_package_dir(original_cwd)?;
+        let package_json_dir = Self::find_package_dir(original_cwd);
 
         if positionals.len() <= 1 {
-            Self::show_help(ctx, pm, &package_json_dir)?;
+            Self::show_help(ctx, pm, &package_json_dir);
             return Ok(());
         }
 
         let (version_type, new_version) = Self::parse_version_argument(positionals[1]);
 
-        Self::verify_git(&package_json_dir, pm)?;
+        Self::verify_git(&package_json_dir, pm);
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
@@ -98,13 +84,11 @@ impl PmVersionCommand {
                 Global::exit(1);
             }
         };
-        // `defer ctx.allocator.free(package_json_contents)` — handled by Drop.
 
         let package_json_source = bun_ast::Source::init_path_string(
             package_json_path.as_bytes(),
             &*package_json_contents,
         );
-        // Hand the parser a local bump arena for its scratch allocations.
         let json_bump = Arena::new();
         let json_result = match JSON::parse_package_json_utf8_with_opts(
             JSON::JSONOptions {
@@ -113,9 +97,7 @@ impl PmVersionCommand {
                 ..JSON::PACKAGE_JSON_OPTS
             },
             &package_json_source,
-            // SAFETY: single-threaded CLI dispatch; the returned `&mut Log` is
-            // passed straight into this parse call and no other borrow of the
-            // process-static `Log` (via `ctx` or `pm`) is live for its duration.
+            // SAFETY: no other borrow of the process-static `Log` is live during this call.
             unsafe { ctx.log_mut() },
             &json_bump,
         ) {
@@ -133,48 +115,38 @@ impl PmVersionCommand {
             Global::exit(1);
         }
 
-        let scripts = if pm.options.do_.run_scripts() {
-            json.as_property(b"scripts")
-        } else {
-            None
-        };
-        let scripts_obj = if let Some(s) = &scripts {
-            if matches!(s.expr.data, ExprData::EObject(_)) {
-                Some(s.expr)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        let dry_run = pm.options.dry_run;
+        let scripts_obj = (pm.options.do_.run_scripts() && !dry_run)
+            .then(|| json.get(b"scripts"))
+            .flatten()
+            .filter(|scripts| matches!(scripts.data, ExprData::EObject(_)));
 
         let silent = pm.options.log_level == LogLevel::Silent;
         let use_system_shell = ctx.debug.use_system_shell;
 
-        if let Some(s) = &scripts_obj {
-            if let Some(script) = s.get(b"preversion") {
-                if let Some(script_command) = script.as_string(&json_bump) {
-                    RunCommand::run_package_script_foreground(
-                        ctx,
-                        script_command,
-                        b"preversion",
-                        &package_json_dir,
-                        pm.env_mut(),
-                        &[],
-                        silent,
-                        use_system_shell,
-                    )?;
-                }
-            }
-        }
+        let mut run_script = |name: &[u8]| -> Result<(), crate::Error> {
+            let script = scripts_obj.and_then(|scripts| scripts.get(name));
+            let Some(script_command) = script.and_then(|script| script.as_string(&json_bump))
+            else {
+                return Ok(());
+            };
+            RunCommand::run_package_script_foreground(
+                &mut *ctx,
+                script_command,
+                name,
+                &package_json_dir,
+                pm.env_mut(),
+                &[],
+                silent,
+                use_system_shell,
+            )
+        };
 
-        let current_version: Option<&[u8]> = 'brk_version: {
-            if let Some(v) = json.as_property(b"version") {
-                if let ExprData::EString(s) = &v.expr.data {
-                    break 'brk_version Some(s.data.slice());
-                }
-            }
-            break 'brk_version None;
+        run_script(b"preversion")?;
+
+        let current_version: Option<&[u8]> = match json.get(b"version").map(|v| v.data) {
+            Some(ExprData::EString(s)) => Some(s.data.slice()),
+            _ => None,
         };
 
         let new_version_str = Self::calculate_new_version(
@@ -183,8 +155,7 @@ impl PmVersionCommand {
             new_version,
             pm.options.preid,
             &package_json_dir,
-        )?;
-        // `defer ctx.allocator.free(new_version_str)` — handled by Drop.
+        );
 
         if let Some(version) = current_version {
             if !pm.options.allow_same_version && version == new_version_str.as_slice() {
@@ -193,88 +164,58 @@ impl PmVersionCommand {
             }
         }
 
-        {
-            json.data
-                .e_object_mut()
-                .expect("checked e_object above")
-                .put_string(&json_bump, b"version", &new_version_str)?;
-
-            let mut buffer_writer = JSPrinter::BufferWriter::init();
-            buffer_writer.append_newline = !package_json_contents.is_empty()
-                && package_json_contents[package_json_contents.len() - 1] == b'\n';
-            let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
-
-            // `bun_ast::Indentation` is the same type the printer consumes.
-            let printer_indent: bun_ast::Indentation = json_result.indentation;
-
-            if let Err(err) = JSPrinter::print_json(
-                &mut package_json_writer,
-                json,
-                &package_json_source,
-                JSPrinter::PrintJsonOptions {
-                    indent: printer_indent,
-                    mangled_props: None,
-                    ..Default::default()
-                },
-            ) {
-                Output::err_generic("Failed to save package.json: {}", (err.name(),));
-                Global::exit(1);
-            }
-
-            if let Err(err) = bun_sys::File::write_file(
-                Fd::cwd(),
-                package_json_path,
-                package_json_writer.ctx.written_without_trailing_zero(),
-            ) {
-                Output::err_generic("Failed to write package.json: {}", (BStr::new(err.name()),));
-                Global::exit(1);
-            }
+        if dry_run {
+            Output::print(format_args!("v{}\n", BStr::new(&new_version_str)));
+            Output::flush();
+            return Ok(());
         }
 
-        if let Some(s) = &scripts_obj {
-            if let Some(script) = s.get(b"version") {
-                if let Some(script_command) = script.as_string(&json_bump) {
-                    RunCommand::run_package_script_foreground(
-                        ctx,
-                        script_command,
-                        b"version",
-                        &package_json_dir,
-                        pm.env_mut(),
-                        &[],
-                        silent,
-                        use_system_shell,
-                    )?;
-                }
-            }
+        json.data
+            .e_object_mut()
+            .expect("checked e_object above")
+            .put_string(&json_bump, b"version", &new_version_str)?;
+
+        let mut buffer_writer = JSPrinter::BufferWriter::init();
+        buffer_writer.append_newline = package_json_contents.ends_with(b"\n");
+        let mut package_json_writer = JSPrinter::BufferPrinter::init(buffer_writer);
+
+        if let Err(err) = JSPrinter::print_json(
+            &mut package_json_writer,
+            json,
+            &package_json_source,
+            JSPrinter::PrintJsonOptions {
+                indent: json_result.indentation,
+                mangled_props: None,
+                ..Default::default()
+            },
+        ) {
+            Output::err_generic("Failed to save package.json: {}", (err.name(),));
+            Global::exit(1);
         }
+
+        if let Err(err) = bun_sys::File::write_file(
+            Fd::cwd(),
+            package_json_path,
+            package_json_writer.ctx.written_without_trailing_zero(),
+        ) {
+            Output::err_generic("Failed to write package.json: {}", (BStr::new(err.name()),));
+            Global::exit(1);
+        }
+
+        run_script(b"version")?;
 
         if pm.options.git_tag_version {
-            Self::git_commit_and_tag(&new_version_str, pm.options.message, &package_json_dir)?;
+            Self::git_commit_and_tag(&new_version_str, pm.options.message, &package_json_dir);
         }
 
-        if let Some(s) = &scripts_obj {
-            if let Some(script) = s.get(b"postversion") {
-                if let Some(script_command) = script.as_string(&json_bump) {
-                    RunCommand::run_package_script_foreground(
-                        ctx,
-                        script_command,
-                        b"postversion",
-                        &package_json_dir,
-                        pm.env_mut(),
-                        &[],
-                        silent,
-                        use_system_shell,
-                    )?;
-                }
-            }
-        }
+        run_script(b"postversion")?;
 
         Output::print(format_args!("v{}\n", BStr::new(&new_version_str)));
         Output::flush();
         Ok(())
     }
 
-    fn find_package_dir(start_dir: &[u8]) -> Result<Vec<u8>, AllocError> {
+    fn find_package_dir(start_dir: &[u8]) -> Vec<u8> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut current_dir = start_dir;
 
@@ -285,40 +226,39 @@ impl PmVersionCommand {
                 &[b"package.json"],
             );
             if bun_sys::exists_at(Fd::cwd(), package_json_path_z) {
-                return Ok(current_dir.to_vec());
+                return current_dir.to_vec();
             }
 
             let parent = path::dirname::<path_platform::Auto>(current_dir);
             if parent == current_dir {
-                break;
+                return start_dir.to_vec();
             }
             current_dir = parent;
         }
-
-        Ok(start_dir.to_vec())
     }
 
-    fn verify_git(cwd: &[u8], pm: &mut PackageManager) -> Result<(), AllocError> {
+    fn verify_git(cwd: &[u8], pm: &mut PackageManager) {
         if !pm.options.git_tag_version {
-            return Ok(());
+            return;
         }
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let git_dir_path =
             path::join_abs_string_buf_z::<path_platform::Auto>(cwd, &mut path_buf.0, &[b".git"]);
-        if !matches!(
-            bun_sys::directory_exists_at(Fd::cwd(), git_dir_path),
-            Ok(true)
-        ) {
+        // `.git` is a file, not a directory, in a linked worktree or a submodule.
+        if !bun_sys::exists_z(git_dir_path) {
             pm.options.git_tag_version = false;
-            return Ok(());
-        }
-
-        if !pm.options.force && !Self::is_git_clean(cwd)? {
+        } else if !pm.options.force && !Self::is_git_clean(cwd) {
             Output::err_generic("Git working directory not clean.", ());
             Global::exit(1);
         }
-        Ok(())
+    }
+
+    /// node-semver's limit: https://github.com/npm/node-semver/blob/v7.7.2/classes/semver.js#L50-L60
+    fn is_valid_version(result: &Semver::version::ParseResult<u64>) -> bool {
+        const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
+        let version = result.version.min();
+        result.valid && version.major.max(version.minor).max(version.patch) <= MAX_SAFE_INTEGER
     }
 
     fn parse_version_argument(arg: &[u8]) -> (VersionType, Option<&[u8]>) {
@@ -327,7 +267,7 @@ impl PmVersionCommand {
         }
 
         let version = Semver::Version::parse(Semver::SlicedString::init(arg, arg));
-        if version.valid {
+        if Self::is_valid_version(&version) {
             return (VersionType::Specific, Some(arg));
         }
 
@@ -339,7 +279,6 @@ impl PmVersionCommand {
     }
 
     fn get_current_version(ctx: &command::ContextData, cwd: &[u8]) -> Option<Vec<u8>> {
-        // Returns an owned Vec<u8> (no borrow of the package.json bytes).
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
             cwd,
@@ -347,41 +286,28 @@ impl PmVersionCommand {
             &[b"package.json"],
         );
 
-        let Ok(package_json_contents) = bun_sys::File::read_from(Fd::cwd(), package_json_path)
-        else {
-            return None;
-        };
+        let package_json_contents = bun_sys::File::read_from(Fd::cwd(), package_json_path).ok()?;
 
         let package_json_source = bun_ast::Source::init_path_string(
             package_json_path.as_bytes(),
             &*package_json_contents,
         );
         let json_bump = Arena::new();
-        let Ok(json) = JSON::parse_package_json_utf8(
+        let json = JSON::parse_package_json_utf8(
             &package_json_source,
-            // SAFETY: single-threaded CLI dispatch; the returned `&mut Log` is
-            // passed straight into this parse call and no other borrow of the
-            // process-static `Log` is live for its duration.
+            // SAFETY: no other borrow of the process-static `Log` is live during this call.
             unsafe { ctx.log_mut() },
             &json_bump,
-        ) else {
-            return None;
-        };
+        )
+        .ok()?;
 
-        if let Some(v) = json.as_property(b"version") {
-            if let ExprData::EString(s) = &v.expr.data {
-                return Some(s.data.to_vec());
-            }
+        match json.get(b"version")?.data {
+            ExprData::EString(s) => Some(s.data.to_vec()),
+            _ => None,
         }
-
-        None
     }
 
-    fn show_help(
-        ctx: &command::ContextData,
-        pm: &PackageManager,
-        cwd: &[u8],
-    ) -> Result<(), AllocError> {
+    fn show_help(ctx: &command::ContextData, pm: &PackageManager, cwd: &[u8]) {
         let _current_version = Self::get_current_version(ctx, cwd);
         let current_version: &[u8] = _current_version.as_deref().unwrap_or(b"1.0.0");
 
@@ -394,70 +320,30 @@ impl PmVersionCommand {
         }
 
         let preid = pm.options.preid;
-
-        let patch_version =
-            Self::calculate_new_version(current_version, VersionType::Patch, None, preid, cwd)?;
-        let minor_version =
-            Self::calculate_new_version(current_version, VersionType::Minor, None, preid, cwd)?;
-        let major_version =
-            Self::calculate_new_version(current_version, VersionType::Major, None, preid, cwd)?;
-        let prerelease_version = Self::calculate_new_version(
-            current_version,
-            VersionType::Prerelease,
-            None,
-            preid,
-            cwd,
-        )?;
-        // `defer ctx.allocator.free(...)` — handled by Drop.
+        let next = |version_type: VersionType, preid: &[u8]| {
+            Self::calculate_new_version(current_version, version_type, None, preid, cwd)
+        };
 
         bun_core::pretty!(
             "\n<b>Increment<r>:\n  <cyan>patch<r>      <d>{0} → {1}<r>\n  <cyan>minor<r>      <d>{0} → {2}<r>\n  <cyan>major<r>      <d>{0} → {3}<r>\n  <cyan>prerelease<r> <d>{0} → {4}<r>\n",
             BStr::new(current_version),
-            BStr::new(&patch_version),
-            BStr::new(&minor_version),
-            BStr::new(&major_version),
-            BStr::new(&prerelease_version),
+            BStr::new(&next(VersionType::Patch, preid)),
+            BStr::new(&next(VersionType::Minor, preid)),
+            BStr::new(&next(VersionType::Major, preid)),
+            BStr::new(&next(VersionType::Prerelease, preid)),
         );
 
         if strings::index_of_char(current_version, b'-').is_some() || !preid.is_empty() {
-            let prepatch_version = Self::calculate_new_version(
-                current_version,
-                VersionType::Prepatch,
-                None,
-                preid,
-                cwd,
-            )?;
-            let preminor_version = Self::calculate_new_version(
-                current_version,
-                VersionType::Preminor,
-                None,
-                preid,
-                cwd,
-            )?;
-            let premajor_version = Self::calculate_new_version(
-                current_version,
-                VersionType::Premajor,
-                None,
-                preid,
-                cwd,
-            )?;
-
             bun_core::pretty!(
                 "  <cyan>prepatch<r>   <d>{0} → {1}<r>\n  <cyan>preminor<r>   <d>{0} → {2}<r>\n  <cyan>premajor<r>   <d>{0} → {3}<r>\n",
                 BStr::new(current_version),
-                BStr::new(&prepatch_version),
-                BStr::new(&preminor_version),
-                BStr::new(&premajor_version),
+                BStr::new(&next(VersionType::Prepatch, preid)),
+                BStr::new(&next(VersionType::Preminor, preid)),
+                BStr::new(&next(VersionType::Premajor, preid)),
             );
         }
 
-        let beta_prerelease_version = Self::calculate_new_version(
-            current_version,
-            VersionType::Prerelease,
-            None,
-            b"beta",
-            cwd,
-        )?;
+        let beta_prerelease_version = next(VersionType::Prerelease, b"beta");
 
         bun_core::pretty!(
             "  <cyan>from-git<r>   <d>Use version from latest git tag<r>\n\
@@ -469,6 +355,7 @@ impl PmVersionCommand {
              \x20 <cyan>--message<d>=\\<val\\><r>, <cyan>-m<r>  <d>Custom commit message, use %s for version substitution<r>\n\
              \x20 <cyan>--preid<d>=\\<val\\><r>        <d>Prerelease identifier (i.e beta → {})<r>\n\
              \x20 <cyan>--force<r>, <cyan>-f<r>          <d>Bypass dirty git history check<r>\n\
+             \x20 <cyan>--dry-run<r>            <d>Print the new version without writing, running scripts, or tagging<r>\n\
              \n\
              <b>Examples<r>:\n\
              \x20 <d>$<r> <b><green>bun pm version<r> <cyan>patch<r>\n\
@@ -479,7 +366,6 @@ impl PmVersionCommand {
             BStr::new(&beta_prerelease_version),
         );
         Output::flush();
-        Ok(())
     }
 
     fn calculate_new_version(
@@ -488,9 +374,9 @@ impl PmVersionCommand {
         specific_version: Option<&[u8]>,
         preid: &[u8],
         cwd: &[u8],
-    ) -> Result<Vec<u8>, AllocError> {
+    ) -> Vec<u8> {
         if version_type == VersionType::Specific {
-            return Ok(specific_version.unwrap().to_vec());
+            return specific_version.unwrap().to_vec();
         }
 
         if version_type == VersionType::FromGit {
@@ -498,7 +384,7 @@ impl PmVersionCommand {
         }
 
         let current = Semver::Version::parse(Semver::SlicedString::init(current_str, current_str));
-        if !current.valid {
+        if !Self::is_valid_version(&current) {
             Output::err_generic(
                 "Current version \"{}\" is not a valid semver",
                 (BStr::new(current_str),),
@@ -506,28 +392,25 @@ impl PmVersionCommand {
             Global::exit(1);
         }
 
-        let prerelease_id: Vec<u8> = if !preid.is_empty() {
-            preid.to_vec()
+        let current_prerelease = current.version.tag.pre.slice(current_str);
+        let prerelease_id: &[u8] = if !preid.is_empty() {
+            preid
         } else if !current.version.tag.has_pre() {
-            Vec::new()
+            b""
+        } else if let Some(dot_index) = strings::index_of_char(current_prerelease, b'.') {
+            &current_prerelease[..dot_index as usize]
+        } else if Self::next_prerelease_number(current_prerelease).is_some() {
+            b""
         } else {
-            'blk: {
-                let current_prerelease = current.version.tag.pre.slice(current_str);
-
-                if let Some(dot_index) = strings::index_of_char(current_prerelease, b'.') {
-                    break 'blk current_prerelease[..dot_index as usize].to_vec();
-                }
-
-                break 'blk if bun_core::fmt::parse_decimal::<u32>(current_prerelease).is_some() {
-                    Vec::new()
-                } else {
-                    current_prerelease.to_vec()
-                };
-            }
+            current_prerelease
         };
-        // `defer allocator.free(prerelease_id)` — handled by Drop.
 
-        Self::increment_version(current_str, &current, version_type, &prerelease_id)
+        Self::increment_version(current_str, &current, version_type, prerelease_id)
+    }
+
+    /// `None` for a name, and for a number with no successor in the u64 `Tag::order_pre` compares in.
+    fn next_prerelease_number(identifier: &[u8]) -> Option<u64> {
+        bun_core::fmt::parse_decimal::<u64>(identifier)?.checked_add(1)
     }
 
     fn increment_version(
@@ -535,399 +418,195 @@ impl PmVersionCommand {
         current: &Semver::version::ParseResult<u64>,
         version_type: VersionType,
         preid: &[u8],
-    ) -> Result<Vec<u8>, AllocError> {
-        let mut new_version = current.version.min();
+    ) -> Vec<u8> {
+        let v = current.version.min();
+        // The first prerelease of a version.
+        let first = if preid.is_empty() {
+            "0".to_owned()
+        } else {
+            format!("{}.0", BStr::new(preid))
+        };
 
-        match version_type {
-            VersionType::Patch => {
-                return Ok(fmt_bytes(format_args!(
-                    "{}.{}.{}",
-                    new_version.major,
-                    new_version.minor,
-                    new_version.patch + 1
-                )));
-            }
-            VersionType::Minor => {
-                return Ok(fmt_bytes(format_args!(
-                    "{}.{}.0",
-                    new_version.major,
-                    new_version.minor + 1
-                )));
-            }
-            VersionType::Major => {
-                return Ok(fmt_bytes(format_args!("{}.0.0", new_version.major + 1)));
-            }
-            VersionType::Prepatch => {
-                if !preid.is_empty() {
-                    return Ok(fmt_bytes(format_args!(
-                        "{}.{}.{}-{}.0",
-                        new_version.major,
-                        new_version.minor,
-                        new_version.patch + 1,
-                        BStr::new(preid)
-                    )));
-                } else {
-                    return Ok(fmt_bytes(format_args!(
-                        "{}.{}.{}-0",
-                        new_version.major,
-                        new_version.minor,
-                        new_version.patch + 1
-                    )));
-                }
-            }
-            VersionType::Preminor => {
-                if !preid.is_empty() {
-                    return Ok(fmt_bytes(format_args!(
-                        "{}.{}.0-{}.0",
-                        new_version.major,
-                        new_version.minor + 1,
-                        BStr::new(preid)
-                    )));
-                } else {
-                    return Ok(fmt_bytes(format_args!(
-                        "{}.{}.0-0",
-                        new_version.major,
-                        new_version.minor + 1
-                    )));
-                }
-            }
-            VersionType::Premajor => {
-                if !preid.is_empty() {
-                    return Ok(fmt_bytes(format_args!(
-                        "{}.0.0-{}.0",
-                        new_version.major + 1,
-                        BStr::new(preid)
-                    )));
-                } else {
-                    return Ok(fmt_bytes(format_args!("{}.0.0-0", new_version.major + 1)));
-                }
+        let (major, minor, patch, pre) = match version_type {
+            VersionType::Patch => (v.major, v.minor, v.patch + 1, None),
+            VersionType::Minor => (v.major, v.minor + 1, 0, None),
+            VersionType::Major => (v.major + 1, 0, 0, None),
+            VersionType::Prepatch => (v.major, v.minor, v.patch + 1, Some(first)),
+            VersionType::Preminor => (v.major, v.minor + 1, 0, Some(first)),
+            VersionType::Premajor => (v.major + 1, 0, 0, Some(first)),
+            VersionType::Prerelease if !current.version.tag.has_pre() => {
+                (v.major, v.minor, v.patch + 1, Some(first))
             }
             VersionType::Prerelease => {
-                if current.version.tag.has_pre() {
-                    let current_prerelease = current.version.tag.pre.slice(current_str);
-                    let identifier: &[u8] = if !preid.is_empty() {
-                        preid
-                    } else {
-                        current_prerelease
-                    };
-
-                    if let Some(dot_index) = strings::last_index_of_char(current_prerelease, b'.') {
-                        let number_str = &current_prerelease[(dot_index as usize) + 1..];
-                        let next_num = bun_core::fmt::parse_decimal::<u32>(number_str).unwrap_or(0);
-                        return Ok(fmt_bytes(format_args!(
-                            "{}.{}.{}-{}.{}",
-                            new_version.major,
-                            new_version.minor,
-                            new_version.patch,
-                            BStr::new(identifier),
-                            next_num + 1
-                        )));
-                    } else {
-                        let num = bun_core::fmt::parse_decimal::<u32>(current_prerelease);
-                        if let Some(n) = num {
-                            if !preid.is_empty() {
-                                return Ok(fmt_bytes(format_args!(
-                                    "{}.{}.{}-{}.{}",
-                                    new_version.major,
-                                    new_version.minor,
-                                    new_version.patch,
-                                    BStr::new(preid),
-                                    n + 1
-                                )));
-                            } else {
-                                return Ok(fmt_bytes(format_args!(
-                                    "{}.{}.{}-{}",
-                                    new_version.major,
-                                    new_version.minor,
-                                    new_version.patch,
-                                    n + 1
-                                )));
-                            }
-                        } else {
-                            return Ok(fmt_bytes(format_args!(
-                                "{}.{}.{}-{}.1",
-                                new_version.major,
-                                new_version.minor,
-                                new_version.patch,
-                                BStr::new(identifier)
-                            )));
-                        }
-                    }
+                let current_prerelease = current.version.tag.pre.slice(current_str);
+                let identifier = BStr::new(if !preid.is_empty() {
+                    preid
                 } else {
-                    new_version.patch += 1;
-                    if !preid.is_empty() {
-                        return Ok(fmt_bytes(format_args!(
-                            "{}.{}.{}-{}.0",
-                            new_version.major,
-                            new_version.minor,
-                            new_version.patch,
-                            BStr::new(preid)
-                        )));
-                    } else {
-                        return Ok(fmt_bytes(format_args!(
-                            "{}.{}.{}-0",
-                            new_version.major, new_version.minor, new_version.patch
-                        )));
+                    current_prerelease
+                });
+                let pre = match strings::last_index_of_char(current_prerelease, b'.') {
+                    Some(dot_index) => {
+                        let number_str = &current_prerelease[dot_index + 1..];
+                        let next_num = Self::next_prerelease_number(number_str).unwrap_or(1);
+                        format!("{identifier}.{next_num}")
                     }
-                }
+                    None => match Self::next_prerelease_number(current_prerelease) {
+                        Some(next_num) if preid.is_empty() => next_num.to_string(),
+                        next_num => format!("{identifier}.{}", next_num.unwrap_or(1)),
+                    },
+                };
+                (v.major, v.minor, v.patch, Some(pre))
             }
-            _ => {}
+            VersionType::Specific | VersionType::FromGit => (v.major, v.minor, v.patch, None),
+        };
+
+        match pre {
+            Some(pre) => fmt_bytes(format_args!("{major}.{minor}.{patch}-{pre}")),
+            None => fmt_bytes(format_args!("{major}.{minor}.{patch}")),
         }
-        Ok(fmt_bytes(format_args!(
-            "{}.{}.{}",
-            new_version.major, new_version.minor, new_version.patch
-        )))
     }
 
-    fn is_git_clean(cwd: &[u8]) -> Result<bool, AllocError> {
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let Some(git_path) = which(
-            &mut path_buf,
-            env_var::PATH.get().unwrap_or(b""),
-            cwd,
-            b"git",
-        ) else {
+    fn find_git<'a>(
+        path_buf: &'a mut bun_paths::PathBuffer,
+        cwd: &[u8],
+        used_for: &str,
+    ) -> &'a [u8] {
+        let Some(git_path) = which(path_buf, env_var::PATH.get().unwrap_or(b""), cwd, b"git")
+        else {
             Output::err_generic(
-                "git must be installed to use `bun pm version --git-tag-version`",
-                (),
+                "git must be installed to use `bun pm version {}`",
+                (used_for,),
             );
             Global::exit(1);
         };
+        git_path.as_bytes()
+    }
 
-        let proc = match spawn_sync(&SpawnSyncOptions {
-            argv: build_argv(&[git_path.as_bytes(), b"status", b"--porcelain"]),
+    /// Runs `argv` in `cwd` with its stdout buffered.
+    fn spawn_git(
+        argv: &[&[u8]],
+        cwd: &[u8],
+        stderr: Stdio,
+    ) -> Result<bun_sys::Maybe<SpawnSyncResult>, bun_spawn::Error> {
+        spawn_sync(&SpawnSyncOptions {
+            argv: argv.iter().map(|arg| Box::<[u8]>::from(*arg)).collect(),
             stdout: Stdio::Buffer,
-            stderr: Stdio::Ignore,
+            stderr,
             stdin: Stdio::Ignore,
             cwd: Box::<[u8]>::from(cwd),
             envp: None,
             #[cfg(windows)]
             windows: spawn_windows_options(),
             ..Default::default()
-        }) {
-            Ok(p) => p,
+        })
+    }
+
+    fn is_git_clean(cwd: &[u8]) -> bool {
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let git_path = Self::find_git(&mut path_buf, cwd, "--git-tag-version");
+
+        match Self::spawn_git(&[git_path, b"status", b"--porcelain"], cwd, Stdio::Ignore) {
+            Ok(Ok(result)) => result.is_ok() && result.stdout.is_empty(),
+            Ok(Err(err)) => {
+                Output::err(err, "Failed to spawn git process", ());
+                Global::exit(1);
+            }
             Err(err) => {
                 Output::err_generic("Failed to spawn git process: {}", (err.name(),));
                 Global::exit(1);
             }
-        };
-
-        match proc {
-            Err(err) => {
-                Output::err(err, "Failed to spawn git process", ());
-                Global::exit(1);
-            }
-            Ok(result) => Ok(result.is_ok() && result.stdout.is_empty()),
         }
     }
 
-    fn get_version_from_git(cwd: &[u8]) -> Result<Vec<u8>, AllocError> {
+    fn get_version_from_git(cwd: &[u8]) -> Vec<u8> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        let Some(git_path) = which(
-            &mut path_buf,
-            env_var::PATH.get().unwrap_or(b""),
-            cwd,
-            b"git",
-        ) else {
-            Output::err_generic("git must be installed to use `bun pm version from-git`", ());
-            Global::exit(1);
-        };
+        let git_path = Self::find_git(&mut path_buf, cwd, "from-git");
 
-        let proc = match spawn_sync(&SpawnSyncOptions {
-            argv: build_argv(&[git_path.as_bytes(), b"describe", b"--tags", b"--abbrev=0"]),
-            stdout: Stdio::Buffer,
-            stderr: Stdio::Buffer,
-            stdin: Stdio::Ignore,
-            cwd: Box::<[u8]>::from(cwd),
-            envp: None,
-            #[cfg(windows)]
-            windows: spawn_windows_options(),
-            ..Default::default()
-        }) {
-            Ok(p) => p,
-            Err(err) => {
-                Output::err(err, "Failed to spawn git process", ());
-                Global::exit(1);
-            }
-        };
-
-        match proc {
-            Err(err) => {
+        let argv: [&[u8]; 4] = [git_path, b"describe", b"--tags", b"--abbrev=0"];
+        let result = match Self::spawn_git(&argv, cwd, Stdio::Buffer) {
+            Ok(Ok(result)) => result,
+            Ok(Err(err)) => {
                 Output::err(err, "Git command failed unexpectedly", ());
                 Global::exit(1);
             }
-            Ok(result) => {
-                if !result.is_ok() {
-                    if !result.stderr.is_empty() {
-                        Output::err_generic(
-                            "Git error: {}",
-                            (BStr::new(strings::trim(&result.stderr, b" \n\r\t")),),
-                        );
-                    } else {
-                        Output::err_generic("No git tags found", ());
-                    }
-                    Global::exit(1);
-                }
+            Err(err) => {
+                Output::err(err, "Failed to spawn git process", ());
+                Global::exit(1);
+            }
+        };
 
-                let mut version_str = strings::trim(&result.stdout, b" \n\r\t");
-                if version_str.starts_with(b"v") {
-                    version_str = &version_str[1..];
-                }
+        if !result.is_ok() {
+            if !result.stderr.is_empty() {
+                Output::err_generic(
+                    "Git error: {}",
+                    (BStr::new(strings::trim(&result.stderr, b" \n\r\t")),),
+                );
+            } else {
+                Output::err_generic("No git tags found", ());
+            }
+            Global::exit(1);
+        }
 
-                Ok(version_str.to_vec())
+        let version_str = strings::trim(&result.stdout, b" \n\r\t");
+        version_str
+            .strip_prefix(b"v")
+            .unwrap_or(version_str)
+            .to_vec()
+    }
+
+    /// `git <what>`, which may have exited with a failure.
+    fn run_git(what: &str, argv: &[&[u8]], cwd: &[u8]) -> SpawnSyncResult {
+        match Self::spawn_git(argv, cwd, Stdio::Buffer) {
+            Ok(Ok(result)) => result,
+            Ok(Err(err)) => {
+                Output::err(err, "Git {} failed unexpectedly", (what,));
+                Global::exit(1);
+            }
+            Err(err) => {
+                Output::err_generic("Git {} failed: {}", (what, err.name()));
+                Global::exit(1);
             }
         }
     }
 
-    fn git_commit_and_tag(
-        version: &[u8],
-        custom_message: Option<&[u8]>,
-        cwd: &[u8],
-    ) -> Result<(), AllocError> {
+    fn git_commit_and_tag(version: &[u8], custom_message: Option<&[u8]>, cwd: &[u8]) {
         let mut path_buf = bun_paths::path_buffer_pool::get();
-        let Some(git_path) = which(
-            &mut path_buf,
-            env_var::PATH.get().unwrap_or(b""),
-            cwd,
-            b"git",
-        ) else {
-            Output::err_generic(
-                "git must be installed to use `bun pm version --git-tag-version`",
-                (),
-            );
+        let git_path = Self::find_git(&mut path_buf, cwd, "--git-tag-version");
+
+        let staged = Self::run_git("add", &[git_path, b"add", b"package.json"], cwd);
+        if !staged.is_ok() {
+            let exit_code: i32 = match &staged.status {
+                ProcStatus::Exited(e) => i32::from(e.code),
+                _ => -1,
+            };
+            Output::err_generic("Git add failed with exit code {}", (exit_code,));
             Global::exit(1);
-        };
-
-        let stage_proc = match spawn_sync(&SpawnSyncOptions {
-            argv: build_argv(&[git_path.as_bytes(), b"add", b"package.json"]),
-            cwd: Box::<[u8]>::from(cwd),
-            stdout: Stdio::Buffer,
-            stderr: Stdio::Buffer,
-            stdin: Stdio::Ignore,
-            envp: None,
-            #[cfg(windows)]
-            windows: spawn_windows_options(),
-            ..Default::default()
-        }) {
-            Ok(p) => p,
-            Err(err) => {
-                Output::err_generic("Git add failed: {}", (err.name(),));
-                Global::exit(1);
-            }
-        };
-
-        match stage_proc {
-            Err(err) => {
-                Output::err(err, "Git add failed unexpectedly", ());
-                Global::exit(1);
-            }
-            Ok(result) => {
-                if !result.is_ok() {
-                    let exit_code: i32 = match &result.status {
-                        ProcStatus::Exited(e) => i32::from(e.code),
-                        _ => -1,
-                    };
-                    Output::err_generic("Git add failed with exit code {}", (exit_code,));
-                    Global::exit(1);
-                }
-            }
-        }
-
-        let commit_message: Vec<u8> = if let Some(msg) = custom_message {
-            strings::replace_owned(msg, b"%s", version)
-        } else {
-            fmt_bytes(format_args!("v{}", BStr::new(version)))
-        };
-        // `defer allocator.free(commit_message)` — handled by Drop.
-
-        let commit_proc = match spawn_sync(&SpawnSyncOptions {
-            argv: build_argv(&[git_path.as_bytes(), b"commit", b"-m", &commit_message]),
-            cwd: Box::<[u8]>::from(cwd),
-            stdout: Stdio::Buffer,
-            stderr: Stdio::Buffer,
-            stdin: Stdio::Ignore,
-            envp: None,
-            #[cfg(windows)]
-            windows: spawn_windows_options(),
-            ..Default::default()
-        }) {
-            Ok(p) => p,
-            Err(err) => {
-                Output::err_generic("Git commit failed: {}", (err.name(),));
-                Global::exit(1);
-            }
-        };
-
-        match commit_proc {
-            Err(err) => {
-                Output::err(err, "Git commit failed unexpectedly", ());
-                Global::exit(1);
-            }
-            Ok(result) => {
-                if !result.is_ok() {
-                    Output::err_generic("Git commit failed", ());
-                    Global::exit(1);
-                }
-            }
         }
 
         let tag_name = fmt_bytes(format_args!("v{}", BStr::new(version)));
-        // `defer allocator.free(tag_name)` — handled by Drop.
-
-        let tag_proc = match spawn_sync(&SpawnSyncOptions {
-            argv: build_argv(&[
-                git_path.as_bytes(),
-                b"tag",
-                b"-a",
-                &tag_name,
-                b"-m",
-                &tag_name,
-            ]),
-            cwd: Box::<[u8]>::from(cwd),
-            stdout: Stdio::Buffer,
-            stderr: Stdio::Buffer,
-            stdin: Stdio::Ignore,
-            envp: None,
-            #[cfg(windows)]
-            windows: spawn_windows_options(),
-            ..Default::default()
-        }) {
-            Ok(p) => p,
-            Err(err) => {
-                Output::err_generic("Git tag failed: {}", (err.name(),));
-                Global::exit(1);
-            }
+        let commit_message: Vec<u8> = match custom_message {
+            Some(msg) => strings::replace_owned(msg, b"%s", version),
+            None => tag_name.clone(),
         };
 
-        match tag_proc {
-            Err(err) => {
-                Output::err(err, "Git tag failed unexpectedly", ());
-                Global::exit(1);
-            }
-            Ok(result) => {
-                if !result.is_ok() {
-                    Output::err_generic("Git tag failed", ());
-                    Global::exit(1);
-                }
-            }
+        let commit: [&[u8]; 4] = [git_path, b"commit", b"-m", &commit_message];
+        if !Self::run_git("commit", &commit, cwd).is_ok() {
+            Output::err_generic("Git commit failed", ());
+            Global::exit(1);
         }
-        Ok(())
+
+        let tag: [&[u8]; 6] = [git_path, b"tag", b"-a", &tag_name, b"-m", &tag_name];
+        if !Self::run_git("tag", &tag, cwd).is_ok() {
+            Output::err_generic("Git tag failed", ());
+            Global::exit(1);
+        }
     }
 }
 
-// Builds formatted output into a `Vec<u8>` (never `format!`).
-#[inline]
 fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
     let mut v = Vec::new();
     v.write_fmt(args).expect("unreachable");
     v
-}
-
-// Note: build `sync::Options.argv: Vec<Box<[u8]>>` from a slice of byte
-// slices.
-#[inline]
-fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
-    parts.iter().map(|p| Box::<[u8]>::from(*p)).collect()
 }
 
 #[cfg(windows)]

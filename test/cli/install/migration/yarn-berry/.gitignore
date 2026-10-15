@@ -1,0 +1,5 @@
+# the fixtures are yarn lockfiles
+!yarn.lock
+!.yarn/
+bun.lock
+bun.lockb

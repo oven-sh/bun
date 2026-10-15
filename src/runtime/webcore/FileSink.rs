@@ -464,8 +464,9 @@ impl FileSink {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
         // The streaming writer follows every `onError` with `close()` →
         // `onClose` (on both platforms), which fires `source.close()` and
-        // releases the keep-alive ref. Releasing the ref here instead could
-        // drop the last reference and free `this` before that `close()` runs.
+        // releases the keep-alive ref. The JS `run_pending` runs can get there
+        // first: a failed pump closes the writer, and `this` is then only kept
+        // alive by the ref the writer holds until its own `close()` returns.
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
             (*this).record_stream_error(streams::StreamError::Error(err.clone()));

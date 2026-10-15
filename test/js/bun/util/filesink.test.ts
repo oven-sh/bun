@@ -1451,45 +1451,24 @@ it("start() with invalid options throws instead of silently ignoring them", asyn
 // spot, because the reader has hung up, used to return a second, already rejected promise: a script awaiting the
 // first one caught the error and still died of an unhandled rejection.
 //
-// The child blocks in a synchronous read of stdin between its two writes, so no event-loop turn can tell the sink
-// about the hang-up first: the second write() is the one that finds out, with the first still pending.
-it.skipIf(isWindows)("a write() that fails while another is pending rejects the pending promise once", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-const fs = require("node:fs");
-process.on("unhandledRejection", e => {
-  console.error("unhandledRejection " + e?.code);
-});
-const sink = Bun.stdout.writer();
-const first = sink.write(Buffer.alloc(8 * 1024 * 1024, "x").toString());
-fs.readSync(0, Buffer.alloc(1));
-const second = sink.write("tail");
-try {
-  await first;
-  console.error("resolved");
-} catch (e) {
-  console.error("caught " + e.code + ", same promise: " + (second === first));
-}
-`,
-    ],
-    env: bunEnv,
-    stdin: "pipe",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  // Take one chunk, close the read end while most of the first write is still pending, and only then let the
-  // child make its second write.
-  const reader = proc.stdout.getReader();
-  await reader.read();
-  await reader.cancel();
-  proc.stdin.write("x");
-  await proc.stdin.end();
-
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("caught EPIPE, same promise: true\n");
-  expect(exitCode).toBe(0);
+// The hang-up and the second write() share one tick, so no event-loop turn can tell the sink about the hang-up
+// first: the second write() is the one that finds out, with the first still pending.
+it.skipIf(!isPosix)("a write() that fails while another is pending rejects the pending promise once", async () => {
+  const [readFd, writeFd] = createSocketPair();
+  let readFdOpen = true;
+  const sink = Bun.file(writeFd).writer();
+  try {
+    // Nothing drains `readFd`, so the socket buffers fill up.
+    const first = sink.write(Buffer.alloc(8 * 1024 * 1024, "x").toString());
+    expect(Bun.peek.status(first)).toBe("pending");
+    fs.closeSync(readFd);
+    readFdOpen = false;
+    const second = sink.write("tail");
+    expect(second).toBe(first);
+    await expect(first).rejects.toMatchObject({ code: "EPIPE" });
+  } finally {
+    await Promise.resolve(sink.end()).catch(() => {});
+    fs.closeSync(writeFd);
+    if (readFdOpen) fs.closeSync(readFd);
+  }
 });

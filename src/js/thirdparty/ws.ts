@@ -2671,9 +2671,10 @@ function initAsClient(
     opts.defaultPort = opts.defaultPort || defaultPort;
     opts.timeout = handshakeTimeout;
 
-    if ($isObject(opts.tls)) {
+    const given = opts.tls;
+    if ($isObject(given)) {
       // It stands in for all that the other options say about TLS, as it does for the native client below.
-      const { serverName, ...tls }: Dictionary<unknown> = { __proto__: null as never, ...opts.tls };
+      const { serverName, ...tls }: Dictionary<unknown> = { __proto__: null as never, ...given };
       const connect = opts as unknown as Dictionary<unknown>;
       const { nodeClientTlsKeys } = require("internal/tls");
 
@@ -2746,9 +2747,10 @@ function initAsClient(
   const req = (websocket._req = new ClientRequest(websocket, url, nativeOptions, state));
 
   const headers = req[kHeaders];
-  if (opts.headers) {
-    for (const name of Object.keys(opts.headers)) {
-      const value = opts.headers[name];
+  const extraHeaders = opts.headers;
+  if (extraHeaders) {
+    for (const name of Object.keys(extraHeaders)) {
+      const value = extraHeaders[name];
       if (value !== undefined) headers[name.toLowerCase()] = [name, value];
     }
   }

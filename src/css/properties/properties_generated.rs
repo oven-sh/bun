@@ -1626,7 +1626,7 @@ pub enum Property {
     InsetBlock(margin_padding::InsetBlock),
     InsetInline(margin_padding::InsetInline),
     Inset(margin_padding::Inset),
-    BorderSpacing(css::css_values::size::Size2D<css::css_values::length::Length>),
+    BorderSpacing(css::css_values::size::Size2D<NonNegative<css::css_values::length::Length>>),
     BorderTopColor(css::css_values::color::CssColor),
     BorderBottomColor(css::css_values::color::CssColor),
     BorderLeftColor(css::css_values::color::CssColor),
@@ -2742,7 +2742,7 @@ impl Property {
             }
             PropertyId::BorderSpacing => {
                 if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::Length>,
+                    css::css_values::size::Size2D<NonNegative<css::css_values::length::Length>>,
                 >(input, options)
                 {
                     return Ok(Property::BorderSpacing(c));

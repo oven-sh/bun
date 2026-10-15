@@ -1331,11 +1331,9 @@ pub(crate) enum FlushState {
 /// What a stream still sends between the moment RST_STREAM is submitted for it and the frame.
 #[derive(Clone, Copy)]
 enum BeforeReset {
-    /// Its DATA that is queued and sendable at that moment: node sends it in front of the
-    /// frame (Http2Session::SendPendingData in Http2Stream::SubmitRstStream). The stream's
-    /// send window keeps room for that DATA and for no more.
+    /// Its DATA that is queued and sendable at that moment, as node's SendPendingData in
+    /// Http2Stream::SubmitRstStream. The send window keeps room for that DATA and no more.
     QueuedData,
-    /// Nothing.
     Nothing,
 }
 
@@ -2765,9 +2763,8 @@ impl H2FrameParser {
 
     /// be sure that we dont have any backpressure/data queued on writerBuffer before calling this
     ///
-    /// `only` is the stream that rst_stream is about to reset. Its queue alone is flushed, and
-    /// socket backpressure does not stop that: the socket buffers the DATA like the
-    /// RST_STREAM that follows it.
+    /// `only` is the stream that rst_stream is about to reset. Socket backpressure does not
+    /// stop its flush: the socket buffers the DATA like the RST_STREAM that follows it.
     fn flush_stream_queue(&self, only: Option<u32>) -> usize {
         bun_output::scoped_log!(
             H2FrameParser,
@@ -4273,8 +4270,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
         if let Some(stream) = self.streams.get().get(&stream_id).copied() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             if unsafe { (*stream).closing } && !after_own_headers {
-                // nghttp2 ignores a frame for a stream that is closing, END_STREAM included. A
-                // listener of the HEADERS frame that carries this END_STREAM does not undo it.
+                // nghttp2 ignores a frame for a closing stream, END_STREAM included. It keeps
+                // the END_STREAM of the HEADERS frame whose own listener made the call.
                 return;
             }
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
@@ -5226,7 +5223,7 @@ impl H2FrameParser {
             // engine dispatch (the engine cell may already be borrowed).
             //
             // A NO_ERROR reset for an unknown id is always a no-op: it reaches here from the
-            // deferred JS close path (rstStreamNT after _destroy) once a cleanly-completed
+            // deferred JS close path (writeRstStream after _destroy) once a cleanly-completed
             // stream's entry has been evicted. Node sends no RST for cleanly-closed streams;
             // writing one makes the peer answer with RST(STREAM_CLOSED) per request.
             if error_code != ErrorCode::NO_ERROR.0 {
@@ -5245,8 +5242,8 @@ impl H2FrameParser {
             return Ok(JSValue::TRUE);
         };
 
-        // The drain runs write callbacks and can write to a JS transport: no stream is freed
-        // while the guard is live, and the entry is looked up again after it.
+        // The drain runs write callbacks and can write to a JS transport: the guard defers
+        // the free of a stream, and the entry is looked up again after the drain.
         let _dispatch = this.enter_dispatch();
         let has_queue = {
             // SAFETY: stream is a *mut Stream from self.streams; valid while the map entry exists
@@ -5642,10 +5639,8 @@ impl H2FrameParser {
     }
 
     /// setStreamClosing(streamId, code, destroyed): close() or destroy() submits RST_STREAM.
-    ///
-    /// node hands the frame to nghttp2 inside the call. Here rst_stream() writes the frame one
-    /// event loop turn later, so this marks the stream now. It writes no frame and runs no JS.
-    /// The rule is Http2Stream::SubmitRstStream and Http2Stream::Destroy of node v26.3.0.
+    /// rst_stream() writes the frame one event loop turn later. The rule is
+    /// Http2Stream::SubmitRstStream and Http2Stream::Destroy of node v26.3.0.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn set_stream_closing(
         this: &Self,
@@ -5661,8 +5656,8 @@ impl H2FrameParser {
         };
         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
         let stream = unsafe { &mut *stream };
-        // node parks the frame while the socket has not taken the last write. destroy() submits
-        // it at once all the same, and the queued DATA then does not leave.
+        // node's destroy() submits the frame with a socket write in progress, and the DATA
+        // that waits for that write does not leave.
         if destroyed_arg.to_boolean() {
             let writing = this.write_buffer.get().len_u32() > 0;
             this.set_closing(

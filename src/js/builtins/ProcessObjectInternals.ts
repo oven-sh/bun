@@ -90,6 +90,12 @@ export function getStdioWriteStream(
   stream._isStdio = true;
   stream.fd = fd;
 
+  // Node's is a TTY, a Pipe or a TCP. Command-line tools call setBlocking(true) before native code writes to the descriptor.
+  if (isTTY || fdType !== BunProcessStdinFdType.file) {
+    const setStdioBlocking = $newRustFunction("node_process.rs", "setStdioBlocking", 2);
+    stream._handle = { fd, setBlocking: (blocking: boolean) => setStdioBlocking(fd, !!blocking) };
+  }
+
   const underlyingSink = stream[require("internal/fs/streams").kWriteStreamFastPath];
   $assert(underlyingSink);
   return [stream, underlyingSink];

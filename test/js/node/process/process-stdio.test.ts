@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { release } from "node:os";
 import path from "path";
 import { isatty } from "tty";
@@ -168,6 +168,47 @@ describe.concurrent.skipIf(isWindows)(
   "O_NONBLOCK on process.stdout/stderr does not leak to children or truncate console output",
   () => {
     const probe = path.join(import.meta.dir, "fd-nonblock-fixture.js");
+
+    // What command-line tools do before native code of theirs writes to the descriptor. Without it a write stops at a full pipe.
+    test.each(["stdout", "stderr"] as const)(
+      "process.%s._handle.setBlocking(true) makes the pipe blocking",
+      async name => {
+        const [fd, otherFd] = name === "stdout" ? [1, 2] : [2, 1];
+        await using proc = spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+            const { writeSync } = require("node:fs");
+            const handle = process.${name}._handle;
+            const result = handle.setBlocking(true);
+            const written = writeSync(${fd}, Buffer.alloc(1_000_000, "x"));
+            writeSync(${otherFd}, JSON.stringify({ fd: handle.fd, result, written }));
+          `,
+          ],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const [output, report] = name === "stdout" ? [stdout, stderr] : [stderr, stdout];
+        expect(JSON.parse(report)).toEqual({ fd, result: 0, written: 1_000_000 });
+        expect(output.length).toBe(1_000_000);
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test("a file has no _handle, as in Node", async () => {
+      using dir = tempDir("stdout-file-handle", {});
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", `require("node:fs").writeSync(2, typeof process.stdout._handle)`],
+        env: bunEnv,
+        stdout: Bun.file(path.join(String(dir), "out.txt")),
+        stderr: "pipe",
+      });
+      expect(await proc.stderr.text()).toBe("undefined");
+      expect(await proc.exited).toBe(0);
+    });
 
     // Newline-delimited JSON events from a child's stderr, one at a time, plus the raw remainder at EOF.
     function jsonLines(stream: ReadableStream<Uint8Array>) {

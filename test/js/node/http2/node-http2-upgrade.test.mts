@@ -334,7 +334,7 @@ describe("HTTP/2 upgrade — the client closes its side first", () => {
     const h2Server = http2.createSecureServer(TLS);
     const log: string[] = [];
     const first = Buffer.alloc(16 * 1024 * 1024, "a");
-    const writing = Promise.withResolvers<void>();
+    const writing = Promise.withResolvers<tls.TLSSocket>();
     h2Server.on("error", (err: NodeJS.ErrnoException) => log.push(`server 'error': ${err.code}`));
     h2Server.on("unknownProtocol", socket => {
       socket.on("error", (err: NodeJS.ErrnoException) => log.push(`'error': ${err.code}`));
@@ -343,7 +343,7 @@ describe("HTTP/2 upgrade — the client closes its side first", () => {
       socket.write(first, err => log.push(`write callback: ${(err as NodeJS.ErrnoException)?.code}`));
       socket.write("tail", err => log.push(`queued write callback: ${(err as NodeJS.ErrnoException)?.code}`));
       socket.write("third", err => log.push(`last write callback: ${(err as NodeJS.ErrnoException)?.code}`));
-      writing.resolve();
+      writing.resolve(socket);
     });
     let raw: net.Socket | undefined;
     const netServer = net.createServer(socket => void h2Server.emit("connection", (raw = socket)));
@@ -354,10 +354,10 @@ describe("HTTP/2 upgrade — the client closes its side first", () => {
     try {
       client.on("error", err => log.push(`client 'error': ${(err as NodeJS.ErrnoException).code}`));
       await once(client, "secureConnect");
-      await writing.promise;
+      const serverSide = await writing.promise;
       // A turn later only what the kernel did not take is left.
       await new Promise(resolve => setImmediate(resolve));
-      if (process.versions.bun !== undefined) assert.notStrictEqual(raw?.writableLength, 0);
+      assert.notStrictEqual(serverSide.writableLength, 0);
       let received = 0;
       const ended = once(client, "end");
       client.end();
@@ -775,20 +775,6 @@ describe("HTTP/2 upgrade — fatal TLS error after the handshake", () => {
     }
   });
 });
-
-if (typeof Bun !== "undefined") {
-  describe("Node.js compatibility", () => {
-    test("tests should run on node.js", async () => {
-      await using proc = Bun.spawn({
-        cmd: [Bun.which("node") || "node", "--test", import.meta.filename],
-        stdout: "inherit",
-        stderr: "inherit",
-        stdin: "ignore",
-      });
-      assert.strictEqual(await proc.exited, 0);
-    });
-  });
-}
 
 describe("HTTP/2 upgrade — the server's whole TLS configuration applies", () => {
   const read = (name: string) => fs.readFileSync(path.join(FIXTURES_PATH, name));

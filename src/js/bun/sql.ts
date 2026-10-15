@@ -229,8 +229,9 @@ function dispatchToPool(this: Client, query: Query, handle: QueryHandle) {
 
 function refusal(scope: Scope): Error {
   for (let around: Scope | null = scope; around !== null; around = around.parent) {
-    if (around.error !== null) {
-      return around.error;
+    const { error } = around;
+    if (error !== null) {
+      return error;
     }
   }
   return scope.kind === Kind.reservation
@@ -746,8 +747,9 @@ async function closeTransaction(this: Scope, options?: CloseOptions) {
     return;
   }
   const transaction = transactionOf(this);
-  if (transaction.finishing !== null) {
-    await transaction.finishing.$then(undefined, noop);
+  const { finishing } = transaction;
+  if (finishing !== null) {
+    await finishing.$then(undefined, noop);
     return;
   }
   shut(transaction);

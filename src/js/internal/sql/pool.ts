@@ -729,11 +729,12 @@ abstract class BaseSQLAdapter<
     }
     closeHandlers.clear();
 
+    const waiting = this.queue.length;
     if (this.#tornDown) {
       if (!established) {
         return;
       }
-    } else if (this.queue.length > 0) {
+    } else if (waiting > 0) {
       // They never used `connection`. After one that worked they get a new one.
       if (established) {
         this.#serve();

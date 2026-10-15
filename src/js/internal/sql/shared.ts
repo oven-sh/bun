@@ -331,7 +331,8 @@ class QueryBuilder {
         return;
       }
       if (value instanceof SQLArrayParameter) {
-        if (value.arrayType !== undefined) after = "::" + value.arrayType + "[]" + after;
+        const { arrayType } = value;
+        if (arrayType !== undefined) after = "::" + arrayType + "[]" + after;
         value = value.serializedValues;
       } else if ($isArray(value) && value[0] instanceof Query) {
         for (let i = 0; i < value.length; i++) {

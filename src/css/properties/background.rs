@@ -4,8 +4,9 @@ use crate::css_values::color::ColorFallbackKind;
 use crate::css_values::color::CssColor;
 use crate::css_values::image::Image;
 use crate::css_values::length::LengthPercentageOrAuto;
+use crate::css_values::number::NonNegative;
 use crate::css_values::position::{HorizontalPosition, Position, VerticalPosition};
-use crate::generics::{CssEql, DeepClone};
+use crate::generics::{CssEql, DeepClone, Parse as _};
 use crate::properties::{Property, PropertyId};
 use crate::{
     DeclarationList, Parser, PrintErr, Printer, PropertyHandlerContext, SmallList, VendorPrefix,
@@ -278,17 +279,17 @@ pub enum BackgroundSize {
 #[derive(Clone, PartialEq)]
 pub struct ExplicitBackgroundSize {
     /// The width of the background.
-    pub(crate) width: LengthPercentageOrAuto,
+    pub(crate) width: NonNegative<LengthPercentageOrAuto>,
     /// The height of the background.
-    pub(crate) height: LengthPercentageOrAuto,
+    pub(crate) height: NonNegative<LengthPercentageOrAuto>,
 }
 
 impl BackgroundSize {
     pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
-        if let Ok(width) = input.try_parse(LengthPercentageOrAuto::parse) {
+        if let Ok(width) = input.try_parse(NonNegative::<LengthPercentageOrAuto>::parse) {
             let height = input
-                .try_parse(LengthPercentageOrAuto::parse)
-                .unwrap_or(LengthPercentageOrAuto::Auto);
+                .try_parse(NonNegative::<LengthPercentageOrAuto>::parse)
+                .unwrap_or(NonNegative(LengthPercentageOrAuto::Auto));
             return Ok(BackgroundSize::Explicit(ExplicitBackgroundSize {
                 width,
                 height,
@@ -310,10 +311,10 @@ impl BackgroundSize {
             BackgroundSize::Cover => dest.write_str("cover"),
             BackgroundSize::Contain => dest.write_str("contain"),
             BackgroundSize::Explicit(explicit) => {
-                explicit.width.to_css(dest)?;
-                if !matches!(explicit.height, LengthPercentageOrAuto::Auto) {
+                explicit.width.0.to_css(dest)?;
+                if !matches!(explicit.height.0, LengthPercentageOrAuto::Auto) {
                     dest.write_str(" ")?;
-                    explicit.height.to_css(dest)?;
+                    explicit.height.0.to_css(dest)?;
                 }
                 Ok(())
             }
@@ -322,8 +323,8 @@ impl BackgroundSize {
 
     pub(crate) fn default() -> Self {
         BackgroundSize::Explicit(ExplicitBackgroundSize {
-            width: LengthPercentageOrAuto::Auto,
-            height: LengthPercentageOrAuto::Auto,
+            width: NonNegative(LengthPercentageOrAuto::Auto),
+            height: NonNegative(LengthPercentageOrAuto::Auto),
         })
     }
 

@@ -113,16 +113,46 @@ use bun_s3_signing::storage_class::StorageClass;
 // re-export hub instead.
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
-    self as s3_simple_request, Key, Resend, Retry, S3CommitResult, S3DeleteResult,
-    S3DownloadResult, S3PartResult, S3UploadResult, execute_simple_s3_request,
+    self as s3_simple_request, Attempt, Resend, S3CommitResult, S3DeleteResult, S3DownloadResult,
+    S3PartResult, S3UploadResult, execute_simple_s3_request, send_again,
 };
 use crate::webcore::s3::xml_response;
 use bun_collections::index_sort;
 
 declare_scope!(S3MultiPartUpload, hidden);
 
-/// The callback of such a request sends it again itself, so it is not also sent again below.
-const RETRIED_BY_CALLBACK: Retry = Retry::Never;
+/// Sends a request of an upload: for the first time, with `resend`, or once more after an
+/// attempt of it failed. `false`: it is not sent again.
+fn issue(
+    credentials: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
+    options: s3_simple_request::S3RequestOptions<'_>,
+    attempt: Option<Attempt<'_>>,
+    resend: Resend,
+    callback: s3_simple_request::S3Callback,
+    callback_context: *mut c_void,
+) -> bun_jsc::JsResult<bool> {
+    match attempt {
+        None => execute_simple_s3_request(
+            credentials,
+            context,
+            options,
+            resend,
+            callback,
+            callback_context,
+        )
+        .map(|()| true),
+        Some(attempt) => Ok(send_again(
+            credentials,
+            context,
+            options,
+            attempt,
+            callback,
+            callback_context,
+        )
+        .is_ok()),
+    }
+}
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MultiPartUpload {
@@ -278,7 +308,6 @@ pub(crate) struct UploadPart {
     pub(crate) allocated_size: Cell<usize>,
     pub(crate) state: Cell<PartState>,
     pub(crate) part_number: Cell<u16>, // max is 10,000
-    pub(crate) retry: Cell<u8>,        // auto retry, decrement until 0 and fail after this
     pub(crate) index: Cell<u8>,
 }
 
@@ -328,21 +357,13 @@ impl UploadPart {
 
         match result {
             S3PartResult::Failure(err) => {
-                let retry = this.retry.get();
-                if retry > 0 {
-                    scoped_log!(S3MultiPartUpload, "onPartResponse {} retry", part_number);
-                    this.retry.set(retry - 1);
-                    // retry failed
-                    this.perform()
-                } else {
-                    scoped_log!(S3MultiPartUpload, "onPartResponse {} failed", part_number);
-                    this.state.set(PartState::NotAssigned);
-                    this.free_allocated_slice();
-                    // The ctx deref must run after fail():
-                    let r = ctx.fail(err);
-                    MultiPartUpload::deref_(ctx_ptr);
-                    r
-                }
+                scoped_log!(S3MultiPartUpload, "onPartResponse {} failed", part_number);
+                this.state.set(PartState::NotAssigned);
+                this.free_allocated_slice();
+                // The ctx deref must run after fail():
+                let r = ctx.fail(err);
+                MultiPartUpload::deref_(ctx_ptr);
+                r
             }
             S3PartResult::Etag(etag) => {
                 scoped_log!(S3MultiPartUpload, "onPartResponse {} success", part_number);
@@ -370,6 +391,25 @@ impl UploadPart {
     }
 
     fn perform(&self) -> bun_jsc::JsResult<()> {
+        self.send(None).map(drop)
+    }
+
+    fn again(
+        this: *mut c_void,
+        _: &bun_jsc::ScriptExecutionContext,
+        attempt: Attempt<'_>,
+    ) -> bun_jsc::JsResult<bool> {
+        // SAFETY: the queue slot `send` passed; the ref this part holds on `ctx` keeps the
+        // queue alive until the part's response.
+        let this = unsafe { &*this.cast::<Self>() };
+        if this.state.get() == PartState::Canceled || this.ctx.get().state.get() == State::Finished
+        {
+            return Ok(false);
+        }
+        this.send(Some(attempt))
+    }
+
+    fn send(&self, attempt: Option<Attempt<'_>>) -> bun_jsc::JsResult<bool> {
         let ctx = self.ctx.get();
         let mut params_buffer = [0u8; 2048];
         let written = {
@@ -384,7 +424,7 @@ impl UploadPart {
             2048 - w.len()
         };
         let search_params = &params_buffer[..written];
-        execute_simple_s3_request(
+        issue(
             &ctx.credentials,
             ctx.context(),
             s3_simple_request::S3RequestOptions {
@@ -396,7 +436,8 @@ impl UploadPart {
                 request_payer: ctx.request_payer,
                 ..Default::default()
             },
-            RETRIED_BY_CALLBACK,
+            attempt,
+            Resend::transient(ctx.options.get().retry, Self::again),
             s3_simple_request::S3Callback::Part(Self::on_part_response),
             std::ptr::from_ref::<Self>(self).cast_mut().cast::<c_void>(),
         )
@@ -456,40 +497,8 @@ impl MultiPartUpload {
         }
         match result {
             S3UploadResult::Failure(err) => {
-                let mut options = self_.options.get();
-                if options.retry > 0 {
-                    scoped_log!(
-                        S3MultiPartUpload,
-                        "singleSendUploadResponse {} retry",
-                        options.retry
-                    );
-                    options.retry -= 1;
-                    self_.options.set(options);
-                    self_.ref_();
-                    execute_simple_s3_request(
-                        &self_.credentials,
-                        self_.context(),
-                        s3_simple_request::S3RequestOptions {
-                            path: &self_.path,
-                            method: bun_http::Method::PUT,
-                            proxy_url: self_.proxy_url(),
-                            body: self_.buffered.get().slice(),
-                            content_type: self_.content_type.as_deref(),
-                            content_disposition: self_.content_disposition.as_deref(),
-                            content_encoding: self_.content_encoding.as_deref(),
-                            acl: self_.acl,
-                            storage_class: self_.storage_class,
-                            request_payer: self_.request_payer,
-                            ..Default::default()
-                        },
-                        RETRIED_BY_CALLBACK,
-                        s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
-                        this.cast::<c_void>(),
-                    )
-                } else {
-                    scoped_log!(S3MultiPartUpload, "singleSendUploadResponse failed");
-                    self_.fail(err)
-                }
+                scoped_log!(S3MultiPartUpload, "singleSendUploadResponse failed");
+                self_.fail(err)
             }
             S3UploadResult::Success => {
                 scoped_log!(S3MultiPartUpload, "singleSendUploadResponse success");
@@ -504,6 +513,84 @@ impl MultiPartUpload {
                 self_.done()
             }
         }
+    }
+
+    /// The one PutObject of an upload that fits in one part.
+    fn single_send_options(&self) -> s3_simple_request::S3RequestOptions<'_> {
+        s3_simple_request::S3RequestOptions {
+            path: &self.path,
+            method: bun_http::Method::PUT,
+            proxy_url: self.proxy_url(),
+            body: self.buffered.get().slice(),
+            content_type: self.content_type.as_deref(),
+            content_disposition: self.content_disposition.as_deref(),
+            content_encoding: self.content_encoding.as_deref(),
+            acl: self.acl,
+            storage_class: self.storage_class,
+            request_payer: self.request_payer,
+            ..Default::default()
+        }
+    }
+
+    fn single_send_again(
+        this: *mut c_void,
+        _: &bun_jsc::ScriptExecutionContext,
+        attempt: Attempt<'_>,
+    ) -> bun_jsc::JsResult<bool> {
+        // SAFETY: the request holds the ref `process_buffered` took until its callback runs.
+        let this = unsafe { &*this.cast::<Self>() };
+        if this.state.get() == State::Finished {
+            return Ok(false);
+        }
+        Ok(send_again(
+            &this.credentials,
+            this.context(),
+            this.single_send_options(),
+            attempt,
+            s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
+            this.as_ctx_ptr(),
+        )
+        .is_ok())
+    }
+
+    /// CreateMultipartUpload. Sent again only if the store cannot have made an upload for the
+    /// attempt that failed.
+    fn create_options(&self) -> s3_simple_request::S3RequestOptions<'_> {
+        s3_simple_request::S3RequestOptions {
+            path: &self.path,
+            method: bun_http::Method::POST,
+            proxy_url: self.proxy_url(),
+            body: b"",
+            search_params: Some(b"?uploads="),
+            content_type: self.content_type.as_deref(),
+            content_disposition: self.content_disposition.as_deref(),
+            content_encoding: self.content_encoding.as_deref(),
+            acl: self.acl,
+            storage_class: self.storage_class,
+            request_payer: self.request_payer,
+            ..Default::default()
+        }
+    }
+
+    fn create_again(
+        this: *mut c_void,
+        _: &bun_jsc::ScriptExecutionContext,
+        attempt: Attempt<'_>,
+    ) -> bun_jsc::JsResult<bool> {
+        // SAFETY: the request holds the ref `enqueue_part` took until its callback runs.
+        let this = unsafe { &*this.cast::<Self>() };
+        if this.state.get() == State::Finished {
+            return Ok(false);
+        }
+        Ok(send_again(
+            &this.credentials,
+            this.context(),
+            this.create_options(),
+            attempt,
+            s3_simple_request::S3Callback::Download(Self::start_multi_part_request_result),
+            this.as_ctx_ptr(),
+        )
+        .is_ok())
     }
 
     /// This is the only place we allocate the queue or the parts, this is responsible for the flow of parts and the max allowed concurrency
@@ -540,7 +627,6 @@ impl MultiPartUpload {
                     part_number: Cell::new(0),
                     ctx: self_ref,
                     index: Cell::new(0),
-                    retry: Cell::new(0),
                     state: Cell::new(PartState::NotAssigned),
                 });
             }
@@ -563,7 +649,6 @@ impl MultiPartUpload {
         queue_item.allocated_size.set(allocated_len);
         queue_item.part_number.set(part_number);
         queue_item.index.set(index as u8); // @truncate
-        queue_item.retry.set(self.options.get().retry);
         queue_item.state.set(PartState::Pending);
         Some(queue_item)
     }
@@ -818,16 +903,6 @@ impl MultiPartUpload {
 
         match result {
             S3CommitResult::Failure(err) => {
-                let mut options = self_.options.get();
-                // (Retried in the context of the script that uploads: once that has stopped the
-                // request would only be aborted again.)
-                if options.retry > 0 && !self_.context().is_stopped() {
-                    options.retry -= 1;
-                    self_.options.set(options);
-                    // retry commit
-                    self_.commit_multi_part_request()?;
-                    return Ok(());
-                }
                 self_.state.set(State::Finished);
                 let r = (self_.callback)(
                     self_,
@@ -865,14 +940,6 @@ impl MultiPartUpload {
         );
         match result {
             S3DeleteResult::Failure(_err) => {
-                let mut options = self_.options.get();
-                if options.retry > 0 {
-                    options.retry -= 1;
-                    self_.options.set(options);
-                    // retry rollback
-                    self_.rollback_multi_part_request()?;
-                    return Ok(());
-                }
                 MultiPartUpload::deref_(this);
                 Ok(())
             }
@@ -885,6 +952,19 @@ impl MultiPartUpload {
     }
 
     fn commit_multi_part_request(&self) -> bun_jsc::JsResult<()> {
+        self.commit(None).map(drop)
+    }
+
+    fn commit_again(
+        this: *mut c_void,
+        _: &bun_jsc::ScriptExecutionContext,
+        attempt: Attempt<'_>,
+    ) -> bun_jsc::JsResult<bool> {
+        // SAFETY: the request owns the final-step ref until its callback runs.
+        unsafe { &*this.cast::<Self>() }.commit(Some(attempt))
+    }
+
+    fn commit(&self, attempt: Option<Attempt<'_>>) -> bun_jsc::JsResult<bool> {
         scoped_log!(
             S3MultiPartUpload,
             "commitMultiPartRequest {}",
@@ -898,7 +978,7 @@ impl MultiPartUpload {
         };
         let search_params = &params_buffer[..written];
 
-        execute_simple_s3_request(
+        issue(
             &self.credentials,
             self.context(),
             s3_simple_request::S3RequestOptions {
@@ -910,13 +990,27 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            RETRIED_BY_CALLBACK,
+            attempt,
+            Resend::transient(self.options.get().retry, Self::commit_again),
             s3_simple_request::S3Callback::Commit(Self::on_commit_multi_part_request),
             self.as_ctx_ptr(),
         )
     }
 
     fn rollback_multi_part_request(&self) -> bun_jsc::JsResult<()> {
+        self.rollback(None).map(drop)
+    }
+
+    fn rollback_again(
+        this: *mut c_void,
+        _: &bun_jsc::ScriptExecutionContext,
+        attempt: Attempt<'_>,
+    ) -> bun_jsc::JsResult<bool> {
+        // SAFETY: the request owns the final-step ref until its callback runs.
+        unsafe { &*this.cast::<Self>() }.rollback(Some(attempt))
+    }
+
+    fn rollback(&self, attempt: Option<Attempt<'_>>) -> bun_jsc::JsResult<bool> {
         scoped_log!(
             S3MultiPartUpload,
             "rollbackMultiPartRequest {}",
@@ -930,7 +1024,7 @@ impl MultiPartUpload {
         };
         let search_params = &params_buffer[..written];
 
-        execute_simple_s3_request(
+        issue(
             &self.credentials,
             // Not the script's request: it tells the store to drop the parts it holds (they are billed
             // until they expire), and has to go out when the upload fails because its context stopped.
@@ -944,7 +1038,8 @@ impl MultiPartUpload {
                 request_payer: self.request_payer,
                 ..Default::default()
             },
-            RETRIED_BY_CALLBACK,
+            attempt,
+            Resend::transient(self.options.get().retry, Self::rollback_again),
             s3_simple_request::S3Callback::Delete(Self::on_rollback_multi_part_request),
             self.as_ctx_ptr(),
         )
@@ -967,27 +1062,8 @@ impl MultiPartUpload {
             execute_simple_s3_request(
                 &self.credentials,
                 self.context(),
-                s3_simple_request::S3RequestOptions {
-                    path: &self.path,
-                    method: bun_http::Method::POST,
-                    proxy_url: self.proxy_url(),
-                    body: b"",
-                    search_params: Some(b"?uploads="),
-                    content_type: self.content_type.as_deref(),
-                    content_disposition: self.content_disposition.as_deref(),
-                    content_encoding: self.content_encoding.as_deref(),
-                    acl: self.acl,
-                    storage_class: self.storage_class,
-                    request_payer: self.request_payer,
-                    ..Default::default()
-                },
-                Retry::Budget(Resend {
-                    attempts: self.options.get().retry,
-                    sent_again: 0,
-                    credentials: self.credentials.clone(),
-                    // SAFETY: `root_ptr()` is this live upload.
-                    key: Key::Upload(unsafe { RefPtr::init_ref(self.root_ptr()) }),
-                }),
+                self.create_options(),
+                Resend::transient_once_at_most(self.options.get().retry, Self::create_again),
                 s3_simple_request::S3Callback::Download(Self::start_multi_part_request_result),
                 self.as_ctx_ptr(),
             )?;
@@ -1116,20 +1192,8 @@ impl MultiPartUpload {
             let _ = execute_simple_s3_request(
                 &self.credentials,
                 self.context(),
-                s3_simple_request::S3RequestOptions {
-                    path: &self.path,
-                    method: bun_http::Method::PUT,
-                    proxy_url: self.proxy_url(),
-                    body: self.buffered.get().slice(),
-                    content_type: self.content_type.as_deref(),
-                    content_disposition: self.content_disposition.as_deref(),
-                    content_encoding: self.content_encoding.as_deref(),
-                    acl: self.acl,
-                    storage_class: self.storage_class,
-                    request_payer: self.request_payer,
-                    ..Default::default()
-                },
-                RETRIED_BY_CALLBACK,
+                self.single_send_options(),
+                Resend::transient(self.options.get().retry, Self::single_send_again),
                 s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                 self.as_ctx_ptr(),
             ); // TODO: properly propagate exception upwards

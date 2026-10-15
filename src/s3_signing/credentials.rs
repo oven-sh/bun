@@ -835,7 +835,6 @@ impl S3Credentials {
         result.storage_class = sign_options.storage_class;
         result.request_payer = request_payer;
         result.url = url;
-        result.search_params_len = search_params.map_or(0, |params| params.len() as u32);
         result._headers_len = 4;
         // Self-referential: _headers borrows from owned Box<[u8]> fields on SignResult.
         // bun_picohttp::Header stores raw `*const u8, len` (verified), so the heap pointers stay
@@ -979,8 +978,6 @@ pub struct SignResult {
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
-    /// How many bytes at the end of `url` are the `search_params` it was signed with.
-    pub(crate) search_params_len: u32,
     // Self-referential: entries borrow from the Box<[u8]> fields above. PicoHeader
     // must be a raw (ptr,len) pair; see note in sign_request.
     pub(crate) _headers: [PicoHeader; Self::MAX_HEADERS],
@@ -1007,30 +1004,6 @@ impl SignResult {
         headers_buffer[len] = header;
         &headers_buffer[0..len + 1]
     }
-
-    /// The options that sign the same request once more: a request that is sent again needs a
-    /// new date, and so a new signature. `path` and `method` are the caller's; neither is kept
-    /// here. Only for a request signed in its headers with no payload hash and no Content-MD5:
-    /// those two are not kept as they were given.
-    pub fn sign_options_again<'a>(&'a self, path: &'a [u8], method: Method) -> SignOptions<'a> {
-        fn given(bytes: &[u8]) -> Option<&[u8]> {
-            (!bytes.is_empty()).then_some(bytes)
-        }
-        debug_assert!(self.content_md5.is_empty());
-        SignOptions {
-            path,
-            method,
-            content_hash: None,
-            content_md5: None,
-            search_params: given(&self.url[self.url.len() - self.search_params_len as usize..]),
-            content_disposition: given(&self.content_disposition),
-            content_type: None,
-            content_encoding: given(&self.content_encoding),
-            acl: self.acl,
-            storage_class: self.storage_class,
-            request_payer: self.request_payer,
-        }
-    }
 }
 
 impl Default for SignResult {
@@ -1047,7 +1020,6 @@ impl Default for SignResult {
             acl: None,
             storage_class: None,
             request_payer: false,
-            search_params_len: 0,
             _headers: [pico_header_empty(); Self::MAX_HEADERS],
             _headers_len: 0,
         }

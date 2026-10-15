@@ -46,7 +46,6 @@ use crate::webcore::s3::simple_request as s3_simple_request;
 
 use crate::webcore::ByteStream;
 use crate::webcore::ReadableStream;
-use crate::webcore::blob::store::Store;
 use crate::webcore::readable_stream::Source as ReadableStreamPtr;
 use crate::webcore::readable_stream::Strong as ReadableStreamStrong;
 use crate::webcore::s3::multipart::State as MultiPartUploadState;
@@ -59,7 +58,7 @@ use bun_jsc::CallFrame;
 bun_core::declare_scope!(S3UploadStream, visible);
 
 /// `retry` is documented for uploads: a read, a HEAD, a DELETE and a listing are sent once.
-const SENT_ONCE: s3_simple_request::Retry = s3_simple_request::Retry::Never;
+const SENT_ONCE: s3_simple_request::Resend = s3_simple_request::Resend::Never;
 
 pub(crate) fn stat(
     this: &S3Credentials,
@@ -313,9 +312,7 @@ pub(crate) fn list_objects(
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
-        method: bun_http::Method::GET,
-        // As `SENT_ONCE`.
-        resend: None,
+        resend: SENT_ONCE,
     }));
     // SAFETY: just allocated, non-null
     let task = unsafe { &mut *task_ptr };
@@ -382,47 +379,63 @@ pub(crate) fn list_objects(
     Ok(())
 }
 
-/// One PUT of `content` to the key of `store`, sent again up to `options.options.retry` times.
+fn upload_options<'a>(
+    path: &'a [u8],
+    options: &'a S3CredentialsWithOptions,
+    content: &'a [u8],
+    content_type: Option<&'a [u8]>,
+) -> s3_simple_request::Options<'a> {
+    s3_simple_request::Options {
+        path,
+        method: bun_http::Method::PUT,
+        body: content,
+        content_type,
+        content_disposition: options.content_disposition.as_deref(),
+        content_encoding: options.content_encoding.as_deref(),
+        acl: options.acl,
+        storage_class: options.storage_class,
+        request_payer: options.request_payer,
+        ..Default::default()
+    }
+}
+
+/// One PUT of `content`, sent again up to `options.options.retry` times through `again`, which
+/// calls `upload_again` with the same `path` and `options`. `Err`: it is not sent, and
+/// `callback` is not told.
 pub(crate) fn upload(
     context: &bun_jsc::ScriptExecutionContext,
-    store: &RefPtr<Store>,
+    path: &[u8],
     options: &S3CredentialsWithOptions,
     content: &[u8],
     content_type: Option<&[u8]>,
+    again: s3_simple_request::Again,
     callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
-) -> JsResult<()> {
-    let s3 = store.data.as_s3();
-    // The request holds on to what signs it: the store's credentials, or a copy of its own
-    // when this call's options changed them.
-    let changed;
-    let credentials = if options.changed_credentials {
-        changed = options.credentials.dupe();
-        &changed
-    } else {
-        s3.get_credentials()
-    };
-    s3_simple_request::execute_simple_s3_request(
-        credentials,
+) -> Result<(), Error::S3Error<'static>> {
+    s3_simple_request::send(
+        &options.credentials,
         context,
-        s3_simple_request::Options {
-            path: s3.path(),
-            method: bun_http::Method::PUT,
-            body: content,
-            content_type,
-            content_disposition: options.content_disposition.as_deref(),
-            content_encoding: options.content_encoding.as_deref(),
-            acl: options.acl,
-            storage_class: options.storage_class,
-            request_payer: options.request_payer,
-            ..Default::default()
-        },
-        s3_simple_request::Retry::Budget(s3_simple_request::Resend {
-            attempts: options.options.retry,
-            sent_again: 0,
-            credentials: credentials.clone(),
-            key: s3_simple_request::Key::Store(store.clone()),
-        }),
+        upload_options(path, options, content, content_type),
+        None,
+        s3_simple_request::Resend::transient(options.options.retry, again),
+        s3_simple_request::Callback::Upload(callback),
+        callback_context,
+    )
+}
+
+pub(crate) fn upload_again(
+    context: &bun_jsc::ScriptExecutionContext,
+    path: &[u8],
+    options: &S3CredentialsWithOptions,
+    attempt: s3_simple_request::Attempt<'_>,
+    callback: fn(S3UploadResult, *mut c_void) -> JsResult<()>,
+    callback_context: *mut c_void,
+) -> Result<(), Error::S3Error<'static>> {
+    s3_simple_request::send_again(
+        &options.credentials,
+        context,
+        upload_options(path, options, b"", attempt.content_type),
+        attempt,
         s3_simple_request::Callback::Upload(callback),
         callback_context,
     )

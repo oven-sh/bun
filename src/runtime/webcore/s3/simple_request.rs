@@ -10,11 +10,9 @@ use bun_http::{
     AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
     Method,
 };
-use bun_http_types::ETag::HeaderEntryColumns as _;
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_picohttp as picohttp;
-use bun_ptr::RefPtr;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
 use bun_s3_signing::error::{S3Error, get_sign_error_code_and_message};
@@ -23,8 +21,6 @@ use bun_threading::thread_pool;
 use bun_url::URL;
 
 use crate::timer::{EventLoopTimer, EventLoopTimerTag};
-use crate::webcore::blob::store::Store;
-use crate::webcore::s3::multipart::MultiPartUpload;
 use crate::webcore::s3::{list_objects, xml_response};
 
 // The result/options structs below carry borrowed slices that are valid only for the
@@ -145,42 +141,67 @@ pub(crate) struct S3HttpSimpleTask {
     pub(crate) abort_handle: bun_jsc::AbortHandle,
     /// The context of the script that asked (the handle forgets it when the context stops).
     pub(crate) context: bun_jsc::ContextId,
-    pub(crate) method: Method,
-    /// `None`: the request is sent once.
-    pub(crate) resend: Option<Resend>,
+    pub(crate) resend: Resend,
 }
 
 /// Whether a request that fails is sent again. Not an option with a default: every sender
 /// says which.
-pub(crate) enum Retry {
+pub(crate) enum Resend {
     Never,
-    /// Sent again, signed again, while it fails in a way another attempt can get past
-    /// (`S3HttpSimpleTask::is_transient`).
-    Budget(Resend),
+    /// While it fails in a way another attempt can get past (`S3HttpSimpleTask::is_transient`),
+    /// each time after a wait.
+    Transient(Budget),
 }
 
-/// What a request keeps so that it can be signed again after its sender has returned.
-pub(crate) struct Resend {
+pub(crate) struct Budget {
     /// How many more times the request is sent.
-    pub(crate) attempts: u8,
+    left: u8,
     /// How many times it was sent again: the wait before the next attempt grows with it.
-    pub(crate) sent_again: u8,
-    pub(crate) credentials: RefPtr<S3Credentials>,
-    pub(crate) key: Key,
+    sent_again: u8,
+    /// A request that got no answer may have been carried out. When a second one would not
+    /// leave the store as one does (CreateMultipartUpload), it is sent again only if no byte
+    /// of it was written.
+    once_at_most: bool,
+    again: Again,
 }
 
-/// The owner of the key a request is signed for: an S3 blob store, or a multipart upload.
-pub(crate) enum Key {
-    Store(RefPtr<Store>),
-    Upload(RefPtr<MultiPartUpload>),
+/// How the sender of a request issues it once more, through `send_again`. `false`: it is not
+/// sent again, and the sender's callback is told the failure in hand.
+pub(crate) type Again = fn(
+    callback_context: *mut c_void,
+    context: &bun_jsc::ScriptExecutionContext,
+    attempt: Attempt<'_>,
+) -> bun_jsc::JsResult<bool>;
+
+/// What a request that is sent again takes from the attempt that failed.
+pub(crate) struct Attempt<'a> {
+    /// Moved from that attempt, not copied again.
+    body: Box<[u8]>,
+    /// The Content-Type that attempt was sent with.
+    pub(crate) content_type: Option<&'a [u8]>,
+    /// What is left of the budget.
+    resend: Resend,
 }
 
-impl Key {
-    fn path(&self) -> &[u8] {
-        match self {
-            Key::Store(store) => store.data.as_s3().path(),
-            Key::Upload(upload) => &upload.path,
-        }
+impl Resend {
+    /// `retry` more attempts.
+    pub(crate) fn transient(retry: u8, again: Again) -> Self {
+        Resend::Transient(Budget {
+            left: retry,
+            sent_again: 0,
+            once_at_most: false,
+            again,
+        })
+    }
+
+    /// `transient`, for a request that must not be carried out twice.
+    pub(crate) fn transient_once_at_most(retry: u8, again: Again) -> Self {
+        Resend::Transient(Budget {
+            left: retry,
+            sent_again: 0,
+            once_at_most: true,
+            again,
+        })
     }
 }
 
@@ -310,29 +331,10 @@ impl S3HttpSimpleTask {
         Ok(())
     }
 
-    /// A commit can answer 200 and still carry an `<Error>` document.
-    fn fail_if_contains_error(&mut self, status: u32) -> bun_jsc::JsResult<bool> {
-        let mut code: &[u8] = b"UnknownError";
-        let mut message: &[u8] = b"an unexpected error has occurred";
-        let parsed;
-        if let Some(err) = self.result.fail {
-            code = err.name().as_bytes();
-        } else {
-            let bytes = self.response_buffer.list.as_slice();
-            if !bytes.is_empty() {
-                message = bytes;
-            }
-            parsed = xml_response::parse_error(bytes);
-            if let Some(error) = &parsed {
-                code = error.code.as_deref().unwrap_or(code);
-                message = error.message.as_deref().unwrap_or(message);
-            }
-            if (parsed.is_none() && status == 200) || status == 206 {
-                return Ok(false);
-            }
-        }
-        self.callback.fail(code, message, self.callback_context)?;
-        Ok(true)
+    /// A part or a commit can answer 200 and still carry an `<Error>` document.
+    fn contains_error(&self, status: u32) -> bool {
+        let parsed = xml_response::parse_error(self.response_buffer.list.as_slice());
+        !((parsed.is_none() && status == 200) || status == 206)
     }
 
     /// this is the task callback from the last task result and is always in the main thread
@@ -423,47 +425,48 @@ impl S3HttpSimpleTask {
             },
             Callback::Commit(callback) => {
                 // commit multipart upload can fail with status 200
-                let status = response.status_code;
-                if !this.fail_if_contains_error(status)? {
-                    callback(S3CommitResult::Success, this.callback_context)?;
+                if this.contains_error(response.status_code) {
+                    return this.fail_or_send_again(context.context());
                 }
+                callback(S3CommitResult::Success, this.callback_context)?;
             }
             Callback::Part(callback) => {
-                let status = response.status_code;
-                if !this.fail_if_contains_error(status)? {
-                    let response = &this.result.metadata.as_ref().unwrap().response;
-                    if let Some(etag) = response.headers.get(b"etag") {
-                        callback(S3PartResult::Etag(etag), this.callback_context)?;
-                    } else {
-                        this.error_with_body(ErrorType::Failure)?;
-                    }
+                if this.contains_error(response.status_code) {
+                    return this.fail_or_send_again(context.context());
                 }
+                let Some(etag) = response.headers.get(b"etag") else {
+                    return this.fail_or_send_again(context.context());
+                };
+                callback(S3PartResult::Etag(etag), this.callback_context)?;
             }
         }
         Ok(())
     }
 
     /// Whether another attempt can get past this failure.
-    fn is_transient(&self) -> bool {
+    fn is_transient(&self, budget: &Budget) -> bool {
         use bun_http::Error;
         if let Some(err) = self.result.fail {
-            // A POST that got no answer may have been carried out.
-            return self.method != Method::POST
-                && matches!(
-                    err,
-                    Error::ConnectionClosed
-                        | Error::ConnectionRefused
-                        | Error::DNSResolveFailed
-                        | Error::DNSResolutionFailed
-                        | Error::FailedToOpenSocket
-                        | Error::WriteFailed
-                );
+            return match err {
+                // No byte of the request was written.
+                Error::ConnectionRefused
+                | Error::DNSResolveFailed
+                | Error::DNSResolutionFailed
+                | Error::FailedToOpenSocket
+                | Error::ProxyConnectFailed => true,
+                Error::ConnectionClosed | Error::WriteFailed | Error::Timeout => {
+                    !budget.once_at_most
+                }
+                _ => false,
+            };
         }
         let Some(metadata) = &self.result.metadata else {
             return false;
         };
         match metadata.response.status_code {
-            429 | 500 | 502 | 503 | 504 => true,
+            // A failure under a 200: an `<Error>` document, or a part with no ETag.
+            200 => true,
+            408 | 429 | 500..=599 => true,
             // `RequestTimeout`: the store stopped waiting for the request's bytes.
             400 => xml_response::parse_error(self.response_buffer.list.as_slice())
                 .is_some_and(|error| error.code.as_deref() == Some(b"RequestTimeout".as_slice())),
@@ -473,8 +476,11 @@ impl S3HttpSimpleTask {
 
     /// Whether this request, which failed, goes out once more.
     fn is_sent_again(&self, context: &bun_jsc::ScriptExecutionContext) -> bool {
-        self.resend.as_ref().is_some_and(|resend| resend.attempts > 0)
-            && self.is_transient()
+        let Resend::Transient(budget) = &self.resend else {
+            return false;
+        };
+        budget.left > 0
+            && self.is_transient(budget)
             // What stopped the request's context raised this, even if a response got here first.
             && !self.signal_store.aborted.load(Ordering::Relaxed)
             && !nothing_new_leaves(context)
@@ -491,21 +497,12 @@ impl S3HttpSimpleTask {
         if base_ms == 0 {
             return None;
         }
-        let sent_again = self.resend.as_ref().map_or(0, |resend| resend.sent_again);
+        let sent_again = match &self.resend {
+            Resend::Transient(budget) => budget.sent_again,
+            Resend::Never => 0,
+        };
         let backoff = bun_http::retry::backoff(base_ms, u16::from(sent_again) + 1);
         Some(bun_http::retry::retry_after(&self.result).map_or(backoff, |asked| asked.max(backoff)))
-    }
-
-    /// The header this request sends after the signer's, if it sends one (`Signed::new`).
-    fn unsigned_header(&self) -> Option<picohttp::Header> {
-        let entries = self.headers.entries.slice();
-        let index = self.sign_result.headers().len();
-        let name = *entries.items_name().get(index)?;
-        let value = entries.items_value()[index];
-        Some(picohttp::Header::new(
-            self.headers.as_str(name),
-            self.headers.as_str(value),
-        ))
     }
 
     /// Where a failure that is not an answer ends: the callback is told, or the request goes
@@ -528,40 +525,25 @@ impl S3HttpSimpleTask {
         }
     }
 
-    /// This request goes out again with a new signature (a signature carries its date), in a
-    /// task of its own that takes over the body, the proxy and the callback.
-    fn send_again(
-        &mut self,
-        context: &bun_jsc::ScriptExecutionContext,
-    ) -> bun_jsc::JsResult<()> {
-        let signed = self.resend.as_ref().and_then(|resend| {
-            let options = self
-                .sign_result
-                .sign_options_again(resend.key.path(), self.method);
-            let sign_result = resend
-                .credentials
-                .sign_request::<false>(&options, None)
-                .ok()?;
-            Some(Signed::new(sign_result, self.unsigned_header()))
-        });
-        let Some(signed) = signed else {
+    /// The sender issues this request once more, with the body of this attempt. A sender that
+    /// does not want it any more is told of the failure in hand.
+    fn send_again(&mut self, context: &bun_jsc::ScriptExecutionContext) -> bun_jsc::JsResult<()> {
+        let Resend::Transient(mut budget) = core::mem::replace(&mut self.resend, Resend::Never)
+        else {
             return self.error_with_body(ErrorType::Failure);
         };
-        let mut resend = self.resend.take();
-        if let Some(resend) = &mut resend {
-            resend.attempts -= 1;
-            resend.sent_again = resend.sent_again.saturating_add(1);
-        }
-        let carried = Carried {
-            method: self.method,
+        let again = budget.again;
+        budget.left = budget.left.saturating_sub(1);
+        budget.sent_again = budget.sent_again.saturating_add(1);
+        let attempt = Attempt {
             body: core::mem::take(&mut self.body),
-            proxy_url: core::mem::take(&mut self.proxy_url),
-            resend,
-            callback: self.callback,
-            callback_context: self.callback_context,
+            content_type: self.headers.get(b"content-type"),
+            resend: Resend::Transient(budget),
         };
-        send(signed, carried, context);
-        Ok(())
+        if again(self.callback_context, context, attempt)? {
+            return Ok(());
+        }
+        self.error_with_body(ErrorType::Failure)
     }
 
     fn stage_http_result(
@@ -676,8 +658,8 @@ pub(crate) struct Wait {
     pub(crate) timer: EventLoopTimer,
     /// The context of the request ends the wait when it stops.
     abort_handle: bun_jsc::AbortHandle,
-    /// The attempt that failed. It keeps the event loop alive, what it carries goes out again,
-    /// and its failure is the callback's if the wait ends first.
+    /// The attempt that failed. It keeps the event loop alive, its body goes out again, and
+    /// its failure is the callback's if the wait ends first.
     task: Box<S3HttpSimpleTask>,
 }
 
@@ -714,7 +696,8 @@ impl Wait {
     pub(crate) fn fire(this: *mut Self) -> bun_jsc::JsResult<()> {
         // SAFETY: fn contract.
         unsafe { (*this).abort_handle.leave() };
-        // SAFETY: fn contract — allocated in `start`, reclaimed exactly once.
+        // SAFETY: fn contract — allocated in `start`, reclaimed exactly once. The timer was
+        // popped before it fired, so nothing takes it out of the heap here.
         let Wait { mut task, .. } = *unsafe { bun_core::heap::take(this) };
         let vm = VirtualMachine::get();
         let context = vm.enter_context(task.context);
@@ -730,7 +713,7 @@ impl Wait {
     /// # Safety
     /// `this` is the live `Wait` whose timer is armed; it is reclaimed here.
     unsafe fn stop(this: *mut Self) {
-        // SAFETY: fn contract.
+        // SAFETY: fn contract — armed, so the timer is in the heap.
         unsafe { crate::jsc_hooks::timer_all_mut().remove(&raw mut (*this).timer) };
         // SAFETY: fn contract — allocated in `start`, reclaimed exactly once.
         let Wait { task, .. } = *unsafe { bun_core::heap::take(this) };
@@ -814,62 +797,69 @@ pub(crate) const NOTHING_NEW_LEAVES: S3Error<'static> = S3Error {
     message: b"The JavaScript VM that owns this request is shutting down",
 };
 
-/// A signed request and the headers it goes out with.
-struct Signed {
-    sign_result: SignResult,
-    headers: Headers,
-}
-
-impl Signed {
-    /// `unsigned`: the one header a request can send that is not signed, a range or the
-    /// content type.
-    fn new(sign_result: SignResult, unsigned: Option<picohttp::Header>) -> Self {
-        let headers = match unsigned {
-            Some(header) => {
-                let mut buffer = [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
-                Headers::from_pico_http_headers(sign_result.mix_with_header(&mut buffer, header))
-            }
-            None => Headers::from_pico_http_headers(sign_result.headers()),
-        };
-        Self {
-            sign_result,
-            headers,
-        }
-    }
-}
-
-/// What a request takes with it each time it is sent.
-struct Carried {
-    method: Method,
-    body: Box<[u8]>,
-    proxy_url: Box<[u8]>,
-    resend: Option<Resend>,
-    callback: Callback,
-    callback_context: *mut c_void,
-}
-
+/// Sends a request. If it cannot be sent, `callback` is told why before this returns.
 pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
     options: S3SimpleRequestOptions<'_>,
-    retry: Retry,
+    resend: Resend,
     callback: Callback,
     callback_context: *mut c_void,
 ) -> bun_jsc::JsResult<()> {
+    match send(
+        this,
+        context,
+        options,
+        None,
+        resend,
+        callback,
+        callback_context,
+    ) {
+        Ok(()) => Ok(()),
+        Err(err) => callback.fail(err.code, err.message, callback_context),
+    }
+}
+
+/// Sends a request once more after an attempt of it failed: with that attempt's body, so
+/// `options.body` is not read. `Err`: it is not sent, and `callback` is not told.
+pub(crate) fn send_again(
+    this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
+    options: S3SimpleRequestOptions<'_>,
+    attempt: Attempt<'_>,
+    callback: Callback,
+    callback_context: *mut c_void,
+) -> Result<(), S3Error<'static>> {
+    send(
+        this,
+        context,
+        options,
+        Some(attempt.body),
+        attempt.resend,
+        callback,
+        callback_context,
+    )
+}
+
+/// Puts a request on the HTTP thread. `body`: `None` copies `options.body`. `Err`: the
+/// request is not sent, and `callback` is not told.
+pub(crate) fn send(
+    this: &S3Credentials,
+    context: &bun_jsc::ScriptExecutionContext,
+    options: S3SimpleRequestOptions<'_>,
+    body: Option<Box<[u8]>>,
+    resend: Resend,
+    callback: Callback,
+    callback_context: *mut c_void,
+) -> Result<(), S3Error<'static>> {
     // A multipart/retry continuation can reach here from teardown's queue
     // release; nothing new leaves a VM that is stopping. Nor for a context
     // that has stopped (a disposed `Bun.ModuleGraph`'s leftover script): the
     // completion is released as for a failure, which is reported to nobody.
     if nothing_new_leaves(context) {
-        drop(options.range);
-        callback.fail(
-            NOTHING_NEW_LEAVES.code,
-            NOTHING_NEW_LEAVES.message,
-            callback_context,
-        )?;
-        return Ok(());
+        return Err(NOTHING_NEW_LEAVES);
     }
-    let sign_result = match this.sign_request::<false>(
+    let result = match this.sign_request::<false>(
         &SignOptions {
             path: options.path,
             method: options.method,
@@ -887,79 +877,57 @@ pub(crate) fn execute_simple_s3_request(
     ) {
         Ok(r) => r,
         Err(sign_err) => {
-            // options.range drops here automatically
-            drop(options.range);
             let error_code_and_message = get_sign_error_code_and_message(sign_err.into());
-            callback.fail(
-                error_code_and_message.code,
-                error_code_and_message.message,
-                callback_context,
-            )?;
-            return Ok(());
+            return Err(S3Error {
+                code: error_code_and_message.code,
+                message: error_code_and_message.message,
+            });
         }
     };
 
-    let unsigned = match &options.range {
-        Some(range) => Some(picohttp::Header::new(b"range", range)),
-        None => options
-            .content_type
-            .filter(|content_type| !content_type.is_empty())
-            .map(|content_type| picohttp::Header::new(b"Content-Type", content_type)),
-    };
-    let signed = Signed::new(sign_result, unsigned);
-    let resend = match retry {
-        Retry::Never => None,
-        Retry::Budget(resend) => {
-            // The request is signed again from what `resend` holds.
-            debug_assert!(core::ptr::eq(this, &raw const *resend.credentials));
-            debug_assert!(core::ptr::eq(options.path, resend.key.path()));
-            // A part or a commit that fails with a status is told so by `fail_if_contains_error`,
-            // which asks nobody whether it is sent again.
-            debug_assert!(!matches!(callback, Callback::Part(_) | Callback::Commit(_)));
-            Some(resend)
+    let headers = 'brk: {
+        let mut header_buffer = [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
+        if let Some(range_) = options.range {
+            let _headers = result
+                .mix_with_header(&mut header_buffer, picohttp::Header::new(b"range", &range_));
+            break 'brk Headers::from_pico_http_headers(_headers);
+        } else {
+            if let Some(content_type) = options.content_type {
+                if !content_type.is_empty() {
+                    let _headers = result.mix_with_header(
+                        &mut header_buffer,
+                        picohttp::Header::new(b"Content-Type", content_type),
+                    );
+                    break 'brk Headers::from_pico_http_headers(_headers);
+                }
+            }
+            break 'brk Headers::from_pico_http_headers(result.headers());
         }
     };
-    let proxy_url = resolve_proxy(options.proxy_url, &signed.sign_result.url);
-    send(
-        signed,
-        Carried {
-            method: options.method,
-            body: Box::<[u8]>::from(options.body),
-            proxy_url,
-            resend,
-            callback,
-            callback_context,
-        },
-        context,
-    );
-    Ok(())
-}
 
-/// Puts one attempt of a request on the HTTP thread.
-fn send(signed: Signed, carried: Carried, context: &bun_jsc::ScriptExecutionContext) {
     let mut poll_ref = KeepAlive::init();
     poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
         bun_io::AllocatorType::Js,
     ));
+    let proxy_url = resolve_proxy(options.proxy_url, &result.url);
     let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
         // written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
-        sign_result: signed.sign_result,
-        callback_context: carried.callback_context,
-        callback: carried.callback,
-        headers: signed.headers,
+        sign_result: result,
+        callback_context,
+        callback,
+        headers,
         http_ticket: None,
         response_buffer: MutableString::default(),
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),
-        proxy_url: carried.proxy_url,
-        body: carried.body,
+        proxy_url,
+        body: body.unwrap_or_else(|| Box::<[u8]>::from(options.body)),
         poll_ref,
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
-        method: carried.method,
-        resend: carried.resend,
+        resend,
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; shared reads only until
     // the scoped exclusive `http` writes below.
@@ -990,7 +958,7 @@ fn send(signed: Signed, carried: Carried, context: &bun_jsc::ScriptExecutionCont
     let verbose = vm.get_verbose_fetch();
     let reject_unauthorized = vm.get_tls_reject_unauthorized();
     let async_http = AsyncHTTP::init(
-        task.method,
+        options.method,
         url,
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
@@ -1032,4 +1000,5 @@ fn send(signed: Signed, carried: Carried, context: &bun_jsc::ScriptExecutionCont
         bun_jsc::AbortHandle::arm_owner(task_ptr, context);
     }
     bun_http::HTTPThread::schedule(batch);
+    Ok(())
 }

@@ -3,6 +3,7 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import { runInNewContext } from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1339,6 +1340,129 @@ test("Error.captureStackTrace with caller not in stack clears async frames too",
   const err = await outerAsync();
   // When caller is not found, V8 clears everything
   expect(err.stack).toBe("Error: async test");
+});
+
+// The frames that Error.captureStackTrace(err, fn) leaves for each `fn` of the fixture. They are what node
+// prints, but for the generators: node has a `generator.next` frame first, and `asyncGenerator.next` for `next`.
+const framesBelowCaller = {
+  // `fn` awaited first, so its code runs in a frame that the microtask queue resumed.
+  declaration: ["async theCaller"],
+  method: ["async theCaller"],
+  arrow: ["async theCaller"],
+  expression: ["async theCaller"],
+  computedKey: ["async theCaller"],
+  renamed: ["async theCaller"],
+  classFieldArrow: ["async theCaller"],
+  classMethod: ["async theCaller"],
+  arrowBeforeAwait: ["theCaller"],
+  arrowWithoutAwait: ["theCaller"],
+  // Another function has the name of `fn`: above `fn`, and with `fn` not on the stack.
+  sameNameAbove: ["async theCaller"],
+  sameNameOnly: [],
+  generator: ["callerOfGenerator"],
+  generatorResumed: ["callerOfGeneratorResumed"],
+  asyncGenerator: ["next", "callerOfAsyncGenerator"],
+  // `fn` is not running, it awaits the function that captures. The trace starts below its `at async` frame.
+  awaiting: ["async theCaller"],
+  awaitingArrow: ["async theCaller"],
+  notAwaiting: [],
+  // `fn` is one of two closures of the same function expression.
+  closureOuter: ["async callerOfHandlers"],
+  closureBeforeAwaitOuter: ["callerOfPlain"],
+  closureBeforeAwaitInner: ["<anonymous>", "plain", "callerOfPlain"],
+  // Not a function that can be on the stack: it does not limit the trace.
+  bound: ["capture", "withBound"],
+  proxy: ["capture", "withProxy"],
+  object: ["capture", "withObject"],
+  notOnStack: [],
+  builtinConstructor: [],
+  thisConstructor: ["makesDerivedError"],
+};
+
+test.concurrent("Error.captureStackTrace(err, fn) starts the trace below the topmost activation of fn", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dirname, "capture-stack-trace-caller-fixture.mjs")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(framesBelowCaller);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("Error.captureStackTrace ends when two functions await each other", async () => {
+  // awaitsSecond awaits awaitsFirst, which awaits awaitsSecond: what awaits `captures` is a cycle.
+  const fixture = `
+    let sink = 0; // keeps the calls out of tail position
+    let first, second;
+    const stacks = {};
+    async function notInTheChain() {}
+    async function captures() {
+      await null;
+      const all = {};
+      Error.captureStackTrace(all);
+      sink++;
+      const none = {};
+      Error.captureStackTrace(none, notInTheChain);
+      sink++;
+      stacks.all = all.stack.split("\\n").map(line => line.trim().split(" (")[0]);
+      stacks.none = none.stack;
+    }
+    async function awaitsSecond() {
+      await null;
+      const value = await Promise.race([second, captures()]);
+      sink++;
+      return value;
+    }
+    async function awaitsFirst() {
+      await null;
+      const value = await first;
+      sink++;
+      return value;
+    }
+    first = awaitsSecond();
+    second = awaitsFirst();
+    setImmediate(() => console.log(JSON.stringify(stacks)));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    all: ["Error", "at captures", "at async awaitsSecond", "at async awaitsFirst"],
+    none: "Error",
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("Error.captureStackTrace(err, fn) in a node:vm context starts the trace below the topmost activation of fn", async () => {
+  const stacks = await runInNewContext(
+    `
+      let sink = 0; // keeps the calls out of tail position
+      function capture(hide) { const err = new Error("boom"); Error.captureStackTrace(err, hide); sink++; return err.stack; }
+      const arrow = async () => { await null; const stack = capture(arrow); sink++; return stack; };
+      async function theCaller(fn) { const stack = await fn(); sink++; return stack; }
+      function withBound() { const stack = capture(withBound.bind(null)); sink++; return stack; }
+      function notOnStack() {}
+      function withNotOnStack() { const stack = capture(notOnStack); sink++; return stack; }
+      (async () => ({ arrow: await theCaller(arrow), bound: withBound(), notOnStack: withNotOnStack() }))();
+    `,
+    {},
+    { filename: "vm-context.js" },
+  );
+  // The context formats its stack in its own way: look for the function names.
+  const has = stack => ["capture", "theCaller", "withBound", "withNotOnStack"].filter(name => stack.includes(name));
+  expect({ arrow: has(stacks.arrow), bound: has(stacks.bound), notOnStack: has(stacks.notOnStack) }).toEqual({
+    arrow: ["theCaller"],
+    bound: ["capture", "withBound"],
+    notOnStack: [],
+  });
 });
 
 test("Error.captureStackTrace applies stackTraceLimit after caller removal", () => {

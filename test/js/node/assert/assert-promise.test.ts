@@ -119,3 +119,40 @@ describe("assert.doesNotReject", () => {
     });
   });
 });
+
+describe("the stack of a failed assert.rejects and assert.doesNotReject", () => {
+  let sink = 0; // `sink++` after a call keeps that call out of tail position
+
+  async function callsRejects() {
+    await assert.rejects(Promise.resolve(1));
+    sink++;
+  }
+  async function callsStrictRejects() {
+    await assert.strict.rejects(Promise.resolve(1));
+    sink++;
+  }
+  async function callsDoesNotReject() {
+    await assert.doesNotReject(Promise.reject(new Error("unwanted")));
+    sink++;
+  }
+  async function callsStrictDoesNotReject() {
+    await assert.strict.doesNotReject(Promise.reject(new Error("unwanted")));
+    sink++;
+  }
+
+  it.each([
+    ["assert.rejects", callsRejects],
+    ["assert.strict.rejects", callsStrictRejects],
+    ["assert.doesNotReject", callsDoesNotReject],
+    ["assert.strict.doesNotReject", callsStrictDoesNotReject],
+  ])("%s: starts at the function that called it", async (_, caller) => {
+    const error = await caller().then(
+      () => null,
+      error => error,
+    );
+    expect(error).toBeInstanceOf(AssertionError);
+    const frames = error.stack.split("\n").filter(line => line.startsWith("    at "));
+    expect(frames[0]).toStartWith(`    at async ${caller.name} (`);
+    expect(error.stack).not.toContain("node:assert");
+  });
+});

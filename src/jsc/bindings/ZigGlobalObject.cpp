@@ -1489,7 +1489,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
     RELEASE_AND_RETURN(
         throwScope,
         Bun__encoding__toString(
-            byteCast<uint8_t>(encodedString.span8().data()),
+            encodedString.span8().data(),
             length,
             globalObject,
             static_cast<uint8_t>(WebCore::BufferEncodingType::base64)));

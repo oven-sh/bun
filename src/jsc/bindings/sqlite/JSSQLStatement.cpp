@@ -464,7 +464,7 @@ public:
             name += prefixOffset;
             size_t namelen = strlen(reinterpret_cast<const char*>(name));
             if (prefixOffset == 1 && name[0] >= '0' && name[0] <= '9') {
-                auto integer = WTF::parseInteger<uint64_t>(StringView({ byteCast<Latin1Character>(name), namelen }), 10);
+                auto integer = WTF::parseInteger<uint64_t>(StringView({ name, namelen }), 10);
                 if (integer.has_value()) {
                     hasOutOfOrderNames = true;
                     bindingNames.clear();

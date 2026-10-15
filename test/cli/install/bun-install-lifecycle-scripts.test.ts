@@ -2786,6 +2786,28 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("the install after a 
     });
   });
 
+  // No kill, so this one runs on Windows too: the list is written by hand, as a dead install leaves it.
+  test("a package that the list names is installed again", async () => {
+    using ctx = await setupScriptPackages(linker, { held: { scripts: { postinstall: "echo ran > ran.txt" } } });
+    await writeFile(
+      ctx.packageJson,
+      JSON.stringify({ name: "foo", dependencies: { held: "1.0.0" }, trustedDependencies: ["held"] }),
+    );
+    expect((await ctx.bun("install")).exitCode).toBe(0);
+    await rm(ctx.installed("held", "ran.txt"));
+    const dir =
+      linker === "hoisted"
+        ? join("node_modules", "held")
+        : join("node_modules", ".bun", "held@1.0.0", "node_modules", "held");
+    await writeFile(ctx.installed(".bun-pending-scripts"), `+${dir}\n`);
+
+    const { err, exitCode } = await ctx.bun("install");
+    expect(err).not.toContain("error:");
+    expect(existsSync(ctx.installed("held", "ran.txt"))).toBe(true);
+    expect(await readdirSorted(ctx.installed())).toEqual(installed);
+    expect(exitCode).toBe(0);
+  });
+
   // `bun patch` puts a copy to edit in place of the package. No script runs before `--commit`.
   test.skipIf(isWindows)("bun patch: the copy to edit stays until --commit, which builds", async () => {
     await whileScriptRuns(async ({ ctx, kill, bun }) => {

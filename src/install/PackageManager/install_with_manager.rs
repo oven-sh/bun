@@ -863,7 +863,10 @@ pub fn install_with_manager(
             );
         // `bun patch <pkg>` is not to fail on a script of the package it prepares.
         let retries_pending_scripts = manager.options.do_.run_scripts()
-            && !matches!(manager.options.patch_features, Options::PatchFeatures::Patch);
+            && !matches!(
+                manager.options.patch_features,
+                Options::PatchFeatures::Patch
+            );
         manager
             .pending_scripts
             .get_mut()

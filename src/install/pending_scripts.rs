@@ -1,14 +1,16 @@
 //! `node_modules/.bun-pending-scripts` lists the packages that are in place and whose lifecycle
-//! scripts did not finish. A record is `+<path>` before the package is placed and `-<path>` after its
-//! last script, where `<path>` is the package's directory from the project's root. The install that
-//! writes holds `flock` on the file: the next install can tell a dead writer from one whose scripts
-//! still run, and installs what a dead writer left again.
+//! scripts did not finish. A record is `+<path>` before the package is placed and `-<path>` after
+//! its last script, where `<path>` is the package's directory from the project's root. The install
+//! that writes holds `flock` on the file: the next install can tell a dead writer from one whose
+//! scripts still run, and installs what a dead writer left again.
 
 use bun_core::{ZBox, ZStr, strings};
 use bun_sys::{self as sys, Fd, File};
 
 /// From the project's root, which is the cwd of an install. So are the paths in the file.
 const PATH: &ZStr = bun_core::zstr!("node_modules/.bun-pending-scripts");
+/// Far more than the records of one install. What is past it is not read.
+const MAX_BYTES: usize = 1 << 20;
 
 #[derive(Default)]
 pub(crate) struct PendingScripts {
@@ -41,8 +43,10 @@ impl PendingScripts {
             Opened::Busy => {}
             Opened::Locked(file) => {
                 self.enabled = true;
-                if let Ok(bytes) = file.read_to_end() {
-                    self.stale = parse(&bytes);
+                // By offset: on Windows `read_to_end` reads at the cursor, which `O::APPEND` moved.
+                let mut bytes = vec![0u8; file.get_end_pos().unwrap_or(0).min(MAX_BYTES)];
+                if let Ok(len) = file.pread_all(&mut bytes, 0) {
+                    self.stale = parse(&bytes[..len]);
                 }
                 self.file = Some(file);
             }
@@ -87,7 +91,7 @@ impl PendingScripts {
         true
     }
 
-    /// `path` has no script left to run, or is not in place any more. Nothing for a path not listed.
+    /// `path` has no script left to run, or is not in place any more. No-op for a path not listed.
     pub(crate) fn done(&mut self, path: &[u8]) {
         if remove(&mut self.begun, path) || remove(&mut self.stale, path) {
             self.append(b'-', path);
@@ -151,7 +155,7 @@ fn remove(paths: &mut Vec<Box<[u8]>>, path: &[u8]) -> bool {
     }
 }
 
-/// The paths with a `+` record and no later `-` record. A kill can cut the last line: it is ignored.
+/// The paths with a `+` record and no later `-` record. A last line that a kill cut is ignored.
 fn parse(bytes: &[u8]) -> Vec<Box<[u8]>> {
     let mut pending: Vec<Box<[u8]>> = Vec::new();
     let mut rest = bytes;
@@ -181,10 +185,13 @@ fn open_locked(create: bool) -> Opened {
             Err(err) if err.get_errno() == sys::E::ENOENT => return Opened::Missing,
             Err(_) => return Opened::Busy,
         };
-        if !matches!(sys::flock(file.handle, sys::FileLockMode::Exclusive, true), Ok(true)) {
+        if !matches!(
+            sys::flock(file.handle, sys::FileLockMode::Exclusive, true),
+            Ok(true)
+        ) {
             return Opened::Busy;
         }
-        // The lock is on the file, not on its name: it counts only while the name still leads to it.
+        // The lock is on the file, not on its name. It counts while the name still leads to it.
         if let (Ok(locked), Ok(named)) = (sys::fstat(file.handle), sys::fstatat(Fd::cwd(), PATH))
             && locked.st_ino == named.st_ino
             && locked.st_dev == named.st_dev
@@ -192,5 +199,9 @@ fn open_locked(create: bool) -> Opened {
             return Opened::Locked(file);
         }
     }
-    if create { Opened::Busy } else { Opened::Missing }
+    if create {
+        Opened::Busy
+    } else {
+        Opened::Missing
+    }
 }

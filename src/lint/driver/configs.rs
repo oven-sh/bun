@@ -13,7 +13,7 @@
 //! Only a config file, a dependency in package.json, `--config` or `--flavor` pick the tool. Other flags never do, with one
 //! exception: `--no-eslintrc`, `--env` and `--rulesdir` only exist in ESLint 8, so without a config file they mean an ESLint 8 run.
 
-use crate::cli::{Options, Override, Tool, merge};
+use crate::cli::{Options, Override, Tool, Wildcard, merge};
 use crate::embedded::Framework;
 use crate::gitignore::{self, Files, OfGit};
 use crate::print_config::object;
@@ -330,10 +330,23 @@ pub(crate) fn read_frameworks(directory: &[u8]) -> Option<Frameworks> {
 }
 
 /// Combines a directory's `own` [`read_frameworks`] result with its `parent` directory's frameworks. The closest
-/// package.json wins, except that test runners are also inherited from the parent.
-pub(crate) fn inherit_frameworks(parent: Frameworks, own: Option<Frameworks>) -> Frameworks {
+/// package.json wins, except that a package without a test runner inherits the one from above.
+///
+/// `is_repository_root`: [`gitignore::is_root`] of the directory. Nothing is inherited from a package.json outside the
+/// repository, such as one in the home directory.
+pub(crate) fn inherit_frameworks(
+    parent: Frameworks,
+    own: Option<Frameworks>,
+    is_repository_root: bool,
+) -> Frameworks {
+    let inherited = match is_repository_root {
+        true => Frameworks::empty(),
+        false => parent & Frameworks::TEST_RUNNERS,
+    };
     match own {
-        Some(own) => own | (parent & Frameworks::TEST_RUNNERS),
+        // With both runners' plugins on, each problem would be reported twice.
+        Some(own) if own.intersects(Frameworks::TEST_RUNNERS) => own,
+        Some(own) => own | inherited,
         None => parent,
     }
 }
@@ -517,11 +530,22 @@ fn rules_of(options: &Options, cwd: &[u8]) -> Vec<(Vec<u8>, Json)> {
     rules
 }
 
+/// `wildcards` as the value of [`native::WILDCARDS`]. A later wildcard for the same plugin replaces an earlier one.
+fn wildcards_of(wildcards: &[Wildcard]) -> Json {
+    let mut entries = Vec::new();
+    for it in wildcards {
+        merge(&mut entries, vec![(it.id.clone(), it.setting.clone())]);
+    }
+    Json::Object(entries)
+}
+
 /// The config format to write an override in.
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Shape {
     /// An object in an `eslint.config.js`.
     Flat,
+    /// The same, in Bun's built-in config. It can have [`native::WILDCARDS`].
+    Native,
     /// An entry of `overrides` in an `.oxlintrc.json`.
     Oxlint,
     /// The same in an `.eslintrc.json`.
@@ -980,7 +1004,7 @@ impl<'l> Loader<'l> {
             let mut entries = vec![(&b"files"[..], strings_of(&it.files))];
             if !it.excluded.is_empty() {
                 let key: &[u8] = match shape {
-                    Shape::Flat => b"ignores",
+                    Shape::Flat | Shape::Native => b"ignores",
                     Shape::Oxlint => b"excludeFiles",
                     Shape::Legacy => b"excludedFiles",
                 };
@@ -990,7 +1014,7 @@ impl<'l> Loader<'l> {
             entries.push((b"$globsOfBun", Json::Bool(true)));
             match shape {
                 _ if base_path == start => {}
-                Shape::Flat => entries.push((b"basePath", text(&start))),
+                Shape::Flat | Shape::Native => entries.push((b"basePath", text(&start))),
                 Shape::Oxlint => entries.push((b"$basePath", text(&start))),
                 // See `legacy_config`.
                 Shape::Legacy => {}
@@ -1005,9 +1029,12 @@ impl<'l> Loader<'l> {
                 );
                 entries.push((b"rules", Json::Object(rules)));
             }
+            if shape == Shape::Native && !it.wildcards.is_empty() {
+                entries.push((native::WILDCARDS, wildcards_of(&it.wildcards)));
+            }
             match (it.globals.is_empty(), Json::Object(it.globals.clone())) {
                 (true, _) => {}
-                (false, globals) if shape == Shape::Flat => {
+                (false, globals) if matches!(shape, Shape::Flat | Shape::Native) => {
                     entries.push((b"languageOptions", object(vec![(b"globals", globals)])));
                 }
                 (false, globals) => entries.push((b"globals", globals)),
@@ -1021,17 +1048,21 @@ impl<'l> Loader<'l> {
         let last = alone.map(|alone| Override {
             files: vec![b"**/*".to_vec()],
             rules: rules_of(alone, self.cwd()),
+            wildcards: alone.wildcards.clone(),
             globals: (globals_of(alone).and_then(Json::into_object)).unwrap_or_default(),
             ..Override::default()
         });
-        let last = last.filter(|it| !it.rules.is_empty() || !it.globals.is_empty());
+        let is_empty =
+            |it: &Override| it.rules.is_empty() && it.globals.is_empty() && it.wildcards.is_empty();
+        let last = last.filter(|it| !is_empty(it));
         (self.options.overrides.iter().chain(&last))
             .map(write)
             .collect()
     }
 
-    /// ESLint's `overrideConfig`, as `translateOptions` makes it from the command line.
-    fn override_config(&self, base_path: &[u8]) -> Vec<Json> {
+    /// ESLint's `overrideConfig`, as `translateOptions` makes it from the command line. `shape` is [`Shape::Flat`] or
+    /// [`Shape::Native`].
+    fn override_config(&self, base_path: &[u8], shape: Shape) -> Vec<Json> {
         let options = self.options;
         let mut language_options = Vec::new();
         if let Some(globals) = globals_of(options) {
@@ -1050,9 +1081,10 @@ impl<'l> Loader<'l> {
         if !language_options.is_empty() {
             first.push((&b"languageOptions"[..], object(language_options)));
         }
-        let mut rules = rules_of(options, self.cwd());
-        let flag_rules = native::take_flag_rules(options, &mut rules);
-        first.push((b"rules", Json::Object(rules)));
+        first.push((b"rules", Json::Object(rules_of(options, self.cwd()))));
+        if shape == Shape::Native && !options.wildcards.is_empty() {
+            first.push((native::WILDCARDS, wildcards_of(&options.wildcards)));
+        }
         if !options.settings.is_empty() {
             first.push((b"settings", Json::Object(options.settings.clone())));
         }
@@ -1084,10 +1116,7 @@ impl<'l> Loader<'l> {
             }
         }
         let mut all = vec![object(first)];
-        if !flag_rules.is_empty() {
-            all.push(object(vec![(b"rules", Json::Object(flag_rules))]));
-        }
-        all.extend(self.overrides(Shape::Flat, base_path));
+        all.extend(self.overrides(shape, base_path));
         if let Some(extensions) = &options.ext {
             let patterns = extensions.iter().map(|extension| {
                 let dot: &[u8] = if extension.starts_with(b".") {
@@ -1102,8 +1131,9 @@ impl<'l> Loader<'l> {
         all
     }
 
-    /// What ESLint's `calculateConfigArray` adds to what a configuration file exports.
-    fn added(&self, base_path: &[u8]) -> Vec<Json> {
+    /// What ESLint's `calculateConfigArray` adds to what a configuration file exports. `shape`: see
+    /// [`Loader::override_config`].
+    fn added(&self, base_path: &[u8], shape: Shape) -> Vec<Json> {
         let mut added = Vec::new();
         for (start, patterns) in self.ignore_patterns() {
             if !patterns.is_empty() {
@@ -1113,7 +1143,7 @@ impl<'l> Loader<'l> {
                 ]));
             }
         }
-        added.extend(self.override_config(base_path));
+        added.extend(self.override_config(base_path, shape));
         added
     }
 
@@ -1143,7 +1173,7 @@ impl<'l> Loader<'l> {
         let only_errors = options.quiet && options.max_warnings == -1;
         let about_layout = formatting_rules().map(|it| Json::String(it.into()));
         let mut added: Vec<Json> = Self::object_of_named(named).into_iter().collect();
-        added.extend(self.added(base_path));
+        added.extend(self.added(base_path, Shape::Flat));
         let mut run = Vec::new();
         bun_lint::linter::write_json(
             &mut run,
@@ -1188,7 +1218,7 @@ impl<'l> Loader<'l> {
         // `built_in` has already added these.
         if is_of_eslint {
             all.extend(Self::object_of_named(&named));
-            all.extend(self.added(base_path));
+            all.extend(self.added(base_path, Shape::Flat));
         }
         let mut all = Json::Array(all);
         if !self.options.ignore {
@@ -1390,9 +1420,6 @@ impl<'l> Loader<'l> {
     /// Loads what `plugins` in bunfig.toml and `--plugin` name. They add to whatever the configuration is.
     fn named_plugins(&self, flavor: Flavor) -> Result<Vec<NamedPlugin>, Fatal> {
         let checked = self.load_named_plugins(flavor).and_then(|plugins| {
-            if flavor != Flavor::BuiltIn {
-                native::reject_plugin_wildcards(self.options)?;
-            }
             // What is wrong with their rules in bunfig.toml is said of bunfig.toml. ESLint 8 takes more than the others: any options
             // for a rule without a schema, and a rule that does not exist is a finding.
             if matches!(flavor, Flavor::Eslint | Flavor::Oxlint) {
@@ -1710,8 +1737,8 @@ impl<'l> Loader<'l> {
             project,
         )];
         let mut of_user = native::categories(self.linter.registry(), self.options);
-        of_user.extend(self.added(b"/"));
-        native::expand_plugin_wildcards(self.linter.registry(), &plugins, &mut of_user);
+        of_user.extend(self.added(b"/", Shape::Native));
+        let of_user = native::expand_wildcards(self.linter.registry(), &plugins, of_user);
         objects.extend(self.split_pairs(of_user));
         let mut config = self.flat(b"/", Json::Array(objects), false, plugins)?;
         // Without a word: where the run has types, which then cost nothing more.
@@ -2052,6 +2079,19 @@ impl<'l> Loader<'l> {
         let Some((flag, whose)) = self.options.flag_that_means_nothing_to(flavor) else {
             return Ok(());
         };
+        let refusal = [
+            &flag[..],
+            b" is an ",
+            whose,
+            b" flag and has no effect here\n  ",
+            &self.describe(flavor, file),
+        ]
+        .concat();
+        Err(Fatal(self.refused.get_or_init(|| refusal).clone()))
+    }
+
+    /// A sentence that says which config a run uses: "This run uses .oxlintrc.json, an oxlint config."
+    fn describe(&self, flavor: Flavor, file: Option<&[u8]>) -> Vec<u8> {
         let tool: &[u8] = match flavor {
             Flavor::Oxlint => b"oxlint",
             Flavor::EslintRc => b"ESLint 8",
@@ -2068,15 +2108,28 @@ impl<'l> Loader<'l> {
             None if flavor == Flavor::BuiltIn => b"Bun's defaults.".to_vec(),
             None => [tool, b"'s defaults."].concat(),
         };
-        let refusal = [
-            &flag[..],
-            b" is an ",
-            whose,
-            b" flag and has no effect here\n  This run uses ",
-            &uses,
+        [b"This run uses ", &uses[..]].concat()
+    }
+
+    /// Rejects `plugin/*` wildcards if `of_cwd`, the working directory's config, isn't Bun's own. Only native mode expands
+    /// them, so they would do nothing. A config file in a nested directory isn't a reason to fail: the wildcards still
+    /// apply to the rest of the project.
+    pub(crate) fn check_wildcards(&self, of_cwd: &Loaded) -> Result<(), Fatal> {
+        let Some(wildcard) = native::first_wildcard(self.options) else {
+            return Ok(());
+        };
+        if of_cwd.flavor == Flavor::BuiltIn {
+            return Ok(());
+        }
+        let message = [
+            b"\"",
+            &wildcard.id[..],
+            b"\" only works with Bun's own lint config\n  ",
+            &self.describe(of_cwd.flavor, of_cwd.file.as_deref()),
         ]
         .concat();
-        Err(Fatal(self.refused.get_or_init(|| refusal).clone()))
+        let at = wildcard.place.as_ref().map(|it| it.key_at);
+        Err(self.fatal(native::Mistake::new(message, at)))
     }
 
     /// Prefixes `why`, ESLint's message about an invalid config, with a line that says where the mistake is. That's `file`
@@ -2632,7 +2685,8 @@ impl<'l> Loader<'l> {
         }
         let parent = Some(paths::dirname(directory)).filter(|it| it.len() < directory.len());
         let parent = parent.map_or(Frameworks::empty(), |it| self.detect_frameworks(loaded, it));
-        let detected = inherit_frameworks(parent, read_frameworks(directory));
+        let is_repository_root = gitignore::is_root(directory);
+        let detected = inherit_frameworks(parent, read_frameworks(directory), is_repository_root);
         (self.frameworks.lock()).insert(directory.to_vec(), detected);
         detected
     }

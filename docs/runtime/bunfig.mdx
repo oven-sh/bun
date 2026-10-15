@@ -436,7 +436,7 @@ Set a rule to `"off"`, `"warn"`, or `"error"`. To pass options, use an array. Ev
 "no-restricted-imports" = ["error", { paths = ["lodash"] }]
 ```
 
-Use `*` as the rule name to set every rule of a plugin. A setting for a single rule overrides the wildcard, in either order. A wildcard takes a severity and no options. Next to an ESLint or oxlint config file, `bun lint` rejects a wildcard. Set the plugin's rules in that file.
+Use `*` as the rule name to set every rule of a plugin. A setting for a single rule overrides the wildcard, in either order.
 
 ```toml title="bunfig.toml" icon="settings"
 [lint.rules]
@@ -445,7 +445,12 @@ Use `*` as the rule name to set every rule of a plugin. A setting for a single r
 "unicorn/no-null" = "off"
 ```
 
+- A wildcard takes a severity and no options. If it turns on a rule that requires options, `bun lint` reports an error that names the rule. Set that rule under its own name.
+- A wildcard works with Bun's own lint config. If the working directory has an ESLint or oxlint config, `bun lint` rejects the wildcard. Files under a config file in a nested directory follow that file, and the wildcard doesn't apply to them.
+
 Some ESLint rules have a typescript-eslint version, such as `no-unused-vars` and `@typescript-eslint/no-unused-vars`. Setting either name sets both. The ESLint rule runs on JavaScript files and the typescript-eslint rule on TypeScript files, so a problem is never reported twice. If you set both names, each one applies to its own kind of file.
+
+A wildcard is about one plugin, so it sets such a rule in one language. `"@typescript-eslint/*" = "off"` turns `no-unused-vars` off in TypeScript files and leaves it on in JavaScript files. `"eslint/*"` does the opposite.
 
 A few typescript-eslint versions need type information, such as `@typescript-eslint/require-await`. Setting that name type checks your TypeScript files, like any other [type-aware rule](/lint#type-aware-rules). Setting only `require-await` doesn't start a type check. It uses the typescript-eslint version if the run has types anyway, and the ESLint rule otherwise.
 
@@ -492,7 +497,7 @@ A category sets the rules of every built-in plugin. The plugins for a framework 
 | `jest`   | `jest`                                           |
 | `vitest` | `vitest`                                         |
 
-For each file, Bun reads the closest `package.json` that lists dependencies. Monorepos often list the test runner only in the root `package.json`, so Bun also looks for `jest` and `vitest` in the `package.json` files above that one.
+For each file, Bun reads the closest `package.json` that lists dependencies. Monorepos often list the test runner only in the root `package.json`. If the closest `package.json` lists neither `jest` nor `vitest`, Bun also looks in the ones above it, up to the root of the repository.
 
 `[lint.rules]` doesn't depend on `package.json`. To turn off a plugin that a category turns on, set `"unicorn/*" = "off"`. To use a plugin without its package, set `"jsx-a11y/*" = "warn"`.
 

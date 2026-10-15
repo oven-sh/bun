@@ -343,7 +343,12 @@ fn search(
             let decides =
                 !directory.relative.is_empty() && own.flavor == Flavor::BuiltIn && has_package();
             let own_frameworks = decides.then(|| read_frameworks(&directory.path)).flatten();
-            let frameworks = inherit_frameworks(directory.frameworks, own_frameworks);
+            let is_repository_root = decides
+                && entries
+                    .iter()
+                    .any(|it| matches!(&it.name[..], b".git" | b".jj"));
+            let frameworks =
+                inherit_frameworks(directory.frameworks, own_frameworks, is_repository_root);
             let reads_ignore_files = loader.reads_ignore_files(&own);
             let mut ignores = directory.ignores.clone();
             if reads_ignore_files && !loader.reads_ignore_files(&directory.inherited) {

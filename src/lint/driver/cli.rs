@@ -403,6 +403,28 @@ pub enum FixType {
     Layout,
 }
 
+/// A wildcard like `"unicorn/*" = "off"`, which sets every rule of a plugin. Wildcards are stored apart from single rules
+/// because only native mode supports them: see [`crate::native::expand_wildcards`].
+#[derive(Clone, Debug)]
+pub struct Wildcard {
+    /// As written: `unicorn/*`.
+    pub id: Vec<u8>,
+    pub setting: Json,
+    /// Where it is in bunfig.toml. `None` if it came from a flag.
+    pub place: Option<crate::bunfig::RuleOfBunfig>,
+}
+
+impl Wildcard {
+    /// Returns `unicorn` for the ID `unicorn/*`, and `None` for the ID of a single rule.
+    pub fn plugin_of(id: &[u8]) -> Option<&[u8]> {
+        id.strip_suffix(b"/*").filter(|it| !it.is_empty())
+    }
+
+    pub fn plugin(&self) -> &[u8] {
+        Wildcard::plugin_of(&self.id).unwrap_or_default()
+    }
+}
+
 /// One entry of `[[lint.overrides]]`.
 #[derive(Clone, Debug, Default)]
 pub struct Override {
@@ -412,6 +434,7 @@ pub struct Override {
     pub rules: Vec<(Vec<u8>, Json)>,
     /// bunfig.toml location of each entry in `rules`.
     pub places: Vec<crate::bunfig::RuleOfBunfig>,
+    pub wildcards: Vec<Wildcard>,
     pub globals: Vec<(Vec<u8>, Json)>,
     pub settings: Vec<(Vec<u8>, Json)>,
 }
@@ -450,10 +473,12 @@ pub struct Options {
     pub is_config_of_bunfig: bool,
     /// [`Options::suppressions_location`] is what the flag says.
     pub is_suppressions_location_of_flag: bool,
+    /// Wildcards from `[lint.rules]`, then from `--rule` and `-A` / `-W` / `-D`.
+    pub wildcards: Vec<Wildcard>,
     /// `[[lint.overrides]]` from bunfig.toml. There's no flag for it.
     pub overrides: Vec<Override>,
-    /// Only set if there are `overrides`. The command line's options on their own, because its rules and globals apply
-    /// after the overrides.
+    /// Only set if there are `overrides`, or if a flag has a wildcard. The command line's options on their own, because its
+    /// rules and globals apply after the overrides, and its wildcards after the single rules of bunfig.toml.
     pub of_command_line: Option<Box<Options>>,
     pub fix: bool,
     pub fix_dry_run: bool,
@@ -576,6 +601,7 @@ impl Default for Options {
             is_suppressions_location_of_flag: false,
             overrides: Vec::new(),
             of_command_line: None,
+            wildcards: Vec::new(),
             fix: false,
             fix_dry_run: false,
             fix_type: None,
@@ -752,6 +778,15 @@ impl Options {
             b"rule" => {
                 let mut said = Vec::new();
                 object(name, text, &mut said)?;
+                let (wildcards, said): (Vec<_>, Vec<_>) =
+                    (said.into_iter()).partition(|it| Wildcard::plugin_of(&it.0).is_some());
+                for (id, setting) in wildcards {
+                    self.wildcards.push(Wildcard {
+                        id,
+                        setting,
+                        place: None,
+                    });
+                }
                 // What bunfig.toml has about them is no longer what counts.
                 for (at, place) in self.rules_of_bunfig.iter_mut().enumerate() {
                     if (self.rule.get(at)).is_some_and(|it| said.iter().any(|said| said.0 == it.0))
@@ -858,9 +893,21 @@ impl Options {
             b"env-info" => self.env_info = is_on,
             b"parser" => self.parser = owned(),
             b"plugin" => self.plugin.extend(list(text)),
-            b"allow" => self.filters.push((Severity::Off, text.to_vec())),
-            b"warn" => self.filters.push((Severity::Warn, text.to_vec())),
-            b"deny" => self.filters.push((Severity::Error, text.to_vec())),
+            b"allow" | b"warn" | b"deny" => {
+                let severity = match name {
+                    b"allow" => Severity::Off,
+                    b"warn" => Severity::Warn,
+                    _ => Severity::Error,
+                };
+                match Wildcard::plugin_of(text) {
+                    Some(_) => self.wildcards.push(Wildcard {
+                        id: text.to_vec(),
+                        setting: crate::configs::severity_name(severity),
+                        place: None,
+                    }),
+                    None => self.filters.push((severity, text.to_vec())),
+                }
+            }
             b"deny-warnings" => self.deny_warnings = is_on,
             b"silent" => self.silent = is_on,
             b"ignore-path" => {
@@ -1152,7 +1199,10 @@ impl Options {
         let of_filters = self.filters.iter().map(|it| &it.1[..]);
         let names = self.rule.iter().chain(of_overrides).map(|it| &it.0[..]);
         let mut names = names.chain(of_filters);
+        let of_overrides = self.overrides.iter().flat_map(|it| &it.wildcards);
+        let mut wildcards = self.wildcards.iter().chain(of_overrides);
         names.any(|it| matches!(it, b"bun/format" | b"prettier/prettier"))
+            || wildcards.any(|it| matches!(it.plugin(), b"bun" | b"prettier"))
     }
 
     /// Where the paths and the patterns in bunfig.toml start: where the file is, which is the project to a run from any
@@ -1182,7 +1232,7 @@ impl Options {
         if !alone.fix && !alone.fix_dry_run {
             defaults.fix_type = None;
         }
-        if !defaults.overrides.is_empty() {
+        if !defaults.overrides.is_empty() || !alone.wildcards.is_empty() {
             defaults.of_command_line = Some(Box::new(alone));
         }
         defaults.with(args)

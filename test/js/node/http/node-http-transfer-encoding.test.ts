@@ -1530,6 +1530,48 @@ describe("res.end() when a replaced res.writeHead sends the head", () => {
         serverSide.destroy();
       }
     });
+
+    // On a socket, the kernel decides how much of the body still drains when the outer end() runs: Windows can take
+    // any amount from a socket that nobody reads. Each test reads which state it has, and expects the order of that state.
+    test.concurrent.each([
+      ["a body of 8 MB on a socket", false, Buffer.alloc(8 * 1024 * 1024, "x")],
+      ['a small body on a socket from emit("connection")', true, Buffer.from("inner")],
+      ['a body of 8 MB on a socket from emit("connection")', true, Buffer.alloc(8 * 1024 * 1024, "x")],
+    ])("%s: the callback of the outer end() follows the state of the response", async (_, emitted, body) => {
+      const events: string[] = [];
+      let drains = false;
+      const handled = Promise.withResolvers<void>();
+      const responseClosed = Promise.withResolvers<void>();
+      const server = createServer((req, res) => {
+        res.on("close", () => responseClosed.resolve());
+        endInWriteHead(res, body, events);
+        drains = !res.writableFinished;
+        handled.resolve();
+      });
+      await using listener = emitted ? new Server(socket => void server.emit("connection", socket)) : server;
+      await once(listener.listen(0, "127.0.0.1"), "listening");
+      const { port } = listener.address() as AddressInfo;
+      const clientClosed = Promise.withResolvers<void>();
+      const socket = connect(port, "127.0.0.1", () => socket.write(GET_CLOSE));
+      socket.on("error", clientClosed.reject);
+      socket.on("close", () => clientClosed.resolve());
+      await Promise.race([handled.promise, clientClosed.promise]);
+      let head = "";
+      let received = 0;
+      socket.on("data", (chunk: Buffer) => {
+        if (received === 0) head = chunk.toString("latin1", 0, chunk.indexOf("\r\n\r\n") + 4);
+        received += chunk.length;
+      });
+      await clientClosed.promise;
+      await responseClosed.promise;
+      expect({ events, head: head.replace(/^Date: .*\r\n/m, ""), body: received - head.length }).toEqual({
+        events: drains
+          ? ["end() returned", "finish", "end callback: no error"]
+          : ["end callback: ERR_STREAM_ALREADY_FINISHED", "end() returned", "finish"],
+        head: `${HEAD_CLOSE}Content-Length: ${body.length}\r\n\r\n`,
+        body: body.length,
+      });
+    });
   });
 });
 

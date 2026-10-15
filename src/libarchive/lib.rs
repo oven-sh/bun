@@ -312,38 +312,31 @@ pub mod lib {
             unsafe { archive_read_data(self.as_mut_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
         }
 
-        /// Appends the entry's data, the holes of a sparse map as zeros. `Ok(false)`: read error.
+        /// Reads in steps so an untrusted `size` doesn't drive allocation. `Ok(false)`: read error.
         pub fn read_data_to_vec(
             &self,
+            size: usize,
             out: &mut Vec<u8>,
         ) -> core::result::Result<bool, bun_core::OOM> {
             let start = out.len();
-            let mut offset: i64 = 0;
-            loop {
-                let block = self.next(&mut offset);
-                let bytes: &[u8] = match &block {
-                    Some(block) if block.result != Result::Ok => return Ok(false),
-                    Some(block) => block.bytes,
-                    None => &[],
-                };
-                // Where the block goes or, behind the last one, where the entry ends.
-                let Some(at) = usize::try_from(offset)
-                    .ok()
-                    .and_then(|offset| start.checked_add(offset))
-                else {
-                    return Ok(false);
-                };
-                if block.is_some() && at < out.len() {
+            while out.len() - start < size {
+                let to_read = (size - (out.len() - start)).min(64 * 1024);
+                out.try_reserve(to_read).map_err(|_| bun_core::AllocError)?;
+                // SAFETY: `archive_read_data` only writes into the slice; the written prefix is committed below.
+                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(out)[..to_read] };
+                let read = self.read_data(dest);
+                if read < 0 {
                     return Ok(false);
                 }
-                out.try_reserve(at.saturating_sub(out.len()).saturating_add(bytes.len()))
-                    .map_err(|_| bun_core::AllocError)?;
-                out.resize(at, 0);
-                out.extend_from_slice(bytes);
-                if block.is_none() {
-                    return Ok(true);
+                if read == 0 {
+                    break;
                 }
+                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
+                unsafe {
+                    bun_core::vec::commit_spare(out, usize::try_from(read).expect("int cast"))
+                };
             }
+            Ok(true)
         }
 
         /// `archive_read_data_block` — returns `None` on EOF; `*offset` is then the entry's length.
@@ -797,8 +790,16 @@ pub mod lib {
             &self,
             archive: &Archive,
         ) -> core::result::Result<IteratorResult<Box<[u8]>>, bun_core::OOM> {
+            // SAFETY: self.entry is the libarchive-owned entry from read_next_header.
+            let size = unsafe { (*self.entry).size() };
+            let Ok(size) = usize::try_from(size) else {
+                return Ok(IteratorResult::init_err(
+                    archive.as_mut_ptr(),
+                    b"invalid archive entry size",
+                ));
+            };
             let mut buf: Vec<u8> = Vec::new();
-            if !archive.read_data_to_vec(&mut buf)? {
+            if !archive.read_data_to_vec(size, &mut buf)? {
                 return Ok(IteratorResult::init_err(
                     archive.as_mut_ptr(),
                     b"failed to read archive data",
@@ -1173,7 +1174,7 @@ pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: b
                     if log {
                         bun_core::warn!(
                             "Skipping symlink whose parent directory changed during extraction: {}\n",
-                            bstr::BStr::new(symlink.path.as_bytes()),
+                            bun_core::fmt::escape_control_chars(symlink.path.as_bytes()),
                         );
                     }
                     continue;
@@ -1186,8 +1187,8 @@ pub fn create_deferred_symlinks(dir_fd: Fd, symlinks: &[DeferredSymlink], log: b
                 if log {
                     bun_core::warn!(
                         "Skipping symlink that could not be created: {} -> {}\n",
-                        bstr::BStr::new(symlink.path.as_bytes()),
-                        bstr::BStr::new(symlink.target.as_bytes()),
+                        bun_core::fmt::escape_control_chars(symlink.path.as_bytes()),
+                        bun_core::fmt::escape_control_chars(symlink.target.as_bytes()),
                     );
                 }
             }
@@ -1605,7 +1606,10 @@ impl Archiver {
                         if options.log {
                             bun_core::warn!(
                                 "Skipping entry with a path longer than the maximum path length: {}\n",
-                                bun_core::fmt::fmt_os_path(pathname, Default::default()),
+                                bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_os_path(
+                                    pathname,
+                                    Default::default()
+                                )),
                             );
                         }
                         continue;
@@ -1672,7 +1676,10 @@ impl Archiver {
                     if options.log {
                         bun_core::prettyln!(
                             " {}",
-                            bun_core::fmt::fmt_os_path(path_slice, Default::default())
+                            bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_os_path(
+                                path_slice,
+                                Default::default()
+                            ))
                         );
                     }
 
@@ -1730,11 +1737,15 @@ impl Archiver {
                                     if options.log {
                                         bun_core::warn!(
                                             "Skipping symlink with unsafe target: {} -> {}\n",
-                                            bun_core::fmt::fmt_os_path(
-                                                path_slice,
-                                                Default::default(),
+                                            bun_core::fmt::EscapeControlChars(
+                                                bun_core::fmt::fmt_os_path(
+                                                    path_slice,
+                                                    Default::default(),
+                                                )
                                             ),
-                                            bstr::BStr::new(link_target.as_bytes()),
+                                            bun_core::fmt::escape_control_chars(
+                                                link_target.as_bytes()
+                                            ),
                                         );
                                     }
                                     continue;
@@ -1836,8 +1847,10 @@ impl Archiver {
                                         if plucker_.filename_hash == h {
                                             plucker_.contents.list.clear();
                                             // SAFETY: archive valid
-                                            let read_ok = unsafe { &*archive }
-                                                .read_data_to_vec(&mut plucker_.contents.list)?;
+                                            let read_ok = unsafe { &*archive }.read_data_to_vec(
+                                                size,
+                                                &mut plucker_.contents.list,
+                                            )?;
                                             if !read_ok {
                                                 if options.log {
                                                     // SAFETY: `archive` is the live

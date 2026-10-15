@@ -410,7 +410,7 @@ Environment variables take priority over `bunfig.toml`.
 | `BUN_CONFIG_HTTP_RETRY_COUNT`      | How often a failed request is retried (default: 5)        |
 | `BUN_CONFIG_HTTP_RETRY_BACKOFF`    | Wait before the first retry, in ms (default: 250)         |
 
-A request is retried after a connection failure or a 5xx, 429 or 408 response. The wait doubles with every retry, up to 40 times the first one, with ±20% jitter. A longer `Retry-After` header is honored, up to 60 seconds. `BUN_CONFIG_HTTP_RETRY_BACKOFF=0` retries at once.
+A request is retried after a connection failure or a 5xx, 429 or 408 response. The wait doubles with every retry, up to 40 times the first one, with ±20% jitter. A longer `Retry-After` header is honored, up to 60 seconds. `BUN_CONFIG_HTTP_RETRY_BACKOFF=0` retries at once. `bun info`, `bun pm whoami`, `bun pm diff` and `bun audit` follow the same rule. `bun publish` uploads a package once and never retries the upload.
 
 Bun uses the fastest installation method available on the target platform: `clonefile` on macOS and `hardlink` on Linux and Windows. You can change the installation method with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fall back to a platform-specific implementation of copying files.
 
@@ -596,27 +596,27 @@ Bun's usage of `Cache-Control` ignores `Age`. This improves performance, but mea
 
 A flag that `bun install` does not know is an error. So that a command line written for npm, Yarn or pnpm keeps working, `bun install`, `bun ci`, `bun add`, `bun remove` and `bun update` also take these:
 
-| Flag                                                           | What Bun does                                 |
-| -------------------------------------------------------------- | --------------------------------------------- |
-| `--save-dev`, `--save-exact`, `--save-optional`, `--save-peer` | `--dev`, `--exact`, `--optional`, `--peer`    |
-| `--no-optional`, `--ignore-optional`                           | `--omit=optional`                             |
-| `--only=production`, `--only=prod`                             | `--omit=dev`                                  |
-| `--production=true`                                            | `--production`                                |
-| `--package-lock-only`                                          | `--lockfile-only`                             |
-| `--immutable`                                                  | `--frozen-lockfile`                           |
-| `--shamefully-hoist`                                           | `--linker=hoisted`                            |
-| `--progress=false`                                             | `--no-progress`                               |
-| `--loglevel=silent`                                            | `--silent`                                    |
-| `--loglevel=error`, `--loglevel=warn`                          | `--quiet`                                     |
-| `--loglevel=verbose`, `--loglevel=silly`                       | `--verbose`                                   |
-| `--loglevel=notice`, `--loglevel=http`, `--loglevel=info`      | Nothing: the default output                   |
-| `--no-audit`, `--no-fund`, `--no-update-notifier`              | Nothing: an install does none of these        |
-| `--legacy-peer-deps`                                           | Nothing: peers that conflict are not an error |
-| `--ignore-engines`                                             | Nothing: `engines` is not checked             |
-| `--unsafe-perm`                                                | Nothing: scripts run as the current user      |
-| `--non-interactive`                                            | Nothing: an install asks no questions         |
-| `--include=dev`, `--include=optional`, `--include=peer`        | Nothing: installed by default                 |
-| `--no-frozen-lockfile`, `--prefer-frozen-lockfile`             | Nothing: the default                          |
+| Flag                                                           | What Bun does                                            |
+| -------------------------------------------------------------- | -------------------------------------------------------- |
+| `--save-dev`, `--save-exact`, `--save-optional`, `--save-peer` | `--dev`, `--exact`, `--optional`, `--peer`, if it has it |
+| `--no-optional`, `--ignore-optional`                           | `--omit=optional`                                        |
+| `--only=production`, `--only=prod`                             | `--omit=dev`                                             |
+| `--production=true`                                            | `--production`                                           |
+| `--package-lock-only`                                          | `--lockfile-only`                                        |
+| `--immutable`                                                  | `--frozen-lockfile`                                      |
+| `--shamefully-hoist`                                           | `--linker=hoisted`                                       |
+| `--progress=false`                                             | `--no-progress`                                          |
+| `--loglevel=silent`                                            | `--silent`                                               |
+| `--loglevel=error`, `--loglevel=warn`                          | `--quiet`                                                |
+| `--loglevel=verbose`, `--loglevel=silly`                       | `--verbose`                                              |
+| `--loglevel=notice`, `--loglevel=http`, `--loglevel=info`      | Nothing: the default output                              |
+| `--no-audit`, `--no-fund`, `--no-update-notifier`              | Nothing: an install does none of these                   |
+| `--legacy-peer-deps`                                           | Nothing: peers that conflict are not an error            |
+| `--ignore-engines`                                             | Nothing: `engines` is not checked                        |
+| `--unsafe-perm`                                                | Nothing: scripts run as the current user                 |
+| `--non-interactive`                                            | Nothing: an install asks no questions                    |
+| `--include=dev`, `--include=optional`, `--include=peer`        | Nothing: installed by default                            |
+| `--no-frozen-lockfile`, `--prefer-frozen-lockfile`             | Nothing: the default                                     |
 
 `--name value` works like `--name=value`, and `--audit=false` like `--no-audit`. Bun still installs peer dependencies with `--legacy-peer-deps`; `--omit=peer` leaves them out.
 

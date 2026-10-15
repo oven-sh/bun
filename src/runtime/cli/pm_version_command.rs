@@ -448,7 +448,10 @@ impl PmVersionCommand {
             Global::package_json_version_with_sha
         );
         if let Some(version) = &_current_version {
-            bun_core::prettyln!("Current package version: <green>v{}<r>", BStr::new(version));
+            bun_core::prettyln!(
+                "Current package version: <green>v{}<r>",
+                bun_core::fmt::escape_control_chars(version)
+            );
         }
 
         let preid = pm.options.preid;
@@ -458,7 +461,7 @@ impl PmVersionCommand {
 
         bun_core::pretty!(
             "\n<b>Increment<r>:\n  <cyan>patch<r>      <d>{0} → {1}<r>\n  <cyan>minor<r>      <d>{0} → {2}<r>\n  <cyan>major<r>      <d>{0} → {3}<r>\n  <cyan>prerelease<r> <d>{0} → {4}<r>\n",
-            BStr::new(current_version),
+            bun_core::fmt::escape_control_chars(current_version),
             BStr::new(&next(VersionType::Patch, preid)),
             BStr::new(&next(VersionType::Minor, preid)),
             BStr::new(&next(VersionType::Major, preid)),
@@ -468,7 +471,7 @@ impl PmVersionCommand {
         if strings::index_of_char(current_version, b'-').is_some() || !preid.is_empty() {
             bun_core::pretty!(
                 "  <cyan>prepatch<r>   <d>{0} → {1}<r>\n  <cyan>preminor<r>   <d>{0} → {2}<r>\n  <cyan>premajor<r>   <d>{0} → {3}<r>\n",
-                BStr::new(current_version),
+                bun_core::fmt::escape_control_chars(current_version),
                 BStr::new(&next(VersionType::Prepatch, preid)),
                 BStr::new(&next(VersionType::Preminor, preid)),
                 BStr::new(&next(VersionType::Premajor, preid)),
@@ -518,7 +521,7 @@ impl PmVersionCommand {
         let Some(current) = Version::parse(current_str) else {
             Output::err_generic(
                 "Current version \"{}\" is not a valid semver",
-                (BStr::new(current_str),),
+                (bun_core::fmt::escape_control_chars(current_str),),
             );
             Global::exit(1);
         };
@@ -622,7 +625,10 @@ impl PmVersionCommand {
         let tag = strings::trim(&result.stdout, b" \n\r\t");
         let prefix = tag.iter().take_while(|c| !c.is_ascii_digit()).count();
         let Some(version) = Version::parse(&tag[prefix..]) else {
-            Output::err_generic("Tag is not a valid version: \"{}\"", (BStr::new(tag),));
+            Output::err_generic(
+                "Tag is not a valid version: \"{}\"",
+                (bun_core::fmt::escape_control_chars(tag),),
+            );
             Global::exit(1);
         };
         version.to_bytes()

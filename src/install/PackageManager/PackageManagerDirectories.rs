@@ -432,20 +432,24 @@ pub fn fetch_cache_directory_path(
     configured: Option<&[u8]>,
 ) -> sys::Maybe<CacheDir> {
     const CWD_FALLBACK: &[u8] = b"node_modules/.bun-cache";
-    let from_env = env
-        .get(b"BUN_INSTALL_CACHE_DIR")
-        .filter(|dir| !dir.is_empty())
+    let variable = |name: &[u8]| {
+        env.get(name)
+            .filter(|dir| !dir.is_empty())
+            .map(options::expand_home)
+    };
+    let from_env = variable(b"BUN_INSTALL_CACHE_DIR");
+    let bun_install = variable(b"BUN_INSTALL");
+    let home = env_var::XDG_CACHE_HOME
+        .get_not_empty()
+        .or_else(|| env_var::HOME.get_not_empty())
         .map(options::expand_home);
     let parts: &[&[u8]] = if let Some(dir) = from_env.as_deref() {
         &[dir]
     } else if let Some(dir) = configured.filter(|dir| !dir.is_empty()) {
         &[dir]
-    } else if let Some(dir) = env.get(b"BUN_INSTALL").filter(|dir| !dir.is_empty()) {
+    } else if let Some(dir) = bun_install.as_deref() {
         &[dir, b"install/", b"cache/"]
-    } else if let Some(dir) = env_var::XDG_CACHE_HOME
-        .get_not_empty()
-        .or_else(|| env_var::HOME.get_not_empty())
-    {
+    } else if let Some(dir) = home.as_deref() {
         &[dir, b".bun/", b"install/", b"cache/"]
     } else {
         &[CWD_FALLBACK]

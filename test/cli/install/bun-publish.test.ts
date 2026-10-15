@@ -131,6 +131,15 @@ function mockRegistry(
   return mock;
 }
 
+/** name, the characters, how they are printed */
+const unprintable = [
+  ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],
+  ["CR", "\r", "\\r"],
+  ["BEL", "\x07", "\\x07"],
+  ["U+009B", "\u009b2K", "\\u009b2K"],
+  ["OSC 52", "\x1b]52;c;aGk=\x07", "\\x1b]52;c;aGk=\\x07"],
+] as const;
+
 /** The token the mock registry tests configure. `bun publish` sends it as `authorization: Bearer <token>`. */
 const registryToken = "registry-token";
 
@@ -651,6 +660,109 @@ describe.concurrent("otp", () => {
     expect(mock.requests).toEqual([]);
     expect(exitCode).toBe(1);
   });
+
+  /** Asks for the web login on the first PUT, and hands out `token` at the done url. */
+  function webLoginRegistry(authUrlSuffix: string, token: string) {
+    return mockRegistry((req, recorded, mock) => {
+      if (req.method === "PUT") {
+        if (recorded.otp !== null) {
+          return new Response("OK", { status: 200 });
+        }
+        return Response.json(
+          {
+            authUrl: `http://localhost:${mock.port}/auth${authUrlSuffix}`,
+            doneUrl: `http://localhost:${mock.port}/done`,
+          },
+          { status: 401, headers: { "www-authenticate": "OTP" } },
+        );
+      }
+      return Response.json({ token });
+    });
+  }
+
+  test.each([
+    ["CRLF", "abc\r\nX-Injected: 1"],
+    ["a bare LF", "abc\ndef"],
+    ["a bare CR", "abc\rdef"],
+  ])("a web login token containing %s is rejected", async (_, token) => {
+    using mock = webLoginRegistry("", token);
+    using dir = tempDir("publish-token-crlf", {
+      "package.json": JSON.stringify({ name: "otp-pkg-token", version: "1.0.0" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    const { err, exitCode } = await publish(env, String(dir));
+    expect(err).toBe("WebLogin: invalid `token` field in response json\n");
+    expect(mock.requests).toEqual([request("PUT", "/otp-pkg-token"), request("GET", "/done")]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.each(unprintable)(
+    "an auth url with %s is shown spelled out, without the offer to open it",
+    async (_, raw, spelled) => {
+      using mock = webLoginRegistry(`${raw}| http://example.com/login`, "123456");
+      using dir = tempDir("publish-auth-url", {
+        "package.json": JSON.stringify({ name: "otp-pkg-url", version: "1.0.0" }),
+        "bunfig.toml": mockBunfig(mock),
+      });
+
+      const { out, err, exitCode } = await publish(env, String(dir));
+      expect(err).toBe("");
+      const shown = `http://localhost:${mock.port}/auth${spelled}| http://example.com/login`;
+      const border = `|${Buffer.alloc(shown.length + 2, "-")}|`;
+      expect(out).toEndWith(
+        `\nAuthenticate your account at:\n${border}\n| ${shown} |\n${border}\n\n + otp-pkg-url@1.0.0\n`,
+      );
+      expect(exitCode).toBe(0);
+    },
+  );
+});
+
+// npm prints the header of every response that has no `x-local-cache`.
+describe.concurrent("the registry's npm-notice is printed", () => {
+  const notice = "Classic tokens stop working next month.";
+  const printed = `\nnote: ${notice}\n`;
+
+  async function publishTo(respond: (req: Request) => Response, ...args: string[]) {
+    using mock = mockRegistry(respond);
+    using dir = tempDir("publish-notice", {
+      "package.json": JSON.stringify({ name: "notice-pkg", version: "1.0.0" }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+    return await publish(env, String(dir), ...args);
+  }
+  const answer = (status: number, headers = {}) => new Response("{}", { status, headers });
+
+  test.each([
+    [200, []],
+    [201, []],
+    [201, ["--otp", "123456"]],
+  ] as [number, string[]][])("with a %d (args: %j)", async (status, args) => {
+    const { err, exitCode } = await publishTo(() => answer(status, { "npm-notice": notice }), ...args);
+    expect(err).toBe(printed);
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([403, 409, 500])("before the error of a %d", async status => {
+    const { err, exitCode } = await publishTo(() => answer(status, { "npm-notice": notice }));
+    expect(err).toStartWith(`${printed}\n${status} `);
+    expect(exitCode).toBe(1);
+  });
+
+  test("with the answer to --tolerate-republish", async () => {
+    const { err, exitCode } = await publishTo(
+      req => answer(200, req.method === "GET" ? { "npm-notice": notice } : {}),
+      "--tolerate-republish",
+    );
+    expect(err).toBe(printed);
+    expect(exitCode).toBe(0);
+  });
+
+  test("unless the response came from a cache", async () => {
+    const { err, exitCode } = await publishTo(() => answer(201, { "npm-notice": notice, "x-local-cache": "1" }));
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe.concurrent("can publish with only _auth from .npmrc", () => {
@@ -955,10 +1067,9 @@ describe.concurrent("bin longer than the path buffer", () => {
     const packageJson = JSON.stringify({ name: "publish-long-bin", version: "1.0.0", ...fields });
     await Promise.all([
       write(join(packageDir, "package.json"), packageJson),
-      write(join(packageDir, "cli.js"), ""),
       Bun.Archive.write(
         join(packageDir, "publish-long-bin-1.0.0.tgz"),
-        { "package/package.json": packageJson },
+        { "package/package.json": packageJson, "package/cli.js": "" },
         { compress: "gzip" },
       ),
     ]);
@@ -1892,6 +2003,50 @@ describe.concurrent("`private` that is not a boolean", () => {
   });
 });
 
+// As for `JSON.parse`, which is how everybody else reads the package.json in the tarball.
+describe.concurrent("of two equal keys in package.json the last one counts", () => {
+  const equalKeys = `{
+    "name": "first-name", "version": "1.0.0", "private": true, "publishConfig": { "tag": "first" },
+    "name": "equal-keys", "version": "2.0.0", "private": false, "publishConfig": { "tag": "second", "tag": "last" }
+  }`;
+
+  test.each(["a directory", "a tarball"])("from %s", async from => {
+    using mock = mockRegistry();
+    using dir = tempDir("publish-equal-keys", {
+      "package.json": from === "a directory" ? equalKeys : JSON.stringify({ name: "here", private: true }),
+      "bunfig.toml": mockBunfig(mock),
+    });
+    const args: string[] = [];
+    if (from === "a tarball") {
+      await Bun.Archive.write(join(dir, "it.tgz"), { "package/package.json": equalKeys }, { compress: "gzip" });
+      args.push("./it.tgz");
+    }
+
+    const { out, err, exitCode } = await publish(env, String(dir), ...args);
+    expect(err).toBe("");
+    expect(out).toContain("\n + equal-keys@2.0.0\n");
+    expect(mock.requests).toEqual([request("PUT", "/equal-keys")]);
+    const [{ manifest }] = mock.requests;
+    expect(manifest["dist-tags"]).toEqual({ last: "2.0.0" });
+    expect(Object.keys(manifest.versions)).toEqual(["2.0.0"]);
+    expect(Object.keys(manifest._attachments)).toEqual(["equal-keys-2.0.0.tgz"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test('a last "private": true refuses the publish', async () => {
+    using mock = mockRegistry();
+    using dir = tempDir("publish-equal-keys-private", {
+      "package.json": `{ "name": "equal-keys", "version": "1.0.0", "private": false, "private": true }`,
+      "bunfig.toml": mockBunfig(mock),
+    });
+
+    const { err, exitCode } = await publish(env, String(dir));
+    expect(err).toBe("error: attempted to publish a private package\n");
+    expect(mock.requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+});
+
 describe.concurrent("package.json version", () => {
   const NOT_SEMVER = "error: package.json `version` is not a valid semver version\n";
 
@@ -2390,6 +2545,84 @@ describe("publishConfig registry", () => {
       "dist-tags": { internal: "1.0.0" },
       access: "restricted",
       versions: { "1.0.0": { dist: { tarball: `http://${pinned.host}/@corp/secretpkg/-/@corp/secretpkg-1.0.0.tgz` } } },
+    });
+  });
+
+  // Like the name and the version, `publishConfig` is the one in package.json once these scripts have run.
+  describe("after the scripts that run before packing", () => {
+    /** A package whose `script` merges `written` into its package.json. */
+    function scripted(npmrc: string, script: string, fields: object, written: object) {
+      return tempDir("publish-config-script", {
+        ".npmrc": npmrc,
+        "package.json": JSON.stringify({
+          name: "scripted-pkg",
+          version: "1.0.0",
+          scripts: { [script]: `${bunExe()} write.js` },
+          files: ["index.js"],
+          ...fields,
+        }),
+        "write.js": `const fs = require("fs");
+          const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          fs.writeFileSync("package.json", JSON.stringify({ ...pkg, ...${JSON.stringify(written)} }));`,
+      });
+    }
+
+    test.concurrent.each(["prepublishOnly", "prepack", "prepare"])("one that %s writes counts", async script => {
+      using configured = mockRegistry();
+      using pinned = mockRegistry({ secure: true });
+      using dir = scripted(
+        `registry=${configured.url}\n${configured.npmrcToken}\n${pinned.npmrcToken}\n`,
+        script,
+        {},
+        { publishConfig: { registry: pinned.url, tag: "internal" } },
+      );
+
+      const { out, err, exitCode } = await publish(env, String(dir), ...ca);
+      expect(err).not.toContain("error:");
+      expect(out).toContain(`Tag: internal\nAccess: default\nRegistry: ${pinned.url}\n`);
+      expect(configured.requests).toEqual([]);
+      expect(pinned.requests).toEqual(put("/scripted-pkg", pinned.token));
+      expect(pinned.manifest["dist-tags"]).toEqual({ internal: "1.0.0" });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("one that a script takes out does not count", async () => {
+      using configured = mockRegistry();
+      using pinned = mockRegistry({ secure: true });
+      using dir = scripted(
+        `registry=${configured.url}\n${configured.npmrcToken}\n${pinned.npmrcToken}\n`,
+        "prepublishOnly",
+        { publishConfig: { registry: pinned.url, tag: "internal" } },
+        { publishConfig: {} },
+      );
+
+      const { out, err, exitCode } = await publish(env, String(dir), ...ca);
+      expect(err).not.toContain("error:");
+      expect(out).toContain(`Tag: latest\nAccess: default\nRegistry: ${configured.url}\n`);
+      expect(pinned.requests).toEqual([]);
+      expect(configured.requests).toEqual(put("/scripted-pkg", configured.token));
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent.each([
+      [{ access: "restricted" }, "error: unable to restrict access to unscoped package\n"],
+      [
+        { provenance: true },
+        'error: "provenance" in the publishConfig of package.json is not supported yet: bun publish cannot generate provenance statements\n',
+      ],
+    ])("%j that a script writes is refused", async (publishConfig, error) => {
+      using configured = mockRegistry();
+      using dir = scripted(
+        `registry=${configured.url}\n${configured.npmrcToken}\n`,
+        "prepublishOnly",
+        {},
+        { publishConfig },
+      );
+
+      const { err, exitCode } = await publish(env, String(dir));
+      expect(err).toBe(`$ ${bunExe()} write.js\n${error}`);
+      expect(configured.requests).toEqual([]);
+      expect(exitCode).toBe(1);
     });
   });
 
@@ -2972,6 +3205,40 @@ describe.concurrent("bin in the published manifest", () => {
     expect(exitCode).toBe(0);
 
     expect(captured.versions["1.0.0"].bin).toEqual(expected);
+  });
+
+  // Whatever folder the command is run in.
+  test.each([
+    [{ directories: { bin: "bin" } }, { "tool-cmd": "bin/tool-cmd", "other-cmd": "bin/more/other-cmd" }, ""],
+    [{ directories: { bin: "scripts" } }, undefined, "warn: bin directory 'scripts' does not exist\n"],
+    [
+      { bin: { packed: "bin/tool-cmd", "not-packed": "scripts/here.sh" } },
+      { packed: "bin/tool-cmd", "not-packed": "scripts/here.sh" },
+      "warn: bin 'scripts/here.sh' does not exist\n",
+    ],
+  ])("of a tarball with %j is looked up in the tarball", async (fields, expected, warnings) => {
+    using mock = mockRegistry();
+    using dir = tempDir("publish-bin-tarball", {
+      "package.json": JSON.stringify({ name: "here", private: true }),
+      "bunfig.toml": mockBunfig(mock),
+      "bin/here.sh": "#!/bin/sh\n",
+      "scripts/here.sh": "#!/bin/sh\n",
+    });
+    await Bun.Archive.write(
+      join(dir, "tool-1.0.0.tgz"),
+      {
+        "package/package.json": JSON.stringify({ name: "tool", version: "1.0.0", ...fields }),
+        "package/bin/tool-cmd": "#!/bin/sh\n",
+        "package/bin/more/other-cmd": "#!/bin/sh\n",
+      },
+      { compress: "gzip" },
+    );
+
+    const { err, exitCode } = await publish(env, String(dir), "./tool-1.0.0.tgz");
+    expect(err).toBe(warnings);
+    expect(mock.requests).toEqual([request("PUT", "/tool")]);
+    expect(mock.requests[0].manifest.versions["1.0.0"].bin).toEqual(expected);
+    expect(exitCode).toBe(0);
   });
 
   // Neither is packed. Listing them would send the file names of a directory outside the package to the registry.
@@ -3863,5 +4130,43 @@ describe.concurrent("NODE_TLS_REJECT_UNAUTHORIZED=0", () => {
     expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
     expect(registry.requests).toEqual([]);
     expect(exitCode).toBe(1);
+  });
+});
+
+describe.concurrent.each(unprintable)("%s is printed spelled out", (_, raw, spelled) => {
+  const dryRunEnv = { ...env, npm_config_registry: "http://someuser:hunter2@127.0.0.1:1/" };
+  const anyUnprintable = /[\x00-\x09\x0b-\x1f\x7f-\x9f]/;
+
+  test.skipIf(isWindows)("in a file name of the directory", async () => {
+    using dir = tempDir("publish-file-name", {
+      "package.json": JSON.stringify({ name: "publish-file-name", version: "1.0.0" }),
+      [`a${raw}b.js`]: "x",
+    });
+    const { out, err, exitCode } = await publish(dryRunEnv, String(dir), "--dry-run");
+    expect(out).toContain(`packed 1B a${spelled}b.js\n`);
+    expect(out + err).not.toMatch(anyUnprintable);
+    expect(exitCode).toBe(0);
+  });
+
+  test("in a tarball", async () => {
+    using dir = tempDir("publish-tarball-names", { "package.json": "{}" });
+    await Bun.Archive.write(
+      join(dir, "it.tgz"),
+      {
+        "package/package.json": JSON.stringify({
+          name: `a${raw}b`,
+          version: "1.0.0",
+          publishConfig: { tag: `c${raw}d` },
+        }),
+        [`package/e${raw}f.js`]: "x",
+      },
+      { compress: "gzip" },
+    );
+    const { out, err, exitCode } = await publish(dryRunEnv, String(dir), "./it.tgz", "--dry-run");
+    expect(out).toContain(`packed 1B e${spelled}f.js\n`);
+    expect(out).toContain(`\nTag: c${spelled}d\n`);
+    expect(out).toEndWith(`\n + a${spelled}b@1.0.0 (dry-run)\n`);
+    expect(out + err).not.toMatch(anyUnprintable);
+    expect(exitCode).toBe(0);
   });
 });

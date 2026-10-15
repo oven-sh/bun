@@ -391,6 +391,7 @@ describe.concurrent("auto-install uses the versions of the lockfile", () => {
     using dir = tempDir("autoinstall-lockfile-root", {
       "app/package.json": JSON.stringify({ name: "app", dependencies }),
       "app/bun.lock": lockfile(dependencies),
+      "app/src/package.json": JSON.stringify({ type: "commonjs" }),
       "app/src/index.js": printNoDepsVersion,
       "elsewhere/.keep": "",
     });
@@ -2417,6 +2418,16 @@ describe.concurrent("auto-install is off when a security scanner is configured",
     expect(await run(files, { cwd: "elsewhere", args: ["../app/src/index.js"] })).toEqual(refused(configured));
   });
 
+  test("configured in the project's bunfig.toml, run from a folder with a package.json that only has a type", async () => {
+    const files = {
+      "app/bunfig.toml": scanner,
+      "app/package.json": JSON.stringify({ name: "app" }),
+      "app/src/package.json": JSON.stringify({ type: "commonjs" }),
+      "app/src/index.js": requireIt,
+    };
+    expect(await run(files, { cwd: "app/src" })).toEqual(refused(configured));
+  });
+
   test.each([
     [".npmrc", "a folder of the project", { cwd: "app/src" }],
     [".npmrc", "outside the project", { cwd: "elsewhere", args: ["../app/src/index.js"] }],
@@ -2816,6 +2827,20 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
         ["x.mjs"],
         { "app/package.json": packageJson, "app/src/x.mjs": importIt },
       ],
+      ...[
+        ["app", ["src/x.mjs"]],
+        ["app/src", ["x.mjs"]],
+        ["home", ["../app/src/x.mjs"]],
+      ].map(([cwd, args]) => [
+        `in ${cwd}, for a file beside a package.json that only has a type`,
+        cwd,
+        args,
+        {
+          "app/package.json": packageJson,
+          "app/src/package.json": JSON.stringify({ type: "module" }),
+          "app/src/x.mjs": importIt,
+        },
+      ]),
       [
         "in a member of the workspace",
         "app/packages/member",
@@ -2871,6 +2896,32 @@ describe("auto-install reads the registries and credentials of .npmrc", () => {
       });
       expect(result).toEqual(fromDefaultRegistry);
     });
+  });
+
+  const projectInProject = {
+    "app/package.json": JSON.stringify({ name: "app" }),
+    "app/examples/package.json": packageJson,
+    "app/examples/x.mjs": importIt,
+  };
+
+  cell("the .npmrc of the start directory counts for a file of another project", async () => {
+    const result = await autoInstall({
+      args: ["examples/x.mjs"],
+      files: r => ({ "app/.npmrc": scopeAndToken(r), ...projectInProject }),
+    });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
+  cell("the .npmrc of the project overrides the one of the start directory", async () => {
+    const result = await autoInstall({
+      args: ["examples/x.mjs"],
+      files: r => ({
+        "app/.npmrc": `@corp:registry=http://${r.DEFAULT}/\n`,
+        "app/examples/.npmrc": scopeAndToken(r),
+        ...projectInProject,
+      }),
+    });
+    expect(result).toEqual(fromPrivateRegistry);
   });
 
   cell("the bunfig.toml of the start directory overrides the one of the project root", async () => {

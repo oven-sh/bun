@@ -3,10 +3,11 @@
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use bun_core::{Output, strings};
-use bun_http::HTTPClientResult;
+use bun_core::{MutableString, Output, strings};
+use bun_http::{AsyncHTTP, HTTPClientResult, HTTPResponseMetadata};
 use bun_threading::{Condition, Guarded};
 
+use crate::package_manager_real::run_tasks::download_outcome;
 use crate::package_manager_real::{self, enqueue, package_manager_options::LogLevel};
 use crate::{NetworkTask, PackageManager};
 
@@ -36,28 +37,18 @@ pub(crate) fn retry(
     attempt: u16,
     response: &HTTPClientResult<'static>,
 ) -> Duration {
-    let base_ms = manager
-        .env()
-        .get(b"BUN_CONFIG_HTTP_RETRY_BACKOFF")
-        .and_then(|ms| bun_core::parse_unsigned::<u32>(ms, 10).ok())
-        .unwrap_or(250);
-    // Under auto-install the JS thread is blocked on this request.
-    if base_ms == 0 || manager.options.runtime_auto_install {
+    let (wait, asked) = wait_before(manager, attempt, response);
+    if wait.is_zero() {
         enqueue::enqueue_network_task(manager, task);
         return Duration::ZERO;
     }
-
-    let mut wait = backoff(base_ms, attempt);
-    if let Some(asked) = retry_after(response).filter(|asked| *asked > wait) {
-        wait = asked;
-        // Rate limits hit many requests at once: one line per wave.
-        if manager.retry_queue.len() == 0 && manager.options.log_level != LogLevel::Silent {
-            Output::flush();
-            manager.progress.log(format_args!(
-                "warn: the registry asked to wait {}s before the next attempt\n",
-                asked.as_secs(),
-            ));
-        }
+    // Rate limits hit many requests at once: one line per wave.
+    if asked && manager.retry_queue.len() == 0 && manager.options.log_level != LogLevel::Silent {
+        Output::flush();
+        manager.progress.log(format_args!(
+            "warn: the registry asked to wait {}s before the next attempt\n",
+            wait.as_secs(),
+        ));
     }
 
     let due = Instant::now() + wait;
@@ -67,6 +58,65 @@ pub(crate) fn retry(
     }
     manager.retry_queue.0.push((due, task));
     wait
+}
+
+impl PackageManager {
+    /// `send_sync` with the attempts and the waits of `bun install`, for a command that sends one request at a time.
+    /// Not for a request the registry must not get twice: the PUT of `bun publish`.
+    pub fn send_with_retries(
+        &self,
+        request: &mut AsyncHTTP<'_>,
+        response_buffer: &mut MutableString,
+    ) -> bun_http::Result<HTTPResponseMetadata> {
+        let mut attempt: u16 = 0;
+        loop {
+            response_buffer.reset();
+            let response = request.send_sync_for_result(response_buffer)?;
+            let (_, retry) = download_outcome(&response, &self.options);
+            if !retry || attempt >= self.options.max_retry_count {
+                return response.into_metadata();
+            }
+            attempt += 1;
+            let (wait, asked) = wait_before(self, attempt, &response);
+            if self.options.log_level != LogLevel::Silent {
+                if asked {
+                    bun_core::warn!(
+                        "the registry asked to wait {}s before the next attempt",
+                        wait.as_secs(),
+                    );
+                } else if matches!(response.fail, Some(bun_http::Error::Timeout)) {
+                    bun_core::warn!(
+                        "Timeout waiting for the registry. Retrying {}/{}...",
+                        attempt,
+                        self.options.max_retry_count,
+                    );
+                }
+            }
+            std::thread::sleep(wait);
+        }
+    }
+}
+
+/// The wait before retry number `attempt`, and whether the registry asked for it. Zero: at once.
+fn wait_before(
+    manager: &PackageManager,
+    attempt: u16,
+    response: &HTTPClientResult<'static>,
+) -> (Duration, bool) {
+    let base_ms = manager
+        .env()
+        .get(b"BUN_CONFIG_HTTP_RETRY_BACKOFF")
+        .and_then(|ms| bun_core::parse_unsigned::<u32>(ms, 10).ok())
+        .unwrap_or(250);
+    // Under auto-install the JS thread is blocked on this request.
+    if base_ms == 0 || manager.options.runtime_auto_install {
+        return (Duration::ZERO, false);
+    }
+    let wait = backoff(base_ms, attempt);
+    match retry_after(response).filter(|asked| *asked > wait) {
+        Some(asked) => (asked, true),
+        None => (wait, false),
+    }
 }
 
 /// +-20%, so that a fleet of installs does not retry in step.

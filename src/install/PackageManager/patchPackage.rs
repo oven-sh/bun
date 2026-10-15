@@ -83,19 +83,103 @@ impl PatchCommitResult {
         edit_patched_dependencies(manager, package_json, &self.patch_key, &self.patchfile_path)
     }
 
-    /// Once package.json and the lockfile no longer name the patch file.
+    /// Once package.json and the lockfile no longer name the patch file for this package.
     pub(crate) fn delete_removed_patch(&self, manager: &PackageManager) {
         if !self.removes_patch || !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
             return;
         }
         let path = ZBox::from_bytes(&self.patchfile_path);
-        let deleted = is_file_of_the_project(&path) && sys::unlink(&path).is_ok();
+        let lockfile = &manager.lockfile;
+        let real = resolve_links(&self.patchfile_path).ok();
+        let own_key = string_hash(&self.patch_key);
+        let is_shared = (lockfile.patched_dependencies.iter()).any(|(key, other)| {
+            *key != own_key && resolve_links(lockfile.str(&other.path)).ok() == real
+        });
+        let outcome = if is_shared {
+            "another package uses"
+        } else if is_file_of_the_project(&path) && sys::unlink(&path).is_ok() {
+            "deleted"
+        } else {
+            "did not delete"
+        };
         bun_core::pretty!(
             "\nRemoved the patch for <b>{}<r> ({} {})\n",
             bun_fmt::for_terminal(bstr::BStr::new(&self.patch_key)),
-            if deleted { "deleted" } else { "did not delete" },
-            bstr::BStr::new(&self.patchfile_path),
+            outcome,
+            bun_fmt::escape_control_chars(&self.patchfile_path),
         );
+    }
+}
+
+/// What `bun patch --commit` does to the disk once no check can refuse its install any more.
+#[derive(Default)]
+pub(crate) struct PendingCommit {
+    new_patch: Option<NewPatch>,
+    /// The install lays the package again in the place of this folder.
+    stale_folder: Option<Vec<u8>>,
+}
+
+struct NewPatch {
+    name_and_version_hash: u64,
+    path: ZBox,
+    contents: Vec<u8>,
+}
+
+impl PendingCommit {
+    /// An install hashes the patch files before its checks, when this one is not written yet.
+    pub(crate) fn patch_hash(&self, name_and_version_hash: u64) -> Option<u64> {
+        (self.new_patch.as_ref())
+            .filter(|patch| patch.name_and_version_hash == name_and_version_hash)
+            .map(|patch| crate::patch_install::hash_patch(&patch.contents))
+    }
+}
+
+/// The path of the file, if this run has one to write.
+pub(crate) fn write_pending_patch(
+    manager: &mut PackageManager,
+) -> Result<Option<ZBox>, crate::Error> {
+    let Some(patch) = manager.pending_patch_commit.new_patch.take() else {
+        return Ok(None);
+    };
+    if let PatchFeatures::Commit { patches_dir } = &manager.options.patch_features
+        && let Err(e) = sys::mkdir_recursive(patches_dir)
+    {
+        Output::err(
+            e,
+            "failed to make patches dir {f}",
+            (bun_fmt::quote(patches_dir),),
+        );
+        Global::crash();
+    }
+
+    // write the patch contents to temp file then rename
+    let mut tmpname_buf = [0u8; 1024];
+    let tempfile_name =
+        bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
+    let tmpdir = get_temporary_directory(manager).handle.fd();
+    if let Err(e) = sys::File::write_file(tmpdir, tempfile_name, &patch.contents) {
+        Output::err(e, "failed to write patch to temp file", ());
+        Global::crash();
+    }
+    if let Err(e) = sys::renameat_concurrently(
+        tmpdir,
+        tempfile_name,
+        Fd::cwd(),
+        &patch.path,
+        sys::RenameOptions {
+            move_fallback: true,
+        },
+    ) {
+        Output::err(e, "failed renaming patch file to patches dir", ());
+        Global::crash();
+    }
+    Ok(Some(patch.path))
+}
+
+/// Right before the linker runs. The patch file holds the edits of the folder by now.
+pub(crate) fn remove_stale_folder(manager: &mut PackageManager) {
+    if let Some(folder) = manager.pending_patch_commit.stale_folder.take() {
+        let _ = Fd::cwd().delete_tree(&folder);
     }
 }
 
@@ -335,21 +419,21 @@ fn folder_lookup_error(
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: cannot patch <b>{}<r>: <b>{}@{}<r> is not in the lockfile",
                 bstr::BStr::new(folder),
-                bstr::BStr::new(name),
-                bstr::BStr::new(version),
+                bun_fmt::EscapeControlChars(bstr::BStr::new(name)),
+                bun_fmt::EscapeControlChars(bstr::BStr::new(version)),
             );
             bun_core::note!(
                 "if the edits changed \"version\" in its package.json, run <b>{} {}@\\<version in the lockfile\\><r> instead",
                 command,
-                bstr::BStr::new(name),
+                bun_fmt::EscapeControlChars(bstr::BStr::new(name)),
             );
         }
         FolderLookupError::NeedsLabel => bun_core::pretty_errorln!(
             "<r><red>error<r>: cannot patch <b>{}<r>: no npm package <b>{}@{}<r> is in the lockfile, and the other packages named <b>{}<r> have a git, tarball or folder label. Run <b>{} \\<dependency\\>@\\<label\\><r> with the dependency name and the label from the lockfile instead.",
             bstr::BStr::new(folder),
-            bstr::BStr::new(name),
-            bstr::BStr::new(version),
-            bstr::BStr::new(name),
+            bun_fmt::EscapeControlChars(bstr::BStr::new(name)),
+            bun_fmt::EscapeControlChars(bstr::BStr::new(version)),
+            bun_fmt::EscapeControlChars(bstr::BStr::new(name)),
             command,
         ),
     }
@@ -358,9 +442,11 @@ fn folder_lookup_error(
 
 /// - Arg is the dir containing the package with changes OR name and version
 /// - Get the patch file contents by running git diff on the temp dir and the original package dir
-/// - Write the patch file to $PATCHES_DIR/$PKG_NAME_AND_VERSION.patch
 /// - Update "patchedDependencies" in package.json
 /// - Run install to install newly patched pkg
+/// - Once its checks have passed, it writes $PATCHES_DIR/$PKG_NAME_AND_VERSION.patch
+///
+/// This function changes nothing in the project: the install may still refuse to run.
 pub fn do_patch_commit(
     manager: &mut PackageManager,
     log_level: LogLevel,
@@ -447,12 +533,12 @@ pub fn do_patch_commit(
                 bun_core::prettyln!(
                     "<r><d>dry run:<r> would remove the patch for <b>{}<r> ({})",
                     bun_fmt::for_terminal(bstr::BStr::new(&patch_key)),
-                    bstr::BStr::new(&patchfile_path),
+                    bun_fmt::escape_control_chars(&patchfile_path),
                 );
                 Output::flush();
                 Global::exit(0);
             }
-            delete_copy_at_link_position(linker, &new_folder);
+            manager.pending_patch_commit.stale_folder = copy_at_link_position(linker, new_folder);
             return Ok(Some(PatchCommitResult {
                 patch_key: patch_key.into_boxed_slice(),
                 patchfile_path,
@@ -481,7 +567,7 @@ pub fn do_patch_commit(
         Output::flush();
         // The copy has no edit to keep and lacks what the scripts write. The install lays it again.
         if !manager.options.dry_run && has_trusted_scripts(manager, &pkg, &name, &new_folder) {
-            let _ = Fd::cwd().delete_tree(&new_folder);
+            manager.pending_patch_commit.stale_folder = Some(new_folder);
         }
         return Ok(None);
     }
@@ -496,7 +582,7 @@ pub fn do_patch_commit(
             bstr::BStr::new(&target.folder),
         );
         for line in binary_files {
-            bun_core::pretty_errorln!("  {}", bstr::BStr::new(line));
+            bun_core::pretty_errorln!("  {}", bun_fmt::EscapeControlChars(bstr::BStr::new(line)));
         }
         bun_core::note!("undo the changes to these files, then commit again");
         Global::crash();
@@ -532,21 +618,11 @@ pub fn do_patch_commit(
         );
         bun_core::prettyln!(
             "<r><d>dry run:<r> would write {} and add <b>{}<r> to patchedDependencies",
-            bstr::BStr::new(patchfile_path),
+            bun_fmt::EscapeControlChars(bstr::BStr::new(patchfile_path)),
             bun_fmt::for_terminal(bstr::BStr::new(&patch_key)),
         );
         Output::flush();
         Global::exit(0);
-    }
-
-    // write the patch contents to temp file then rename
-    let mut tmpname_buf = [0u8; 1024];
-    let tempfile_name =
-        bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
-    let tmpdir = get_temporary_directory(manager).handle.fd();
-    if let Err(e) = sys::File::write_file(tmpdir, tempfile_name, &patchfile_contents) {
-        Output::err(e, "failed to write patch to temp file", ());
-        Global::crash();
     }
 
     let mut patches_dir: &[u8] = match &manager.options.patch_features {
@@ -556,10 +632,10 @@ pub fn do_patch_commit(
         _ => unreachable!("patch_features must be Commit in doPatchCommit"),
     };
 
-    // First: it refuses what the user typed when that does not fit a path buffer.
-    if let Err(e) = sys::mkdir_recursive(patches_dir) {
+    // First: what follows takes what fits a path buffer.
+    if patches_dir.len() >= bun_paths::MAX_PATH_BYTES {
         Output::err(
-            e,
+            sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::mkdir),
             "failed to make patches dir {f}",
             (bun_fmt::quote(patches_dir),),
         );
@@ -584,35 +660,27 @@ pub fn do_patch_commit(
         &[patches_dir, &patch_filename],
     ));
 
-    // rename to patches dir
-    if let Err(e) = sys::renameat_concurrently(
-        tmpdir,
-        tempfile_name,
-        Fd::cwd(),
-        &path_in_patches_dir,
-        sys::RenameOptions {
-            move_fallback: true,
-        },
-    ) {
-        Output::err(e, "failed renaming patch file to patches dir", ());
-        Global::crash();
-    }
-
-    delete_copy_at_link_position(linker, &new_folder);
+    let patchfile_path = Box::<[u8]>::from(path_in_patches_dir.as_bytes());
+    manager.pending_patch_commit = PendingCommit {
+        new_patch: Some(NewPatch {
+            name_and_version_hash: string_hash(&patch_key),
+            path: path_in_patches_dir,
+            contents: patchfile_contents,
+        }),
+        stale_folder: copy_at_link_position(linker, new_folder),
+    };
 
     Ok(Some(PatchCommitResult {
         patch_key: patch_key.into_boxed_slice(),
-        patchfile_path: Box::<[u8]>::from(path_in_patches_dir.as_bytes()),
+        patchfile_path,
         not_in_workspace_root: target.not_in_workspace_root,
         removes_patch: false,
     }))
 }
 
-/// An install leaves the copy that `bun patch` made in place of a link alone. Its edits are saved.
-fn delete_copy_at_link_position(linker: NodeLinker, folder: &[u8]) {
-    if linker == NodeLinker::Isolated && is_link_position(folder) {
-        let _ = Fd::cwd().delete_tree(folder);
-    }
+/// An install leaves the copy that `bun patch` made in place of a link alone.
+fn copy_at_link_position(linker: NodeLinker, folder: Vec<u8>) -> Option<Vec<u8>> {
+    (linker == NodeLinker::Isolated && is_link_position(&folder)).then_some(folder)
 }
 
 /// What an install does with the patch, on a scratch copy. `false` after a printed error.
@@ -723,7 +791,7 @@ fn diff_against_cache(
             }
             bun_core::pretty_error!(
                 "<r><red>error<r>: failed to make diff {}<r>\n",
-                bstr::BStr::new(&stderr)
+                bun_fmt::escape_control_chars_multiline(&stderr)
             );
             None
         }
@@ -1085,7 +1153,6 @@ fn make_bins_executable(
         rel_buf: rel_buf.as_mut_slice(),
         err: None,
         skipped_due_to_missing_bin: false,
-        keeps_target: false,
     }
     .link(false);
 }

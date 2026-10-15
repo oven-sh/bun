@@ -1005,9 +1005,7 @@ test.concurrent("--lockfile-only rewrites bun.lock without installing", async ()
   expect(again.stderr).toBe("");
   expect(await lock(packageDir)).toBe(lockDeduped);
 
-  // The install that follows takes the copy away that one-range-dep would go on loading.
   await runBunInstall(installEnv(packageDir), packageDir, { frozenLockfile: true });
-  expect(await exists(join(packageDir, "node_modules", "one-range-dep", "node_modules"))).toBeFalse();
 });
 
 test.concurrent("--silent keeps the exit codes", async () => {

@@ -107,6 +107,9 @@ impl Dir {
     /// Deletes what this dir holds and keeps the dir itself; nothing is looked up through its name.
     /// Goes on after an entry that cannot be deleted and returns the first error.
     pub fn delete_children(&self) -> Maybe<()> {
+        // A listing goes on where the last one through this handle stopped. Windows starts over.
+        #[cfg(not(windows))]
+        set_file_offset(self.fd, 0)?;
         let mut names: Vec<Vec<u8>> = Vec::new();
         let mut entries = dir_iterator::iterate(self.fd);
         while let Some(entry) = entries.next()? {

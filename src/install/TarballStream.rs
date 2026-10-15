@@ -808,7 +808,7 @@ impl TarballStream {
         if rest.len() >= norm_buf.len() {
             bun_core::warn!(
                 "Skipping entry with a path longer than the maximum path length: {}\n",
-                bun_core::fmt::fmt_os_path(rest, Default::default()),
+                bun_fmt::EscapeControlChars(bun_fmt::fmt_os_path(rest, Default::default())),
             );
             self.phase = Phase::WantData;
             self.out = None;
@@ -1044,7 +1044,7 @@ impl TarballStream {
                             } else {
                                 ": "
                             },
-                            bstr::BStr::new(&self.fail_detail),
+                            bun_fmt::EscapeControlChars(bstr::BStr::new(&self.fail_detail)),
                             self.bytes_consumed,
                             self.content_length
                                 .as_ref()

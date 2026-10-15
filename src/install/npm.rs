@@ -99,7 +99,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     let mut req =
         manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
 
-    let res = match req.send_sync(&mut response_buf) {
+    let res = match manager.send_with_retries(&mut req, &mut response_buf) {
         Ok(res) => res,
         Err(bun_http::Error::Alloc(bun_alloc::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);
@@ -184,7 +184,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
             ""
         },
         bun_fmt::escape_control_chars(res.status_text()),
-        bun_fmt::redacted_npm_url(req.url.href),
+        bun_fmt::EscapeControlChars(bun_fmt::redacted_npm_url(req.url.href)),
     );
 
     if res.status_code() == 404
@@ -192,8 +192,8 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     {
         bun_core::pretty_errorln!(
             "\n - '{}@{}' does not exist in this registry",
-            bstr::BStr::new(package_name),
-            bstr::BStr::new(package_version),
+            bun_fmt::escape_control_chars(package_name),
+            bun_fmt::escape_control_chars(package_version),
         );
     } else if let Some(msg) = &message {
         if OTP_RESPONSE {
@@ -483,7 +483,7 @@ pub mod registry {
                             bun_core::warn!(
                                 "registry {} references <b>{}<r>, but that environment variable is not set; treating it as no credential",
                                 what,
-                                bstr::BStr::new(&**field),
+                                bun_fmt::escape_control_chars(&**field),
                             );
                         }
                         *field = Box::default();
@@ -1815,8 +1815,8 @@ impl MinimumReleaseAgeExcludes {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Ignoring minimumReleaseAgeExcludes entry {}: expected a package name or exact versions, e.g. \"{name}@1.2.3\" or \"{name}@1.2.3 || 1.2.4\"",
-                            bun_fmt::quote(entry),
-                            name = bstr::BStr::new(name),
+                            bun_fmt::EscapeControlChars(bun_fmt::quote(entry)),
+                            name = bun_fmt::escape_control_chars(name),
                         ),
                     );
                     break;
@@ -2551,7 +2551,7 @@ impl PackageManifest {
                             prop.key_loc,
                             format_args!(
                                 "Skipping version {} of {}: not a valid semver version",
-                                bun_fmt::quote(version_name),
+                                bun_fmt::EscapeControlChars(bun_fmt::quote(version_name)),
                                 bun_fmt::quote(expected_name),
                             ),
                         );
@@ -3067,7 +3067,7 @@ impl PackageManifest {
                                 format_args!(
                                     "Unsupported or malformed integrity hash in registry metadata for {}@{}; its tarball will not be verified",
                                     bstr::BStr::new(expected_name),
-                                    bstr::BStr::new(version_name),
+                                    bun_fmt::escape_control_chars(version_name),
                                 ),
                             );
                         }

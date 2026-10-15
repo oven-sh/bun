@@ -127,6 +127,8 @@ As in npm, `publishConfig.registry` replaces the default registry only. A regist
 
 Credentials are the ones configured for that registry, the same as when it is the default registry: a `//registry.myorg.example/:_authToken=...` line in `.npmrc`, or a registry with the same URL in `bunfig.toml` or `.npmrc`. When there are none, the credentials of the registry the package would otherwise have been published to are used only if the pinned registry has the same origin; otherwise `bun publish` fails with a missing authentication error instead of sending them to a different registry.
 
+As in npm, `publishConfig` is read like the name and the version: from the `package.json` that the `prepublishOnly`, `prepack` and `prepare` scripts leave behind.
+
 ### `--dry-run`
 
 `--dry-run` runs the publish process without publishing the package, so you can verify what would be published.

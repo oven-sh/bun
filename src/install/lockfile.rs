@@ -8,7 +8,8 @@ use crate::Error as BunError;
 use bun_alloc::AllocError;
 use bun_collections::{
     ArrayHashMap, ArrayIdentityContext, ArrayIdentityContextU64, DynamicBitSet,
-    HashMap as BunHashMap, IdentityContext, LinearFifo, index_sort, linear_fifo::DynamicBuffer,
+    HashMap as BunHashMap, IdentityContext, LinearFifo, StringHashMap, index_sort,
+    linear_fifo::DynamicBuffer,
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, UnwrapOrOom as _};
@@ -194,8 +195,6 @@ pub(crate) type PackageList = self::package::List<u64>;
 /// A workspace with a symbolic link on the way from the project to its folder.
 #[derive(Clone)]
 pub(crate) struct LinkedMember {
-    /// Relative to the project, as in bun.lock.
-    path: Box<[u8]>,
     /// Empty: it could not be resolved.
     pub(crate) real_path: Box<[u8]>,
     is_outside: bool,
@@ -204,30 +203,33 @@ pub(crate) struct LinkedMember {
 /// Not on Windows: the real path may spell the root another way (drive, short names).
 #[derive(Clone, Default)]
 pub(crate) struct LinkedMembers {
-    list: Vec<LinkedMember>,
-    /// Parents of workspaces that are not links: each is looked at once.
-    real_parents: Vec<Box<[u8]>>,
+    /// By the path from the project, as in bun.lock.
+    members: StringHashMap<LinkedMember>,
+    /// Folders that are not links: each is looked at once.
+    real_folders: StringHashMap<()>,
     real_root: Box<[u8]>,
 }
 
 impl LinkedMembers {
     pub(crate) fn get(&self, path: &[u8]) -> Option<&LinkedMember> {
-        let path = strings::without_trailing_slash(path);
-        self.list.iter().find(|member| *member.path == *path)
+        if self.members.is_empty() {
+            return None;
+        }
+        self.members.get(strings::without_trailing_slash(path))
     }
 
     /// For a workspace that no directory listing told the kind of: one `lstat` for each new folder.
     pub(crate) fn look_at(&mut self, path: &[u8]) {
         let path = strings::without_trailing_slash(path);
-        if cfg!(windows) || crate::bin::path_climbs_out(path) {
+        if cfg!(windows) || crate::bin::path_climbs_out(path) || self.get(path).is_some() {
             return;
         }
         let mut buf = bun_paths::path_buffer_pool::get();
         let mut end = 0;
         while end < path.len() {
             end = strings::index_of_char_pos(path, b'/', end + 1).unwrap_or(path.len());
-            let (folder, is_parent) = (&path[..end], end < path.len());
-            if is_parent && self.real_parents.iter().any(|real| **real == *folder) {
+            let folder = &path[..end];
+            if self.real_folders.contains_key(folder) {
                 continue;
             }
             let is_link = !resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
@@ -242,9 +244,7 @@ impl LinkedMembers {
             if is_link {
                 return self.add(path);
             }
-            if is_parent {
-                self.real_parents.push(folder.into());
-            }
+            self.real_folders.put(folder, ()).unwrap_or_oom();
         }
     }
 
@@ -258,14 +258,14 @@ impl LinkedMembers {
             self.real_root = Self::real_path_of(b".");
         }
         let real_path = Self::real_path_of(path);
-        self.list.push(LinkedMember {
-            path: path.into(),
+        let member = LinkedMember {
             is_outside: self.real_root.is_empty()
                 || real_path.is_empty()
                 || resolve_path::is_parent_or_equal(&self.real_root, &real_path)
                     == resolve_path::ParentEqual::Unrelated,
             real_path,
-        });
+        };
+        self.members.put(path, member).unwrap_or_oom();
     }
 
     /// `path`: from the project. Empty: it could not be resolved.
@@ -308,75 +308,6 @@ impl<'a> DepSorter<'a> {
             Ordering::Equal => {
                 strings::order(l_dep.name.slice(string_buf), r_dep.name.slice(string_buf))
                     == Ordering::Less
-            }
-        }
-    }
-}
-
-/// Calls `emit(first, later)` for each row of one package that lists again the name of an earlier
-/// dev or optional row. `id_at(0..len)`: its rows as `DepSorter` and `Dependency::cmp` sort them.
-#[inline]
-pub(crate) fn names_listed_again(
-    len: usize,
-    id_at: impl Fn(usize) -> DependencyID,
-    deps: &[Dependency],
-    buf: &[u8],
-    mut emit: impl FnMut(DependencyID, DependencyID),
-) {
-    // workspaces, dev, optional, prod, peer: nearly every package starts at prod.
-    if len >= 2 && {
-        let first = deps[id_at(0) as usize].behavior;
-        !first.is_prod() && !first.is_peer()
-    } {
-        names_listed_in_two_groups(len, &id_at, deps, buf, &mut emit);
-    }
-}
-
-fn names_listed_in_two_groups(
-    len: usize,
-    id_at: &dyn Fn(usize) -> DependencyID,
-    deps: &[Dependency],
-    buf: &[u8],
-    emit: &mut dyn FnMut(DependencyID, DependencyID),
-) {
-    use dependency::Behavior;
-    let row = |i: usize| &deps[id_at(i) as usize];
-    let end_of = |from: usize, group: fn(Behavior) -> bool| {
-        (from..len)
-            .find(|&i| !group(row(i).behavior))
-            .unwrap_or(len)
-    };
-    let dev = end_of(0, Behavior::is_workspace);
-    let optional = end_of(dev, Behavior::is_dev);
-    let prod = end_of(optional, Behavior::is_optional);
-    if dev == prod {
-        return;
-    }
-
-    // One key twice in a group.
-    let mut first = dev;
-    for i in dev + 1..prod {
-        if row(i).name_hash == row(first).name_hash {
-            emit(id_at(first), id_at(i));
-        } else {
-            first = i;
-        }
-    }
-    let peer = end_of(prod, Behavior::is_prod);
-    for (earlier, later) in [
-        (dev..optional, optional..prod),
-        (dev..optional, prod..peer),
-        (optional..prod, prod..peer),
-    ] {
-        let (mut e, mut l) = (earlier.start, later.start);
-        while e < earlier.end && l < later.end {
-            match (row(e).name.slice(buf)).cmp(row(l).name.slice(buf)) {
-                Ordering::Less => e += 1,
-                Ordering::Greater => l += 1,
-                Ordering::Equal => {
-                    emit(id_at(e), id_at(l));
-                    l += 1;
-                }
             }
         }
     }
@@ -1230,17 +1161,9 @@ impl Lockfile {
                     dep_list.get(self.buffers.dependencies.as_slice());
                 let resolved_ids: &[PackageID] = res_list.get(self.buffers.resolutions.as_slice());
                 debug_assert_eq!(resolved_ids.len(), workspace_deps.len());
-                // Of a name in two groups, the entry that `edit` wrote has the literal asked for.
-                let written = workspace_deps.iter().position(|dep| {
-                    !dep.behavior.is_workspace()
-                        && update.matches(dep, string_buf)
-                        && dep.version.literal.slice(string_buf) == update.asked
-                });
-                for (i, (&package_id, dep)) in
-                    resolved_ids.iter().zip(workspace_deps.iter()).enumerate()
-                {
+                for (&package_id, dep) in resolved_ids.iter().zip(workspace_deps.iter()) {
                     // The root's implicit `workspaces` rows are not package.json entries.
-                    if dep.behavior.is_workspace() || written.is_some_and(|written| written != i) {
+                    if dep.behavior.is_workspace() {
                         continue;
                     }
                     if update.matches(dep, string_buf) {
@@ -1639,8 +1562,7 @@ impl<'a> Cloner<'a> {
 impl Lockfile {
     /// Re-hoists while a pass bound or moved a peer; a reload has that binding up front.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
-        const METHOD: tree::BuilderMethod = tree::BuilderMethod::Resolvable;
-        while self.hoist::<METHOD>(log, None, true, &[], None)?.0 {}
+        while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
         TextLockfile::rebind_peers_to_printed_packages(self)?;
         Ok(())
     }
@@ -1652,19 +1574,18 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<tree::LeftOut, tree::SubtreeError> {
-        let (_, left_out) = self.hoist::<{ tree::BuilderMethod::Filter }>(
+    ) -> Result<(), tree::SubtreeError> {
+        self.hoist::<{ tree::BuilderMethod::Filter }>(
             log,
             Some(manager),
             install_root_dependencies,
             workspace_filters,
             packages_to_install,
         )?;
-        Ok(left_out)
+        Ok(())
     }
 
-    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_peer` and what
-    /// `clean` dropped.
+    /// Sets `buffers.trees`/`hoisted_dependencies`; returns `Builder::late_bound_peer`.
     /// `Filter` without a `manager`: the install tree of every dependency type, member and platform.
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
@@ -1673,7 +1594,7 @@ impl Lockfile {
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
         packages_to_install: Option<&[PackageID]>,
-    ) -> Result<(bool, tree::LeftOut), tree::SubtreeError> {
+    ) -> Result<bool, tree::SubtreeError> {
         let slice = self.packages.slice();
 
         // Only the install applies the barrier, so the saved tree does not depend on it.
@@ -1703,7 +1624,6 @@ impl Lockfile {
             served: Default::default(),
             list: Default::default(),
             sort_buf: Default::default(),
-            listed_again: Default::default(),
             peer_probes: Default::default(),
             placed: Default::default(),
             shipped_rows: Default::default(),
@@ -1733,7 +1653,7 @@ impl Lockfile {
         let late_bound_peer = builder.late_bound_peer;
         self.buffers.trees = cleaned.trees;
         self.buffers.hoisted_dependencies = cleaned.dep_ids;
-        Ok((late_bound_peer, cleaned.left_out))
+        Ok(late_bound_peer)
     }
 }
 
@@ -2269,6 +2189,14 @@ impl Lockfile {
     pub(crate) fn tag_workspace_links(&mut self, link_workspace_packages: bool) {
         let pkg_resolutions = self.packages.items_resolution();
         let root_rows = self.packages.items_dependencies().first();
+        let is_local_row = |dep_id: usize| {
+            (self.packages.items_dependencies().iter())
+                .zip(pkg_resolutions)
+                .any(|(rows, owner)| {
+                    rows.contains(dep_id as DependencyID)
+                        && matches!(owner.tag, ResolutionTag::Root | ResolutionTag::Workspace)
+                })
+        };
         let buf = self.buffers.string_bytes.as_slice();
         for (dep_id, (dep, &pkg_id)) in self
             .buffers
@@ -2301,6 +2229,8 @@ impl Lockfile {
                         buf,
                     )
                     .is_some()
+                        // The hoist binds it, so a fresh install saves it as the range it is.
+                        && (!dep.behavior.is_optional_peer() || is_local_row(dep_id))
                 }
                 // For the root, the workspace of that name wins over a `file:` folder.
                 dependency::Tag::Folder => {

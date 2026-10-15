@@ -1542,6 +1542,80 @@ describe.concurrent("bun-install", () => {
       expect(stdout).toContain("1 package installed");
       expect(exitCode).toBe(0);
     });
+
+    // The commands that send one request at a time follow the same rule.
+    describe.each([
+      { name: "on the same port keeps the token", samePort: true, authorization: `Bearer ${token}` },
+      { name: "on another port drops the token", samePort: false, authorization: null },
+    ])("an upgrade from http to https $name", ({ samePort, authorization }) => {
+      it.each([
+        [["info", "no-deps"], manifestPath],
+        [["pm", "view", "no-deps"], manifestPath],
+        [["pm", "whoami"], "/-/whoami"],
+        [["pm", "diff", "no-deps"], manifestPath],
+        [["audit"], "/-/npm/v1/security/advisories/bulk"],
+        [["publish"], "/app"],
+      ])("%j", async (cmd, requested) => {
+        const received: { pathname: string; authorization: string | null }[] = [];
+        await using targetServer = Bun.serve({
+          port: 0,
+          ...tls,
+          fetch(req) {
+            const { pathname } = new URL(req.url);
+            received.push({ pathname, authorization: req.headers.get("authorization") });
+            if (pathname === tarballPath) return new Response(file(tgz));
+            if (pathname === "/-/whoami") return Response.json({ username: "me" });
+            if (pathname !== manifestPath) return Response.json({});
+            return Response.json({
+              name: "no-deps",
+              "dist-tags": { latest: "1.0.0" },
+              versions: {
+                "1.0.0": {
+                  name: "no-deps",
+                  version: "1.0.0",
+                  dist: { integrity, tarball: `http://127.0.0.1:${registryPort}${tarballPath}` },
+                },
+              },
+            });
+          },
+        });
+        await using registry = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch: req => Response.redirect(`https://127.0.0.1:${targetPort}${new URL(req.url).pathname}`, 308),
+        });
+        using bothSchemes = samePort ? await serveBothSchemes(registry.port!, targetServer.port!) : undefined;
+        const registryPort = bothSchemes?.port ?? registry.port;
+        const targetPort = bothSchemes?.port ?? targetServer.port;
+
+        using dir = tempDir("token-across-redirects", {
+          "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+          "bun.lock": JSON.stringify({
+            lockfileVersion: 1,
+            workspaces: { "": { name: "app", dependencies: { "no-deps": "1.0.0" } } },
+            packages: { "no-deps": ["no-deps@1.0.0", "", {}, integrity] },
+          }),
+          ".npmrc": [
+            `registry=http://127.0.0.1:${registryPort}/`,
+            `//127.0.0.1:${registryPort}/:_authToken=${token}`,
+            ``,
+          ].join("\n"),
+          "cafile": tls.cert,
+        });
+        await using proc = spawn({
+          cmd: [bunExe(), ...cmd, "--cafile", "cafile"],
+          cwd: String(dir),
+          env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+
+        expect(stderr).not.toContain("error:");
+        expect(received[0]).toEqual({ pathname: requested, authorization });
+        expect(exitCode).toBe(0);
+      });
+    });
   });
 
   // A tarball URL with credentials in it is downloaded the way npm downloads
@@ -7751,14 +7825,14 @@ describe.concurrent("bun-install", () => {
       expect(await readdirSorted(join(cache, `@G@${sha}`))).toEqual([".bun-tag", "package.json"]);
       const mirror = (await readdirSorted(cache)).find(entry => entry.endsWith(".git"))!;
 
-      // `git log` during resolution does not need the tree object, but `git checkout` cannot unpack without it.
+      // `git log` during resolution does not need the tree object, but the checkout cannot list it without it.
       const treeObject = join(cache, mirror, "objects", treeSha.slice(0, 2), treeSha.slice(2));
       const treeBytes = await file(treeObject).bytes();
       await rm(treeObject);
       await rm(join(cache, `@G@${sha}`), { recursive: true });
       await rm(join(ctx.package_dir, "node_modules", "checkout-fails"), { recursive: true });
       const failed = await install();
-      expect(failed.err).toContain('"git checkout" for "checkout-fails" failed');
+      expect(failed.err).toContain('"git ls-tree" for "checkout-fails" failed');
       expect(failed.exitCode).not.toBe(0);
       expect(await readdirSorted(cache)).toEqual([mirror]);
 
@@ -9415,8 +9489,7 @@ describe.concurrent("bun-install", () => {
   // Workspace package.jsons are parsed without the root's duplicate check, so a name listed in
   // two dependency groups yields two dependency slots. The hoister has to collapse them into one
   // node_modules entry; the slot sorted first wins (dev, optional, prod, then peer), as it already
-  // did for the root package. The place stays in the workspace's own node_modules, and bun.lock has the
-  // other slot's package a level below it. `expected` is the `packages` section of bun.lock, name -> resolution.
+  // did for the root package. `expected` is the `packages` section of bun.lock, name -> resolution.
   it.each<{
     name: string;
     root?: Record<string, Record<string, string>>;
@@ -9427,20 +9500,12 @@ describe.concurrent("bun-install", () => {
     {
       name: "dependencies + devDependencies",
       pkgA: { dependencies: { baz: "0.0.5" }, devDependencies: { baz: "0.0.3" } },
-      expected: {
-        "pkg-a": "pkg-a@workspace:packages/pkg-a",
-        "pkg-a/baz": "baz@0.0.3",
-        "pkg-a/baz/baz": "baz@0.0.5",
-      },
+      expected: { "baz": "baz@0.0.3", "pkg-a": "pkg-a@workspace:packages/pkg-a" },
     },
     {
       name: "dependencies + optionalDependencies",
       pkgA: { dependencies: { baz: "0.0.5" }, optionalDependencies: { baz: "0.0.3" } },
-      expected: {
-        "pkg-a": "pkg-a@workspace:packages/pkg-a",
-        "pkg-a/baz": "baz@0.0.3",
-        "pkg-a/baz/baz": "baz@0.0.5",
-      },
+      expected: { "baz": "baz@0.0.3", "pkg-a": "pkg-a@workspace:packages/pkg-a" },
     },
     {
       // the root pin keeps both of pkg-a's slots out of the root folder, so they collide inside
@@ -9448,12 +9513,7 @@ describe.concurrent("bun-install", () => {
       name: "dependencies + optionalDependencies while the root pins a third version",
       root: { dependencies: { baz: "0.0.7" } },
       pkgA: { dependencies: { baz: "0.0.5" }, optionalDependencies: { baz: "0.0.3" } },
-      expected: {
-        "baz": "baz@0.0.7",
-        "pkg-a": "pkg-a@workspace:packages/pkg-a",
-        "pkg-a/baz": "baz@0.0.3",
-        "pkg-a/baz/baz": "baz@0.0.5",
-      },
+      expected: { "baz": "baz@0.0.7", "pkg-a": "pkg-a@workspace:packages/pkg-a", "pkg-a/baz": "baz@0.0.3" },
     },
     {
       // pkg-b makes the peer slot resolve to a different package than pkg-a's own dependencies slot
@@ -9517,158 +9577,6 @@ describe.concurrent("bun-install", () => {
 
       expect(await install("--frozen-lockfile")).toBe(lockfile);
       expect(await install()).toBe(lockfile);
-    });
-  });
-
-  // Each entry keeps its own version: a full install lays the devDependencies one, an install that leaves it out lays
-  // the dependencies one. bun.lockb records both ("should prefer dependencies over devDependencies"). bun.lock has the
-  // second one a level below the first: "baz" and "baz/baz".
-  describe.each(["hoisted", "isolated"] as const)("a name in dependencies and devDependencies (%s linker)", linker => {
-    const inBoth = { dependencies: { baz: "0.0.3" }, devDependencies: { baz: "<=0.0.5" } };
-
-    async function setup(ctx: TestContext, files: Record<string, object>, newest: object = {}) {
-      setContextHandler(
-        ctx,
-        dummyRegistryForContext(ctx, [], {
-          "0.0.3": { as: "0.0.3" },
-          "0.0.5": { as: "0.0.5", ...newest },
-          // only has to resolve; there is no baz-0.0.7.tgz fixture
-          "0.0.7": { as: "0.0.5" },
-          latest: "0.0.5",
-        }),
-      );
-      await write(
-        join(ctx.package_dir, "bunfig.toml"),
-        Bun.TOML.stringify({ install: { cache: false, registry: ctx.registry_url, linker } }),
-      );
-      await Promise.all(
-        Object.entries(files).map(([path, contents]) => write(join(ctx.package_dir, path), JSON.stringify(contents))),
-      );
-    }
-
-    // Starts from an empty node_modules and returns the version of baz that code in `from` loads, null if none.
-    async function install(ctx: TestContext, args: string[], from = "") {
-      await Promise.all(
-        [...new Set([from, ""])].map(dir =>
-          rm(join(ctx.package_dir, dir, "node_modules"), { recursive: true, force: true }),
-        ),
-      );
-      await using proc = spawn({
-        cmd: [bunExe(), "install", ...args],
-        cwd: ctx.package_dir,
-        stdout: "ignore",
-        stdin: "ignore",
-        stderr: "pipe",
-        env,
-      });
-      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      expect(err).not.toContain("error:");
-      expect(exitCode).toBe(0);
-      for (const dir of new Set([from, ""])) {
-        const manifest = file(join(ctx.package_dir, dir, "node_modules", "baz", "package.json"));
-        if (await manifest.exists()) return (await manifest.json()).version;
-      }
-      return null;
-    }
-
-    // The entries of bun.lock's `packages` for baz, key -> resolution.
-    const locked = async (ctx: TestContext) =>
-      Object.fromEntries(
-        Object.entries((Bun.JSONC.parse(await file(join(ctx.package_dir, "bun.lock")).text()) as any).packages)
-          .filter(([key]) => key.endsWith("baz"))
-          .map(([key, [resolution]]: any) => [key, resolution]),
-      );
-
-    for (const { name, args, newest } of [
-      { name: "with --omit=dev", args: ["--omit=dev"], newest: {} },
-      { name: "when the other version is not for this os", args: [], newest: { os: ["!" + process.platform] } },
-    ]) {
-      it(`bun.lock gives the dependencies version like the install that wrote it, ${name}`, async () => {
-        await withContext({ linker }, async ctx => {
-          await setup(ctx, { "package.json": { name: "root", ...inBoth } }, newest);
-          expect({
-            first: await install(ctx, args),
-            locked: await locked(ctx),
-            fromLockfile: await install(ctx, ["--frozen-lockfile", ...args]),
-          }).toEqual({ first: "0.0.3", locked: { "baz": "baz@0.0.5", "baz/baz": "baz@0.0.3" }, fromLockfile: "0.0.3" });
-        });
-      });
-    }
-
-    it("a bun.lock with one version passes --frozen-lockfile and gets the second one from the next install", async () => {
-      await withContext({ linker }, async ctx => {
-        await setup(ctx, { "package.json": { name: "root", ...inBoth } });
-        await install(ctx, []);
-        const lockfile = file(join(ctx.package_dir, "bun.lock"));
-        const older = (await lockfile.text()).replace(/^    "baz\/baz": .*\n\n?/m, "");
-        await write(lockfile, older);
-        expect(await locked(ctx)).toEqual({ "baz": "baz@0.0.5" });
-
-        expect(await install(ctx, ["--frozen-lockfile"])).toBe("0.0.5");
-        expect(await lockfile.text()).toBe(older);
-        expect(await install(ctx, [])).toBe("0.0.5");
-        expect(await locked(ctx)).toEqual({ "baz": "baz@0.0.5", "baz/baz": "baz@0.0.3" });
-        expect(await install(ctx, ["--production"])).toBe("0.0.3");
-      });
-    });
-
-    // bun.lock has no key for the dependencies version in these two, so it keeps what it has.
-    it.each([
-      { name: "the first version depends on its own name", groups: {}, newest: { dependencies: { baz: "0.0.3" } } },
-      { name: "a third group lists the name", groups: { optionalDependencies: { baz: "0.0.7" } }, newest: {} },
-    ])("the second install does not save bun.lock again when $name", async ({ groups, newest }) => {
-      await withContext({ linker }, async ctx => {
-        await setup(
-          ctx,
-          {
-            "package.json": { name: "root", workspaces: ["packages/*"] },
-            "packages/member/package.json": { name: "member", ...inBoth, ...groups },
-          },
-          newest,
-        );
-        const saved = () => {
-          const { ino, mtimeMs } = statSync(join(ctx.package_dir, "bun.lock"));
-          return { ino, mtimeMs };
-        };
-        await install(ctx, [], "packages/member");
-        const first = saved();
-        await install(ctx, [], "packages/member");
-        expect(saved()).toEqual(first);
-        await install(ctx, ["--frozen-lockfile"], "packages/member");
-      });
-    });
-
-    it("--production lays the dependencies version without and with bun.lock", async () => {
-      await withContext({ linker }, async ctx => {
-        await setup(ctx, { "package.json": { name: "root", ...inBoth } });
-        expect({
-          withoutLockfile: await install(ctx, ["--production"]),
-          full: await install(ctx, []),
-          withLockfile: await install(ctx, ["--production"]),
-        }).toEqual({ withoutLockfile: "0.0.3", full: "0.0.5", withLockfile: "0.0.3" });
-      });
-    });
-
-    it("a workspace gets the same versions from the first install and from bun.lock", async () => {
-      await withContext({ linker }, async ctx => {
-        await setup(ctx, {
-          "package.json": { name: "root", workspaces: ["packages/*"] },
-          // Sorted before `member`, so this one puts baz into the root's node_modules.
-          "packages/app/package.json": { name: "app", dependencies: { baz: "*" } },
-          "packages/member/package.json": { name: "member", ...inBoth },
-        });
-        expect({
-          first: await install(ctx, [], "packages/member"),
-          locked: await locked(ctx),
-          second: await install(ctx, [], "packages/member"),
-          withoutDev: await install(ctx, ["--omit=dev"], "packages/member"),
-        }).toEqual({
-          first: "0.0.5",
-          locked: { "baz": "baz@0.0.5", "member/baz": "baz@0.0.5", "member/baz/baz": "baz@0.0.3" },
-          second: "0.0.5",
-          withoutDev: "0.0.3",
-        });
-      });
     });
   });
 
@@ -16869,8 +16777,19 @@ describe.concurrent("the flags of npm, yarn and pnpm", () => {
     });
   });
 
+  // They say where a new dependency is saved.
   it.each([
-    [["remove", "--save-dev", "dep"], "remove", "--save-dev"],
+    ["remove", ["dev"], ["--save-dev", "--save-exact", "--save-optional", "--save-peer"]],
+    ["update", [], ["--save-optional", "--save-peer"]],
+  ] as [string, string[], string[]][])("bun %s, which saves none, takes %j with %j", async (command, args, flags) => {
+    const plain = await outcome([command, ...args], groups, true);
+    expect(plain.stderr).not.toContain("error:");
+    expect(plain.exitCode).toBe(0);
+
+    for (const flag of flags) expect(await outcome([command, flag, ...args], groups, true)).toEqual(plain);
+  });
+
+  it.each([
     [["install", "--loglevel=loud"], "install", "--loglevel"],
     [["install", "--loglevel", "dep"], "install", "--loglevel"],
     [["install", "--audit"], "install", "--audit"],

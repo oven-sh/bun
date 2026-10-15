@@ -64,7 +64,7 @@ bun patch --commit react --patches-dir=mypatches
 bun patch-commit react
 ```
 
-If `bun install` could not apply the resulting patch, the commit fails and changes nothing: your edits, `package.json`, the lockfile, and any earlier patch file stay as they were.
+If `bun install` could not apply the resulting patch, or the install is refused (for example by a [security scanner](/pm/security-scanner-api)), the commit fails and changes nothing: your edits, `package.json`, the lockfile, and any earlier patch file stay as they were.
 
 To run the same checks without writing anything, pass `--dry-run`. It prints the patch file that the commit would write.
 
@@ -78,13 +78,13 @@ bun patch react
 bun patch --commit react
 ```
 
-When the package has no changes left, Bun removes it from `"patchedDependencies"` in `package.json` and the lockfile, deletes its patch file, and reinstalls the original package.
+When the package has no changes left, Bun removes it from `"patchedDependencies"` in `package.json` and the lockfile, deletes its patch file unless another entry uses it, and reinstalls the original package.
 
 You can also delete the entry from `"patchedDependencies"` and the patch file yourself, then run `bun install`.
 
 #### A missing patch file
 
-`bun install` fails when a file in `"patchedDependencies"` does not exist. `bun patch <pkg>` still works: it starts from the original package, and `bun patch --commit <pkg>` writes the file again.
+`bun install` and `bun patch <pkg>` fail when a file in `"patchedDependencies"` does not exist, and leave `node_modules` alone. While the patched package is still in `node_modules`, `bun patch --commit <pkg>` writes the file again. To start over, delete the entry from `"patchedDependencies"` and run `bun install`.
 
 ---
 

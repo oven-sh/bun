@@ -326,7 +326,7 @@ impl CatalogMap {
                         key_loc,
                         format_args!(
                             "\"{}\" is defined in both \"catalog\" and \"catalogs.default\"; keep one of them",
-                            BStr::new(dep_name)
+                            bun_core::fmt::EscapeControlChars(BStr::new(dep_name))
                         ),
                     );
                     conflict = true;

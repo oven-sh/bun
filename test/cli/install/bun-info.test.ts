@@ -330,6 +330,18 @@ describe.concurrent("bun info", () => {
       expect(output).toBe("");
     });
 
+    it.each([[["info"]], [["pm", "view"]]])("%j asks the registry for a name longer than a path", async command => {
+      const { output, error, code } = await runCommand(
+        [bunExe(), ...command, Buffer.alloc(5000, "x").toString()],
+        await setupTest(),
+        false,
+      );
+
+      expect(error).toContain("Not Found");
+      expect(output).toBe("");
+      expect(code).toBe(1);
+    });
+
     // TODO: Version validation needs to be fixed - currently falls back to first version instead of failing
     it("should handle non-existent version", async () => {
       const testDir = await setupTest();

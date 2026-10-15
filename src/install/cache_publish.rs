@@ -48,6 +48,7 @@ impl<'a> StagedEntry<'a> {
         let cache = Dir::borrow(&cache_dir);
         let mut retry = RenameRetry::new();
         let mut attempts = 0;
+        let mut emptying_err: Option<sys::Error> = None;
         loop {
             // `rename` replaces only an empty directory: never a published folder.
             let Err(err) = retry.rename(self.parent, self.name, cache_dir, to) else {
@@ -58,10 +59,13 @@ impl<'a> StagedEntry<'a> {
             // Nothing below can remove a published folder, even one that appears meanwhile.
             match cache.open_at_with(to.as_bytes(), O::RDONLY | O::CLOEXEC | O::NOFOLLOW) {
                 Ok(published) if is_complete(&published) => return Ok(Some(published)),
-                _ if attempts == MAX_ATTEMPTS => return Err(err),
+                // Why the folder could not be emptied says more than that it is in the way.
+                _ if attempts == MAX_ATTEMPTS => {
+                    return Err(emptying_err.map_or(err, RenameError::from));
+                }
                 // Emptied through its own handle; `rmdir` only removes an empty folder.
                 Ok(incomplete) => {
-                    let _ = incomplete.delete_children();
+                    emptying_err = incomplete.delete_children().err();
                     incomplete.close();
                     let _ = sys::rmdirat(cache_dir, to);
                 }

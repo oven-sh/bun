@@ -3153,7 +3153,8 @@ test.concurrent("can override npm package with workspace package under a differe
 });
 
 // packages/m is a member named no-deps, and the root has `overrides: { "no-deps": "2.0.0" }`. A rule does not apply to
-// the member ("overrides do not apply to workspaces"), nor to a row of the project that links it.
+// the member ("overrides do not apply to workspaces"). It does apply to every dependency on that name, as in Bun 1.4,
+// also to one that would link the member.
 describe.each(["hoisted", "isolated"])("an override for the name of a member, %s linker", linker => {
   type Shape = {
     title: string;
@@ -3167,42 +3168,42 @@ describe.each(["hoisted", "isolated"])("an override for the name of a member, %s
   };
   test.concurrent.each<Shape>([
     {
-      title: "leaves a sibling's range that links it",
+      title: "applies to a sibling's range that would link it",
       member: "1.0.0",
       bar: { dependencies: { "no-deps": "^1.0.0" } },
-      sees: [["packages/bar", "1.0.0"]],
+      sees: [["packages/bar", "2.0.0"]],
     },
     {
-      title: "leaves a sibling's * on a member without a version",
+      title: "applies to a sibling's * on a member without a version",
       bar: { dependencies: { "no-deps": "*" } },
-      sees: [["packages/bar", undefined]],
+      sees: [["packages/bar", "2.0.0"]],
     },
     {
-      title: "leaves a sibling's workspace:*",
+      title: "applies to a sibling's workspace:*",
       member: "1.0.0",
       bar: { dependencies: { "no-deps": "workspace:*" } },
-      sees: [["packages/bar", "1.0.0"]],
+      sees: [["packages/bar", "2.0.0"]],
     },
     {
-      title: "leaves a sibling's catalog: range that links it",
+      title: "applies to a sibling's catalog: range that would link it",
       member: "1.0.0",
       root: { catalog: { "no-deps": "^1.0.0" } },
       bar: { dependencies: { "no-deps": "catalog:" } },
-      sees: [["packages/bar", "1.0.0"]],
+      sees: [["packages/bar", "2.0.0"]],
     },
     {
-      title: "leaves a sibling's peer that links it",
+      title: "gives a sibling's peer no copy: it finds the member at the root",
       member: "1.0.0",
       bar: { peerDependencies: { "no-deps": "^1.0.0" } },
       sees: [["packages/bar", "1.0.0"]],
     },
     {
-      title: "leaves the root's range that links it, and applies to a registry package",
+      title: "applies to the root's range that would link it, and to a registry package",
       member: "1.0.0",
       // one-dep depends on no-deps@1.0.1
       root: { dependencies: { "no-deps": "^1.0.0", "one-dep": "1.0.0" } },
       sees: [
-        ["", "1.0.0"],
+        ["", "2.0.0"],
         ["node_modules/one-dep", "2.0.0"],
       ],
     },
@@ -3259,6 +3260,85 @@ describe.each(["hoisted", "isolated"])("an override for the name of a member, %s
     await check();
     expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
   });
+
+  test.concurrent.each(["workspace:*", "^1.0.0"])(
+    "keeps the bun.lock that Bun 1.4 wrote for a sibling's %s",
+    async spec => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const install = async (...args: string[]) => {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--linker", linker, ...args],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect({ args, err, exitCode }).toEqual({ args, err: expect.not.stringContaining("error:"), exitCode: 0 });
+      };
+
+      // The row of no-deps@2.0.0, with the URL and the hash of this registry.
+      await write(packageJson, JSON.stringify({ name: "root", dependencies: { "no-deps": "2.0.0" } }));
+      await install("--lockfile-only");
+      const published = (await file(join(packageDir, "bun.lock")).text()).match(
+        /"no-deps": (\["no-deps@2\.0\.0".*\]),/,
+      )![1];
+
+      const lockfile = `{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "root",
+    },
+    "packages/bar": {
+      "name": "bar",
+      "dependencies": {
+        "no-deps": "${spec}",
+      },
+    },
+    "packages/m": {
+      "name": "no-deps",
+      "version": "1.0.5",
+    },
+  },
+  "overrides": {
+    "no-deps": "2.0.0",
+  },
+  "packages": {
+    "bar": ["bar@workspace:packages/bar"],
+
+    "no-deps": ["no-deps@workspace:packages/m"],
+
+    "bar/no-deps": ${published},
+  }
+}
+`;
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({ name: "root", workspaces: ["packages/*"], overrides: { "no-deps": "2.0.0" } }),
+        ),
+        write(join(packageDir, "packages", "m", "package.json"), JSON.stringify({ name: "no-deps", version: "1.0.5" })),
+        write(
+          join(packageDir, "packages", "bar", "package.json"),
+          JSON.stringify({ name: "bar", dependencies: { "no-deps": spec } }),
+        ),
+        write(join(packageDir, "bun.lock"), lockfile),
+      ]);
+
+      await install("--frozen-lockfile");
+      await install();
+      expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+      expect(await file(join(packageDir, "packages", "bar", "node_modules", "no-deps", "package.json")).json()).toEqual(
+        {
+          name: "no-deps",
+          version: "2.0.0",
+        },
+      );
+    },
+  );
 });
 
 test.concurrent("overrides in workspace packages and root pnpm.overrides are ignored", async () => {
@@ -4177,7 +4257,7 @@ describe("a workspace outside the project", () => {
       write(join(project, "package.json"), JSON.stringify({ name: "project", ...root })),
       write(join(project, "packages", "lib", "package.json"), JSON.stringify({ name: "lib", version: "1.2.3" })),
       write(join(dir, "app", "package.json"), JSON.stringify(app)),
-      write(join(dir, "app", "cli.js"), "#!/usr/bin/env node\r\n"),
+      write(join(dir, "app", "cli.js"), "#!/usr/bin/env node\n"),
       write(join(dir, "app", "node_modules", "no-deps", "package.json"), JSON.stringify({ name: "no-deps" })),
       write(join(dir, "app", "node_modules", "lib", "package.json"), JSON.stringify({ name: "lib" })),
     ]);
@@ -4189,7 +4269,7 @@ describe("a workspace outside the project", () => {
     return project;
   }
 
-  /** Every entry below `dir` with its mode and its contents. */
+  /** Every entry below `dir` with its mode and its contents. As in npm, linking a command makes its file executable. */
   function contentsOf(dir: string) {
     const entries = new Bun.Glob("**").scanSync({ cwd: dir, dot: true, onlyFiles: false, followSymlinks: false });
     return Array.from(entries, entry => {
@@ -4197,7 +4277,7 @@ describe("a workspace outside the project", () => {
       const contents = stat.isSymbolicLink()
         ? readlinkSync(join(dir, entry))
         : stat.isFile() && readFileSync(join(dir, entry), "utf8");
-      return [entry, stat.mode.toString(8), contents];
+      return [entry, entry !== "cli.js" && stat.mode.toString(8), contents];
     }).sort();
   }
 
@@ -4250,6 +4330,7 @@ describe("a workspace outside the project", () => {
         expect(contentsOf(join(packageDir, "app"))).toEqual(before);
         expect(err).toContain(note(path));
         expect(realpathSync(join(project, "node_modules", "app"))).toBe(realpathSync(join(packageDir, "app")));
+        if (!isWindows) expect(statSync(join(project, "node_modules", ".bin", "app")).mode & 0o100).toBe(0o100);
         expect(await file(join(project, "node_modules", "no-deps", "package.json")).json()).toEqual({
           name: "no-deps",
           version: "2.0.0",
@@ -4376,6 +4457,47 @@ describe.skipIf(isWindows)("in a member that is a link to a folder elsewhere", (
 
   test.concurrent.each(["repo/packages/app", "repo/packages/app/src"])("%s belongs to the project", async cwd => {
     expect(await install(cwd, cwd)).toEqual({ errors: [], lockfiles: ["repo"], exitCode: 0 });
+  });
+
+  test.concurrent.each([
+    ["inside the project", "repo/libs/shared"],
+    ["outside the project", "shared"],
+  ])("bun add and bun remove work, with the folder %s", async (_, real) => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    const repo = join(packageDir, "repo");
+    const shared = { name: "shared", version: "1.0.0", dependencies: { "a-dep": "1.0.1" } };
+    await Promise.all([
+      verdaccio.writeBunfig(repo),
+      write(join(repo, "package.json"), JSON.stringify({ name: "repo", workspaces: ["packages/*"] })),
+      write(join(packageDir, real, "package.json"), JSON.stringify(shared)),
+    ]);
+    mkdirSync(join(repo, "packages"));
+    symlinkSync(join(packageDir, real), join(repo, "packages", "shared"));
+
+    for (const [cwd, ...args] of [
+      [repo, "install"],
+      [join(repo, "packages", "shared"), "add", "no-deps"],
+      [join(repo, "packages", "shared"), "remove", "a-dep"],
+    ]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...env, PWD: cwd, npm_config_registry: verdaccio.registryUrl() },
+      });
+      const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
+    const dependencies = { "no-deps": "^2.0.0" };
+    expect(await file(join(packageDir, real, "package.json")).json()).toEqual({ ...shared, dependencies });
+    const lockfile = Bun.JSON5.parse(await file(join(repo, "bun.lock")).text());
+    expect(lockfile.workspaces["packages/shared"]).toEqual({ ...shared, dependencies });
+    expect(Object.keys(lockfile.packages).sort()).toEqual(["no-deps", "shared"]);
+    expect(existsSync(join(packageDir, real, "bun.lock"))).toBe(false);
   });
 
   test.concurrent("a $PWD that is another folder does not count", async () => {

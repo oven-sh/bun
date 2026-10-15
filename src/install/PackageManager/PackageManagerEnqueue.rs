@@ -1072,8 +1072,7 @@ fn enqueue_dependency_logging(
             };
             let overridden = (this.lockfile.overrides)
                 .lookup_declared(&this.lockfile, id, rule_name_hash, &dependency.version)
-                .map(|rule| rule.version().clone())
-                .filter(|_| !links_workspace_member(this, id, dependency, name_hash));
+                .map(|rule| rule.version().clone());
             if let Some(new) = &overridden {
                 bun_output::scoped_log!(
                     PackageManager,
@@ -2143,26 +2142,6 @@ fn links_workspace(
         lockfile.buffers.string_bytes.as_slice(),
     )
     .is_some()
-}
-
-/// A rule for the member's name does not displace the link of a root or workspace row.
-fn links_workspace_member(
-    this: &PackageManager,
-    id: DependencyID,
-    dependency: &Dependency,
-    name_hash: PackageNameHash,
-) -> bool {
-    let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    let declared = lockfile.catalogs.resolve_range(buf, dependency);
-    let links = match declared.tag {
-        dependency::version::Tag::Workspace => true,
-        dependency::version::Tag::Npm => links_workspace(this, name_hash, &declared.npm().version),
-        _ => false,
-    };
-    links
-        && lockfile.is_workspace_dependency(id)
-        && root_workspace_package_id(lockfile, name_hash).is_some()
 }
 
 fn root_workspace_package_id(
@@ -3547,9 +3526,7 @@ impl PackageManager {
             ) else {
                 continue;
             };
-            if range.npm().version.satisfies(version, buf, buf)
-                || links_workspace_member(self, row, peer, peer.name_hash)
-            {
+            if range.npm().version.satisfies(version, buf, buf) {
                 continue;
             }
             let Some(dependent) = lockfile.get_parent_pkg_of_dependency(row) else {

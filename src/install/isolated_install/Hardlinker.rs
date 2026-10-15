@@ -153,9 +153,11 @@ impl Hardlinker {
                                                 self.src.slice(),
                                                 Default::default()
                                             ),
-                                            bun_core::fmt::fmt_os_path(
-                                                destfile_path.as_slice(),
-                                                Default::default()
+                                            bun_core::fmt::EscapeControlChars(
+                                                bun_core::fmt::fmt_os_path(
+                                                    destfile_path.as_slice(),
+                                                    Default::default()
+                                                )
                                             ),
                                         );
                                     }
@@ -176,9 +178,11 @@ impl Hardlinker {
                                                 self.src.slice(),
                                                 Default::default()
                                             ),
-                                            bun_core::fmt::fmt_os_path(
-                                                destfile_path.as_slice(),
-                                                Default::default()
+                                            bun_core::fmt::EscapeControlChars(
+                                                bun_core::fmt::fmt_os_path(
+                                                    destfile_path.as_slice(),
+                                                    Default::default()
+                                                )
                                             ),
                                         );
                                     }

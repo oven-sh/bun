@@ -334,7 +334,8 @@ impl<'a> Migrator<'a> {
             if !self.patched.is_empty() {
                 self.patched.push_str(", ");
             }
-            let _ = write!(self.patched, "\"{}\"", bstr::BStr::new(name));
+            let name = bun_core::fmt::escape_control_chars(name);
+            let _ = write!(self.patched, "\"{name}\"");
         }
 
         let mut meta = lockfile::Meta {
@@ -739,7 +740,7 @@ impl<'a> Migrator<'a> {
                     if !self.silent {
                         bun_core::warn!(
                             "skipped \"{}@{}\" from {}: unsupported version specifier",
-                            bstr::BStr::new(name),
+                            bun_core::fmt::escape_control_chars(name),
                             bun_core::fmt::for_terminal(bstr::BStr::new(spec)),
                             self.lockfile_name,
                         );
@@ -892,8 +893,8 @@ impl<'a> Migrator<'a> {
                 if !self.silent {
                     bun_core::warn!(
                         "workspace \"{}\" ({}) is not in {}; resolving it from package.json",
-                        bstr::BStr::new(&ws.name),
-                        bstr::BStr::new(path),
+                        bun_core::fmt::escape_control_chars(&ws.name),
+                        bun_core::fmt::escape_control_chars(path),
                         self.lockfile_name,
                     );
                 }
@@ -993,9 +994,9 @@ impl<'a> Migrator<'a> {
         if !self.silent {
             bun_core::warn!(
                 "skipped \"{}\" from {}: transitive folder dependency \"{}\" is outside the project",
-                bstr::BStr::new(name),
+                bun_core::fmt::escape_control_chars(name),
                 self.lockfile_name,
-                bstr::BStr::new(self.entries[t as usize].key.slice()),
+                bun_core::fmt::escape_control_chars(self.entries[t as usize].key.slice()),
             );
         }
         self.shadow(t);
@@ -1014,7 +1015,7 @@ impl<'a> Migrator<'a> {
         if !self.silent && !self.shadowed.is_set(t as usize) {
             bun_core::warn!(
                 "skipped \"{}\" from {}: a folder npm copied (--install-links)",
-                bstr::BStr::new(name),
+                bun_core::fmt::escape_control_chars(name),
                 self.lockfile_name,
             );
         }
@@ -1067,7 +1068,8 @@ impl<'a> Migrator<'a> {
                 if count > 1 {
                     list.push_str(", ");
                 }
-                let _ = write!(list, "\"{}\"", bstr::BStr::new(entry.key.slice()));
+                let key = bun_core::fmt::escape_control_chars(entry.key.slice());
+                let _ = write!(list, "\"{key}\"");
             }
         }
         if count == 0 {

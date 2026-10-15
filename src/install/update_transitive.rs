@@ -130,12 +130,10 @@ impl DirectDependencies {
                     || (new as usize) >= packages_len
                     || pkg_res[new as usize].tag != ResolutionTag::Npm
                     || name_hashes[old as usize] != name_hashes[new as usize]
-                    // Another group of the owner lists the name and keeps the old package. So does the
-                    // root's own dependency, whose package a peer only shared (`bind_served_peers`).
-                    || [Some(owner), dep.behavior.is_peer().then_some(0)]
-                        .into_iter()
-                        .flatten()
-                        .any(|holder| {
+                    // A peer only shared the package of its owner's or the root's own dependency,
+                    // which keeps it (`bind_served_peers`).
+                    || (dep.behavior.is_peer()
+                        && [owner, 0].into_iter().any(|holder| {
                             (dep_slices[holder].get(deps).iter())
                                 .zip(res_slices[holder].get(resolutions))
                                 .any(|(other, &kept)| {
@@ -143,7 +141,7 @@ impl DirectDependencies {
                                         && !other.behavior.is_peer()
                                         && kept == old
                                 })
-                        })
+                        }))
                 {
                     continue;
                 }
@@ -629,9 +627,9 @@ pub fn pretty_update_row(name: &[u8], from: &[u8], to: &[u8], downgrade: bool) {
     pretty!(
         "<b>{}<r> <d>{} {}<r> <b><cyan>{}<r>",
         BStr::new(name),
-        BStr::new(from),
+        bun_core::fmt::escape_control_chars(from),
         glyphs.arrow,
-        BStr::new(to)
+        bun_core::fmt::escape_control_chars(to)
     );
 }
 
@@ -771,7 +769,7 @@ fn warn_patch_key_without_version(
         source.range_of_string(key_loc),
         format_args!(
             "patchedDependencies keys need a version: {}",
-            BStr::new(&keys)
+            bun_core::fmt::for_terminal(BStr::new(&keys))
         ),
     );
 }
@@ -838,15 +836,15 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
         if now.is_empty() {
             bun_core::warn!(
                 "{} no longer applies ({} is no longer installed)",
-                BStr::new(patch.path.slice(buf)),
-                BStr::new(name)
+                bun_core::fmt::escape_control_chars(patch.path.slice(buf)),
+                bun_core::fmt::EscapeControlChars(BStr::new(name))
             );
         } else {
             bun_core::warn!(
                 "{} no longer applies ({} is now {})",
-                BStr::new(patch.path.slice(buf)),
-                BStr::new(name),
-                BStr::new(&now)
+                bun_core::fmt::escape_control_chars(patch.path.slice(buf)),
+                bun_core::fmt::EscapeControlChars(BStr::new(name)),
+                bun_core::fmt::for_terminal(BStr::new(&now))
             );
         }
     }

@@ -30,8 +30,6 @@ pub struct UpdateRequest {
     /// owned elsewhere → `RawSlice<u8>` (centralises the outlives-holder
     /// invariant; see `version_buf()`).
     pub(crate) version_buf: bun_ptr::RawSlice<u8>,
-    /// `version.literal` as typed. `version` is rebound to lockfile rows, whose buffer can move.
-    pub(crate) asked: &'static [u8],
     pub(crate) package_id: PackageID,
     pub(crate) is_aliased: bool,
     pub failed: bool,
@@ -48,7 +46,6 @@ impl Default for UpdateRequest {
             name_hash: 0,
             version: dependency::Version::default(),
             version_buf: bun_ptr::RawSlice::EMPTY,
-            asked: b"",
             package_id: INVALID_PACKAGE_ID,
             is_aliased: false,
             failed: false,
@@ -274,7 +271,6 @@ impl UpdateRequest {
             }
 
             let mut request = UpdateRequest {
-                asked: anchor_cli_bytes(version.literal.slice(input).into()),
                 version,
                 version_buf: bun_ptr::RawSlice::new(input),
                 ..UpdateRequest::default()

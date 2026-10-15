@@ -1986,6 +1986,29 @@ describe("Bun.Archive", () => {
       expect(wrong).toEqual([]);
     });
 
+    // Old tar writers repeat the size of the file in the header of a hard link, which has no body.
+    test("files() and extract() give a hard link whose header states a size no bytes", async () => {
+      const archive = new Uint8Array(
+        Buffer.concat([
+          ustarEntry("a.txt", Buffer.from("AAAA")),
+          ustarHeader("link", 5000, "1"),
+          ustarEntry("z.txt", Buffer.from("ZZ")),
+          Buffer.alloc(1024),
+        ]),
+      );
+      const sizes = [
+        ["a.txt", 4],
+        ["link", 0],
+        ["z.txt", 2],
+      ];
+      const files = await new Bun.Archive(archive).files();
+      expect([...files].map(([name, file]) => [name, file.size])).toEqual(sizes);
+
+      using dir = tempDir("archive-hard-link-size", {});
+      await new Bun.Archive(archive).extract(String(dir));
+      expect(sizes.map(([name]) => [name, statSync(join(String(dir), String(name))).size])).toEqual(sizes);
+    });
+
     test("extract() does not size a file from a header that declares more than the archive holds", async () => {
       // The header declares 16 MiB. The archive ends 100 bytes into the body.
       const lying = new Uint8Array(

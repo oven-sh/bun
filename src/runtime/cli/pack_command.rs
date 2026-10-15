@@ -105,7 +105,7 @@ impl<'a> Context<'a> {
         if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
             bun_core::pretty!("\n");
         }
-        bun_core::pretty!("{}\n", path);
+        bun_core::pretty!("{}\n", bun_fmt::EscapeControlChars(path));
     }
 }
 
@@ -266,7 +266,12 @@ const DEFAULT_IGNORE_PATTERNS: &[(&[u8], bool)] = &[
     // (b"config.gypi", false),
     (b".env.production", true),
     (b"bunfig.toml", true),
+    // `open_tarball`'s temporary file: of a pack that runs at the same time, or one that was killed.
+    (b".bun-pack.*.tmp", false),
 ];
+
+/// Before `FileSystem::tmpname`, which starts with a `.` and here ends in `.tmp`.
+const UNFINISHED_TARBALL_PREFIX: &[u8] = b".bun-pack";
 
 struct PackListEntry {
     subpath: ZBox,
@@ -444,6 +449,7 @@ fn iterate_included_project_tree(
             pack_queue,
             bins,
             Some(excludes),
+            Vec::new(),
             included_dir_info,
             log_level,
         )?;
@@ -465,8 +471,8 @@ fn print_ignored(
     bun_core::prettyln!(
         "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
         <&str>::from(kind),
-        bstr::BStr::new(pattern),
-        bstr::BStr::new(entry_subpath.as_bytes()),
+        bun_fmt::escape_control_chars(pattern),
+        bun_fmt::escape_control_chars(entry_subpath.as_bytes()),
         if entry_kind == bun_sys::FileKind::Directory {
             "/"
         } else {
@@ -592,6 +598,8 @@ struct Bundle {
     /// Placed, and neither its files nor its dependencies are looked at yet.
     pending: Vec<usize>,
     files: Vec<BundledFile>,
+    /// The workspace root, or the packed package where it is in no workspace. Links resolved.
+    project_path: Box<[u8]>,
 }
 
 impl Bundle {
@@ -634,12 +642,17 @@ impl Bundle {
 
 /// What `require(name)` finds from the folder `from`: the closest `node_modules/<name>`, links resolved.
 /// The flag: it is in the `node_modules` of `from` itself.
-fn resolve_installed(from: &[u8], name: &[u8]) -> Option<(Box<[u8]>, bool)> {
+/// Nothing above `project` counts as installed. A linked folder or the global store is outside of it: there,
+/// nothing above the `node_modules` that `from` is in.
+fn resolve_installed(project: &[u8], from: &[u8], name: &[u8]) -> Option<(Box<[u8]>, bool)> {
     let mut spill: Vec<u8> = Vec::new();
     let mut real_path_buf = bun_paths::path_buffer_pool::get();
-    let mut next = Some(from);
-    while let Some(dir) = next {
-        next = path::dirname(dir);
+    let ancestors = || core::iter::successors(Some(from), |&dir| path::dirname(dir));
+    let last = ancestors()
+        .find(|dir| *dir == project)
+        .or_else(|| strings::index_of(from, path::NODE_MODULES_NEEDLE).map(|at| &from[..at]))
+        .unwrap_or(from);
+    for dir in ancestors().take_while(|dir| dir.len() >= last.len()) {
         if path::basename(dir) == b"node_modules" {
             continue;
         }
@@ -661,8 +674,8 @@ fn resolve_installed(from: &[u8], name: &[u8]) -> Option<(Box<[u8]>, bool)> {
 fn iterate_bundled_deps(
     bundled_deps: &mut Vec<BundledDep>,
     stats: &mut Stats,
-    log: &mut bun_ast::Log,
-    workspace_manifests: Option<&WorkspaceManifests>,
+    manager: &mut PackageManager,
+    workspace_manifests: &mut Option<WorkspaceManifests>,
     root_dir: &Dir,
     log_level: LogLevel,
 ) -> Result<Vec<BundledFile>, AllocError> {
@@ -675,11 +688,20 @@ fn iterate_bundled_deps(
     let root_path: &[u8] = root_dir
         .get_fd_path(&mut root_path_buf)
         .unwrap_or_else(|err| fail_open_dir(err.into(), b"."));
+    {
+        let project_path = path::fs::FileSystem::instance().top_level_dir();
+        let mut project_path_buf = bun_paths::path_buffer_pool::get();
+        bundle.project_path = (Dir::cwd().open_dir(project_path, ITERABLE))
+            .and_then(|project_dir| {
+                Ok(Box::from(&*project_dir.get_fd_path(&mut project_path_buf)?))
+            })
+            .unwrap_or_else(|err| fail_open_dir(err.into(), project_path));
+    }
 
     // All of these first: what one of them depends on must not take the place of another.
     for dep in bundled_deps.iter() {
         let found = bun_install::package_installer::alias_is_safe_install_target(&dep.name)
-            .then(|| resolve_installed(root_path, &dep.name))
+            .then(|| resolve_installed(&bundle.project_path, root_path, &dep.name))
             .flatten();
         // The tarball's package.json tells whoever installs it that the package is inside.
         let Some((real_path, _)) = found else {
@@ -700,7 +722,7 @@ fn iterate_bundled_deps(
         add_bundled_dep(
             bundle,
             index,
-            log,
+            manager,
             workspace_manifests,
             root_path,
             log_level,
@@ -727,8 +749,8 @@ fn iterate_bundled_deps(
 fn add_bundled_dep(
     bundle: &mut Bundle,
     index: usize,
-    log: &mut bun_ast::Log,
-    manifests: Option<&WorkspaceManifests>,
+    manager: &mut PackageManager,
+    manifests: &mut Option<WorkspaceManifests>,
     root_path: &[u8],
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
@@ -736,6 +758,16 @@ fn add_bundled_dep(
     let real_path = bundle.packages[index].real_path.clone();
     let dir = (Dir::cwd().open_dir(&real_path, ITERABLE))
         .unwrap_or_else(|err| fail_open_dir(err.into(), &real_path));
+
+    // A workspace or a linked folder, not an installed copy: it is packed as for its own tarball. Only that
+    // takes the other workspaces. They are read before the parse below, whose `Store` nodes they would reset.
+    let manifests: Option<&WorkspaceManifests> =
+        if strings::contains(&real_path, path::NODE_MODULES_NEEDLE) {
+            None
+        } else {
+            Some(&*manifests.get_or_insert_with(|| WorkspaceManifests::load(manager)))
+        };
+    let log = manager.log_mut();
 
     let source = match File::read_from(dir.fd, b"package.json") {
         Ok(bytes) => Some(bun_ast::Source::init_path_string_owned(
@@ -753,13 +785,13 @@ fn add_bundled_dep(
         }
     };
     let json = (source.as_ref())
-        .and_then(|source| JSON::parse_package_json_utf8(source, log, pack_bump()).ok());
+        .and_then(|source| JSON::parse_package_json_utf8(source, log, pack_bump()).ok())
+        .inspect(|json| drop_shadowed_properties(*json));
 
     if let (Some(source), Some(json)) = (&source, &json) {
         find_dependencies_to_bundle(bundle, index, json, root_path)?;
 
-        // A workspace or a linked folder, not an installed copy: it is packed as for its own tarball.
-        if !strings::contains(&real_path, path::NODE_MODULES_NEEDLE) {
+        if let Some(manifests) = manifests {
             let mut add_file = |file: &[u8], edited: Option<Box<[u8]>>| -> Result<(), AllocError> {
                 bundle.files.push(BundledFile {
                     path: entry_subpath(&subpath, file)?,
@@ -771,7 +803,7 @@ fn add_bundled_dep(
             let edited = if needs_workspace_manifests(*json) {
                 let indentation = JSON::guess_indentation(&source.contents);
                 Some(edit_root_package_json(
-                    manifests,
+                    Some(manifests),
                     &real_path,
                     *json,
                     source,
@@ -781,7 +813,9 @@ fn add_bundled_dep(
                 None
             };
             add_file(b"package.json", edited)?;
-            let (published, _) = published_files(&dir, &real_path, json, pack_bump(), log_level)?;
+            let is_workspace = manifests.contains_package_dir(&real_path);
+            let (published, _) =
+                published_files(&dir, &real_path, is_workspace, json, pack_bump(), log_level)?;
             for file in published.into_paths() {
                 add_file(file.as_bytes(), None)?;
             }
@@ -864,7 +898,9 @@ fn find_dependencies_to_bundle(
             }
 
             let from = &bundle.packages[index].real_path;
-            let Some((real_path, is_nested)) = resolve_installed(from, dep_name) else {
+            let Some((real_path, is_nested)) =
+                resolve_installed(&bundle.project_path, from, dep_name)
+            else {
                 continue;
             };
             // A workspace can depend on the package that bundles it.
@@ -873,7 +909,8 @@ fn find_dependencies_to_bundle(
             }
 
             let other_at_the_top = || {
-                resolve_installed(root_path, dep_name).is_some_and(|(other, _)| other != real_path)
+                resolve_installed(&bundle.project_path, root_path, dep_name)
+                    .is_some_and(|(other, _)| other != real_path)
             };
             let parent = match bundle.visible_from(index, dep_name) {
                 Some(visible) if visible.real_path == real_path => continue,
@@ -882,6 +919,21 @@ fn find_dependencies_to_bundle(
                 None if is_nested || other_at_the_top() => Some(index),
                 None => None,
             };
+            // In a ring through two versions of two packages each copy needs the next one inside it, without end.
+            let copies_above =
+                core::iter::successors(parent, |&above| bundle.packages[above].parent)
+                    .filter(|&above| bundle.packages[above].real_path == real_path)
+                    .count();
+            if copies_above > 1 {
+                Output::err_generic(
+                    "a cycle of bundled dependencies cannot be laid out in node_modules: \"{}\"",
+                    format_args!(
+                        "{}",
+                        bun_fmt::escape_control_chars(&bundle.subpath_in(parent, dep_name)),
+                    ),
+                );
+                Global::crash();
+            }
             let placed = bundle.place(parent, dep_name, real_path)?;
             bundle.pending.push(placed);
         }
@@ -891,15 +943,16 @@ fn find_dependencies_to_bundle(
 }
 
 /// `files_excludes`: `"files"` includes the directory `root_dir`; these are its negated entries.
+/// `ignores`: [`IgnorePatterns::read_above_workspace`].
 fn iterate_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
     files_excludes: Option<&[Pattern]>,
+    mut ignores: Vec<IgnorePatterns>,
     root_dir: DirInfo,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
     let root_depth = root_dir.2;
-    let mut ignores: Vec<IgnorePatterns> = Vec::new();
 
     if let Some(excludes) = files_excludes.filter(|excludes| !excludes.is_empty()) {
         ignores.push(IgnorePatterns {
@@ -1314,10 +1367,11 @@ fn file_kind_tag(kind: bun_core::FileKind) -> &'static str {
 
 /// Everything `bun pm pack` would put in the tarball besides package.json: bins, then either the `files` list or
 /// the whole tree minus ignores. Shared with `bun pm diff`, whose local side is "what would be published".
-/// `root_path` is the path `root_dir` was opened from.
+/// `root_path` is the path `root_dir` was opened from. `is_workspace`: it is a workspace of the manager's project.
 pub(crate) fn published_files(
     root_dir: &Dir,
     root_path: &[u8],
+    is_workspace: bool,
     json_root: &Expr,
     bump: &bun_alloc::Arena,
     log_level: LogLevel,
@@ -1339,6 +1393,7 @@ pub(crate) fn published_files(
                         &mut pack_queue,
                         &[],
                         None,
+                        Vec::new(),
                         DirInfo(bin_dir, bin.path.as_bytes().into(), 2),
                         log_level,
                     )?;
@@ -1349,10 +1404,16 @@ pub(crate) fn published_files(
     }
 
     let Some(files) = json_root.get(b"files") else {
+        let ignores_above = if is_workspace {
+            IgnorePatterns::read_above_workspace(root_path)
+        } else {
+            Vec::new()
+        };
         iterate_project_tree(
             &mut pack_queue,
             &bins,
             None,
+            ignores_above,
             DirInfo(Dir::from_fd(root_dir.fd), Box::default(), 1),
             log_level,
         )?;
@@ -1429,8 +1490,55 @@ pub(crate) fn package_json_entry<'a>(
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Global::crash();
         }
-        WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
+        WorkspacePackageJSONCache::GetResult::Entry(entry) => {
+            drop_shadowed_properties(entry.root);
+            entry
+        }
     }
+}
+
+/// Of the properties of an object that have the same key, `JSON.parse` keeps the last. So does this, in
+/// place: what is packed and sent then reads the same to everyone.
+pub(crate) fn drop_shadowed_properties(json: Expr) {
+    let ExprData::EObject(mut object) = json.data else {
+        return;
+    };
+    let mut seen: StringHashMap<()> = StringHashMap::default();
+    // Last property first, so that `pop` hands these out from the first property on.
+    let mut is_last: Vec<bool> = (object.properties.slice().iter().rev())
+        .map(|property| {
+            let key = property.key.as_ref().and_then(Expr::as_utf8_string_literal);
+            key.is_none_or(|key| !bun_core::handle_oom(seen.get_or_put(key)).found_existing)
+        })
+        .collect();
+    object.properties.retain(|_| is_last.pop().unwrap_or(true));
+    for property in object.properties.slice() {
+        if let Some(value) = property.value {
+            drop_shadowed_properties(value);
+        }
+    }
+}
+
+/// Takes the `publishConfig` of `package_json`, and refuses what `bun publish` does not send.
+fn apply_publish_config(
+    manager: &mut PackageManager,
+    package_json: &Expr,
+    package_name: &[u8],
+) -> Result<(), PackError> {
+    let is_scoped = bun_install::dependency::is_scoped_package_name(package_name)
+        .map_err(|_| PackError::InvalidPackageName)?;
+    manager
+        .options
+        .apply_publish_config(package_json, pack_bump(), package_name)?;
+    Publish::PublishCommand::refuse_provenance(manager, package_json);
+    if manager.options.publish_config.access == Some(bun_install::Access::Restricted) && !is_scoped
+    {
+        return Err(PackError::RestrictedUnscopedPackage);
+    }
+    if is_private_package(package_json) {
+        return Err(PackError::PrivatePackage);
+    }
+    Ok(())
 }
 
 /// Both become part of the tarball's filename.
@@ -1494,21 +1602,10 @@ pub(crate) fn pack(
     let mut json = package_json_entry(ctx.manager, abs_package_json_path);
 
     let (mut package_name, mut package_version) = name_and_version(&json.root)?;
+    // What the command line and the config files say, without any `publishConfig`.
+    let target_before = for_publish.then(|| ctx.manager.options.publish_target(package_name));
     if for_publish {
-        let is_scoped = bun_install::dependency::is_scoped_package_name(package_name)
-            .map_err(|_| PackError::InvalidPackageName)?;
-        ctx.manager
-            .options
-            .apply_publish_config(&json.root, bump, package_name)?;
-        Publish::PublishCommand::refuse_provenance(ctx.manager, &json.root);
-        if ctx.manager.options.publish_config.access == Some(bun_install::Access::Restricted)
-            && !is_scoped
-        {
-            return Err(PackError::RestrictedUnscopedPackage);
-        }
-        if is_private_package(&json.root) {
-            return Err(PackError::PrivatePackage);
-        }
+        apply_publish_config(ctx.manager, &json.root, package_name)?;
     }
 
     let mut this_transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'static>> =
@@ -1585,10 +1682,11 @@ pub(crate) fn pack(
     if ran_scripts {
         pm_workspace_cache(ctx.manager).map.clear();
         json = package_json_entry(ctx.manager, abs_package_json_path);
-        if for_publish && is_private_package(&json.root) {
-            return Err(PackError::PrivatePackage);
-        }
         (package_name, package_version) = name_and_version(&json.root)?;
+        if let Some(target_before) = &target_before {
+            ctx.manager.options.set_publish_target(target_before)?;
+            apply_publish_config(ctx.manager, &json.root, package_name)?;
+        }
     }
 
     // Not before the scripts: one of them may be what writes the real version.
@@ -1602,23 +1700,12 @@ pub(crate) fn pack(
         .or_else(|| get_bundled_deps(&json.root, "bundleDependencies"))
         .unwrap_or_default();
 
-    // A workspace that is bundled has such specs of its own.
-    let needs_manifests = !ctx.bundled_deps.is_empty() || needs_workspace_manifests(json.root);
-    let workspace_manifests = needs_manifests.then(|| WorkspaceManifests::load(ctx.manager));
+    let mut workspace_manifests =
+        needs_workspace_manifests(json.root).then(|| WorkspaceManifests::load(ctx.manager));
     if workspace_manifests.is_some() {
         // Loading added the other workspaces' package.json files to the cache `json` points into.
         json = package_json_entry(ctx.manager, abs_package_json_path);
     }
-    // A copy: the edits add `Store` nodes, and the next workspace of `bun publish -r` reads the cached tree.
-    let root = json.root.deep_clone(bump);
-    let mut root = root.map_err(|_| PackError::OutOfMemory)?;
-    let edited_package_json = edit_root_package_json(
-        workspace_manifests.as_ref(),
-        abs_workspace_path,
-        root,
-        &json.source,
-        json.indentation,
-    )?;
 
     let root_dir: Dir = match Dir::cwd().open_dir(abs_workspace_path, ITERABLE) {
         Ok(d) => d,
@@ -1637,16 +1724,35 @@ pub(crate) fn pack(
         .then(|| Publish::PublishCommand::find_workspace_readme(abs_workspace_path))
         .flatten();
 
-    let (mut pack_queue, bins) =
-        published_files(&root_dir, abs_workspace_path, &json.root, bump, log_level)?;
+    let (mut pack_queue, bins) = published_files(
+        &root_dir,
+        abs_workspace_path,
+        true,
+        &json.root,
+        bump,
+        log_level,
+    )?;
 
     let bundled_files = iterate_bundled_deps(
         &mut ctx.bundled_deps,
         &mut ctx.stats,
-        ctx.manager.log_mut(),
-        workspace_manifests.as_ref(),
+        ctx.manager,
+        &mut workspace_manifests,
         &root_dir,
         log_level,
+    )?;
+
+    // A bundled workspace loads the manifests too, which also resets the `Store`: the copy comes after.
+    json = package_json_entry(ctx.manager, abs_package_json_path);
+    // A copy: the edits add `Store` nodes, and the next workspace of `bun publish -r` reads the cached tree.
+    let root = json.root.deep_clone(bump);
+    let mut root = root.map_err(|_| PackError::OutOfMemory)?;
+    let edited_package_json = edit_root_package_json(
+        workspace_manifests.as_ref(),
+        abs_workspace_path,
+        root,
+        &json.source,
+        json.indentation,
     )?;
 
     // +1 for package.json
@@ -1770,7 +1876,9 @@ pub(crate) fn pack(
         let _ = Dir::cwd().make_path(&abs_tarball_dest.as_bytes()[..abs_tarball_dest_dir_end]);
         Some(abs_tarball_dest)
     };
-    let tarball_file = abs_tarball_dest.map(|dest| (open_tarball(dest), dest));
+    let is_typed_filename = !ctx.manager.options.pack_filename.is_empty();
+    let tarball_file =
+        abs_tarball_dest.and_then(|dest| Some((open_tarball(dest, is_typed_filename)?, dest)));
 
     let mut tarball_bytes: Vec<u8> = Vec::new();
     let mut packed_size: usize = 0;
@@ -1785,12 +1893,7 @@ pub(crate) fn pack(
             return;
         };
         if let Err(err) = file.write_all(bytes) {
-            Output::err(
-                err,
-                "failed to write tarball \"{}\"",
-                format_args!("{}", bstr::BStr::new(dest.as_bytes())),
-            );
-            Global::crash();
+            fail_write_tarball(err, dest);
         }
     };
     let mut tarball_buffer = GrowingBuffer::forward_to(&mut write_tarball);
@@ -1927,14 +2030,19 @@ pub(crate) fn pack(
 
     ctx.stats.packed_size = packed_size;
 
-    if let Some((file, abs_tarball_dest)) = tarball_file {
-        finish_tarball(file, abs_tarball_dest);
+    match (tarball_file, abs_tarball_dest) {
+        (Some((file, dest)), _) => finish_tarball(file, dest, is_typed_filename),
+        (None, Some(dest)) => write_tarball_in_place(dest, &tarball_bytes, is_typed_filename),
+        (None, None) => {}
     }
 
     let normalized_pkg_info: Box<[u8]> = if for_publish {
         Publish::PublishCommand::normalized_package(
             ctx.manager,
-            abs_workspace_path,
+            Publish::PackageFiles::Folder {
+                root: Fd::from_std_dir(&root_dir),
+                abs_path: abs_workspace_path,
+            },
             package_name,
             package_version,
             &mut root,
@@ -2143,30 +2251,89 @@ extern "C" fn remove_unfinished_tarball() {
     }
 }
 
-/// A temporary file next to the destination, which `finish_tarball` renames to it: the destination
-/// never holds a partial tarball.
-fn open_tarball(abs_tarball_dest: &ZStr) -> File {
-    // A FIFO, a device, a symlink or a read-only file is not ours to replace: it is opened itself.
-    let in_place = bun_sys::lstat(abs_tarball_dest).is_ok_and(|stat| {
-        bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) != bun_sys::FileKind::File
-            || bun_sys::access(abs_tarball_dest, bun_sys::posix::W_OK).is_err()
-    });
-    let tmp = (!in_place).then(|| {
-        let mut name_buf = [0u8; 64];
-        let name = path::fs::FileSystem::tmpname(b"tmp", &mut name_buf, bun_core::fast_random())
-            .expect("unreachable");
-        let dir = path::dirname_simple(abs_tarball_dest.as_bytes());
-        ZBox::from_vec_with_nul([dir, SEP_STR.as_bytes(), name.as_bytes_with_nul()].concat())
-    });
-    let file = match &tmp {
-        Some(tmp) => File::openat(
-            Fd::cwd(),
-            tmp,
-            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::CLOEXEC,
-            0o666,
-        ),
-        None => File::create(Fd::cwd(), abs_tarball_dest, true),
+/// A temporary file next to the destination, which `finish_tarball` renames to it. `None`: the destination
+/// is not one to replace, or no file can be made next to it. The tarball then stays in memory until
+/// `write_tarball_in_place`. Either way the destination changes only once the tarball is whole.
+fn open_tarball(abs_tarball_dest: &ZStr, is_typed_filename: bool) -> Option<File> {
+    let mode: bun_sys::Mode = match bun_sys::lstat(abs_tarball_dest) {
+        Err(_) => 0o666,
+        Ok(stat) => match bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) {
+            bun_sys::FileKind::File
+                if bun_sys::access(abs_tarball_dest, bun_sys::posix::W_OK).is_ok() =>
+            {
+                stat.st_mode as bun_sys::Mode & 0o777
+            }
+            // Replaced under the name that bun gives the tarball. `--filename` may name a link to it.
+            bun_sys::FileKind::SymLink if !is_typed_filename => 0o666,
+            // A FIFO, a device, a read-only file.
+            _ => return None,
+        },
+    };
+    let mut name_buf = [0u8; 64];
+    let name = path::fs::FileSystem::tmpname(b"tmp", &mut name_buf, bun_core::fast_random())
+        .expect("unreachable");
+    let tmp = ZBox::from_vec_with_nul(
+        [
+            path::dirname_simple(abs_tarball_dest.as_bytes()),
+            SEP_STR.as_bytes(),
+            UNFINISHED_TARBALL_PREFIX,
+            name.as_bytes_with_nul(),
+        ]
+        .concat(),
+    );
+    let file = File::openat(
+        Fd::cwd(),
+        &tmp,
+        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::EXCL | bun_sys::O::CLOEXEC,
+        mode,
+    )
+    .ok()?;
+    *UNFINISHED_TARBALL.lock() = Some((file.handle(), tmp));
+    Global::add_exit_callback(remove_unfinished_tarball);
+    Some(file)
+}
+
+fn finish_tarball(file: File, abs_tarball_dest: &ZStr, is_typed_filename: bool) {
+    let unfinished = UNFINISHED_TARBALL.lock().take();
+    // Windows cannot rename the file while it is open.
+    drop(file);
+    let Some((_, tmp)) = unfinished else { return };
+    if bun_sys::rename(&tmp, abs_tarball_dest).is_ok() {
+        return;
     }
+    // A file that is a mount point, or somebody else's in a sticky directory, can be written but not replaced.
+    let tarball_bytes = File::read_from(Fd::cwd(), tmp.as_bytes());
+    let _ = bun_sys::unlink(&tmp);
+    match tarball_bytes {
+        Ok(tarball_bytes) => {
+            write_tarball_in_place(abs_tarball_dest, &tarball_bytes, is_typed_filename)
+        }
+        Err(err) => fail_write_tarball(err, abs_tarball_dest),
+    }
+}
+
+#[cold]
+fn fail_write_tarball(err: bun_sys::Error, abs_tarball_dest: &ZStr) -> ! {
+    Output::err(
+        err,
+        "failed to write tarball \"{}\"",
+        format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
+    );
+    Global::crash();
+}
+
+fn write_tarball_in_place(abs_tarball_dest: &ZStr, tarball_bytes: &[u8], is_typed_filename: bool) {
+    let follow = if is_typed_filename {
+        0
+    } else {
+        bun_sys::O::NOFOLLOW
+    };
+    let file = File::openat(
+        Fd::cwd(),
+        abs_tarball_dest,
+        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::CLOEXEC | follow,
+        0o666,
+    )
     .unwrap_or_else(|err| {
         Output::err(
             err,
@@ -2175,26 +2342,16 @@ fn open_tarball(abs_tarball_dest: &ZStr) -> File {
         );
         Global::crash();
     });
-    if let Some(tmp) = tmp {
-        *UNFINISHED_TARBALL.lock() = Some((file.handle(), tmp));
-        Global::add_exit_callback(remove_unfinished_tarball);
-    }
-    file
-}
-
-fn finish_tarball(file: File, abs_tarball_dest: &ZStr) {
-    let unfinished = UNFINISHED_TARBALL.lock().take();
-    // Windows cannot rename the file while it is open.
-    drop(file);
-    let Some((_, tmp)) = unfinished else { return };
-    if let Err(err) = bun_sys::rename(&tmp, abs_tarball_dest) {
-        let _ = bun_sys::unlink(&tmp);
-        Output::err(
-            err,
-            "failed to write tarball \"{}\"",
-            format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
-        );
-        Global::crash();
+    if let Err(err) = file.write_all(tarball_bytes) {
+        // Windows cannot delete the file while it is open.
+        drop(file);
+        // A `--filename` that is a symlink or a device is not ours to delete.
+        if bun_sys::lstat(abs_tarball_dest).is_ok_and(|stat| {
+            bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) == bun_sys::FileKind::File
+        }) {
+            let _ = bun_sys::unlink(abs_tarball_dest);
+        }
+        fail_write_tarball(err, abs_tarball_dest);
     }
 }
 
@@ -2315,6 +2472,7 @@ fn add_archive_entry(
         return entry.clear();
     }
 
+    let mut written: usize = 0;
     loop {
         let read = match bun_sys::read(file, read_buf) {
             Ok(0) => break,
@@ -2323,8 +2481,18 @@ fn add_archive_entry(
         };
         // The size of each write reaches the compressor, so it is part of what keeps the bytes stable.
         for chunk in read_buf[..read].chunks(8192) {
-            ctx.stats.unpacked_size += write_archive_data(archive, chunk);
+            written += write_archive_data(archive, chunk);
         }
+    }
+    ctx.stats.unpacked_size += written;
+
+    // libarchive leaves out what is past the size in the header, and fills up with zeroes what is missing.
+    if (written as i64) < stat.st_size as i64 {
+        Output::err_generic(
+            "file got shorter while it was packed: \"{}\"",
+            format_args!("{}", bun_fmt::escape_control_chars(filename.as_bytes())),
+        );
+        Global::crash();
     }
 
     entry.clear()
@@ -2751,6 +2919,31 @@ impl IgnorePatterns {
         }
     }
 
+    /// Like npm, a workspace also goes by the ignore files of the project's root and of the directories
+    /// between the two, read as if they were in the workspace's own directory. Its own files come after them.
+    fn read_above_workspace(workspace_path: &[u8]) -> Vec<IgnorePatterns> {
+        let root = path::string_paths::without_trailing_slash_windows_path(
+            path::fs::FileSystem::instance().top_level_dir(),
+        );
+        let mut above: Vec<&[u8]> = Vec::new();
+        let mut dir_path = workspace_path;
+        while dir_path != root {
+            // A workspace that is a link to a folder outside of the project.
+            let Some(parent) = path::dirname(dir_path) else {
+                return Vec::new();
+            };
+            above.push(parent);
+            dir_path = parent;
+        }
+        // Depth 0: the walk, which starts at depth 1, never leaves these behind.
+        let read = |dir_path: &&[u8]| {
+            let dir = (Dir::cwd().open_dir(dir_path, ITERABLE))
+                .unwrap_or_else(|err| fail_open_dir(err.into(), dir_path));
+            Self::read_from_disk(&dir, 0)
+        };
+        above.iter().rev().filter_map(read).collect()
+    }
+
     /// ignore files are always ignored, don't need to worry about opening or reading twice
     fn read_from_disk(dir: &Dir, dir_depth: usize) -> Option<IgnorePatterns> {
         let mut opened: Option<(File, IgnorePatternsKind)> = None;
@@ -2817,7 +3010,7 @@ fn print_archived_files_and_packages(
         bun_core::prettyln!(
             "<r><b><cyan>packed<r> {} {}",
             fmt_size(size),
-            bstr::BStr::new(path),
+            bun_fmt::escape_control_chars(path),
         );
     };
     match pack_list {
@@ -2846,7 +3039,10 @@ fn print_archived_files_and_packages(
     }
 
     for dep in ctx.bundled_deps.iter() {
-        bun_core::prettyln!("<r><b><green>bundled<r> {}", bstr::BStr::new(&dep.name));
+        bun_core::prettyln!(
+            "<r><b><green>bundled<r> {}",
+            bun_fmt::escape_control_chars(&dep.name)
+        );
     }
 
     Output::flush();

@@ -1640,6 +1640,27 @@ pub(crate) fn edit(
             }
         }
     }
+    // Without a group flag the entries of all groups this install follows take the spec, as for a folder and --latest.
+    if !move_to_target && manager.subcommand == Subcommand::Add {
+        let features = manager.options.local_package_features;
+        for request in updates.iter() {
+            let name = request.get_resolved_name(&manager.lockfile);
+            let mut declared = [
+                (DependencyGroup::DEPENDENCIES, true),
+                (DependencyGroup::DEV, features.dev_dependencies),
+                (DependencyGroup::OPTIONAL, features.optional_dependencies),
+            ]
+            .into_iter()
+            .filter(|(_, followed)| *followed)
+            .filter_map(|(group, _)| string_entry(current_package_json, group.prop, name));
+            if let Some(slot) = declared
+                .next()
+                .filter(|slot| request.e_string == Some(slot.as_ptr()))
+            {
+                also_declared.extend(declared.map(|other| (slot, other)));
+            }
+        }
+    }
     for (slot, mut other) in also_declared {
         if other.data.slice() != slot.data.slice() {
             changed = true;

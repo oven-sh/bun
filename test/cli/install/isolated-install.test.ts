@@ -806,6 +806,28 @@ test.concurrent("what a workspace no longer depends on is unlinked there and sta
   });
 });
 
+test.concurrent("a workspace that the root no longer depends on is unlinked from the root's node_modules", async () => {
+  const root = { name: "dropped-by-the-root", workspaces: ["packages/*"] };
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+    files: {
+      "package.json": JSON.stringify({ ...root, dependencies: { lib: "workspace:*", "no-deps": "1.0.0" } }),
+      "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0", bin: { "lib-cli": "cli.js" } }),
+      "packages/lib/cli.js": "#!/usr/bin/env node\n",
+    },
+  });
+  const nodeModules = join(packageDir, "node_modules");
+  await runBunInstall(installEnv(packageDir), packageDir);
+  expect(await readdirSorted(nodeModules)).toEqual([".bin", ".bun", "lib", "no-deps"]);
+  expect(await readdirSorted(join(nodeModules, ".bin"))).toHaveBins(["lib-cli"]);
+
+  await write(packageJson, JSON.stringify({ ...root, dependencies: { "no-deps": "1.0.0" } }));
+  await runBunInstall(installEnv(packageDir), packageDir);
+
+  expect(await readdirSorted(nodeModules)).toEqual([".bin", ".bun", "no-deps"]);
+  expect(await readdirSorted(join(nodeModules, ".bin"))).toEqual([]);
+});
+
 test.concurrent("the last dependency that left package.json is unlinked from node_modules", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
@@ -3630,9 +3652,11 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
       const nested = join(packageDir, "packages", "m", "node_modules", "no-deps");
       expect(lstatSync(nested).isDirectory()).toBe(true);
 
+      // It says that it clears nothing behind the link.
       await runBunInstall(installEnv(packageDir), packageDir, {
         packages: ["--linker", "isolated"],
         savesLockfile: false,
+        allowWarnings: true,
       });
 
       expect(readlinkSync(nested)).toBe(linkInMember);

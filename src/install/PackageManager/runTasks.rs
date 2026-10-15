@@ -783,7 +783,9 @@ fn run_tasks_erased(
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
-                            bun_core::fmt::redacted_npm_url(metadata.url.slice()),
+                            bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
+                                metadata.url.slice()
+                            )),
                             response.status_code,
                         );
                     } else {
@@ -792,7 +794,9 @@ fn run_tasks_erased(
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                            bun_core::fmt::redacted_npm_url(metadata.url.slice()),
+                            bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
+                                metadata.url.slice()
+                            )),
                             response.status_code,
                         );
                     }

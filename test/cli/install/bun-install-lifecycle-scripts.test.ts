@@ -1337,8 +1337,8 @@ describe("the trusted set", () => {
     expect(trusted.exitCode).toBe(0);
   });
 
-  // A checkout without the workspace that declares the list has only bun.lock to learn it from (frozen-lockfile-pruned.test.ts).
-  test.concurrent("bun.lock records a list that names nothing installed for as long as it is declared", async () => {
+  // A checkout without the workspace that declares `[]` has only bun.lock to learn it from (frozen-lockfile-pruned.test.ts).
+  test.concurrent("bun.lock records an empty list, and only that one, for as long as it is declared", async () => {
     const manifest = { name: "foo", dependencies: { "no-deps": "1.0.0" } };
     using ctx = await project("hoisted", { "package.json": manifest });
     const install = async (trustedDependencies?: string[]) => {
@@ -1353,18 +1353,10 @@ describe("the trusted set", () => {
     expect(lock).not.toContain("trustedDependencies");
     const withEmptyList = lock.replace('  "packages": {', '  "trustedDependencies": [],\n  "packages": {');
 
-    // Earlier versions left the list out: that bun.lock is not out of date, and the next install adds it.
-    await write(ctx.packageJson, JSON.stringify({ ...manifest, trustedDependencies: ["not-installed"] }));
-    const frozen = await bun(ctx, ["install", "--frozen-lockfile"]);
-    expect(frozen.err).not.toContain("error:");
-    expect(frozen.exitCode).toBe(0);
-
-    expect(await install(["not-installed"])).toEqual({ saved: true, lock: withEmptyList });
-    expect(await install(["not-installed"])).toEqual({ saved: false, lock: withEmptyList });
-    expect(await install([])).toEqual({ saved: false, lock: withEmptyList });
-    expect(await install()).toEqual({ saved: true, lock });
+    expect(await install(["not-installed"])).toEqual({ saved: false, lock });
     expect(await install([])).toEqual({ saved: true, lock: withEmptyList });
     expect(await install([])).toEqual({ saved: false, lock: withEmptyList });
+    expect(await install()).toEqual({ saved: true, lock });
   });
 
   // It cannot record that the scripts ran, so every frozen install would run them again.

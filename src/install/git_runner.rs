@@ -75,8 +75,9 @@ enum Step {
         url: Vec<u8>,
         is_retry: bool,
     },
-    /// `git clone --bare <this URL> <tmp>` (clone task).
-    Clone(Vec<u8>),
+    /// `git clone --bare <url> <tmp>` (clone task). `replaces`: the cache has a clone that git
+    /// cannot use.
+    Clone { url: Vec<u8>, replaces: bool },
     /// `git log -1 <committish>` (commit task).
     Log,
     /// `git <this --git-dir=> ls-tree -r <resolved>` in the bare repository (checkout task).
@@ -90,8 +91,8 @@ enum Step {
 pub(crate) enum Finalize {
     /// The bare repository exists (a cache hit, or `git fetch` refreshed it).
     Repo(Fd),
-    /// A fresh bare clone of this URL, to move into the cache.
-    PublishRepo(CacheStaging, Vec<u8>),
+    /// A fresh bare clone of this URL, to move into the cache, and `Step::Clone::replaces`.
+    PublishRepo(CacheStaging, Vec<u8>, bool),
     /// A checkout the cache already has, and what `read_package_json_in` returned for it.
     CachedCheckout(bun_sys::Dir, bun_sys::Maybe<Vec<u8>>),
     /// A fresh checkout, to strip and move into the cache.
@@ -116,8 +117,8 @@ impl Finalize {
             Finalize::Repo(fd) => Ok(Task::Data {
                 git_clone: ManuallyDrop::new(fd),
             }),
-            Finalize::PublishRepo(staging, url) => {
-                finish_clone(task, staging, &url).map(|dir| Task::Data {
+            Finalize::PublishRepo(staging, url, replaces) => {
+                finish_clone(task, staging, &url, replaces).map(|dir| Task::Data {
                     git_clone: ManuallyDrop::new(dir.into_raw()),
                 })
             }
@@ -239,76 +240,162 @@ fn copy_linked_files(checkout: &bun_sys::Dir, tree: &[u8]) -> bun_sys::Maybe<()>
         .collect();
     entries.sort_unstable();
 
-    // All are read before any is replaced: a link can lead to a link.
+    // All are read before any is replaced: a link can lead to a link. `None`: not a link that
+    // git wrote a file for.
     let mut targets: Vec<Option<Vec<u8>>> = Vec::with_capacity(entries.len());
     for &(path, mode) in &entries {
-        if mode != LINK {
+        if mode != LINK || !stays_in_checkout(path) {
             targets.push(None);
             continue;
-        }
-        // git only skips a path that it does not accept, so one can be listed here.
-        if !bun_patch::is_safe_patch_path(path) {
-            return Err(bun_sys::Error::from_code(E::EINVAL, bun_sys::Tag::unlink));
         }
         let target = checkout
             .open_file(path, O::RDONLY | O::CLOEXEC | O::NOFOLLOW, 0)
             .and_then(|file| file.read_to_end());
-        targets.push(Some(match target {
-            Err(err) if err.get_errno() != E::ENOENT => return Err(err),
-            target => target.unwrap_or_default(),
-        }));
+        targets.push(match target {
+            Ok(target) => Some(target),
+            Err(err) if matches!(err.get_errno(), E::ENOENT | E::EISDIR) => None,
+            Err(err) => return Err(err),
+        });
     }
 
-    let link_count = targets.iter().flatten().count();
-    let file_behind = |link: usize| -> Option<usize> {
-        let mut at = link;
-        // A chain with more hops than there are links is a loop.
-        for _ in 0..=link_count {
-            let Some(target) = &targets[at] else {
-                return matches!(entries[at].1, b"100644" | b"100755").then_some(at);
-            };
-            let path = link_target_path(entries[at].0, target)?;
-            at = entries
-                .binary_search_by(|(listed, _)| (*listed).cmp(&path))
-                .ok()?;
+    let ends = link_ends(&entries, &targets);
+    for (link, end) in ends.iter().enumerate() {
+        if targets[link].is_none() {
+            continue;
         }
-        None
-    };
-    for link in (0..entries.len()).filter(|&at| targets[at].is_some()) {
         let path = entries[link].0;
-        match bun_sys::unlinkat(checkout.fd(), &bun_core::ZBox::from_bytes(path)) {
-            Err(err) if err.get_errno() != E::ENOENT => return Err(err),
-            _ => {}
-        }
-        let Some((from, mode)) = file_behind(link).map(|file| entries[file]) else {
+        bun_sys::unlinkat(checkout.fd(), &bun_core::ZBox::from_bytes(path))?;
+        let LinkEnd::At(Some(end)) = end else {
             continue;
         };
+        let Ok(file) = entries.binary_search_by(|(listed, _)| (*listed).cmp(end)) else {
+            continue;
+        };
+        let (from, mode) = entries[file];
         // The modes that git creates its files with.
-        let mode = if mode == b"100755" { 0o777 } else { 0o666 };
-        let from = checkout.open_file(from, O::RDONLY | O::CLOEXEC | O::NOFOLLOW, 0)?;
+        let mode = match mode {
+            b"100755" => 0o777,
+            b"100644" => 0o666,
+            _ => continue,
+        };
+        if !stays_in_checkout(from) {
+            continue;
+        }
+        let from = match checkout.open_file(from, O::RDONLY | O::CLOEXEC | O::NOFOLLOW, 0) {
+            // Not every listed file is on disk: `.bun-tag` is not.
+            Err(err) if err.get_errno() == E::ENOENT => continue,
+            from => from?,
+        };
         let to = checkout.open_file(path, O::WRONLY | O::CREAT | O::EXCL | O::CLOEXEC, mode)?;
         bun_sys::copy_file(from.handle(), to.handle())?;
     }
     Ok(())
 }
 
-/// The path from the root of the repository that `target` names in the folder of `link`, worked
-/// out from the text alone. `None` if it is not below the root.
-fn link_target_path(link: &[u8], target: &[u8]) -> Option<Vec<u8>> {
-    if target.first() == Some(&b'/') {
-        return None;
+/// Whether a path that git lists stays below the folder it is opened from. git writes no file
+/// for one that does not.
+fn stays_in_checkout(path: &[u8]) -> bool {
+    if cfg!(windows) {
+        return bun_patch::is_safe_patch_path(path);
     }
-    let mut parts: Vec<&[u8]> = strings::split(link, b"/").collect();
-    parts.pop();
-    for part in strings::split(target, b"/") {
-        match part {
-            b"" | b"." => {}
-            b".." => drop(parts.pop()?),
-            _ => parts.push(part),
+    !path.is_empty()
+        && path[0] != b'/'
+        && !strings::contains_char(path, 0)
+        && !strings::split(path, b"/").any(|part| part == b"..")
+}
+
+enum LinkEnd {
+    Unknown,
+    /// On the way to it. A walk that meets it again is in a loop.
+    Walking,
+    /// The path from the root of the repository, no part of it a link. `None`: not in there.
+    At(Option<Vec<u8>>),
+}
+
+/// Where each link of `entries` (sorted; `targets` has its text) leads, also through other links,
+/// worked out from the text alone. Each link is walked once.
+fn link_ends(entries: &[(&[u8], &[u8])], targets: &[Option<Vec<u8>>]) -> Vec<LinkEnd> {
+    struct Walk<'a> {
+        link: usize,
+        /// The path so far.
+        at: Vec<u8>,
+        /// The parts still to go, the next one last.
+        rest: Vec<&'a [u8]>,
+    }
+    let walk_of = |link: usize| {
+        let path = entries[link].0;
+        let mut rest: Vec<&[u8]> = targets[link]
+            .as_deref()
+            .map(|target| strings::split(target, b"/").collect())
+            .unwrap_or_default();
+        rest.reverse();
+        Walk {
+            link,
+            at: path[..strings::last_index_of_char(path, b'/').unwrap_or(0)].to_vec(),
+            rest,
+        }
+    };
+
+    let mut ends: Vec<LinkEnd> = targets
+        .iter()
+        .map(|target| match target {
+            Some(target) if target.first() != Some(&b'/') => LinkEnd::Unknown,
+            _ => LinkEnd::At(None),
+        })
+        .collect();
+    // A stack, not recursion: a chain of links can be long.
+    let mut walks: Vec<Walk<'_>> = Vec::new();
+    for first in 0..ends.len() {
+        if !matches!(ends[first], LinkEnd::Unknown) {
+            continue;
+        }
+        ends[first] = LinkEnd::Walking;
+        walks.push(walk_of(first));
+        while let Some(walk) = walks.last_mut() {
+            let end = match walk.rest.pop() {
+                None => Some(core::mem::take(&mut walk.at)),
+                Some(b"" | b".") => continue,
+                Some(b"..") if walk.at.is_empty() => None,
+                Some(b"..") => {
+                    let parent = strings::last_index_of_char(&walk.at, b'/').unwrap_or(0);
+                    walk.at.truncate(parent);
+                    continue;
+                }
+                Some(part) => {
+                    let parent = walk.at.len();
+                    if parent > 0 {
+                        walk.at.push(b'/');
+                    }
+                    walk.at.extend_from_slice(part);
+                    let Some(next) = entries
+                        .binary_search_by(|(listed, _)| (*listed).cmp(&walk.at))
+                        .ok()
+                        .filter(|&listed| targets[listed].is_some())
+                    else {
+                        continue;
+                    };
+                    match &ends[next] {
+                        LinkEnd::At(Some(end)) => {
+                            walk.at.clone_from(end);
+                            continue;
+                        }
+                        LinkEnd::At(None) | LinkEnd::Walking => None,
+                        LinkEnd::Unknown => {
+                            // This part is walked again once that link's end is known.
+                            walk.at.truncate(parent);
+                            walk.rest.push(part);
+                            ends[next] = LinkEnd::Walking;
+                            walks.push(walk_of(next));
+                            continue;
+                        }
+                    }
+                }
+            };
+            ends[walk.link] = LinkEnd::At(end);
+            walks.pop();
         }
     }
-    let path = parts.join(&b'/');
-    bun_patch::is_safe_patch_path(&path).then_some(path)
+    ends
 }
 
 /// As npm and pnpm do. A package that bundles dependencies keeps it.
@@ -540,29 +627,62 @@ fn clone_config(url: &[u8], is_sha256: bool) -> Vec<u8> {
     .concat()
 }
 
-/// The one of `urls` that the clone in `repo` was made from. `None` unless the folder is as
-/// `finish_clone` and git left it: git takes nothing from it but refs and objects.
-fn own_clone_url<'a>(repo: &bun_sys::Dir, urls: &'a [Vec<u8>]) -> Option<&'a [u8]> {
-    use bun_sys::O;
-    let config = repo
+/// Empty if there is none.
+fn read_clone_config(repo: &bun_sys::Dir) -> bun_sys::Maybe<Vec<u8>> {
+    use bun_sys::{E, O};
+    match repo
         .open_file(b"config", O::RDONLY | O::CLOEXEC | O::NOFOLLOW, 0)
         .and_then(|file| file.read_to_end())
-        .ok()?;
-    let url = urls
+    {
+        Err(err) if matches!(err.get_errno(), E::ENOENT | E::ELOOP) => Ok(Vec::new()),
+        config => config,
+    }
+}
+
+/// Makes `clone_config` the `config` of the clone in `repo`, whatever that said before.
+fn write_clone_config(repo: &bun_sys::Dir, url: &[u8]) -> bun_sys::Maybe<()> {
+    let old = read_clone_config(repo)?;
+    // With the wrong answer git cannot read the objects, and no more.
+    let config = clone_config(url, strings::contains(&old, b"objectformat = sha256"));
+    if config == old {
+        return Ok(());
+    }
+    // Another install can be reading it, so it is never half written.
+    let mut tmp_name_buf = [0u8; 64];
+    let tmp_name =
+        Path::fs::FileSystem::tmpname(b"tmp", &mut tmp_name_buf, bun_core::fast_random())
+            .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENOSPC, bun_sys::Tag::open))?;
+    bun_sys::File::write_file(repo.fd(), tmp_name, &config)?;
+    bun_sys::renameat(repo.fd(), tmp_name, repo.fd(), bun_core::zstr!("config"))
+}
+
+/// Puts the form that the `config` of the clone in `repo` names where it is tried first.
+fn try_last_url_first(repo: &bun_sys::Dir, urls: &mut Vec<Vec<u8>>) {
+    let config = read_clone_config(repo).unwrap_or_default();
+    let last = urls
         .iter()
-        .find(|url| clone_config(url, false) == config || clone_config(url, true) == config)?;
+        .position(|url| clone_config(url, false) == config || clone_config(url, true) == config);
+    if let Some(last) = last {
+        let url = urls.remove(last);
+        urls.push(url);
+    }
+}
+
+/// Whether git, under `clone_config`, takes nothing from the folder `repo` but its own refs and
+/// objects.
+fn is_own_clone(repo: &bun_sys::Dir) -> bool {
     let has = |name: &bun_core::ZStr| bun_sys::exists_at_type(repo.fd(), name).is_ok();
     // The first three are git's own test: a tool that copies no empty folder drops `refs`.
-    (has(bun_core::zstr!("HEAD"))
+    has(bun_core::zstr!("HEAD"))
         && has(bun_core::zstr!("objects"))
         && has(bun_core::zstr!("refs"))
         && !has(bun_core::zstr!("commondir"))
         && !has(bun_core::zstr!("objects/info/alternates"))
         && !has(bun_core::zstr!("objects/info/http-alternates"))
-        && has_no_links(repo))
-    .then_some(url.as_slice())
+        && has_no_links(repo)
 }
 
+/// `dir` is a handle that nothing was listed through: a listing goes on where the last one stopped.
 fn has_no_links(dir: &bun_sys::Dir) -> bool {
     use bun_sys::{EntryKind, O};
     let mut folders: Vec<Vec<u8>> = Vec::new();
@@ -595,21 +715,22 @@ fn has_no_links(dir: &bun_sys::Dir) -> bool {
     })
 }
 
-/// Replaces the `config` that git wrote for the clone in `staging`, and moves it into the cache.
+/// Moves the clone of `url` in `staging` into the cache. One that is there already stays, unless
+/// this one `replaces` it.
 fn finish_clone(
     task: &mut Task::Task<'_>,
     staging: CacheStaging,
     url: &[u8],
+    replaces: bool,
 ) -> Result<bun_sys::Dir, Error> {
-    let req = task.request_git_clone();
-    let (name, urls) = (req.name.slice().to_vec(), clone_urls(req.url.slice()));
-    let config = bun_core::ZBox::from_bytes([&staging.tmp_name[..], b"/config"].concat());
-    let written = bun_sys::File::read_from(staging.cache_dir, config.as_bytes()).and_then(|git| {
-        let is_sha256 = strings::contains(&git, b"objectformat = sha256");
-        bun_sys::File::write_file(staging.cache_dir, &config, &clone_config(url, is_sha256))
-    });
-    if let Err(err) = written {
-        staging.discard();
+    let name = task.request_git_clone().name.slice().to_vec();
+    let repo = staging.publish(
+        &mut task.log,
+        &name,
+        &bare_repo_folder_name(task.id),
+        &|repo| !replaces && is_own_clone(repo),
+    )?;
+    if let Err(err) = write_clone_config(&repo, url) {
         task.log.add_error_fmt(
             None,
             bun_ast::Loc::EMPTY,
@@ -621,12 +742,7 @@ fn finish_clone(
         );
         return Err(Error::InstallFailed);
     }
-    staging.publish(
-        &mut task.log,
-        &name,
-        &bare_repo_folder_name(task.id),
-        &|repo| own_clone_url(repo, &urls).is_some(),
-    )
+    Ok(repo)
 }
 
 /// `<hex(clone task id)>.git`: the cache folder of a bare clone.
@@ -765,7 +881,7 @@ impl GitSubprocess {
     fn begin_clone(this: ThisPtr<Self>) -> Result<(), Error> {
         bun_analytics::features::git_dependencies.fetch_add(1, Ordering::Relaxed);
         use bun_sys::{E, O};
-        let urls = clone_urls(this.task().request_git_clone().url.slice());
+        let mut urls = clone_urls(this.task().request_git_clone().url.slice());
 
         let offline = this.manager().options.offline
             == crate::package_manager_real::options::OfflineMode::Offline;
@@ -775,13 +891,16 @@ impl GitSubprocess {
             .open_at_with(&folder_name, O::RDONLY | O::CLOEXEC | O::NOFOLLOW)
         {
             Ok(repo) => {
-                if let Some(url) = own_clone_url(&repo, &urls) {
+                if !urls.is_empty() && is_own_clone(&repo) {
+                    try_last_url_first(&repo, &mut urls);
+                    this.urls.set(urls);
                     // --prefer-offline still fetches: a stale clone may lack the pinned commit.
-                    if offline {
-                        Self::finish_on_pool(this, Finalize::Repo(repo.into_raw()));
-                        return Ok(());
+                    if !offline {
+                        return Self::fetch_next(this, repo);
                     }
-                    return Self::spawn_fetch(this, repo, url, false);
+                    write_clone_config(&repo, this.urls.get().last().expect("is not empty"))?;
+                    Self::finish_on_pool(this, Finalize::Repo(repo.into_raw()));
+                    return Ok(());
                 }
             }
             Err(err) if matches!(err.get_errno(), E::ENOENT | E::ENOTDIR | E::ELOOP) => {}
@@ -798,7 +917,37 @@ impl GitSubprocess {
         if this.urls.get().is_empty() {
             return Err(Error::RepositoryNotFound);
         }
-        Self::spawn_clone(this)
+        Self::spawn_clone(this, false)
+    }
+
+    /// Takes the next of `urls`, which is not empty, and notes it in `clone_output`.
+    fn next_url(&self, command: &str) -> Vec<u8> {
+        let url = self
+            .urls
+            .with_mut(|urls| urls.pop())
+            .expect("a clone URL is left");
+        let heading = format!("git {} {}\n", command, for_terminal(BStr::new(&url)));
+        self.clone_output
+            .with_mut(|output| output.extend_from_slice(heading.as_bytes()));
+        url
+    }
+
+    /// What git said of the URL that `next_url` returned.
+    fn hold_output(&self, stderr: &[u8]) {
+        self.clone_output.with_mut(|output| {
+            output.extend_from_slice(stderr);
+            if output.last() != Some(&b'\n') {
+                output.push(b'\n');
+            }
+        });
+    }
+
+    /// `urls` is not empty. May free `this` on `Ok`.
+    fn fetch_next(this: ThisPtr<Self>, repo: bun_sys::Dir) -> Result<(), Error> {
+        let url = this.next_url("fetch");
+        // The form that works is the one that stays in there.
+        write_clone_config(&repo, &url)?;
+        Self::spawn_fetch(this, repo, &url, false)
     }
 
     /// With `-C` instead, git looks for a repository above a folder that is none.
@@ -846,16 +995,13 @@ impl GitSubprocess {
     }
 
     /// `urls` is not empty. May free `this` on `Ok`.
-    fn spawn_clone(this: ThisPtr<Self>) -> Result<(), Error> {
-        let url = this
-            .urls
-            .with_mut(|urls| urls.pop())
-            .expect("a clone URL is left");
-        let heading = format!("git clone {}\n", for_terminal(BStr::new(&url)));
-        this.clone_output
-            .with_mut(|output| output.extend_from_slice(heading.as_bytes()));
+    fn spawn_clone(this: ThisPtr<Self>, replaces: bool) -> Result<(), Error> {
+        let url = this.next_url("clone");
         let tmp_path = this.new_staging()?;
-        this.step.set(Step::Clone(url.clone()));
+        this.step.set(Step::Clone {
+            url: url.clone(),
+            replaces,
+        });
         Self::spawn(
             this,
             &[
@@ -883,7 +1029,7 @@ impl GitSubprocess {
         let committish = req.committish.slice().to_vec();
         let git_dir = this.git_dir_arg(req.clone_id);
         this.step.set(Step::Log);
-        if committish.is_empty() {
+        if committish.is_empty() || committish == b"HEAD" {
             // The first that resolves. No fetch moves the clone's own HEAD, the second.
             Self::spawn(
                 this,
@@ -1192,7 +1338,7 @@ impl GitSubprocess {
         let step = this.step.replace(Step::Config);
         // "remote: Repository not found." / "fatal: repository '<url>' does not exist"
         let not_found = !ok
-            && matches!(step, Step::Clone(_))
+            && matches!(step, Step::Clone { .. })
             && ((strings::contains(stderr, b"remote:")
                 && strings::contains(stderr, b"not")
                 && strings::contains(stderr, b"found"))
@@ -1205,7 +1351,8 @@ impl GitSubprocess {
                 ..
             }
         ) && matches!(status, Status::Exited(exit) if exit.code == 1);
-        if !ok && !lost_a_ref && !matches!(step, Step::Clone(_) | Step::Config) {
+        // The others hold what git said until the last URL has failed.
+        if !ok && matches!(step, Step::Log | Step::ListTree(_) | Step::Checkout(_)) {
             this.report_failure(status, stderr);
         }
         let name = for_terminal(BStr::new(&this.name));
@@ -1223,28 +1370,38 @@ impl GitSubprocess {
             Step::Fetch { repo, url, .. } => {
                 if ok {
                     Self::finish_on_pool(this, Finalize::Repo(repo.into_raw()));
-                } else if lost_a_ref {
-                    this.reset_polls();
-                    if let Err(err) = Self::spawn_fetch(this, repo, &url, true) {
-                        Self::fail(this, err);
-                    }
-                } else {
-                    this.log_failure(format_args!("\"git fetch\" for \"{}\" failed", name));
-                    Self::fail(this, Error::InstallFailed);
-                }
-            }
-            Step::Clone(url) => {
-                if ok {
-                    let staging = this.staging.take().expect("clone has a staging folder");
-                    Self::finish_on_pool(this, Finalize::PublishRepo(staging, url));
                     return;
                 }
-                this.clone_output.with_mut(|output| {
-                    output.extend_from_slice(stderr);
-                    if output.last() != Some(&b'\n') {
-                        output.push(b'\n');
-                    }
-                });
+                this.reset_polls();
+                if !lost_a_ref {
+                    this.hold_output(stderr);
+                }
+                // git names the clone's own folder: the fault is in there, not at the remote.
+                let is_damaged = strings::contains(stderr, &bare_repo_folder_name(this.task().id));
+                let next = if lost_a_ref {
+                    Self::spawn_fetch(this, repo, &url, true)
+                } else if is_damaged {
+                    drop(repo);
+                    this.urls.with_mut(|urls| urls.push(url));
+                    Self::spawn_clone(this, true)
+                } else if !this.urls.get().is_empty() {
+                    Self::fetch_next(this, repo)
+                } else {
+                    this.report_failure(status, &this.clone_output.take());
+                    this.log_failure(format_args!("\"git fetch\" for \"{}\" failed", name));
+                    Err(Error::InstallFailed)
+                };
+                if let Err(err) = next {
+                    Self::fail(this, err);
+                }
+            }
+            Step::Clone { url, replaces } => {
+                if ok {
+                    let staging = this.staging.take().expect("clone has a staging folder");
+                    Self::finish_on_pool(this, Finalize::PublishRepo(staging, url, replaces));
+                    return;
+                }
+                this.hold_output(stderr);
                 if !this.urls.get().is_empty() {
                     // The next URL form (ssh after https). "not found" is also what a host says
                     // of a private repository to a login without access.
@@ -1253,7 +1410,7 @@ impl GitSubprocess {
                         .expect("clone has a staging folder")
                         .discard();
                     this.reset_polls();
-                    if let Err(err) = Self::spawn_clone(this) {
+                    if let Err(err) = Self::spawn_clone(this, replaces) {
                         Self::fail(this, err);
                     }
                 } else {
@@ -1286,7 +1443,7 @@ impl GitSubprocess {
                         Self::fail(this, err);
                     }
                 } else {
-                    this.log_failure(format_args!("\"git checkout\" for \"{}\" failed", name));
+                    this.log_failure(format_args!("\"git ls-tree\" for \"{}\" failed", name));
                     Self::fail(this, Error::InstallFailed);
                 }
             }
@@ -1295,7 +1452,11 @@ impl GitSubprocess {
                     let staging = this.staging.take().expect("checkout has a staging folder");
                     Self::finish_on_pool(this, Finalize::PublishCheckout(staging, tree));
                 } else {
-                    this.log_failure(format_args!("\"git checkout\" for \"{}\" failed", name));
+                    // "git: 'restore' is not a git command."
+                    if strings::contains(stderr, b"'restore'") {
+                        bun_core::note!("git dependencies need git 2.24 or newer");
+                    }
+                    this.log_failure(format_args!("\"git restore\" for \"{}\" failed", name));
                     Self::fail(this, Error::InstallFailed);
                 }
             }
@@ -1325,7 +1486,9 @@ impl GitSubprocess {
             let ew = Output::error_writer();
             let _ = ew.print(format_args!(
                 "{}",
-                bun_core::fmt::redacted(BStr::new(stderr))
+                bun_core::fmt::EscapeControlCharsMultiline(bun_core::fmt::redacted(BStr::new(
+                    stderr
+                )))
             ));
             if stderr.last() != Some(&b'\n') {
                 let _ = ew.write_all(b"\n");

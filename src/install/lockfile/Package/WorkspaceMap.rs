@@ -55,7 +55,7 @@ impl WorkspaceMap {
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "Skipping workspace \"{}\": its package.json has no \"name\", so its dependencies will not be installed",
-                    BStr::new(dir)
+                    bun_core::fmt::escape_control_chars(dir)
                 ),
             );
         }
@@ -321,10 +321,10 @@ fn add_glob_error(
         Some(source),
         loc,
         "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r> ({} \"{}\")",
-        BStr::new(user_pattern),
+        bun_core::fmt::escape_control_chars(user_pattern),
         BStr::new(err.name()),
         <&'static str>::from(err.syscall),
-        BStr::new(failed_path),
+        bun_core::fmt::escape_control_chars(failed_path),
     );
     crate::Error::InstallFailed
 }
@@ -480,7 +480,10 @@ impl WorkspaceMap {
                         let _ = log.add_error_fmt(
                             Some(source),
                             arr.item_loc(source, i),
-                            format_args!("Workspace not found \"{}\"", BStr::new(input_path)),
+                            format_args!(
+                                "Workspace not found \"{}\"",
+                                bun_core::fmt::escape_control_chars(input_path)
+                            ),
                         );
                     } else {
                         let mut cwd_buf = vec![0u8; MAX_PATH_BYTES];
@@ -491,7 +494,7 @@ impl WorkspaceMap {
                             format_args!(
                                 "{} reading package.json for workspace package \"{}\" from \"{}\"",
                                 err.name(),
-                                BStr::new(input_path),
+                                bun_core::fmt::escape_control_chars(input_path),
                                 BStr::new(&cwd_buf[..cwd_len]),
                             ),
                         );
@@ -623,8 +626,8 @@ impl WorkspaceMap {
                                 format_args!(
                                     "{} reading package.json for workspace package \"{}\" from \"{}\"",
                                     err.name(),
-                                    BStr::new(entry_dir),
-                                    BStr::new(entry_base),
+                                    bun_core::fmt::escape_control_chars(entry_dir),
+                                    bun_core::fmt::escape_control_chars(entry_base),
                                 ),
                             );
                             continue;

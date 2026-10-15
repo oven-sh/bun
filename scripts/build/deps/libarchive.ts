@@ -115,7 +115,7 @@ export const libarchive: Dependency = {
     // Two zero blocks end a tar, and the reader still reads the input to its
     // end, so that the gzip trailer gets checked. Adds the tar reader option
     // `npm`, which `bun install` sets: where tar readers differ in what they
-    // take for a file, its name or its body, do what npm's does.
+    // take for a file or for its name, do what npm's does.
     "patches/libarchive/tar-npm-compat.patch",
   ],
 

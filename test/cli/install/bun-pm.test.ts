@@ -1102,7 +1102,7 @@ it("should remove all cache", async () => {
   expect(await new Response(stderr2).text()).toBe("");
   expect(await new Response(stdout2).text()).toInclude("Cleared 'bun install' cache\n");
   expect(await exited2).toBe(0);
-  expect(await exists(cache_dir)).toBeFalse();
+  expect(await readdirSorted(cache_dir)).toEqual([]);
 });
 
 it("bun pm migrate", async () => {
@@ -1678,7 +1678,7 @@ describe.concurrent("bun pm cache with an empty variable", () => {
 
     expect(await pmCache(["rm"], proj, spawnEnv)).toEqual(cleared);
     expect(await readdirSorted(proj)).toEqual(projectEntries);
-    expect(await exists(envCache)).toBeFalse();
+    expect(await readdirSorted(envCache)).toEqual([]);
   });
 
   test.each([
@@ -1825,8 +1825,68 @@ describe.concurrent("bun pm cache rm", () => {
     await symlink(sibling, join(envCache, "escape@1.0.0@@@1"), "junction");
 
     expect(await pmCache(["rm"], join(String(root), "proj"), cacheEnv(String(side)))).toEqual(cleared);
-    expect(await exists(envCache)).toBeFalse();
+    expect(await readdirSorted(envCache)).toEqual([]);
     expect(await readdirSorted(sibling)).toEqual(["keep.txt"]);
+  });
+
+  test("a cache directory that is a symlink is emptied, and the link still works", async () => {
+    using side = tempDir("pm-cache-rm-root-symlink", {
+      ...sideFiles,
+      "big-disk/bar@0.0.2@@@1/package.json": "{}",
+    });
+    using root = tempDir("pm-cache-rm-root-symlink-project", projectFiles);
+    const proj = join(String(root), "proj");
+    const target = join(String(side), "big-disk");
+    const spawnEnv = cacheEnv(String(side), { BUN_INSTALL_CACHE_DIR: join(String(side), "cache-link") });
+    await symlink(target, join(String(side), "cache-link"), "junction");
+
+    expect(await pmCache(["rm"], proj, spawnEnv)).toEqual(cleared);
+    expect(await readdirSorted(target)).toEqual([]);
+    expect(await pmCache([], proj, spawnEnv)).toEqual({ stdout: target, stderr: "", exitCode: 0 });
+  });
+
+  test.skipIf(isWindows)("a cache directory in a read-only parent is emptied", async () => {
+    using dir = tempDir("pm-cache-rm-read-only-parent", {
+      ...sideFiles,
+      ...projectFiles,
+      "var/cache/bar@0.0.2@@@1/package.json": "{}",
+    });
+    const parent = join(String(dir), "var");
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+    await chmod(parent, 0o555);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "cache", "rm"],
+      cwd: join(String(dir), "proj"),
+      env: cacheEnv(String(dir), { BUN_INSTALL_CACHE_DIR: join(parent, "cache") }),
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await chmod(parent, 0o755);
+
+    expect({ stdout, stderr, exitCode }).toEqual(cleared);
+    expect(await readdirSorted(join(parent, "cache"))).toEqual([]);
+  });
+
+  test.each([
+    [["rm", "bar"], "bar"],
+    [["rm", "bar@0.0.2"], "bar@0.0.2"],
+    [["rm", "--dry-run", "bar"], "bar"],
+    [["prune", "--max-age", "0", "bar"], "bar"],
+    [["clean"], "clean"],
+    [["clear", "--force"], "clear"],
+  ] as const)("a word the command does not take is an error and nothing is deleted: %j", async (args, word) => {
+    using side = tempDir("pm-cache-unexpected-word", sideFiles);
+    using root = tempDir("pm-cache-unexpected-word-project", projectFiles);
+
+    expect(await pmCache([...args], join(String(root), "proj"), cacheEnv(String(side)))).toEqual({
+      stdout: "",
+      stderr:
+        `error: unexpected argument "${word}"\n` + "usage: bun pm cache [rm | prune | pack <file> | unpack <file>]\n",
+      exitCode: 1,
+    });
+    expect(await readdirSorted(join(String(side), "bun-install", "install", "cache"))).toEqual(envCacheEntries);
   });
 
   test.each([[["rm"]], [["rm", "--dry-run"]]])(
@@ -1864,7 +1924,7 @@ describe.concurrent("bun pm cache rm", () => {
 
     expect(await pmCache(["rm"], proj, spawnEnv)).toEqual(cleared);
     expect(await readdirSorted(proj)).toEqual([".git", ".npmrc", "package.json", "src"]);
-    expect(await exists(join(String(side), "bun-install", "install", "cache"))).toBeFalse();
+    expect(await readdirSorted(join(String(side), "bun-install", "install", "cache"))).toEqual([]);
   });
 
   test("--dry-run prints what would be deleted and deletes nothing", async () => {
@@ -2144,8 +2204,8 @@ describe.concurrent("bun pm cache prune", () => {
 describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cache %s", action => {
   const done =
     action === "rm" ? cleared : { stdout: "Removed 1 package older than 30 days (2 bytes)\n", stderr: "", exitCode: 0 };
-  const left = action === "rm" ? null : ["0123456789abcdef.npm"];
-  const entries = async (cache: string) => ((await exists(cache)) ? await readdirSorted(cache) : null);
+  const left = action === "rm" ? [] : ["0123456789abcdef.npm"];
+  const entries = readdirSorted;
 
   /** The cache that the environment names, and `mine` with the same entries next to the project. */
   function caches(name: string) {

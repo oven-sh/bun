@@ -2610,7 +2610,8 @@ describe("`bun audit fix`", () => {
       `error: POST ${registryHref(server)}/-/npm/v1/security/advisories/bulk - 503`,
     );
     expect(exitCode).toBe(1);
-    expect(bulkHits.count).toBe(2);
+    // The audit, the re-audit and its five retries.
+    expect(bulkHits.count).toBe(7);
     expect(await lock(dir)).toContain('"a-dep@1.0.4"');
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
   });
@@ -4639,6 +4640,28 @@ describe("`bun audit fix`", () => {
       expect(exitCode).toBe(1);
     }
     expect(bulkHits.count).toBe(0);
+  });
+
+  test.concurrent.each([
+    ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],
+    ["CR", "\r", "\\r"],
+    ["BEL", "\x07", "\\x07"],
+    ["U+009B", "\u009b2K", "\\u009b2K"],
+    ["OSC 52", "\x1b]52;c;aGk=\x07", "\\x1b]52;c;aGk=\\x07"],
+  ])("%s in a dependent's range is printed spelled out", async (_, raw, spelled) => {
+    await using server = startRegistry({ "no-deps": [adv("<1.1.0")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "one-dep": "1.0.0" } });
+    const lockfile = await lock(dir);
+    expect(lockfile).toContain('"no-deps": "1.0.1"');
+    const range = JSON.stringify(`1.0.1 || a${raw}b`);
+    await write(join(dir, "bun.lock"), lockfile.replace('"no-deps": "1.0.1"', `"no-deps": ${range}`));
+
+    for (const args of [["--dry-run"], []]) {
+      const { stdout, stderr, exitCode } = await auditFix(dir, ...args);
+      expect(stdout).toContain(`\n    one-dep@1.0.0 depends on no-deps@1.0.1 || a${spelled}b\n`);
+      expect(stdout + stderr).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/);
+      expect(exitCode).toBe(1);
+    }
   });
 });
 

@@ -37,6 +37,30 @@ pub(crate) struct ReadmeInfo {
     pub contents: Vec<u8>,
 }
 
+/// Where the files are that `"bin"` and `"directories.bin"` name.
+pub(crate) enum PackageFiles<'a> {
+    /// The folder that was packed.
+    Folder { root: Fd, abs_path: &'a [u8] },
+    /// The paths of the files in the tarball, without the leading `package/`.
+    Tarball(&'a [Vec<u8>]),
+}
+
+impl PackageFiles<'_> {
+    fn has(&self, subpath: &ZStr) -> bool {
+        match self {
+            PackageFiles::Folder { root, .. } => bun_sys::exists_at(*root, subpath),
+            PackageFiles::Tarball(paths) => {
+                let subpath = strings::without_trailing_slash(subpath.as_bytes());
+                let is_at_or_below = |path: &Vec<u8>| {
+                    (path.strip_prefix(subpath))
+                        .is_some_and(|below| below.is_empty() || below[0] == b'/')
+                };
+                paths.iter().any(is_at_or_below)
+            }
+        }
+    }
+}
+
 /// npm's `{README,README.*}` glob, case-insensitive; tar entry names are UTF-16 on Windows.
 fn is_readme_filename<T: bun_core::NoUninit + Into<u32>>(name: &[T]) -> bool {
     const README: &[u8] = b"README";
@@ -142,6 +166,7 @@ impl Context {
 
         let mut maybe_package_json_contents: Option<Box<[u8]>> = None;
         let mut maybe_readme: Option<ReadmeInfo> = None;
+        let mut files: Vec<Vec<u8>> = Vec::new();
 
         let mut iter = archive_ok(ArchiveIterator::init(&tarball_bytes));
 
@@ -178,11 +203,21 @@ impl Context {
                         space_between_number_and_unit: false
                     }
                 ),
-                bun_fmt::fmt_os_path(stripped.unwrap_or(pathname), Default::default()),
+                bun_fmt::EscapeControlChars(bun_fmt::fmt_os_path(
+                    stripped.unwrap_or(pathname),
+                    Default::default()
+                )),
             );
 
             let Some(filename) = stripped else { continue };
-            if next.kind != FileKind::File || filename.iter().any(|&c| bun_paths::is_sep_any_t(c)) {
+            if next.kind != FileKind::File {
+                continue;
+            }
+            #[cfg(not(windows))]
+            files.push(filename.to_vec());
+            #[cfg(windows)]
+            files.push(strings::to_utf8_alloc(filename));
+            if filename.iter().any(|&c| bun_paths::is_sep_any_t(c)) {
                 continue;
             }
 
@@ -225,6 +260,7 @@ impl Context {
                     Global::crash();
                 }
             };
+        pack::drop_shadowed_properties(json);
 
         if pack::is_private_package(&json) {
             return Err(PackError::PrivatePackage);
@@ -266,10 +302,7 @@ impl Context {
 
         let normalized_pkg_info = PublishCommand::normalized_package(
             manager,
-            strings::without_suffix_comptime(
-                manager.original_package_json_path.as_bytes(),
-                b"package.json",
-            ),
+            PackageFiles::Tarball(&files),
             &package_name,
             &package_version,
             &mut json,
@@ -465,7 +498,7 @@ impl PublishCommand {
             if pack::is_private_package(&root) {
                 bun_core::prettyln!(
                     "<d>skipped {}: private<r>",
-                    bstr::BStr::new(if name.is_empty() {
+                    bun_fmt::escape_control_chars(if name.is_empty() {
                         abs_package_json_path.as_bytes()
                     } else {
                         &*name
@@ -487,14 +520,14 @@ impl PublishCommand {
                 if exists {
                     bun_core::prettyln!(
                         "<d>skipped {}@{}: already on the registry<r>",
-                        bstr::BStr::new(&name),
-                        bstr::BStr::new(version),
+                        bun_fmt::escape_control_chars(&name),
+                        bun_fmt::escape_control_chars(version),
                     );
                     continue;
                 }
             }
 
-            bun_core::prettyln!("\n<b><magenta>{}<r>", bstr::BStr::new(&name));
+            bun_core::prettyln!("\n<b><magenta>{}<r>", bun_fmt::escape_control_chars(&name));
             let context = Context::from_workspace(&mut *ctx, manager, &abs_package_json_path);
             let target = manager.options.publish_target(&name);
             bun_core::handle_oom(manager.options.set_publish_target(&cli_target));
@@ -505,7 +538,7 @@ impl PublishCommand {
             bun_core::handle_oom(manager.options.set_publish_target(target));
             bun_core::prettyln!(
                 "\n<b><magenta>{}<r>",
-                bstr::BStr::new(&context.package_name)
+                bun_fmt::escape_control_chars(&context.package_name)
             );
             if bun_core::handle_oom(Self::publish(manager, context)) {
                 Self::finish_directory_publish(&mut *ctx, manager, context, abs_package_json_path)?;
@@ -518,8 +551,8 @@ impl PublishCommand {
     fn print_published(manager: &PackageManager, context: &Context) {
         bun_core::prettyln!(
             "\n<green> +<r> {}@{}{}",
-            bstr::BStr::new(&context.package_name),
-            bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
+            bun_fmt::escape_control_chars(&context.package_name),
+            bun_fmt::escape_control_chars(dependency::without_build_tag(&context.package_version)),
             if manager.options.dry_run {
                 " (dry-run)"
             } else {
@@ -620,9 +653,10 @@ impl PublishCommand {
             b"",
         );
 
-        let Ok(res) = req.send_sync(&mut response_buf) else {
+        let Ok(res) = manager.send_with_retries(&mut req, &mut response_buf) else {
             return false;
         };
+        Self::print_npm_notice(&res);
         if res.status_code() != 200 {
             return false;
         }
@@ -672,7 +706,10 @@ impl PublishCommand {
         failure: &str,
     ) -> Result<http::HTTPResponseMetadata, AllocError> {
         match req.send_sync(response_buf) {
-            Ok(res) => Ok(res),
+            Ok(res) => {
+                Self::print_npm_notice(&res);
+                Ok(res)
+            }
             Err(http::Error::Alloc(_)) => Err(AllocError),
             Err(e) => {
                 Output::err(e, failure, ());
@@ -698,7 +735,7 @@ impl PublishCommand {
             ) {
                 bun_core::warn!(
                     "Registry already knows about version {}; skipping.",
-                    bstr::BStr::new(version_without_build_tag),
+                    bun_fmt::escape_control_chars(version_without_build_tag),
                 );
                 return Ok(false);
             }
@@ -708,13 +745,13 @@ impl PublishCommand {
         let registry_href = registry_url.href_without_auth();
         bun_core::pretty!(
             "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}/\n",
-            bstr::BStr::new(if !manager.options.publish_config.tag.is_empty() {
+            bun_fmt::escape_control_chars(if !manager.options.publish_config.tag.is_empty() {
                 manager.options.publish_config.tag
             } else {
                 b"latest"
             }),
             (manager.options.publish_config.access).map_or("default", Access::as_str),
-            bstr::BStr::new(strings::without_trailing_slash(&registry_href)),
+            bun_fmt::escape_control_chars(strings::without_trailing_slash(&registry_href)),
         );
 
         if manager.options.dry_run {
@@ -782,8 +819,6 @@ impl PublishCommand {
             )?;
         }
 
-        Self::print_npm_notice(&res);
-
         let otp = Self::get_otp(manager, ctx, registry, &mut response_buf)?;
 
         let otp_headers = Self::construct_publish_headers(
@@ -813,7 +848,6 @@ impl PublishCommand {
                 &mut response_buf,
             )?;
         }
-        Self::print_npm_notice(&otp_res);
 
         Ok(true)
     }
@@ -872,7 +906,10 @@ impl PublishCommand {
             // The thread that opens it outlives `bump`.
             let auth_url_str: &'static [u8] = cli_dupe(auth_url_str);
             let auth_url = URL::parse(auth_url_str);
-            let auth_url_is_web = auth_url.is_http() || auth_url.is_https();
+            let shown_auth_url = bun_fmt::escape_control_chars(auth_url_str).to_string();
+            // ENTER opens only what the box shows.
+            let auth_url_is_web = (auth_url.is_http() || auth_url.is_https())
+                && shown_auth_url.as_bytes() == auth_url_str;
 
             let Some(done_url_str) = json.get_string_cloned(&bump, b"doneUrl")? else {
                 break 'try_web;
@@ -907,10 +944,10 @@ impl PublishCommand {
             } else {
                 ["-", "|", "|", "|", "|", "|"]
             };
-            let line = horizontal.repeat(auth_url_str.len() + 2);
+            let line = horizontal.repeat(shown_auth_url.len() + 2);
 
             Output::print(format_args!("{top_left}{line}{top_right}\n{vertical} "));
-            bun_core::pretty!("<b>{}<r>", bstr::BStr::new(auth_url_str));
+            bun_core::pretty!("<b>{}<r>", shown_auth_url);
             Output::print(format_args!(
                 " {vertical}\n{bottom_left}{line}{bottom_right}\n"
             ));
@@ -980,8 +1017,10 @@ impl PublishCommand {
                             Output::err("WebLogin", "missing `token` field in reponse json", ());
                             Global::crash();
                         };
-
-                        Self::print_npm_notice(&res);
+                        if http::async_http::breaks_header_line(token) {
+                            Output::err("WebLogin", "invalid `token` field in response json", ());
+                            Global::crash();
+                        }
 
                         return Ok(token.into());
                     }
@@ -1012,7 +1051,7 @@ impl PublishCommand {
 
     pub(crate) fn normalized_package(
         manager: &PackageManager,
-        abs_workspace_path: &[u8],
+        files: PackageFiles<'_>,
         package_name: &[u8],
         package_version: &[u8],
         json: &mut Expr,
@@ -1085,25 +1124,7 @@ impl PublishCommand {
             ]),
         )?;
 
-        {
-            let workspace_root = match bun_sys::open_a(abs_workspace_path, bun_sys::O::DIRECTORY, 0)
-            {
-                Ok(fd) => fd,
-                Err(e) => {
-                    Output::err(e, "failed to open workspace directory", ());
-                    Global::crash();
-                }
-            };
-            let _close = bun_sys::CloseOnDrop::new(workspace_root);
-
-            Self::normalize_bin(
-                json,
-                &bump,
-                package_name,
-                workspace_root,
-                abs_workspace_path,
-            )?;
-        }
+        Self::normalize_bin(json, &bump, package_name, &files)?;
 
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut writer = bun_js_printer::BufferPrinter::init(buffer_writer);
@@ -1152,7 +1173,7 @@ impl PublishCommand {
         bin_props: &mut Vec<G::Property>,
         key: &[u8],
         value: &[u8],
-        workspace_root: Fd,
+        files: &PackageFiles<'_>,
         path_buf: &mut [u8],
         path_spill: &mut Vec<u8>,
     ) {
@@ -1160,10 +1181,10 @@ impl PublishCommand {
         if pack::is_package_root_or_outside(target.as_bytes()) {
             return;
         }
-        if !bun_sys::exists_at(workspace_root, target) {
+        if !files.has(target) {
             bun_core::warn!(
                 "bin '{}' does not exist",
-                bstr::BStr::new(target.as_bytes()),
+                bun_fmt::escape_control_chars(target.as_bytes()),
             );
         }
         bin_props.push(string_property(cli_dupe(key), cli_dupe(target.as_bytes())));
@@ -1173,8 +1194,7 @@ impl PublishCommand {
         json: &mut Expr,
         bump: &bun_alloc::Arena,
         package_name: &[u8],
-        workspace_root: Fd,
-        abs_workspace_path: &[u8],
+        files: &PackageFiles<'_>,
     ) -> Result<(), AllocError> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut path_spill: Vec<u8> = Vec::new();
@@ -1186,7 +1206,7 @@ impl PublishCommand {
                     &mut bin_props,
                     package_name,
                     bin_str.string(bump)?,
-                    workspace_root,
+                    files,
                     &mut *path_buf,
                     &mut path_spill,
                 ),
@@ -1221,7 +1241,7 @@ impl PublishCommand {
                             &mut bin_props,
                             &key,
                             value.string(bump)?,
-                            workspace_root,
+                            files,
                             &mut *path_buf,
                             &mut path_spill,
                         );
@@ -1260,6 +1280,30 @@ impl PublishCommand {
         };
         let normalized_bin_dir = bun_core::ZBox::from_bytes(bin_dir_subpath);
 
+        let (workspace_root, abs_workspace_path) = match files {
+            PackageFiles::Folder { root, abs_path } => (*root, *abs_path),
+            PackageFiles::Tarball(paths) => {
+                for path in paths.iter() {
+                    if (path.strip_prefix(normalized_bin_dir.as_bytes()))
+                        .is_some_and(|below| below.len() > 1 && below[0] == b'/')
+                    {
+                        bin_props.push(string_property(
+                            cli_dupe(bun_paths::basename_posix(path)),
+                            cli_dupe(path),
+                        ));
+                    }
+                }
+                if bin_props.is_empty() {
+                    bun_core::warn!(
+                        "bin directory '{}' does not exist",
+                        bun_fmt::escape_control_chars(normalized_bin_dir.as_bytes()),
+                    );
+                    return Ok(());
+                }
+                return json.set(bump, b"bin", object_expr(bin_props));
+            }
+        };
+
         // The rule pack has for it: what is not in the tarball is not listed either.
         let not_packed = match pack::bin_kind_without_following_symlinks(
             abs_workspace_path,
@@ -1272,7 +1316,7 @@ impl PublishCommand {
         if let Some(why) = not_packed {
             bun_core::warn!(
                 "bin directory '{}' {}",
-                bstr::BStr::new(normalized_bin_dir.as_bytes()),
+                bun_fmt::escape_control_chars(normalized_bin_dir.as_bytes()),
                 why,
             );
             return Ok(());

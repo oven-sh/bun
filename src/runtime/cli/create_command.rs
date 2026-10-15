@@ -320,11 +320,11 @@ fn exit_with_conflicts<'a>(destination: &[u8], paths: impl Iterator<Item = &'a [
         if strings::ends_with(path, bun_paths::SEP_STR.as_bytes()) {
             pretty_error!(
                 "<r>  <blue>{}<r>",
-                bstr::BStr::new(&path[0..path.len().max(1) - 1]),
+                bun_core::fmt::escape_control_chars(&path[0..path.len().max(1) - 1]),
             );
             pretty_errorln!("{}", bun_paths::SEP_STR);
         } else {
-            pretty_errorln!("<r>  {}", bstr::BStr::new(path));
+            pretty_errorln!("<r>  {}", bun_core::fmt::escape_control_chars(path));
         }
     }
 
@@ -928,7 +928,7 @@ impl CreateCommand {
                                         if create_options.verbose {
                                             bun_core::pretty_errorln!(
                                                 "<r><d>[package.json] Pruned unnecessary script: {}<r>",
-                                                bstr::BStr::new(script),
+                                                bun_core::fmt::escape_control_chars(script),
                                             );
                                         }
                                         continue;
@@ -1191,13 +1191,13 @@ impl CreateCommand {
         if rel_destination.is_empty() {
             bun_core::pretty!(
                 "\n<d>#<r><b> To get started, run:<r>\n\n  <b><cyan>{}<r>\n\n",
-                bstr::BStr::new(start_command),
+                bun_core::fmt::EscapeControlChars(bstr::BStr::new(start_command)),
             );
         } else {
             bun_core::pretty!(
                 "\n<d>#<r><b> To get started, run:<r>\n\n  <b><cyan>cd {}<r>\n  <b><cyan>{}<r>\n\n",
                 bstr::BStr::new(rel_destination),
-                bstr::BStr::new(start_command),
+                bun_core::fmt::EscapeControlChars(bstr::BStr::new(start_command)),
             );
         }
 
@@ -1250,12 +1250,21 @@ impl CreateCommand {
 
         // SAFETY: single-threaded CLI access to module-level static path buffer
         let home_dir_buf = unsafe { &mut *HOME_DIR_BUF.get() };
+        // The length of the NUL-terminated path in `buf`; `None`: too long to be a path.
+        let join = |parts: &[&[u8]], buf: &mut PathBuffer| {
+            bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+                bun_paths::resolve_path::platform::Loose,
+            >(filesystem.top_level_dir, &mut buf[..], parts)
+            .map(|path| path.as_bytes().len())
+        };
         let template: &[u8] = 'brk: {
             let positional = positionals[0];
 
             let parts = [filesystem.top_level_dir, positional];
-            let len = filesystem.abs_buf(&parts, home_dir_buf).len();
-            home_dir_buf[len] = 0;
+            let Some(len) = join(&parts, home_dir_buf) else {
+                pretty_errorln!("<r><red>error<r>: the template name is too long");
+                Global::exit(1);
+            };
             let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
             if !bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes())
                 && matches!(
@@ -1297,8 +1306,9 @@ impl CreateCommand {
                 home_dir.map(|dir| vec![dir, BUN_CREATE_DIR, positional]),
             ];
             for parts in template_dirs.iter().flatten() {
-                let len = filesystem.abs_buf(parts, home_dir_buf).len();
-                home_dir_buf[len] = 0;
+                let Some(len) = join(parts, home_dir_buf) else {
+                    continue;
+                };
                 let outdir_path_ = bun_core::ZStr::from_buf(&home_dir_buf[..], len);
                 if !bun_paths::resolve_path::has_any_illegal_chars(outdir_path_.as_bytes())
                     && bun_sys::directory_exists_at(bun_sys::Fd::cwd(), outdir_path_)
@@ -1559,15 +1569,15 @@ impl Example {
             if !example.description.is_empty() {
                 bun_core::pretty!(
                     "  <r># {}<r>\n  <b>bun create <cyan>{}<r><b> {}<r>\n<d>  \n\n",
-                    bstr::BStr::new(example.description),
-                    bstr::BStr::new(example.name),
-                    bstr::BStr::new(app_name),
+                    bun_core::fmt::escape_control_chars(example.description),
+                    bun_core::fmt::escape_control_chars(example.name),
+                    bun_core::fmt::escape_control_chars(app_name),
                 );
             } else {
                 bun_core::pretty!(
                     "  <r><b>bun create <cyan>{}<r><b> {}<r>\n\n",
-                    bstr::BStr::new(example.name),
-                    bstr::BStr::new(app_name),
+                    bun_core::fmt::escape_control_chars(example.name),
+                    bun_core::fmt::escape_control_chars(app_name),
                 );
             }
         }
@@ -1737,7 +1747,7 @@ impl Example {
             if !content_type.is_empty() {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: Unexpected content type from GitHub: {}",
-                    bstr::BStr::new(content_type),
+                    bun_core::fmt::escape_control_chars(content_type),
                 );
             } else {
                 bun_core::pretty_errorln!(
@@ -1962,7 +1972,7 @@ impl Example {
             bun_core::pretty_errorln!(
                 "<r><red>{} {}<r> fetching examples :( ",
                 response.status_code(),
-                bstr::BStr::new(mutable.list.as_slice()),
+                bun_core::fmt::escape_control_chars_multiline(mutable.list.as_slice()),
             );
             Global::exit(1);
         }
@@ -2131,8 +2141,8 @@ impl GitHandler {
                 if spawn(&[b"var", b"GIT_COMMITTER_IDENT"], Ignore)?.is_ok() {
                     pretty_error!(
                         "{}{}",
-                        bstr::BStr::new(&commit.stdout),
-                        bstr::BStr::new(&commit.stderr),
+                        bun_core::fmt::escape_control_chars_multiline(&commit.stdout),
+                        bun_core::fmt::escape_control_chars_multiline(&commit.stderr),
                     );
                 } else {
                     bun_core::pretty_errorln!(

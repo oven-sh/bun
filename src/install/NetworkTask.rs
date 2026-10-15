@@ -868,7 +868,7 @@ impl NetworkTask {
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "Expected tarball URL to start with https:// or http://, got {} while fetching package {}",
-                    quote(&redacted_tarball_url),
+                    bun_core::fmt::EscapeControlChars(quote(&redacted_tarball_url)),
                     quote(tarball.name.slice()),
                 ),
             );

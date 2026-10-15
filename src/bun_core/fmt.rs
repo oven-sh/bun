@@ -3612,7 +3612,8 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
     write_bytes(writer, remain)
 }
 
-/// Spells out C0/C1 controls and DEL so text somebody else authored cannot repaint our output.
+/// Spells out C0/C1 controls, DEL, U+2028-U+202E and U+2066-U+2069 (line separators, bidirectional
+/// overrides and isolates), so text somebody else authored cannot repaint our output.
 pub struct EscapeControlChars<T>(pub T);
 
 /// [`EscapeControlChars`] that lets `\t`, `\n` and `\r\n` through (`bun pm view <pkg> readme`).
@@ -3640,9 +3641,9 @@ impl<T: Display> Display for EscapeControlCharsMultiline<T> {
 }
 
 /// `.1`: keep `\t`, `\n`, `\r\n`.
-struct EscapeControlCharsWriter<'a, 'f>(&'a mut Formatter<'f>, bool);
+pub(crate) struct EscapeControlCharsWriter<'a>(pub(crate) &'a mut dyn fmt::Write, pub(crate) bool);
 
-impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
+impl fmt::Write for EscapeControlCharsWriter<'_> {
     /// `Raw` and `write_bytes` pass bytes nobody checked off as a `str`, and this is the writer that decodes it.
     fn write_str(&mut self, s: &str) -> fmt::Result {
         s.as_bytes().utf8_chunks().try_for_each(|chunk| {
@@ -3656,7 +3657,7 @@ impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
     }
 }
 
-impl EscapeControlCharsWriter<'_, '_> {
+impl EscapeControlCharsWriter<'_> {
     fn write_valid(&mut self, s: &str) -> fmt::Result {
         let Self(f, keep_line_breaks) = self;
         let mut start = 0;
@@ -3673,6 +3674,7 @@ impl EscapeControlCharsWriter<'_, '_> {
                 '\t' | '\n' => *keep_line_breaks,
                 '\r' => *keep_line_breaks && chars.next() == Some('\n'),
                 '\0'..='\x1f' | '\x7f' | '\u{80}'..='\u{9f}' => false,
+                '\u{2028}'..='\u{202e}' | '\u{2066}'..='\u{2069}' => false,
                 _ => true,
             };
             if pass_through {

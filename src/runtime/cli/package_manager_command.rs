@@ -323,7 +323,7 @@ impl PackageManagerCommand {
                     Global::crash();
                 }
             };
-            Output::println(format_args!("{}", bstr::BStr::new(&username)));
+            Output::println(format_args!("{}", bun_fmt::escape_control_chars(&username)));
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"view") {
             let spec: &[u8] = positionals.get(1).copied().unwrap_or(b"");
@@ -393,7 +393,17 @@ impl PackageManagerCommand {
                 bun_install::cache_pack::exec(pm, &cwd);
             }
 
-            if matches!(action, b"rm" | b"prune") {
+            let deletes = matches!(action, b"rm" | b"prune");
+            // `rm` and `prune` work on the whole cache: `rm <package>` must not read as `rm`.
+            if let Some(&word) = positionals.get(if deletes { 2 } else { 1 }) {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> unexpected argument \"{}\"\n<d>usage:<r> bun pm cache [rm | prune | pack \\<file\\> | unpack \\<file\\>]",
+                    bun_fmt::escape_control_chars(word),
+                );
+                Global::exit(1);
+            }
+
+            if deletes {
                 let prune = strings::eql_comptime(action, b"prune");
                 let mut had_err = false;
                 let dry_run = pm.options.dry_run;
@@ -406,9 +416,14 @@ impl PackageManagerCommand {
                     Err(err) => Self::crash_getting_cache_directory(err),
                 };
                 let mut rm_buf = bun_paths::path_buffer_pool::get();
+                let rm_dir: Option<Dir> = match Dir::open(&cache_dir.path) {
+                    Ok(rm_dir) => Some(rm_dir),
+                    Err(err) if err.get_errno() == bun_sys::E::ENOENT => None,
+                    Err(err) => Self::crash_getting_cache_directory(err),
+                };
                 // The real path and whether it holds the global store; `None` when there is no directory.
-                let found: Option<(&[u8], bool)> = match Dir::open(&cache_dir.path) {
-                    Ok(rm_dir) => {
+                let found: Option<(&[u8], bool)> = match &rm_dir {
+                    Some(rm_dir) => {
                         let has_global_store =
                             bun_sys::directory_exists_at(rm_dir.fd(), bun_core::zstr!("links"))
                                 .unwrap_or(false);
@@ -417,14 +432,15 @@ impl PackageManagerCommand {
                             Err(err) => Self::crash_getting_cache_directory(err),
                         }
                     }
-                    Err(err) if err.get_errno() == bun_sys::E::ENOENT => None,
-                    Err(err) => Self::crash_getting_cache_directory(err),
+                    None => None,
                 };
                 let (rm_path, has_global_store) =
                     found.unwrap_or((cache_dir.path.as_slice(), false));
-                let protected = found.and_then(|(real, _)| {
-                    Self::protected_in(real, process_env.get(b"BUN_INSTALL"), &cwd)
-                });
+                let bun_install = process_env
+                    .get(b"BUN_INSTALL")
+                    .map(|dir| bun_options_types::schema::api::BunInstall::resolve_path(b"", dir));
+                let protected = found
+                    .and_then(|(real, _)| Self::protected_in(real, bun_install.as_deref(), &cwd));
                 // What bunx installed is inside the install cache: counted before it goes with it.
                 let mut deleted: usize = match protected {
                     None if !prune => crate::cli::bunx_command::count_cached_packages(rm_path),
@@ -447,18 +463,18 @@ impl PackageManagerCommand {
                 } else if prune {
                     had_err = PmCachePruneCommand::exec(rm_path, cache_max_age_days, dry_run);
                 } else {
+                    // The directory itself stays: it may be a mount point, what a symlink points to, or in a read-only parent.
                     if dry_run {
                         bun_core::prettyln!(
                             "<r><d>dry run:<r> would delete 'bun install' cache at {}",
                             bstr::BStr::new(rm_path),
                         );
+                    } else if let Some(rm_dir) = &rm_dir
+                        && let Err(err) = rm_dir.delete_children()
+                    {
+                        Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
+                        had_err = true;
                     } else {
-                        if found.is_some()
-                            && let Err(err) = bun_sys::delete_tree_absolute(rm_path)
-                        {
-                            Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
-                            had_err = true;
-                        }
                         bun_core::prettyln!("Cleared 'bun install' cache");
                     }
                     if has_global_store {

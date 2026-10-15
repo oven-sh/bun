@@ -848,6 +848,23 @@ describe.concurrent("template given as a path", () => {
     expect(await tree(root)).toEqual(before);
     expect(exitCode).toBe(1);
   });
+
+  // A path on Windows holds more than a command line.
+  it.skipIf(!isPosix).each(["", "a/", "a@", "@a/", "./"])(
+    "refuses a template name longer than a path: %p and 5000 bytes",
+    async prefix => {
+      using dir = tempDir("create-long-template-name", { "home/.keep": "", "proj/keep.js": "mine" });
+      const root = String(dir);
+
+      const { err, exitCode } = await create(join(root, "proj"), [prefix + Buffer.alloc(5000, "x").toString()], {
+        HOME: join(root, "home"),
+        BUN_CREATE_DIR: undefined,
+      });
+
+      expect(err).toBe("error: the template name is too long\n");
+      expect(exitCode).toBe(1);
+    },
+  );
 });
 
 for (const [status, expected] of [

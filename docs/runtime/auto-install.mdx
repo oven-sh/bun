@@ -21,13 +21,13 @@ Auto-install is off when a [security scanner](/runtime/bunfig#install-security-s
 
 ## Project root
 
-Auto-install reads the lockfile and the settings of one project, the same one that `bun install` would use in the directory of the importing file:
+Auto-install reads the lockfile and the settings of one project, the project of the importing file:
 
-1. The nearest directory, at or above the file, that has a `package.json`.
+1. The nearest directory, at or above the file, that has a `package.json` with a `name`, `workspaces`, or dependencies. A `package.json` without any of them, such as `{ "type": "commonjs" }`, belongs to the project above it.
 2. The workspace root, if that directory is a member of a workspace.
-3. The directory of the file, if there is no `package.json`.
+3. The directory of the file, if there is no such `package.json`.
 
-A file in `node_modules` belongs to the project that the `node_modules` directory is in. Bun does not read a lockfile, a `.npmrc`, or the `[install]` settings of a `bunfig.toml` from a directory above the project root.
+A file in `node_modules` belongs to the project that the `node_modules` directory is in. Bun does not read a lockfile from any other directory, and a `.npmrc` or the `[install]` settings of a `bunfig.toml` only from the project root and from the directory where you started `bun`.
 
 The first import that needs auto-install decides the project for the rest of the process.
 
@@ -78,7 +78,7 @@ Bun downloads packages from the npm registry (`https://registry.npmjs.org/`) unl
 //npm.myorg.com/:_authToken=${NPM_TOKEN}
 ```
 
-Bun reads the user's `.npmrc`, then the `.npmrc` of the [project root](#project-root), then the `[install]` settings of the project root's `bunfig.toml`, then the `bunfig.toml` in the directory where you started `bun`. A later file overrides the same value in an earlier one. Other `.npmrc` options, such as `cache`, apply to `bun install` and the other package manager commands only. `install.auto` and `install.prefer` count only in the directory where you started `bun`.
+Bun reads the user's `.npmrc`, then the `.npmrc` in the directory where you started `bun`, then the `.npmrc` of the [project root](#project-root), then the `[install]` settings of the project root's `bunfig.toml`, then the `bunfig.toml` in the directory where you started `bun`. A later file overrides the same value in an earlier one. Other `.npmrc` options, such as `cache`, apply to `bun install` and the other package manager commands only. `install.auto` and `install.prefer` count only in the directory where you started `bun`.
 
 Auto-install replaces `${NAME}` with a variable from the environment of the script, which includes its `.env` files. `bun install` reads `.env.production` where a script reads `.env.development` by default.
 

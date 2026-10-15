@@ -3844,38 +3844,44 @@ describe("should move existing dependency when an explicit group flag is given",
     expect(await add(initial, ["BaR"])).toBe(pkgJson(initial));
   });
 
-  // Each group keeps its own version: a full install lays the devDependencies one, --production the dependencies one.
-  it.each([
-    ["baz@0.0.5", "0.0.5"],
-    ["baz", "^0.0.5"],
-  ])("without a group flag, bun add %s writes dependencies and leaves devDependencies alone", async (spec, saved) => {
-    const initial = { ...root, dependencies: { baz: "0.0.3" }, devDependencies: { baz: "0.0.3" } };
-    expect(await add(initial, [spec], { "0.0.3": {}, "0.0.5": {} })).toBe(
-      pkgJson({ ...initial, dependencies: { baz: saved } }),
-    );
+  describe.each([
+    ["dependencies", "devDependencies"],
+    ["dependencies", "optionalDependencies"],
+    ["devDependencies", "optionalDependencies"],
+  ])("without a group flag the entries in %s and %s both take", (first, second) => {
+    it.each([
+      ["baz@0.0.5", "0.0.5"],
+      ["baz", "^0.0.5"],
+    ])("bun add %s", async (spec, saved) => {
+      const declared = (version: string) => ({ ...root, [first]: { baz: version }, [second]: { baz: version } });
+      expect(await add(declared("0.0.3"), [spec], { "0.0.3": {}, "0.0.5": {} })).toBe(pkgJson(declared(saved)));
 
-    for (const { args, says, version } of [
-      { args: [], says: "(no changes)", version: "0.0.3" },
-      { args: ["--frozen-lockfile"], says: "(no changes)", version: "0.0.3" },
-      { args: ["--production"], says: "1 package installed", version: "0.0.5" },
-    ]) {
-      await using proc = spawn({
-        cmd: [bunExe(), "install", ...args],
-        cwd: package_dir,
-        stdout: "pipe",
-        stderr: "pipe",
-        env,
-      });
-      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({
-        args,
-        saved: err.includes("Saved lockfile"),
-        failed: err.includes("error:"),
-        out,
-        version: (await file(join(package_dir, "node_modules", "baz", "package.json")).json()).version,
-        exitCode,
-      }).toEqual({ args, saved: false, failed: false, out: expect.stringContaining(says), version, exitCode: 0 });
-    }
+      for (const args of [[], ["--frozen-lockfile"]]) {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", ...args],
+          cwd: package_dir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({
+          args,
+          saved: err.includes("Saved lockfile"),
+          failed: err.includes("error:"),
+          out,
+          version: (await file(join(package_dir, "node_modules", "baz", "package.json")).json()).version,
+          exitCode,
+        }).toEqual({
+          args,
+          saved: false,
+          failed: false,
+          out: expect.stringContaining("(no changes)"),
+          version: "0.0.5",
+          exitCode: 0,
+        });
+      }
+    });
   });
 
   it("does not move with --only-missing", async () => {

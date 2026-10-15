@@ -836,6 +836,17 @@ pub fn install_with_manager(
         }
     }
 
+    // Every check that can refuse the run has passed. One with errors ends without saving.
+    if had_errors_before_cleaning_lockfile
+        && matches!(
+            manager.options.patch_features,
+            Options::PatchFeatures::Commit { .. }
+        )
+    {
+        Global::crash();
+    }
+    super::patch_package::write_pending_patch(manager)?;
+
     // BACKREF: `manager.lockfile` is a `Box<Lockfile>` whose allocation is
     // never replaced for the remainder of this function (only its fields
     // mutate). Wrap once as `ParentRef` so the two `save_lockfile` read sites
@@ -877,11 +888,12 @@ pub fn install_with_manager(
             !load_result.migrated_from_npm() && manager.lockfile.workspace_paths.len() > 0,
         );
     let mut removes_collapsed_copies = false;
-    let mut install_summary: PackageInstallSummary = 'install_summary: {
+    let install_summary: PackageInstallSummary = 'install_summary: {
         if !manager.options.do_.install_packages() {
             break 'install_summary PackageInstallSummary::default();
         }
 
+        super::patch_package::remove_stale_folder(manager);
         crate::package_manager_real::run_tasks::begin_linking_for_bunx(
             root_package_json_path,
             had_errors_before_cleaning_lockfile,
@@ -1011,11 +1023,6 @@ pub fn install_with_manager(
         crate::prune::unlink_dropped_dependencies(manager);
     } else if removes_collapsed_copies {
         crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
-    }
-    if let Some(copies) = install_summary.hiding_copies.take()
-        && install_summary.fail == 0
-    {
-        copies.remove(manager);
     }
     if manager.options.global && manager.options.do_.install_packages() {
         crate::bin_real::link_free_global_bins(&manager.lockfile, manager.options.bin_path);

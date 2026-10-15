@@ -714,6 +714,78 @@ describe.concurrent("backoff", () => {
     expect(exitCode).toBe(0);
   });
 
+  // These commands send one request and wait for its answer, outside the install loop.
+  describe.each(["503", "429", "a dropped connection"])("the first request ends in %s", fault => {
+    async function run(...cmd: string[]) {
+      using dropped = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) {
+            socket.end();
+          },
+          data() {},
+        },
+      });
+      const requests: string[] = [];
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(request) {
+          const { pathname } = new URL(request.url);
+          requests.push(`${request.method} ${pathname} ${request.headers.get("authorization")}`);
+          if (requests.length === 1) {
+            return fault === "a dropped connection"
+              ? Response.redirect(`http://127.0.0.1:${dropped.port}${pathname}`, 307)
+              : busy(Number(fault));
+          }
+          if (pathname.endsWith(".tgz")) return new Response(file(join(import.meta.dir, "bar-0.0.2.tgz")));
+          if (pathname === "/-/whoami") return Response.json({ username: "me" });
+          if (pathname !== "/bar") return Response.json({});
+          return Response.json({
+            name: "bar",
+            "dist-tags": { latest: "0.0.2" },
+            versions: { "0.0.2": { name: "bar", version: "0.0.2", dist: { tarball: `${server.url}bar-0.0.2.tgz` } } },
+          });
+        },
+      });
+      using dir = tempDir("retry-one-request", {
+        "package.json": JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { bar: "0.0.2" } }),
+        "bunfig.toml": Bun.TOML.stringify({
+          install: { cache: false, registry: { url: server.url.href, token: "retry-token" } },
+        }),
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          workspaces: { "": { name: "foo", dependencies: { bar: "0.0.2" } } },
+          packages: { bar: ["bar@0.0.2", "", {}, ""] },
+        }),
+      });
+      await using proc = spawn({ cmd: [bunExe(), ...cmd], cwd: String(dir), stdout: "pipe", stderr: "pipe", env });
+      const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
+      return { err, requests, exitCode };
+    }
+
+    it.each([
+      [["info", "bar"], "GET /bar"],
+      [["pm", "view", "bar"], "GET /bar"],
+      [["pm", "whoami"], "GET /-/whoami"],
+      [["pm", "diff", "bar"], "GET /bar"],
+      [["audit"], "POST /-/npm/v1/security/advisories/bulk"],
+    ])("%j asks again", async (cmd, request) => {
+      const { err, requests, exitCode } = await run(...cmd);
+      expect(err).not.toContain("error:");
+      expect(requests.slice(0, 2)).toEqual([`${request} Bearer retry-token`, `${request} Bearer retry-token`]);
+      expect(exitCode).toBe(0);
+    });
+
+    // The registry may have taken the package before the answer was lost.
+    it("bun publish does not upload the package again", async () => {
+      const { requests, exitCode } = await run("publish");
+      expect(requests).toEqual(["PUT /foo Bearer retry-token"]);
+      expect(exitCode).toBe(1);
+    });
+  });
+
   // The next handshake would see the same certificate.
   it("does not retry a certificate it refuses", async () => {
     using server = Bun.serve({ port: 0, hostname: "127.0.0.1", tls, fetch: () => new Response("unreachable") });

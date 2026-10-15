@@ -155,9 +155,9 @@ pub(crate) fn parse_patch_source<'a>(
         }
     };
     for section in &patchfile.skipped {
-        let subject = match section.path {
-            Some(path) if section.is_binary => format!("the content of {}", BStr::new(path)),
-            Some(path) => format!("the section for {}", BStr::new(path)),
+        let subject = match section.path.map(bun_core::fmt::escape_control_chars) {
+            Some(path) if section.is_binary => format!("the content of {path}"),
+            Some(path) => format!("the section for {path}"),
             None => "text that is not a patch".to_owned(),
         };
         log.add_range_warning_fmt_with_notes(
@@ -182,35 +182,46 @@ pub(crate) fn parse_patch_source<'a>(
     Some(patchfile)
 }
 
-/// `bun patch` and its `--commit` go on without the patch: they are how the file is made again.
+/// The first 8 bytes of the SHA-1: it names the cache entry of the patched package.
+pub(crate) fn hash_patch(contents: &[u8]) -> u64 {
+    let mut hasher = bun_sha_hmac::sha::hashers::SHA1::init();
+    hasher.update(contents);
+    let mut digest = [0u8; bun_sha_hmac::sha::hashers::SHA1::DIGEST];
+    hasher.r#final(&mut digest);
+    u64::from_le_bytes(digest[0..8].try_into().unwrap())
+}
+
+/// No linker runs without the file: the patched folder in node_modules may be the last copy of it.
 #[cold]
-fn skip_missing_patch_or_crash(
+fn crash_on_missing_patch(
     manager: &mut PackageManager,
     patch: &CalcPatchHash,
     log_level: LogLevel,
-) {
-    let file = BStr::new(&patch.patchfile_path);
-    if !matches!(manager.options.patch_features, PatchFeatures::Nothing) {
-        let patched = &mut manager.lockfile.patched_dependencies;
-        if patched.ordered_remove(&patch.name_and_version_hash) {
-            manager.log_mut().add_warning_fmt(
-                None,
-                Loc::EMPTY,
-                format_args!("Couldn't find patch file: '{file}'. Going on without it"),
-            );
-        }
-        return;
+) -> Result<(), crate::Error> {
+    // It stops the install, not the commit of another package's patch: both files may be lost.
+    let committed = package_manager::patch_package::write_pending_patch(manager)?;
+    if committed.is_some() {
+        package_manager::package_json_write_back::flush(manager)?;
     }
     if log_level != LogLevel::Silent {
-        bun_core::pretty_errorln!("<r><red>error<r>: Couldn't find patch file: '{}'", file);
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: Couldn't find patch file: '{}'",
+            bun_core::fmt::escape_control_chars(&patch.patchfile_path),
+        );
         let keys = crate::update_transitive::patched_dependency_keys(manager);
         if let Some(key) = keys.iter().find(|key| {
             bun_semver::string::Builder::string_hash(key) == patch.name_and_version_hash
         }) {
             bun_core::pretty_errorln!(
-                "\nTo create a new patch file run:\n\n  <cyan>bun patch {}<r>\n\nTo install the package without a patch, remove \"{}\" from \"patchedDependencies\" in package.json",
-                BStr::new(key),
-                BStr::new(key),
+                "\nTo write it again from the patched package in node_modules, run:\n\n  <cyan>bun patch --commit {}<r>\n\nTo install the package without a patch, remove \"{}\" from \"patchedDependencies\" in package.json",
+                bun_core::fmt::escape_control_chars(key),
+                bun_core::fmt::escape_control_chars(key),
+            );
+        }
+        if let Some(committed) = committed {
+            bun_core::note!(
+                "{} was written, and the install did not run",
+                bun_core::fmt::escape_control_chars(committed.as_bytes()),
             );
         }
     }
@@ -319,7 +330,7 @@ impl PatchTask {
                 }
             }
             None if calc_hash.not_found => {
-                skip_missing_patch_or_crash(manager, calc_hash, log_level);
+                crash_on_missing_patch(manager, calc_hash, log_level)?;
             }
             None => {
                 if log_level != LogLevel::Silent {
@@ -604,6 +615,9 @@ impl PatchTask {
         let Callback::CalcHash(calc_hash) = &mut self.callback else {
             unreachable!()
         };
+        if calc_hash.result.is_some() {
+            return calc_hash.result;
+        }
         let log = &mut calc_hash.logger;
 
         let dir = self.project_dir;
@@ -641,7 +655,7 @@ impl PatchTask {
                 None,
                 Loc::EMPTY,
                 "patchfile <b>{}<r> is empty, please restore or delete it.",
-                BStr::new(absolute_patchfile_path.as_bytes()),
+                bun_core::fmt::escape_control_chars(absolute_patchfile_path.as_bytes()),
             );
             return None;
         }
@@ -658,37 +672,21 @@ impl PatchTask {
             sys::Result::Ok(f) => f,
         };
 
-        let mut hasher = bun_sha_hmac::sha::hashers::SHA1::init();
-
-        const CHUNK_SIZE: usize = 64 * 1024;
-        let mut chunk = vec![0u8; CHUNK_SIZE];
-        let mut offset: u64 = 0;
-        while offset < size {
-            let n = match file.pread_all(&mut chunk[..], offset) {
-                sys::Result::Ok(n) => n,
-                sys::Result::Err(e) => {
-                    log.add_error_fmt(
-                        None,
-                        Loc::EMPTY,
-                        format_args!(
-                            "failed to read from patch file: {} ({})",
-                            e,
-                            BStr::new(absolute_patchfile_path.as_bytes())
-                        ),
-                    );
-                    return None;
-                }
-            };
-            if n == 0 {
-                break;
+        match file.read_to_end() {
+            sys::Result::Ok(contents) => Some(hash_patch(&contents)),
+            sys::Result::Err(e) => {
+                log.add_error_fmt(
+                    None,
+                    Loc::EMPTY,
+                    format_args!(
+                        "failed to read from patch file: {} ({})",
+                        e,
+                        bun_core::fmt::escape_control_chars(absolute_patchfile_path.as_bytes())
+                    ),
+                );
+                None
             }
-            hasher.update(&chunk[..n]);
-            offset += n as u64;
         }
-
-        let mut digest = [0u8; bun_sha_hmac::sha::hashers::SHA1::DIGEST];
-        hasher.r#final(&mut digest);
-        Some(u64::from_le_bytes(digest[0..8].try_into().unwrap()))
     }
 
     pub(crate) fn schedule(&mut self, batch: &mut Batch) {
@@ -710,6 +708,7 @@ impl PatchTask {
         // The field is only ever consumed as a byte slice (`join_z_buf` input,
         // log formatting), so no trailing NUL is needed.
 
+        let result = (manager.pending_patch_commit).patch_hash(name_and_version_hash);
         let tempdir = manager.get_temporary_directory().handle.fd();
         Box::new(PatchTask {
             tempdir,
@@ -717,7 +716,7 @@ impl PatchTask {
                 state,
                 patchfile_path,
                 name_and_version_hash,
-                result: None,
+                result,
                 not_found: false,
                 logger: Log::init(),
             }),
@@ -813,5 +812,5 @@ impl PatchTask {
 use crate::PreinstallState;
 use crate::network_task::Authorization;
 use crate::package_install::{InstallResult, Method as InstallMethod};
-use crate::package_manager::Options::{LogLevel, PatchFeatures};
+use crate::package_manager::Options::LogLevel;
 use crate::package_manager_task::Id as TaskId;

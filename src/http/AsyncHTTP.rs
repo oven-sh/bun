@@ -622,6 +622,14 @@ impl<'a> AsyncHTTP<'a> {
         &mut self,
         response_buffer: &mut MutableString,
     ) -> crate::Result<crate::HTTPResponseMetadata> {
+        self.send_sync_for_result(response_buffer)?.into_metadata()
+    }
+
+    /// `send_sync` for a caller that may send `self` again: the whole result says how the attempt ended.
+    pub fn send_sync_for_result(
+        &mut self,
+        response_buffer: &mut MutableString,
+    ) -> crate::Result<HTTPClientResult<'static>> {
         // `HTTPClient::start` sends any other scheme over plain TCP (`fetch("host:port/path")` relies on it); no blocking caller means that.
         if !self.client.url.has_http_like_protocol() {
             return Err(crate::Error::UnsupportedProtocol);
@@ -650,15 +658,7 @@ impl<'a> AsyncHTTP<'a> {
         let result = bun_ptr::ParentRef::from(ctx).read_item();
         // SAFETY: see above — sole owner, callback completed.
         drop(unsafe { bun_core::heap::take(ctx.as_ptr()) });
-        if let Some(err) = result.fail {
-            return Err(err);
-        }
-        let Some(metadata) = result.metadata else {
-            // Terminal result with neither error nor response head; surface as
-            // a network error rather than panicking on network-driven state.
-            return Err(crate::Error::ConnectionClosed);
-        };
-        Ok(metadata)
+        Ok(result)
     }
 
     // ──────────────────────────────────────────────────────────────────────

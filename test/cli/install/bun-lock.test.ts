@@ -5315,7 +5315,7 @@ describe.concurrent("a file: folder listed in both dependencies and devDependenc
     },
   );
 
-  it("keeps the second folder a level below the first when the two groups point at different folders", async () => {
+  it("keeps one entry when the two groups point at different folders", async () => {
     using dir = tempDir("dup-folder-dep-", {
       "v1/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
       "v2/a/package.json": JSON.stringify({ name: "a", version: "2.0.0" }),
@@ -5329,7 +5329,7 @@ describe.concurrent("a file: folder listed in both dependencies and devDependenc
 
     await install(String(dir));
     const lockfile = await file(lockfilePath).text();
-    expect(packageKeys(lockfile)).toEqual(['    "a": [', '    "a/a": [']);
+    expect(packageKeys(lockfile)).toEqual(['    "a": [']);
 
     const { err } = await install(String(dir), "--frozen-lockfile");
     expect(err).not.toContain("Ignoring lockfile");

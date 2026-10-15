@@ -19,7 +19,7 @@ import { bunExe, bunEnv as env, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { tmpdir } from "os";
-import { basename, dirname, join, resolve } from "path";
+import { basename, dirname, join, relative, resolve } from "path";
 
 // This test validates the fix for a symlink path traversal vulnerability in tarball extraction.
 // CVE: Path traversal via symlink when installing packages
@@ -1599,7 +1599,6 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
   const places: Record<string, [(repo: string) => string | Promise<string>, string[]]> = {
     "node_modules/.bin": [repo => join(repo, "node_modules", ".bin"), ["greet"]],
     "node_modules/@scope": [repo => join(repo, "node_modules", "@x"), ["dep"]],
-    "a member's node_modules": [repo => join(repo, "evil", "node_modules"), []],
     "a member's node_modules/.bin": [repo => join(repo, "evil", "node_modules", ".bin"), ["greet"]],
     "node_modules/.bun/node_modules": [repo => join(storeOf(repo), "node_modules"), []],
     "node_modules/.bun/node_modules/@scope": [repo => join(storeOf(repo), "node_modules", "@x"), ["dep"]],
@@ -1707,21 +1706,31 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     await expectInstalled(repo, result);
   });
 
+  // People link every `node_modules` of a monorepo to a volume or a cache disk, not only the root's.
   // A first install resets the `node_modules` of the members, but not with `--filter`.
-  it("does not write through a member's node_modules on a first install with --filter", async () => {
-    using root = tempDir("nm-filter", {});
-    const victim = await plantVictim(String(root));
+  it.skipIf(isWindows).each([
+    ["", []],
+    [" with --filter", ["--filter", "evil"]],
+  ] as const)("still installs through a link at a workspace member's node_modules%s", async (_, args) => {
+    using root = tempDir("nm-member", {});
+    const volume = join(String(root), "volume");
+    await mkdir(volume);
     const repo = await project(String(root));
     const link = join(repo, "evil", "node_modules");
-    await linkDir(victim, link);
+    await symlink("../../volume", link);
 
-    const { stderr, exitCode } = await install(repo, "--filter", "evil");
+    for (const expected of ["installed", "(no changes)"]) {
+      const { stdout, stderr, exitCode } = await install(repo, ...args);
 
-    expect(stderr).not.toContain("error:");
-    await expectVictimUntouched(victim);
-    expect((await lstat(link)).isDirectory()).toBe(true);
-    expect(await readdir(join(link, "@x"))).toEqual(["dep"]);
-    expect(exitCode).toBe(0);
+      expect(stderr).not.toContain("error:");
+      expect(stderr).not.toContain("warn:");
+      expect(stdout).toContain(expected);
+      expect((await lstat(link)).isSymbolicLink()).toBe(true);
+      expect((await readdir(volume)).sort()).toEqual([".bin", "@x"]);
+      expect(await Bun.file(join(link, "@x", "dep", "package.json")).json()).toMatchObject({ name: "@x/dep" });
+      expect(await Bun.file(join(link, ".bin", "greet")).text()).toContain("console.log('hi')");
+      expect(exitCode).toBe(0);
+    }
   });
 
   // What is left of an optional dependency that cannot be had is deleted: its copy in the store,
@@ -1795,6 +1804,7 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     for (const expected of ["packages installed", "(no changes)"]) {
       const result = await install(repo);
       expect(result.stdout).toContain(expected);
+      expect(result.stderr).not.toContain("warn:");
       expect((await lstat(join(repo, "node_modules"))).isSymbolicLink()).toBe(true);
       expect((await lstat(join(volume, ".bun"))).isDirectory()).toBe(true);
       await expectInstalled(repo, result);
@@ -1918,5 +1928,198 @@ describe.concurrent("links below node_modules with the isolated linker", () => {
     expect((await readdir(victim)).sort()).toEqual(["keep.txt", "package.json"]);
     expect(await Bun.file(join(victim, "package.json")).text()).toBe(manifest);
     await expectInstalled(repo, result);
+  });
+});
+
+// A link at the `node_modules` of the project or of a workspace is followed: people keep theirs on a
+// volume or a cache disk. Not all that is behind such a link need be bun's.
+describe.concurrent.skipIf(isWindows)("what is behind a link at node_modules", () => {
+  const MINE: Record<string, string> = {
+    "notes.txt": KEEP,
+    ".hidden": KEEP,
+    "thesis/chapter.tex": KEEP,
+    "@me/notes/a.txt": KEEP,
+    "node_modules/x/a.txt": KEEP,
+    "other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
+  };
+  const NOT_CLEARED = (folder: string) =>
+    `warn: ${folder} is a symlink, so what another linker installed there was not removed\n` +
+    "note: remove the link and run 'bun install'";
+
+  async function plant(root: string, files = MINE) {
+    const outside = join(root, "outside");
+    for (const [path, content] of Object.entries(files)) {
+      await mkdir(dirname(join(outside, path)), { recursive: true });
+      await writeFile(join(outside, path), content);
+    }
+    return outside;
+  }
+
+  async function read(outside: string, files = MINE) {
+    const text = (path: string) =>
+      Bun.file(join(outside, path))
+        .text()
+        .catch(() => "(gone)");
+    return Object.fromEntries(await Promise.all(Object.keys(files).map(async path => [path, await text(path)])));
+  }
+
+  // The project and its workspace `app` depend on two versions of `dep`.
+  async function workspace(root: string) {
+    const repo = join(root, "repo");
+    await mkdir(join(repo, "packages", "app"), { recursive: true });
+    await Promise.all([
+      writeTarball(join(repo, "dep1.tgz"), "dep", "1.0.0", "module.exports = 1", { bin: { dep: "index.js" } }),
+      writeTarball(join(repo, "dep2.tgz"), "dep", "2.0.0", "module.exports = 2", { bin: { dep: "index.js" } }),
+      writeTarball(join(repo, "dev.tgz"), "dev", "1.0.0", "module.exports = 1"),
+      writeTarball(join(repo, "extra.tgz"), "extra", "1.0.0", "module.exports = 1"),
+      writeFile(
+        join(repo, "package.json"),
+        JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { app: "workspace:*", dep: "file:./dep1.tgz" },
+          devDependencies: { dev: "file:./dev.tgz" },
+        }),
+      ),
+      writeFile(
+        join(repo, "packages", "app", "package.json"),
+        JSON.stringify({ name: "app", version: "1.0.0", dependencies: { dep: "file:../../dep2.tgz" } }),
+      ),
+    ]);
+    return repo;
+  }
+
+  // One dependency, of the name of its tarball.
+  async function projectWith(root: string, ...names: string[]) {
+    const repo = join(root, "repo");
+    await mkdir(repo, { recursive: true });
+    await Promise.all(names.map(name => writeTarball(join(repo, `${name}.tgz`), name, "1.0.0", "module.exports = 1")));
+    await writeFile(
+      join(repo, "package.json"),
+      JSON.stringify({ name: "root", dependencies: Object.fromEntries(names.map(name => [name, `file:./${name}.tgz`])) }),
+    );
+    return repo;
+  }
+
+  it.each([
+    ["the project's", "isolated", "hoisted"],
+    ["the project's", "hoisted", "isolated"],
+    ["a workspace's", "isolated", "hoisted"],
+    ["a workspace's", "hoisted", "isolated"],
+  ])("stays whatever is run: %s node_modules, the %s linker first", async (where, linker, other) => {
+    using root = tempDir("nm-outside", {});
+    const outside = await plant(String(root));
+    const repo = await workspace(String(root));
+    const owner = where === "the project's" ? repo : join(repo, "packages", "app");
+    const link = join(owner, "node_modules");
+    await symlink(relative(owner, outside), link);
+
+    const commands = [
+      [linker, repo, "install"],
+      [linker, repo, "install"],
+      [linker, repo, "install", "--force"],
+      [linker, owner, "add", relative(owner, join(repo, "extra.tgz"))],
+      [linker, owner, "remove", "extra"],
+      [linker, repo, "prune"],
+      [linker, repo, "install", "--production"],
+      [linker, repo, "prune", "--production"],
+      [other, repo, "install"],
+      [other, repo, "install"],
+      [other, repo, "prune"],
+      [linker, repo, "install"],
+      [linker, repo, "install", "--frozen-lockfile"],
+    ];
+    const versionIn = async (dir: string) => (await Bun.file(join(dir, "node_modules/dep/package.json")).json()).version;
+    for (const [linker, cwd, ...args] of commands) {
+      const command = `${args.join(" ")} --linker ${linker}`;
+      const result = await runBun(cwd, [...args, "--ignore-scripts", "--linker", linker], join(String(root), "cache"));
+
+      expect({ command, mine: await read(outside), isLink: (await lstat(link)).isSymbolicLink() }).toEqual({
+        command,
+        mine: MINE,
+        isLink: true,
+      });
+      if (args[0] === "prune") {
+        expect(result.stderr).toContain(`error: ${relative(repo, link)} is a symlink, so nothing was pruned`);
+        expect({ command, exitCode: result.exitCode }).toEqual({ command, exitCode: 1 });
+        continue;
+      }
+      expect({
+        command,
+        root: await versionIn(repo),
+        app: await versionIn(join(repo, "packages", "app")),
+        linkToApp: await realpath(join(repo, "node_modules", "app")),
+        exitCode: result.exitCode,
+      }).toEqual({
+        command,
+        root: "1.0.0",
+        app: "2.0.0",
+        linkToApp: await realpath(join(repo, "packages", "app")),
+        exitCode: 0,
+      });
+    }
+  });
+
+  it.each([
+    ["node_modules", ""],
+    ["packages/app/node_modules", "packages/app"],
+  ])("the isolated linker says that it clears nothing behind %s", async (folder, owner) => {
+    using root = tempDir("nm-outside-warning", {});
+    const outside = await plant(String(root));
+    const repo = await workspace(String(root));
+    await symlink(relative(join(repo, owner), outside), join(repo, folder));
+
+    const { stderr, exitCode } = await runBun(repo, ["install", "--ignore-scripts", "--linker", "isolated"]);
+
+    expect(stderr).toContain(NOT_CLEARED(folder));
+    expect(await read(outside)).toEqual(MINE);
+    expect(exitCode).toBe(0);
+  });
+
+  it("the hoisted linker starts nothing over because of a .bun there", async () => {
+    using root = tempDir("nm-outside-store", {});
+    const files = { ...MINE, ".bun/bin/tool": KEEP };
+    const outside = await plant(String(root), files);
+    const repo = await workspace(String(root));
+    await symlink("../outside", join(repo, "node_modules"));
+
+    for (const expected of ["packages installed", "(no changes)"]) {
+      const { stdout, stderr, exitCode } = await runBun(repo, ["install", "--ignore-scripts", "--linker", "hoisted"]);
+
+      expect(await read(outside, files)).toEqual(files);
+      expect(stderr).toContain(NOT_CLEARED("node_modules"));
+      expect(stdout).toContain(expected);
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  it.each(["hoisted", "isolated"])("has a name that left package.json (%s)", async linker => {
+    using root = tempDir("nm-outside-left", {});
+    const outside = await plant(String(root));
+    const repo = await projectWith(String(root), "dep", "thesis");
+    const install = () => runBun(repo, ["install", "--ignore-scripts", "--linker", linker]);
+    expect((await install()).exitCode).toBe(0);
+    await rm(join(repo, "node_modules"), { recursive: true });
+    await projectWith(String(root), "dep");
+    await symlink("../outside", join(repo, "node_modules"));
+
+    const { exitCode } = await install();
+
+    expect(await read(outside)).toEqual(MINE);
+    expect(await Bun.file(join(outside, "dep", "package.json")).json()).toMatchObject({ name: "dep" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.each(["thesis", "notes.txt"])("is in the way of the isolated linker's link: %s", async name => {
+    using root = tempDir("nm-outside-taken", {});
+    const outside = await plant(String(root));
+    const repo = await projectWith(String(root), name);
+    await symlink("../outside", join(repo, "node_modules"));
+
+    const { stderr, exitCode } = await runBun(repo, ["install", "--ignore-scripts", "--linker", "isolated"]);
+
+    expect(await read(outside)).toEqual(MINE);
+    expect(stderr).toContain("EEXIST");
+    expect(exitCode).toBe(1);
   });
 });

@@ -109,7 +109,7 @@ pub(crate) fn load_package_for_link(
         if manager.options.log_level != LogLevel::Silent {
             bun_core::pretty_errorln!(
                 "<r><red>error:<r> invalid package.json name \"{}\" <d>in \"{}\"<r>",
-                BStr::new(name),
+                bun_core::fmt::escape_control_chars(name),
                 BStr::new(package_json_source.path.text),
             );
         }
@@ -209,7 +209,6 @@ pub(crate) fn link_global_bins(
         rel_buf: link_rel_buf.as_mut_slice(),
         err: None,
         skipped_due_to_missing_bin: false,
-        keeps_target: false,
     };
     if unlink {
         bin_linker.unlink(true);

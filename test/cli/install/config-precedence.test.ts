@@ -1179,15 +1179,32 @@ describe.concurrent("directories named by config files", () => {
     });
 
     test.each([
-      ["--cache-dir", ["--cache-dir=~/c"], {}],
-      ["$BUN_INSTALL_CACHE_DIR", [], { BUN_INSTALL_CACHE_DIR: "~/c" }],
-    ])("%s", async (_, args, env) => {
+      ["--cache-dir", ["--cache-dir=~/c"], {}, ["c"]],
+      ["$BUN_INSTALL_CACHE_DIR", [], { BUN_INSTALL_CACHE_DIR: "~/c" }, ["c"]],
+      ["$BUN_INSTALL", [], { BUN_INSTALL: "~/c" }, ["c", "install", "cache"]],
+      ["$XDG_CACHE_HOME", [], { XDG_CACHE_HOME: "~/c" }, ["c", ".bun", "install", "cache"]],
+    ])("%s", async (_, args, env, expected) => {
       using dir = tempDir("config-tilde-typed", files);
       expect(await run(String(dir), ["pm", "cache", ...args], { ...noDirs, ...env })).toEqual({
-        stdout: join(String(dir), "home", "c"),
+        stdout: join(String(dir), "home", ...expected),
         stderr: "",
         exitCode: 0,
       });
+    });
+
+    test.each([
+      [{ BUN_INSTALL: "~/c" }, ["c"]],
+      [{ XDG_CACHE_HOME: "~/c" }, ["c", ".bun"]],
+    ])("-g installs below %j", async (env, expected) => {
+      using dir = tempDir("config-tilde-global", files);
+      const root = String(dir);
+      const { stderr, exitCode } = await run(root, ["add", "-g", join(root, "dep")], { ...noDirs, ...env });
+      expect(stderr).not.toContain("error:");
+      expect(await readdirSorted(join(root, "home", ...expected, "install", "global", "node_modules"))).toContain(
+        "dep",
+      );
+      expect(binNames(join(root, "home", ...expected, "bin"))).toContain("depbin");
+      expect(exitCode).toBe(0);
     });
   });
 

@@ -145,7 +145,7 @@ impl Tree {
 enum HoistDependencyResult {
     DependencyLoop,
     Hoisted,
-    /// Another group of the same package holds the place in `id` for another package.
+    /// Install tree: another group of the same package holds the place in `id` for another package.
     Contested {
         id: Id,
     },
@@ -484,8 +484,6 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) served: Vec<(DependencyID, PackageID)>,
     pub(crate) manager: Option<&'a PackageManager>,
     pub(crate) sort_buf: Vec<DependencyID>,
-    /// Of `sort_buf`: `names_listed_again`, sorted.
-    pub(crate) listed_again: Vec<(DependencyID, DependencyID)>,
     pub(crate) workspace_filters: &'a [WorkspaceFilter],
     pub(crate) install_root_dependencies: bool,
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
@@ -648,11 +646,7 @@ bun_collections::multi_array_columns! {
 pub(crate) struct CleanResult {
     pub trees: Vec<Tree>,
     pub dep_ids: Vec<DependencyID>,
-    pub left_out: LeftOut,
 }
-
-/// The places of an install tree whose rows `clean` dropped: a folder there is no stranger.
-pub(crate) type LeftOut = bun_collections::HashMap<(Id, PackageNameHash), ()>;
 
 /// `Some(n)`: two equal rounds of `n` trees end at `parent`, so a third would nest forever.
 fn repeating_period(
@@ -963,6 +957,13 @@ impl LinkedRows<'_> {
                 let filler = if takes_over { dep_id } else { row };
                 // An edge this run follows: whether it is optional decides what a failure means.
                 let follows = takes_over || self.resolutions[row as usize] == target;
+                // Another package, found by name only: the run links it for its own edge or not at all.
+                if !follows
+                    && left_out[row as usize]
+                    && !self.shipped_rows.contains_key(&(tree_id, row))
+                {
+                    continue;
+                }
                 kept.insert((tree_id, row), if follows { dep_id } else { row });
                 let filler_pkg_id = self.resolutions[filler as usize];
                 if filler_pkg_id != invalid_package_id {
@@ -991,7 +992,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         }
 
         let mut dep_ids: DependencyIDList = Vec::with_capacity(total as usize);
-        let mut left_out = LeftOut::default();
 
         debug_assert_eq!(trees.len(), dependencies.len());
         for (tree, child) in trees.iter_mut().zip(dependencies.iter_mut()) {
@@ -1016,7 +1016,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
                     Some(kept) => kept.get(&(tree.id, dep_id)).copied(),
                 };
                 let (false, Some(edge)) = (shipped, edge) else {
-                    left_out.insert((tree.id, self.dependencies[dep_id as usize].name_hash), ());
                     continue;
                 };
 
@@ -1030,11 +1029,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         slice.deinit_owned();
 
-        Ok(CleanResult {
-            trees,
-            dep_ids,
-            left_out,
-        })
+        Ok(CleanResult { trees, dep_ids })
     }
 }
 
@@ -1223,19 +1218,6 @@ impl Tree {
             });
         }
 
-        builder.listed_again.clear();
-        {
-            let (sort_buf, listed_again) = (&builder.sort_buf, &mut builder.listed_again);
-            crate::lockfile::names_listed_again(
-                sort_buf.len(),
-                |i| sort_buf[i],
-                dependencies,
-                lockfile.buffers.string_bytes.as_slice(),
-                |first, later| listed_again.push((first, later)),
-            );
-        }
-        builder.listed_again.sort_unstable();
-
         'dep: for sort_idx in 0..builder.sort_buf.len() {
             let dep_id = builder.sort_buf[sort_idx];
             let bound_by_version = builder.bind_peer(dep_id);
@@ -1305,21 +1287,6 @@ impl Tree {
                     break 'hoisted hoist(next_id, &mut *builder);
                 }
 
-                // A later group lists the name for another package: the place they contest is here.
-                if !builder.listed_again.is_empty()
-                    && builder.listed_again
-                        [builder.listed_again.partition_point(|pair| pair.0 < dep_id)..]
-                        .iter()
-                        .take_while(|pair| pair.0 == dep_id)
-                        .any(|&(_, later)| {
-                            !dependencies[later as usize].behavior.is_bundled()
-                                && builder.resolutions[later as usize] != pkg_id
-                                && builder.resolutions[later as usize] != invalid_package_id
-                        })
-                {
-                    break 'hoisted hoist(next_id, &mut *builder);
-                }
-
                 hoist(hoist_root_id, &mut *builder)
             };
 
@@ -1333,34 +1300,11 @@ impl Tree {
                     }
                 }
                 HoistDependencyResult::Contested { id } => {
-                    let again = (builder.contested)
-                        .insert((id, dependency.name_hash), ())
-                        .is_some();
-                    let mut tree_id = id;
-                    if METHOD == BuilderMethod::Resolvable {
-                        // bun.lock has one key below the place; a third group's package is not saved.
-                        if again {
-                            continue;
-                        }
-                        // Saved one level below the place: `k/k`, and `k/k/..` for its tree.
-                        tree_id = builder.list.len() as Id;
-                        builder.list.append(BuilderEntry {
-                            tree: Tree {
-                                parent: id,
-                                id: tree_id,
-                                dependency_id: dep_id,
-                                dependencies: DependencyIDSlice::new(0, 1),
-                            },
-                            dependencies: vec![dep_id],
-                        })?;
-                        builder
-                            .placed
-                            .insert((tree_id, dependency.name_hash), dep_id);
-                    }
-                    // Install tree: no row, but a tree, so what it needs has places when it is linked.
+                    builder.contested.insert((id, dependency.name_hash), ());
+                    // No row, but a tree: what this package needs has places for when it is linked.
                     if builder.resolution_lists[pkg_id as usize].len > 0 {
                         builder.queue.write_item(FillItem {
-                            tree_id,
+                            tree_id: id,
                             dependency_id: dep_id,
                             hoist_root_id,
                         })?;
@@ -1586,8 +1530,17 @@ impl Tree {
                 |row: &Dependency| !row.behavior.is_optional() && !row.behavior.is_bundled();
 
             if input_dep_range.contains(dep_id) {
-                // The root's own dependency takes the folder from the member of that name.
-                if dep.behavior.is_workspace() {
+                // The root's own dependency takes the folder from the member of that name, unless
+                // an earlier group asks for the member.
+                if dep.behavior.is_workspace()
+                    && !(input_dep_range.begin()..input_dep_id).any(|earlier| {
+                        let row = &deps[earlier as usize];
+                        row.name_hash == dependency.name_hash
+                            && !row.behavior.is_workspace()
+                            && !row.behavior.is_peer()
+                            && builder.resolutions[earlier as usize] == res_id
+                    })
+                {
                     return HoistDependencyResult::ResolveReplace {
                         id: this.id,
                         dep_id,
@@ -1602,15 +1555,7 @@ impl Tree {
                     return HoistDependencyResult::Served(res_id); // 1
                 }
                 // same package lists this name in another dependency group
-                let own = builder.resolution_lists[res_id as usize];
-                if METHOD == BuilderMethod::Filter
-                    // Saved below the place, unless the package there has that key for its own row.
-                    || (AS_DEFINED
-                        && (dep.behavior.is_dev() || dep.behavior.is_optional())
-                        && !dependency.behavior.is_peer()
-                        && !(own.begin()..own.end())
-                            .any(|row| deps[row as usize].name_hash == dependency.name_hash))
-                {
+                if METHOD == BuilderMethod::Filter {
                     return HoistDependencyResult::Contested { id: this.id };
                 }
                 return HoistDependencyResult::Hoisted; // 1

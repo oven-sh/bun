@@ -2,7 +2,7 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_ast::{self, self as js_ast, E, Expr, ExprData};
 use bun_collections::{StringArrayHashMap, VecExt};
-use bun_core::fmt::for_terminal;
+use bun_core::fmt::{escape_control_chars, for_terminal};
 use bun_core::{Global, strings};
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
@@ -126,7 +126,7 @@ fn missing_package_entry(
         format_args!(
             "pnpm-lock.yaml has no package entry '{}' for dependency '{}' of {}",
             for_terminal(BStr::new(dep_path)),
-            BStr::new(dep_name),
+            escape_control_chars(dep_name),
             parent
         ),
     )
@@ -490,7 +490,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             bail!(
                 log,
                 "pnpm-lock.yaml override '{}' must be a string",
-                BStr::new(name_str)
+                escape_control_chars(name_str)
             );
         };
 
@@ -514,7 +514,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             bail!(
                 log,
                 "pnpm-lock.yaml override '{}' has an invalid value '{}'",
-                BStr::new(name_str),
+                escape_control_chars(name_str),
                 for_terminal(BStr::new(version_str))
             );
         }
@@ -596,8 +596,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 bail!(
                     log,
                     "pnpm-lock.yaml lists importer '{}' but '{}/package.json' does not exist",
-                    BStr::new(importer_path),
-                    BStr::new(importer_path)
+                    escape_control_chars(importer_path),
+                    escape_control_chars(importer_path)
                 );
             }
             crate::GetJsonResult::ParseErr(_) => return Err(InvalidPnpmLockfile),
@@ -771,8 +771,8 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 bail!(
                     log,
                     "pnpm-lock.yaml dependency '{}' of importer '{}' has a link path that is too long",
-                    BStr::new(dep.name.slice(string_bytes!(lockfile))),
-                    BStr::new(workspace_path)
+                    escape_control_chars(dep.name.slice(string_bytes!(lockfile))),
+                    escape_control_chars(workspace_path)
                 );
             };
 
@@ -917,7 +917,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 bail!(
                     log,
                     "pnpm-lock.yaml package '{}' has a directory path that is too long",
-                    BStr::new(name_str)
+                    escape_control_chars(name_str)
                 );
             };
             if let Some(workspace_pkg_id) = pkg_map
@@ -974,12 +974,12 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         match url {
                             Some(url) => bun_core::warn!(
                                 "fetching pnpm registry \"{}\" packages from {}; add it to bunfig.toml or .npmrc if it needs authentication",
-                                BStr::new(registry_name),
-                                bun_core::fmt::redacted_npm_url(url)
+                                escape_control_chars(registry_name),
+                                for_terminal(BStr::new(url))
                             ),
                             None => bun_core::warn!(
                                 "skipped pnpm registry \"{}\" from pnpm-lock.yaml: not in namedRegistries of pnpm-workspace.yaml (resolving its packages from the configured registry)",
-                                BStr::new(registry_name)
+                                escape_control_chars(registry_name)
                             ),
                         }
                     }
@@ -1097,14 +1097,14 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     bail!(
                         log,
                         "pnpm-lock.yaml cannot resolve root dependency '{}' - missing version in importer",
-                        BStr::new(dep_name)
+                        escape_control_chars(dep_name)
                     );
                 }
                 bail!(
                     log,
                     "pnpm-lock.yaml cannot resolve workspace dependency '{}' in '{}' - missing version",
-                    BStr::new(dep_name),
-                    BStr::new(workspace_path)
+                    escape_control_chars(dep_name),
+                    escape_control_chars(workspace_path)
                 );
             };
             let reference = remove_suffix(strings::without_prefix(version_maybe_alias, b"npm:"));
@@ -1125,7 +1125,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     log,
                     &res_buf,
                     dep_name,
-                    format_args!("importer '{}'", BStr::new(workspace_path)),
+                    format_args!("importer '{}'", escape_control_chars(workspace_path)),
                 ));
             };
 
@@ -1180,7 +1180,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     log,
                     &res_buf,
                     dep_name,
-                    format_args!("package '{}'", BStr::new(pkg_name)),
+                    format_args!("package '{}'", escape_control_chars(pkg_name)),
                 ));
             };
 
@@ -1519,7 +1519,7 @@ impl std::fmt::Display for ImporterName<'_> {
         if self.0 == b"." {
             f.write_str("the root package")
         } else {
-            write!(f, "workspace \"{}\"", BStr::new(self.0))
+            write!(f, "workspace \"{}\"", escape_control_chars(self.0))
         }
     }
 }
@@ -1555,14 +1555,14 @@ fn parse_append_importer_dependencies(
                 bail!(
                     log,
                     "pnpm-lock.yaml dependency '{}' missing 'specifier' field",
-                    BStr::new(name_str)
+                    escape_control_chars(name_str)
                 );
             };
             let Some(version_expr) = value.get(b"version") else {
                 bail!(
                     log,
                     "pnpm-lock.yaml dependency '{}' missing 'version' field",
-                    BStr::new(name_str)
+                    escape_control_chars(name_str)
                 );
             };
             let version_str = as_str(&version_expr).ok_or(InvalidPnpmLockfile)?;
@@ -1571,8 +1571,8 @@ fn parse_append_importer_dependencies(
                 if !silent {
                     bun_core::warn!(
                         "skipped \"{}@{}\" from pnpm-lock.yaml: runtime dependencies are not supported",
-                        BStr::new(name_str),
-                        BStr::new(version_str)
+                        escape_control_chars(name_str),
+                        escape_control_chars(version_str)
                     );
                 }
                 continue;
@@ -1606,8 +1606,8 @@ fn parse_append_importer_dependencies(
                     bail!(
                         log,
                         "pnpm-lock.yaml catalog '{}' missing entry for dependency '{}'",
-                        BStr::new(catalog_name),
-                        BStr::new(name_str)
+                        escape_control_chars(catalog_name),
+                        escape_control_chars(name_str)
                     );
                 }
             }
@@ -1624,7 +1624,7 @@ fn parse_append_importer_dependencies(
         if !decl.optional && !importer_versions.contains(peer_name) && !silent {
             bun_core::warn!(
                 "skipped peer \"{}\" of {}: not recorded in pnpm-lock.yaml (bun install will resolve it)",
-                BStr::new(peer_name),
+                escape_control_chars(peer_name),
                 ImporterName(importer_path)
             );
         }
@@ -1643,7 +1643,7 @@ fn parse_append_importer_dependencies(
                 {
                     bun_core::warn!(
                         "skipped \"{}\" from {}: excluded from pnpm-lock.yaml by excludeLinksFromLockfile",
-                        BStr::new(name_str),
+                        escape_control_chars(name_str),
                         ImporterName(importer_path)
                     );
                 }

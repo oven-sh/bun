@@ -504,6 +504,9 @@ pub struct PackageManager {
     pub(crate) patched_dependencies_to_remove:
         ArrayHashMap<PackageNameAndVersionHash, () /* , ArrayIdentityContext::U64, false */>,
 
+    // bun patch --commit: what install_with_manager writes and removes after its checks.
+    pub(crate) pending_patch_commit: patch_package::PendingCommit,
+
     pub(crate) active_lifecycle_scripts: crate::lifecycle_script_runner::List<'static>,
     pub(crate) last_reported_slow_lifecycle_script_at: u64,
     pub(crate) cached_tick_for_slow_lifecycle_script_logging: u64,
@@ -1590,6 +1593,7 @@ fn allocate_package_manager(
         wr!(migrated_package_json_moves, Vec::new());
         wr!(catalog_add, add_catalog::State::default());
         wr!(patched_dependencies_to_remove, ArrayHashMap::default());
+        wr!(pending_patch_commit, Default::default());
         wr!(last_reported_slow_lifecycle_script_at, 0);
         wr!(cached_tick_for_slow_lifecycle_script_logging, 0);
     }
@@ -1748,11 +1752,12 @@ fn push_package_json(path: &mut Vec<u8>) {
 
 /// A relative `$NPM_CONFIG_USERCONFIG` is relative to `start_dir`.
 /// `unreadable`, if empty, gets the path of a file that is there and could not be read.
-fn load_npmrc_files(
+/// A later file of `project_npmrcs` overrides an earlier one, and each of them the user's.
+fn load_npmrc_files<'a>(
     bunfig: &Api::BunInstall,
     env: &dot_env::Loader,
     start_dir: &[u8],
-    project_npmrc: Option<&ZStr>,
+    project_npmrcs: impl IntoIterator<Item = &'a ZStr>,
     diagnostics: ini::NpmrcDiagnostics,
     unreadable: &mut Option<Box<[u8]>>,
 ) -> Api::BunInstall {
@@ -1781,7 +1786,10 @@ fn load_npmrc_files(
     }
 
     let user_npmrc = (global_len > 0).then(|| ZStr::from_buf(&buf[..], global_len));
-    let paths: Vec<&ZStr> = [user_npmrc, project_npmrc].into_iter().flatten().collect();
+    let mut paths: Vec<&ZStr> = user_npmrc.into_iter().collect();
+    for path in project_npmrcs {
+        paths.push(path);
+    }
     let mut install = Api::BunInstall::default();
     if let Some(path) = ini::load_npmrc_config(&mut install, bunfig, env, diagnostics, &paths) {
         unreadable.get_or_insert_with(|| path.as_bytes().into());
@@ -1943,7 +1951,7 @@ fn path_as_typed(dir: &[u8]) -> Option<&'static [u8]> {
     if typed == dir
         || !(below_dir.is_empty() || below_dir[0] == b'/')
         || !bun_paths::is_absolute(typed)
-        || strings::split_any(typed, b"/").any(|part| matches!(part, b"." | b".."))
+        || strings::split_any(&typed[1..], b"/").any(|part| matches!(part, b"" | b"." | b".."))
     {
         return None;
     }
@@ -2356,6 +2364,12 @@ pub fn init(
                 fs.set_top_level_dir(fs.dirname_store().append(parent)?);
                 let _ = child_json.close();
                 workspace_name_hash = Some(name_hash);
+                // Found by the path as typed. The root reads the member's package.json by that name.
+                if !core::ptr::eq(walk.cwd, original_cwd) {
+                    let mut typed = walk.cwd.to_vec();
+                    push_package_json(&mut typed);
+                    original_package_json_path_buf = typed;
+                }
                 break 'root_package_json_file json_file;
             }
         }
@@ -2775,11 +2789,30 @@ fn init_with_runtime_once(
     };
     let importer_dir = without_trailing_slash_windows_path(importer_dir);
     // The project, as `init` finds it: the nearest package.json, then the workspace root it is a
-    // member of.
+    // member of. One that only says how to read the files beside it, such as
+    // `{ "type": "commonjs" }`, is part of the project above it.
     let mut workspace_package_json_cache = WorkspacePackageJSONCache::default();
     let mut walk = PackageJsonWalk::new(importer_dir);
-    let mut project = core::iter::from_fn(|| walk.next(bun_sys::O::RDONLY))
-        .find_map(|(dir, opened)| opened.is_ok().then_some(dir));
+    let mut project = None;
+    while let Some((dir, opened)) = walk.next(bun_sys::O::RDONLY) {
+        const OF_A_PROJECT: [&[u8]; 6] = [
+            b"name",
+            b"workspaces",
+            b"dependencies",
+            b"devDependencies",
+            b"optionalDependencies",
+            b"peerDependencies",
+        ];
+        if opened.is_ok()
+            && workspace_package_json_cache
+                .get_with_path(&mut bun_ast::Log::init(), &walk.path, Default::default())
+                .unwrap()
+                .is_ok_and(|json| OF_A_PROJECT.iter().any(|key| json.root.get(key).is_some()))
+        {
+            project = Some(dir);
+            break;
+        }
+    }
     if let Some(member) = project
         && let Ok(Some((root, _, _))) = find_workspace_root(
             &mut walk,
@@ -2798,14 +2831,14 @@ fn init_with_runtime_once(
     // `bun_install` came from the start directory; `process.chdir()` moves `top_level_dir`.
     let start_dir = bun_paths::fs::FileSystem::instance().initial_top_level_dir();
     let mut unreadable = None;
-    let root_bunfig = if without_trailing_slash_windows_path(start_dir) == project_dir {
-        None
-    } else {
-        ::bun_bunfig::arguments::load_install_section(project_dir).unwrap_or_else(|path| {
+    let root_bunfig_dir =
+        Some(project_dir).filter(|&dir| dir != without_trailing_slash_windows_path(start_dir));
+    let root_bunfig = root_bunfig_dir.and_then(|dir| {
+        ::bun_bunfig::arguments::load_install_section(dir).unwrap_or_else(|path| {
             unreadable = Some(path);
             None
         })
-    };
+    });
     // Also one in a folder between the two, which `bun install` does not read: in doubt it counts.
     let has_scanner = ::bun_bunfig::arguments::has_security_scanner(start_dir, project_dir);
     // A scanner is shown what `bun install` is about to install, and nothing else.
@@ -2820,17 +2853,30 @@ fn init_with_runtime_once(
     {
         return Err(bun_resolver::Error::SecurityScannerConfigured.into());
     }
-    let mut project_npmrc = bun_paths::path_buffer_pool::get();
+    // The start directory's own counts too, as its bunfig.toml does.
+    let mut npmrc_bufs = [
+        bun_paths::path_buffer_pool::get(),
+        bun_paths::path_buffer_pool::get(),
+    ];
+    let npmrc_dirs = [
+        Some(start_dir).filter(|_| root_bunfig_dir.is_some()),
+        Some(project_dir),
+    ];
     let no_bunfig = Api::BunInstall::default();
     let npmrc = load_npmrc_files(
         bun_install.unwrap_or(&no_bunfig),
         env,
         start_dir,
-        resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
-            project_dir,
-            &mut project_npmrc,
-            &[b".npmrc".as_slice()],
-        ),
+        npmrc_dirs
+            .into_iter()
+            .zip(&mut npmrc_bufs)
+            .filter_map(|(dir, buf)| {
+                resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
+                    dir?,
+                    buf,
+                    &[b".npmrc".as_slice()],
+                )
+            }),
         ini::NpmrcDiagnostics::Discard,
         &mut unreadable,
     );

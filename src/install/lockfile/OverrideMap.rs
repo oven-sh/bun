@@ -421,8 +421,8 @@ impl OverrideMap {
                 source.range_of_string(rule_loc(root, name)),
                 format_args!(
                     "{}@{} is not in the catalog{}",
-                    bstr::BStr::new(name),
-                    bstr::BStr::new(dep.version.literal.slice(buf)),
+                    bun_core::fmt::escape_control_chars(name),
+                    bun_core::fmt::escape_control_chars(dep.version.literal.slice(buf)),
                     if has_workspaces {
                         ""
                     } else {
@@ -805,7 +805,10 @@ impl OverrideMap {
                 ctx.log.add_warning_fmt(
                     Some(ctx.source),
                     value_loc,
-                    format_args!("Invalid override value for \"{}\"", bstr::BStr::new(k)),
+                    format_args!(
+                        "Invalid override value for \"{}\"",
+                        bun_core::fmt::escape_control_chars(k)
+                    ),
                 );
                 return Ok(());
             }
@@ -840,7 +843,7 @@ impl OverrideMap {
                         child_value_loc,
                         format_args!(
                             "Invalid override value for \"{}\"",
-                            bstr::BStr::new(child_key)
+                            bun_core::fmt::escape_control_chars(child_key)
                         ),
                     );
                     return Ok(());
@@ -914,7 +917,10 @@ impl OverrideMap {
                 ctx.log.add_warning_fmt(
                     Some(ctx.source),
                     value_loc,
-                    format_args!("Invalid resolution value for \"{}\"", bstr::BStr::new(k)),
+                    format_args!(
+                        "Invalid resolution value for \"{}\"",
+                        bun_core::fmt::escape_control_chars(k)
+                    ),
                 );
                 return Ok(());
             };
@@ -1092,7 +1098,10 @@ fn warn_selector_error(
         SelectorError::InvalidName => ctx.log.add_warning_fmt(
             source,
             key_loc,
-            format_args!("Invalid package name \"{}\"", bstr::BStr::new(key)),
+            format_args!(
+                "Invalid package name \"{}\"",
+                bun_core::fmt::escape_control_chars(key)
+            ),
         ),
         SelectorError::TooDeep => ctx.log.add_warning_fmt(
             source,
@@ -1105,7 +1114,10 @@ fn warn_selector_error(
         SelectorError::EmptyRange => ctx.log.add_warning_fmt(
             source,
             key_loc,
-            format_args!("Missing version range after \"{}\"", bstr::BStr::new(key)),
+            format_args!(
+                "Missing version range after \"{}\"",
+                bun_core::fmt::escape_control_chars(key)
+            ),
         ),
     }
 }
@@ -1154,8 +1166,10 @@ fn parse_range(
                 key_loc,
                 format_args!(
                     "Invalid version range \"{}\" for \"{}\"",
-                    bstr::BStr::new(range),
-                    bstr::BStr::new(name.slice(ctx.builder.string_bytes.as_slice()))
+                    bun_core::fmt::escape_control_chars(range),
+                    bun_core::fmt::escape_control_chars(
+                        name.slice(ctx.builder.string_bytes.as_slice())
+                    )
                 ),
             );
             None
@@ -1187,7 +1201,7 @@ fn parse_override_value(
             loc,
             format_args!(
                 "Removing \"{}\" with \"-\" is not supported",
-                bstr::BStr::new(key)
+                bun_core::fmt::escape_control_chars(key)
             ),
         );
         return Ok(None);
@@ -1231,8 +1245,8 @@ fn parse_override_value(
                         loc,
                         format_args!(
                             "Could not resolve \"{}\": \"{}\" is not in dependencies",
-                            bstr::BStr::new(value),
-                            bstr::BStr::new(ref_name),
+                            bun_core::fmt::escape_control_chars(value),
+                            bun_core::fmt::escape_control_chars(ref_name),
                         ),
                     );
                     return Ok(None);
@@ -1243,8 +1257,8 @@ fn parse_override_value(
                         loc,
                         format_args!(
                             "Could not resolve \"{}\": workspaces declare different versions of \"{}\"",
-                            bstr::BStr::new(value),
-                            bstr::BStr::new(ref_name),
+                            bun_core::fmt::escape_control_chars(value),
+                            bun_core::fmt::escape_control_chars(ref_name),
                         ),
                     );
                     return Ok(None);
@@ -1272,7 +1286,11 @@ fn parse_override_value(
         ctx.log.add_warning_fmt(
             Some(ctx.source),
             loc,
-            format_args!("Invalid {} value \"{}\"", field, bstr::BStr::new(value)),
+            format_args!(
+                "Invalid {} value \"{}\"",
+                field,
+                bun_core::fmt::escape_control_chars(value)
+            ),
         );
         return Ok(None);
     };

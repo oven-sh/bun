@@ -1363,6 +1363,111 @@ describe.concurrent("a commit whose patch bun install cannot apply changes nothi
   });
 });
 
+// The install that `bun patch --commit` runs can refuse to go on. By then the patch file was
+// written, over an older one too, and with the global store the edited copy was deleted, while
+// nothing in package.json named the patch.
+describe.concurrent("a commit whose install is refused changes nothing", () => {
+  const scannerJs = `export const scanner = {
+  version: "1",
+  scan: async () => [{ package: "basic-1", level: "fatal", description: "bad", url: "http://example.invalid/" }],
+};\n`;
+  const withScanner = (bunfig: string) => `${bunfig}[install.security]\nscanner = "./scanner.js"\n`;
+
+  /** Every path outside of the cache, with what it holds. */
+  const state = (dir: string) =>
+    tree(dir)
+      .filter(path => !path.startsWith(".bun-cache"))
+      .map(path => [path, kind(dir, path) === "file" ? readFileSync(join(dir, path), "utf8") : kind(dir, path)]);
+
+  async function expectRefusedByScanner(dir: string, env: Env, name: string) {
+    const before = state(dir);
+    const { stdout, exitCode } = await runBun(dir, env, "patch", "--commit", name);
+    expect(stdout).toContain("Installation aborted due to fatal security advisories");
+    expect(state(dir)).toEqual(before);
+    expect(exitCode).toBe(1);
+  }
+
+  describe.each(layouts)("%s linker, globalStore = %p", (linker, globalStore) => {
+    test.each(["a new patch", "a patch over an older one", "every edit undone"])(
+      "the security scanner says no to another package: %s",
+      async row => {
+        await using project = await installedProject(
+          { dependencies: { "no-deps": "1.0.0", "basic-1": "1.0.0" } },
+          { linker, globalStore, files: { "scanner.js": scannerJs } },
+        );
+        const { dir, env } = project;
+        const index = join(dir, "node_modules", "no-deps", "index.js");
+        const original = await Bun.file(index).text();
+        await bunOk(dir, env, "patch", "no-deps");
+        if (row !== "a new patch") {
+          await Bun.write(index, patched);
+          await bunOk(dir, env, "patch", "--commit", "no-deps");
+          await bunOk(dir, env, "patch", "no-deps");
+        }
+        const edited = row === "every edit undone" ? original : "module.exports = 'an hour of work';\n";
+        await Bun.write(index, edited);
+
+        const bunfig = await Bun.file(join(dir, "bunfig.toml")).text();
+        await Bun.write(join(dir, "bunfig.toml"), withScanner(bunfig));
+        await expectRefusedByScanner(dir, env, "no-deps");
+
+        await Bun.write(join(dir, "bunfig.toml"), bunfig);
+        await bunOk(dir, env, "patch", "--commit", "no-deps");
+        expect(await Bun.file(index).text()).toBe(edited);
+      },
+    );
+
+    test("a dependency does not resolve", async () => {
+      await using project = await installedProject({ dependencies: { "no-deps": "1.0.0" } }, { linker, globalStore });
+      const { dir, env } = project;
+      await bunOk(dir, env, "patch", "no-deps");
+      await Bun.write(join(dir, "node_modules", "no-deps", "index.js"), patched);
+      await Bun.write(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "root", dependencies: { "no-deps": "1.0.0", "no-registry-has-this": "1.0.0" } }),
+      );
+
+      const before = state(dir);
+      const { stderr, exitCode } = await runBun(dir, env, "patch", "--commit", "no-deps");
+      expect(stderr).toContain("no-registry-has-this");
+      expect(state(dir)).toEqual(before);
+      expect(exitCode).toBe(1);
+    });
+
+    // No linker runs, so nothing puts the package back in the place of the copy.
+    test("--lockfile-only leaves the folder", async () => {
+      await using project = await installedProject({ dependencies: { "no-deps": "1.0.0" } }, { linker, globalStore });
+      const { dir, env } = project;
+      await bunOk(dir, env, "patch", "no-deps");
+      await Bun.write(join(dir, "node_modules", "no-deps", "index.js"), patched);
+      await bunOk(dir, env, "patch", "--commit", "no-deps", "--lockfile-only");
+      expect({
+        index: await Bun.file(join(dir, "node_modules", "no-deps", "index.js")).text(),
+        patches: await readdirSorted(join(dir, "patches")),
+        patchedDependencies: (await Bun.file(join(dir, "package.json")).json()).patchedDependencies,
+      }).toEqual({
+        index: patched,
+        patches: ["no-deps@1.0.0.patch"],
+        patchedDependencies: { "no-deps@1.0.0": "patches/no-deps@1.0.0.patch" },
+      });
+    });
+  });
+
+  test.each(["hoisted", "isolated"] as const)(
+    "nothing was edited in a package with install scripts (%s linker)",
+    async linker => {
+      await using project = await installedProject(
+        { dependencies: { "uses-what-bin": "1.0.0", "basic-1": "1.0.0" }, trustedDependencies: ["uses-what-bin"] },
+        { linker, files: { "scanner.js": scannerJs } },
+      );
+      const { dir, env } = project;
+      await bunOk(dir, env, "patch", "uses-what-bin");
+      await Bun.write(join(dir, "bunfig.toml"), withScanner(await Bun.file(join(dir, "bunfig.toml")).text()));
+      await expectRefusedByScanner(dir, env, "uses-what-bin");
+    },
+  );
+});
+
 // bun has no command that removes a patch. `bun patch --commit` used to say "No changes detected"
 // and leave the patch in force, while node_modules had the text that the user restored.
 describe.concurrent("committing a package with every edit undone removes its patch", () => {
@@ -1433,6 +1538,46 @@ describe.concurrent("committing a package with every edit undone removes its pat
       );
       expect(await state(dir)).toEqual(unpatched);
       expect(await Bun.file(file).text()).toBe("not the project's to delete\n");
+    },
+  );
+
+  // One fix that fits two versions, kept as one file. Migrating from pnpm writes such entries.
+  test.each(["patches/shared.patch", "./patches/../patches/shared.patch"])(
+    "a patch file that the entry of another version names stays: %s",
+    async otherPath => {
+      await using project = await installedProject({
+        dependencies: { "no-deps": "1.0.0", "no-deps-2": "npm:no-deps@2.0.0" },
+      });
+      const { dir, env } = project;
+      const added = (name: string) => existsSync(join(dir, "node_modules", name, "added.js"));
+      const readPackageJson = () => Bun.file(join(dir, "package.json")).json();
+      await bunOk(dir, env, "patch", "no-deps@1.0.0");
+      await Bun.write(join(dir, "node_modules", "no-deps", "added.js"), "// fits every version\n");
+      await bunOk(dir, env, "patch", "--commit", "no-deps@1.0.0");
+      await Bun.write(join(dir, "patches", "shared.patch"), Bun.file(join(dir, patchPath)));
+      rmSync(join(dir, patchPath));
+      await Bun.write(
+        join(dir, "package.json"),
+        JSON.stringify({
+          ...(await readPackageJson()),
+          patchedDependencies: { "no-deps@1.0.0": "patches/shared.patch", "no-deps@2.0.0": otherPath },
+        }),
+      );
+      await bunOk(dir, env, "install");
+      expect([added("no-deps"), added("no-deps-2")]).toEqual([true, true]);
+
+      await bunOk(dir, env, "patch", "no-deps@1.0.0");
+      rmSync(join(dir, "node_modules", "no-deps", "added.js"));
+      expect(await bunOk(dir, env, "patch", "--commit", "no-deps@1.0.0")).toContain(
+        "Removed the patch for no-deps@1.0.0 (another package uses patches/shared.patch)\n",
+      );
+      expect((await readPackageJson()).patchedDependencies).toEqual({ "no-deps@2.0.0": otherPath });
+      expect(await readdirSorted(join(dir, "patches"))).toEqual(["shared.patch"]);
+
+      // What everybody else gets.
+      rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+      await bunOk(dir, env, "install");
+      expect([added("no-deps"), added("no-deps-2")]).toEqual([false, true]);
     },
   );
 });
@@ -3178,10 +3323,10 @@ describe.concurrent("a patch file that is not there", () => {
   };
 
   /** Every package of `names` is patched, and patches/ is gone: not committed, or lost in a merge. */
-  async function withoutPatchFiles(names: string[], linker: Linker = "hoisted") {
+  async function withoutPatchFiles(names: string[], linker: Linker = "hoisted", globalStore = false) {
     const project = await installedProject(
       { dependencies: Object.fromEntries(names.map(name => [name, "1.0.0"])) },
-      { linker },
+      { linker, globalStore },
     );
     for (const name of names) {
       await bunOk(project.dir, project.env, "patch", name);
@@ -3191,21 +3336,22 @@ describe.concurrent("a patch file that is not there", () => {
     return project;
   }
 
-  test("bun install names the package to patch again", async () => {
+  test("bun install names the command that writes it again", async () => {
     await using project = await withoutPatchFiles(["basic-1"]);
     const { stderr, exitCode } = await runBun(project.dir, project.env, "install");
     expect(stderr).toEndWith(
       "error: Couldn't find patch file: 'patches/basic-1@1.0.0.patch'\n\n" +
-        "To create a new patch file run:\n\n  bun patch basic-1@1.0.0\n\n" +
+        "To write it again from the patched package in node_modules, run:\n\n  bun patch --commit basic-1@1.0.0\n\n" +
         'To install the package without a patch, remove "basic-1@1.0.0" from "patchedDependencies" in package.json\n',
     );
     expect(exitCode).toBe(1);
   });
 
-  test("bun patch and a --commit without edits take the entry out of package.json", async () => {
+  test("a --commit of the package's own text takes the entry out of package.json", async () => {
     await using project = await withoutPatchFiles(["basic-1"]);
     const { dir, env } = project;
-    await bunOk(dir, env, "patch", "basic-1");
+    rmSync(indexJs(dir, "basic-1"));
+    await Bun.write(indexJs(dir, "basic-1"), 'console.log("basic-1 1.0.0");\n');
     expect(await bunOk(dir, env, "patch", "--commit", "basic-1")).toContain(
       "Removed the patch for basic-1@1.0.0 (did not delete patches/basic-1@1.0.0.patch)\n",
     );
@@ -3213,41 +3359,56 @@ describe.concurrent("a patch file that is not there", () => {
     await bunOk(dir, env, "install");
   });
 
-  // The install that either command runs used to stop at the first file it did not find.
-  test.each(["hoisted", "isolated"] as const)(
-    "bun patch and --commit make the files again (%s linker)",
-    async linker => {
-      await using project = await withoutPatchFiles(["basic-1", "no-deps"], linker);
+  // The patched folder may be the last copy of the change. `bun patch` laid the unpatched package
+  // over it, and with the global store so did `bun patch` and `bun patch --commit` of another package.
+  test.each(layouts)(
+    "bun patch leaves the patched folders alone, and --commit writes the files again (%s linker, globalStore = %p)",
+    async (linker, globalStore) => {
+      await using project = await withoutPatchFiles(["basic-1", "no-deps"], linker, globalStore);
       const { dir, env } = project;
-
-      const { stdout, stderr, exitCode } = await runBun(dir, env, "patch", "basic-1@1.0.0");
-      expect(stderr).toContain("warn: Couldn't find patch file: 'patches/basic-1@1.0.0.patch'. Going on without it\n");
-      expect(stderr).not.toContain("error");
-      expect(stdout).toContain(patchMessage("basic-1", "node_modules/basic-1"));
-      expect(exitCode).toBe(0);
-      expect(await Bun.file(indexJs(dir, "basic-1")).text()).toBe('console.log("basic-1 1.0.0");\n');
-
-      await commitEdit(dir, env, "basic-1", "module.exports = 'again';\n");
-      expect(await readdirSorted(join(dir, "patches"))).toEqual(["basic-1@1.0.0.patch"]);
-      await bunOk(dir, env, "patch", "no-deps");
-      await commitEdit(dir, env, "no-deps", patched);
-
-      // Another machine has the patch files only.
-      rmSync(join(dir, "node_modules"), { recursive: true, force: true });
-      rmSync(join(dir, ".bun-cache"), { recursive: true, force: true });
-      await bunOk(dir, env, "install");
-      expect({
+      const state = async () => ({
         "basic-1": await Bun.file(indexJs(dir, "basic-1")).text(),
         "no-deps": await Bun.file(indexJs(dir, "no-deps")).text(),
         patchedDependencies: (await Bun.file(join(dir, "package.json")).json()).patchedDependencies,
-      }).toEqual({
-        "basic-1": "module.exports = 'again';\n",
+        lockfile: (await Bun.file(join(dir, "bun.lock")).text()).match(/patches\/[^"]+/g)?.sort(),
+      });
+      const bothPatched = {
+        "basic-1": patched,
         "no-deps": patched,
         patchedDependencies: {
           "basic-1@1.0.0": "patches/basic-1@1.0.0.patch",
           "no-deps@1.0.0": "patches/no-deps@1.0.0.patch",
         },
-      });
+        lockfile: ["patches/basic-1@1.0.0.patch", "patches/no-deps@1.0.0.patch"],
+      };
+
+      const { stdout, stderr, exitCode } = await runBun(dir, env, "patch", "basic-1@1.0.0");
+      expect(stderr).toContain("error: Couldn't find patch file: 'patches/");
+      expect(stdout).not.toContain("To patch");
+      expect(await state()).toEqual(bothPatched);
+      expect(exitCode).toBe(1);
+
+      // The file of no-deps is still lost. That stops the install, not the commit.
+      const first = await runBun(dir, env, "patch", "--commit", "basic-1");
+      expect(first.stderr).toContain("error: Couldn't find patch file: 'patches/no-deps@1.0.0.patch'\n");
+      expect(first.stderr).toEndWith("note: patches/basic-1@1.0.0.patch was written, and the install did not run\n");
+      expect(await state()).toEqual(bothPatched);
+      expect(await readdirSorted(join(dir, "patches"))).toEqual(["basic-1@1.0.0.patch"]);
+      expect(first.exitCode).toBe(1);
+
+      const other = await runBun(dir, env, "patch", "basic-1");
+      expect(other.stderr).toContain("error: Couldn't find patch file: 'patches/no-deps@1.0.0.patch'\n");
+      expect(await state()).toEqual(bothPatched);
+      expect(other.exitCode).toBe(1);
+
+      await bunOk(dir, env, "patch", "--commit", "no-deps");
+      expect(await state()).toEqual(bothPatched);
+
+      // Another machine has the patch files only.
+      rmSync(join(dir, "node_modules"), { recursive: true, force: true });
+      rmSync(join(dir, ".bun-cache"), { recursive: true, force: true });
+      await bunOk(dir, env, "install");
+      expect(await state()).toEqual(bothPatched);
     },
   );
 });

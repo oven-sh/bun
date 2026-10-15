@@ -1063,10 +1063,11 @@ impl FilesContext {
                 }
             }
 
+            let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
             let mtime: i64 = entry_ref.mtime();
 
             let mut data: Vec<u8> = Vec::new();
-            if !archive.read_data_to_vec(&mut data)? {
+            if !archive.read_data_to_vec(size, &mut data)? {
                 return Ok(Self::read_error(&archive));
             }
 

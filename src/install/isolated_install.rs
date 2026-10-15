@@ -49,7 +49,7 @@ use crate::network_task::ForTarballError;
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
 use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_task as Task;
-use crate::prune::OldModules;
+use crate::prune::{LinkedNodeModules, OldModules};
 use crate::{
     self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
     invalid_dependency_id, invalid_package_id,
@@ -546,8 +546,6 @@ fn build_store(
     });
 
     let mut dep_ids_sort_buf: Vec<DependencyID> = Vec::new();
-    // Of `dep_ids_sort_buf`: the later rows of `names_listed_again`, sorted.
-    let mut listed_again: Vec<DependencyID> = Vec::new();
 
     // For each package, the peer dependency names declared anywhere in its
     // transitive closure that are not satisfied within that closure (i.e., the
@@ -984,16 +982,6 @@ fn build_store(
             });
         }
 
-        listed_again.clear();
-        lockfile::names_listed_again(
-            dep_ids_sort_buf.len(),
-            |i| dep_ids_sort_buf[i],
-            dependencies,
-            string_buf,
-            |_, later| listed_again.push(later),
-        );
-        listed_again.sort_unstable();
-
         peer_dep_ids.clear();
 
         // Under `--omit=peer` the copy an ancestor provides is installed anyway, and is linked.
@@ -1049,18 +1037,8 @@ fn build_store(
 
                 let pkg_id = resolutions[dep_id as usize];
 
-                // One folder per name: the first group that this run links has it.
-                if !listed_again.is_empty()
-                    && listed_again.binary_search(&dep_id).is_ok()
-                    && (node_dependencies[node_id.get() as usize].iter())
-                        .map(|ids| &dependencies[ids.dep_id as usize])
-                        .take_while(|first| !first.behavior.is_prod())
-                        .any(|first| {
-                            first.name_hash == dep.name_hash && !first.behavior.is_workspace()
-                        })
-                {
-                    continue;
-                }
+                // TODO: handle duplicate dependencies. should be similar logic
+                // like we have for dev dependencies in `hoistDependency`
 
                 if !dep.behavior.is_peer() {
                     // simple case:
@@ -1490,11 +1468,12 @@ fn build_store(
     })
 }
 
-/// Entry by entry: `node_modules` may be a mount point or a symlink. `keep_links`: of `bun link`.
+/// Entry by entry: `node_modules` may be a mount point. `keep_links`: of `bun link`.
 pub(crate) fn move_node_modules_aside(
     lockfile: &Lockfile,
     keep_links: bool,
-    for_hoisted_linker: bool,
+    linked: &LinkedNodeModules,
+    log_level: package_manager::Options::LogLevel,
 ) -> Option<OldModules> {
     let mut old_modules = AutoRelPath::from(b"node_modules").assume_ok();
     let rand = fast_random();
@@ -1509,9 +1488,12 @@ pub(crate) fn move_node_modules_aside(
         return None;
     }
     let old_modules_name = old_modules.basename().to_vec();
+    linked.warn_not_cleared(log_level, |path| holds_a_tree(path, &old_modules_name));
 
     let mut node_modules = AutoRelPath::from(b"node_modules").assume_ok();
-    move_entries_aside(&mut node_modules, &mut old_modules, keep_links);
+    if !linked.contains(node_modules.slice()) {
+        move_entries_aside(&mut node_modules, &mut old_modules, keep_links);
+    }
 
     for (i, workspace_path) in lockfile.workspace_paths.values().iter().enumerate() {
         let workspace_path = workspace_path.slice(&lockfile.buffers.string_bytes);
@@ -1520,6 +1502,9 @@ pub(crate) fn move_node_modules_aside(
         }
         let mut workspace_node_modules = AutoRelPath::from(workspace_path).assume_ok();
         workspace_node_modules.append(b"node_modules").assume_ok();
+        if linked.contains(workspace_node_modules.slice()) {
+            continue;
+        }
 
         // Not the folder's name: `apps/web` and `packages/web` would collide.
         let old_modules_len = old_modules.len();
@@ -1527,18 +1512,8 @@ pub(crate) fn move_node_modules_aside(
             .append_fmt(format_args!(".old_{i}_modules"))
             .assume_ok();
 
-        match installer::is_link(workspace_node_modules.slice_z()) {
-            None => {}
-            // That linker installs through the link. The isolated linker never wrote behind it.
-            Some(true) if for_hoisted_linker => {}
-            // The isolated linker's links are relative, so behind a link they would dangle.
-            Some(true) => move_or_delete(workspace_node_modules.slice_z(), old_modules.slice_z()),
-            Some(false) => {
-                let _ = sys::mkdirat(Fd::cwd(), old_modules.slice_z(), 0o755);
-                move_entries_aside(&mut workspace_node_modules, &mut old_modules, false);
-                let _ = sys::rmdir(workspace_node_modules.slice_z());
-            }
-        }
+        move_entries_aside(&mut workspace_node_modules, &mut old_modules, false);
+        let _ = sys::rmdir(workspace_node_modules.slice_z());
 
         old_modules.set_length(old_modules_len);
     }
@@ -1550,19 +1525,43 @@ pub(crate) fn move_node_modules_aside(
     Some(OldModules(old_modules_name.into_boxed_slice()))
 }
 
-/// `to` is a directory in `from`, or of its name.
+/// No package's name begins with a dot: what is not bun's is another tool's (`.vite`).
+fn is_a_linkers(name: &[u8]) -> bool {
+    name[0] != b'.' || name == b".bin" || name == b".bun" || crate::prune::is_leftover(name)
+}
+
+/// Whether `move_entries_aside` would take something out of `node_modules`.
+fn holds_a_tree(node_modules: &[u8], old_modules_name: &[u8]) -> bool {
+    use bun_sys::FdExt as _;
+
+    let Ok(dir) = sys::open_dir_for_iteration(Fd::cwd(), node_modules) else {
+        return false;
+    };
+    let mut iter = sys::iterate_dir(dir);
+    let mut found = false;
+    while let Ok(Some(entry)) = iter.next() {
+        let name = entry.name.slice_u8();
+        if is_a_linkers(name) && name != old_modules_name {
+            found = true;
+            break;
+        }
+    }
+    dir.close();
+    found
+}
+
+/// Makes `to`, a directory in `from` or of its name.
 fn move_entries_aside(from: &mut AutoRelPath, to: &mut AutoRelPath, keep_links: bool) {
     use bun_sys::FdExt as _;
 
     let Ok(dir) = sys::open_dir_for_iteration(Fd::cwd(), from.slice()) else {
         return;
     };
+    let _ = sys::mkdirat(Fd::cwd(), to.slice_z(), 0o755);
     let mut iter = sys::iterate_dir(dir);
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
-        // No package's name begins with a dot: what is not bun's is another tool's (`.vite`).
-        let is_buns = name == b".bin" || name == b".bun" || crate::prune::is_leftover(name);
-        if (name[0] == b'.' && !is_buns) || name == to.basename() {
+        if !is_a_linkers(name) || name == to.basename() {
             continue;
         }
         if keep_links && entry.kind == sys::EntryKind::SymLink {
@@ -1574,7 +1573,6 @@ fn move_entries_aside(from: &mut AutoRelPath, to: &mut AutoRelPath, keep_links: 
         to.append(name).assume_ok();
 
         if entry.kind == sys::EntryKind::Directory && name[0] == b'@' {
-            let _ = sys::mkdirat(Fd::cwd(), to.slice_z(), 0o755);
             move_entries_aside(from, to, keep_links);
             let _ = sys::rmdir(from.slice_z());
         } else {
@@ -2013,6 +2011,8 @@ pub(crate) fn install_isolated_packages(
         None
     };
 
+    let linked = LinkedNodeModules::find(lockfile);
+
     // setup node_modules/.bun
     let mut old_modules: Option<OldModules> = None;
     let is_new_bun_modules: bool = 'is_new_bun_modules: {
@@ -2044,7 +2044,12 @@ pub(crate) fn install_isolated_packages(
         if !is_new_node_modules
             || (!lockfile.workspace_paths.is_empty() && workspace_filters.is_empty())
         {
-            old_modules = move_node_modules_aside(lockfile, manager.options.global, false);
+            old_modules = move_node_modules_aside(
+                lockfile,
+                manager.options.global,
+                &linked,
+                manager.options.log_level,
+            );
         }
 
         if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
@@ -2061,7 +2066,8 @@ pub(crate) fn install_isolated_packages(
 
     // Remove the fallback a previous install with hoisting on left behind.
     // `delete_tree` succeeds on a missing tree, so any error here is real.
-    if !manager.options.hoist && !is_new_bun_modules {
+    let clears_fallback = !is_new_bun_modules && !linked.contains(b"node_modules");
+    if clears_fallback && !manager.options.hoist {
         use bun_sys::FdExt as _;
         if let Err(err) =
             Fd::cwd().delete_tree(paths::path_literal!("node_modules/.bun/node_modules"))
@@ -2073,7 +2079,7 @@ pub(crate) fn install_isolated_packages(
             );
             Global::exit(1);
         }
-    } else if !is_new_bun_modules {
+    } else if clears_fallback {
         crate::prune::unlink_unhoisted(manager);
     }
 
@@ -2167,6 +2173,7 @@ pub(crate) fn install_isolated_packages(
                 PackageInstall::supported_method() as u8
             ),
             is_new_bun_modules,
+            linked,
             staging_lock: Default::default(),
             global_store_path: global_store_path
                 .as_deref()

@@ -360,7 +360,10 @@ impl PmPkgCommand {
                 );
 
                 if !bun_sys::exists_z(full_path) {
-                    bun_core::warn!("No bin file found at {}", bstr::BStr::new(bin_path));
+                    bun_core::warn!(
+                        "No bin file found at {}",
+                        bun_core::fmt::EscapeControlChars(bstr::BStr::new(bin_path))
+                    );
                 }
             }
         }

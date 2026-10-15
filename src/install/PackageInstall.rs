@@ -65,9 +65,6 @@ pub struct Summary {
     /// Set when this install replaced the tree of the other linker.
     pub(crate) old_modules: Option<crate::prune::OldModules>,
 
-    /// Hoisted linker, over a `node_modules` that was there: what to remove once bun.lock is saved.
-    pub(crate) hiding_copies: Option<crate::prune::HidingCopies>,
-
     pub(crate) offline_misses: OfflineMisses,
 }
 
@@ -191,7 +188,7 @@ impl InstallResult {
             bun_core::pretty_errorln!(
                 "<r><red>{}<r>: copying file {}",
                 failure.err.name(),
-                bstr::BStr::new(&failure.file)
+                bun_core::fmt::EscapeControlChars(bstr::BStr::new(&failure.file))
             );
         }
         self

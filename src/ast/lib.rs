@@ -714,7 +714,7 @@ impl Location {
             to,
             ENABLE_ANSI_COLORS,
             "<d>at <r><cyan>{}<r>",
-            bstr::BStr::new(&self.file)
+            bun_core::fmt::EscapeControlChars(bstr::BStr::new(&self.file))
         )?;
         if self.line > 0 && self.column > -1 {
             bun_core::write_pretty!(
@@ -1031,7 +1031,7 @@ impl Data {
                             to,
                             "{}",
                             bun_core::fmt::fmt_javascript(
-                                text,
+                                &printable(text),
                                 bun_core::fmt::HighlighterOptions {
                                     enable_colors: ENABLE_ANSI_COLORS,
                                     redact_sensitive_information,
@@ -1058,7 +1058,7 @@ impl Data {
                         to,
                         "{}",
                         bun_core::fmt::fmt_javascript(
-                            line_text,
+                            &printable(line_text),
                             bun_core::fmt::HighlighterOptions {
                                 enable_colors: ENABLE_ANSI_COLORS,
                                 redact_sensitive_information,
@@ -1106,17 +1106,25 @@ impl Data {
     }
 }
 
-/// Width in terminal columns of the first `units` UTF-16 code units of `line`. A tab counts as one column.
+/// A line of a file as it is printed: its control characters are spelled out. A tab stays.
+fn printable(line: &[u8]) -> Vec<u8> {
+    bun_core::fmt::escape_control_chars_multiline(line)
+        .to_string()
+        .into_bytes()
+}
+
+/// Width in terminal columns of the first `units` UTF-16 code units of `line`, printed. A tab counts as one column.
 fn width_before(line: &[u8], units: usize) -> usize {
     use bun_core::strings;
-    if strings::is_all_ascii(line) {
-        return units;
-    }
     let before = &line[..strings::wtf8_offset_of_utf16_index(line, units as u32)];
     let past_the_end = units.saturating_sub(strings::wtf8_len_utf16(before) as usize);
+    let before = printable(before);
+    if strings::is_all_ascii(&before) {
+        return before.len() + past_the_end;
+    }
     // The width of a tab is 0 there.
-    let tabs = strings::count_char(before, b'\t');
-    strings::visible::width::exclude_ansi_colors::utf8(before) + tabs + past_the_end
+    let tabs = strings::count_char(&before, b'\t');
+    strings::visible::width::exclude_ansi_colors::utf8(&before) + tabs + past_the_end
 }
 
 fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {

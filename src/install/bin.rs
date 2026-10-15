@@ -869,8 +869,6 @@ pub struct Linker<'a> {
 
     pub err: Option<Error>,
     pub skipped_due_to_missing_bin: bool,
-    /// Only link: the file keeps its mode and its first line (`Lockfile::is_member_outside`).
-    pub keeps_target: bool,
 }
 
 #[cfg(not(windows))]
@@ -1035,7 +1033,7 @@ impl<'a> Linker<'a> {
         }
 
         #[cfg(not(windows))]
-        if !self.keeps_target {
+        {
             let mode = exec_mode();
             if (target_stat.st_mode as Mode) & 0o777 != mode {
                 let _ = sys::lchmod(abs_target, mode);
@@ -1984,7 +1982,6 @@ pub(crate) fn link_free_bins(
             rel_buf: rel_buf.as_mut_slice(),
             err: None,
             skipped_due_to_missing_bin: false,
-            keeps_target: lockfile.is_member_outside(package_id),
         }
         .link(global_bin_path.is_some());
     }

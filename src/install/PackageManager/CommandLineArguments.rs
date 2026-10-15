@@ -1359,7 +1359,13 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             .filter_map(|&(flag, kind)| match kind {
                 AliasOf(own) => {
                     let name_end = strings::index_of_char_usize(own, b'=').unwrap_or(own.len());
-                    has(&own[2..name_end]).then_some((flag, own))
+                    if has(&own[2..name_end]) {
+                        Some((flag, own))
+                    } else {
+                        // Where a new dependency is saved: nothing to a command that saves none.
+                        flag.starts_with(b"--save-")
+                            .then_some((flag, b"".as_slice()))
+                    }
                 }
                 Satisfied => Some((flag, b"".as_slice())),
                 Near(_) => None,

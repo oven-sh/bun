@@ -66,6 +66,7 @@ pub struct Installer<'a> {
     pub(crate) installed: Bitset,
     pub(crate) install_node: Option<&'a mut ProgressNode>,
     pub(crate) is_new_bun_modules: bool,
+    pub(crate) linked: crate::prune::LinkedNodeModules,
     /// Taken by the first task that links a project-local package.
     pub(crate) staging_lock: std::sync::OnceLock<StagingLock>,
 
@@ -1895,6 +1896,7 @@ impl<'a> Installer<'a> {
             dest: hidden_hoisted_node_modules.into_sep::<{ PathSeparators::ANY }>(),
             target: target.into_sep::<{ PathSeparators::ANY }>(),
             real_len,
+            is_behind_link: false,
             #[cfg(windows)]
             fallback_junction_target: full_target.into_sep::<{ PathSeparators::ANY }>(),
         };
@@ -1957,8 +1959,10 @@ impl<'a> Installer<'a> {
 
         let mut dest = AutoPath::init_top_level_dir();
         self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
-        // A relative link counts from where it really is, and a member may be behind a link.
-        if pkg_res.tag == ResolutionTag::Workspace
+        // A relative link counts from where it really is: `node_modules` or a member can be a link.
+        let is_linked = self.linked.resolve(&mut dest);
+        if !is_linked
+            && pkg_res.tag == ResolutionTag::Workspace
             && let Some(member) = lockfile
                 .linked_members
                 .get(lockfile.str(pkg_res.workspace()))
@@ -1967,19 +1971,28 @@ impl<'a> Installer<'a> {
             dest.append(b"node_modules").assume_ok();
         }
         let base_len = dest.len();
+        // The `node_modules` of the project or of a member, which no first install has reset.
+        let is_behind_link =
+            is_linked && matches!(pkg_res.tag, ResolutionTag::Root | ResolutionTag::Workspace);
 
         // See `Symlinker::real_len`. A first install with `--filter` does not reset the members.
         let all_real = made_entry
             || uses_global_store
-            || (self.is_new_bun_modules && pkg_res.tag != ResolutionTag::Workspace);
+            || (self.is_new_bun_modules
+                && pkg_res.tag != ResolutionTag::Workspace
+                && !is_behind_link);
         let mut real_len = match (pkg_res.tag, strategy) {
             (ResolutionTag::Root, _) | (_, symlinker::Strategy::ExpectMissing) => base_len,
+            _ if is_behind_link => base_len,
             _ => base_len - "/node_modules".len(),
         };
         let mut real_scope: &[u8] = b"";
 
         // Gives `dest` back, with the `real_len` the symlinker ends with.
-        let link = |mut dest: AutoPath, to: AutoAbsPath, real_len: usize| {
+        let link = |mut dest: AutoPath, mut to: AutoAbsPath, real_len: usize| {
+            if is_linked {
+                self.linked.resolve(&mut to);
+            }
             let dest_len = dest.len();
             dest.undo(1);
             let target = dest.relative(&to);
@@ -1989,6 +2002,7 @@ impl<'a> Installer<'a> {
                 dest: dest.into_sep::<{ PathSeparators::ANY }>(),
                 target: target.into_sep::<{ PathSeparators::ANY }>(),
                 real_len: if all_real { dest_len } else { real_len },
+                is_behind_link,
                 #[cfg(windows)]
                 fallback_junction_target: to.into_sep::<{ PathSeparators::ANY }>(),
             };
@@ -2123,7 +2137,9 @@ impl<'a> Installer<'a> {
                     lockfile.str(&lockfile.buffers.dependencies[dep.dep_id as usize].name),
                     self.entry_store_node_modules_package_name(entry_id),
                 );
-                let _ = remove_link(dest.slice_z());
+                if is_link(dest.slice_z()) == Some(true) {
+                    let _ = remove_link(dest.slice_z());
+                }
             }
         }
 
@@ -2186,7 +2202,9 @@ impl<'a> Installer<'a> {
 
             let mut path = AutoAbsPath::init_top_level_dir();
             self.append_store_node_modules_path(&mut path, entry_id);
-            if let Ok(node_modules) = sys::Dir::open(path.slice()) {
+            if !self.linked.contains(path.slice())
+                && let Ok(node_modules) = sys::Dir::open(path.slice())
+            {
                 crate::prune::prune_bins(&node_modules, Some(&is_left_over));
             }
             if entry_id == StoreEntryId::ROOT && options.global {
@@ -2270,6 +2288,7 @@ impl<'a> Installer<'a> {
     fn bin_links(&self, entry_id: StoreEntryId) -> BinLinks {
         let mut node_modules_path = DefaultAbsPath::init_top_level_dir();
         self.append_real_store_node_modules_path(&mut node_modules_path, entry_id, Which::Staging);
+        self.linked.resolve(&mut node_modules_path);
         BinLinks {
             node_modules_path,
             seen: StringHashMap::default(),
@@ -2295,6 +2314,7 @@ impl<'a> Installer<'a> {
             .map(|entry_id| {
                 let mut path = DefaultAbsPath::init_top_level_dir();
                 self.append_real_store_node_modules_path(&mut path, entry_id, Which::Final);
+                self.linked.resolve(&mut path);
                 (
                     path,
                     strings::StringOrTinyString::init(self.pkg_name(entry_id)),
@@ -2320,7 +2340,6 @@ impl<'a> Installer<'a> {
             rel_buf: &mut *links.rel_buf,
             err: None,
             skipped_due_to_missing_bin: false,
-            keeps_target: lockfile.is_member_outside(pkg_id),
         };
 
         bin_linker.link(global);

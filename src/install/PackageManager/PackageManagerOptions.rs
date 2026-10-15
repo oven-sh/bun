@@ -619,8 +619,9 @@ fn make_open_dir(path: &[u8]) -> crate::Result<bun_sys::Fd> {
 fn make_open_dir_under(base: &[u8], parts: &[&[u8]]) -> crate::Result<bun_sys::Fd> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf_checked};
 
+    let base = expand_home(base);
     let mut buf = bun_paths::path_buffer_pool::get();
-    let Some(path) = join_abs_string_buf_checked::<platform::Auto>(base, &mut buf.0, parts) else {
+    let Some(path) = join_abs_string_buf_checked::<platform::Auto>(&base, &mut buf.0, parts) else {
         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
     };
     make_open_dir(path)

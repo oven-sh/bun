@@ -5,7 +5,6 @@ import {
   chmodSync,
   closeSync,
   copyFileSync,
-  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -2657,13 +2656,9 @@ test.concurrent(
     expect(existsSync(join(nested, "package.json"))).toBeTrue();
     expect(await file(rootPkgJson).json()).toMatchObject({ version: "2.0.0" });
 
-    const saved = join(dir, "saved");
-    cpSync(nested, saved, { recursive: true });
     await install(dir);
     expect(await file(rootPkgJson).json()).toMatchObject({ version: "1.0.1" });
-    // `bun install` removes it itself. `bun prune` does the same for one that comes from elsewhere.
-    expect(existsSync(nested)).toBeFalse();
-    cpSync(saved, nested, { recursive: true });
+    expect(existsSync(nested)).toBeTrue();
 
     const { stdout, stderr, exitCode } = await prune(dir);
     expect(out(stdout)).toMatchInlineSnapshot(`
@@ -4214,16 +4209,12 @@ test.concurrent("hoisted: a nested copy left behind by an override to a tarball 
       overrides: { "no-deps": copyTarball(dir, "no-deps", "2.0.0") },
     }),
   );
-  const saved = join(dir, "saved");
-  cpSync(nested, saved, { recursive: true });
-  // In two steps, as after a `git pull`.
+  // In two steps, as after a `git pull`: the install that changes bun.lock removes the copy itself.
   await install(dir, "--lockfile-only");
   await install(dir);
   expect(await lock(dir)).not.toContain('"one-dep/no-deps"');
   expect(await lock(dir)).toContain("no-deps-2.0.0.tgz");
-  // `bun install` removes it itself. `bun prune` does the same for one that comes from elsewhere.
-  expect(existsSync(nested)).toBeFalse();
-  cpSync(saved, nested, { recursive: true });
+  expect(existsSync(join(nested, "package.json"))).toBeTrue();
 
   const { stdout, stderr, exitCode } = await prune(dir);
   expect(stderr).not.toContain("warn:");
@@ -4670,3 +4661,30 @@ test.concurrent(
     expect(existsSync(fresh)).toBeFalse();
   },
 );
+
+test.concurrent.each([
+  ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],
+  ["CR", "\r", "\\r"],
+  ["BEL", "\x07", "\\x07"],
+  ["U+009B", "\u009b2K", "\\u009b2K"],
+  ["OSC 52", "\x1b]52;c;aGk=\x07", "\\x1b]52;c;aGk=\\x07"],
+])("%s in a row of the list is printed spelled out", async (_, raw, spelled) => {
+  const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
+  // Windows has no such file names.
+  const [folder, folderSpelled] = isWindows ? ["junk", "junk"] : [`a${raw}b`, `a${spelled}b`];
+  const planted = plant(dir, `node_modules/no-deps/node_modules/${folder}`);
+  writeFileSync(join(planted, "package.json"), JSON.stringify({ name: "junk", version: `1.0.0-c${raw}d` }));
+  const row = `\n- ${folderSpelled}@1.0.0-c${spelled}d (node_modules`;
+
+  for (const [args, code] of [
+    [["--check"], 1],
+    [["--dry-run"], 0],
+    [[], 0],
+  ] as const) {
+    const { stdout, stderr, exitCode } = await prune(dir, ...args);
+    expect(stdout).toContain(row);
+    expect(stdout + stderr).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f-\x9f]/);
+    expect(exitCode).toBe(code);
+  }
+  expect(existsSync(planted)).toBeFalse();
+});

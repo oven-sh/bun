@@ -512,8 +512,10 @@ impl Stringifier {
 
                 Self::dec_indent(writer, indent)?;
                 writer.write_all(b"],\n")?;
-            } else if lockfile.trusted_dependencies.is_some() {
-                // A checkout without the workspace that declares the list must tell it from no list.
+            } else if (lockfile.trusted_dependencies.as_ref())
+                .is_some_and(|trusted_dependencies| trusted_dependencies.count() == 0)
+            {
+                // A checkout without the workspace that declares `[]` must tell it from no list.
                 Self::write_indent(writer, *indent)?;
                 writer.write_all(b"\"trustedDependencies\": [],\n")?;
             }
@@ -2404,7 +2406,10 @@ pub(crate) fn parse_into_binary_lockfile(
                     log.add_error_fmt(
                         source,
                         at_item(key_loc, res_info_idx),
-                        format_args!("Unexpected resolution: {}", bstr::BStr::new(res_str)),
+                        format_args!(
+                            "Unexpected resolution: {}",
+                            bun_core::fmt::for_terminal(bstr::BStr::new(res_str))
+                        ),
                     );
                     return Err(ParseError::UnexpectedResolution);
                 }
@@ -2512,7 +2517,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         at_item(key_loc, res_info_idx),
                         format_args!(
                             "Unknown workspace: '{}'",
-                            bstr::BStr::new(res.workspace().slice(string_buf))
+                            bun_core::fmt::escape_control_chars(res.workspace().slice(string_buf))
                         ),
                     );
                     return Err(ParseError::InvalidPackageInfo);
@@ -2763,21 +2768,37 @@ pub(crate) fn parse_into_binary_lockfile(
         let string_buf: &[u8] = buffers.string_bytes.as_slice();
         let dependencies: &[Dependency] = buffers.dependencies.as_slice();
         let resolutions: &mut [PackageID] = buffers.resolutions.as_mut_slice();
-        let peer_by_version = |dep: &Dependency| {
-            resolve_peer_dep_version_based(
-                dep,
-                catalogs,
-                package_index,
-                overrides,
-                pkg_resolutions,
-                string_buf,
-                |_| true,
-            )
-        };
         let link_workspace_packages =
             manager.is_none_or(|manager| manager.options.link_workspace_packages);
         let workspace_paths = &lockfile.workspace_paths;
         let workspace_versions = &lockfile.workspace_versions;
+        // As the resolver, which looks at no version when the range of a peer links a member.
+        let linked_member = |dep: &Dependency| {
+            let (range, name_hash) =
+                version_based_peer_range(dep, catalogs, overrides, string_buf)?;
+            super::linked_workspace_path(
+                link_workspace_packages,
+                workspace_paths,
+                workspace_versions,
+                name_hash,
+                &range.try_npm()?.version,
+                string_buf,
+            )?;
+            (members.clone()).find(|&id| pkg_name_hashes[id as usize] == name_hash)
+        };
+        let peer_by_version = |dep: &Dependency| {
+            linked_member(dep).or_else(|| {
+                resolve_peer_dep_version_based(
+                    dep,
+                    catalogs,
+                    package_index,
+                    overrides,
+                    pkg_resolutions,
+                    string_buf,
+                    |_| true,
+                )
+            })
+        };
         // An older bun.lock lists no "unresolved" rows: the name binds one only to what it asks for.
         let is_another_edges_package = |dep: &Dependency, id: PackageID, own_entry: bool| {
             use DependencyVersionTag as Asked;
@@ -2834,43 +2855,12 @@ pub(crate) fn parse_into_binary_lockfile(
             }
         };
 
-        // A later group that lists a name again has its package one level below the first group's.
-        let later_groups = |rows: DependencySlice, listed_again: &mut Vec<DependencyID>| {
-            listed_again.clear();
-            super::names_listed_again(
-                rows.len as usize,
-                |i| rows.begin() + i as DependencyID,
-                dependencies,
-                string_buf,
-                |_, later| listed_again.push(later),
-            );
-            listed_again.sort_unstable();
-        };
-        let mut listed_again: Vec<DependencyID> = Vec::new();
-        let later_group_entry =
-            |listed_again: &[DependencyID], dep_id: DependencyID, own_key: &[u8]| {
-                if listed_again.binary_search(&dep_id).is_err() {
-                    return None;
-                }
-                let dep = &dependencies[dep_id as usize];
-                // Unless the first group's package has that key for a dependency of its own.
-                let first = pkg_deps[*pkg_map.get(own_key)? as usize].get(dependencies);
-                if first.iter().any(|row| row.name_hash == dep.name_hash) {
-                    return None;
-                }
-                pkg_map.get(&[own_key, b"/", dep.name.slice(string_buf)].concat())
-            };
-
         {
             // first the root dependencies are resolved
-            later_groups(pkg_deps[0], &mut listed_again);
             for dep_id in pkg_deps[0].begin()..pkg_deps[0].end() {
                 let dep = &dependencies[dep_id as usize];
 
-                let name = dep.name.slice(string_buf);
-                let named = later_group_entry(&listed_again, dep_id, name)
-                    .or_else(|| pkg_map.get(name))
-                    .copied();
+                let named = pkg_map.get(dep.name.slice(string_buf)).copied();
                 // The root's own dependency can have the key of the member of that name.
                 let bound = if dep.behavior.is_workspace()
                     && !named.is_some_and(|id| members.contains(&id))
@@ -2913,7 +2903,6 @@ pub(crate) fn parse_into_binary_lockfile(
                 let name_end = prefix.len() + workspace_name.len();
 
                 let deps = pkg_deps[pkg_id as usize];
-                later_groups(deps, &mut listed_again);
                 for dep_id in deps.begin()..deps.end() {
                     let dep = &dependencies[dep_id as usize];
                     let dep_name = dep.name.slice(string_buf);
@@ -2940,9 +2929,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         &buf_slice[..needed]
                     };
 
-                    let own_entry =
-                        later_group_entry(&listed_again, dep_id, workspace_node_modules)
-                            .or_else(|| pkg_map.get(workspace_node_modules));
+                    let own_entry = pkg_map.get(workspace_node_modules);
                     let Some(res_id) = peer_by_version(dep)
                         .or_else(|| own_entry.or_else(|| pkg_map.get(dep_name)).copied())
                         .filter(|&id| !is_another_edges_package(dep, id, own_entry.is_some()))
@@ -2990,7 +2977,6 @@ pub(crate) fn parse_into_binary_lockfile(
 
             // find resolutions. iterate up to root through the pkg path.
             let deps = pkg_deps[pkg_id as usize];
-            later_groups(deps, &mut listed_again);
             'deps: for dep_id in deps.begin()..deps.end() {
                 let dep = &dependencies[dep_id as usize];
 
@@ -3014,19 +3000,6 @@ pub(crate) fn parse_into_binary_lockfile(
                         ) {
                             Ok((&id, mut evidence)) => {
                                 let own_entry = evidence == RowEvidence::OwnEntry;
-                                let id = if own_entry && !listed_again.is_empty() {
-                                    // `path_buf` starts with the key that was found.
-                                    let own_key_len =
-                                        pkg_path.len() + 1 + dep.name.slice(string_buf).len();
-                                    later_group_entry(
-                                        &listed_again,
-                                        dep_id,
-                                        &path_buf[..own_key_len],
-                                    )
-                                    .map_or(id, |&below| below)
-                                } else {
-                                    id
-                                };
                                 if evidence == RowEvidence::WalkedToRoot
                                     && dep.behavior.is_peer()
                                     && root_dep_names.contains(&dep.name_hash)
@@ -3111,12 +3084,8 @@ pub(crate) fn parse_into_binary_lockfile(
 /// re-keys isolated-linker store entries (and global-store entry hashes)
 /// on warm installs.
 ///
-/// Peers whose name matches a workspace package need no special casing
-/// even though the fresh resolver binds them to the workspace before any
-/// deferral (`'resolve_from_workspace`): the version scan below picks an
-/// npm candidate for such an edge, but workspaces are root dependencies,
-/// so the isolated store's ancestor walk and the hoisted tree's dedupe
-/// both resolve the name through the root's workspace entry.
+/// A peer whose range links a workspace never gets here: the fresh resolver binds it to the
+/// workspace before any deferral, and so does the loader (`linked_member`).
 ///
 /// The hoist only starts from this binding: an edge that finds the root's dependency of that name,
 /// or its package's own, in range ends on that package (`tree::bind_served_peers`).

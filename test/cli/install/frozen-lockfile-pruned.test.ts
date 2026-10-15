@@ -753,9 +753,6 @@ describe.each(linkers)("linker: %s", linker => {
       // The hook is a diff of its own, so that install takes the other path through the differ's result.
       { list: [], nodeModules: "absent", diff: "a hook", complete: [false, false], pruned: [false, false] },
       { list: [], nodeModules: "intact", diff: "a hook", complete: [false, false], pruned: [false, false] },
-      // Names nothing that is installed.
-      { list: ["no-deps"], nodeModules: "absent", diff: "none", complete: [false, false], pruned: [false, false] },
-      { list: ["no-deps"], nodeModules: "absent", diff: "a hook", complete: [false, false], pruned: [false, false] },
       // Recorded and on the default list.
       { list: ["electron"], nodeModules: "absent", diff: "none", complete: [true, false], pruned: [true, false] },
       // No package.json on disk vouches for the recorded name, and the default list stays off.

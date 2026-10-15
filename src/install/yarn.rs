@@ -740,7 +740,11 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 let reason: Cow<str> = if entry.version.is_empty() {
                     "missing \"version\" field".into()
                 } else if !Semver::Version::parse_utf8(entry.version).valid {
-                    format!("invalid version \"{}\"", bstr::BStr::new(entry.version)).into()
+                    format!(
+                        "invalid version \"{}\"",
+                        bun_core::fmt::escape_control_chars(entry.version)
+                    )
+                    .into()
                 } else {
                     "missing \"resolved\" field".into()
                 };

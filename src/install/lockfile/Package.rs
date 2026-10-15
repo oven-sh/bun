@@ -1110,7 +1110,6 @@ impl Diff {
                         to_lockfile,
                         to_deps!(),
                         cur_to_i,
-                        frozen,
                     )
                 {
                     summary.update += 1;
@@ -1470,7 +1469,7 @@ impl Diff {
             bun_ast::Loc::EMPTY,
             format_args!(
                 "the dependencies in {}/package.json changed since the lockfile was saved (run 'bun install' to update it)",
-                bstr::BStr::new(
+                bun_core::fmt::escape_control_chars(
                     lockfile.packages.items_resolution()[folder as usize]
                         .folder()
                         .slice(lockfile.buffers.string_bytes.as_slice())
@@ -1506,7 +1505,6 @@ impl Diff {
         to_lockfile: &Lockfile,
         to_deps: &[Dependency],
         to_i: usize,
-        frozen: bool,
     ) -> bool {
         let to_dep = &to_deps[to_i];
         let packages = &from_lockfile.packages;
@@ -1528,27 +1526,13 @@ impl Diff {
             && (npm.name).eql(packages.items_name()[locked as usize], to_buf, from_buf)
             && !to_lockfile.overrides.has_rule_for_name(to_dep.name_hash)
             && !(npm.version).satisfies(resolution.npm().version, to_buf, from_buf)
-            // An older bun.lock has one version for a name in two groups. It stays when frozen, and
-            // where bun.lock has no key for another: see `Contested` in `Tree::hoist_dependency`.
-            && {
-                let mut others = to_deps.iter().enumerate().filter(|&(i, other)| {
-                    i != to_i
-                        && other.name_hash == to_dep.name_hash
-                        && !other.behavior.is_workspace()
-                });
-                match (others.next(), others.next()) {
-                    (None, _) => true,
-                    (Some((_, first)), None) => {
-                        !frozen
-                            && !first.behavior.is_prod()
-                            && !(packages.items_dependencies()[locked as usize])
-                                .get(from_lockfile.buffers.dependencies.as_slice())
-                                .iter()
-                                .any(|own| own.name_hash == to_dep.name_hash)
-                    }
-                    _ => false,
-                }
-            }
+            // A name in two groups gets one version, which only has to fit one of the ranges.
+            && (to_deps.iter())
+                .filter(|other| {
+                    other.name_hash == to_dep.name_hash && !other.behavior.is_workspace()
+                })
+                .count()
+                == 1
     }
 
     /// `to` is about to replace `from_id`; its rows keep what `generate` lets a root row keep.
@@ -1575,7 +1559,6 @@ impl Diff {
                             lockfile,
                             to.dependencies.get(&lockfile.buffers.dependencies),
                             to_i - to.dependencies.begin() as usize,
-                            pm.options.enable.frozen_lockfile(),
                         ))
                         || Self::locked_version_satisfies(lockfile, locked, to_dep, buf)))
                 .then_some(locked)
@@ -1852,7 +1835,7 @@ impl Package<u64> {
                 value_loc_of(source, key_loc),
                 format_args!(
                     "Dependency \"{}\" has an unsafe folder path",
-                    bstr::BStr::new(external_alias.slice(buf)),
+                    bun_core::fmt::escape_control_chars(external_alias.slice(buf)),
                 ),
             );
             crate::Error::InstallFailed
@@ -2022,11 +2005,7 @@ impl Package<u64> {
                     }
 
                     // The caller knows about a path from "workspaces".
-                    if tag.is_none()
-                        && relative != b"*"
-                        && !(workspace_paths.values().iter())
-                            .any(|known| known.slice(buf) == relative)
-                    {
+                    if tag.is_none() && relative != b"*" {
                         linked_members.look_at(relative);
                     }
 
@@ -2138,7 +2117,7 @@ impl Package<u64> {
                         notes.into(),
                         format_args!(
                             "Duplicate dependency: \"{}\" specified in package.json",
-                            bstr::BStr::new(external_alias.slice(buf))
+                            bun_core::fmt::escape_control_chars(external_alias.slice(buf))
                         ),
                     );
                 }
@@ -2190,7 +2169,10 @@ impl Package<u64> {
                             log.add_error_fmt(
                                 source,
                                 value_loc_of(source, name_q.loc),
-                                format_args!("Invalid package name {}", bun_core::fmt::quote(name)),
+                                format_args!(
+                                    "Invalid package name {}",
+                                    bun_core::fmt::EscapeControlChars(bun_core::fmt::quote(name))
+                                ),
                             );
                             return Err(crate::Error::InvalidPackageJSON);
                         }
@@ -2444,7 +2426,9 @@ impl Package<u64> {
                                         q.expr.loc,
                                         format_args!(
                                             "\"workspaces.selfContained\": \"{}\" does not match any workspace path or name",
-                                            bstr::BStr::new(unmatched)
+                                            bun_core::fmt::EscapeControlChars(bstr::BStr::new(
+                                                unmatched
+                                            ))
                                         ),
                                     );
                                 }
@@ -2842,7 +2826,7 @@ impl Package<u64> {
                             notes.into(),
                             format_args!(
                                 "Workspace name \"{}\" already exists",
-                                bstr::BStr::new(&entry.name),
+                                bun_core::fmt::escape_control_chars(&entry.name),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);
@@ -2868,7 +2852,7 @@ impl Package<u64> {
                             format_args!(
                                 "workspace \"{}\": installConfig.hoistingLimits \"{}\" is not supported (only \"workspaces\" and \"none\" are); ignoring",
                                 bstr::BStr::new(&entry.name),
-                                bstr::BStr::new(v),
+                                bun_core::fmt::EscapeControlChars(bstr::BStr::new(v)),
                             ),
                         );
                     }

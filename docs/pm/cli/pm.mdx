@@ -15,6 +15,8 @@ bun pm pack
 
 `bun pm pack` creates a `.tgz` file containing all files that would be published to npm, following the same rules as `npm pack`.
 
+Without a `files` field in `package.json`, `.npmignore` (or, where there is none, `.gitignore`) says what is left out. As in npm, a workspace also goes by the `.npmignore` / `.gitignore` of the workspace root and of the folders between the two. A build folder such as `dist` that the root's `.gitignore` names is therefore not packed unless `files` lists it, or the workspace's own `.npmignore` has `!dist`.
+
 ## Examples
 
 Basic usage:
@@ -367,7 +369,7 @@ bun pm cache rm
 bun pm cache rm --dry-run   # print the directories that would be deleted
 ```
 
-This deletes everything in the cache directory, including the [global store](/pm/global-store) at `<cache>/links/`. Every project with `globalStore = true` symlinks into that directory, so run `bun install` again in each of them afterwards. Bun refuses to clear a directory that is or contains your project, your home directory or your Bun install.
+This deletes everything in the cache directory, including the [global store](/pm/global-store) at `<cache>/links/`. The directory itself stays, so it can be a symlink or a mount. There is no way to remove one package: `bun pm cache rm <package>` is an error. Every project with `globalStore = true` symlinks into that directory, so run `bun install` again in each of them afterwards. Bun refuses to clear a directory that is or contains your project, your home directory or your Bun install.
 
 To refresh stale registry metadata without deleting the cache, use `bun install --force` or `bun add <pkg> --force`. See [Cache](/pm/cli/install#cache).
 

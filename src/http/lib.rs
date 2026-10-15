@@ -528,6 +528,15 @@ impl<'a> HTTPClientResult<'a> {
         self.fail.is_none()
     }
 
+    /// The response head of a terminal result, or why there is none.
+    pub fn into_metadata(self) -> crate::Result<HTTPResponseMetadata> {
+        if let Some(err) = self.fail {
+            return Err(err);
+        }
+        // Neither error nor response head: a network error, not a panic on network-driven state.
+        self.metadata.ok_or(crate::Error::ConnectionClosed)
+    }
+
     pub(crate) fn is_timeout(&self) -> bool {
         matches!(self.fail, Some(crate::Error::Timeout))
     }

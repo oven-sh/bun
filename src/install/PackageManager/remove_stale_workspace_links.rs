@@ -1,6 +1,6 @@
 use bun_paths::AutoAbsPathChecked;
 
-use crate::isolated_install::installer::remove_link;
+use crate::isolated_install::installer::{is_link, remove_link};
 use crate::lockfile::Lockfile;
 use crate::lockfile::package::PackageColumns as _;
 use crate::package_installer::alias_is_safe_install_target;
@@ -36,6 +36,8 @@ fn remove_link_in(package_dir: &[u8], name: &[u8]) {
     let mut path = AutoAbsPathChecked::init_top_level_dir();
     if path.append(package_dir).is_err()
         || path.append(b"node_modules").is_err()
+        // See `LinkedNodeModules`.
+        || is_link(path.slice_z()) == Some(true)
         || path.append(name).is_err()
     {
         return;

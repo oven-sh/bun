@@ -791,6 +791,36 @@ describe.concurrent("whoami", async () => {
     expect(err).toBe(`error: failed to authenticate with registry 'http://localhost:${anonymous.port}/'\n`);
     expect(await exited).toBe(1);
   });
+  test.each([
+    ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],
+    ["CR", "\r", "\\r"],
+    ["BEL", "\x07", "\\x07"],
+    ["U+009B", "\u009b2K", "\\u009b2K"],
+    ["OSC 52", "\x1b]52;c;aGk=\x07", "\\x1b]52;c;aGk=\\x07"],
+  ])("%s in the username is printed spelled out", async (_, raw, spelled) => {
+    const { packageDir, packageJson, env } = await setupTest();
+    using named = Bun.serve({ port: 0, fetch: () => Response.json({ username: `a${raw}b` }) });
+    const bunfig = Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: { url: `http://localhost:${named.port}/`, token: "1234567" },
+      },
+    });
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+    ]);
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await stdout.text()).toBe(`a${spelled}b\n`);
+    expect(await stderr.text()).toBeEmpty();
+    expect(await exited).toBe(0);
+  });
 });
 
 describe.concurrent("package.json indentation", async () => {

@@ -1837,8 +1837,8 @@ describe.concurrent("a package whose package.json fails the install is not publi
 
 // -------------------------------------------------------------------
 // A tarball gives the files that npm gives for it. Tar readers differ in
-// what they take for a file, for its name, for its body and for the end
-// of the archive. What each case expects is what npm's reader does.
+// what they take for a file, for its name and for the end of the
+// archive. What each case expects is what npm's reader does.
 // -------------------------------------------------------------------
 describe.concurrent("entries that npm skips or names differently", () => {
   const packageJson = JSON.stringify({ name: "stream-pkg", version: "1.0.0" });
@@ -1889,19 +1889,23 @@ describe.concurrent("entries that npm skips or names differently", () => {
       tarball(...entry(`${index}/`, second, "7")),
       { "lib/index.js": "second" },
     ],
-    ["a file with the target of a link", tarball(...entry(index, second, "0", target)), {}],
-    ["a symbolic link with a body", tarball(...entry("package/link", again, "2", target)), {}],
-    ["a FIFO with a body", tarball(...entry("package/fifo", again, "6")), {}],
+    ["a type that npm does not know, with a trailing slash", tarball(...entry("package/x/", again, "9")), {}],
+    [
+      "a file with a trailing slash behind a pax header that gets a warning",
+      tarball(...pax("hdrcharset", "unknown"), ...entry("package/x/", again, "0")),
+      { "lib/index.js": "second" },
+    ],
+    // Go's archive/tar leaves the field for the target empty when the target has no ASCII character.
+    ...["1", "2"].map((type): [string, Buffer, Record<string, string>] => [
+      `a link of type ${type} whose target is in the pax header alone`,
+      tarball(...pax("linkpath", "日本"), ...entry("package/link", Buffer.alloc(0), type), ...other),
+      { "other.js": "second" },
+    ]),
     ["a NUL in the path of a pax header", tarball(...pax("path", `${index}\0.js`), ...other), {}],
     [
       "the name of a sparse file in a pax header",
       tarball(...pax("GNU.sparse.name", index), ...other),
       { "other.js": "second" },
-    ],
-    [
-      "the old header for a long name",
-      tarball(...entry("name", Buffer.from(`${index}\0`), "N"), ...other),
-      { "lib/index.js": "second" },
     ],
     ["a header for a long name at the end", tarball(...entry("name", Buffer.from(`${index}\0`), "L")), {}],
     [
@@ -1944,6 +1948,29 @@ describe.concurrent("entries that npm skips or names differently", () => {
           files: { "package.json": packageJson, "lib/index.js": "first", ...more },
         },
       ]);
+    },
+  );
+
+  // Two cases that do not follow npm, which loses files of archives that real tar writers make.
+  // Old writers repeat the size of the file in the header of a hard link. npm takes what follows for its body.
+  test.each(paths)("the entries behind a hard link whose header states a size are extracted (%s)", async path => {
+    const tgz = tarball(tarHeader("package/link", 5000, "1", undefined, target), ...other);
+    expect((await installStreamPkg(path, tgz, { files: true }))[0]).toMatchObject({
+      files: { "package.json": packageJson, "lib/index.js": "first", "other.js": "second" },
+      exitCode: 0,
+    });
+  });
+
+  // npm lays the file behind such a link under the link's name.
+  test.each(paths)(
+    "the file behind a link whose name and target are in the pax header alone keeps its name (%s)",
+    async path => {
+      const records = Buffer.concat([pax("path", "package/日")[1], pax("linkpath", "本")[1]]);
+      const tgz = tarball(...entry("PaxHeader", records, "x"), ...entry("package/", Buffer.alloc(0), "2"), ...other);
+      expect((await installStreamPkg(path, tgz, { files: true }))[0]).toMatchObject({
+        files: { "package.json": packageJson, "lib/index.js": "first", "other.js": "second" },
+        exitCode: 0,
+      });
     },
   );
 });

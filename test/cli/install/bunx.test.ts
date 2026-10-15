@@ -2411,6 +2411,20 @@ describe("a package in node_modules", () => {
     });
   });
 
+  it.concurrent.skipIf(isWindows)("a command in node_modules/.bin that cannot run is not downloaded", async () => {
+    using registry = await localRegistry(fixturePackage("gen", "1.0.0", "gen"));
+    using box = sandbox(registry);
+    addLocalBin(box.cwd, "gen", `console.log("mine");`);
+    chmodSync(join(box.cwd, "node_modules", ".bin", "gen"), 0o644);
+
+    expect(await box.run(["gen"])).toMatchObject({
+      stdout: "",
+      stderr: expect.stringMatching(/^error: .*\/node_modules\/\.bin\/gen is not executable\n$/),
+      exitCode: 126,
+    });
+    expect(registry.requests).toEqual([]);
+  });
+
   it.concurrent("is found from a directory below the project", async () => {
     using box = sandbox(undefined, { cwd: { src: { deep: {} } } });
     addLocalPackage(box.cwd, "@corp/cli", "1.0.0", "corp");
@@ -2438,18 +2452,50 @@ describe("a package in node_modules", () => {
     },
   );
 
+  // Like npx: any command, which finds the bins of the package before node_modules/.bin and $PATH.
+  it.concurrent.each(["node_modules/.bin", "$PATH"])(
+    "-p installs the package for a command that is none of its bins, from %s",
+    async where => {
+      using registry = await localRegistry(fixturePackage("mypkg", "1.0.0", "lint"));
+      using box = sandbox(registry, { elsewhere: {} });
+      const elsewhere = join(box.dir, "elsewhere");
+      addLocalBin(
+        where === "$PATH" ? elsewhere : box.cwd,
+        "caller",
+        `console.log("caller got " + require("child_process").execSync("lint", { encoding: "utf8" }).trim());`,
+      );
+      const PATH = [join(elsewhere, "node_modules", ".bin"), box.env.PATH ?? process.env.PATH].join(delimiter);
+      const env = { ...box.env, PATH };
+
+      const ran = { stdout: "caller got lint 1.0.0\n", exitCode: 0 };
+      expect(await box.run(["-p", "mypkg", "caller"], { env })).toMatchObject(ran);
+      expect(await box.run(["-p", "mypkg", "caller"], { env })).toMatchObject({ ...ran, stderr: "", requests: [] });
+      expect(await box.run(["-p", "mypkg", "nowhere"], { env })).toMatchObject({
+        stdout: "",
+        stderr: expect.stringContaining("error: Package mypkg does not provide a binary named nowhere"),
+        exitCode: 1,
+      });
+    },
+  );
+
   it.concurrent("-p takes the package of the project", async () => {
     using box = sandbox();
     addLocalPackage(box.cwd, "mypkg", "1.0.0", "lint");
-
-    expect(await box.run(["--no-install", "-p", "mypkg", "lint"])).toMatchObject({
-      stdout: "lint of mypkg 1.0.0\n",
-      stderr: "",
-      exitCode: 0,
-    });
-    // Not a bin of the package.
     addLocalPackage(box.cwd, "other", "1.0.0", "format");
-    expect(await box.run(["--no-install", "-p", "mypkg", "format"])).toMatchObject({ stdout: "", exitCode: 1 });
+
+    for (const [command, stdout] of [
+      ["lint", "lint of mypkg 1.0.0\n"],
+      // None of its bins.
+      ["format", "format of other 1.0.0\n"],
+    ]) {
+      expect(await box.run(["--no-install", "-p", "mypkg", command])).toMatchObject({
+        stdout,
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+    // Without the package no command is run.
+    expect(await box.run(["--no-install", "-p", "absent", "format"])).toMatchObject({ stdout: "", exitCode: 1 });
   });
 
   it.concurrent.each(["css@3.4.0", "css@3", "css@^3"])(

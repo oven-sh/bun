@@ -709,7 +709,7 @@ impl<'a> PackageInstaller<'a> {
                 None,
                 bun_ast::Loc::EMPTY,
                 "Failed to link into <b>{}<r>: {}",
-                bstr::BStr::new(err.path.as_ref()),
+                bun_core::fmt::EscapeControlChars(bstr::BStr::new(err.path.as_ref())),
                 bstr::BStr::new(err.name()),
             );
             while tree.binaries.remove_or_null().is_some() {}
@@ -853,7 +853,6 @@ impl<'a> PackageInstaller<'a> {
                     rel_buf: link_rel_buf,
                     err: None,
                     skipped_due_to_missing_bin: false,
-                    keeps_target: lockfile.is_member_outside(package_id),
                 };
 
                 bin_linker.link(global);
@@ -1846,7 +1845,7 @@ impl<'a> PackageInstaller<'a> {
                         bun_core::pretty_errorln!(
                             "<r><red>error<r>: refusing to install dependency <b>{}<r> with unsafe folder path \"{}\"",
                             bstr::BStr::new(pkg_name.slice(string_buf!())),
-                            bstr::BStr::new(folder),
+                            bun_core::fmt::escape_control_chars(folder),
                         );
                     }
                     return self.fail(is_pending_package_install, log_level);
@@ -2314,8 +2313,6 @@ impl<'a> PackageInstaller<'a> {
                 install_result,
             );
         } else {
-            self.look_below_package_in_place(dependency_id, package_id);
-
             if self.manager().options.offline
                 == crate::package_manager_real::options::OfflineMode::Offline
             {
@@ -2360,26 +2357,6 @@ impl<'a> PackageInstaller<'a> {
             }
 
             self.increment_tree_install_count(is_pending_package_install, log_level);
-        }
-    }
-
-    /// The tree has nothing below a package of the current tree that stays as it is. Has the disk?
-    fn look_below_package_in_place(&mut self, dependency_id: DependencyID, package_id: PackageID) {
-        let lockfile = self.lockfile();
-        let tree_id = self.current_tree_id;
-        let Some(copies) = &mut self.summary.hiding_copies else {
-            return;
-        };
-        if !copies.can_have_folder(lockfile, tree_id, dependency_id, package_id) {
-            return;
-        }
-        let alias = (lockfile.buffers.dependencies[dependency_id as usize].name)
-            .slice(lockfile.buffers.string_bytes.as_slice());
-        let mut path_buf = bun_paths::path_buffer_pool::get();
-        let below = join_normalized_z(path_buf.as_mut_slice(), alias, b"node_modules");
-        if (self.node_modules).directory_exists_at(&self.root_node_modules_folder, below) {
-            let path = [self.node_modules.path.as_slice(), &[SEP], below.as_bytes()].concat();
-            copies.check_package(lockfile, tree_id, dependency_id, package_id, &path);
         }
     }
 
@@ -2514,7 +2491,9 @@ impl<'a> PackageInstaller<'a> {
                 {
                     bun_core::pretty_errorln!(
                         "<r><red>error<r>: Could not find folder \"file:{}\" for dependency \"{}\"",
-                        bstr::BStr::new(resolution.folder().slice(string_buf!())),
+                        bun_core::fmt::escape_control_chars(
+                            resolution.folder().slice(string_buf!())
+                        ),
                         bstr::BStr::new(alias.slice(string_buf!())),
                     );
                 } else if matches!(

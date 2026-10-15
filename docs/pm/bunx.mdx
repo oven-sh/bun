@@ -82,6 +82,12 @@ bunx -p renovate renovate-config-validator
 bunx --package @angular/cli ng
 ```
 
+As with `npx`, the command can be any program. It finds the package's binaries first on its `PATH`:
+
+```bash terminal icon="terminal"
+bunx -p typescript sh -c "tsc --version"
+```
+
 To force a script to always run with Bun, give it a `bun` shebang.
 
 ```js dist/index.js icon="/icons/javascript.svg"

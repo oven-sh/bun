@@ -7,6 +7,8 @@ pub(crate) struct Symlinker {
     pub(crate) target: bun_paths::RelPath,
     /// The directories of `dest` after `dest[..real_len]` may be links that came with the project.
     pub(crate) real_len: usize,
+    /// See `LinkedNodeModules`: a directory or a file in the way of `dest` stays, and the link fails.
+    pub(crate) is_behind_link: bool,
     #[cfg(windows)]
     pub(crate) fallback_junction_target: bun_paths::AbsPath,
 }
@@ -58,7 +60,7 @@ impl Symlinker {
                         };
                         let _ = Fd::cwd().make_path(dest_parent);
                     }
-                    Errno::EEXIST => {
+                    Errno::EEXIST if !self.is_behind_link => {
                         let _ = Fd::cwd().delete_tree(self.dest.slice_z());
                     }
                     _ => return Err(symlink_err1),
@@ -100,13 +102,17 @@ impl Symlinker {
                                         let _ = dest.append(b"package.json");
                                         bun_sys::exists_z(dest.slice_z())
                                     };
-                                    if has_package_json
-                                        || bun_sys::rmdir(self.dest.slice_z())
-                                            .is_err_and(|err| err.get_errno() == Errno::EBUSY)
-                                    {
+                                    if has_package_json {
                                         return Ok(false);
                                     }
-                                    let _ = Fd::cwd().delete_tree(self.dest.slice_z());
+                                    if !self.is_behind_link {
+                                        if bun_sys::rmdir(self.dest.slice_z())
+                                            .is_err_and(|err| err.get_errno() == Errno::EBUSY)
+                                        {
+                                            return Ok(false);
+                                        }
+                                        let _ = Fd::cwd().delete_tree(self.dest.slice_z());
+                                    }
                                     return self.symlink().map(|()| true);
                                 }
                             };
